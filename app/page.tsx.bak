@@ -1,0 +1,716 @@
+'use client';
+
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { QueuePanel } from './components/QueuePanel';
+import { ComfyStatusIndicator } from './components/ComfyStatusIndicator';
+import { addQueued } from './components/queue';
+import { flushQueue } from './components/flush';
+
+type TabKey = 'generate' | 'gallery' | 'queue' | 'settings';
+
+const TABS: Array<{ key: TabKey; label: string; hint?: string }> = [
+  { key: 'generate', label: 'Generate', hint: 'Run a job' },
+  { key: 'gallery', label: 'Gallery', hint: 'Recent outputs' },
+  { key: 'queue', label: 'History', hint: 'All jobs' },
+  { key: 'settings', label: 'Settings', hint: 'Preferences' },
+];
+
+type Preset = { name: string };
+
+type QueueItem = {
+  id: string;
+  preset: string;
+  prompts: string[];
+  status: 'pending' | 'sent' | 'error';
+  error?: string;
+};
+
+type LoraEntry = {
+  id: string;
+  name: string;
+  strength: number;
+  enabled: boolean;
+};
+
+type RunState = 'idle' | 'running' | 'sampling' | 'decoding' | 'saving' | 'complete' | 'error';
+
+// Job Cards v1 (run history)
+type JobRunStatus = 'queued' | 'running' | 'complete' | 'error';
+
+type JobRun = {
+  id: string;
+  preset: string;
+  prompts: string[];
+  status: JobRunStatus;
+  startedAt: number;
+  finishedAt?: number;
+  progressPct: number; // 0..100
+  nodeName?: string | null;
+  error?: string;
+};
+
+function uid(prefix = 'id') {
+  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
+}
+
+function splitPrompts(raw: string): string[] {
+  return raw
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function clamp(n: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, n));
+}
+
+export default function Page() {
+  // Tabs
+  const [activeTab, setActiveTab] = useState<TabKey>('generate');
+  const active = useMemo(() => TABS.find((t) => t.key === activeTab), [activeTab]);
+
+  // Presets
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [selectedPreset, setSelectedPreset] = useState('');
+
+  // Prompts
+  const [positivePrompt, setPositivePrompt] = useState('');
+  const [negativePrompt, setNegativePrompt] = useState('');
+  const [repeats, setRepeats] = useState(1);
+
+  // Seed
+  const [seedMode, setSeedMode] = useState<'random' | 'fixed'>('random');
+  const [fixedSeed, setFixedSeed] = useState(0);
+
+  // LoRAs
+  const [availableLoras, setAvailableLoras] = useState<string[]>([]);
+  const [loraPick, setLoraPick] = useState('');
+  const [loraStrength, setLoraStrength] = useState(1);
+  const [loraList, setLoraList] = useState<LoraEntry[]>([]);
+
+  // Img2img
+  const [pickedFileName, setPickedFileName] = useState('');
+  const [pickedFilePreview, setPickedFilePreview] = useState('');
+  const [uploadedImagePath, setUploadedImagePath] = useState('');
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [forceImg2Img, setForceImg2Img] = useState(false);
+
+  // Queue
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [sending, setSending] = useState(false);
+  const [status, setStatus] = useState('');
+
+  // Job Cards v1 (run history)
+  const [jobRuns, setJobRuns] = useState<JobRun[]>([]);
+  const currentRunIdRef = useRef<string | null>(null);
+
+  // Progress
+  const [runState, setRunState] = useState<RunState>('idle');
+  const [nodeName, setNodeName] = useState<string | null>(null);
+  const [pct, setPct] = useState(0);
+  const [totalNodes, setTotalNodes] = useState(0);
+  const [doneNodes, setDoneNodes] = useState(0);
+  const lastProgressAtRef = useRef<number>(0);
+
+  const pendingCount = useMemo(() => queue.filter((q) => q.status === 'pending').length, [queue]);
+  const canRun = useMemo(() => !!selectedPreset && pendingCount > 0 && !sending, [pendingCount, selectedPreset, sending]);
+
+  // Conservative allowlist: if preset name hints i2i, or user forces (requires image).
+  const img2ImgAllowedForSelected = useMemo(() => {
+    const s = selectedPreset.toLowerCase();
+    return s.includes('img2img') || s.includes('i2i') || s.includes('image');
+  }, [selectedPreset]);
+
+  const hasUploadedImage = !!uploadedImagePath;
+  const willUseImg2Img = hasUploadedImage && (forceImg2Img || img2ImgAllowedForSelected);
+
+  const progressIsMoving = useMemo(() => {
+    const now = Date.now();
+    return now - lastProgressAtRef.current < 3000;
+  }, [pct, runState, doneNodes, totalNodes]);
+
+  const progressColor = useMemo(() => {
+    if (runState === 'error') return '#ef4444';
+    if (runState === 'complete') return '#22c55e';
+    if (runState === 'saving') return '#a855f7';
+    if (runState === 'decoding') return '#3b82f6';
+    if (runState === 'sampling') return '#f59e0b';
+    if (runState === 'running') return '#10b981';
+    return '#94a3b8';
+  }, [runState]);
+
+  // Load presets and loras
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const r = await fetch('/api/presets', { cache: 'no-store' });
+        const j = await r.json();
+        if (!cancelled) {
+          const files: string[] = Array.isArray(j?.presets) ? j.presets : [];
+          setPresets(files.map((name) => ({ name })));
+        }
+      } catch (e) {
+        if (!cancelled) setStatus(`Failed to load presets: ${String(e)}`);
+      }
+
+      try {
+        const r = await fetch('/api/loras', { cache: 'no-store' });
+        const j = await r.json();
+        if (!cancelled) {
+          const list: string[] = Array.isArray(j?.loras) ? j.loras : Array.isArray(j?.items) ? j.items : [];
+          setAvailableLoras(list);
+        }
+      } catch {
+        // LoRAs optional
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Subscribe to progress events (best-effort; safe if endpoint not available)
+  useEffect(() => {
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource('/api/comfy-events');
+      es.onmessage = (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          // Expected shapes may vary; handle defensively.
+          if (typeof data?.pct === 'number') setPct(clamp(data.pct, 0, 100));
+          if (typeof data?.nodeName === 'string') setNodeName(data.nodeName);
+          if (typeof data?.totalNodes === 'number') setTotalNodes(Math.max(0, data.totalNodes));
+          if (typeof data?.doneNodes === 'number') setDoneNodes(Math.max(0, data.doneNodes));
+          if (typeof data?.state === 'string') setRunState(data.state as RunState);
+
+          // Mirror progress into the current Job Card (Job Cards v1)
+          const activeRunId = currentRunIdRef.current;
+          if (activeRunId) {
+            setJobRuns((prev) =>
+              prev.map((j) => {
+                if (j.id !== activeRunId) return j;
+                const nextPct = typeof data?.pct === 'number' ? clamp(data.pct, 0, 100) : j.progressPct;
+                const nextNode = typeof data?.nodeName === 'string' ? data.nodeName : j.nodeName;
+
+                // If backend reports terminal states, reflect them here too.
+                if (data?.state === 'complete') {
+                  currentRunIdRef.current = null;
+                  return { ...j, status: 'complete', finishedAt: Date.now(), progressPct: 100, nodeName: nextNode };
+                }
+                if (data?.state === 'error') {
+                  currentRunIdRef.current = null;
+                  return { ...j, status: 'error', finishedAt: Date.now(), progressPct: nextPct, nodeName: nextNode, error: j.error ?? 'Execution failed' };
+                }
+
+                return { ...j, status: 'running', progressPct: nextPct, nodeName: nextNode };
+              }),
+            );
+          }
+
+          lastProgressAtRef.current = Date.now();
+        } catch {
+          // ignore parse errors
+        }
+      };
+      es.onerror = () => {
+        // don't spam console; just close and keep UI functional
+        es?.close();
+      };
+    } catch {
+      // ignore
+    }
+    return () => es?.close();
+  }, []);
+
+  // LoRA helpers
+  function addLoraToList() {
+    if (!loraPick) return;
+    setLoraList((prev) => {
+      const existing = prev.find((p) => p.name === loraPick);
+      if (existing) {
+        return prev.map((p) => (p.name === loraPick ? { ...p, strength: loraStrength, enabled: true } : p));
+      }
+      return [...prev, { id: uid('lora'), name: loraPick, strength: loraStrength, enabled: true }];
+    });
+    setLoraPick('');
+  }
+
+  function toggleLoraEnabled(id: string) {
+    setLoraList((prev) => prev.map((p) => (p.id === id ? { ...p, enabled: !p.enabled } : p)));
+  }
+
+  function removeLora(id: string) {
+    setLoraList((prev) => prev.filter((p) => p.id !== id));
+  }
+
+  // Img2img helpers
+  async function onPickImage(files: FileList) {
+    const file = files[0];
+    if (!file) return;
+
+    // Preview
+    setPickedFileName(file.name);
+    try {
+      const url = URL.createObjectURL(file);
+      setPickedFilePreview(url);
+    } catch {
+      // ignore
+    }
+
+    // Upload
+    setUploadingImage(true);
+    setStatus('Uploading image…');
+    try {
+      const form = new FormData();
+      form.append('file', file, file.name);
+      const r = await fetch('/api/comfy-upload', { method: 'POST', body: form });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || `Upload failed (${r.status})`);
+      const p = String(j?.path || j?.uploaded || j?.filename || '');
+      setUploadedImagePath(p);
+      setStatus('Image uploaded.');
+    } catch (e: any) {
+      setUploadedImagePath('');
+      setStatus(`Image upload failed: ${String(e?.message ?? e)}`);
+    } finally {
+      setUploadingImage(false);
+    }
+  }
+
+  function clearImage() {
+    setPickedFileName('');
+    if (pickedFilePreview) {
+      try {
+        URL.revokeObjectURL(pickedFilePreview);
+      } catch {}
+    }
+    setPickedFilePreview('');
+    setUploadedImagePath('');
+    setForceImg2Img(false);
+  }
+
+  // Queue helpers
+  function addToQueue() {
+    if (!selectedPreset) {
+      setStatus('Pick a workflow first.');
+      return;
+    }
+    const lines = splitPrompts(positivePrompt);
+    if (!lines.length) {
+      setStatus('Add at least one positive prompt line.');
+      return;
+    }
+
+    const prompts: string[] = [];
+    for (const line of lines) {
+      for (let i = 0; i < clamp(repeats, 1, 50); i++) prompts.push(line);
+    }
+
+    const item: QueueItem = {
+      id: uid('q'),
+      preset: selectedPreset,
+      prompts,
+      status: 'pending',
+    };
+
+    setQueue((prev) => [...prev, item]);
+    setStatus(`Queued ${prompts.length} prompt(s).`);
+    // Optional: focus user on queue
+    setActiveTab('queue');
+  }
+
+  async function runQueue() {
+    if (!canRun) return;
+    setSending(true);
+    setStatus('Running queue…');
+    setRunState('running');
+    setPct(0);
+    setNodeName(null);
+    setDoneNodes(0);
+    setTotalNodes(0);
+
+    // Create a Job Card for this run (Job Cards v1)
+    const runId = uid('jobrun');
+    currentRunIdRef.current = runId;
+    const pendingItems = queue.filter((q) => q.status === 'pending');
+    setJobRuns((prev) => [
+      {
+        id: runId,
+        preset: selectedPreset,
+        prompts: pendingItems.flatMap((q: any) => (Array.isArray(q.prompts) ? q.prompts : [])),
+        status: 'running',
+        startedAt: Date.now(),
+        progressPct: 0,
+        nodeName: null,
+      },
+      ...prev,
+    ]);
+
+    const enabledLoras = loraList.filter((l) => l.enabled).map((l) => ({ name: l.name, strength: l.strength }));
+    const seed = seedMode === 'fixed' ? fixedSeed : null;
+
+    // Run pending items in order
+    const items = queue.filter((q) => q.status === 'pending');
+    let hadError = false;
+    for (const q of items) {
+      try {
+        const payload = {
+          preset: q.preset,
+          prompts: q.prompts,
+          positivePrompt: positivePrompt, // keep for backward compatibility
+          negativePrompt,
+          seedMode,
+          seed,
+          loras: enabledLoras,
+          imagePath: willUseImg2Img ? uploadedImagePath : '',
+          useImg2Img: willUseImg2Img,
+          forceImg2Img,
+        };
+
+        const r = await fetch('/api/comfy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!r.ok) {
+          // Offline? Save to IDB queue then stop.
+          if (r.status === 0 || r.status >= 500) {
+            await addQueued({ type: 'submit', payload });
+            setStatus('Server unreachable. Saved job to offline queue.');
+            hadError = true;
+            setRunState('error');
+            setJobRuns((prev) =>
+              prev.map((j) =>
+                j.id === runId && j.status === 'running'
+                  ? { ...j, status: 'error', finishedAt: Date.now(), error: 'Server unreachable (saved offline)' }
+                  : j,
+              ),
+            );
+            currentRunIdRef.current = null;
+            break;
+          }
+          const j = await r.json().catch(() => ({}));
+          throw new Error(j?.error || `Submit failed (${r.status})`);
+        }
+
+        setQueue((prev) => prev.map((x) => (x.id === q.id ? { ...x, status: 'sent' } : x)));
+      } catch (e: any) {
+        const msg = String(e?.message ?? e);
+        setQueue((prev) => prev.map((x) => (x.id === q.id ? { ...x, status: 'error', error: msg } : x)));
+        setStatus(`Error: ${msg}`);
+        setRunState('error');
+        hadError = true;
+        setJobRuns((prev) =>
+          prev.map((j) =>
+            j.id === runId && j.status === 'running' ? { ...j, status: 'error', finishedAt: Date.now(), error: msg } : j,
+          ),
+        );
+        currentRunIdRef.current = null;
+        break;
+      }
+    }
+
+    if (!hadError) {
+      setStatus('Queue finished.');
+      setRunState('complete');
+      setPct(100);
+      setJobRuns((prev) =>
+        prev.map((j) =>
+          j.id === runId && j.status === 'running'
+            ? { ...j, status: 'complete', finishedAt: Date.now(), progressPct: 100 }
+            : j,
+        ),
+      );
+      currentRunIdRef.current = null;
+    }
+
+    setSending(false);
+  }
+
+  function clearQueue() {
+    setQueue([]);
+    setStatus('');
+    setRunState('idle');
+    setPct(0);
+    setNodeName(null);
+    setDoneNodes(0);
+    setTotalNodes(0);
+  }
+
+  // Best-effort offline flush (if you come back online)
+  useEffect(() => {
+    function onOnline() {
+      flushQueue().catch(() => {});
+    }
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, []);
+
+  return (
+    <div className="min-h-dvh bg-zinc-50 text-zinc-900 antialiased selection:bg-zinc-900/10 selection:text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+      <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+        {/* Header */}
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-1">
+            <div className="inline-flex items-center gap-2">
+              <div className="h-8 w-8 rounded-2xl bg-zinc-900/90 shadow-sm dark:bg-zinc-100/90" />
+              <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">ComfyUI OTG</h1>
+            </div>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+              Run jobs, monitor progress, and review outputs — all in one place.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            
+            <ComfyStatusIndicator compact />
+<button
+              type="button"
+              className="inline-flex items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-900 shadow-sm transition hover:bg-zinc-50 active:scale-[0.99] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-900/70"
+              onClick={() => setActiveTab('generate')}
+            >
+              New Job
+            </button>
+          </div>
+        </header>
+
+        {/* Tabs */}
+        <div className="mt-6">
+          <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            {/* Tab bar */}
+            <div className="flex flex-col gap-3 border-b border-zinc-200 px-3 py-3 dark:border-zinc-800 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+              <nav aria-label="Tabs" className="flex flex-wrap gap-2">
+                {TABS.map((tab) => {
+                  const isActive = tab.key === activeTab;
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setActiveTab(tab.key)}
+                      className={[
+                        'inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/20 dark:focus-visible:ring-zinc-100/20',
+                        isActive
+                          ? 'bg-zinc-900 text-white shadow-sm dark:bg-zinc-100 dark:text-zinc-900'
+                          : 'text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800/60',
+                      ].join(' ')}
+                      aria-current={isActive ? 'page' : undefined}
+                    >
+                      {tab.label}
+                      {tab.hint ? (
+                        <span
+                          className={[
+                            'hidden rounded-lg px-2 py-0.5 text-xs font-semibold sm:inline',
+                            isActive
+                              ? 'bg-white/15 text-white dark:bg-zinc-900/10 dark:text-zinc-900'
+                              : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
+                          ].join(' ')}
+                        >
+                          {tab.hint}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </nav>
+
+              {/* Tab status */}
+              <div className="flex items-center justify-between gap-3 sm:justify-end">
+                <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                  {sending ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500/90" />
+                      Sending…
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500/90" />
+                      {active?.hint ?? 'Ready'}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Tab content */}
+            <section className="p-3 sm:p-4">
+              {(activeTab === 'generate' || activeTab === 'queue') && (
+                <div className="rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/30 sm:p-4">
+                  <QueuePanel
+                    presets={presets}
+                    selectedPreset={selectedPreset}
+                    setSelectedPreset={setSelectedPreset}
+                    positivePrompt={positivePrompt}
+                    setPositivePrompt={setPositivePrompt}
+                    negativePrompt={negativePrompt}
+                    setNegativePrompt={setNegativePrompt}
+                    repeats={repeats}
+                    setRepeats={setRepeats}
+                    seedMode={seedMode}
+                    setSeedMode={setSeedMode}
+                    fixedSeed={fixedSeed}
+                    setFixedSeed={setFixedSeed}
+                    availableLoras={availableLoras}
+                    loraPick={loraPick}
+                    setLoraPick={setLoraPick}
+                    loraStrength={loraStrength}
+                    setLoraStrength={setLoraStrength}
+                    loraList={loraList}
+                    addLoraToList={addLoraToList}
+                    toggleLoraEnabled={toggleLoraEnabled}
+                    removeLora={removeLora}
+                    pickedFileName={pickedFileName}
+                    setPickedFileName={setPickedFileName}
+                    pickedFilePreview={pickedFilePreview}
+                    setPickedFilePreview={setPickedFilePreview}
+                    uploadedImagePath={uploadedImagePath}
+                    setUploadedImagePath={setUploadedImagePath}
+                    uploadingImage={uploadingImage}
+                    onPickImage={onPickImage}
+                    forceImg2Img={forceImg2Img}
+                    setForceImg2Img={setForceImg2Img}
+                    img2ImgAllowedForSelected={img2ImgAllowedForSelected}
+                    hasUploadedImage={hasUploadedImage}
+                    willUseImg2Img={willUseImg2Img}
+                    clearImage={clearImage}
+                    queue={queue}
+                    pendingCount={pendingCount}
+                    status={status}
+                    canRun={canRun}
+                    sending={sending}
+                    addToQueue={addToQueue}
+                    runQueue={runQueue}
+                    clearQueue={clearQueue}
+                    runState={runState}
+                    nodeName={nodeName}
+                    pct={pct}
+                    totalNodes={totalNodes}
+                    doneNodes={doneNodes}
+                    progressIsMoving={progressIsMoving}
+                    progressColor={progressColor}
+                  />
+
+                  {activeTab === 'queue' && (
+                    <div className="mt-6 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">Job Cards (v1)</h3>
+                        <button
+                          type="button"
+                          onClick={() => setJobRuns([])}
+                          className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
+                        >
+                          Clear
+                        </button>
+                      </div>
+
+                      <div className="space-y-3">
+                        {jobRuns.length === 0 ? (
+                          <div className="text-sm text-zinc-500">No jobs yet. Run something to see cards here.</div>
+                        ) : (
+                          jobRuns.map((job) => (
+                            <div key={job.id} className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/40">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{job.preset}</div>
+                                  <div className="mt-1 line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">
+                                    {(job.prompts && job.prompts.length ? job.prompts.join(' • ') : '—')}
+                                  </div>
+                                </div>
+
+                                <span
+                                  className={
+                                    'shrink-0 rounded-full px-2 py-1 text-xs font-medium ' +
+                                    (job.status === 'running'
+                                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-200'
+                                      : job.status === 'complete'
+                                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200'
+                                        : job.status === 'error'
+                                          ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-200'
+                                          : 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200')
+                                  }
+                                >
+                                  {job.status.toUpperCase()}
+                                </span>
+                              </div>
+
+                              <div className="mt-3">
+                                <div className="flex items-center justify-between text-xs text-zinc-500">
+                                  <span className="truncate">{job.nodeName ?? 'Waiting…'}</span>
+                                  <span>{Math.round(job.progressPct)}%</span>
+                                </div>
+                                <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900">
+                                  <div className="h-2 bg-zinc-900 dark:bg-zinc-100" style={{ width: `${Math.round(job.progressPct)}%` }} />
+                                </div>
+                                {job.error ? <div className="mt-2 text-xs text-rose-600 dark:text-rose-300">{job.error}</div> : null}
+                              </div>
+
+                              <div className="mt-4 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-900 shadow-sm hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                                  onClick={() => {
+                                    // Quick re-run: copy prompts back into the prompt box (v1)
+                                    setPositivePrompt(job.prompts?.join('
+') ?? '');
+                                    setActiveTab('generate');
+                                  }}
+                                >
+                                  ▶ Re-run
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-900 shadow-sm hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                                  onClick={() => {
+                                    // Remove card (v1)
+                                    setJobRuns((prev) => prev.filter((x) => x.id !== job.id));
+                                  }}
+                                >
+                                  🗑 Delete
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              )}
+
+              {activeTab === 'gallery' && (
+                <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-950/40">
+                  <h2 className="text-base font-semibold">Gallery</h2>
+                  <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                    Next up: we’ll plug your outputs here (Step 3).
+                  </p>
+                </div>
+              )}
+
+              {activeTab === 'settings' && (
+                <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-950/40">
+                  <h2 className="text-base font-semibold">Settings</h2>
+                  <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                    Theme toggle comes in Step 5 — we’re focusing on generation stability first.
+                  </p>
+                </div>
+              )}
+            </section>
+          </div>
+        </div>
+
+        <footer className="mt-8 flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
+          <span>© {new Date().getFullYear()} ComfyUI OTG</span>
+          <span className="hidden sm:inline">Generate is live (wiring phase)</span>
+        </footer>
+      </div>
+    </div>
+  );
+}

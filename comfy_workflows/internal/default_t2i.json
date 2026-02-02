@@ -1,0 +1,93 @@
+{
+  "__otg": {
+    "type": "text2image",
+    "note": "Internal default workflow used when durationSeconds=0 (still image).",
+    "hidden": true
+  },
+  "prompt": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "__OTG_CHECKPOINT__"
+      }
+    },
+    "2": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": "__OTG_WIDTH__",
+        "height": "__OTG_HEIGHT__",
+        "batch_size": 1
+      }
+    },
+    "3": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "__OTG_POSITIVE_PROMPT__",
+        "clip": [
+          "1",
+          1
+        ]
+      }
+    },
+    "4": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "__OTG_NEGATIVE_PROMPT__",
+        "clip": [
+          "1",
+          1
+        ]
+      }
+    },
+    "5": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 0,
+        "steps": 28,
+        "cfg": 7,
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 1,
+        "model": [
+          "1",
+          0
+        ],
+        "positive": [
+          "3",
+          0
+        ],
+        "negative": [
+          "4",
+          0
+        ],
+        "latent_image": [
+          "2",
+          0
+        ]
+      }
+    },
+    "6": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "5",
+          0
+        ],
+        "vae": [
+          "1",
+          2
+        ]
+      }
+    },
+    "7": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "otg_t2i",
+        "images": [
+          "6",
+          0
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,5 @@
+/* SLR Studios OTG overrides (kept separate to avoid overwriting globals.css) */
+body.otg-app{
+  /* Use a new filename to bust any CDN/service-worker caching */
+  background-image: url("/bg-slr-studios-otg.svg") !important;
+}

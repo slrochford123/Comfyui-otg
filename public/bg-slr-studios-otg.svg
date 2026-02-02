@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="2560" viewBox="0 0 1440 2560">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#05060c"/>
+      <stop offset="45%" stop-color="#07081a"/>
+      <stop offset="100%" stop-color="#0a0b12"/>
+    </linearGradient>
+
+    <radialGradient id="glowPurple" cx="30%" cy="25%" r="70%">
+      <stop offset="0%" stop-color="#9b5cff" stop-opacity="0.35"/>
+      <stop offset="55%" stop-color="#9b5cff" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#9b5cff" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="glowCyan" cx="70%" cy="70%" r="75%">
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.26"/>
+      <stop offset="60%" stop-color="#22d3ee" stop-opacity="0.07"/>
+      <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="logoGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+
+    <!-- Soft neon outer glow -->
+    <filter id="neonGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="18" result="blur1"/>
+      <feColorMatrix in="blur1" type="matrix"
+        values="1 0 0 0 0
+                0 1 0 0 0
+                0 0 1 0 0
+                0 0 0 0.55 0" result="glow1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="40" result="blur2"/>
+      <feColorMatrix in="blur2" type="matrix"
+        values="1 0 0 0 0
+                0 1 0 0 0
+                0 0 1 0 0
+                0 0 0 0.35 0" result="glow2"/>
+      <feMerge>
+        <feMergeNode in="glow2"/>
+        <feMergeNode in="glow1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Subtle inner shadow for depth -->
+    <filter id="innerShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feOffset dx="0" dy="8"/>
+      <feGaussianBlur stdDeviation="10" result="offBlur"/>
+      <feComposite in="offBlur" in2="SourceAlpha" operator="arithmetic" k2="-1" k3="1" result="shadowDiff"/>
+      <feColorMatrix in="shadowDiff" type="matrix"
+        values="0 0 0 0 0
+                0 0 0 0 0
+                0 0 0 0 0
+                0 0 0 0.35 0"/>
+      <feComposite in2="SourceGraphic" operator="in"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Soft vignette -->
+    <radialGradient id="vignette" cx="50%" cy="45%" r="75%">
+      <stop offset="0%" stop-color="#000" stop-opacity="0"/>
+      <stop offset="75%" stop-color="#000" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.35"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Base -->
+  <rect width="1440" height="2560" fill="url(#bg)"/>
+  <rect width="1440" height="2560" fill="url(#glowPurple)"/>
+  <rect width="1440" height="2560" fill="url(#glowCyan)"/>
+
+  <!-- Center logo -->
+  <g transform="translate(720 1280)">
+    <!-- Extra glow pass behind -->
+    <text x="0" y="0"
+      text-anchor="middle" dominant-baseline="middle"
+      font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
+      font-size="140" font-weight="900"
+      fill="url(#logoGrad)"
+      opacity="0.22"
+      filter="url(#neonGlow)"
+    >SLR Studios OTG</text>
+
+    <!-- Main logo -->
+    <text x="0" y="0"
+      text-anchor="middle" dominant-baseline="middle"
+      font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
+      font-size="140" font-weight="900"
+      fill="url(#logoGrad)"
+      filter="url(#neonGlow)"
+    >SLR Studios OTG</text>
+
+    <!-- Slightly smaller subline (optional, subtle) -->
+    <text x="0" y="140"
+      text-anchor="middle"
+      font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
+      font-size="44" font-weight="700"
+      fill="#ffffff"
+      opacity="0.18"
+      filter="url(#neonGlow)"
+    >Creating new worlds on the go.</text>
+  </g>
+
+  <!-- Vignette -->
+  <rect width="1440" height="2560" fill="url(#vignette)"/>
+</svg>

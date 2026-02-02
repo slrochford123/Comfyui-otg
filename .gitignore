@@ -1,8 +1,14 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# =========================================================
+# OTG / Next.js / Capacitor / ComfyUI .gitignore
+# =========================================================
+# See https://help.github.com/articles/ignoring-files/
+# =========================================================
 
-# dependencies
-/node_modules
-/.pnp
+# -------------------------
+# Dependencies
+# -------------------------
+node_modules/
+.pnp
 .pnp.*
 .yarn/*
 !.yarn/patches
@@ -10,32 +16,112 @@
 !.yarn/releases
 !.yarn/versions
 
-# testing
-/coverage
+# -------------------------
+# Testing / Coverage
+# -------------------------
+coverage/
 
-# next.js
-/.next/
-/out/
+# -------------------------
+# Next.js
+# -------------------------
+.next/
+out/
+build/
 
-# production
-/build
+# -------------------------
+# Capacitor / Mobile
+# -------------------------
+android/.gradle/
+android/.idea/
+android/build/
+android/app/build/
+android/app/release/
+android/local.properties
+ios/build/
+ios/Pods/
+ios/DerivedData/
 
-# misc
-.DS_Store
+# -------------------------
+# Runtime / App Data (CRITICAL)
+# -------------------------
+data/
+device_galleries/
+gallery/
+galleries/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.jsonl
+
+# -------------------------
+# Secrets / Keys / Certs (CRITICAL)
+# -------------------------
+keys/
+*.keystore
 *.pem
+*.p12
+*.crt
+*.key
 
-# debug
+# -------------------------
+# Environment files
+# -------------------------
+.env.local
+.env.*.local
+.env.production
+.env.production.local
+.env.test
+.env.test.local
+
+# Allow example template only
+!.env.example
+
+# -------------------------
+# Logs / Debug
+# -------------------------
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.log
 
-# env files (can opt-in for committing if needed)
-.env*
+# -------------------------
+# Archives / Temp
+# -------------------------
+*.zip
+*.tar
+*.tar.gz
+*.7z
 
-# vercel
+# -------------------------
+# OS / Editor junk
+# -------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# -------------------------
+# Vercel
+# -------------------------
 .vercel
 
-# typescript
+# -------------------------
+# TypeScript
+# -------------------------
 *.tsbuildinfo
 next-env.d.ts
+
+# -------------------------
+# PM2 / Process
+# -------------------------
+pm2.log
+ecosystem*.log
+
+# -------------------------
+# Misc safety
+# -------------------------
+.cache/
+.tmp/
+.temp/

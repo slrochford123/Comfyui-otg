@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "workflows": [
+    {
+      "id": "presets/slr_text_to_image",
+      "label": "Text to Image",
+      "type": "preset",
+      "path": "presets/slr_text_to_image.json",
+      "tags": [],
+      "enabled": true
+    },
+    {
+      "id": "presets/slr_image_edit",
+      "label": "Image Edit",
+      "type": "preset",
+      "path": "presets/slr_image_edit.json",
+      "tags": [],
+      "enabled": true
+    },
+    {
+      "id": "presets/slr_wan_t2v",
+      "label": "Wan Text to Video",
+      "type": "preset",
+      "path": "presets/slr_wan_t2v.json",
+      "tags": [],
+      "enabled": true
+    },
+    {
+      "id": "presets/slr_wan_i2v",
+      "label": "Wan Image to Video",
+      "type": "preset",
+      "path": "presets/slr_wan_i2v.json",
+      "tags": [],
+      "enabled": true
+    },
+    {
+      "id": "presets/slr_wan_fflf",
+      "label": "Wan FFLF Video",
+      "type": "preset",
+      "path": "presets/slr_wan_fflf.json",
+      "tags": [],
+      "enabled": true
+    },
+    {
+      "id": "presets/slr_ltx_t2v_audio",
+      "label": "LTX Text to Video w/Audio",
+      "type": "preset",
+      "path": "presets/slr_ltx_t2v_audio.json",
+      "tags": [],
+      "enabled": true
+    },
+    {
+      "id": "presets/slr_ltx_i2v_audio",
+      "label": "LTX Image to Video w/Audio",
+      "type": "preset",
+      "path": "presets/slr_ltx_i2v_audio.json",
+      "tags": [],
+      "enabled": true
+    }
+  ]
+}

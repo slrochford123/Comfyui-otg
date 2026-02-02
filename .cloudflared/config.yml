@@ -1,0 +1,11 @@
+tunnel: f682f4d2-bdbc-42fa-a429-a7600fd031b7
+credentials-file: C:\Users\SLRoc\.cloudflared\f682f4d2-bdbc-42fa-a429-a7600fd031b7.json
+
+ingress:
+  - hostname: comf-otg.comfyui-otg.win
+    service: http://127.0.0.1:3000
+
+  - hostname: comfy.comfyui-otg.win
+    service: http://127.0.0.1:8188
+
+  - service: http_status:404
