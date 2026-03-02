@@ -1,0 +1,50 @@
+{
+  "ts": 1771980708887,
+  "prompt_id": "b95ed53b-8699-4660-baa6-36df17aa668e",
+  "preset": "presets/GGUF",
+  "title": null,
+  "positivePrompt": "She starts to suck an African mans dick from the side",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": [
+    {
+      "name": "wan2.2-i2v-high-ov1.0.safetensors",
+      "strengthModel": 1,
+      "strengthClip": 1
+    },
+    {
+      "name": "wan2.2-i2v-low-o-v1.0.safetensors",
+      "strengthModel": 1,
+      "strengthClip": 1
+    }
+  ],
+  "seed": 590425910,
+  "submitPayload": {
+    "preset": "presets/GGUF",
+    "prompts": null,
+    "positivePrompt": "She starts to suck an African mans dick from the side",
+    "negativePrompt": "",
+    "loras": [
+      {
+        "name": "wan2.2-i2v-high-ov1.0.safetensors",
+        "strengthModel": 1,
+        "strengthClip": 1
+      },
+      {
+        "name": "wan2.2-i2v-low-o-v1.0.safetensors",
+        "strengthModel": 1,
+        "strengthClip": 1
+      }
+    ],
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 590425910,
+    "title": "",
+    "width": 720,
+    "height": 1280,
+    "durationSeconds": 8,
+    "frameCount": null,
+    "orientation": "portrait",
+    "prompt": null
+  }
+}

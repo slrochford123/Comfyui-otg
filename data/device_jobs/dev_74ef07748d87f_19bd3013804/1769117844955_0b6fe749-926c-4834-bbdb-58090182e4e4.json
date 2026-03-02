@@ -1,0 +1,14 @@
+{
+  "ts": 1769117844955,
+  "deviceId": "dev_74ef07748d87f_19bd3013804",
+  "prompt_id": "0b6fe749-926c-4834-bbdb-58090182e4e4",
+  "preset": "presets/Test_LTX2_T2V",
+  "positivePrompt": "A man in white clothes in a white room ",
+  "negativePrompt": "",
+  "seed": 854013862,
+  "rawResponse": {
+    "prompt_id": "0b6fe749-926c-4834-bbdb-58090182e4e4",
+    "number": 0,
+    "node_errors": {}
+  }
+}

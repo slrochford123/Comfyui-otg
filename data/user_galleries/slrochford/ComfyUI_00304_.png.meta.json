@@ -1,0 +1,28 @@
+{
+  "ts": 1771932746957,
+  "prompt_id": "2cfe23ef-5798-4ede-8420-b242f6b6a23b",
+  "preset": "presets/Anime Image Creator",
+  "title": null,
+  "positivePrompt": "A dramatic scene of two heroes, one male and one female, emerging from a dark alley in a rundown neighborhood. The male hero is tall and muscular with short dreadlocks, while the female hero has long braids and a determined expression on her face. They are both dressed in black leather jackets and jeans, and they carry weapons as they make their way through the crowded streets of the city.\r\n\r\nAs they approach a group of people gathered around a burning car, the male hero stops to look at the scene. He sees a young man lying on the ground, bleeding from a gunshot wound. The female hero rushes over and kneels beside him, checking his vital signs as she speaks into her communicator.\r\n\r\n\"We need an ambulance here, now!\" she shouts into the device. \"There's been another shooting in this area.\"\r\n\r\nThe male hero stands guard while the female hero tends to the wounded man. As they wait for help to arrive, the two superheroes exchange a look of determination and resolve. They know that they are facing an enemy who is determined to cause chaos and destruction in their city, but they will not back down from the fight.\r\n\r\nSuddenly, a group of masked figures emerge from the shadows and attack the heroes with weapons. The female hero springs into action, using her super strength to push one of the assailants away while the male hero fires his gun at another. As the battle rages on, the two heroes work together seamlessly, using their unique abilities to protect the innocent and bring down the criminals who are terrorizing their city.\r\n\r\nThe scene cuts to a close-up of the female hero as she stands over the wounded man, her face contorted with anger and determination. She knows that there is still work to be done, but for now, she will rest her weapon and tend to the injured.",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 593228099,
+  "submitPayload": {
+    "preset": "presets/Anime Image Creator",
+    "prompts": null,
+    "positivePrompt": "A dramatic scene of two heroes, one male and one female, emerging from a dark alley in a rundown neighborhood. The male hero is tall and muscular with short dreadlocks, while the female hero has long braids and a determined expression on her face. They are both dressed in black leather jackets and jeans, and they carry weapons as they make their way through the crowded streets of the city.\r\n\r\nAs they approach a group of people gathered around a burning car, the male hero stops to look at the scene. He sees a young man lying on the ground, bleeding from a gunshot wound. The female hero rushes over and kneels beside him, checking his vital signs as she speaks into her communicator.\r\n\r\n\"We need an ambulance here, now!\" she shouts into the device. \"There's been another shooting in this area.\"\r\n\r\nThe male hero stands guard while the female hero tends to the wounded man. As they wait for help to arrive, the two superheroes exchange a look of determination and resolve. They know that they are facing an enemy who is determined to cause chaos and destruction in their city, but they will not back down from the fight.\r\n\r\nSuddenly, a group of masked figures emerge from the shadows and attack the heroes with weapons. The female hero springs into action, using her super strength to push one of the assailants away while the male hero fires his gun at another. As the battle rages on, the two heroes work together seamlessly, using their unique abilities to protect the innocent and bring down the criminals who are terrorizing their city.\r\n\r\nThe scene cuts to a close-up of the female hero as she stands over the wounded man, her face contorted with anger and determination. She knows that there is still work to be done, but for now, she will rest her weapon and tend to the injured.",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 593228099,
+    "title": "",
+    "width": 1280,
+    "height": 720,
+    "durationSeconds": 5,
+    "frameCount": null,
+    "orientation": "landscape",
+    "prompt": null
+  }
+}

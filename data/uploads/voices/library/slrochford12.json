@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "voices": [
+    {
+      "voiceId": "slrochford12__v_1771795247463_e66303ba63fd",
+      "name": "Dagoth",
+      "tags": [],
+      "type": "created",
+      "refText": "hey my brotha get off me land now before me put a stick up your backside",
+      "refAudioRel": "outputs/slrochford12__v_1771795247463_e66303ba63fd/design_ref_1771795270714.flac",
+      "createdAt": "2026-02-22T21:20:47.463Z",
+      "updatedAt": "2026-02-22T21:21:10.716Z"
+    }
+  ]
+}

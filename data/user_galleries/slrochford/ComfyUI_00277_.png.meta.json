@@ -1,0 +1,28 @@
+{
+  "ts": 1771880974117,
+  "prompt_id": "23945199-138c-4ea4-8a1b-ee20fe2b812d",
+  "preset": "presets/Anime Image Creator",
+  "title": null,
+  "positivePrompt": "A luminous green creature with four paws, a long snout, and a bushy tail stands before you. It looks at you with curious eyes as it lets out a high-pitched bark.",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 1731053834,
+  "submitPayload": {
+    "preset": "presets/Anime Image Creator",
+    "prompts": null,
+    "positivePrompt": "A luminous green creature with four paws, a long snout, and a bushy tail stands before you. It looks at you with curious eyes as it lets out a high-pitched bark.",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 1731053834,
+    "title": "",
+    "width": 1280,
+    "height": 720,
+    "durationSeconds": 5,
+    "frameCount": null,
+    "orientation": "landscape",
+    "prompt": null
+  }
+}

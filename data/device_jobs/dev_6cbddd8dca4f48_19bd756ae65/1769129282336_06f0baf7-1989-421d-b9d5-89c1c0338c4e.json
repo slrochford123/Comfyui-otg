@@ -1,0 +1,14 @@
+{
+  "ts": 1769129282336,
+  "deviceId": "dev_6cbddd8dca4f48_19bd756ae65",
+  "prompt_id": "06f0baf7-1989-421d-b9d5-89c1c0338c4e",
+  "preset": "presets/Test_LTX2_T2V",
+  "positivePrompt": "bouncing bear ",
+  "negativePrompt": "",
+  "seed": 124306822,
+  "rawResponse": {
+    "prompt_id": "06f0baf7-1989-421d-b9d5-89c1c0338c4e",
+    "number": 1,
+    "node_errors": {}
+  }
+}

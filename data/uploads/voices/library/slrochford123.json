@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "voices": [
+    {
+      "voiceId": "slrochford123__v_1771946715921_a3d0a99da573",
+      "name": "Stacey",
+      "tags": [],
+      "type": "cloned",
+      "refText": "Hello there. This is a short voice test for timing and clarity. I'm speaking at a steady pace with gentle pauses. If you can hear every word, the recording is working well.",
+      "refAudioRel": "samples/slrochford123__v_1771946715921_a3d0a99da573/ref_1771946716668.wav",
+      "createdAt": "2026-02-24T15:25:15.921Z",
+      "updatedAt": "2026-02-24T15:25:39.364Z",
+      "refVideoRel": "samples/slrochford123__v_1771946715921_a3d0a99da573/ref_1771946716668.mp4"
+    },
+    {
+      "voiceId": "slrochford123__v_1771899423478_17b4d34280a4",
+      "name": "dwe",
+      "tags": [],
+      "type": "cloned",
+      "refText": "",
+      "refAudioRel": "",
+      "createdAt": "2026-02-24T02:17:03.478Z",
+      "updatedAt": "2026-02-24T02:17:03.479Z"
+    }
+  ]
+}

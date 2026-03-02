@@ -1,0 +1,28 @@
+{
+  "ts": 1772077375604,
+  "prompt_id": "85d3b583-78c8-4e69-807d-b226e02d72f7",
+  "preset": "presets/Anime Image Creator",
+  "title": null,
+  "positivePrompt": "A lone frog jumps across a still pond, its long legs stretched taut as it propels itself through the air with a loud splash. The water ripples and spreads out in concentric circles around the frog's landing spot, revealing countless tiny insects caught in its wake. Above, the sky is clear and blue, dotted with puffy clouds that seem to float lazily across the horizon.",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 958845057,
+  "submitPayload": {
+    "preset": "presets/Anime Image Creator",
+    "prompts": null,
+    "positivePrompt": "A lone frog jumps across a still pond, its long legs stretched taut as it propels itself through the air with a loud splash. The water ripples and spreads out in concentric circles around the frog's landing spot, revealing countless tiny insects caught in its wake. Above, the sky is clear and blue, dotted with puffy clouds that seem to float lazily across the horizon.",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 958845057,
+    "title": "",
+    "width": 1280,
+    "height": 720,
+    "durationSeconds": 5,
+    "frameCount": null,
+    "orientation": "landscape",
+    "prompt": null
+  }
+}

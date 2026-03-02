@@ -1,0 +1,28 @@
+{
+  "ts": 1771903393183,
+  "prompt_id": "7f3fcbf3-33fb-47af-991b-827d4919b76c",
+  "preset": "presets/Z images Base",
+  "title": null,
+  "positivePrompt": "A massive blue whale glides through the deep ocean, its powerful tail propelling it effortlessly through the water. Its sleek body is a shimmering blue-gray, reflecting the light from above. The whale's eyes are large and dark, surveying the vast expanse of the ocean around them. As it dives deeper into the depths, the whale's powerful lungs fill with water, allowing it to stay submerged for long periods of time without surfacing.",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 718188833,
+  "submitPayload": {
+    "preset": "presets/Z images Base",
+    "prompts": null,
+    "positivePrompt": "A massive blue whale glides through the deep ocean, its powerful tail propelling it effortlessly through the water. Its sleek body is a shimmering blue-gray, reflecting the light from above. The whale's eyes are large and dark, surveying the vast expanse of the ocean around them. As it dives deeper into the depths, the whale's powerful lungs fill with water, allowing it to stay submerged for long periods of time without surfacing.",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 718188833,
+    "title": "",
+    "width": 0,
+    "height": 0,
+    "durationSeconds": 5,
+    "frameCount": null,
+    "orientation": "portrait",
+    "prompt": null
+  }
+}

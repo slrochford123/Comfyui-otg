@@ -1,0 +1,15 @@
+{
+  "voiceId": "v_1771558810130_e488e946",
+  "userId": "slrochford123",
+  "displayName": "Old Lady",
+  "createdAt": "2026-02-20T03:40:10.133Z",
+  "updatedAt": "2026-02-20T03:40:10.133Z",
+  "source": {
+    "extractId": "ex_1771558786321_30148476",
+    "wav24k": "source/audio/ref.wav"
+  },
+  "qwen": {
+    "status": "source_ready",
+    "artifacts": "qwen/artifacts"
+  }
+}

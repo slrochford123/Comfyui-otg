@@ -1,0 +1,28 @@
+{
+  "ts": 1771914935830,
+  "prompt_id": "5b57f9ec-03f5-4636-ae60-88d1d0f99892",
+  "preset": "presets/Anime - Realism",
+  "title": null,
+  "positivePrompt": "Make a video about Malachi, Zachariah Zephaniah, Haggi Habakkuk,\r\nNahum, Obadia, Amos, Ezra, Joel, like a old testament minor prophet mashup",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 157183979,
+  "submitPayload": {
+    "preset": "presets/Anime - Realism",
+    "prompts": null,
+    "positivePrompt": "Make a video about Malachi, Zachariah Zephaniah, Haggi Habakkuk,\r\nNahum, Obadia, Amos, Ezra, Joel, like a old testament minor prophet mashup",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 157183979,
+    "title": "",
+    "width": 0,
+    "height": 0,
+    "durationSeconds": 10,
+    "frameCount": null,
+    "orientation": "landscape",
+    "prompt": null
+  }
+}

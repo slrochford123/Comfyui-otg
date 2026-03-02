@@ -1,0 +1,14 @@
+{
+  "ts": 1769131411363,
+  "deviceId": "dev_21cfceb4129088_19bcee7725c",
+  "prompt_id": "ceffda06-fbec-4e1b-96ae-edfcf40d9cdd",
+  "preset": "presets/Test_LTX2_T2V",
+  "positivePrompt": "black bear eating",
+  "negativePrompt": "",
+  "seed": 243242868,
+  "rawResponse": {
+    "prompt_id": "ceffda06-fbec-4e1b-96ae-edfcf40d9cdd",
+    "number": 2,
+    "node_errors": {}
+  }
+}

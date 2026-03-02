@@ -1,0 +1,4 @@
+OK C:\Users\SLRoc\comfy-controller\data\voices\users\slrochford123\profiles\v_1771602652202_01a00fe2\samples\s_1771602652322_9b61bec5.wav (24000Hz) speaker=aiden lang=english
+
+Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Fetching 4 files: 100%|##########| 4/4 [00:00<?, ?it/s]
+Setting `pad_token_id` to `eos_token_id`:2150 for open-end generation.

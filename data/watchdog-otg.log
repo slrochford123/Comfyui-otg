@@ -1,0 +1,4 @@
+2026-02-02 07:53:49  PROD DOWN (port=False api=False). Restarting task OTG-PROD
+2026-02-02 07:53:52  TEST DOWN (port=False api=False). Restarting task OTG-TEST
+2026-02-02 08:01:28  PROD OK (port=True api=True tunnel=True)
+2026-02-02 08:01:30  TEST DOWN (port=False api=False). Restarting task OTG-TEST

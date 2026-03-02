@@ -1,0 +1,12 @@
+{
+  "status": "running",
+  "fileName": null,
+  "favorited": false,
+  "startedAt": 1770768316516,
+  "readyAt": null,
+  "updatedAt": 1770768316518,
+  "kind": null,
+  "deviceId": null,
+  "workflowId": "presets/Text_to_Image",
+  "workflowTitle": null
+}

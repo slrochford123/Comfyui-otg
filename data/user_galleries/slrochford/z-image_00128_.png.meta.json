@@ -1,0 +1,28 @@
+{
+  "ts": 1771901873772,
+  "prompt_id": "bfe763d0-dfa1-4a3c-aa97-136fac43660f",
+  "preset": "presets/Z images Base",
+  "title": null,
+  "positivePrompt": "A beautiful young woman, with dark skin and long hair flowing in the wind, stands on a white sandy beach, her bare breasts glistening under the sun. She looks out into the vast ocean, her eyes piercingly blue as she takes in the serene landscape before her. The camera pans out to reveal a lone seashell on the shore, its intricate design and delicate shape contrasting with the woman's powerful form. As the scene fades to black, we are left wondering what lies beyond this moment of tranquility.",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 1673772143,
+  "submitPayload": {
+    "preset": "presets/Z images Base",
+    "prompts": null,
+    "positivePrompt": "A beautiful young woman, with dark skin and long hair flowing in the wind, stands on a white sandy beach, her bare breasts glistening under the sun. She looks out into the vast ocean, her eyes piercingly blue as she takes in the serene landscape before her. The camera pans out to reveal a lone seashell on the shore, its intricate design and delicate shape contrasting with the woman's powerful form. As the scene fades to black, we are left wondering what lies beyond this moment of tranquility.",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 1673772143,
+    "title": "",
+    "width": 720,
+    "height": 1280,
+    "durationSeconds": 5,
+    "frameCount": null,
+    "orientation": "portrait",
+    "prompt": null
+  }
+}

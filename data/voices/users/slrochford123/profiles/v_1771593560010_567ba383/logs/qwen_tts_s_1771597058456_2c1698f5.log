@@ -1,0 +1,9 @@
+
+Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Fetching 4 files: 100%|##########| 4/4 [00:00<00:00, 4003.15it/s]
+Reference-audio TTS not available, falling back: Qwen3TTSModel.generate_custom_voice() missing 1 required positional argument: 'speaker'
+Traceback (most recent call last):
+  File "C:\AI\OTG-Test\scripts\qwen3tts\generate.py", line 118, in <module>
+    raise SystemExit(main())
+  File "C:\AI\OTG-Test\scripts\qwen3tts\generate.py", line 100, in main
+    wav, sr = model.generate(
+AttributeError: 'Qwen3TTSModel' object has no attribute 'generate'

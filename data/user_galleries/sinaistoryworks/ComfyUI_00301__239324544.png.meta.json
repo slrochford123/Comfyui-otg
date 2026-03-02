@@ -1,0 +1,28 @@
+{
+  "ts": 1771919346812,
+  "prompt_id": "8cedf317-4153-4c7c-aaff-1ea00a89cf8c",
+  "preset": "presets/Anime - Realism",
+  "title": null,
+  "positivePrompt": "Create a kid-friendly animation scene set in ancient Israel. Show a young shepherd boy caring for his sheep in rolling hills and stone villages. He faces a challenge that requires courage, faith, and problem-solving, guided by lessons from his elders. The scene should be realistic, warm, and engaging, with authentic biblical clothing and landscapes, expressive characters, and cinematic composition. Focus on human action and moral lessons rather than magic or fantasy.",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 714814282,
+  "submitPayload": {
+    "preset": "presets/Anime - Realism",
+    "prompts": null,
+    "positivePrompt": "Create a kid-friendly animation scene set in ancient Israel. Show a young shepherd boy caring for his sheep in rolling hills and stone villages. He faces a challenge that requires courage, faith, and problem-solving, guided by lessons from his elders. The scene should be realistic, warm, and engaging, with authentic biblical clothing and landscapes, expressive characters, and cinematic composition. Focus on human action and moral lessons rather than magic or fantasy.",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 714814282,
+    "title": "",
+    "width": 480,
+    "height": 856,
+    "durationSeconds": 9,
+    "frameCount": null,
+    "orientation": "portrait",
+    "prompt": null
+  }
+}

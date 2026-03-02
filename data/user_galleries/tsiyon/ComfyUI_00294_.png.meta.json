@@ -1,0 +1,28 @@
+{
+  "ts": 1771916328355,
+  "prompt_id": "69e2977d-3bc0-4d31-bf86-1875fab08496",
+  "preset": "presets/Anime - Realism",
+  "title": null,
+  "positivePrompt": "The camera opens on a majestic shot of the French countryside as the soundtrack begins to build, creating an atmosphere of anticipation and excitement. As the camera pans across rolling hills dotted with picturesque stone buildings, it comes to rest on a humble farmhouse where Paul Marie Yves Roch Motier Gilbert de Lafayette is tending to his crops.\r\n\r\nThe camera pans back to reveal a young man in colonial attire standing nearby. It is none other than George Washington himself, who has come to seek out the advice of this great military strategist. As they discuss the war and its potential outcomes, the camera captures their every move with meticulous detail.\r\n\r\nSuddenly, a loud knocking sound interrupts their conversation. It is none other than Alexander Hamilton, another key figure in the American Revolution. The three men exchange greetings before sitting down to discuss the war's next steps. As they talk, the camera captures the tension and urgency of the situation with expert precision.\r\n\r\nThe scene shifts back to Lafayette as he stands alone on a hilltop overlooking his farmhouse and the surrounding countryside. The camera pans out to reveal the vast expanse of land that stretches before him, and he takes a moment to reflect on all that has happened in just a few short years.\r\n\r\nAs the scene fades to black, the viewer is left with an indelible image of these great men working together towards a common goal - freedom for their beloved country.\r\n",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 1596135011,
+  "submitPayload": {
+    "preset": "presets/Anime - Realism",
+    "prompts": null,
+    "positivePrompt": "The camera opens on a majestic shot of the French countryside as the soundtrack begins to build, creating an atmosphere of anticipation and excitement. As the camera pans across rolling hills dotted with picturesque stone buildings, it comes to rest on a humble farmhouse where Paul Marie Yves Roch Motier Gilbert de Lafayette is tending to his crops.\r\n\r\nThe camera pans back to reveal a young man in colonial attire standing nearby. It is none other than George Washington himself, who has come to seek out the advice of this great military strategist. As they discuss the war and its potential outcomes, the camera captures their every move with meticulous detail.\r\n\r\nSuddenly, a loud knocking sound interrupts their conversation. It is none other than Alexander Hamilton, another key figure in the American Revolution. The three men exchange greetings before sitting down to discuss the war's next steps. As they talk, the camera captures the tension and urgency of the situation with expert precision.\r\n\r\nThe scene shifts back to Lafayette as he stands alone on a hilltop overlooking his farmhouse and the surrounding countryside. The camera pans out to reveal the vast expanse of land that stretches before him, and he takes a moment to reflect on all that has happened in just a few short years.\r\n\r\nAs the scene fades to black, the viewer is left with an indelible image of these great men working together towards a common goal - freedom for their beloved country.\r\n",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 1596135011,
+    "title": "",
+    "width": 0,
+    "height": 0,
+    "durationSeconds": 6,
+    "frameCount": null,
+    "orientation": "portrait",
+    "prompt": null
+  }
+}

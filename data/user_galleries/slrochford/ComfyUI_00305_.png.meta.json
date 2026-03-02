@@ -1,0 +1,28 @@
+{
+  "ts": 1771932927513,
+  "prompt_id": "d15cf6cb-2798-4fc0-b8cf-2dca6d606404",
+  "preset": "presets/Anime Image Creator",
+  "title": null,
+  "positivePrompt": "Next Scene 1:\r\nYoung woman with dark skin and curly hair stands in front of a mirror, smiling contentedly at her reflection. She is wearing a white blouse and blue jeans. The room is sparsely furnished with a bed and dresser.\r\n\r\nNext Scene 2:\r\nThe young woman walks out into the street, looking around her. There are several people walking by, some in business attire while others wear casual clothing. She stops at a corner store to buy a drink. The camera pans over to show the storefront and the products inside.\r\n\r\nNext Scene 3:\r\nThe young woman walks into an office building, passing through security and entering the lobby. There are several people milling about, some waiting for elevators while others sit at tables or talk on their phones. The camera pans over to show a receptionist behind a desk.\r\n\r\nNext Scene 4:\r\nThe young woman enters an office suite, passing through a set of double doors and into the room beyond. There are several people working at desks, some talking on the phone while others type away on their computers. The camera pans over to show the young woman walking up to her boss's desk.\r\n\r\nNext Scene 5:\r\nThe young woman sits down across from her boss and begins to speak. She is discussing a project that she has been working on for several weeks, explaining how it went and what she learned along the way. Her boss listens intently, taking notes as she talks. The camera pans over to show them both sitting at their desks, facing each other.\r\n\r\nOutput: \r\n\"Next Scene 1: Young woman with dark skin and curly hair stands in front of a mirror, smiling contentedly at her reflection. She is wearing a white blouse and blue jeans. The room is sparsely furnished with a bed and dresser.",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 1702951717,
+  "submitPayload": {
+    "preset": "presets/Anime Image Creator",
+    "prompts": null,
+    "positivePrompt": "Next Scene 1:\r\nYoung woman with dark skin and curly hair stands in front of a mirror, smiling contentedly at her reflection. She is wearing a white blouse and blue jeans. The room is sparsely furnished with a bed and dresser.\r\n\r\nNext Scene 2:\r\nThe young woman walks out into the street, looking around her. There are several people walking by, some in business attire while others wear casual clothing. She stops at a corner store to buy a drink. The camera pans over to show the storefront and the products inside.\r\n\r\nNext Scene 3:\r\nThe young woman walks into an office building, passing through security and entering the lobby. There are several people milling about, some waiting for elevators while others sit at tables or talk on their phones. The camera pans over to show a receptionist behind a desk.\r\n\r\nNext Scene 4:\r\nThe young woman enters an office suite, passing through a set of double doors and into the room beyond. There are several people working at desks, some talking on the phone while others type away on their computers. The camera pans over to show the young woman walking up to her boss's desk.\r\n\r\nNext Scene 5:\r\nThe young woman sits down across from her boss and begins to speak. She is discussing a project that she has been working on for several weeks, explaining how it went and what she learned along the way. Her boss listens intently, taking notes as she talks. The camera pans over to show them both sitting at their desks, facing each other.\r\n\r\nOutput: \r\n\"Next Scene 1: Young woman with dark skin and curly hair stands in front of a mirror, smiling contentedly at her reflection. She is wearing a white blouse and blue jeans. The room is sparsely furnished with a bed and dresser.",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 1702951717,
+    "title": "",
+    "width": 1280,
+    "height": 720,
+    "durationSeconds": 5,
+    "frameCount": null,
+    "orientation": "landscape",
+    "prompt": null
+  }
+}

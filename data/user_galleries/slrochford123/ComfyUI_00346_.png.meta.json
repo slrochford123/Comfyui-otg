@@ -1,0 +1,28 @@
+{
+  "ts": 1771960998019,
+  "prompt_id": "6f32ff49-a062-4b47-bf89-7d4d947a6f07",
+  "preset": "presets/Qwen Edit Image",
+  "title": null,
+  "positivePrompt": "make his cape loger that it covers his feet,put blood at the ends of his hair",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 838383384,
+  "submitPayload": {
+    "preset": "presets/Qwen Edit Image",
+    "prompts": null,
+    "positivePrompt": "make his cape loger that it covers his feet,put blood at the ends of his hair",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 838383384,
+    "title": "",
+    "width": 1280,
+    "height": 720,
+    "durationSeconds": 5,
+    "frameCount": null,
+    "orientation": "landscape",
+    "prompt": null
+  }
+}

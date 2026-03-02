@@ -1,0 +1,28 @@
+{
+  "ts": 1772130251004,
+  "prompt_id": "4d26a58c-a12b-4fbd-b14d-1e83aefd1253",
+  "preset": "presets/Qwen Edit Image",
+  "title": null,
+  "positivePrompt": "change the fire color to orange. put blood on his hair, face, beard, and clothes ",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 1314566932,
+  "submitPayload": {
+    "preset": "presets/Qwen Edit Image",
+    "prompts": null,
+    "positivePrompt": "change the fire color to orange. put blood on his hair, face, beard, and clothes ",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 1314566932,
+    "title": "",
+    "width": 720,
+    "height": 1280,
+    "durationSeconds": 8,
+    "frameCount": null,
+    "orientation": "portrait",
+    "prompt": null
+  }
+}

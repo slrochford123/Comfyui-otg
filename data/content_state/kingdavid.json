@@ -1,0 +1,12 @@
+{
+  "status": "done",
+  "fileName": "latest.png",
+  "favorited": false,
+  "startedAt": 1770336534066,
+  "readyAt": 1770336537948,
+  "updatedAt": 1770336538070,
+  "kind": "image",
+  "deviceId": null,
+  "workflowId": "Text_to_Image",
+  "workflowTitle": null
+}

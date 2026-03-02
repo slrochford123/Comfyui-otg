@@ -1,0 +1,25 @@
+{
+  "status": "done",
+  "fileName": "latest.mp4",
+  "favorited": false,
+  "startedAt": 1772244678044,
+  "readyAt": 1772244847190,
+  "updatedAt": 1772244847271,
+  "kind": "video",
+  "deviceId": "dev_6362490a1720c8_19b66cad6b6",
+  "workflowId": "presets/Create a Video from Pictures",
+  "workflowTitle": null,
+  "positivePrompt": "A woman stands before a roaring fire, admiring her hands and arms. As the flames grow brighter and brighter, her hair blazes with a fiery blue hue. Suddenly, she shifts into a new form, and her skin turns the same light blue as her hair. She smiles, content in this newfound state of being.",
+  "negativePrompt": "blurry ,low quality",
+  "submitPayload": {
+    "preset": "presets/Create a Video from Pictures",
+    "positivePrompt": "A woman stands before a roaring fire, admiring her hands and arms. As the flames grow brighter and brighter, her hair blazes with a fiery blue hue. Suddenly, she shifts into a new form, and her skin turns the same light blue as her hair. She smiles, content in this newfound state of being.",
+    "negativePrompt": " blurry ,low quality ",
+    "loras": null,
+    "orientation": "landscape",
+    "durationSec": 8,
+    "seed": "",
+    "width": "1280",
+    "height": "720"
+  }
+}

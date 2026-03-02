@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "voices": [
+    {
+      "voiceId": "slrochford__v_1771901577867_fce8b8c24a83",
+      "name": "mkmk",
+      "tags": [],
+      "type": "cloned",
+      "refText": "Hello there. This is a short voice test for timing and clarity. I'm speaking at a steady pace with gentle pauses. If you can hear every word, the recording is working well.",
+      "refAudioRel": "samples/slrochford__v_1771901577867_fce8b8c24a83/ref_1771901577909.wav",
+      "createdAt": "2026-02-24T02:52:57.867Z",
+      "updatedAt": "2026-02-24T02:53:39.770Z",
+      "refVideoRel": "samples/slrochford__v_1771901577867_fce8b8c24a83/ref_1771901577909.mp4"
+    }
+  ]
+}

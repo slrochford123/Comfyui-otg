@@ -1,0 +1,28 @@
+{
+  "ts": 1772219676282,
+  "prompt_id": "db9d7291-5609-460d-99f3-4c07214053bc",
+  "preset": "presets/Create an Anime",
+  "title": null,
+  "positivePrompt": "only show the African baby make the background smooth stone. put a glowing symbol written in blood on his forehead ",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 347961376,
+  "submitPayload": {
+    "preset": "presets/Create an Anime",
+    "prompts": null,
+    "positivePrompt": "only show the African baby make the background smooth stone. put a glowing symbol written in blood on his forehead ",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 347961376,
+    "title": "",
+    "width": 1280,
+    "height": 720,
+    "durationSeconds": 5,
+    "frameCount": null,
+    "orientation": "landscape",
+    "prompt": null
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "ts": 1772233029175,
+  "prompt_id": "a9dd7602-8e86-4b2b-aefb-d56fd0fcda76",
+  "preset": "presets/Create a Video",
+  "title": null,
+  "positivePrompt": "As the sun sets over the abandoned warehouse, a lone figure emerges from the shadows. Their eyes glowing a deep crimson, they approach the dilapidated building with purpose. The air is thick with tension as the figure stops at the doorway and stares into the darkness within. Suddenly, a low growl emanates from somewhere in the building, followed by a series of muffled thumps and bangs. The figure's face contorts into a grimace as they turn towards you, their eyes burning with an unholy fire. \"Make the monster red,\" they hiss, their voice raspy and menacing.",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 593423588,
+  "submitPayload": {
+    "preset": "presets/Create a Video",
+    "prompts": null,
+    "positivePrompt": "As the sun sets over the abandoned warehouse, a lone figure emerges from the shadows. Their eyes glowing a deep crimson, they approach the dilapidated building with purpose. The air is thick with tension as the figure stops at the doorway and stares into the darkness within. Suddenly, a low growl emanates from somewhere in the building, followed by a series of muffled thumps and bangs. The figure's face contorts into a grimace as they turn towards you, their eyes burning with an unholy fire. \"Make the monster red,\" they hiss, their voice raspy and menacing.",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 593423588,
+    "title": "",
+    "width": 1280,
+    "height": 720,
+    "durationSeconds": 5,
+    "frameCount": null,
+    "orientation": "landscape",
+    "prompt": null
+  }
+}

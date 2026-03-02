@@ -1,0 +1,28 @@
+{
+  "ts": 1771936329943,
+  "prompt_id": "4daf4737-adb5-42d2-964a-c826465a4a83",
+  "preset": "presets/Z images Base",
+  "title": null,
+  "positivePrompt": "A lone frog jumps across a still pond, its long legs stretched taut as it propels itself through the air with a loud splash. The water ripples and spreads out in concentric circles around the frog's landing spot, revealing countless tiny insects caught in its wake. Above, the sky is clear and blue, dotted with puffy clouds that seem to float lazily across the horizon.",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 1102095477,
+  "submitPayload": {
+    "preset": "presets/Z images Base",
+    "prompts": null,
+    "positivePrompt": "A lone frog jumps across a still pond, its long legs stretched taut as it propels itself through the air with a loud splash. The water ripples and spreads out in concentric circles around the frog's landing spot, revealing countless tiny insects caught in its wake. Above, the sky is clear and blue, dotted with puffy clouds that seem to float lazily across the horizon.",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 1102095477,
+    "title": "",
+    "width": 720,
+    "height": 1280,
+    "durationSeconds": 5,
+    "frameCount": null,
+    "orientation": "portrait",
+    "prompt": null
+  }
+}

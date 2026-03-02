@@ -1,0 +1,28 @@
+{
+  "ts": 1771937138881,
+  "prompt_id": "ad8f3e39-7092-4aca-a4a2-a99639af003d",
+  "preset": "presets/Anime Image Creator",
+  "title": null,
+  "positivePrompt": "A dark fantasy character portrayed in live-action realism. Natural human anatomy, realistic facial structure, emotionally grounded expression. Skin shows natural imperfections, subtle lighting highlights facial contours. Hair behaves naturally with individual strands visible. Costume materials are physically accurate with realistic fabric texture and wear. Shot with cinematic depth of field, soft backlighting, volumetric atmosphere, film-grade color grading.",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 1579567575,
+  "submitPayload": {
+    "preset": "presets/Anime Image Creator",
+    "prompts": null,
+    "positivePrompt": "A dark fantasy character portrayed in live-action realism. Natural human anatomy, realistic facial structure, emotionally grounded expression. Skin shows natural imperfections, subtle lighting highlights facial contours. Hair behaves naturally with individual strands visible. Costume materials are physically accurate with realistic fabric texture and wear. Shot with cinematic depth of field, soft backlighting, volumetric atmosphere, film-grade color grading.",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 1579567575,
+    "title": "",
+    "width": 1280,
+    "height": 720,
+    "durationSeconds": 5,
+    "frameCount": null,
+    "orientation": "landscape",
+    "prompt": null
+  }
+}

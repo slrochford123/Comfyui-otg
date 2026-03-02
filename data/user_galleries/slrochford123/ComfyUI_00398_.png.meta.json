@@ -1,0 +1,28 @@
+{
+  "ts": 1772025341103,
+  "prompt_id": "e0cec631-e78d-41d7-b4bb-dce25baf978d",
+  "preset": "presets/Anime Image Creator",
+  "title": null,
+  "positivePrompt": "The scene opens on a bright and sunny day, with the sounds of children laughing and playing echoing in the distance. A group of teenagers are gathered outside the school building, chatting and enjoying their lunch break. Suddenly, one of them, an ebony-skinned girl with long braids, rushes up to the others, her face flushed with embarrassment. She had forgotten to wear a top that morning, and now she is standing in front of them completely exposed. The other teens stare at her in shock, unsure of what to do or say. One of the boys steps forward, his eyes wide with concern. \"Are you okay?\" he asks gently. The girl nods, still red-faced, but manages a weak smile. As she turns and walks away, the other teens exchange glances, their faces filled with sympathy and understanding.",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 645340077,
+  "submitPayload": {
+    "preset": "presets/Anime Image Creator",
+    "prompts": null,
+    "positivePrompt": "The scene opens on a bright and sunny day, with the sounds of children laughing and playing echoing in the distance. A group of teenagers are gathered outside the school building, chatting and enjoying their lunch break. Suddenly, one of them, an ebony-skinned girl with long braids, rushes up to the others, her face flushed with embarrassment. She had forgotten to wear a top that morning, and now she is standing in front of them completely exposed. The other teens stare at her in shock, unsure of what to do or say. One of the boys steps forward, his eyes wide with concern. \"Are you okay?\" he asks gently. The girl nods, still red-faced, but manages a weak smile. As she turns and walks away, the other teens exchange glances, their faces filled with sympathy and understanding.",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 645340077,
+    "title": "",
+    "width": 1280,
+    "height": 720,
+    "durationSeconds": 8,
+    "frameCount": null,
+    "orientation": "landscape",
+    "prompt": null
+  }
+}

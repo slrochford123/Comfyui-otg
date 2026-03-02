@@ -1,0 +1,28 @@
+{
+  "ts": 1772219541649,
+  "prompt_id": "ca722c1d-f575-4233-8bc2-be9b8d46c14b",
+  "preset": "presets/Create an Anime",
+  "title": null,
+  "positivePrompt": "In a lush, verdant forest, a towering oak stands out among its brethren with vibrant hues of red, blue, purple, yellow, and orange adorning its branches. Surrounding it are colorful flowers that sprout from the ground like tiny jewels, while birds, squirrels, and furry creatures scamper about in search of a haven among the tree's verdant foliage.",
+  "negativePrompt": "",
+  "prompts": null,
+  "loras": null,
+  "seed": 1336987668,
+  "submitPayload": {
+    "preset": "presets/Create an Anime",
+    "prompts": null,
+    "positivePrompt": "In a lush, verdant forest, a towering oak stands out among its brethren with vibrant hues of red, blue, purple, yellow, and orange adorning its branches. Surrounding it are colorful flowers that sprout from the ground like tiny jewels, while birds, squirrels, and furry creatures scamper about in search of a haven among the tree's verdant foliage.",
+    "negativePrompt": "",
+    "loras": null,
+    "lorasApplied": 0,
+    "lorasAvailable": 0,
+    "seed": 1336987668,
+    "title": "",
+    "width": 720,
+    "height": 1280,
+    "durationSeconds": 5,
+    "frameCount": null,
+    "orientation": "portrait",
+    "prompt": null
+  }
+}

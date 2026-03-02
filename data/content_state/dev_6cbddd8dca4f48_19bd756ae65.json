@@ -1,0 +1,12 @@
+{
+  "status": "running",
+  "fileName": null,
+  "favorited": false,
+  "startedAt": 1769877489648,
+  "readyAt": null,
+  "updatedAt": 1769877489648,
+  "kind": null,
+  "deviceId": null,
+  "workflowId": "slr_text_to_image",
+  "workflowTitle": null
+}

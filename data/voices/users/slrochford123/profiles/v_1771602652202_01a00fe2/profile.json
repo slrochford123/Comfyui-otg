@@ -1,0 +1,17 @@
+{
+  "voiceId": "v_1771602652202_01a00fe2",
+  "displayName": "Shawn R",
+  "createdAt": "2026-02-20T15:50:52.204Z",
+  "updatedAt": "2026-02-20T15:52:25.643Z",
+  "source": {
+    "type": "extraction",
+    "extractId": "x_1771602640513_08c870b8"
+  },
+  "qwen": {
+    "status": "ready"
+  },
+  "lastSample": {
+    "id": "s_1771602714383_135f9913",
+    "rel": "samples/s_1771602714383_135f9913.wav"
+  }
+}

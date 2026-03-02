@@ -1,0 +1,179 @@
+{
+  "ts": 1769057361688,
+  "deviceId": "dev_21cfceb4129088_19bcee7725c",
+  "preset": "presets/t2i",
+  "positivePrompt": "red car",
+  "negativePrompt": "",
+  "seed": 315909472,
+  "rawResponse": {
+    "prompt_id": "0fce45bc-ed03-47f8-a3e9-96ed7fe4dc47",
+    "number": 0,
+    "node_errors": {}
+  }
+}
+{
+  "ts": 1769086364561,
+  "deviceId": "dev_21cfceb4129088_19bcee7725c",
+  "preset": "presets/t2i",
+  "positivePrompt": "man in white clothes in a white room",
+  "negativePrompt": "",
+  "seed": 1637521186,
+  "rawResponse": {
+    "prompt_id": "4c35d45f-e0b1-44ac-81a5-192e197082f9",
+    "number": 0,
+    "node_errors": {}
+  }
+}
+{
+  "ts": 1769086496771,
+  "deviceId": "dev_21cfceb4129088_19bcee7725c",
+  "preset": "presets/t2i",
+  "positivePrompt": "a man in white clothes in a white room",
+  "negativePrompt": "",
+  "seed": 137099436,
+  "rawResponse": {
+    "prompt_id": "5acb8250-089a-4d07-ac41-dfec428695d9",
+    "number": 1,
+    "node_errors": {}
+  }
+}
+{
+  "ts": 1769087868195,
+  "deviceId": "dev_21cfceb4129088_19bcee7725c",
+  "preset": "presets/t2i",
+  "positivePrompt": "a man in white clothes in a white room",
+  "negativePrompt": "",
+  "seed": 456240648,
+  "rawResponse": {
+    "prompt_id": "e84356de-b647-4866-bbcd-4fa3a1376110",
+    "number": 0,
+    "node_errors": {}
+  }
+}
+{
+  "ts": 1769088229509,
+  "deviceId": "dev_21cfceb4129088_19bcee7725c",
+  "preset": "presets/t2i",
+  "positivePrompt": "a man in white clothes in a white room ",
+  "negativePrompt": "",
+  "seed": 1206219079,
+  "rawResponse": {
+    "prompt_id": "56e724cd-0a80-4769-8776-d13d5119a411",
+    "number": 1,
+    "node_errors": {}
+  }
+}
+{
+  "ts": 1769088944089,
+  "deviceId": "dev_21cfceb4129088_19bcee7725c",
+  "preset": "presets/t2i",
+  "positivePrompt": "A man in white clothes standing in a white room, OTGTEST_99331",
+  "negativePrompt": "",
+  "seed": 953948518,
+  "rawResponse": {
+    "prompt_id": "fd606c97-27c6-437c-959f-9558fa7572d7",
+    "number": 0,
+    "node_errors": {}
+  }
+}
+{"ts":1769131411363,"deviceId":"dev_21cfceb4129088_19bcee7725c","prompt_id":"ceffda06-fbec-4e1b-96ae-edfcf40d9cdd","preset":"presets/Test_LTX2_T2V","rawResponse":{"prompt_id":"ceffda06-fbec-4e1b-96ae-edfcf40d9cdd","number":2,"node_errors":{}}}
+{
+  "ts": 1769228583295,
+  "deviceId": "dev_21cfceb4129088_19bcee7725c",
+  "preset": "presets/SLR_Studios_Z_Turbo",
+  "positivePrompt": "bird",
+  "negativePrompt": "",
+  "seed": 949048671,
+  "rawResponse": {
+    "prompt_id": "79c48808-47c9-4200-a5dd-acd617d0ab2f",
+    "number": 56,
+    "node_errors": {}
+  }
+}
+{
+  "ts": 1769269602443,
+  "deviceId": "dev_21cfceb4129088_19bcee7725c",
+  "preset": "presets/SLR_Studios_Z_Turbo",
+  "positivePrompt": "a man in white clothes in a white room",
+  "negativePrompt": "",
+  "seed": 528058809,
+  "rawResponse": {
+    "prompt_id": "b4752b2c-c89b-402f-883d-94beb1f400ac",
+    "number": 57,
+    "node_errors": {}
+  }
+}
+{
+  "ts": 1769269634619,
+  "deviceId": "dev_21cfceb4129088_19bcee7725c",
+  "preset": "presets/SLR_Studios_Z_Turbo",
+  "positivePrompt": "a man in white clothes in a white room",
+  "negativePrompt": "",
+  "seed": 1105600926,
+  "rawResponse": {
+    "prompt_id": "ed023a48-f0f5-4073-a919-d13a8e6fbb15",
+    "number": 58,
+    "node_errors": {}
+  }
+}
+{
+  "ts": 1769269696781,
+  "deviceId": "dev_21cfceb4129088_19bcee7725c",
+  "preset": "presets/SLR_Studios_Z_Turbo",
+  "positivePrompt": "a man in white clothes in a black room",
+  "negativePrompt": "",
+  "seed": 1261650751,
+  "rawResponse": {
+    "prompt_id": "67248526-110a-4638-a7ad-bc8a20771ac7",
+    "number": 59,
+    "node_errors": {}
+  }
+}
+{
+  "ts": 1769271548485,
+  "deviceId": "dev_21cfceb4129088_19bcee7725c",
+  "preset": "presets/SLR_Studios_Z_Turbo",
+  "positivePrompt": "A BLACK BEAR",
+  "negativePrompt": "",
+  "seed": 1521944820,
+  "rawResponse": {
+    "prompt_id": "38d48115-82e7-4c6b-8a0c-c2aaffe0b65d",
+    "number": 60,
+    "node_errors": {}
+  }
+}
+{
+  "ts": 1769271555397,
+  "deviceId": "dev_21cfceb4129088_19bcee7725c",
+  "preset": "presets/SLR_Studios_Z_Turbo",
+  "positivePrompt": "A BLACK BEAR",
+  "negativePrompt": "",
+  "seed": 121489143,
+  "rawResponse": {
+    "prompt_id": "88e5e8c8-a543-41d3-84cb-8e815cc5c0a0",
+    "number": 61,
+    "node_errors": {}
+  }
+}
+{"ts":1769296434855,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a red monkey in a white room","negativePrompt":"","seed":665929157,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"b61979d1-63ef-4c6c-934a-f266c0dd335a","rawResponse":{"prompt_id":"b61979d1-63ef-4c6c-934a-f266c0dd335a","number":4,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a red monkey in a white room","negativePrompt":"","seed":665929157,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":1280,"height":720,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769304586618,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a blue monkey in a white room","negativePrompt":"","seed":1268212342,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"73d1ca60-3183-44a9-8ef9-c36fea8f224d","rawResponse":{"prompt_id":"73d1ca60-3183-44a9-8ef9-c36fea8f224d","number":11,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a blue monkey in a white room","negativePrompt":"","seed":1268212342,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":720,"height":1280,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769314888589,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a teal monkey in a white room","negativePrompt":"","seed":534034836,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"fb77b4c2-97cd-4ee2-9d35-bbc42ab63cd5","rawResponse":{"prompt_id":"fb77b4c2-97cd-4ee2-9d35-bbc42ab63cd5","number":13,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a teal monkey in a white room","negativePrompt":"","seed":534034836,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":1280,"height":720,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769315136253,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a red monkey in a white room","negativePrompt":"","seed":275625834,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"7e1405ab-075a-4dbf-bf22-43f77adc0f18","rawResponse":{"prompt_id":"7e1405ab-075a-4dbf-bf22-43f77adc0f18","number":14,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a red monkey in a white room","negativePrompt":"","seed":275625834,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":1280,"height":720,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769358622667,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a white dog in a white room","negativePrompt":"","seed":1491027643,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"6e6f6ac9-4cef-41a5-af03-ab9330ddd43f","rawResponse":{"prompt_id":"6e6f6ac9-4cef-41a5-af03-ab9330ddd43f","number":5,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a white dog in a white room","negativePrompt":"","seed":1491027643,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":720,"height":1280,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769358829664,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a white dog in a white room","negativePrompt":"","seed":1884725982,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"e0cd59e2-9deb-4c98-ac6b-49b78b59064e","rawResponse":{"prompt_id":"e0cd59e2-9deb-4c98-ac6b-49b78b59064e","number":1,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a white dog in a white room","negativePrompt":"","seed":1884725982,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":1280,"height":720,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769359608962,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a black dog in a white room","negativePrompt":"","seed":1965590225,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"d0cbcd37-2afc-47ae-9458-927ea687414d","rawResponse":{"prompt_id":"d0cbcd37-2afc-47ae-9458-927ea687414d","number":2,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a black dog in a white room","negativePrompt":"","seed":1965590225,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":1280,"height":720,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769360018800,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"red dog in white room","negativePrompt":"","seed":1633655741,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"0a31024b-2055-4ec7-b729-7acb288aca3d","rawResponse":{"prompt_id":"0a31024b-2055-4ec7-b729-7acb288aca3d","number":4,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"red dog in white room","negativePrompt":"","seed":1633655741,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":720,"height":1280,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769362292787,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"blue dog in white room","negativePrompt":"","seed":1989367155,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"3b90bd1b-b90d-4512-9647-234702fcf907","rawResponse":{"prompt_id":"3b90bd1b-b90d-4512-9647-234702fcf907","number":12,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"blue dog in white room","negativePrompt":"","seed":1989367155,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":720,"height":1280,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769362915309,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"blue dog in white room","negativePrompt":"","seed":39120471,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"89f7cd94-989a-47df-8708-e3e216d7ea23","rawResponse":{"prompt_id":"89f7cd94-989a-47df-8708-e3e216d7ea23","number":16,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"blue dog in white room","negativePrompt":"","seed":39120471,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":720,"height":1280,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769363553033,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"blue dog in white room","negativePrompt":"","seed":891741607,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"aa5925fc-82cc-43d5-a44c-614055bb14a6","rawResponse":{"prompt_id":"aa5925fc-82cc-43d5-a44c-614055bb14a6","number":20,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"blue dog in white room","negativePrompt":"","seed":891741607,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":720,"height":1280,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769366188632,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a green dog in a white room","negativePrompt":"","seed":835952255,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"fe2a9788-98cb-4eed-9c69-e8ee29a8a3b6","rawResponse":{"prompt_id":"fe2a9788-98cb-4eed-9c69-e8ee29a8a3b6","number":0,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a green dog in a white room","negativePrompt":"","seed":835952255,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":1280,"height":720,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769367564980,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a pink dog in a white room","negativePrompt":"","seed":347652800,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"15bbb2fe-1698-47b0-9641-de3346f8743b","rawResponse":{"prompt_id":"15bbb2fe-1698-47b0-9641-de3346f8743b","number":1,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a pink dog in a white room","negativePrompt":"","seed":347652800,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":1280,"height":720,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769367695418,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a black dog","negativePrompt":"","seed":1565179804,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"5032b6ba-c962-49ef-baa0-b9e21d0f2990","rawResponse":{"prompt_id":"5032b6ba-c962-49ef-baa0-b9e21d0f2990","number":2,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a black dog","negativePrompt":"","seed":1565179804,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":1280,"height":720,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769368171273,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"blue dog","negativePrompt":"","seed":1656520967,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"02a00b3d-cb66-4f7f-8531-cc351cf76b7c","rawResponse":{"prompt_id":"02a00b3d-cb66-4f7f-8531-cc351cf76b7c","number":3,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"blue dog","negativePrompt":"","seed":1656520967,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":1280,"height":720,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769368305772,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"red dog","negativePrompt":"","seed":153389343,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"a9e2cffd-24c1-479a-b2ea-56b1fcd58513","rawResponse":{"prompt_id":"a9e2cffd-24c1-479a-b2ea-56b1fcd58513","number":4,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"red dog","negativePrompt":"","seed":153389343,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":1280,"height":720,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769384080866,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a orange dog","negativePrompt":"","seed":1823625636,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"123b3d18-f212-4621-9327-a306246342b8","rawResponse":{"prompt_id":"123b3d18-f212-4621-9327-a306246342b8","number":3,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a orange dog","negativePrompt":"","seed":1823625636,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":1280,"height":720,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769384425089,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"an orange dog","negativePrompt":"","seed":25755051,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"45afeaf7-a864-43e7-a0b7-436eecff013e","rawResponse":{"prompt_id":"45afeaf7-a864-43e7-a0b7-436eecff013e","number":0,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"an orange dog","negativePrompt":"","seed":25755051,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":1280,"height":720,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769385017002,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"an blue dog","negativePrompt":"","seed":1426313827,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"d6f60a7e-4eb5-4053-9f1e-11d125d47645","rawResponse":{"prompt_id":"d6f60a7e-4eb5-4053-9f1e-11d125d47645","number":1,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"an blue dog","negativePrompt":"","seed":1426313827,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":1280,"height":720,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769385060068,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a red dog","negativePrompt":"","seed":1891307415,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"161a9c5e-c159-4d3f-a003-c21bdd416546","rawResponse":{"prompt_id":"161a9c5e-c159-4d3f-a003-c21bdd416546","number":2,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a red dog","negativePrompt":"","seed":1891307415,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":1280,"height":720,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769400143996,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a red bear","negativePrompt":"","seed":47089724,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"cf97274a-06a6-452c-8197-18faff92bad8","rawResponse":{"prompt_id":"cf97274a-06a6-452c-8197-18faff92bad8","number":89,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"a red bear","negativePrompt":"","seed":47089724,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":720,"height":1280,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}
+{"ts":1769400793542,"ownerKey":"slrochford123","username":"slrochford123","deviceId":"dev_21cfceb4129088_19bcee7725c","title":"SLR Studios Z Turbo","preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"","negativePrompt":"","seed":648771393,"useImg2Img":false,"imagePath":null,"loras":null,"prompt_id":"946f9064-51be-4872-b1cb-4b74707f3e86","rawResponse":{"prompt_id":"946f9064-51be-4872-b1cb-4b74707f3e86","number":90,"node_errors":{}},"submitPayload":{"preset":"SLR_Studios_Z_Turbo","prompts":null,"positivePrompt":"","negativePrompt":"","seed":648771393,"seedMode":null,"loras":null,"imagePath":"","useImg2Img":false,"forceImg2Img":false,"title":"SLR Studios Z Turbo","width":720,"height":1280,"durationSeconds":5,"orientation":null,"enhanceLevel":null}}

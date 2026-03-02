@@ -1,0 +1,8 @@
+
+Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Fetching 4 files: 100%|##########| 4/4 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "C:\AI\OTG-Test\scripts\qwen3tts\generate.py", line 122, in <module>
+    raise SystemExit(main())
+  File "C:\AI\OTG-Test\scripts\qwen3tts\generate.py", line 55, in main
+    model = model.to(device)
+AttributeError: 'Qwen3TTSModel' object has no attribute 'to'
