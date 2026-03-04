@@ -57,7 +57,7 @@ export async function flushQueue(): Promise<void> {
         await removeQueued(id);
       }
     } catch {
-      // Stop on first failure so we donâ€™t loop spam while offline.
+      // Stop on first failure so we don't loop spam while offline.
       break;
     }
   }

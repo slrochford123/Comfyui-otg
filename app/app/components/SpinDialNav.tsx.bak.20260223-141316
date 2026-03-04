@@ -1,0 +1,75 @@
+"use client";
+
+import { useMemo } from "react";
+
+export type SpinTabId =
+  | "gethelp"
+  | "generate"
+  | "angles"
+  | "storyboard"
+  | "gallery"
+  | "voices"
+  | "favorites"
+  | "settings"
+  | "support";
+
+type Props = {
+  tab: SpinTabId;
+  onTab: (t: SpinTabId) => void;
+  isAdmin?: boolean;
+};
+
+type Item = {
+  id: SpinTabId;
+  label: string;
+  disabled?: boolean;
+};
+
+export default function SpinDialNav({ tab, onTab, isAdmin }: Props) {
+  const items: Item[] = useMemo(
+    () => [
+      { id: "gethelp", label: "AI Assistance" },
+      { id: "generate", label: "Generate" },
+      { id: "angles", label: "Angles" },
+      { id: "storyboard", label: "Storyboard" },
+      { id: "gallery", label: "Gallery" },
+
+      // Voices are available to all users
+      { id: "voices", label: "Voices" },
+
+      { id: "favorites", label: "Favorites" },
+      { id: "settings", label: "Settings" },
+      { id: "support", label: "Support" },
+    ],
+    [isAdmin],
+  );
+
+  return (
+    <div className="otg-dialNav">
+      <div className="otg-dialNavScroll">
+        {items.map((item) => {
+          const active = tab === item.id;
+          const disabled = !!item.disabled;
+
+          return (
+            <button
+              key={item.id}
+              onClick={() => !disabled && onTab(item.id)}
+              className={[
+                "otg-dialNavItem",
+                active ? "otg-dialNavItemActive" : "",
+                disabled ? "otg-dialNavItemDisabled" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              disabled={disabled}
+              aria-disabled={disabled}
+            >
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

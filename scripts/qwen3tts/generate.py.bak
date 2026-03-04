@@ -1,0 +1,84 @@
+import argparse
+import os
+import sys
+import numpy as np
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("--text", required=True)
+    p.add_argument("--lang", default="en")
+    p.add_argument("--out", required=True)
+    p.add_argument("--ref", default="")
+    args = p.parse_args()
+
+    text = (args.text or "").strip()
+    if not text:
+        print("Missing --text", file=sys.stderr)
+        return 2
+
+    out = args.out
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+
+    try:
+        from qwen_tts.inference.qwen3_tts_model import Qwen3TTSModel
+        import soundfile as sf
+    except Exception as e:
+        print(f"Import error: {e}", file=sys.stderr)
+        return 3
+
+    repo_id = os.environ.get(
+        "QWEN3TTS_MODEL_CUSTOM",
+        "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+    )
+    base_repo = os.environ.get(
+        "QWEN3TTS_MODEL_BASE",
+        "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+    )
+
+    use_ref = bool(args.ref and os.path.exists(args.ref))
+    chosen_repo = repo_id if use_ref else base_repo
+
+    try:
+        model = Qwen3TTSModel.from_pretrained(chosen_repo)
+    except Exception as e:
+        print(f"Model load error: {e}", file=sys.stderr)
+        return 4
+
+    try:
+        if use_ref:
+            ref_wav, ref_sr = sf.read(args.ref)
+            if isinstance(ref_wav, np.ndarray) and ref_wav.ndim > 1:
+                ref_wav = ref_wav[:, 0]
+
+            wavs, sr = model.generate_custom_voice(
+                text=text,
+                speaker=0,
+                prompt_wav=ref_wav,
+                prompt_sr=ref_sr,
+                language=args.lang,
+            )
+        else:
+            wavs, sr = model.generate_custom_voice(
+                text=text,
+                speaker=0,
+                language=args.lang,
+            )
+
+        wav = wavs[0] if isinstance(wavs, (list, tuple)) else wavs
+
+    except Exception as e:
+        print(f"TTS generation error: {e}", file=sys.stderr)
+        return 5
+
+    try:
+        sf.write(out, wav, int(sr))
+        print(f"OK {out} ({sr}Hz)")
+        return 0
+    except Exception as e:
+        print(f"Failed to write wav: {e}", file=sys.stderr)
+        return 6
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

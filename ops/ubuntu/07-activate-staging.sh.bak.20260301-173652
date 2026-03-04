@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REL_ID=${1:-}
+if [ -z "$REL_ID" ]; then
+  echo "Usage: 07-activate-staging.sh <release_id>" >&2
+  exit 1
+fi
+
+REL_DIR="/opt/otg/releases/$REL_ID"
+if [ ! -d "$REL_DIR" ]; then
+  echo "Release not found: $REL_DIR" >&2
+  exit 1
+fi
+
+ln -sfn "$REL_DIR" /opt/otg/current-staging
+sudo systemctl restart otg-staging
+
+# Smoke test staging
+BASE_URL=${BASE_URL:-http://127.0.0.1:3002}
+/opt/otg/repo/ops/ubuntu/05-smoke-test.sh "$BASE_URL"
+
+echo "OK: staging activated -> $REL_ID"

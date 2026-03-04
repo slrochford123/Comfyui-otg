@@ -112,6 +112,22 @@ export default function AdminUsersClient() {
       >
         ← Back to App
       </a>
+
+      <a
+        href="/app/admin/gallery"
+        className="otg-authShowBtn"
+        style={{ textDecoration: "none", padding: "10px 14px" }}
+      >
+        Gallery
+      </a>
+
+      <a
+        href="/app/admin/feedback"
+        className="otg-authShowBtn"
+        style={{ textDecoration: "none", padding: "10px 14px" }}
+      >
+        Feedback
+      </a>
     </div>
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}>

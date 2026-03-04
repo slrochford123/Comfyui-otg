@@ -1,0 +1,65 @@
+import { NextResponse } from "next/server";
+import { getWorkflowList } from "@/lib/workflows";
+
+export const runtime = "nodejs";
+
+function parseAllowlist() {
+  // Optional: comma-separated workflow IDs to show on the Generate dropdown.
+  // If unset, defaults to "show all" minus hard-hidden entries.
+  const raw = (process.env.OTG_GENERATE_WORKFLOW_ALLOWLIST || "").trim();
+  if (!raw) return null;
+  const ids = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return ids.length ? new Set(ids) : null;
+}
+
+function isHiddenByDefault(id: string) {
+  const v = (id || "").toLowerCase();
+
+  // Hide Storyboard + Angles workflows from the Generate dropdown.
+  // (Storyboard/Angles remain available via their dedicated tabs.)
+  if (v.startsWith("storyboard/")) return true;
+  if (v === "presets/angles" || v === "angles") return true;
+
+  // Hide internal helper workflows from the Generate dropdown.
+  if (v.startsWith("internal/")) return true;
+
+  return false;
+}
+
+export async function GET() {
+  const lst = getWorkflowList();
+  if (!lst.ok) {
+    return NextResponse.json(
+      { ok: false, error: lst.error },
+      { status: 500, headers: { "cache-control": "no-store" } }
+    );
+  }
+
+  const allow = parseAllowlist();
+
+  const workflows = lst.list
+    .filter((w) => {
+      const id = String(w.id || "");
+      if (!id) return false;
+      if (allow) return allow.has(id);
+      return !isHiddenByDefault(id);
+    })
+    .map((w) => ({
+      id: w.id,
+      label: w.label ?? w.id,
+      description: w.description ?? "",
+      img2img: !!w.img2img,
+      format: w.format,
+      canRun: !!(w as any).canRun,
+      needsImages: Number((w as any).needsImages || 0),
+      parseOk: !!w.parseOk,
+      exists: !!w.exists,
+      file: w.file,
+      error: w.error ?? "",
+    }));
+
+  return NextResponse.json({ ok: true, workflows }, { headers: { "cache-control": "no-store" } });
+}

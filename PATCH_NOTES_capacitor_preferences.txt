@@ -1,0 +1,19 @@
+This patch fixes the build error: Module not found: Can't resolve '@capacitor/preferences'
+
+Cause:
+- src/native/lastNotified.ts imports @capacitor/preferences
+- package.json did not include @capacitor/preferences
+- package-lock referenced @capacitor/preferences@8, which mismatches @capacitor/core@7.x
+
+Changes in this patch:
+- package.json: add @capacitor/preferences ^7.0.0 (compatible with @capacitor/core 7.x)
+- package.json: pin @capacitor/cli to ^7.4.5 to match core 7.x (avoids major mismatch)
+
+Apply (in C:\AI\OTG-Test\OTG):
+1) Extract this zip (it overwrites package.json)
+2) Delete node_modules + lockfile (important to clear the bad resolution):
+   rmdir /s /q node_modules
+   del package-lock.json
+3) Reinstall and build:
+   npm install
+   npm run build

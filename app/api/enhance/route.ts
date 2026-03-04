@@ -23,8 +23,10 @@ async function enhanceWithOllama(prompt: string, timeoutMs = 7000): Promise<stri
   const model = (process.env.OLLAMA_MODEL || process.env.OTG_OLLAMA_MODEL || "llama3.1").trim();
 
   const system =
-    "Rewrite the user's prompt into a vivid, detailed cinematic prompt while preserving intent and subject. " +
-    "Do not add new characters. Output only the enhanced prompt.";
+    "Rewrite the user's prompt into a stronger, more specific prompt while STRICTLY preserving the same subject, setting, and key details. " +
+    "Do NOT add new characters, new objects, or new locations. Do NOT change identity. " +
+    "Keep the original meaning and main nouns. You may reorder, clarify, and add camera/lighting descriptors ONLY if they match the existing scene. " +
+    "Output ONLY the enhanced prompt text (no quotes, no markdown, no commentary).";
 
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
@@ -38,7 +40,7 @@ async function enhanceWithOllama(prompt: string, timeoutMs = 7000): Promise<stri
         model,
         prompt: `${system}\n\nUSER:\n${prompt.trim()}\n\nENHANCED:`,
         stream: false,
-        options: { temperature: 0.4 },
+        options: { temperature: 0.2, top_p: 0.9 },
       }),
     });
 

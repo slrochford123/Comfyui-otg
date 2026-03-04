@@ -1,18 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
-function sanitizeComfyPromptGraph(graph: any) {
-  const out: Record<string, any> = {};
-  if (!graph || typeof graph !== "object") return out;
-
-  for (const [id, node] of Object.entries(graph)) {
-    if (!/^\d+$/.test(id)) continue;      // drop _otg_meta and non-node keys
-    if (!node || typeof node !== "object") continue;
-    if (!("class_type" in node)) continue;
-    out[id] = node;
-  }
-  return out;
-}
+// NOTE: submit prompt graphs as-is (no sanitization).
 
 export const runtime = "nodejs";
 
@@ -104,7 +93,7 @@ const jobPath = path.join(JOBS_DIR, `${deviceId}.jsonl`);
   const upstream = await fetch(`${COMFY_BASE_URL}/prompt`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ prompt: sanitizeComfyPromptGraph(graph), client_id: deviceId  }),
+    body: JSON.stringify({ prompt: graph, client_id: deviceId }),
   });
 
   const text = await upstream.text();

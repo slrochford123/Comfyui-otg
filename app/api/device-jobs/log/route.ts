@@ -21,13 +21,14 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
 
   const deviceId = safeDeviceId(body.deviceId || headerDeviceId);
-  const promptId = body.promptId ? String(body.promptId) : "";
+  const promptId = body.promptId ? String(body.promptId) : (body.prompt_id ? String(body.prompt_id) : "");
 
   if (!promptId) return Response.json({ ok: false, error: "Missing promptId" }, { status: 400 });
 
   ensureDir(JOBS_DIR);
   const file = path.join(JOBS_DIR, `${deviceId}.jsonl`);
-  fs.appendFileSync(file, JSON.stringify({ promptId, at: Date.now() }) + "\n", "utf-8");
+  // Keep compatibility with readers that expect prompt_id (e.g. /api/gallery/sync).
+  fs.appendFileSync(file, JSON.stringify({ prompt_id: String(promptId), ts: Date.now(), deviceId }) + "\n", "utf-8");
 
   return Response.json({ ok: true, deviceId, promptId });
 }

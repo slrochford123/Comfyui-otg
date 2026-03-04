@@ -1,0 +1,7 @@
+*** Begin Patch
+*** Update File: app/api/tts/control/route.ts
+@@
+-    const audioUrl = await waitForAudio({ prompt_id, nodeId: "75" });
++    // waitForAudio() in this codebase expects the prompt id (string)
++    const audioUrl = await waitForAudio(prompt_id);
+*** End Patch

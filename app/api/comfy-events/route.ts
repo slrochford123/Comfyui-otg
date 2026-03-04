@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolveComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 
 export const runtime = "nodejs";
 
@@ -13,7 +14,8 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const clientId = searchParams.get("clientId") || "cid_default";
 
-  const base = process.env.COMFY_BASE_URL || "http://127.0.0.1:8188";
+  const { baseUrl } = await resolveComfyBaseUrl();
+  const base = baseUrl;
   const wsUrl = `${toWsBase(base)}/ws?clientId=${encodeURIComponent(clientId)}`;
 
   const encoder = new TextEncoder();

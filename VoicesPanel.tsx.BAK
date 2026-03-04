@@ -1,0 +1,456 @@
+"use client";
+
+import * as React from "react";
+
+type Mode = "extract" | "clone" | "create" | "tts";
+
+type Voice = {
+  id: string;
+  name: string;
+  description?: string;
+  tags?: string[];
+};
+
+const DEFAULT_VOICES: Voice[] = [
+  { id: "alloy", name: "Alloy", description: "Neutral, clear", tags: ["neutral"] },
+  { id: "verse", name: "Verse", description: "Warm narration", tags: ["narration"] },
+  { id: "aria", name: "Aria", description: "Bright, expressive", tags: ["expressive"] },
+];
+
+// Pill theme similar to your Generate tab buttons
+function Pill({
+  active,
+  children,
+  onClick,
+  disabled,
+}: {
+  active?: boolean;
+  disabled?: boolean;
+  children: React.ReactNode;
+  onClick?: () => void;
+}) {
+  const base =
+    "rounded-full border px-4 py-2 text-sm font-semibold transition select-none";
+  const inactive =
+    "border-white/10 bg-white/5 text-white/80 hover:border-white/20 hover:bg-white/10";
+  const activeCls =
+    "border-white/15 bg-gradient-to-r from-purple-500/40 via-purple-500/25 to-cyan-500/20 text-white shadow-[0_0_0_1px_rgba(168,85,247,0.20),0_0_28px_rgba(168,85,247,0.12)]";
+  const dis =
+    "opacity-50 cursor-not-allowed hover:border-white/10 hover:bg-white/5";
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={[base, active ? activeCls : inactive, disabled ? dis : ""].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+export default function VoicesPanel({ isAdmin = false }: { isAdmin?: boolean }) {
+  const [mode, setMode] = React.useState<Mode>("extract");
+
+  // voice library
+  const [query, setQuery] = React.useState("");
+  const [selectedId, setSelectedId] = React.useState(DEFAULT_VOICES[0]?.id ?? "");
+  const voices = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return DEFAULT_VOICES;
+    return DEFAULT_VOICES.filter((v) =>
+      (v.name + " " + (v.description ?? "") + " " + (v.tags ?? []).join(" "))
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [query]);
+  const selected = React.useMemo(
+    () => voices.find((v) => v.id === selectedId) ?? DEFAULT_VOICES.find((v) => v.id === selectedId) ?? null,
+    [voices, selectedId]
+  );
+
+  // Extract state
+  const [videoFile, setVideoFile] = React.useState<File | null>(null);
+  const [videoUrl, setVideoUrl] = React.useState<string>("");
+  const [startSec, setStartSec] = React.useState(0);
+  const [endSec, setEndSec] = React.useState(30);
+  const [extracting, setExtracting] = React.useState(false);
+  const [extractErr, setExtractErr] = React.useState<string>("");
+
+  // Extract output (auto-fed into Clone)
+  const [audioId, setAudioId] = React.useState<string>("");
+  const [audioUrl, setAudioUrl] = React.useState<string>("");
+
+  // Clone state
+  const [cloneName, setCloneName] = React.useState("");
+
+  // Create / TTS stubs
+  const [newVoiceName, setNewVoiceName] = React.useState("");
+  const [newVoiceDesc, setNewVoiceDesc] = React.useState("");
+  const [ttsText, setTtsText] = React.useState("Hello. This is a voice preview.");
+
+  React.useEffect(() => {
+    if (!videoFile) {
+      setVideoUrl("");
+      return;
+    }
+    const u = URL.createObjectURL(videoFile);
+    setVideoUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [videoFile]);
+
+  async function doExtract() {
+    setExtractErr("");
+    if (!videoFile) {
+      setExtractErr("Select a video first.");
+      return;
+    }
+    const dur = endSec - startSec;
+    if (dur < 5 || dur > 120) {
+      setExtractErr("Clip must be between 5 seconds and 2 minutes.");
+      return;
+    }
+
+    setExtracting(true);
+    try {
+      const fd = new FormData();
+      fd.append("video", videoFile);
+      fd.append("start", String(startSec));
+      fd.append("end", String(endSec));
+
+      const res = await fetch("/api/voices/extract", {
+        method: "POST",
+        body: fd,
+      });
+
+      const json = await res.json();
+      if (!json?.ok) throw new Error(json?.error ?? "Extract failed");
+
+      setAudioId(json.audioId);
+      setAudioUrl(json.url);
+
+      // Auto-switch to Clone after extraction (your requested flow)
+      setMode("clone");
+    } catch (e: any) {
+      setExtractErr(e?.message ?? "Extract failed");
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  return (
+    <section className="w-full rounded-2xl border border-white/10 bg-black/30 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-white/90">Voices</h2>
+          <p className="text-xs text-white/60">Extract • Clone • Create • Text-to-Speech</p>
+        </div>
+        <div className="text-[10px] text-white/40">{isAdmin ? "admin" : "user"}</div>
+      </div>
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        <Pill active={mode === "extract"} onClick={() => setMode("extract")}>Extract</Pill>
+        <Pill active={mode === "clone"} onClick={() => setMode("clone")} disabled={!audioId}>
+          Clone
+        </Pill>
+        <Pill active={mode === "create"} onClick={() => setMode("create")}>Create</Pill>
+        <Pill active={mode === "tts"} onClick={() => setMode("tts")}>Text-to-Speech</Pill>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+        {/* Left */}
+        <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+          {mode === "extract" ? (
+            <div className="space-y-3">
+              <div className="text-xs font-medium text-white/60">Extract audio from video (5s–2m)</div>
+
+              <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                <div className="mb-2 text-xs text-white/60">Video</div>
+                <input
+                  type="file"
+                  accept="video/*"
+                  onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
+                  className="w-full rounded-xl border border-white/10 bg-black/30 p-2 text-sm text-white/80"
+                />
+
+                {videoUrl ? (
+                  <video
+                    className="mt-3 w-full max-h-80 rounded-xl border border-white/10 bg-black/40 object-contain"
+                    src={videoUrl}
+                    controls
+                    preload="metadata"
+                  />
+                ) : null}
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="mb-2 text-xs text-white/60">Start (seconds)</div>
+                  <input
+                    type="number"
+                    min={0}
+                    value={startSec}
+                    onChange={(e) => setStartSec(Number(e.target.value))}
+                    className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white/90 outline-none focus:border-white/25"
+                  />
+                </div>
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="mb-2 text-xs text-white/60">End (seconds)</div>
+                  <input
+                    type="number"
+                    min={0}
+                    value={endSec}
+                    onChange={(e) => setEndSec(Number(e.target.value))}
+                    className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white/90 outline-none focus:border-white/25"
+                  />
+                </div>
+              </div>
+
+              {extractErr ? (
+                <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-100">
+                  {extractErr}
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap gap-2">
+                <Pill active onClick={doExtract} disabled={extracting}>
+                  {extracting ? "Extracting..." : "Extract"}
+                </Pill>
+                <Pill
+                  onClick={() => {
+                    setVideoFile(null);
+                    setStartSec(0);
+                    setEndSec(30);
+                    setAudioId("");
+                    setAudioUrl("");
+                    setExtractErr("");
+                  }}
+                >
+                  Reset
+                </Pill>
+              </div>
+
+              {audioUrl ? (
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="text-xs font-medium text-white/60">Extracted audio ready</div>
+                  <audio className="mt-2 w-full" controls src={audioUrl} />
+                  <div className="mt-2 text-[10px] text-white/45">audio_id: {audioId}</div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {mode === "clone" ? (
+            <div className="space-y-3">
+              <div className="text-xs font-medium text-white/60">
+                Clone extracted audio to a character/LoRA
+              </div>
+
+              {/* Auto-fed audio (no file input required) */}
+              <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                <div className="text-xs font-medium text-white/60">Input audio (from Extract)</div>
+                {audioUrl ? (
+                  <>
+                    <audio className="mt-2 w-full" controls src={audioUrl} />
+                    <div className="mt-2 text-[10px] text-white/45">audio_id: {audioId}</div>
+                  </>
+                ) : (
+                  <div className="mt-2 text-sm text-white/60">
+                    No extracted audio yet. Go to Extract first.
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                <div className="mb-2 text-xs text-white/60">New voice / character name</div>
+                <input
+                  value={cloneName}
+                  onChange={(e) => setCloneName(e.target.value)}
+                  placeholder="e.g., mari_voice_v1"
+                  className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white/90 placeholder:text-white/40 outline-none focus:border-white/25"
+                />
+              </div>
+
+              <div className="text-[11px] text-white/45">
+                Selected target voice profile: <span className="text-white/70">{selected?.name ?? "None"}</span>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Pill
+                  active
+                  disabled={!audioId}
+                  onClick={() => {
+                    // TODO: wire to /api/voices/clone (not included yet)
+                    console.log("Clone stub", { audioId, cloneName, targetVoiceId: selected?.id });
+                  }}
+                >
+                  Clone (stub)
+                </Pill>
+                <Pill onClick={() => setCloneName("")}>Reset</Pill>
+              </div>
+            </div>
+          ) : null}
+
+          {mode === "create" ? (
+            <div className="space-y-3">
+              <div className="text-xs font-medium text-white/60">Create a new voice profile</div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="mb-2 text-xs text-white/60">Voice name</div>
+                  <input
+                    value={newVoiceName}
+                    onChange={(e) => setNewVoiceName(e.target.value)}
+                    placeholder="e.g., brother_smitty_v1"
+                    className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white/90 placeholder:text-white/40 outline-none focus:border-white/25"
+                  />
+                </div>
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="mb-2 text-xs text-white/60">Description</div>
+                  <input
+                    value={newVoiceDesc}
+                    onChange={(e) => setNewVoiceDesc(e.target.value)}
+                    placeholder="short note"
+                    className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white/90 placeholder:text-white/40 outline-none focus:border-white/25"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                <div className="mb-2 text-xs text-white/60">Training samples (audio)</div>
+                <input
+                  type="file"
+                  accept="audio/*"
+                  multiple
+                  className="w-full rounded-xl border border-white/10 bg-black/30 p-2 text-sm text-white/80"
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Pill
+                  active
+                  onClick={() => {
+                    // TODO: wire to /api/voices/create
+                    console.log("Create stub", { newVoiceName, newVoiceDesc });
+                  }}
+                >
+                  Create (stub)
+                </Pill>
+                <Pill
+                  onClick={() => {
+                    setNewVoiceName("");
+                    setNewVoiceDesc("");
+                  }}
+                >
+                  Reset
+                </Pill>
+              </div>
+            </div>
+          ) : null}
+
+          {mode === "tts" ? (
+            <div className="space-y-3">
+              <div className="text-xs font-medium text-white/60">Generate voice audio from text (TTS)</div>
+
+              <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                <div className="mb-2 text-xs text-white/60">Text prompt</div>
+                <textarea
+                  value={ttsText}
+                  onChange={(e) => setTtsText(e.target.value)}
+                  className="min-h-28 w-full resize-y rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-white/90 outline-none focus:border-white/25"
+                />
+              </div>
+
+              <div className="text-[11px] text-white/45">
+                Voice source: <span className="text-white/70">{selected?.name ?? "None"}</span>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Pill
+                  active
+                  onClick={() => {
+                    // TODO: wire to /api/voices/tts
+                    console.log("TTS stub", { voiceId: selected?.id, ttsText });
+                  }}
+                >
+                  Generate (stub)
+                </Pill>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Right: library */}
+        <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="text-xs font-medium text-white/60">Voice Library</div>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search voices..."
+              className="w-48 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white/90 placeholder:text-white/40 outline-none focus:border-white/25"
+            />
+          </div>
+
+          <div className="max-h-72 overflow-auto pr-1">
+            <ul className="space-y-2">
+              {voices.map((v) => {
+                const active = v.id === selectedId;
+                return (
+                  <li key={v.id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(v.id)}
+                      className={[
+                        "w-full rounded-xl border px-3 py-2 text-left transition",
+                        active
+                          ? "border-white/25 bg-white/10"
+                          : "border-white/10 bg-black/20 hover:border-white/20 hover:bg-white/5",
+                      ].join(" ")}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-white/90">{v.name}</div>
+                          {v.description ? (
+                            <div className="truncate text-xs text-white/55">{v.description}</div>
+                          ) : null}
+                        </div>
+                        <div className="text-[10px] text-white/45">{v.id}</div>
+                      </div>
+                      {v.tags?.length ? (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {v.tags.map((t) => (
+                            <span
+                              key={t}
+                              className="rounded-full border border-white/10 bg-black/30 px-2 py-0.5 text-[10px] text-white/60"
+                            >
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
+            <div className="text-xs font-medium text-white/60">Selected</div>
+            {selected ? (
+              <div className="mt-2 space-y-1">
+                <div className="text-sm font-semibold text-white/90">{selected.name}</div>
+                <div className="text-xs text-white/55">{selected.description ?? "—"}</div>
+                <div className="text-[10px] text-white/45">voice_id: {selected.id}</div>
+              </div>
+            ) : (
+              <div className="mt-2 text-sm text-white/60">No voice selected.</div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}

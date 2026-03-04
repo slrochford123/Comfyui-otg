@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build a standalone Next.js release from /opt/otg/repo
+# Outputs: /opt/otg/releases/<release_id>
+
+REPO_DIR=${REPO_DIR:-/opt/otg/repo}
+REL_ID=${REL_ID:-$(date +%Y%m%d-%H%M%S)}
+OUT_DIR="/opt/otg/releases/$REL_ID"
+
+cd "$REPO_DIR"
+
+# Ensure node + deps
+export NVM_DIR="$HOME/.nvm"
+# shellcheck disable=SC1090
+[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+NODE_VER=$(cat .nvmrc | tr -d '\r\n\t ')
+command -v nvm >/dev/null 2>&1 && nvm use "$NODE_VER" >/dev/null
+
+npm ci
+npm run build
+
+# Assemble standalone release
+mkdir -p "$OUT_DIR"
+
+# Copy standalone server bundle
+cp -R .next/standalone/* "$OUT_DIR/"
+
+# Copy static assets required by standalone
+mkdir -p "$OUT_DIR/.next"
+cp -R .next/static "$OUT_DIR/.next/static"
+
+# Copy public assets
+if [ -d "public" ]; then
+  cp -R public "$OUT_DIR/public"
+fi
+
+# Record build metadata
+node -v > "$OUT_DIR/.build.node"
+npm -v > "$OUT_DIR/.build.npm"
+
+echo "$REL_ID" > "$OUT_DIR/.release_id"
+
+echo "OK: built release $REL_ID at $OUT_DIR"

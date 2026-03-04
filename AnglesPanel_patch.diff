@@ -1,0 +1,24 @@
+*** Begin Patch
+*** Update File: app/app/components/AnglesPanel.tsx
+@@ useEffect(() => {
+-      setModelBusy(true);
+-      setModelMsg("Generating 3D preview...");
++      setModelBusy(true);
++      setModelMsg("Please wait, generating image...");
+       setModelUrl("");
+@@  <div
+-              {modelViewerEl ? (
+-                modelViewerEl
+-              ) : (
+-                <div className="otg-muted">
+-                  {file ? (modelBusy ? "Generating 3D preview..." : "3D preview not generated yet.") : "Upload an image to generate the 3D preview."}
+-                </div>
+-              )}
++              {modelViewerEl ? (
++                modelViewerEl
++              ) : (
++                <div className="otg-muted">
++                  {file ? (modelBusy ? "Please wait, generating image..." : "3D preview not generated yet.") : "Upload an image to generate the 3D preview."}
++                </div>
++              )}
+*** End Patch

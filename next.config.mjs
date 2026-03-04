@@ -1,4 +1,4 @@
-import path from "node:path";
+﻿import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -7,9 +7,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const nextConfig = {
   reactStrictMode: true,
 
+  // Create a self-contained production artifact under .next/standalone.
+  // This enables build-once / promote-the-same-artifact deployments.
+  output: "standalone",
+
   // Force Next.js to treat THIS folder as the workspace root even if there are
   // multiple lockfiles elsewhere. This stabilizes builds/starts.
   outputFileTracingRoot: __dirname,
+
+  // Serve images directly — avoids sharp dependency issues and works
+  // reliably behind Cloudflare Tunnel with output: "standalone".
+  images: {
+    unoptimized: true,
+  },
 
   // Keep production builds from failing because of ESLint warnings/errors
   eslint: {
@@ -19,7 +29,7 @@ const nextConfig = {
   webpack(config) {
     // Prevent Next from bundling Storybook story files
     config.module.rules.push({
-      test: /\.stories\.(ts|tsx|js|jsx)$/,
+      test: /\\.stories\\.(ts|tsx|js|jsx)$/,
       loader: "ignore-loader",
     });
     return config;

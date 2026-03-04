@@ -1,0 +1,75 @@
+{
+  "75": {
+    "inputs": {
+      "filename_prefix": "audio/ComfyUI",
+      "audioUI": "",
+      "audio": [
+        "116",
+        0
+      ]
+    },
+    "class_type": "SaveAudio",
+    "_meta": {
+      "title": "Save Audio (FLAC)"
+    }
+  },
+  "81": {
+    "inputs": {
+      "value": "It's in the top drawer... wait, it's empty? No way, that's impossible! I'm sure I put it there!"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Target Text to Synthesize"
+    }
+  },
+  "82": {
+    "inputs": {
+      "value": "Speak in an incredulous tone, but with a hint of panic beginning to creep into your voice."
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Style Instruction(Optional)"
+    }
+  },
+  "116": {
+    "inputs": {
+      "text": [
+        "81",
+        0
+      ],
+      "speaker": "Ryan",
+      "model_choice": "1.7B",
+      "device": "auto",
+      "precision": "bf16",
+      "language": "Auto",
+      "seed": 1089853387693880,
+      "instruct": [
+        "82",
+        0
+      ],
+      "max_new_tokens": 2048,
+      "top_p": 0.8,
+      "top_k": 20,
+      "temperature": 1,
+      "repetition_penalty": 1.05,
+      "attention": "auto",
+      "unload_model_after_generate": false,
+      "custom_model_path": {
+        "__value__": [
+          false,
+          true
+        ]
+      },
+      "custom_speaker_name": {
+        "__value__": [
+          false,
+          true
+        ]
+      }
+    },
+    "class_type": "FB_Qwen3TTSCustomVoice",
+    "_meta": {
+      "title": "🎵 Qwen3-TTS CustomVoice"
+    }
+  }
+}

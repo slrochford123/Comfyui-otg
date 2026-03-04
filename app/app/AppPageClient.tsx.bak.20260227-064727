@@ -1,0 +1,1432 @@
+"use client";
+
+import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
+import BottomNav, { type TabId } from "./components/BottomNav";
+import ComfyStatusIndicator from "../components/ComfyStatusIndicator";
+import { withDeviceHeader } from "./studio/deviceHeader";
+
+type WorkflowItem = {
+  id: string;
+  label?: string;
+  description?: string;
+  format: "prompt_graph" | "ui_workflow" | "unknown";
+  canRun?: boolean;
+  needsImages?: number;
+};
+
+type LastContent = {
+  status: "empty" | "idle" | "running" | "ready" | "done" | "error";
+  file: null | { name: string; kind: "image" | "video"; url: string };
+  updatedAt?: number | null;
+  favorited?: boolean;
+};
+
+type GalleryFile = { name: string; ts?: number; size?: number; url: string };
+
+type GalleryMeta = {
+  prompt_id?: string | null;
+  preset?: string | null;
+  title?: string | null;
+  positivePrompt?: string | null;
+  negativePrompt?: string | null;
+  prompts?: any;
+  loras?: any;
+  seed?: any;
+  submitPayload?: any;
+};
+
+type PreviewFile = { name: string; kind: "image" | "video"; url: string };
+
+type LoraChoice = {
+  name: string; // ComfyUI LoRA filename (optionally "subfolder/name.safetensors")
+  strengthModel: number;
+  strengthClip: number;
+};
+
+function isVideoName(name: string) {
+  return /\.(mp4|webm|mov)$/i.test(name || "");
+}
+
+async function jfetch<T = any>(url: string, init?: RequestInit) {
+  const r = await fetch(url, { credentials: "include", ...init, cache: "no-store" });
+  const text = await r.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = { raw: text };
+  }
+  if (!r.ok) {
+    const msg = (data && (data.error || data.message)) || `HTTP ${r.status}`;
+    throw new Error(typeof msg === "string" ? msg : `HTTP ${r.status}`);
+  }
+  return data as T;
+}
+
+function Card({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="otg-card">
+      <div className="otg-cardTitle">{title}</div>
+      <div className="otg-cardBody">{children}</div>
+    </div>
+  );
+}
+
+function PrimaryButton(props: ButtonHTMLAttributes<HTMLButtonElement>) {
+  const { children, ...rest } = props;
+  return (
+    <button {...rest} className={("otg-btnPrimary " + (props.className || "")).trim()}>
+      {children}
+    </button>
+  );
+}
+
+function GhostButton(props: ButtonHTMLAttributes<HTMLButtonElement>) {
+  const { children, ...rest } = props;
+  return (
+    <button {...rest} className={("otg-btnGhost " + (props.className || "")).trim()}>
+      {children}
+    </button>
+  );
+}
+
+export default function AppPage() {
+  const [tab, setTab] = useState<TabId>("generate");
+  const [fontDelta, setFontDelta] = useState<number>(0); // -150 .. 150 (0 baseline)
+
+  // Workflows
+  const [workflows, setWorkflows] = useState<WorkflowItem[]>([]);
+  const [workflowId, setWorkflowId] = useState<string>("presets/t2i");
+  const [activeWorkflowText, setActiveWorkflowText] = useState<string | null>(null);
+  const activeWorkflow = useMemo(
+    () => workflows.find((w) => w.id === workflowId) || null,
+    [workflows, workflowId],
+  );
+
+  // Load workflow JSON text so we can detect how many image inputs it needs
+  useEffect(() => {
+    (async () => {
+      if (!activeWorkflow?.id) {
+        setActiveWorkflowText(null);
+        return;
+      }
+      try {
+        const r = await fetch(`/api/workflows/${encodeURIComponent(activeWorkflow.id)}`);
+        const txt = await r.text();
+        setActiveWorkflowText(txt);
+      } catch {
+        setActiveWorkflowText(null);
+      }
+    })();
+  }, [activeWorkflow?.id]);
+
+  // Compute required image inputs from workflow metadata or placeholders.
+  const needsImages = useMemo(() => {
+    // Prefer explicit workflow metadata when present
+    if (activeWorkflow && typeof (activeWorkflow as any).needsImages === "number") {
+      const n = Number((activeWorkflow as any).needsImages);
+      return Number.isFinite(n) ? Math.max(0, Math.min(4, n)) : 0;
+    }
+
+    // Fall back to scanning the workflow JSON text for placeholders.
+    const txt = activeWorkflowText || "";
+    const legacySlots = ["__OTG_IMAGE_A__", "__OTG_IMAGE_B__", "__OTG_IMAGE_C__", "__OTG_IMAGE_D__"];
+    const newSlots = ["otg__INPUT_1.png", "otg__INPUT_2.png", "otg__INPUT_3.png", "otg__INPUT_4.png"];
+
+    let legacyMax = -1;
+    for (let i = 0; i < legacySlots.length; i++) {
+      if (txt.includes(legacySlots[i])) legacyMax = i;
+    }
+    const legacyCount = legacyMax >= 0 ? legacyMax + 1 : 0;
+
+    let newMax = -1;
+    for (let i = 0; i < newSlots.length; i++) {
+      if (txt.includes(newSlots[i])) newMax = i;
+    }
+    const newCount = newMax >= 0 ? newMax + 1 : 0;
+
+    return Math.max(legacyCount, newCount);
+  }, [activeWorkflow, activeWorkflowText]);
+
+  // Generate form
+  const [positivePrompt, setPositivePrompt] = useState<string>("");
+  const [negativePrompt, setNegativePrompt] = useState<string>("");
+  const [enhanceBusy, setEnhanceBusy] = useState<boolean>(false);
+  const [enhanceMsg, setEnhanceMsg] = useState<string | null>(null);
+
+  const [loraOpen, setLoraOpen] = useState<boolean>(false);
+  const [loraBusy, setLoraBusy] = useState<boolean>(false);
+  const [loraError, setLoraError] = useState<string | null>(null);
+  const [loraList, setLoraList] = useState<string[]>([]);
+  const [loras, setLoras] = useState<LoraChoice[]>([]);
+
+  // Core generation settings
+  const [orientation, setOrientation] = useState<"portrait" | "landscape">("portrait");
+  const [durationSeconds, setDurationSeconds] = useState<string>("5");
+  const [sizePreset, setSizePreset] = useState<"480p" | "512p" | "720p">("720p");
+  const [seed, setSeed] = useState<string>("");
+
+  const [imgA, setImgA] = useState<File | null>(null);
+  const [imgB, setImgB] = useState<File | null>(null);
+  const [imgC, setImgC] = useState<File | null>(null);
+
+  // Local small previews for selected input images (client-only)
+  const [imgAPreviewUrl, setImgAPreviewUrl] = useState<string | null>(null);
+  const [imgBPreviewUrl, setImgBPreviewUrl] = useState<string | null>(null);
+  const [imgCPreviewUrl, setImgCPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!imgA) {
+      setImgAPreviewUrl(null);
+      return;
+    }
+    const u = URL.createObjectURL(imgA);
+    setImgAPreviewUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [imgA]);
+
+  useEffect(() => {
+    if (!imgB) {
+      setImgBPreviewUrl(null);
+      return;
+    }
+    const u = URL.createObjectURL(imgB);
+    setImgBPreviewUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [imgB]);
+
+  useEffect(() => {
+    if (!imgC) {
+      setImgCPreviewUrl(null);
+      return;
+    }
+    const u = URL.createObjectURL(imgC);
+    setImgCPreviewUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [imgC]);
+
+  // Preview/history (newest first)
+  const [last, setLast] = useState<LastContent | null>(null);
+  const [previewStack, setPreviewStack] = useState<PreviewFile[]>([]);
+
+  const effectivePreview = useMemo<PreviewFile | null>(() => {
+    // While a job is running, show loader, but keep the latest completed preview in the stack.
+    if (last?.status === "running") return { name: "SLR.gif", url: "/SLR.gif", kind: "image" };
+    return previewStack[0] || null;
+  }, [last?.status, previewStack]);
+
+  const isLoaderPreview = effectivePreview?.url === "/SLR.gif";
+
+  const [busy, setBusy] = useState<boolean>(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [pipelineStuck, setPipelineStuck] = useState<boolean>(false);
+
+  // Realtime progress
+  const [progressPct, setProgressPct] = useState<number>(0);
+  const [progressMsg, setProgressMsg] = useState<string>("Idle");
+  const [currentPromptId, setCurrentPromptId] = useState<string | null>(null);
+  const sseRef = useRef<EventSource | null>(null);
+
+  const getOrCreateDeviceId = useCallback(() => {
+    if (typeof window === "undefined") return "desktop_default";
+    const k = "otg_device_id";
+    let id = "";
+    try {
+      id = localStorage.getItem(k) || "";
+    } catch {}
+    if (!id) {
+      try {
+        id = crypto.randomUUID();
+        localStorage.setItem(k, id);
+      } catch {
+        id = `dev_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      }
+    }
+    return id;
+  }, []);
+
+  const stopProgressStream = useCallback(() => {
+    try {
+      sseRef.current?.close();
+    } catch {}
+    sseRef.current = null;
+  }, []);
+
+  const startProgressStream = useCallback(
+    (opts?: { promptId?: string | null }) => {
+      const deviceId = getOrCreateDeviceId();
+      const promptId = opts?.promptId ?? null;
+
+      setProgressPct(0);
+      setProgressMsg("Generating...");
+
+      stopProgressStream();
+
+      const url = `/api/comfy-events?clientId=${encodeURIComponent(deviceId)}`;
+      const es = new EventSource(url);
+      sseRef.current = es;
+
+      const safeJson = (s: string) => {
+        try {
+          return JSON.parse(s);
+        } catch {
+          return null;
+        }
+      };
+
+      es.onmessage = (ev) => {
+        const payload = safeJson(ev.data);
+        if (!payload) return;
+
+        if (Array.isArray(payload)) {
+          if (payload[0] === "__ws_open") setProgressMsg("Connected...");
+          return;
+        }
+
+        const type = String(payload.type || "");
+        const data = payload.data || payload;
+
+        const pid = data?.prompt_id ? String(data.prompt_id) : null;
+        if (promptId && pid && pid !== promptId) return;
+
+        if (type === "execution_start") setProgressMsg("Starting...");
+
+        if (type === "progress") {
+          const v = Number(data?.value);
+          const m = Number(data?.max);
+          if (Number.isFinite(v) && Number.isFinite(m) && m > 0) {
+            const pct = Math.max(0, Math.min(100, Math.round((v / m) * 100)));
+            setProgressPct(pct);
+            setProgressMsg(`Generating... ${pct}%`);
+          }
+        }
+
+        if (type === "executing") {
+          const node = data?.node;
+          if (node === null) {
+            setProgressPct(100);
+            setProgressMsg("Finalizing...");
+            stopProgressStream();
+          } else {
+            setProgressMsg("Working...");
+          }
+        }
+      };
+
+      es.onerror = () => {
+        setProgressMsg("Generating...");
+      };
+    },
+    [getOrCreateDeviceId, stopProgressStream],
+  );
+
+  useEffect(() => {
+    return () => stopProgressStream();
+  }, [stopProgressStream]);
+
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<any>(null);
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2000);
+  }, []);
+
+  const pollRef = useRef<number | null>(null);
+
+  // Font scaling
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("otg_font_delta");
+      if (raw != null) {
+        const n = Number(raw);
+        if (!Number.isNaN(n)) setFontDelta(Math.max(-150, Math.min(150, Math.round(n))));
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    const unclamped = 1 + fontDelta / 300; // -150 => 0.5, +150 => 1.5
+    const scale = Math.max(0.7, Math.min(1.5, unclamped));
+    try {
+      document.documentElement.style.setProperty("--otg-font-scale", String(scale));
+      localStorage.setItem("otg_font_delta", String(fontDelta));
+    } catch {}
+  }, [fontDelta]);
+
+  const loadWorkflows = useCallback(async () => {
+    const res = await jfetch<any>("/api/workflows");
+    const rawList = res.list || res.workflows || res.items || res.data || [];
+    const list: WorkflowItem[] = (Array.isArray(rawList) ? rawList : []).map((x: any) => ({
+      id: String(x.id),
+      label: x.label ? String(x.label) : undefined,
+      description: x.description ? String(x.description) : undefined,
+      format: x.format,
+      canRun: typeof x.canRun === "boolean" ? x.canRun : undefined,
+      needsImages: typeof x.needsImages === "number" ? x.needsImages : undefined,
+    }));
+
+    setWorkflows(list);
+
+    const exists = list.some((w) => w.id === workflowId);
+    if (!exists && list[0]) setWorkflowId(list[0].id);
+  }, [workflowId]);
+
+  const onSyncWorkflows = useCallback(async () => {
+    setErr(null);
+    setBusy(true);
+    try {
+      await jfetch("/api/workflows/reload", { method: "POST" });
+      await loadWorkflows();
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  }, [loadWorkflows]);
+
+  useEffect(() => {
+    loadWorkflows().catch(() => void 0);
+  }, [loadWorkflows]);
+
+  const onEnhancePrompt = useCallback(async () => {
+    const ptxt = (positivePrompt || "").trim();
+    if (!ptxt) return;
+    setEnhanceMsg("Please wait, enhancing prompt…");
+    setEnhanceBusy(true);
+    try {
+      const r = await fetch("/api/enhance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: ptxt, mode: "replace" }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j?.ok) throw new Error(j?.error || `Enhance failed (${r.status})`);
+
+      const out =
+        (typeof j.result === "string" && j.result.trim()
+          ? j.result.trim()
+          : typeof j.enhanced === "string" && j.enhanced.trim()
+            ? j.enhanced.trim()
+            : "");
+
+      if (out) {
+        setPositivePrompt(out);
+        setEnhanceMsg(j?.provider === "ollama" ? "Enhanced (Ollama)" : "Enhanced");
+      }
+    } catch (e: any) {
+      setEnhanceMsg(String(e?.message || e));
+    } finally {
+      setEnhanceBusy(false);
+      window.setTimeout(() => setEnhanceMsg(null), 2500);
+    }
+  }, [positivePrompt]);
+
+  const fetchLast = useCallback(async () => {
+    const STALE_MS = 10 * 60 * 1000;
+    let res = await jfetch<LastContent>("/api/content/last");
+
+    if (res?.status === "running") {
+      const updatedAt = Number((res as any).updatedAt || 0);
+      if (!updatedAt || Date.now() - updatedAt > STALE_MS) {
+        try {
+          await jfetch("/api/content/clear", { method: "POST" });
+          res = await jfetch<LastContent>("/api/content/last");
+        } catch {}
+      }
+    }
+    return res;
+  }, []);
+
+  const stopPoll = useCallback(() => {
+    if (pollRef.current) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const promoteCompletedToPreviewStack = useCallback(
+    (res: LastContent | null) => {
+      if (!res?.file?.url || !res?.file?.name) return;
+      const kind: "image" | "video" = isVideoName(res.file.name) ? "video" : "image";
+      const pf: PreviewFile = { name: res.file.name, url: res.file.url, kind };
+
+      setPreviewStack((prev) => {
+        const next = [pf, ...prev.filter((x) => x.url !== pf.url)];
+        // Keep it bounded (avoid unbounded memory growth)
+        return next.slice(0, 25);
+      });
+    },
+    [setPreviewStack],
+  );
+
+  const startPoll = useCallback(() => {
+    if (pollRef.current) return;
+    pollRef.current = window.setInterval(async () => {
+      try {
+        try {
+          await fetch("/api/gallery/sync", {
+            method: "POST",
+            credentials: "include",
+            cache: "no-store",
+            headers: withDeviceHeader(),
+          });
+        } catch {}
+
+        const res = await fetchLast();
+        if (res) {
+          setLast(res);
+          if ((res.status === "done" || res.status === "ready" || res.status === "idle") && res.file) {
+            promoteCompletedToPreviewStack(res);
+            setProgressPct(100);
+            setProgressMsg("Complete");
+            stopProgressStream();
+          }
+        }
+      } catch {}
+    }, 750);
+  }, [fetchLast, promoteCompletedToPreviewStack, stopProgressStream]);
+
+  const onShowContent = useCallback(async () => {
+    try {
+      const res = await fetchLast();
+      if (res) {
+        setLast(res);
+        if (res.status !== "running" && res.file) promoteCompletedToPreviewStack(res);
+      }
+    } catch {}
+  }, [fetchLast, promoteCompletedToPreviewStack]);
+
+  // Used by tab-switch logic; this does not clear preview, it only refreshes "last".
+  const refreshLastBlock = useCallback(async () => {
+    await onShowContent();
+  }, [onShowContent]);
+
+  const loadLoras = useCallback(async () => {
+    setLoraBusy(true);
+    setLoraError(null);
+    try {
+      const r = await fetch("/api/loras", { cache: "no-store" });
+      const j: any = await r.json().catch(() => null);
+      if (!r.ok || !j) throw new Error(j?.error || `Failed to load LoRAs (${r.status})`);
+      const l = Array.isArray(j.loras) ? j.loras : [];
+      setLoraList(l.map((x: any) => ({ name: String(x.name ?? x), label: String(x.label ?? x.name ?? x) })));
+    } catch (e: any) {
+      setLoraError(String(e?.message || e));
+      setLoraList([]);
+    } finally {
+      setLoraBusy(false);
+    }
+  }, []);
+
+  const openLoraPicker = useCallback(async () => {
+    setLoraOpen(true);
+    if (loraList.length === 0) {
+      await loadLoras();
+    }
+  }, [loadLoras, loraList.length]);
+
+  const toggleLora = useCallback((name: string) => {
+    setLoras((prev) => {
+      const exists = prev.find((x) => x.name === name);
+      if (exists) return prev.filter((x) => x.name !== name);
+      return [...prev, { name, strengthModel: 1, strengthClip: 1 }];
+    });
+  }, []);
+
+  const setLoraStrength = useCallback(
+    (name: string, field: "strengthModel" | "strengthClip", value: number) => {
+      const v = Number.isFinite(value) ? Math.max(0, Math.min(2, value)) : 1;
+      setLoras((prev) => prev.map((x) => (x.name === name ? { ...x, [field]: v } : x)));
+    },
+    []
+  );
+
+  const onRandomizeSeed = useCallback(() => {
+    // 32-bit signed range keeps it compatible with most ComfyUI nodes.
+    try {
+      const arr = new Uint32Array(1);
+      crypto.getRandomValues(arr);
+      const next = (arr[0] & 0x7fffffff) >>> 0;
+      setSeed(String(next));
+    } catch {
+      const next = Math.floor(Math.random() * 2147483647);
+      setSeed(String(next));
+    }
+  }, []);
+
+  const onGenerate = useCallback(async () => {
+    setErr(null);
+
+    if (!activeWorkflow?.id) {
+      setErr("Select a workflow.");
+      return;
+    }
+
+    if (needsImages > 0 && !imgA) {
+      setErr("This workflow needs at least 1 input image.");
+      return;
+    }
+
+    try {
+      setBusy(true);
+
+      // Mark running but do not wipe previews
+      setLast((prev) => ({ ...(prev || ({} as any)), status: "running" } as any));
+
+      // Start polling /api/content/last for completion
+      startPoll();
+
+      const fd = new FormData();
+      fd.append("workflowId", activeWorkflow.id);
+      fd.append("prompt", (positivePrompt || "").toString());
+      fd.append("negativePrompt", (negativePrompt || "").toString());
+      fd.append("orientation", orientation);
+      fd.append("durationSeconds", durationSeconds);      // Size/orientation controls.
+      // Presets are short-side based and then expanded to 16:9 (rounded to multiples of 8).
+      const short = sizePreset === "480p" ? 480 : sizePreset === "512p" ? 512 : 720;
+      const long = Math.round((short * 16) / 9 / 8) * 8;
+      const baseW = short;
+      const baseH = long;
+      const w = orientation === "portrait" ? baseW : baseH;
+      const h = orientation === "portrait" ? baseH : baseW;
+      fd.append("width", String(w));
+      fd.append("height", String(h));
+
+      // Seed behavior:
+      // - If user provided a seed, use it.
+      // - If blank, auto-generate a new random seed per run (matches typical ComfyUI "randomize" usage).
+      //   This avoids "fixed seed" outputs when workflow presets contain a constant seed.
+      let seedToSend = String(seed || "").trim();
+      if (!seedToSend) {
+        // Keep within 32-bit signed positive range for broad compatibility.
+        const next = Math.floor(Math.random() * 2147483647);
+        seedToSend = String(next);
+        // Persist so the user can reproduce the last run if desired.
+        setSeed(seedToSend);
+      }
+      fd.append("seed", seedToSend);
+
+      const imgBEffective = imgB || imgA;
+      const imgCEffective = imgC || imgA;
+
+      if (imgA) fd.append("imageA", imgA, imgA.name);
+      if (needsImages > 1 && imgBEffective) fd.append("imageB", imgBEffective, imgBEffective.name);
+      if (needsImages > 2 && imgCEffective) fd.append("imageC", imgCEffective, imgCEffective.name);
+
+      // Optional: LoRA selections
+      if (loras.length > 0) {
+        fd.append("loras", JSON.stringify(loras));
+      }
+
+      // No additional knobs are sent.
+
+      const r = await fetch("/api/comfy", {
+        method: "POST",
+        credentials: "include",
+        headers: withDeviceHeader(),
+        body: fd,
+      });
+
+      if (!r.ok) {
+        let t = "";
+        try {
+          t = await r.text();
+        } catch {}
+        if (r.status === 401) throw new Error("Create failed (401): Unauthorized. Please log in again.");
+        throw new Error(`Create failed (${r.status}): ${t || r.statusText}`);
+      }
+
+      let promptId: string | null = null;
+      try {
+        const j = await r.clone().json();
+        promptId = j?.prompt_id ? String(j.prompt_id) : null;
+      } catch {}
+
+      setCurrentPromptId(promptId);
+      startProgressStream({ promptId });
+
+      // Try to promote output soon after completion
+      window.setTimeout(() => {
+        onShowContent();
+      }, 750);
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      setErr(msg);
+      if (/\(409\)/.test(msg) || /already running/i.test(msg)) setPipelineStuck(true);
+      stopPoll();
+    } finally {
+      setBusy(false);
+    }
+  }, [
+    activeWorkflow,
+    durationSeconds,
+    loras,
+    imgA,
+    imgB,
+    imgC,
+    needsImages,
+    negativePrompt,
+    onShowContent,
+    orientation,
+    positivePrompt,
+	    sizePreset,
+	    seed,
+    startPoll,
+    startProgressStream,
+    stopPoll,
+  ]);
+
+  const onDeleteTopPreview = useCallback(() => {
+    setErr(null);
+    setPreviewStack((prev) => prev.slice(1));
+    setProgressPct(0);
+    setProgressMsg("Idle");
+    showToast("Cleared preview");
+  }, [showToast]);
+
+  const onClearPipeline = useCallback(async () => {
+    setErr(null);
+    setBusy(true);
+    try {
+      await jfetch("/api/content/clear", { method: "POST" });
+      setPipelineStuck(false);
+      const _last = await fetchLast();
+      setLast(_last);
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  }, [fetchLast]);
+
+  // Favorites
+  const onFavorite = useCallback(async () => {
+    const top = previewStack[0];
+    if (!top) return;
+    setErr(null);
+    try {
+      setBusy(true);
+      const r = await fetch(`/api/favorites/add?name=${encodeURIComponent(top.name)}`, { method: "POST" });
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j?.ok) throw new Error(j?.error || `Send to Favorites failed (${r.status})`);
+      showToast("Sent to Favorites");
+      setLast((prev) => ({ ...(prev || ({} as any)), favorited: true } as any));
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  }, [previewStack, showToast]);
+
+  // Gallery/Favorites
+  const [galleryFiles, setGalleryFiles] = useState<any[]>([]);
+  const [favoriteFiles, setFavoriteFiles] = useState<any[]>([]);
+
+  const [mediaModal, setMediaModal] = useState<null | { name: string; url: string; kind: "image" | "video" }>(null);
+  const [promptModal, setPromptModal] = useState<null | { name: string; meta: GalleryMeta }>(null);
+
+  const loadGallery = useCallback(async () => {
+    const res = await jfetch<{ ok: boolean; files: any[] }>("/api/gallery");
+    setGalleryFiles(res.files || []);
+  }, []);
+
+  
+  const loadFavorites = useCallback(async () => {
+    const res = await jfetch<{ ok: boolean; files: any[] }>("/api/favorites");
+    setFavoriteFiles(res.files || []);
+  }, []);
+
+  useEffect(() => {
+    if (tab === "gallery") loadGallery().catch(() => void 0);
+    if (tab === "favorites") loadFavorites().catch(() => void 0);
+    // When returning to Generate, refresh "last" immediately so preview is stable
+    // and does not depend on the polling interval.
+    if (tab === "generate") refreshLastBlock().catch(() => void 0);
+  }, [tab, loadGallery, loadFavorites, refreshLastBlock]);
+
+  const deleteFromGallery = useCallback(
+    async (name: string) => {
+      setErr(null);
+      setBusy(true);
+      try {
+        await jfetch(`/api/gallery/delete?name=${encodeURIComponent(name)}`, { method: "POST" });
+        await loadGallery();
+      } catch (e: any) {
+        setErr(String(e?.message || e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadGallery],
+  );
+
+  const deleteFromFavorites = useCallback(
+    async (name: string) => {
+      setErr(null);
+      setBusy(true);
+      try {
+        await jfetch(`/api/favorites/delete?name=${encodeURIComponent(name)}`, { method: "POST" });
+        await loadFavorites();
+      } catch (e: any) {
+        setErr(String(e?.message || e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadFavorites],
+  );
+
+  const showPromptFromGallery = useCallback(async (name: string) => {
+    setErr(null);
+    try {
+      const r = await jfetch<{ ok: boolean; meta?: GalleryMeta }>(`/api/gallery/meta?name=${encodeURIComponent(name)}`);
+      if (!r?.ok || !r?.meta) throw new Error("No prompt metadata found for this item.");
+      setPromptModal({ name, meta: r.meta });
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    }
+  }, []);
+
+  const retryFromGallery = useCallback(async (name: string) => {
+    setErr(null);
+    try {
+      const r = await jfetch<{ ok: boolean; meta?: GalleryMeta }>(`/api/gallery/meta?name=${encodeURIComponent(name)}`);
+      if (!r?.ok || !r?.meta?.submitPayload) throw new Error("No retry payload found for this item.");
+      const sp = r.meta.submitPayload;
+
+      if (sp?.preset) setWorkflowId(String(sp.preset));
+      if (typeof sp?.positivePrompt === "string") setPositivePrompt(sp.positivePrompt);
+      if (typeof sp?.negativePrompt === "string") setNegativePrompt(sp.negativePrompt);
+      if (Array.isArray(sp?.loras)) setLoras(sp.loras);
+      if (typeof sp?.orientation === "string") setOrientation(sp.orientation);
+      if (Number.isFinite(Number(sp?.durationSeconds))) setDurationSeconds(String(sp.durationSeconds));
+
+      setTab("generate");
+      setTimeout(() => {
+        onGenerate();
+      }, 120);
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    }
+  }, [onGenerate]);
+
+  const onLogout = useCallback(async () => {
+    try {
+      await fetch("/api/logout", { method: "POST" });
+    } catch {}
+    window.location.href = "/login";
+  }, []);
+
+  return (
+    <main className="otg-appPage">
+      <ComfyStatusIndicator />
+
+      <div className="otg-authBg" aria-hidden="true">
+        <div className="otg-authStrobes">
+          <div className="otg-authStrobe otg-authStrobeL" />
+          <div className="otg-authStrobe otg-authStrobeR" />
+        </div>
+      </div>
+
+      <div className="otg-appShell">
+        <header className="otg-appHeader">
+          <div className="otg-appBanner">
+            <Image src="/slr-banner.png" alt="SLR Studios OTG" width={1200} height={320} priority style={{ width: "100%", height: "auto" }} />
+          </div>
+        </header>
+
+        {err ? <div className="otg-error">{err}</div> : null}
+
+        {(last?.status === "running" || progressPct > 0) ? (
+          <div className="otg-progress">
+            <div className="otg-progressTop">
+              <div className="otg-progressMsg">{progressMsg || "Generating..."}</div>
+              <div className="otg-progressPct">{Math.max(0, Math.min(100, Math.round(progressPct)))}%</div>
+            </div>
+            <div className="otg-progressBar" aria-label="Generation progress">
+              <div className="otg-progressFill" style={{ width: `${Math.max(0, Math.min(100, Math.round(progressPct)))}%` }} />
+            </div>
+          </div>
+        ) : null}
+
+        {tab === "generate" ? (
+          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card title="Workflow">
+              <div className="otg-row" style={{ alignItems: "center" }}>
+                <select value={workflowId} onChange={(e) => setWorkflowId(e.target.value)} className="otg-select" style={{ flex: 1 }}>
+                  {workflows.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.label || w.id}
+                    </option>
+                  ))}
+                </select>
+                <GhostButton onClick={onSyncWorkflows} disabled={busy} title="Reload workflows from comfy_workflows/presets">
+                  Load Workflows
+                </GhostButton>
+              </div>
+              {activeWorkflow?.description ? <div className="otg-help">{activeWorkflow.description}</div> : null}
+              {activeWorkflow?.format !== "prompt_graph" ? (
+                <div className="otg-warn">This workflow is UI-format JSON and cannot run until exported as API/prompt JSON.</div>
+              ) : null}
+            </Card>
+
+            <Card title="Prompt">
+              <textarea value={positivePrompt} onChange={(e) => setPositivePrompt(e.target.value)} rows={5} placeholder="Describe what you want..." className="otg-textarea" />
+              <textarea value={negativePrompt} onChange={(e) => setNegativePrompt(e.target.value)} rows={2} placeholder="Negative prompt (optional)" className="otg-textarea" />
+
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+                <div className="otg-row" style={{ alignItems: "center", justifyContent: "space-between" }}>
+                  <div>
+                    <div className="otg-cardTitle" style={{ marginBottom: 6, opacity: 0.9 }}>
+                      Orientation
+                    </div>
+                    <div className="otg-row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      <button type="button" className={orientation === "portrait" ? "otg-btnPrimary" : "otg-btnGhost"} onClick={() => setOrientation("portrait")} disabled={busy}>
+                        Portrait
+                      </button>
+                      <button type="button" className={orientation === "landscape" ? "otg-btnPrimary" : "otg-btnGhost"} onClick={() => setOrientation("landscape")} disabled={busy}>
+                        Landscape
+                      </button>
+                      <button type="button" className="otg-btnGhost" onClick={onEnhancePrompt} disabled={busy || enhanceBusy || !(positivePrompt || "").trim()} title="Enhance the positive prompt">
+                        {enhanceBusy ? "Enhancing…" : "Enhance Prompt"}
+                      </button>
+                      {enhanceMsg ? (
+                        <span className="otg-help" style={{ margin: 0 }}>
+                          {enhanceMsg}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="otg-row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                      <div>
+                        <div className="otg-cardTitle" style={{ marginBottom: 6, opacity: 0.9 }}>Size</div>
+                        <div className="otg-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                          <button type="button" className={sizePreset === "480p" ? "otg-btnPrimary" : "otg-btnGhost"} onClick={() => setSizePreset("480p")} disabled={busy}>480p</button>
+                          <button type="button" className={sizePreset === "512p" ? "otg-btnPrimary" : "otg-btnGhost"} onClick={() => setSizePreset("512p")} disabled={busy}>512p</button>
+                          <button type="button" className={sizePreset === "720p" ? "otg-btnPrimary" : "otg-btnGhost"} onClick={() => setSizePreset("720p")} disabled={busy}>720p</button>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="otg-cardTitle" style={{ marginBottom: 6, opacity: 0.9 }}>Seed</div>
+                        <div className="otg-row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                          <input
+                            className="otg-input"
+                            value={seed}
+                            onChange={(e) => setSeed(e.target.value)}
+                            placeholder="(workflow default)"
+                            disabled={busy}
+                            inputMode="numeric"
+                          />
+                          <button type="button" className="otg-btnGhost" onClick={onRandomizeSeed} disabled={busy}>
+                            Randomize
+                          </button>
+                        </div>
+                        <div className="otg-help" style={{ marginTop: 6 }}>
+                          Optional. If set, overrides seed inputs in the workflow.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ minWidth: 220 }}>
+                    <div className="otg-cardTitle" style={{ marginBottom: 6, opacity: 0.9 }}>
+                      Duration
+                    </div>
+                    <input
+                      type="range"
+                      min={5}
+                      max={10}
+                      step={1}
+                      value={Number(durationSeconds) || 5}
+                      onChange={(e) => setDurationSeconds(String(e.target.value))}
+                      disabled={busy}
+                      className="otg-range"
+                    />
+                    <div className="otg-help" style={{ marginTop: 6 }}>
+                      {durationSeconds}s (converted to frames using the workflow FPS)
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            {needsImages > 0 ? (
+              <Card title="Inputs">
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div>
+                    <div className="otg-cardTitle" style={{ marginBottom: 8, opacity: 0.9 }}>
+                      Image 1
+                    </div>
+                    <label className="otg-btnGhost" style={{ display: "inline-flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                      Choose image
+                      <input type="file" accept="image/*" onChange={(e) => setImgA(e.target.files?.[0] || null)} />
+                    </label>
+                    <div className="otg-help" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      {imgAPreviewUrl ? <img src={imgAPreviewUrl} alt="Image 1 preview" style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)" }} /> : null}
+                      <span>{imgA ? imgA.name : "No file selected"}</span>
+                    </div>
+                  </div>
+
+                  {needsImages > 1 ? (
+                    <div>
+                      <div className="otg-cardTitle" style={{ marginBottom: 8, opacity: 0.9 }}>
+                        Image 2
+                      </div>
+                      <label className="otg-btnGhost" style={{ display: "inline-flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                        Choose image
+                        <input type="file" accept="image/*" onChange={(e) => setImgB(e.target.files?.[0] || null)} />
+                      </label>
+                      <div className="otg-help" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        {imgBPreviewUrl ? <img src={imgBPreviewUrl} alt="Image 2 preview" style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)" }} /> : null}
+                        <span>{imgB ? imgB.name : "No file selected"}</span>
+                        {!imgB && imgA ? <span style={{ opacity: 0.75 }}>(will use Image 1)</span> : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {needsImages > 2 ? (
+                    <div>
+                      <div className="otg-cardTitle" style={{ marginBottom: 8, opacity: 0.9 }}>
+                        Image 3
+                      </div>
+                      <label className="otg-btnGhost" style={{ display: "inline-flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                        Choose image
+                        <input type="file" accept="image/*" onChange={(e) => setImgC(e.target.files?.[0] || null)} />
+                      </label>
+                      <div className="otg-help" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        {imgCPreviewUrl ? <img src={imgCPreviewUrl} alt="Image 3 preview" style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)" }} /> : null}
+                        <span>{imgC ? imgC.name : "No file selected"}</span>
+                        {!imgC && imgA ? <span style={{ opacity: 0.75 }}>(will use Image 1)</span> : null}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </Card>
+            ) : null}
+
+            <div className="otg-row">
+              <PrimaryButton
+                onClick={onGenerate}
+                disabled={busy || !activeWorkflow || (needsImages > 0 && !imgA)}
+                title="Generate (multiple clicks allowed; server may queue or reject if already running)"
+              >
+                {busy ? "Submitting…" : "Generate"}
+              </PrimaryButton>
+
+              <GhostButton onClick={onShowContent} disabled={busy}>
+                Show Content
+              </GhostButton>
+
+              {pipelineStuck ? (
+                <button type="button" className="otg-btnDanger" onClick={onClearPipeline} disabled={busy}>
+                  Clear pipeline
+                </button>
+              ) : null}
+            </div>
+
+            <Card title="Preview">
+              {previewStack.length === 0 && last?.status !== "running" ? <div className="otg-help">No preview yet.</div> : null}
+
+              {effectivePreview ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {/* Newest (or loader) */}
+                  <div>
+                    {effectivePreview.kind === "video" ? (
+                      <video style={{ width: "100%", borderRadius: 18 }} controls autoPlay muted loop playsInline src={effectivePreview.url} />
+                    ) : (
+                      <img style={{ width: "100%", borderRadius: 18 }} src={effectivePreview.url} alt={effectivePreview.name} />
+                    )}
+
+                    {!isLoaderPreview ? (
+                      <div className="otg-row" style={{ marginTop: 10 }}>
+                        <a href={effectivePreview.url} download={effectivePreview.name} className="otg-btnGhost">
+                          Download
+                        </a>
+
+                        <GhostButton onClick={onFavorite} disabled={busy}>
+                          {(last as any)?.favorited ? "Favorited" : "Send to Favorites"}
+                        </GhostButton>
+
+                        <button onClick={onDeleteTopPreview} disabled={busy} className="otg-btnDanger">
+                          Delete
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {/* Older previews (stack) */}
+                  {previewStack.length > 1 ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div className="otg-help" style={{ marginTop: 0 }}>
+                        Recent creations
+                      </div>
+                      {previewStack.slice(1, 6).map((p) => (
+                        <div key={p.url} className="otg-card" style={{ padding: 10 }}>
+                          {p.kind === "video" ? (
+                            <video style={{ width: "100%", borderRadius: 16 }} controls muted playsInline src={p.url} />
+                          ) : (
+                            <img style={{ width: "100%", borderRadius: 16 }} src={p.url} alt={p.name} />
+                          )}
+                          <div className="otg-help" style={{ marginTop: 8 }}>
+                            {p.name}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </Card>
+          </div>
+        ) : null}
+
+        {tab === "gallery" ? (
+          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card title={`Gallery (${galleryFiles.length})`}>
+              <div className="otg-grid2">
+                {galleryFiles.map((f) => (
+                  <div key={f.name} className="otg-card" style={{ padding: 10, overflow: "hidden" }}>
+                    {isVideoName(f.name) ? (
+                      <div style={{ position: "relative" }}>
+                        <video style={{ width: "100%", borderRadius: 16 }} controls muted playsInline src={f.url} />
+                        <button
+                          type="button"
+                          className="otg-btnGhost"
+                          style={{ position: "absolute", right: 10, top: 10, padding: "6px 10px" }}
+                          onClick={() => setMediaModal({ name: f.name, url: f.url, kind: "video" })}
+                        >
+                          Expand
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setMediaModal({ name: f.name, url: f.url, kind: "image" })}
+                        style={{ padding: 0, border: 0, background: "transparent", cursor: "pointer" }}
+                        aria-label={`Open ${f.name}`}
+                      >
+                        <img style={{ width: "100%", borderRadius: 16, display: "block" }} src={f.url} alt={f.name} />
+                      </button>
+                    )}
+                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div className="otg-help" style={{ marginTop: 0 }}>
+                        {f.name}
+                      </div>
+                      <div className="otg-row">
+                        <GhostButton onClick={() => showPromptFromGallery(f.name)} disabled={false}>
+                          Show Prompt
+                        </GhostButton>
+                        <button
+                          type="button"
+                          className="otg-btnGhost"
+                          title="Retry / Regenerate"
+                          onClick={() => retryFromGallery(f.name)}
+                          disabled={false}
+                          style={{ width: 40, height: 40, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                        >
+                          ↻
+                        </button>
+                        <button onClick={() => deleteFromGallery(f.name)} disabled={busy} className="otg-btnDanger">
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+        ) : null}
+
+        {tab === "favorites" ? (
+          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card title={`Favorites (${favoriteFiles.length})`}>
+              <div className="otg-grid2">
+                {favoriteFiles.map((f) => (
+                  <div key={f.name} className="otg-card" style={{ padding: 10, overflow: "hidden" }}>
+                    {isVideoName(f.name) ? <video style={{ width: "100%", borderRadius: 16 }} controls muted playsInline src={f.url} /> : <img style={{ width: "100%", borderRadius: 16 }} src={f.url} alt={f.name} />}
+                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div className="otg-help" style={{ marginTop: 0 }}>
+                        {f.name}
+                      </div>
+                      <div className="otg-row">
+                        <a href={f.url} download={f.name} className="otg-btnGhost">
+                          Download
+                        </a>
+                        <button onClick={() => deleteFromFavorites(f.name)} disabled={busy} className="otg-btnDanger">
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+        ) : null}
+
+        {tab === "settings" ? (
+          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card title="Settings">
+              <div className="otg-help" style={{ marginTop: 0, fontSize: 14, color: "rgba(244,244,247,.86)" }}>
+                Display
+              </div>
+
+              <div style={{ marginTop: 10 }}>
+                <div className="otg-cardTitle" style={{ marginBottom: 8, opacity: 0.9 }}>
+                  Font size
+                </div>
+                <input type="range" min={-150} max={150} step={1} value={fontDelta} onChange={(e) => setFontDelta(Number(e.target.value))} className="otg-range" />
+                <div className="otg-help" style={{ marginTop: 8 }}>
+                  {"Scale: "}
+                  {Math.round((1 + fontDelta / 300) * 100)}%
+                </div>
+              </div>
+
+              <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "14px 0" }} />
+
+              <div className="otg-help" style={{ marginTop: 0, fontSize: 14, color: "rgba(244,244,247,.86)" }}>
+                Pipeline
+              </div>
+              {pipelineStuck ? (
+                <div className="otg-warn" style={{ marginTop: 10 }}>
+                  The server says a generation is already running. Clear the pipeline to unlock.
+                </div>
+              ) : (
+                <div className="otg-help" style={{ marginTop: 10 }}>
+                  If you ever get the “already running” error, use this to reset server-side generation state.
+                </div>
+              )}
+              <div className="otg-row" style={{ marginTop: 10, justifyContent: "space-between" }}>
+                <button type="button" className="otg-btnDanger" onClick={onClearPipeline} disabled={busy} style={{ minWidth: 180 }}>
+                  Clear pipeline
+                </button>
+              </div>
+            </Card>
+
+            <Card title="Account">
+              <div className="otg-row" style={{ justifyContent: "space-between" }}>
+                <GhostButton onClick={onLogout}>Logout</GhostButton>
+              </div>
+            </Card>
+          </div>
+        ) : null}
+      </div>
+
+      {loraOpen ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4">
+          <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-zinc-900 p-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div className="text-lg font-semibold">LoRAs</div>
+              <button type="button" className="otg-btnGhost" onClick={() => setLoraOpen(false)}>
+                Close
+              </button>
+            </div>
+
+            <div className="otg-help" style={{ marginTop: 6 }}>
+              Selected LoRAs are applied to the workflow's existing LoRA loader nodes (if present).
+            </div>
+
+            {loraError ? (
+              <div className="otg-warn" style={{ marginTop: 10 }}>
+                {loraError}
+              </div>
+            ) : null}
+
+            <div className="mt-3 max-h-[50vh] overflow-auto space-y-2">
+              {loraBusy ? (
+                <div className="otg-help">Loading…</div>
+              ) : loraList.length === 0 ? (
+                <div className="otg-help">No LoRAs found in OTG_LORAS_ROOT.</div>
+              ) : (
+                loraList.map((it) => {
+                  const name = typeof it === "string" ? it : (it as any).name;
+                  const label = typeof it === "string" ? it : (it as any).label || (it as any).name;
+                  const chosen = loras.find((x) => x.name === name) || null;
+                  return (
+                    <div key={name} className="rounded-xl border border-white/10 bg-black/20 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <label className="flex items-center gap-3" style={{ minWidth: 0 }}>
+                          <input type="checkbox" checked={!!chosen} onChange={() => toggleLora(name)} />
+                          <span className="truncate" title={name}>
+                            {label}
+                          </span>
+                        </label>
+                        {chosen ? (
+                          <button type="button" className="otg-btnGhost" onClick={() => toggleLora(name)}>
+                            Remove
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {chosen ? (
+                        <div className="mt-3 space-y-3">
+                          <div>
+                            <div className="otg-help" style={{ marginTop: 0 }}>
+                              Strength (Model): {chosen.strengthModel.toFixed(2)}
+                            </div>
+                            <input
+                              className="otg-range"
+                              type="range"
+                              min={0}
+                              max={2}
+                              step={0.05}
+                              value={chosen.strengthModel}
+                              onChange={(e) => setLoraStrength(name, "strengthModel", Number(e.target.value))}
+                            />
+                          </div>
+                          <div>
+                            <div className="otg-help" style={{ marginTop: 0 }}>
+                              Strength (CLIP): {chosen.strengthClip.toFixed(2)}
+                            </div>
+                            <input
+                              className="otg-range"
+                              type="range"
+                              min={0}
+                              max={2}
+                              step={0.05}
+                              value={chosen.strengthClip}
+                              onChange={(e) => setLoraStrength(name, "strengthClip", Number(e.target.value))}
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="mt-4 flex items-center justify-between">
+              <button type="button" className="otg-btnGhost" onClick={() => setLoras([])}>
+                Clear selection
+              </button>
+              <button type="button" className="otg-btn" onClick={() => setLoraOpen(false)}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {mediaModal ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setMediaModal(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            className="otg-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(1100px, 96vw)", maxHeight: "92vh", overflow: "auto", padding: 14 }}
+          >
+            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <div className="otg-cardTitle" style={{ margin: 0 }}>{mediaModal.name}</div>
+              <div className="otg-row">
+                <a className="otg-btnGhost" href={mediaModal.url} download={mediaModal.name}>Download</a>
+                <button type="button" className="otg-btnGhost" onClick={() => setMediaModal(null)}>Close</button>
+              </div>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              {mediaModal.kind === "video" ? (
+                <video style={{ width: "100%", borderRadius: 16 }} controls playsInline src={mediaModal.url} />
+              ) : (
+                <img style={{ width: "100%", borderRadius: 16, display: "block" }} src={mediaModal.url} alt={mediaModal.name} />
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {promptModal ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setPromptModal(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            className="otg-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(980px, 96vw)", maxHeight: "92vh", overflow: "auto", padding: 14 }}
+          >
+            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div className="otg-cardTitle" style={{ margin: 0 }}>Prompt</div>
+                <div className="otg-help" style={{ marginTop: 6 }}>{promptModal.name}</div>
+              </div>
+              <button type="button" className="otg-btnGhost" onClick={() => setPromptModal(null)}>Close</button>
+            </div>
+
+            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              <div>
+                <div className="otg-help" style={{ marginTop: 0, opacity: 0.85 }}>Positive</div>
+                <textarea className="otg-textarea" readOnly value={String(promptModal.meta.positivePrompt || "") || "(none)"} />
+              </div>
+              <div>
+                <div className="otg-help" style={{ marginTop: 0, opacity: 0.85 }}>Negative</div>
+                <textarea className="otg-textarea" readOnly value={String(promptModal.meta.negativePrompt || "") || "(none)"} />
+              </div>
+              <div className="otg-help" style={{ marginTop: 0 }}>
+                {promptModal.meta.seed !== undefined && promptModal.meta.seed !== null ? <>Seed: <b>{String(promptModal.meta.seed)}</b></> : null}
+                {promptModal.meta.prompt_id ? <span style={{ marginLeft: 10, opacity: 0.85 }}>prompt_id: {String(promptModal.meta.prompt_id)}</span> : null}
+              </div>
+
+              <div className="otg-row">
+                <button
+                  type="button"
+                  className="otg-btnGhost"
+                  onClick={() => {
+                    const txt = String(promptModal.meta.positivePrompt || "");
+                    if (!txt) return;
+                    navigator.clipboard?.writeText(txt).catch(() => void 0);
+                    showToast("Copied positive prompt");
+                  }}
+                >
+                  Copy Positive
+                </button>
+                <button
+                  type="button"
+                  className="otg-btnGhost"
+                  onClick={() => {
+                    const txt = String(promptModal.meta.negativePrompt || "");
+                    if (!txt) return;
+                    navigator.clipboard?.writeText(txt).catch(() => void 0);
+                    showToast("Copied negative prompt");
+                  }}
+                >
+                  Copy Negative
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {toast ? <div className="otg-toast">{toast}</div> : null}
+
+      <BottomNav tab={tab} onTab={setTab} />
+    </main>
+  );
+}

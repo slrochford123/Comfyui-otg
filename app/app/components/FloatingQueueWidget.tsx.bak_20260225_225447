@@ -1,0 +1,310 @@
+﻿'use client';
+
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useFloatingQueue } from './FloatingQueueProvider';
+
+const POS_KEY = 'otg:queuePos_v2';
+
+type Pos = { x: number; y: number };
+
+type QueueItem = {
+  id: string;
+  title: string;
+  status: 'queued' | 'running' | 'complete' | 'error' | string;
+  focusId?: string | null;
+  resultName?: string | null;
+};
+
+function statusLabel(s: QueueItem['status']) {
+  if (s === 'running') return 'running';
+  if (s === 'queued') return 'queued';
+  if (s === 'complete') return 'complete';
+  if (s === 'error') return 'error';
+  return String(s || 'queued');
+}
+
+function normalizeTitle(raw: string) {
+  const t = String(raw || '').trim();
+  if (!t) return 'job';
+  // Keep it short and clean. Avoid unicode dashes that previously mojibaked.
+  // Examples: "Anime Image Creator", "WAN 2.2 Video", etc.
+  const cleaned = t
+    .replace(/\s+/g, ' ')
+    .replace(/[â€“â€”]/g, '-') // normalize long dashes
+    .trim();
+  return cleaned;
+}
+
+function shortTitle(raw: string, max = 18) {
+  const t = normalizeTitle(raw);
+  if (t.length <= max) return t;
+  return t.slice(0, Math.max(0, max - 1)).trimEnd() + 'â€¦';
+}
+
+export function FloatingQueueWidget() {
+  const router = useRouter();
+  const { items, isOpen, setOpen, clearAll } = useFloatingQueue();
+
+  const typedItems = items as unknown as QueueItem[];
+
+  // Sort for display: running first, then queued, then complete, then error.
+  const displayItems = useMemo(() => {
+    const rank = (s: QueueItem['status']) => {
+      if (s === 'running') return 0;
+      if (s === 'queued') return 1;
+      if (s === 'complete') return 2;
+      if (s === 'error') return 3;
+      return 9;
+    };
+    return [...typedItems].sort((a, b) => rank(a.status) - rank(b.status));
+  }, [typedItems]);
+
+  const activeCount = useMemo(
+    () => typedItems.filter((i) => i.status === 'queued' || i.status === 'running').length,
+    [typedItems]
+  );
+
+  const hasRunning = useMemo(() => typedItems.some((i) => i.status === 'running'), [typedItems]);
+
+  // numbers only
+  const badgeCount = activeCount > 0 ? activeCount : typedItems.length;
+
+  const [pos, setPos] = useState<Pos>(() => {
+    if (typeof window === 'undefined') return { x: 20, y: 20 };
+    try {
+      const raw = window.localStorage.getItem(POS_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') return parsed;
+    } catch {}
+    return { x: 20, y: 20 };
+  });
+
+  const dragRef = useRef<{
+    dragging: boolean;
+    startClientX: number;
+    startClientY: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+    pointerId: number | null;
+  }>({
+    dragging: false,
+    startClientX: 0,
+    startClientY: 0,
+    startX: 0,
+    startY: 0,
+    moved: false,
+    pointerId: null,
+  });
+
+  const prevCountRef = useRef<number>(typedItems.length);
+  const [pop, setPop] = useState(false);
+  const [lastAddedId, setLastAddedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typedItems.length > prevCountRef.current) {
+      const newest = typedItems[typedItems.length - 1];
+      setLastAddedId(newest?.id ?? null);
+      setPop(true);
+      const t = setTimeout(() => setPop(false), 280);
+      prevCountRef.current = typedItems.length;
+      return () => clearTimeout(t);
+    }
+    prevCountRef.current = typedItems.length;
+  }, [typedItems]);
+
+  if (typedItems.length === 0) return null;
+
+  const savePos = (p: Pos) => {
+    try {
+      window.localStorage.setItem(POS_KEY, JSON.stringify(p));
+    } catch {}
+  };
+
+  const visible = displayItems.slice(0, 3);
+  const remaining = Math.max(0, displayItems.length - visible.length);
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        right: pos.x,
+        bottom: pos.y,
+        zIndex: 9999,
+        userSelect: 'none',
+        touchAction: 'none',
+      }}
+      onPointerDown={(e) => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+        dragRef.current.dragging = true;
+        dragRef.current.pointerId = e.pointerId;
+        dragRef.current.startClientX = e.clientX;
+        dragRef.current.startClientY = e.clientY;
+        dragRef.current.startX = pos.x;
+        dragRef.current.startY = pos.y;
+        dragRef.current.moved = false;
+
+        (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        if (!dragRef.current.dragging) return;
+        if (dragRef.current.pointerId !== e.pointerId) return;
+
+        const dx = e.clientX - dragRef.current.startClientX;
+        const dy = e.clientY - dragRef.current.startClientY;
+
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragRef.current.moved = true;
+
+        const nx = Math.max(0, dragRef.current.startX - dx);
+        const ny = Math.max(0, dragRef.current.startY - dy);
+
+        setPos({ x: nx, y: ny });
+      }}
+      onPointerUp={(e) => {
+        if (dragRef.current.pointerId !== e.pointerId) return;
+
+        dragRef.current.dragging = false;
+        dragRef.current.pointerId = null;
+        savePos(pos);
+      }}
+      onPointerCancel={(e) => {
+        if (dragRef.current.pointerId !== e.pointerId) return;
+
+        dragRef.current.dragging = false;
+        dragRef.current.pointerId = null;
+        savePos(pos);
+      }}
+    >
+      {/* Custom keyframes (Tailwind-safe via plain class names) */}
+      <style jsx>{`
+        @keyframes otg-pop {
+          0% {
+            transform: scale(1);
+          }
+          35% {
+            transform: scale(1.12);
+          }
+          100% {
+            transform: scale(1);
+          }
+        }
+        @keyframes otg-breathe {
+          0% {
+            filter: drop-shadow(0 0 0 rgba(124, 58, 237, 0.0));
+          }
+          50% {
+            filter: drop-shadow(0 0 14px rgba(124, 58, 237, 0.55));
+          }
+          100% {
+            filter: drop-shadow(0 0 0 rgba(124, 58, 237, 0.0));
+          }
+        }
+        .otg-pop {
+          animation: otg-pop 280ms ease-out;
+        }
+        .otg-breathe {
+          animation: otg-breathe 1.6s ease-in-out infinite;
+        }
+      `}</style>
+
+      <button
+        type="button"
+        aria-label={`Jobs: ${badgeCount}`}
+        onClick={() => {
+          if (dragRef.current.moved) return;
+          setOpen(!isOpen);
+        }}
+        className={[
+          'relative inline-flex items-center justify-center',
+          'h-14 w-14 rounded-full',
+          'bg-gradient-to-r from-violet-600 to-sky-500',
+          'text-white font-extrabold text-lg',
+          'shadow-[0_12px_28px_rgba(0,0,0,0.45)]',
+          'focus:outline-none focus:ring-2 focus:ring-violet-300/60',
+          pop ? 'otg-pop' : '',
+          hasRunning ? 'otg-breathe' : '',
+        ].join(' ')}
+      >
+        {/* running halo */}
+        {hasRunning && (
+          <>
+            <span className="absolute -inset-2 rounded-full bg-violet-500/25 animate-ping" />
+            <span className="absolute -inset-1 rounded-full bg-sky-400/15 animate-pulse" />
+          </>
+        )}
+
+        <span className="relative">{badgeCount}</span>
+      </button>
+
+      {/* Panel */}
+      <div
+        className={[
+          'mt-3 w-[270px] max-w-[78vw]',
+          'rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl',
+          'shadow-[0_18px_55px_rgba(0,0,0,0.55)]',
+          'origin-bottom-right transition-all duration-200',
+          isOpen ? 'opacity-100 scale-100 translate-y-0 pointer-events-auto' : 'opacity-0 scale-95 translate-y-2 pointer-events-none',
+        ].join(' ')}
+      >
+        <div className="p-3">
+          <div className="space-y-2">
+            {visible.map((item) => {
+              const focus = item.focusId || item.resultName;
+              const clickable = item.status === 'complete' && !!focus;
+
+              const base = shortTitle(item.title, 18);
+              const label = statusLabel(item.status);
+
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  disabled={!clickable}
+                  onClick={() => {
+                    if (!clickable) return;
+                    const f = encodeURIComponent(String(focus));
+                    router.push(`/app?tab=gallery&focus=${f}`);
+                    setOpen(false);
+                  }}
+                  className={[
+                    'w-full text-left',
+                    'rounded-xl px-3 py-2',
+                    'border border-white/10 bg-white/5',
+                    'text-sm',
+                    'transition',
+                    clickable ? 'hover:bg-white/10 cursor-pointer' : 'cursor-default opacity-90',
+                    item.id === lastAddedId ? 'animate-bounce' : '',
+                  ].join(' ')}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="truncate">
+                      <span className="font-semibold">{base}</span>
+                      <span className="opacity-80"> {label}</span>
+                    </div>
+                    {item.status === 'running' && <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />}
+                    {item.status === 'queued' && <span className="h-2 w-2 rounded-full bg-amber-300" />}
+                    {item.status === 'complete' && <span className="h-2 w-2 rounded-full bg-sky-300" />}
+                    {item.status === 'error' && <span className="h-2 w-2 rounded-full bg-rose-400" />}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {remaining > 0 && <div className="mt-2 text-xs opacity-70">+{remaining} more</div>}
+
+          <button
+            type="button"
+            onClick={clearAll}
+            className="mt-3 w-full rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 py-2 text-xs font-semibold"
+          >
+            Clear All
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+

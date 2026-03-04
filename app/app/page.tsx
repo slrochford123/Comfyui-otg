@@ -1,12 +1,21 @@
 "use client";
 
+import { Suspense } from "react";
+import { useFloatingQueue } from "./components/FloatingQueueProvider";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import BottomNav, { type TabId } from "./components/BottomNav";
+import { useSearchParams } from "next/navigation";
+import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
 import ComfyStatusIndicator from "../components/ComfyStatusIndicator";
 import { withDeviceHeader } from "./studio/deviceHeader";
-
-
+import VoicesPanel from "./components/VoicesPanel";
+import AnglesPanel from "./components/AnglesPanel";
+import StoryboardPanel from "./components/StoryboardPanel";
+import GetHelpPanel from "./components/GetHelpPanel";
+import { type FloatingJob } from "./components/FloatingJobs";
+import SupportPanel from "./components/SupportPanel";
+import Ltx2I2vGraph from "./workflows/LTX2_I2V.json";
+import EditPicturesGraph from "./workflows/Edit_Pictures.json";
 type WorkflowItem = {
   id: string;
   label?: string;
@@ -14,6 +23,16 @@ type WorkflowItem = {
   format: "prompt_graph" | "ui_workflow" | "unknown";
   canRun?: boolean;
   needsImages?: number;
+};
+
+type OtgLoraChoice = { name: string; strengthModel: number; strengthClip: number };
+
+type LoraListItem = {
+  name: string;
+  label?: string;
+  file?: string;
+  size?: number;
+  mtimeMs?: number;
 };
 
 type LastContent = {
@@ -25,6 +44,18 @@ type LastContent = {
 };
 
 type GalleryFile = { name: string; ts?: number; size?: number; url: string };
+
+type GalleryMeta = {
+  prompt_id?: string | null;
+  preset?: string | null;
+  title?: string | null;
+  positivePrompt?: string | null;
+  negativePrompt?: string | null;
+  prompts?: any;
+  loras?: any;
+  seed?: any;
+  submitPayload?: any;
+};
 
 type PreviewFile = { name: string; kind: "image" | "video"; url: string };
 
@@ -41,6 +72,34 @@ type ContentState = {
 function isVideoName(name: string) {
   return /\.(mp4|webm|mov)$/i.test(name || "");
 }
+
+async function safeJson(res: Response) {
+  const text = await res.text();
+  try {
+    return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : null, raw: text };
+  } catch {
+    return { ok: res.ok, status: res.status, data: null, raw: text };
+  }
+}
+
+
+async function uploadAndTranscribeAudio(blob: Blob, filename = "recording.webm"): Promise<{ text: string }> {
+  const fd = new FormData();
+  fd.append("audio", blob, filename);
+
+  const res = await fetch("/api/ollama-ai/transcribe", {
+    method: "POST",
+    headers: withDeviceHeader(),
+    body: fd,
+  });
+
+  const j = await safeJson(res);
+  if (!j.ok) {
+    throw new Error(String((j.data as any)?.error || j.raw || `Transcribe failed (${j.status})`));
+  }
+  return { text: String((j.data as any)?.text || "").trim() };
+}
+
 
 async function jfetch<T = any>(url: string, init?: RequestInit) {
   const r = await fetch(url, { credentials: "include", ...init, cache: "no-store" });
@@ -94,8 +153,94 @@ function GhostButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
 }
 
 
-export default function AppPage() {
-  const [tab, setTab] = useState<TabId>("generate");
+function AppPage() {
+  const fq = useFloatingQueue();
+  const searchParams = useSearchParams();
+  const [tab, setTab] = useState<SpinTabId>("generate");
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+
+  const [comfyTargets, setComfyTargets] = useState<{ id: string; label: string; baseUrl: string }[]>([]);
+  const [comfyTargetId, setComfyTargetId] = useState<string | null>(null);
+  const [comfyStatuses, setComfyStatuses] = useState<Record<string, boolean | null>>({});
+  const [gpuMenuOpen, setGpuMenuOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+  const focus = (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("focus") : null) || "";
+
+    if (!isAdmin) return;
+    (async () => {
+      try {
+        const j = await jfetch<{ ok: boolean; current: string | null; targets: any[] }>("/api/admin/comfy-target");
+        if (j?.ok) {
+          setComfyTargets(Array.isArray(j.targets) ? (j.targets as any) : []);
+          setComfyTargetId(j.current || null);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+  }, [isAdmin]);
+
+  const setAdminComfyTarget = useCallback(async (id: string | null) => {
+    if (!isAdmin) return;
+    try {
+      const j = await jfetch<{ ok: boolean; current: string | null }>("/api/admin/comfy-target", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: id || "" }),
+      });
+      if (j?.ok) setComfyTargetId(j.current || null);
+    } catch {
+      // ignore
+    }
+  }, [isAdmin]);
+
+  const pickTargetId = useCallback(
+    (needle: string) =>
+      comfyTargets.find(
+        (t) =>
+          String(t.id).toLowerCase().includes(needle) || String(t.label || "").toLowerCase().includes(needle)
+      )?.id || null,
+    [comfyTargets]
+  );
+
+  const refreshComfyStatuses = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      const j = await jfetch<{ ok: boolean; statuses: { id: string; online: boolean }[] }>(
+        "/api/admin/comfy-target/status"
+      );
+      if (j?.ok && Array.isArray(j.statuses)) {
+        const next: Record<string, boolean> = {};
+        for (const s of j.statuses) next[String(s.id)] = Boolean((s as any).online);
+        setComfyStatuses(next);
+      }
+    } catch {
+      // ignore
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    refreshComfyStatuses();
+    const t = setInterval(refreshComfyStatuses, 8000);
+    return () => clearInterval(t);
+  }, [isAdmin, refreshComfyStatuses]);
+
+
+
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/whoami", { credentials: "include", cache: "no-store" });
+        const data = await r.json().catch(() => null);
+        setIsAdmin(Boolean(data?.user?.admin));
+      } catch {
+        setIsAdmin(false);
+      }
+    })();
+  }, []);
 
   const [fontDelta, setFontDelta] = useState<number>(0); // -150 .. 150 (0 baseline)
 
@@ -122,6 +267,15 @@ export default function AppPage() {
     })();
   }, [activeWorkflow?.id]);
 
+  const isWanWorkflow = useMemo(() => {
+    const id = String(activeWorkflow?.id || "");
+    const label = String(activeWorkflow?.label || "");
+    if (/\bwan\b/i.test(id) || /\bwan\b/i.test(label)) return true;
+    const txt = String(activeWorkflowText || "");
+    return /WanImageToVideo|EmptyHunyuanLatentVideo/i.test(txt);
+  }, [activeWorkflow?.id, activeWorkflow?.label, activeWorkflowText]);
+
+
 // Compute required image inputs from workflow metadata or placeholders.
 const needsImages = useMemo(() => {
   // Prefer explicit workflow metadata when present
@@ -132,13 +286,23 @@ const needsImages = useMemo(() => {
 
   // Fall back to scanning the workflow JSON text for placeholders.
   const txt = activeWorkflowText || "";
-  // Common placeholders used by OTG
-  const slots = ["__OTG_IMAGE_A__", "__OTG_IMAGE_B__", "__OTG_IMAGE_C__", "__OTG_IMAGE_D__"];
-  let maxIdx = -1;
-  for (let i = 0; i < slots.length; i++) {
-    if (txt.includes(slots[i])) maxIdx = i;
+  // Common placeholders used by OTG (legacy + newer compatible workflows)
+  const legacySlots = ["__OTG_IMAGE_A__", "__OTG_IMAGE_B__", "__OTG_IMAGE_C__", "__OTG_IMAGE_D__"];
+  const newSlots = ["otg__INPUT_1.png", "otg__INPUT_2.png", "otg__INPUT_3.png", "otg__INPUT_4.png"];
+
+  let legacyMax = -1;
+  for (let i = 0; i < legacySlots.length; i++) {
+    if (txt.includes(legacySlots[i])) legacyMax = i;
   }
-  return maxIdx >= 0 ? maxIdx + 1 : 0;
+  const legacyCount = legacyMax >= 0 ? legacyMax + 1 : 0;
+
+  let newMax = -1;
+  for (let i = 0; i < newSlots.length; i++) {
+    if (txt.includes(newSlots[i])) newMax = i;
+  }
+  const newCount = newMax >= 0 ? newMax + 1 : 0;
+
+  return Math.max(legacyCount, newCount);
 }, [activeWorkflow, activeWorkflowText]);
 
 
@@ -147,6 +311,69 @@ const needsImages = useMemo(() => {
   // Generate form
   const [positivePrompt, setPositivePrompt] = useState<string>("");
   const [negativePrompt, setNegativePrompt] = useState<string>("");
+
+  const [promptMicRecording, setPromptMicRecording] = useState<boolean>(false);
+  const [promptMicBusy, setPromptMicBusy] = useState<boolean>(false);
+  const promptMicSupported = useMemo(() => {
+    const hasGum = typeof navigator !== "undefined" && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    const hasRecorder = typeof (window as any).MediaRecorder !== "undefined";
+    return hasGum && hasRecorder;
+  }, []);
+  const [promptMediaRec, setPromptMediaRec] = useState<MediaRecorder | null>(null);
+
+  const startPromptMicRecording = async () => {
+    if (promptMicRecording || promptMicBusy) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const chunks: Blob[] = [];
+      const mr = new MediaRecorder(stream);
+      mr.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+      mr.onstop = async () => {
+        try {
+          const blob = new Blob(chunks, { type: mr.mimeType || "audio/webm" });
+          setPromptMicBusy(true);
+          const { text } = await uploadAndTranscribeAudio(blob);
+          if (text) {
+            setPositivePrompt((prev) => {
+              const p = String(prev || "");
+              const sep = p && !/\s$/.test(p) ? " " : "";
+              return (p + sep + text).trimStart();
+            });
+          }
+        } catch (e) {
+          console.warn("Prompt mic transcribe failed", e);
+        } finally {
+          setPromptMicRecording(false);
+          setPromptMicBusy(false);
+          // stop tracks
+          try { stream.getTracks().forEach((t) => t.stop()); } catch {}
+          setPromptMediaRec(null);
+        }
+      };
+      mr.start();
+      setPromptMediaRec(mr);
+      setPromptMicRecording(true);
+    } catch (e) {
+      console.warn("Prompt mic start failed", e);
+      setPromptMicRecording(false);
+      setPromptMicBusy(false);
+      setPromptMediaRec(null);
+    }
+  };
+
+  const stopPromptMicRecording = () => {
+    if (!promptMediaRec || !promptMicRecording) return;
+    try {
+      promptMediaRec.stop();
+    } catch {
+      setPromptMicRecording(false);
+      setPromptMicBusy(false);
+      setPromptMediaRec(null);
+    }
+  };
+
   const [enhanceBusy, setEnhanceBusy] = useState<boolean>(false);
   const [enhanceMsg, setEnhanceMsg] = useState<string | null>(null);
 
@@ -154,12 +381,56 @@ const needsImages = useMemo(() => {
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [deleteAccountBusy, setDeleteAccountBusy] = useState(false);
   const [deleteAccountErr, setDeleteAccountErr] = useState<string | null>(null);
-  // Locked settings (simple MVP):
-  // - Seed is always random
-  // - Resolution is always 720x1280 (portrait) or 1280x720 (landscape)
-  // - Duration options are fixed (video)
   const [orientation, setOrientation] = useState<"portrait" | "landscape">("portrait");
   const [durationSeconds, setDurationSeconds] = useState<string>("5");
+
+// WAN 2.2: hard cap duration to 9s (10s reliably OOMs).
+useEffect(() => {
+  if (!isWanWorkflow) return;
+  if (String(durationSeconds) === "10") setDurationSeconds("9");
+}, [isWanWorkflow, durationSeconds]);
+
+  const [generationTitle, setGenerationTitle] = useState<string>("");
+  // "default" means: do not inject width/height overrides at all (leave workflow unchanged).
+  const [sizePreset, setSizePreset] = useState<"default" | "480p" | "512p" | "720p">("default");
+
+  // LoRAs (optional)
+  const [loras, setLoras] = useState<OtgLoraChoice[]>([]);
+  const [loraOpen, setLoraOpen] = useState(false);
+  const [loraList, setLoraList] = useState<LoraListItem[]>([]);
+  const [loraLoading, setLoraLoading] = useState(false);
+  const [loraErr, setLoraErr] = useState<string | null>(null);
+  const [renderConfirm, setRenderConfirm] = useState<null | {
+    title?: string;
+    workflow: string;
+    orientation: string;
+    size: string;
+    duration: string;
+    loras: OtgLoraChoice[];
+    gpu: string;
+  }>(null);
+  const [renderConfirmStatus, setRenderConfirmStatus] = useState<"idle" | "submitted" | "done">("idle");
+const currentRenderConfirm = useMemo(() => {
+  const wfName = activeWorkflow?.label || activeWorkflow?.id || "-Â";
+  const sizeLabel = sizePreset === "default" ? "Default (workflow native)" : sizePreset;
+  const gpuLabel = (() => {
+    const id = comfyTargetId || "";
+    const tgt = comfyTargets.find((x) => String(x.id) === String(id));
+    return tgt ? String(tgt.label || tgt.id) : (id ? String(id) : "-Â");
+  })();
+  return {
+    title: isAdmin ? (generationTitle || "") : "",
+    workflow: wfName,
+    orientation,
+    size: sizeLabel,
+    duration: `${durationSeconds}s`,
+    loras,
+    gpu: gpuLabel,
+  };
+}, [activeWorkflow?.id, activeWorkflow?.label, orientation, sizePreset, durationSeconds, loras, comfyTargetId, comfyTargets, isAdmin, generationTitle]);
+
+const confirmView = renderConfirm || currentRenderConfirm;
+
 
   const [imgA, setImgA] = useState<File | null>(null);
   const [imgB, setImgB] = useState<File | null>(null);
@@ -203,6 +474,7 @@ const needsImages = useMemo(() => {
   // Preview
   const [last, setLast] = useState<LastContent | null>(null);
   const [latestPreview, setLatestPreview] = useState<PreviewFile | null>(null);
+  const [showGeneratedPreview, setShowGeneratedPreview] = useState<boolean>(false);
   
 
 const effectivePreview = useMemo<PreviewFile | null>(() => {
@@ -226,14 +498,126 @@ const canSendToGallery = useMemo(() => {
 }, [effectivePreview]);
 
   const [busy, setBusy] = useState<boolean>(false);
+  // Per Shawn request: unlock UI for all users (no single-generation lock).
+  const uiLocked = false;
+
+  const [mediaModal, setMediaModal] = useState<null | { name: string; url: string; kind: "image" | "video" }>(null);  
   const [err, setErr] = useState<string | null>(null);
   const [pipelineStuck, setPipelineStuck] = useState<boolean>(false);
+
+  const [jobs, setJobs] = useState<FloatingJob[]>([]);
 
   // Realtime progress (ComfyUI ws -> OTG SSE)
   const [progressPct, setProgressPct] = useState<number>(0);
   const [progressMsg, setProgressMsg] = useState<string>("Idle");
   const [currentPromptId, setCurrentPromptId] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const pid = localStorage.getItem('otg:lastPromptId');
+      if (pid && !currentPromptId) {
+        setCurrentPromptId(pid);
+        try { startProgressStream({ promptId: pid }); } catch {}
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
+  // Persist UI state so refresh does not wipe the app.
+  const APP_STATE_KEY = 'otg:appState_v1';
+
+  useEffect(() => {
+    try {
+      const sp = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+      const urlTab = sp?.get("tab");
+      const urlFocus = sp?.get("focus");
+      const urlWins = !!(urlTab || urlFocus);
+      const raw = localStorage.getItem(APP_STATE_KEY);
+      if (!raw) return;
+      const st = JSON.parse(raw);
+      if (!urlWins && st?.tab) setTab(st.tab);
+      if (typeof st?.positivePrompt === 'string') setPositivePrompt(st.positivePrompt);
+      if (typeof st?.negativePrompt === 'string') setNegativePrompt(st.negativePrompt);
+      if (st?.orientation) setOrientation(st.orientation);
+      if (st?.sizePreset) setSizePreset(st.sizePreset);
+      if (typeof st?.durationSeconds === 'string') setDurationSeconds(st.durationSeconds);
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        const st = { tab, positivePrompt, negativePrompt, orientation, sizePreset, durationSeconds };
+        localStorage.setItem(APP_STATE_KEY, JSON.stringify(st));
+      } catch {}
+    }, 250);
+    return () => clearTimeout(t);
+  }, [tab, positivePrompt, negativePrompt, orientation, sizePreset, durationSeconds]);
+
+  // URL_TAB_SYNC_V1: allow deep-links like /app?tab=gallery&focus=<name>
+  useEffect(() => {
+    try {
+      const t = searchParams?.get("tab");
+      const f = searchParams?.get("focus");
+      if (f) {
+        setGalleryFocus(f);
+        setTab("gallery");
+        return;
+      }
+      if (t && (t === "generate" || t === "gallery" || t === "favorites" || t === "angles" || t === "storyboard" || t === "gethelp" || t === "voices" || t === "support" || t === "settings")) {
+        setTab(t as any);
+      }
+    } catch {}
+  }, [searchParams]);
+
+  // When gallery loads, scroll the focused item into view.
+  useEffect(() => {
+    if (tab !== "gallery") return;
+    if (!focus) return;
+    const t = setTimeout(() => {
+      try {
+        galleryFocusRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch {}
+    }, 150);
+    return () => clearTimeout(t);
+  
+}, [tab]);
+
+
   const sseRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    if (renderConfirmStatus !== "submitted") return;
+    const done = (last?.status && last.status !== "running" && last.status !== "idle") || (progressPct >= 100 && last?.status !== "running");
+    if (done) setRenderConfirmStatus("done");
+  }, [last?.status, progressPct, renderConfirmStatus]);
+
+  useEffect(() => {
+    if (!currentPromptId) return;
+    if (!last?.status) return;
+
+    // Update the bubble queue item as state changes.
+    if (last.status === "running") {
+      try { fq.update(currentPromptId, { status: "running" }); } catch {}
+      return;
+    }
+
+    if (last.status === "idle") return;
+
+    const done = last.status === "done" || last.status === "ready";
+    const error = last.status === "error";
+    try {
+      if (done) fq.update(currentPromptId, { status: "complete", focusId: last?.file?.name || undefined, resultName: last?.file?.name || undefined });
+      else if (error) fq.update(currentPromptId, { status: "error" });
+    } catch {}
+
+    setJobs((prev) =>
+      prev.map((j) => (j.id === currentPromptId ? { ...j, status: (last.status === "done" || last.status === "ready") ? "done" : "error" } : j)),
+    );
+  }, [currentPromptId, last?.status]);
+
 
   const getOrCreateDeviceId = useCallback(() => {
     if (typeof window === "undefined") return "desktop_default";
@@ -345,8 +729,8 @@ const canSendToGallery = useMemo(() => {
   // because 100% was too small on projector/phone.
   // Then allow users to scale up another +150% on top of that.
     // Font scaling
-  // Slider is centered: -150 → 0 → +150 (0 is baseline).
-  // We map this to a gentle overall UI scale of ~0.7x → 1.5x.
+  // Slider is centered: -150 to 0 to +150 (0 is baseline).
+  // We map this to a gentle overall UI scale of ~0.7x to 1.5x.
   useEffect(() => {
     try {
       const raw = localStorage.getItem("otg_font_delta");
@@ -381,13 +765,27 @@ const canSendToGallery = useMemo(() => {
     // Prefer our simplified set if present; otherwise show everything.
     
 // Always show all workflows returned by the server (the server merges index.json + folder scan).
-setWorkflows(list);
+const HIDDEN_BASES = new Set(["index", "index.example", "schema"]);
+const filtered = list.filter((w) => {
+  const base = String(w.id || "").toLowerCase().split("/").pop() || "";
+  return !HIDDEN_BASES.has(base);
+});
+
+setWorkflows(filtered);
 
 // Ensure selected workflow exists
-const exists = list.some((w) => w.id === workflowId);
-if (!exists && list[0]) setWorkflowId(list[0].id);
+const exists = filtered.some((w) => w.id === workflowId);
+if (!exists && filtered[0]) setWorkflowId(filtered[0].id);
 }, [workflowId]);
 
+
+
+  // AUTOLOAD_WORKFLOWS_V1: when entering Generate, fetch workflow list automatically.
+  useEffect(() => {
+    if (tab !== "generate") return;
+    if (workflows.length) return;
+    loadWorkflows().catch(() => void 0);
+  }, [tab, workflows.length, loadWorkflows]);
   const onSyncWorkflows = useCallback(async () => {
     setErr(null);
     setBusy(true);
@@ -404,7 +802,7 @@ if (!exists && list[0]) setWorkflowId(list[0].id);
   const onEnhancePrompt = useCallback(async () => {
     const ptxt = (positivePrompt || "").trim();
     if (!ptxt) return;
-    setEnhanceMsg("Please wait, enhancing prompt…");
+    setEnhanceMsg("Please wait, enhancing prompt...");
     setEnhanceBusy(true);
     try {
       const r = await fetch("/api/enhance", {
@@ -435,12 +833,56 @@ if (!exists && list[0]) setWorkflowId(list[0].id);
     }
   }, [positivePrompt]);
 
+
+const openLoraPicker = useCallback(async () => {
+  setLoraErr(null);
+  setLoraOpen(true);
+  if (loraList.length) return;
+  try {
+    setLoraLoading(true);
+    const r = await fetch("/api/loras", { cache: "no-store" });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j?.ok) throw new Error(j?.error || `Failed to load LoRAs (${r.status})`);
+    const items: LoraListItem[] = Array.isArray(j.items) ? j.items : [];
+    items.sort((a, b) => String(a.label || a.name).localeCompare(String(b.label || b.name)));
+    setLoraList(items);
+  } catch (e: any) {
+    setLoraErr(String(e?.message || e));
+  } finally {
+    setLoraLoading(false);
+  }
+}, [loraList.length]);
+
+const toggleLora = useCallback((name: string) => {
+  setLoras((prev) => {
+    const idx = prev.findIndex((x) => x.name === name);
+    if (idx >= 0) return prev.filter((x) => x.name !== name);
+    return [...prev, { name, strengthModel: 1, strengthClip: 1 }];
+  });
+}, []);
+
+const setLoraStrength = useCallback((name: string, which: "model" | "clip", value: number) => {
+  setLoras((prev) =>
+    prev.map((x) => {
+      if (x.name !== name) return x;
+      const v = Math.max(0, Math.min(2, Number.isFinite(value) ? value : 1));
+      return which === "model" ? { ...x, strengthModel: v } : { ...x, strengthClip: v };
+    })
+  );
+}, []);
+
   
 
 const onSendToGallery = useCallback(async () => {
   if (!effectivePreview) return;
   setErr(null);
   try {
+    const wfLabel = activeWorkflow?.label || activeWorkflow?.id || "(unknown)";
+    const sizeLabel = sizePreset === "default" ? "Default" : sizePreset;
+    const gpuLabel = (comfyTargets.find(t => t.id === comfyTargetId)?.label) || (comfyTargetId ? String(comfyTargetId) : "Default");
+    setRenderConfirm({ title: (generationTitle || "").trim(), workflow: wfLabel, orientation, size: sizeLabel, duration: `${durationSeconds}s`, loras: loras.slice(), gpu: gpuLabel });
+    setRenderConfirmStatus("submitted");
+
     setBusy(true);
     const r = await fetch("/api/content/gallery", { method: "POST" });
     const j = await r.json().catch(() => null);
@@ -576,6 +1018,7 @@ const onShowContent = useCallback(async () => {
   try {
     const res = await fetchLast();
     if (res) setLast(res);
+    setShowGeneratedPreview(true);
         if (res?.status !== "running" && res?.file?.url && res?.file?.name) {
           const kind: "image" | "video" = isVideoName(res.file.name) ? "video" : "image";
           setLatestPreview({ name: res.file.name, url: res.file.url, kind });
@@ -598,7 +1041,7 @@ const onShowContent = useCallback(async () => {
 }, [fetchLast, fetchLatestFromGallery]);
 
 const onGenerate = useCallback(async () => {
-  if (busy) return;
+  // Intentionally allow multiple submissions (no client-side lock).
   setErr(null);
 
   if (!activeWorkflow?.id) {
@@ -614,8 +1057,22 @@ const onGenerate = useCallback(async () => {
     return;
   }
 
+  // Floating queue widget: create an entry immediately so the bubble appears as soon as we submit.
+  const queueTempId = `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const queueTitle =
+    (isAdmin && String(generationTitle || "").trim())
+      ? String(generationTitle || "").trim()
+      : (activeWorkflow?.label || activeWorkflow?.id || "Generation");
+  let queueId: string = queueTempId;
+  fq.add({ id: queueTempId, title: queueTitle, status: "queued" });
+
+
   try {
     setBusy(true);
+
+    // Snapshot current selections for the confirmation block
+    setRenderConfirm({ ...currentRenderConfirm });
+    setRenderConfirmStatus("submitted");
 
     // Mark running but keep existing preview visible.
     setLast((prev) => ({ ...(prev || ({} as any)), status: "running" } as any));
@@ -627,8 +1084,27 @@ const onGenerate = useCallback(async () => {
     fd.append("workflowId", activeWorkflow.id);
     fd.append("prompt", (positivePrompt || "").toString());
     fd.append("negativePrompt", (negativePrompt || "").toString());
+    if (isAdmin && String(generationTitle || "").trim()) {
+      fd.append("title", String(generationTitle).trim());
+    }
     fd.append("orientation", orientation);
     fd.append("durationSeconds", durationSeconds);
+    // Size/orientation controls.
+    // If sizePreset is "default", do not override the workflow dimensions.
+    if (sizePreset !== "default") {
+      const short = sizePreset === "480p" ? 480 : sizePreset === "512p" ? 512 : 720;
+      const long = Math.round((short * 16) / 9 / 8) * 8;
+      const baseW = short;
+      const baseH = long;
+      const w = orientation === "portrait" ? baseW : baseH;
+      const h = orientation === "portrait" ? baseH : baseW;
+      fd.append("width", String(w));
+      fd.append("height", String(h));
+    }
+
+    if (loras.length > 0) {
+      fd.append("loras", JSON.stringify(loras.map((l) => ({ name: l.name, strengthModel: l.strengthModel, strengthClip: l.strengthClip }))));
+    }
 
     // Images: if the workflow expects multiple slots but the user selected only 1-2,
     // duplicate Image 1 into missing slots so the server has deterministic inputs.
@@ -644,7 +1120,7 @@ const onGenerate = useCallback(async () => {
       let t = "";
       try { t = await r.text(); } catch {}
       if (r.status === 401) {
-        throw new Error(`Create failed (401): Unauthorized. Your session may have expired — please log in again.`);
+        throw new Error(`Create failed (401): Unauthorized. Your session may have expired -Â please log in again.`);
       }
       throw new Error(`Create failed (${r.status}): ${t || r.statusText}`);
     }
@@ -658,6 +1134,26 @@ const onGenerate = useCallback(async () => {
       // ignore
     }
     setCurrentPromptId(promptId);
+      try { localStorage.setItem('otg:lastPromptId', String(promptId)); } catch {}
+
+    // Floating queue widget: if we received a ComfyUI prompt_id, replace the temp entry.
+    if (promptId) {
+      try {
+        fq.remove(queueTempId);
+      } catch {}
+      fq.add({ id: promptId, title: queueTitle, status: "queued" });
+      queueId = promptId;
+    }
+
+    // Track in floating queue
+    setJobs((prev) => {
+      const id = promptId || `local-${Date.now()}`;
+      const title =
+        (isAdmin ? (currentRenderConfirm?.title || "") : "") ||
+        (activeWorkflow?.label || activeWorkflow?.id || "Generation");
+      return [...prev, { id, title, status: "submitted", createdAt: Date.now() }];
+    });
+
     startProgressStream({ promptId });
 
     // Let polling update the UI; also attempt to show content immediately after a short delay.
@@ -665,6 +1161,12 @@ const onGenerate = useCallback(async () => {
   } catch (e: any) {
     const msg = e?.message || String(e);
     setErr(msg);
+
+    // Floating queue widget: reflect failure.
+    try {
+      if (queueId && queueId.startsWith("local-")) fq.remove(queueId);
+      else if (queueId) fq.update(queueId, { status: "error", errorMessage: msg });
+    } catch {}
     // If the server believes a job is still running (409), the pipeline can get
     // stuck until the server-side content state is cleared.
     if (/\(409\)/.test(msg) || /already running/i.test(msg)) {
@@ -675,6 +1177,9 @@ const onGenerate = useCallback(async () => {
     setBusy(false);
   }
 }, [
+  isAdmin,
+  generationTitle,
+  currentRenderConfirm,
   activeWorkflow,
   busy,
   durationSeconds,
@@ -686,9 +1191,10 @@ const onGenerate = useCallback(async () => {
   onShowContent,
   orientation,
   positivePrompt,
+  sizePreset,
   startPoll,
   startProgressStream,
-  stopPoll,
+  stopPoll
 ]);
 
 const onClearPreview = useCallback(async () => {
@@ -735,7 +1241,26 @@ const onClearPreview = useCallback(async () => {
 
   // Gallery/Favorites
   const [galleryFiles, setGalleryFiles] = useState<any[]>([]);
+  const [galleryFocus, setGalleryFocus] = useState<string | null>(null);
+  const galleryFocusRef = React.useRef<HTMLDivElement | null>(null);
+
   const [favoriteFiles, setFavoriteFiles] = useState<any[]>([]);
+
+  // Gallery -> Animate (LTX2 I2V)
+  const [animateModal, setAnimateModal] = useState<null | { name: string; url: string }>(null);
+  const [animatePrompt, setAnimatePrompt] = useState<string>("");
+  const [animateSeconds, setAnimateSeconds] = useState<5 | 10>(5);
+  const [animateBusy, setAnimateBusy] = useState<boolean>(false);
+  const [animateErr, setAnimateErr] = useState<string>("");
+
+  // Gallery -> Edit Image (Qwen Image Edit workflow)
+  const [editModal, setEditModal] = useState<null | { name: string; url: string }>(null);
+  const [editPosPrompt, setEditPosPrompt] = useState<string>("");
+  const [editNegPrompt, setEditNegPrompt] = useState<string>("");
+  const [editBusy, setEditBusy] = useState<boolean>(false);
+  const [editErr, setEditErr] = useState<string>("");
+
+  const favoriteNameSet = useMemo(() => new Set((favoriteFiles || []).map((x: any) => String(x?.name || ""))), [favoriteFiles]);
 
   const loadGallery = useCallback(async () => {
     const res = await jfetch<{ ok: boolean; files: any[] }>("/api/gallery");
@@ -747,7 +1272,11 @@ const onClearPreview = useCallback(async () => {
   }, []);
 
   useEffect(() => {
-    if (tab === "gallery") loadGallery().catch(() => void 0);
+    if (tab === "gallery") {
+      loadGallery().catch(() => void 0);
+      // needed for the heart state in Gallery
+      loadFavorites().catch(() => void 0);
+    }
     if (tab === "favorites") loadFavorites().catch(() => void 0);
   }, [tab, loadGallery, loadFavorites]);
 
@@ -777,30 +1306,222 @@ const onClearPreview = useCallback(async () => {
     }
   }, [loadFavorites]);
 
-  const addToFavoritesFromGallery = useCallback(async (name: string) => {
+  const toggleFavoriteFromGallery = useCallback(async (name: string) => {
     setErr(null);
     setBusy(true);
     try {
-      await jfetch(`/api/favorites/add?name=${encodeURIComponent(name)}`, { method: "POST" });
+      const isFav = favoriteNameSet.has(String(name));
+      if (isFav) {
+        await jfetch(`/api/favorites/delete?name=${encodeURIComponent(name)}`, { method: "POST" });
+      } else {
+        await jfetch(`/api/favorites/add?name=${encodeURIComponent(name)}`, { method: "POST" });
+      }
       await loadFavorites();
     } catch (e: any) {
       setErr(String(e?.message || e));
     } finally {
       setBusy(false);
     }
-  }, [loadFavorites]);
+  }, [favoriteNameSet, loadFavorites]);
 
-  const sendToStudioFromGallery = useCallback(async (name: string) => {
+  const renameFromGallery = useCallback(async (name: string) => {
     setErr(null);
-    setBusy(true);
     try {
-      await jfetch(`/api/studio/send?name=${encodeURIComponent(name)}`, { method: "POST" });
+      const base = String(name || "").trim();
+      if (!base) return;
+      const suggested = base.replace(/\.[^.]+$/, "");
+      const input = window.prompt("Rename file (do not include folders). Extension optional.", suggested);
+      if (input === null) return;
+      const newNameRaw = String(input || "").trim();
+      if (!newNameRaw) return;
+
+      const res = await jfetch<{ ok: boolean; name?: string; oldName?: string; error?: string }>("/api/gallery/rename", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: base, newName: newNameRaw }),
+      });
+
+      if (!res?.ok || !res?.name) throw new Error(String(res?.error || "Rename failed"));
+
+      const newName = String(res.name);
+      setGalleryFiles((prev) =>
+        (prev || []).map((f: any) => {
+          if (String(f?.name) !== String(base)) return f;
+          return { ...f, name: newName, url: `/api/gallery/file?name=${encodeURIComponent(newName)}` };
+        })
+      );
+
+      // Update favorites list (server also attempts to rename favorite copy if present)
+      await loadFavorites();
+
+      if (galleryFocus && String(galleryFocus) === String(base)) setGalleryFocus(newName);
     } catch (e: any) {
       setErr(String(e?.message || e));
-    } finally {
-      setBusy(false);
     }
-  }, []);
+  }, [galleryFocus, loadFavorites]);
+
+  const submitEditFromGallery = useCallback(async () => {
+    if (!editModal) return;
+    const pos = String(editPosPrompt || "").trim();
+    if (!pos) {
+      setEditErr("Positive edit prompt is required.");
+      return;
+    }
+    setEditBusy(true);
+    setEditErr("");
+    setErr(null);
+    try {
+      const imgRes = await fetch(editModal.url, { credentials: "include", cache: "no-store" });
+      if (!imgRes.ok) throw new Error(`Failed to load image (${imgRes.status})`);
+      const blob = await imgRes.blob();
+      const file = new File([blob], editModal.name, { type: blob.type || "image/png" });
+
+      const graph: any = JSON.parse(JSON.stringify(EditPicturesGraph as any));
+
+      // Map text prompt nodes to OTG placeholders so /api/comfy can inject them.
+      if (graph?.["440"]?.inputs) graph["440"].inputs.prompt = "__OTG_POSITIVE_PROMPT__";
+      if (graph?.["442"]?.inputs) graph["442"].inputs.prompt = "__OTG_NEGATIVE_PROMPT__";
+
+      const fd = new FormData();
+      fd.append("imageA", file, file.name);
+      fd.append("positivePrompt", pos);
+      fd.append("negativePrompt", String(editNegPrompt || ""));
+      fd.append("promptJson", JSON.stringify(graph));
+
+      fd.append("client_id", getOrCreateDeviceId());
+      if (isAdmin && comfyTargetId) fd.append("comfyTargetId", String(comfyTargetId));
+
+      const res = await fetch("/api/comfy", { method: "POST", headers: withDeviceHeader(), body: fd });
+      const j = await safeJson(res);
+      if (!j.ok) throw new Error((j.data as any)?.error || j.raw || `Submit failed (${j.status})`);
+
+      const promptId = String((j.data as any)?.prompt_id || "");
+      const tempId = `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      fq.add({ id: promptId || tempId, title: `Edit: ${editModal.name}`, status: "queued" });
+
+      startProgressStream({ promptId });
+      showToast("Submitted edit");
+      setEditModal(null);
+      setEditPosPrompt("");
+      setEditNegPrompt("");
+    } catch (e: any) {
+      setEditErr(String(e?.message || e));
+    } finally {
+      setEditBusy(false);
+    }
+  }, [editModal, editPosPrompt, editNegPrompt, getOrCreateDeviceId, isAdmin, comfyTargetId, fq, startProgressStream, showToast]);
+
+
+  const retryFromGallery = useCallback(async (name: string) => {
+    // Per Shawn request: redo should resubmit in-place and NOT jump the UI back to Generate.
+    setErr(null);
+    try {
+      const r = await jfetch<{ ok: boolean; meta?: GalleryMeta }>(`/api/gallery/meta?name=${encodeURIComponent(name)}`);
+      if (!r?.ok || !r?.meta?.submitPayload) throw new Error("No retry payload found for this item.");
+
+      const deviceId = getOrCreateDeviceId();
+      const payload: any = { ...(r.meta.submitPayload as any) };
+      payload.client_id = deviceId;
+      if (isAdmin && comfyTargetId) payload.comfyTargetId = comfyTargetId;
+
+      const res = await jfetch<{ ok: boolean; prompt_id?: string; error?: string }>("/api/comfy", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res?.ok) throw new Error(String(res?.error || "Submit failed"));
+
+      // Bubble queue widget
+      try {
+        const pid = String(res?.prompt_id || "").trim();
+        if (pid) fq.add({ id: pid, title: `Re-run: ${name}`, status: "queued" });
+      } catch {} 
+      showToast("Sent");
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    }
+  }, [getOrCreateDeviceId, isAdmin, comfyTargetId, showToast]);
+
+  const enhanceAnimatePrompt = useCallback(async () => {
+    const t = String(animatePrompt || "").trim();
+    if (!t) return;
+    setAnimateBusy(true);
+    setAnimateErr("");
+    try {
+      const res = await fetch("/api/enhance-prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...withDeviceHeader() },
+        body: JSON.stringify({ text: t, mode: "scene", size: "medium" }),
+      });
+      const j = await safeJson(res);
+      if (!j.ok) throw new Error((j.data as any)?.error || j.raw || `Enhance failed (${j.status})`);
+      const out = String((j.data as any)?.enhanced || "").trim();
+      if (out) setAnimatePrompt(out);
+    } catch (e: any) {
+      setAnimateErr(String(e?.message || e));
+    } finally {
+      setAnimateBusy(false);
+    }
+  }, [animatePrompt]);
+
+  const submitAnimate = useCallback(async () => {
+    if (!animateModal) return;
+    const prompt = String(animatePrompt || "").trim();
+    if (!prompt) {
+      setAnimateErr("Positive prompt is required.");
+      return;
+    }
+
+    setAnimateBusy(true);
+    setAnimateErr("");
+    setErr(null);
+    try {
+      // Fetch the image from Gallery and re-upload as FormData.
+      const imgRes = await fetch(animateModal.url, { credentials: "include", cache: "no-store" });
+      if (!imgRes.ok) throw new Error(`Failed to load image (${imgRes.status})`);
+      const blob = await imgRes.blob();
+      const file = new File([blob], animateModal.name, { type: blob.type || "image/png" });
+
+      // Clone the LTX2 I2V prompt graph and apply deterministic controls:
+      // - Node 98: __OTG_INPUT_IMAGE__ placeholder (server replaces from imageA upload)
+      // - Node 118: positive prompt placeholder
+      // - Node 129: frames (seconds x 25fps)
+      const frames = (animateSeconds === 10 ? 10 : 5) * 25;
+      const graph: any = JSON.parse(JSON.stringify(Ltx2I2vGraph as any));
+      if (graph?.["118"]?.inputs) graph["118"].inputs.text = "__OTG_POSITIVE_PROMPT__";
+      if (graph?.["129"]?.inputs) graph["129"].inputs.value = frames;
+
+      const fd = new FormData();
+      fd.append("imageA", file, file.name);
+      fd.append("positivePrompt", prompt);
+      fd.append("frameCount", String(frames));
+      fd.append("promptJson", JSON.stringify(graph));
+
+      // Ensure jobs route to the correct SSE stream.
+      fd.append("client_id", getOrCreateDeviceId());
+      if (isAdmin && comfyTargetId) fd.append("comfyTargetId", String(comfyTargetId));
+
+      const res = await fetch("/api/comfy", { method: "POST", headers: withDeviceHeader(), body: fd });
+      const j = await safeJson(res);
+      if (!j.ok) throw new Error((j.data as any)?.error || j.raw || `Submit failed (${j.status})`);
+
+      const promptId = String((j.data as any)?.prompt_id || "");
+      const tempId = `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const title = `Video from ${animateModal.name}`;
+      // Bubble queue widget
+      fq.add({ id: promptId || tempId, title, status: "queued" });
+
+      startProgressStream({ promptId });
+      showToast("Submitted I2V");
+      setAnimateModal(null);
+      setAnimatePrompt("");
+      setAnimateSeconds(5);
+    } catch (e: any) {
+      setAnimateErr(String(e?.message || e));
+    } finally {
+      setAnimateBusy(false);
+    }
+  }, [animateModal, animatePrompt, animateSeconds, getOrCreateDeviceId, isAdmin, comfyTargetId, fq, startProgressStream, showToast]);
 
   const onLogout = useCallback(async () => {
     try {
@@ -831,6 +1552,7 @@ const onClearPreview = useCallback(async () => {
   }, []);
 
   return (
+    <>
     <main className="otg-appPage">
       <ComfyStatusIndicator />
       {/* Reuse the auth background for the main app too (matches login look) */}
@@ -842,7 +1564,7 @@ const onClearPreview = useCallback(async () => {
       </div>
 
       <div className="otg-appShell">
-        <header className="otg-appHeader">
+        <header className="otg-appHeader" style={{ position: "relative" }}>
           <div className="otg-appBanner">
             <Image
               src="/slr-banner.png"
@@ -853,6 +1575,106 @@ const onClearPreview = useCallback(async () => {
               style={{ width: "100%", height: "auto" }}
             />
           </div>
+
+          {isAdmin ? (
+            <div style={{ position: "absolute", top: 14, left: 14, zIndex: 5 }}>
+              <button
+                type="button"
+                className="otg-btnGhost"
+                onClick={() => setGpuMenuOpen((v) => !v)}
+                style={{ display: "flex", alignItems: "center", gap: 10, paddingInline: 14, borderRadius: 999 }}
+                title="Select active ComfyUI GPU target (admin only)"
+              >
+                <span
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 999,
+                    background:
+                      comfyTargetId && comfyStatuses[comfyTargetId] === true
+                        ? "#2ecc71"
+                        : comfyTargetId && comfyStatuses[comfyTargetId] === false
+                          ? "#ff4d4d"
+                          : "rgba(255,255,255,.35)",
+                    boxShadow: "0 0 0 2px rgba(0,0,0,.35)",
+                  }}
+                />
+                <span style={{ fontWeight: 700 }}>
+                  {(() => {
+                    const t = comfyTargets.find((x) => x.id === comfyTargetId);
+                    return (t?.label || t?.id || "GPU").toString();
+                  })()}
+                </span>
+               <span style={{ opacity: 0.75 }}>{"â€º"}</span>
+              </button>
+
+              {gpuMenuOpen ? (
+                <div
+                  role="menu"
+                  style={{
+                    marginTop: 8,
+                    padding: 10,
+                    borderRadius: 16,
+                    background: "rgba(10,10,14,.85)",
+                    border: "1px solid rgba(255,255,255,.12)",
+                    backdropFilter: "blur(10px)",
+                    minWidth: 240,
+                  }}
+                >
+                  {comfyTargets.length ? (
+                    comfyTargets.map((t) => {
+                      const online = comfyStatuses[t.id];
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          className={t.id === comfyTargetId ? "otg-btnPrimary" : "otg-btnGhost"}
+                          onClick={() => {
+                            setGpuMenuOpen(false);
+                            setAdminComfyTarget(t.id);
+                          }}
+                          style={{
+                            width: "100%",
+                            justifyContent: "space-between",
+                            display: "flex",
+                            alignItems: "center",
+                            paddingInline: 14,
+                            borderRadius: 14,
+                            marginBottom: 8,
+                          }}
+                        >
+                          <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <span
+                              style={{
+                                width: 10,
+                                height: 10,
+                                borderRadius: 999,
+                                background:
+                                  online === true
+                                    ? "#2ecc71"
+                                    : online === false
+                                      ? "#ff4d4d"
+                                      : "rgba(255,255,255,.35)",
+                              }}
+                            />
+                            <span>{t.label || t.id}</span>
+                          </span>
+                          <span style={{ opacity: 0.7, fontSize: 12 }}>{t.id}</span>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="otg-help" style={{ margin: 0 }}>
+                      No GPU targets configured.
+                      <div style={{ marginTop: 6, opacity: 0.9 }}>
+                        Fix: ensure your admin comfy-target env/config provides targets, then rebuild/restart.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </header>
 
         {err ? <div className="otg-error">{err}</div> : null}
@@ -885,10 +1707,25 @@ const onClearPreview = useCallback(async () => {
                     </option>
                   ))}
                 </select>
-                <GhostButton onClick={onSyncWorkflows} disabled={busy} title="Reload workflows from comfy_workflows/presets">
-                  Load Workflows
+                <GhostButton onClick={onSyncWorkflows} disabled={uiLocked} title="Refresh workflows list">
+                  Refresh
                 </GhostButton>
               </div>
+              {isAdmin ? (
+                <div style={{ marginTop: 10 }}>
+                  <div className="otg-cardTitle" style={{ marginBottom: 6, opacity: 0.9 }}>Generation Title (admin)</div>
+                  <input
+                    value={generationTitle}
+                    onChange={(e) => setGenerationTitle(e.target.value)}
+                    className="otg-input"
+                    placeholder="e.g., WAN low-noise LoRA test A"
+                    disabled={uiLocked}
+                  />
+                  <div className="otg-help" style={{ marginTop: 6 }}>
+                    Saved output files will use this title as the filename prefix.
+                  </div>
+                </div>
+              ) : null}
               {activeWorkflow?.description ? <div className="otg-help">{activeWorkflow.description}</div> : null}
               {activeWorkflow?.format !== "prompt_graph" ? (
                 <div className="otg-warn">This workflow is UI-format JSON and cannot run until exported as API/prompt JSON.</div>
@@ -920,7 +1757,7 @@ const onClearPreview = useCallback(async () => {
                         type="button"
                         className={orientation === "portrait" ? "otg-btnPrimary" : "otg-btnGhost"}
                         onClick={() => setOrientation("portrait")}
-                        disabled={busy}
+                        disabled={uiLocked}
                       >
                         Portrait
                       </button>
@@ -928,7 +1765,7 @@ const onClearPreview = useCallback(async () => {
                         type="button"
                         className={orientation === "landscape" ? "otg-btnPrimary" : "otg-btnGhost"}
                         onClick={() => setOrientation("landscape")}
-                        disabled={busy}
+                        disabled={uiLocked}
                       >
                         Landscape
                       </button>
@@ -936,10 +1773,69 @@ const onClearPreview = useCallback(async () => {
                         type="button"
                         className="otg-btnGhost"
                         onClick={onEnhancePrompt}
-                        disabled={busy || enhanceBusy || !(positivePrompt || "").trim()}
+                        disabled={uiLocked || enhanceBusy || !(positivePrompt || "").trim()}
                         title="Enhance the positive prompt"
                       >
-                        {enhanceBusy ? "Enhancing…" : "Enhance Prompt"}
+                        {enhanceBusy ? "Enhancing..." : "Enhance Prompt"}
+                      </button>
+
+                      <button
+                        type="button"
+                        className={promptMicRecording ? "otg-btnPrimary" : "otg-btnGhost"}
+                        onClick={() => {
+                          if (promptMicRecording) stopPromptMicRecording();
+                          else startPromptMicRecording();
+                        }}
+                        disabled={uiLocked || !promptMicSupported || promptMicBusy}
+                        title={promptMicRecording ? "Stop recording" : "Record voice to prompt"}
+                        aria-label={promptMicRecording ? "Stop mic" : "Start mic"}
+                      >
+                        <svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                          style={{ display: "block" }}
+                        >
+                          <path
+                            d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Z"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          <path
+                            d="M19 11a7 7 0 0 1-14 0"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          <path
+                            d="M12 18v3"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          <path
+                            d="M8 21h8"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className="otg-btnGhost"
+                        onClick={openLoraPicker}
+                        disabled={uiLocked}
+                        title="Select LoRAs to apply"
+                      >
+                        LoRAs{loras.length ? ` (${loras.length})` : ""}
                       </button>
                       {enhanceMsg ? (
                         <span className="otg-help" style={{ margin: 0 }}>
@@ -947,25 +1843,74 @@ const onClearPreview = useCallback(async () => {
                         </span>
                       ) : null}
                     </div>
-                    <div className="otg-help" style={{ marginTop: 6 }}>
-                      Resolution locked: {orientation === "portrait" ? "720×1280" : "1280×720"}
+                    <div className="otg-row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                      <div>
+                        <div className="otg-cardTitle" style={{ marginBottom: 6, opacity: 0.9 }}>Size</div>
+                        <div className="otg-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                          <button type="button" className={sizePreset === "default" ? "otg-btnPrimary" : "otg-btnGhost"} onClick={() => setSizePreset("default")} disabled={uiLocked}>Default</button>
+                          <button type="button" className={sizePreset === "480p" ? "otg-btnPrimary" : "otg-btnGhost"} onClick={() => setSizePreset("480p")} disabled={uiLocked}>480p</button>
+                          <button type="button" className={sizePreset === "512p" ? "otg-btnPrimary" : "otg-btnGhost"} onClick={() => setSizePreset("512p")} disabled={uiLocked}>512p</button>
+                          <button type="button" className={sizePreset === "720p" ? "otg-btnPrimary" : "otg-btnGhost"} onClick={() => setSizePreset("720p")} disabled={uiLocked}>720p</button>
+                        </div>
+                        <div className="otg-help" style={{ marginTop: 6 }}>
+                          Default leaves the workflow's native size unchanged.
+                        </div>
+                        {isAdmin ? (
+                          <div style={{ marginTop: 10 }}>
+                            <div className="otg-cardTitle" style={{ marginBottom: 6, opacity: 0.9 }}>GPU</div>
+                            <div className="otg-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                              {(() => {
+                                const id3090 = pickTargetId("3090");
+                                const id5060 = pickTargetId("5060");
+                                const id3060 = pickTargetId("3060");
+                                const Btn = ({ id, label }: { id: string | null; label: string }) => (
+                                  <button
+                                    type="button"
+                                    className={(id && comfyTargetId === id) ? "otg-btnPrimary" : "otg-btnGhost"}
+                                    onClick={() => id && setAdminComfyTarget(id)}
+                                    disabled={uiLocked || !id}
+                                    title={id ? `Switch to ${label}` : `Target not configured`}
+                                  >
+                                    {label}
+                                  </button>
+                                );
+                                return (
+                                  <>
+                                    <Btn id={id3090} label="3090" />
+                                    <Btn id={id5060} label="5060 Ti" />
+                                    <Btn id={id3060} label="3060 Ti" />
+                                  </>
+                                );
+                              })()}
+                            </div>
+                            {!comfyTargets.length ? (
+                              <div className="otg-help" style={{ marginTop: 6 }}>
+                                No GPU targets found. Open <code>/api/admin/comfy-target</code> while logged in to confirm.
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      
+                      </div>
                     </div>
                   </div>
 
                   <div style={{ minWidth: 220 }}>
-                    <div className="otg-cardTitle" style={{ marginBottom: 6, opacity: 0.9 }}>Duration</div>
-                    <select
-                      className="otg-select"
-                      value={durationSeconds}
-                      onChange={(e) => setDurationSeconds(e.target.value)}
-                      disabled={busy}
-                    >
-                      <option value="5">5 seconds</option>
-                      <option value="10">10 seconds</option>
-                      <option value="30">30 seconds</option>
-                    </select>
+                    <div className="otg-cardTitle" style={{ marginBottom: 6, opacity: 0.9 }}>
+                      Duration
+                    </div>
+                    <input
+                      type="range"
+                      min={5}
+                      max={isWanWorkflow ? 9 : 10}
+                      step={1}
+                      value={Number(durationSeconds) || 5}
+                      onChange={(e) => setDurationSeconds(String(e.target.value))}
+                      disabled={uiLocked}
+                      className="otg-range"
+                    />
                     <div className="otg-help" style={{ marginTop: 6 }}>
-                      Seed is always random.
+                      {durationSeconds}s (converted to frames using the workflow FPS){isWanWorkflow ? " -Â WAN capped at 9s" : ""}
                     </div>
                   </div>
                 </div>
@@ -1051,19 +1996,52 @@ const onClearPreview = useCallback(async () => {
             <div className="otg-row">
               <PrimaryButton
                 onClick={onGenerate}
-                disabled={
-                  busy ||
-                  last?.status === "running" ||
-                  !activeWorkflow ||
-                  // If the workflow needs images, ensure required image slots are filled.
-                  (needsImages > 0 && !imgA)
-                }
+                disabled={uiLocked || !activeWorkflow || (needsImages > 0 && !imgA)}
               >
-                {busy ? "Generating…" : "Generate"}
+                {busy ? "Generating..." : "Generate"}
               </PrimaryButton>
-  <GhostButton onClick={onShowContent} disabled={busy || last?.status === "running"}>
+  <GhostButton onClick={onShowContent} disabled={uiLocked}>
     Show Content
   </GhostButton>
+
+
+{confirmView ? (
+  <div className="otg-card" style={{ marginTop: 10, opacity: renderConfirmStatus === "done" ? 0.65 : 1 }}>
+    <div className="otg-cardTitle" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <span>Confirm settings</span>
+      <span className="otg-help" style={{ margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+        {renderConfirmStatus === "submitted" ? <span style={{ opacity: 0.9 }}>...</span> : null}
+        {renderConfirmStatus === "done" ? <span style={{ color: "#7CFF9E" }}>OK</span> : null}
+        {renderConfirmStatus === "done" ? (
+          <button
+            type="button"
+            className="otg-btnGhost"
+            style={{ padding: "6px 10px" }}
+            onClick={() => { setRenderConfirm(null); setRenderConfirmStatus("idle"); }}
+          >
+            Clear
+          </button>
+        ) : null}
+      </span>
+    </div>
+    <div className="otg-cardBody">
+      <div className="otg-help" style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 6, margin: 0 }}>
+        {confirmView.title ? (
+          <>
+            <div style={{ opacity: 0.8 }}>Title</div><div>{confirmView.title}</div>
+          </>
+        ) : null}
+        <div style={{ opacity: 0.8 }}>Workflow</div><div>{confirmView.workflow}</div>
+        <div style={{ opacity: 0.8 }}>Orientation</div><div>{confirmView.orientation}</div>
+        <div style={{ opacity: 0.8 }}>Size</div><div>{confirmView.size}</div>
+        <div style={{ opacity: 0.8 }}>Duration</div><div>{confirmView.duration}</div>
+        <div style={{ opacity: 0.8 }}>GPU</div><div>{confirmView.gpu}</div>
+        <div style={{ opacity: 0.8 }}>LoRAs</div>
+        <div>{confirmView.loras.length ? confirmView.loras.map(l => `${l.name} (${l.strengthModel.toFixed(2)})`).join(", ") : "None"}</div>
+      </div>
+    </div>
+  </div>
+) : null}
 </div>
 
 {(busy || last?.status === "running" || progressPct > 0) ? (
@@ -1082,57 +2060,217 @@ const onClearPreview = useCallback(async () => {
   </div>
 ) : null}
 
-<Card title="Preview">
-              {last?.status === "running" ? <div className="otg-help">{progressPct >= 100 ? "Finalizing…" : "Generating…"}</div> : null}
+{showGeneratedPreview && effectivePreview?.url ? (
+  <div className="otg-card" style={{ marginTop: 10 }}>
+    <div className="otg-cardHeader">
+      <div className="otg-cardTitle">Latest content</div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          type="button"
+          className="otg-btnGhost"
+          style={{ padding: "6px 10px" }}
+          onClick={() => setShowGeneratedPreview(false)}
+        >
+          Hide
+        </button>
+        {effectivePreview?.name && effectivePreview?.url ? (
+          <button
+            type="button"
+            className="otg-btnGhost"
+            style={{ padding: "6px 10px" }}
+            onClick={() => setMediaModal({ name: effectivePreview.name, url: effectivePreview.url, kind: effectivePreview.kind })}
+          >
+            Expand
+          </button>
+        ) : null}
+      </div>
+    </div>
+    <div className="otg-cardBody">
+      {effectivePreview.kind === "video" ? (
+        <video style={{ width: "100%", borderRadius: 16 }} controls playsInline src={effectivePreview.url} />
+      ) : (
+        <img src={effectivePreview.url} alt={effectivePreview.name || "preview"} style={{ width: "100%", borderRadius: 16 }} />
+      )}
+    </div>
+  </div>
+) : null}
 
-              {!effectivePreview ? (
-                last?.status === "running" ? null : <div className="otg-help">No preview yet.</div>
-              ) : (
-                <div>
-                  {effectivePreview.kind === "video" ? (
-                    <video style={{ width: "100%", borderRadius: 18 }} controls autoPlay muted loop playsInline src={effectivePreview.url} />
-                  ) : (
-                    <img style={{ width: "100%", borderRadius: 18 }} src={effectivePreview.url} alt={effectivePreview.name} />
-                  )}
-
-                  
-<div className="otg-row" style={{ marginTop: 10 }}>
-  <a href={effectivePreview.url} download={effectivePreview.name} className="otg-btnGhost">
-    Download
-  </a>
-
-  <GhostButton onClick={onFavorite} disabled={busy}>
-    {(last as any)?.favorited ? "Favorited" : "Send to Favorites"}
-  </GhostButton>
-
-  <button onClick={onDeletePreview} disabled={busy} className="otg-btnDanger">
-    Delete
-  </button>
-</div>
-                </div>
-              )}
-            </Card>
           </div>
         ) : null}
 
-        {tab === "gallery" ? (
+        
+        {tab === "gethelp" ? (
+          <GetHelpPanel
+            onSendToPrompt={(t) => {
+              const s = String(t || "").trim();
+              if (!s) return;
+              setPositivePrompt((prev) => {
+                const p = String(prev || "").trim();
+                return p ? `${p}
+
+${s}` : s;
+              });
+              setTab("generate");
+            }}
+            onGotoGenerate={() => setTab("generate")}
+          />
+        ) : null}
+
+        {tab === "angles" ? (
+          <AnglesPanel />
+        ) : null}
+
+        {tab === "storyboard" ? (
+          <StoryboardPanel />
+        ) : null}
+
+{tab === "gallery" ? (
           <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
             <Card title={`Gallery (${galleryFiles.length})`}>
               <div className="otg-grid2">
                 {galleryFiles.map((f) => (
-                  <div key={f.name} className="otg-card" style={{ padding: 10, overflow: "hidden" }}>
+                  <div
+                    key={f.name}
+                    ref={(el) => {
+                      if (galleryFocus && String(f.name) === String(galleryFocus)) galleryFocusRef.current = el;
+                    }}
+                    className="otg-card"
+                    style={{
+                      padding: 10,
+                      overflow: "hidden",
+                      outline: galleryFocus && String(f.name) === String(galleryFocus) ? "2px solid rgba(124,58,237,.85)" : "none",
+                      boxShadow: galleryFocus && String(f.name) === String(galleryFocus) ? "0 0 0 3px rgba(59,130,246,.25)" : undefined,
+                    }}
+                  >
                     {isVideoName(f.name) ? (
-                      <video style={{ width: "100%", borderRadius: 16 }} controls autoPlay muted loop playsInline src={f.url} />
+                      <div style={{ position: "relative" }}>
+                        <video style={{ width: "100%", borderRadius: 16 }} controls muted playsInline src={f.url} />
+                        <button
+                          type="button"
+                          className="otg-btnGhost"
+                          style={{ position: "absolute", right: 10, top: 10, padding: "6px 10px" }}
+                          onClick={() => setMediaModal({ name: f.name, url: f.url, kind: "video" })}
+                        >
+                          Expand
+                        </button>
+                      </div>
                     ) : (
-                      <img style={{ width: "100%", borderRadius: 16 }} src={f.url} alt={f.name} />
+                      <button
+                        type="button"
+                        onClick={() => setMediaModal({ name: f.name, url: f.url, kind: "image" })}
+                        style={{ padding: 0, border: 0, background: "transparent", cursor: "pointer" }}
+                        aria-label={`Open ${f.name}`}
+                      >
+                        <img style={{ width: "100%", borderRadius: 16, display: "block" }} src={f.url} alt={f.name} />
+                      </button>
                     )}
                     <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
                       <div className="otg-help" style={{ marginTop: 0 }}>{f.name}</div>
-                      <div className="otg-row">
-                        <GhostButton onClick={() => sendToStudioFromGallery(f.name)} disabled={busy}>
-                          Send to Studio
-                        </GhostButton>
-                        <button onClick={() => deleteFromGallery(f.name)} disabled={busy} className="otg-btnDanger">
+                      <div className="otg-row" style={{ flexWrap: "wrap" }}>
+                        {!isVideoName(f.name) ? (
+                          <PrimaryButton
+                            type="button"
+                            disabled={uiLocked}
+                            onClick={() => {
+                              setAnimateErr("");
+                              setAnimateModal({ name: f.name, url: f.url });
+                              setAnimateSeconds(5);
+                              setAnimatePrompt("");
+                            }}
+                            style={{ height: 40, paddingInline: 14, borderRadius: 999 }}
+                            title="Animate (Image â†’ Video)"
+                          >
+                            Animate
+                          </PrimaryButton>
+                        ) : null}
+
+                        {!isVideoName(f.name) ? (
+                          <button
+                            type="button"
+                            className="otg-btnGhost"
+                            title="Edit image"
+                            onClick={() => {
+                              setEditErr("");
+                              setEditModal({ name: f.name, url: f.url });
+                              setEditPosPrompt("");
+                              setEditNegPrompt("");
+                            }}
+                            disabled={uiLocked}
+                            style={{ width: 40, height: 40, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                          >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                              <path d="M12 20h9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+                            </svg>
+                          </button>
+                        ) : null}
+
+                        <a
+                          href={f.url}
+                          download={f.name}
+                          className="otg-btnGhost"
+                          title="Download"
+                          style={{ width: 40, height: 40, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M12 3v10" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                            <path d="M8 11l4 4 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            <path d="M4 21h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                          </svg>
+                        </a>
+
+                        <button
+                          type="button"
+                          className="otg-btnGhost"
+                          title="Redo / Regenerate"
+                          onClick={() => retryFromGallery(f.name)}
+                          disabled={uiLocked}
+                          style={{ width: 40, height: 40, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M21 12a9 9 0 1 1-3-6.7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                            <path d="M21 4v6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="otg-btnGhost"
+                          title="Favorite"
+                          onClick={() => toggleFavoriteFromGallery(f.name)}
+                          disabled={uiLocked}
+                          style={{
+                            width: 40,
+                            height: 40,
+                            borderRadius: 999,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            border: favoriteNameSet.has(String(f.name)) ? "1px solid rgba(239,68,68,0.6)" : undefined,
+                            background: favoriteNameSet.has(String(f.name)) ? "rgba(239,68,68,0.18)" : undefined,
+                            color: favoriteNameSet.has(String(f.name)) ? "rgb(239,68,68)" : undefined,
+                          }}
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill={favoriteNameSet.has(String(f.name)) ? "currentColor" : "none"} aria-hidden="true">
+                            <path d="M12 21s-7-4.4-9.5-8.2C.5 9.7 2.2 6.5 5.7 6.1c1.8-.2 3.3.7 4.3 2 1-1.3 2.5-2.2 4.3-2 3.5.4 5.2 3.6 3.2 6.7C19 16.6 12 21 12 21Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+                          </svg>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="otg-btnGhost"
+                          title="Rename"
+                          onClick={() => renameFromGallery(f.name)}
+                          disabled={uiLocked}
+                          style={{ height: 40, paddingInline: 12, borderRadius: 999, display: "inline-flex", alignItems: "center", gap: 8 }}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
+                          </svg>
+                          <span>Rename</span>
+                        </button>
+
+                        <button onClick={() => deleteFromGallery(f.name)} disabled={uiLocked} className="otg-btnDanger" style={{ height: 40, borderRadius: 999, paddingInline: 14 }}>
                           Delete
                         </button>
                       </div>
@@ -1165,7 +2303,7 @@ const onClearPreview = useCallback(async () => {
                         >
                           Download
                         </a>
-                        <button onClick={() => deleteFromFavorites(f.name)} disabled={busy} className="otg-btnDanger">
+                        <button onClick={() => deleteFromFavorites(f.name)} disabled={uiLocked} className="otg-btnDanger">
                           Delete
                         </button>
                       </div>
@@ -1174,6 +2312,16 @@ const onClearPreview = useCallback(async () => {
                 ))}
               </div>
             </Card>
+          </div>
+        ) : null}
+
+        {tab === "voices" ? (
+          <VoicesPanel isAdmin={isAdmin} />
+        ) : null}
+
+        {tab === "support" ? (
+          <div style={{ marginTop: 14 }}>
+            <SupportPanel />
           </div>
         ) : null}
 
@@ -1213,7 +2361,7 @@ const onClearPreview = useCallback(async () => {
                 </div>
               ) : (
                 <div className="otg-help" style={{ marginTop: 10 }}>
-                  If you ever get the “already running” error, use this to reset the server-side generation state.
+                  If you ever get the "already runningÂ error, use this to reset the server-side generation state.
                 </div>
               )}
               <div className="otg-row" style={{ marginTop: 10, justifyContent: "space-between" }}>
@@ -1221,13 +2369,13 @@ const onClearPreview = useCallback(async () => {
                   type="button"
                   className="otg-btnDanger"
                   onClick={onClearPipeline}
-                  disabled={busy}
+                  disabled={uiLocked}
                   style={{ minWidth: 180 }}
                 >
                   Clear pipeline
                 </button>
                 {pipelineStuck ? (
-                  <GhostButton type="button" onClick={() => setTab("generate")} disabled={busy}>
+                  <GhostButton type="button" onClick={() => setTab("generate")} disabled={uiLocked}>
                     Back to Studio
                   </GhostButton>
                 ) : null}
@@ -1245,6 +2393,15 @@ const onClearPreview = useCallback(async () => {
                   Delete account
                 </button>
               </div>
+
+              {isAdmin ? (
+                <div className="otg-row" style={{ justifyContent: "flex-end", marginTop: 10 }}>
+                  <a className="otg-btnGhost" href="/app/admin/users">
+                    Admin Panel
+                  </a>
+                </div>
+              ) : null}
+
               <div className="otg-help" style={{ marginTop: 10 }}>
                 Deleting your account removes your profile and deletes your gallery and favorites.
               </div>
@@ -1309,15 +2466,330 @@ const onClearPreview = useCallback(async () => {
                 onClick={onConfirmDeleteAccount}
                 style={{ minWidth: 200 }}
               >
-                {deleteAccountBusy ? "Deleting…" : "Yes, delete everything"}
+                {deleteAccountBusy ? "Deleting..." : "Yes, delete everything"}
               </button>
             </div>
           </div>
         </div>
       ) : null}
 
-      <BottomNav tab={tab} onTab={setTab} />
+      {animateModal ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => {
+            if (!animateBusy) setAnimateModal(null);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            className="otg-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(900px, 96vw)", maxHeight: "92vh", overflow: "auto", padding: 14 }}
+          >
+            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div className="otg-cardTitle" style={{ margin: 0 }}>Animate (LTX2 - Image to Video)</div>
+                <div className="otg-help" style={{ marginTop: 6 }}>{animateModal.name}</div>
+              </div>
+              <button type="button" className="otg-btnGhost" disabled={animateBusy} onClick={() => setAnimateModal(null)}>
+                Close
+              </button>
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <img
+                src={animateModal.url}
+                alt={animateModal.name}
+                style={{ width: "100%", borderRadius: 16, display: "block" }}
+              />
+            </div>
+
+            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              <div>
+                <div className="otg-help" style={{ marginTop: 0, opacity: 0.9 }}>Positive prompt</div>
+                <textarea
+                  className="otg-textarea"
+                  value={animatePrompt}
+                  onChange={(e) => setAnimatePrompt(e.target.value)}
+                  placeholder="Describe how the image should animateâ€¦"
+                  rows={5}
+                  disabled={animateBusy}
+                />
+              </div>
+
+              <div className="otg-row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+                <GhostButton type="button" onClick={enhanceAnimatePrompt} disabled={animateBusy || !String(animatePrompt || "").trim()}>
+                  Enhance
+                </GhostButton>
+
+                <div className="otg-row" style={{ gap: 10 }}>
+                  <button
+                    type="button"
+                    className={animateSeconds === 5 ? "otg-btnPrimary" : "otg-btnGhost"}
+                    onClick={() => setAnimateSeconds(5)}
+                    disabled={animateBusy}
+                    style={{ borderRadius: 999, height: 40, paddingInline: 14, fontWeight: 800 }}
+                  >
+                    5s
+                  </button>
+                  <button
+                    type="button"
+                    className={animateSeconds === 10 ? "otg-btnPrimary" : "otg-btnGhost"}
+                    onClick={() => setAnimateSeconds(10)}
+                    disabled={animateBusy}
+                    style={{ borderRadius: 999, height: 40, paddingInline: 14, fontWeight: 800 }}
+                  >
+                    10s
+                  </button>
+                </div>
+              </div>
+
+              {animateErr ? <div className="otg-error">{animateErr}</div> : null}
+
+              <div className="otg-row" style={{ justifyContent: "flex-end" }}>
+                <PrimaryButton
+                  type="button"
+                  onClick={submitAnimate}
+                  disabled={animateBusy || !String(animatePrompt || "").trim()}
+                  style={{ minWidth: 180, borderRadius: 999, height: 44 }}
+                >
+                  {animateBusy ? "Submitting..." : "Submit"}
+                </PrimaryButton>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {mediaModal ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setMediaModal(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            className="otg-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(1100px, 96vw)", maxHeight: "92vh", overflow: "auto", padding: 14 }}
+          >
+            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <div className="otg-cardTitle" style={{ margin: 0 }}>{mediaModal.name}</div>
+              <div className="otg-row">
+                <a className="otg-btnGhost" href={mediaModal.url} download={mediaModal.name}>Download</a>
+                <button type="button" className="otg-btnGhost" onClick={() => setMediaModal(null)}>Close</button>
+              </div>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              {mediaModal.kind === "video" ? (
+                <video style={{ width: "100%", borderRadius: 16 }} controls playsInline src={mediaModal.url} />
+              ) : (
+                <img style={{ width: "100%", borderRadius: 16, display: "block" }} src={mediaModal.url} alt={mediaModal.name} />
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editModal ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => {
+            if (!editBusy) setEditModal(null);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            className="otg-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(980px, 96vw)", maxHeight: "92vh", overflow: "auto", padding: 14 }}
+          >
+            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div className="otg-cardTitle" style={{ margin: 0 }}>Edit Image</div>
+                <div className="otg-help" style={{ marginTop: 6 }}>{editModal.name}</div>
+              </div>
+              <button type="button" className="otg-btnGhost" onClick={() => setEditModal(null)} disabled={editBusy}>Close</button>
+            </div>
+
+            {editErr ? (
+              <div className="otg-warn" style={{ marginTop: 12 }}>
+                {editErr}
+              </div>
+            ) : null}
+
+            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              <div>
+                <div className="otg-help" style={{ marginTop: 0, opacity: 0.85 }}>Instruction (positive)</div>
+                <textarea
+                  className="otg-textarea"
+                  placeholder='e.g. "change fish to black"'
+                  value={editPosPrompt}
+                  onChange={(e) => setEditPosPrompt(e.target.value)}
+                  disabled={editBusy}
+                />
+              </div>
+              <div>
+                <div className="otg-help" style={{ marginTop: 0, opacity: 0.85 }}>Negative (optional)</div>
+                <textarea
+                  className="otg-textarea"
+                  value={editNegPrompt}
+                  onChange={(e) => setEditNegPrompt(e.target.value)}
+                  disabled={editBusy}
+                />
+              </div>
+
+              <div className="otg-row" style={{ justifyContent: "flex-end" }}>
+                <PrimaryButton
+                  type="button"
+                  onClick={submitEditFromGallery}
+                  disabled={editBusy || uiLocked}
+                  style={{ height: 44, paddingInline: 18, borderRadius: 999 }}
+                >
+                  {editBusy ? "Submittingâ€¦" : "Submit Edit"}
+                </PrimaryButton>
+              </div>
+
+              <div className="otg-help" style={{ marginTop: 0, opacity: 0.85 }}>
+                Uses workflow: Edit Pictures (Qwen Image Edit). Result will appear in Gallery when finished.
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <SpinDialNav
+        tab={tab}
+        isAdmin={isAdmin}
+        onTab={(t) => setTab(t)}
+      />
     </main>
 
+      {loraOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            zIndex: 50,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setLoraOpen(false);
+          }}
+        >
+          <div
+            className="otg-card"
+            style={{
+              width: "min(920px, 100%)",
+              maxHeight: "min(80vh, 720px)",
+              overflow: "auto",
+              borderRadius: 24,
+              border: "1px solid rgba(255,255,255,0.12)",
+              background: "rgba(0,0,0,0.85)",
+              padding: 16,
+            }}
+          >
+            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div className="otg-cardTitle" style={{ fontSize: 22 }}>LoRA Library</div>
+                <div className="otg-help" style={{ marginTop: 4 }}>Applied only if the workflow already contains LoRA loader nodes.</div>
+              </div>
+              <button type="button" className="otg-btnGhost" onClick={() => setLoraOpen(false)}>Close</button>
+            </div>
+
+            {loraErr ? <div className="otg-help" style={{ marginTop: 10, color: "#fca5a5" }}>{loraErr}</div> : null}
+            {loraLoading ? <div className="otg-help" style={{ marginTop: 10 }}>Loading...</div> : null}
+
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+              {loraList.map((it) => {
+                const selected = loras.find((x) => x.name === it.name);
+                return (
+                  <div key={it.name} className="otg-row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <label className="otg-row" style={{ gap: 10, alignItems: "center", cursor: "pointer" }}>
+                      <input type="checkbox" checked={!!selected} onChange={() => toggleLora(it.name)} />
+                      <span style={{ fontFamily: "monospace", fontSize: 12, opacity: 0.95 }}>{it.name}</span>
+                      {it.label ? <span className="otg-help">-Â {it.label}</span> : null}
+                    </label>
+
+                    {selected ? (
+                      <div className="otg-row" style={{ gap: 10, alignItems: "center" }}>
+                        <label className="otg-help" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          Model
+                          <input
+                            className="otg-input"
+                            style={{ width: 84 }}
+                            inputMode="decimal"
+                            value={String(selected.strengthModel)}
+                            onChange={(e) => setLoraStrength(it.name, "model", Number(e.target.value))}
+                          />
+                        </label>
+                        <label className="otg-help" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          Clip
+                          <input
+                            className="otg-input"
+                            style={{ width: 84 }}
+                            inputMode="decimal"
+                            value={String(selected.strengthClip)}
+                            onChange={(e) => setLoraStrength(it.name, "clip", Number(e.target.value))}
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+
+              {!loraLoading && loraList.length === 0 ? <div className="otg-help">No LoRAs found.</div> : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+    </>
   );
 }
+
+export default function AppPageSuspenseWrapper() {
+  return (
+    <Suspense fallback={null}>
+      <AppPage />
+    </Suspense>
+  );
+}
+
+

@@ -2,15 +2,19 @@
 
 import React from "react";
 
-export type TabId = "generate" | "gallery" | "favorites" | "settings";
+export type TabId = "generate" | "gallery" | "favorites" | "settings" | "admin";
 
 export default function BottomNav({
   tab,
   onTab,
+  showAdmin,
 }: {
   tab: TabId;
   onTab: (t: TabId) => void;
+  showAdmin?: boolean;
 }) {
+  // NOTE: This component is kept for backwards compatibility.
+  // The new navigation UI is SpinDialNav.
   const item = (id: TabId, label: string) => {
     const active = tab === id;
     return (
@@ -31,6 +35,7 @@ export default function BottomNav({
       {item("gallery", "Gallery")}
       {item("favorites", "Favorites")}
       {item("settings", "Settings")}
+      {showAdmin ? item("admin", "Admin") : null}
     </nav>
   );
 }

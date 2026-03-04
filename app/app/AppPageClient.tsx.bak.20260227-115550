@@ -1,0 +1,531 @@
+﻿"use client";
+
+import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
+import BottomNav, { type TabId } from "./components/BottomNav";
+import ComfyStatusIndicator from "../components/ComfyStatusIndicator";
+type WorkflowItem = {
+  id: string;
+  title: string;
+  tags?: string[];
+  description?: string;
+  image?: string;
+  supports?: {
+    image?: boolean;
+    video?: boolean;
+  };
+};
+
+type LoRAItem = { id: string; weight: number };
+
+type SubmitPayload = {
+  preset?: string;
+  positivePrompt?: string;
+  negativePrompt?: string;
+  loras?: LoRAItem[];
+  orientation?: string;
+  durationSec?: number;
+  seconds?: number;
+};
+
+type GalleryMeta = {
+  positivePrompt?: string | null;
+  negativePrompt?: string | null;
+  prompts?: any;
+  loras?: any;
+  seed?: any;
+  submitPayload?: SubmitPayload | null;
+};
+
+function Card({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="otg-card" style={{ padding: 14 }}>
+      <div style={{ fontWeight: 700, marginBottom: 10 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function GhostButton(props: ButtonHTMLAttributes<HTMLButtonElement> & { children: ReactNode }) {
+  const { children, ...rest } = props;
+  return (
+    <button type="button" className="otg-btnGhost" {...rest}>
+      {children}
+    </button>
+  );
+}
+
+function jfetch<T>(url: string, init?: RequestInit): Promise<T> {
+  return fetch(url, init).then(async (r) => {
+    const txt = await r.text();
+    let json: any = null;
+    try {
+      json = txt ? JSON.parse(txt) : null;
+    } catch {
+      // ignore
+    }
+    if (!r.ok) throw new Error(json?.error || txt || `HTTP ${r.status}`);
+    return json as T;
+  });
+}
+
+function isVideoName(name: string) {
+  const n = name.toLowerCase();
+  return n.endsWith(".mp4") || n.endsWith(".webm") || n.endsWith(".mov") || n.endsWith(".mkv") || n.endsWith(".gif");
+}
+
+function clamp(n: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, n));
+}
+
+export default function AppPageClient() {
+  const [tab, setTab] = useState<TabId>("generate");
+
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const [workflowId, setWorkflowId] = useState<string>("studio-image");
+  const [workflows, setWorkflows] = useState<WorkflowItem[]>([]);
+  const [loras, setLoras] = useState<LoRAItem[]>([]);
+
+  const [positivePrompt, setPositivePrompt] = useState("");
+  const [negativePrompt, setNegativePrompt] = useState("");
+  const [orientation, setOrientation] = useState("portrait");
+  const [durationSec, setDurationSec] = useState(7);
+
+  const [lastFile, setLastFile] = useState<string | null>(null);
+  const [lastUrl, setLastUrl] = useState<string | null>(null);
+
+  const [galleryFiles, setGalleryFiles] = useState<any[]>([]);
+  const [galleryMedia, setGalleryMedia] = useState<"all" | "images" | "videos">("all");
+  const [gallerySort, setGallerySort] = useState<"newest" | "oldest" | "name">("newest");
+
+  const [favoriteFiles, setFavoriteFiles] = useState<any[]>([]);
+  const [mediaModal, setMediaModal] = useState<null | { name: string; url: string; kind: "image" | "video" }>(null);
+  const [promptModal, setPromptModal] = useState<null | { name: string; meta: GalleryMeta }>(null);
+
+  const toastRef = useRef<number | null>(null);
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastRef.current) window.clearTimeout(toastRef.current);
+    toastRef.current = window.setTimeout(() => setToast(null), 2000);
+  }, []);
+
+  const refreshLastBlock = useCallback(async () => {
+    try {
+      const r = await jfetch<{ ok: boolean; url?: string; name?: string }>("/api/last");
+      if (r?.ok && r.url) {
+        setLastUrl(r.url);
+        setLastFile(r.name || null);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    jfetch<{ ok: boolean; workflows: WorkflowItem[] }>("/api/workflows")
+      .then((r) => setWorkflows(r.workflows || []))
+      .catch(() => void 0);
+    refreshLastBlock().catch(() => void 0);
+  }, [refreshLastBlock]);
+
+  const loadGallery = useCallback(async () => {
+    const res = await jfetch<{ ok: boolean; files: any[] }>(
+      `/api/gallery?media=${encodeURIComponent(galleryMedia)}&sort=${encodeURIComponent(gallerySort)}`,
+    );
+    setGalleryFiles(res.files || []);
+  }, [galleryMedia, gallerySort]);
+
+  const loadFavorites = useCallback(async () => {
+    const res = await jfetch<{ ok: boolean; files: any[] }>("/api/favorites");
+    setFavoriteFiles(res.files || []);
+  }, []);
+
+  useEffect(() => {
+    if (tab === "gallery") loadGallery().catch(() => void 0);
+    if (tab === "favorites") loadFavorites().catch(() => void 0);
+    if (tab === "generate") refreshLastBlock().catch(() => void 0);
+  }, [tab, loadGallery, loadFavorites, refreshLastBlock]);
+
+  useEffect(() => {
+    // Gallery auto-refresh: required because ingestion occurs when /api/gallery is called
+    if (tab !== "gallery") return;
+    const t = window.setInterval(() => {
+      loadGallery().catch(() => void 0);
+    }, 2500);
+    return () => window.clearInterval(t);
+  }, [tab, loadGallery]);
+const deleteFromGallery = useCallback(
+    async (name: string) => {
+      setErr(null);
+      setBusy(true);
+      try {
+        await jfetch(`/api/gallery/delete?name=${encodeURIComponent(name)}`, { method: "POST" });
+        await loadGallery();
+      } catch (e: any) {
+        setErr(String(e?.message || e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadGallery],
+  );
+
+  const deleteFromFavorites = useCallback(
+    async (name: string) => {
+      setErr(null);
+      setBusy(true);
+      try {
+        await jfetch(`/api/favorites/delete?name=${encodeURIComponent(name)}`, { method: "POST" });
+        await loadFavorites();
+      } catch (e: any) {
+        setErr(String(e?.message || e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadFavorites],
+  );
+
+  
+  const showPromptFromGallery = useCallback(
+    async (name: string) => {
+      setErr(null);
+      try {
+        const r = await jfetch<{ ok: boolean; meta?: any }>(
+          `/api/gallery/meta?name=${encodeURIComponent(name)}`,
+        );
+
+        if (!r?.ok) throw new Error("Failed to load prompt metadata.");
+        const meta = (r?.meta ?? {}) as any;
+
+        setPromptModal({ name, meta });
+
+        if (!r?.meta) showToast("No prompt found. Click 🔧 to repair.");
+      } catch (e: any) {
+        setErr(String(e?.message || e));
+      }
+    },
+    [showToast],
+  );
+
+  const repairPromptFromGallery = useCallback(
+    async (fileName: string) => {
+      setErr(null);
+      try {
+        await jfetch(`/api/gallery/repair-meta?name=${encodeURIComponent(fileName)}`, { method: "POST" });
+
+        const r = await jfetch<{ ok: boolean; meta?: any }>(
+          `/api/gallery/meta?name=${encodeURIComponent(fileName)}`,
+        );
+
+        if (!r?.ok) throw new Error("Repair ran but meta fetch failed.");
+        const meta = (r?.meta ?? {}) as any;
+
+        setPromptModal({ name: fileName, meta });
+
+        if (!r?.meta || (!meta?.positivePrompt && !meta?.negativePrompt)) {
+          showToast("Repair ran, but prompts are still missing for this item.");
+        } else {
+          showToast("Prompt repaired");
+        }
+      } catch (e: any) {
+        setErr(String(e?.message || e));
+      }
+    },
+    [showToast],
+  );
+return (
+    <main className="otg-root">
+      <ComfyStatusIndicator />
+
+      <div className="otg-page">
+        {err ? <div className="otg-error">{err}</div> : null}
+
+        {tab === "generate" ? (
+          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card title="Generate">
+              <div className="otg-row" style={{ alignItems: "center" }}>
+                <select value={workflowId} onChange={(e) => setWorkflowId(e.target.value)} className="otg-select" style={{ flex: 1 }}>
+                  {workflows.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.title}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" className="otg-btn" disabled={busy} onClick={() => void 0}>
+                  Run
+                </button>
+              </div>
+
+              {workflow?.image ? (
+                <div style={{ marginTop: 10 }}>
+                  <Image src={workflow.image} alt={workflow.title} width={1200} height={600} style={{ width: "100%", height: "auto", borderRadius: 16 }} />
+                </div>
+              ) : null}
+
+              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                <textarea className="otg-textarea" value={positivePrompt} onChange={(e) => setPositivePrompt(e.target.value)} placeholder="Positive prompt" />
+                <textarea className="otg-textarea" value={negativePrompt} onChange={(e) => setNegativePrompt(e.target.value)} placeholder="Negative prompt" />
+                <div className="otg-row" style={{ gap: 10 }}>
+                  <select className="otg-select" value={orientation} onChange={(e) => setOrientation(e.target.value)} style={{ flex: 1 }}>
+                    <option value="portrait">Portrait</option>
+                    <option value="landscape">Landscape</option>
+                  </select>
+                  <input
+                    className="otg-input"
+                    type="number"
+                    value={durationSec}
+                    min={1}
+                    max={30}
+                    onChange={(e) => setDurationSec(clamp(Number(e.target.value || 7), 1, 30))}
+                    style={{ width: 120 }}
+                  />
+                </div>
+              </div>
+            </Card>
+
+            {lastUrl ? (
+              <Card title="Last output">
+                {lastFile && isVideoName(lastFile) ? (
+                  <video style={{ width: "100%", borderRadius: 16 }} controls muted playsInline src={lastUrl} />
+                ) : lastUrl ? (
+                  <img style={{ width: "100%", borderRadius: 16, display: "block" }} src={lastUrl} alt={lastFile || "Last output"} />
+                ) : null}
+              </Card>
+            ) : null}
+          </div>
+        ) : null}
+
+        {tab === "gallery" ? (
+          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card title={`Gallery (${galleryFiles.length})`}>
+              <div className="otg-row" style={{ justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                <div className="otg-row" style={{ gap: 10, flexWrap: "wrap" }}>
+                  <label className="otg-help" style={{ marginTop: 0 }}>
+                    Media
+                  </label>
+                  <select className="otg-select" value={galleryMedia} onChange={(e) => setGalleryMedia(e.target.value as any)} style={{ minWidth: 160 }}>
+                    <option value="all">All</option>
+                    <option value="images">Images</option>
+                    <option value="videos">Videos</option>
+                  </select>
+
+                  <label className="otg-help" style={{ marginTop: 0 }}>
+                    Sort
+                  </label>
+                  <select className="otg-select" value={gallerySort} onChange={(e) => setGallerySort(e.target.value as any)} style={{ minWidth: 180 }}>
+                    <option value="newest">Newest</option>
+                    <option value="oldest">Oldest</option>
+                    <option value="name">Name</option>
+                  </select>
+                </div>
+
+                <button type="button" className="otg-btn" onClick={() => loadGallery().catch(() => void 0)}>
+                  Refresh
+                </button>
+              </div>
+
+              <div className="otg-grid2">
+                {galleryFiles.map((f) => (
+                  <div key={f.name} className="otg-card" style={{ padding: 10, overflow: "hidden" }}>
+                    {isVideoName(f.name) ? (
+                      <div style={{ position: "relative" }}>
+                        <video style={{ width: "100%", borderRadius: 16 }} controls muted playsInline src={f.url} />
+                        <button
+                          type="button"
+                          className="otg-btnGhost"
+                          style={{ position: "absolute", right: 10, top: 10, padding: "6px 10px" }}
+                          onClick={() => setMediaModal({ name: f.name, url: f.url, kind: "video" })}
+                        >
+                          Expand
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setMediaModal({ name: f.name, url: f.url, kind: "image" })}
+                        style={{ padding: 0, border: 0, background: "transparent", cursor: "pointer" }}
+                        aria-label={`Open ${f.name}`}
+                      >
+                        <img style={{ width: "100%", borderRadius: 16, display: "block" }} src={f.url} alt={f.name} />
+                      </button>
+                    )}
+                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div className="otg-help" style={{ marginTop: 0 }}>
+                        {f.name}
+                      </div>
+                      <div className="otg-row">
+                        <GhostButton onClick={() => showPromptFromGallery(f.name)} disabled={false}>
+                          Show Prompt
+                        </GhostButton>
+                        <button
+                          type="button"
+                          className="otg-btnGhost"
+                          title="Retry / Regenerate"
+                          onClick={() => retryFromGallery(f.name)}
+                          disabled={false}
+                          style={{
+                            width: 40,
+                            height: 40,
+                            borderRadius: 999,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          ↻
+                        </button>
+                        <button onClick={() => deleteFromGallery(f.name)} disabled={busy} className="otg-btnDanger">
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+        ) : null}
+
+        {tab === "favorites" ? (
+          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card title={`Favorites (${favoriteFiles.length})`}>
+              <div className="otg-grid2">
+                {favoriteFiles.map((f) => (
+                  <div key={f.name} className="otg-card" style={{ padding: 10, overflow: "hidden" }}>
+                    {isVideoName(f.name) ? (
+                      <video style={{ width: "100%", borderRadius: 16 }} controls muted playsInline src={f.url} />
+                    ) : (
+                      <img style={{ width: "100%", borderRadius: 16, display: "block" }} src={f.url} alt={f.name} />
+                    )}
+                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div className="otg-help" style={{ marginTop: 0 }}>
+                        {f.name}
+                      </div>
+                      <div className="otg-row">
+                        <button onClick={() => deleteFromFavorites(f.name)} disabled={busy} className="otg-btnDanger">
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+        ) : null}
+      </div>
+
+      {mediaModal ? (
+        <div className="otg-modalOverlay" onClick={() => setMediaModal(null)}>
+          <div className="otg-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="otg-row" style={{ justifyContent: "space-between" }}>
+              <div style={{ fontWeight: 700 }}>{mediaModal.name}</div>
+              <button type="button" className="otg-btnGhost" onClick={() => setMediaModal(null)}>
+                Close
+              </button>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              {mediaModal.kind === "video" ? (
+                <video style={{ width: "100%", borderRadius: 16 }} controls muted playsInline src={mediaModal.url} />
+              ) : (
+                <img style={{ width: "100%", borderRadius: 16, display: "block" }} src={mediaModal.url} alt={mediaModal.name} />
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {promptModal ? (
+        <div className="otg-modalOverlay" onClick={() => setPromptModal(null)}>
+          <div className="otg-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="otg-row" style={{ justifyContent: "space-between" }}>
+              <div style={{ fontWeight: 700 }}>Prompt: {promptModal.name}</div>
+              <div className="otg-row" style={{ gap: 10 }}>
+                <button
+                  type="button"
+                  className="otg-btnGhost"
+                  title="Repair prompt metadata"
+                  onClick={() => repairPromptFromGallery(promptModal.name)}
+                >
+                  🔧
+                </button>
+                
+<div className="otg-row" style={{ gap: 10 }}>
+  <button
+    type="button"
+    className="otg-btnGhost"
+    title="Repair prompt metadata"
+    onClick={() => repairPromptFromGallery(promptModal.name)}
+  >
+    🔧
+  </button>
+  <button type="button" className="otg-btnGhost" onClick={() => setPromptModal(null)}>
+                  Close
+                </button>
+</div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div>
+                <div className="otg-help" style={{ marginTop: 0 }}>
+                  Positive
+                </div>
+                <pre className="otg-pre">{String(promptModal.meta?.positivePrompt || "")}</pre>
+              </div>
+
+              <div>
+                <div className="otg-help" style={{ marginTop: 0 }}>
+                  Negative
+                </div>
+                <pre className="otg-pre">{String(promptModal.meta?.negativePrompt || "")}</pre>
+              </div>
+
+              <div className="otg-row" style={{ justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  className="otg-btn"
+                  onClick={() => {
+                    const txt = String(promptModal.meta?.positivePrompt || "");
+                    navigator.clipboard.writeText(txt).catch(() => void 0);
+                    showToast("Copied positive prompt");
+                  }}
+                >
+                  Copy Positive
+                </button>
+                <button
+                  type="button"
+                  className="otg-btn"
+                  onClick={() => {
+                    const txt = String(promptModal.meta?.negativePrompt || "");
+                    navigator.clipboard.writeText(txt).catch(() => void 0);
+                    showToast("Copied negative prompt");
+                  }}
+                >
+                  Copy Negative
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {toast ? <div className="otg-toast">{toast}</div> : null}
+
+      <BottomNav tab={tab} onTab={setTab} />
+    </main>
+  );
+}
+
+
+
+
+
+
+
+

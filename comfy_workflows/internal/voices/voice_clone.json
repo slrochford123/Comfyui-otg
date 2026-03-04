@@ -1,0 +1,83 @@
+{
+  "69": {
+    "inputs": {
+      "filename_prefix": "audio/OTG_Voices",
+      "audioUI": "",
+      "audio": [
+        "117",
+        0
+      ]
+    },
+    "class_type": "SaveAudio",
+    "_meta": {
+      "title": "Save Audio (FLAC)"
+    }
+  },
+  "71": {
+    "inputs": {
+      "audio": "placeholder.wav",
+      "audioUI": ""
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "78": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Target Text to Clone"
+    }
+  },
+  "80": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Reference Audio Transcription(Optional)"
+    }
+  },
+  "117": {
+    "inputs": {
+      "target_text": [
+        "78",
+        0
+      ],
+      "model_choice": "1.7B",
+      "device": "auto",
+      "precision": "bf16",
+      "language": "Auto",
+      "ref_text": [
+        "80",
+        0
+      ],
+      "seed": 910098504942178,
+      "max_new_tokens": 2048,
+      "top_p": 0.8,
+      "top_k": 20,
+      "temperature": 1,
+      "repetition_penalty": 1.05,
+      "x_vector_only": false,
+      "attention": "auto",
+      "unload_model_after_generate": false,
+      "custom_model_path": {
+        "__value__": [
+          false,
+          true
+        ]
+      },
+      "ref_audio": [
+        "71",
+        0
+      ]
+    },
+    "class_type": "FB_Qwen3TTSVoiceClone",
+    "_meta": {
+      "title": "🎭 Qwen3-TTS VoiceClone"
+    }
+  }
+}

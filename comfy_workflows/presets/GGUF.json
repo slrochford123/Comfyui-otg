@@ -1,0 +1,605 @@
+{
+  "8": {
+    "inputs": {
+      "samples": [
+        "177",
+        0
+      ],
+      "vae": [
+        "199",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "50": {
+    "inputs": {
+      "width": [
+        "196",
+        1
+      ],
+      "height": [
+        "196",
+        2
+      ],
+      "length": [
+        "241",
+        0
+      ],
+      "batch_size": 1,
+      "positive": [
+        "255",
+        0
+      ],
+      "negative": [
+        "202",
+        0
+      ],
+      "vae": [
+        "199",
+        0
+      ],
+      "start_image": [
+        "196",
+        0
+      ]
+    },
+    "class_type": "WanImageToVideo",
+    "_meta": {
+      "title": "WanImageToVideo"
+    }
+  },
+  "54": {
+    "inputs": {
+      "shift": 8,
+      "model": [
+        "59",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "59": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": true,
+        "lora": "lightx2v_I2V_14B_480p_cfg_step_distill_rank16_bf16.safetensors",
+        "strength": 3
+      },
+      "lora_2": {
+        "on": false,
+        "lora": "FC Flux Perfect Busts.safetensors",
+        "strength": 0
+      },
+      "lora_3": {
+        "on": true,
+        "lora": "SaggyTits_wan22_e20_high.safetensors",
+        "strength": 0.9
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "209",
+        0
+      ],
+      "clip": [
+        "200",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree) High Pass"
+    }
+  },
+  "116": {
+    "inputs": {
+      "image": "__OTG_INPUT_IMAGE__"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "177": {
+    "inputs": {
+      "add_noise": "disable",
+      "noise_seed": 640281671940769,
+      "steps": [
+        "256",
+        0
+      ],
+      "cfg": 1,
+      "sampler_name": "lcm",
+      "scheduler": "simple",
+      "start_at_step": [
+        "221",
+        0
+      ],
+      "end_at_step": 10000,
+      "return_with_leftover_noise": "disable",
+      "model": [
+        "182",
+        0
+      ],
+      "positive": [
+        "237",
+        0
+      ],
+      "negative": [
+        "238",
+        0
+      ],
+      "latent_image": [
+        "178",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Advanced) Low Pass"
+    }
+  },
+  "178": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": 866913516877358,
+      "steps": [
+        "256",
+        0
+      ],
+      "cfg": 1,
+      "sampler_name": "lcm",
+      "scheduler": "simple",
+      "start_at_step": 0,
+      "end_at_step": [
+        "221",
+        0
+      ],
+      "return_with_leftover_noise": "enable",
+      "model": [
+        "54",
+        0
+      ],
+      "positive": [
+        "237",
+        0
+      ],
+      "negative": [
+        "238",
+        0
+      ],
+      "latent_image": [
+        "239",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Advanced) High Pass"
+    }
+  },
+  "181": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": true,
+        "lora": "lightx2v_I2V_14B_480p_cfg_step_distill_rank16_bf16.safetensors",
+        "strength": 1.5
+      },
+      "lora_2": {
+        "on": false,
+        "lora": "W_NSFW_Posing_Nude_i2v_720p_v1.safetensors",
+        "strength": 0
+      },
+      "lora_3": {
+        "on": true,
+        "lora": "SaggyTits_wan22_e25_low.safetensors",
+        "strength": 0.9
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "210",
+        0
+      ],
+      "clip": [
+        "200",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree) Low Pass"
+    }
+  },
+  "182": {
+    "inputs": {
+      "shift": 8,
+      "model": [
+        "181",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "194": {
+    "inputs": {
+      "unet_name": "wan22-i2v-a14b-high-q4-k-s.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "195": {
+    "inputs": {
+      "unet_name": "wan22-i2v-a14b-low-q4-k-s.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "196": {
+    "inputs": {
+      "image": [
+        "198",
+        0
+      ]
+    },
+    "class_type": "GetImageSizeAndCount",
+    "_meta": {
+      "title": "Get Image Size & Count (Swwan)"
+    }
+  },
+  "198": {
+    "inputs": {
+      "size": 720,
+      "interpolation_mode": "nearest",
+      "image": [
+        "225",
+        0
+      ]
+    },
+    "class_type": "JWImageResizeByLongerSide",
+    "_meta": {
+      "title": "Image Resize by Longer Side"
+    }
+  },
+  "199": {
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "200": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "202": {
+    "inputs": {
+      "text": "__OTG_NEGATIVE_PROMPT__",
+      "clip": [
+        "200",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "207": {
+    "inputs": {
+      "frame_rate": 16,
+      "loop_count": 0,
+      "filename_prefix": "wan2/upscaled/v2v",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 4,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine preview video 16 fps"
+    }
+  },
+  "209": {
+    "inputs": {
+      "model": [
+        "232",
+        0
+      ]
+    },
+    "class_type": "wanBlockSwap",
+    "_meta": {
+      "title": "WanVideoBlockSwap High Pass"
+    }
+  },
+  "210": {
+    "inputs": {
+      "model": [
+        "233",
+        0
+      ]
+    },
+    "class_type": "wanBlockSwap",
+    "_meta": {
+      "title": "WanVideoBlockSwap Low Pass"
+    }
+  },
+  "219": {
+    "inputs": {
+      "a": [
+        "256",
+        0
+      ],
+      "b": 2
+    },
+    "class_type": "JWIntegerDiv",
+    "_meta": {
+      "title": "Integer Divide"
+    }
+  },
+  "221": {
+    "inputs": {
+      "value": [
+        "219",
+        0
+      ],
+      "mode": "round"
+    },
+    "class_type": "JWFloatToInteger",
+    "_meta": {
+      "title": "Float to Integer"
+    }
+  },
+  "225": {
+    "inputs": {
+      "any_01": [
+        "116",
+        0
+      ]
+    },
+    "class_type": "Any Switch (rgthree)",
+    "_meta": {
+      "title": "Any Switch (rgthree)"
+    }
+  },
+  "232": {
+    "inputs": {
+      "any_02": [
+        "279",
+        0
+      ]
+    },
+    "class_type": "Any Switch (rgthree)",
+    "_meta": {
+      "title": "Any Switch (rgthree)"
+    }
+  },
+  "233": {
+    "inputs": {
+      "any_02": [
+        "280",
+        0
+      ]
+    },
+    "class_type": "Any Switch (rgthree)",
+    "_meta": {
+      "title": "Any Switch (rgthree)"
+    }
+  },
+  "237": {
+    "inputs": {
+      "any_01": [
+        "50",
+        0
+      ],
+      "any_02": [
+        "255",
+        0
+      ]
+    },
+    "class_type": "Any Switch (rgthree)",
+    "_meta": {
+      "title": "pos"
+    }
+  },
+  "238": {
+    "inputs": {
+      "any_01": [
+        "50",
+        1
+      ],
+      "any_02": [
+        "202",
+        0
+      ]
+    },
+    "class_type": "Any Switch (rgthree)",
+    "_meta": {
+      "title": "neg"
+    }
+  },
+  "239": {
+    "inputs": {
+      "any_01": [
+        "50",
+        2
+      ]
+    },
+    "class_type": "Any Switch (rgthree)",
+    "_meta": {
+      "title": "latent"
+    }
+  },
+  "241": {
+    "inputs": {
+      "expression": "a*16+1",
+      "a": [
+        "242",
+        0
+      ]
+    },
+    "class_type": "MathExpression|pysssss",
+    "_meta": {
+      "title": "Math Expression 🐍"
+    }
+  },
+  "242": {
+    "inputs": {
+      "Xi": 7,
+      "Xf": 7,
+      "isfloatX": 0
+    },
+    "class_type": "mxSlider",
+    "_meta": {
+      "title": "clip lenght ( in seconds )"
+    }
+  },
+  "253": {
+    "inputs": {
+      "text": "__OTG_POSITIVE_PROMPT__",
+      "clip": [
+        "200",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "255": {
+    "inputs": {
+      "any_04": [
+        "253",
+        0
+      ]
+    },
+    "class_type": "Any Switch (rgthree)",
+    "_meta": {
+      "title": "pos"
+    }
+  },
+  "256": {
+    "inputs": {
+      "Xi": 4,
+      "Xf": 4,
+      "isfloatX": 0
+    },
+    "class_type": "mxSlider",
+    "_meta": {
+      "title": "Generation Steps"
+    }
+  },
+  "275": {
+    "inputs": {
+      "enable_fp16_accumulation": true,
+      "model": [
+        "276",
+        0
+      ]
+    },
+    "class_type": "ModelPatchTorchSettings",
+    "_meta": {
+      "title": "Model Patch Torch Settings"
+    }
+  },
+  "276": {
+    "inputs": {
+      "sage_attention": "auto",
+      "allow_compile": false,
+      "model": [
+        "194",
+        0
+      ]
+    },
+    "class_type": "PathchSageAttentionKJ",
+    "_meta": {
+      "title": "Patch Sage Attention KJ"
+    }
+  },
+  "277": {
+    "inputs": {
+      "enable_fp16_accumulation": true,
+      "model": [
+        "278",
+        0
+      ]
+    },
+    "class_type": "ModelPatchTorchSettings",
+    "_meta": {
+      "title": "Model Patch Torch Settings"
+    }
+  },
+  "278": {
+    "inputs": {
+      "sage_attention": "auto",
+      "allow_compile": false,
+      "model": [
+        "195",
+        0
+      ]
+    },
+    "class_type": "PathchSageAttentionKJ",
+    "_meta": {
+      "title": "Patch Sage Attention KJ"
+    }
+  },
+  "279": {
+    "inputs": {
+      "any_02": [
+        "275",
+        0
+      ]
+    },
+    "class_type": "Any Switch (rgthree)",
+    "_meta": {
+      "title": "Any Switch (rgthree)"
+    }
+  },
+  "280": {
+    "inputs": {
+      "any_02": [
+        "277",
+        0
+      ]
+    },
+    "class_type": "Any Switch (rgthree)",
+    "_meta": {
+      "title": "Any Switch (rgthree)"
+    }
+  }
+}

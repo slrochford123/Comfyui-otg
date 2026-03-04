@@ -1,0 +1,9 @@
+﻿{
+  "appId": "com.slr.otg",
+  "appName": "OTG Test",
+  "webDir": "public",
+  "server": {
+    "url": "http://100.76.179.83:3001",
+    "cleartext": true
+  }
+}

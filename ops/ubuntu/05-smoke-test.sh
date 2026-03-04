@@ -1,0 +1,28 @@
+﻿#!/usr/bin/env bash
+set -euo pipefail
+
+BASE_URL=${1:-http://127.0.0.1:3000}
+
+req() {
+  local url="$1"
+  local code
+  code=$(curl -sS -o /dev/null -w "%{http_code}" "$url")
+  echo "$code $url"
+  if [ "$code" -lt 200 ] || [ "$code" -ge 400 ]; then
+    echo "FAIL: $url returned $code" >&2
+    exit 1
+  fi
+}
+
+req "$BASE_URL/api/healthz"
+req "$BASE_URL/api/whoami"
+req "$BASE_URL/login"
+
+code=$(curl -sS -o /dev/null -w "%{http_code}" -I "$BASE_URL/app")
+echo "$code $BASE_URL/app"
+if [ "$code" -lt 300 ] || [ "$code" -ge 400 ]; then
+  echo "FAIL: /app expected redirect (3xx), got $code" >&2
+  exit 1
+fi
+
+echo "OK: smoke test passed ($BASE_URL)"

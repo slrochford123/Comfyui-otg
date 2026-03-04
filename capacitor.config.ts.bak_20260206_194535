@@ -1,0 +1,17 @@
+﻿import type { CapacitorConfig } from "@capacitor/cli";
+
+const isTest = process.env.SLR_BUILD === "test";
+
+const config: CapacitorConfig = {
+  appId: "com.slr.otg", // 🔒 NEVER CHANGE (Play Store identity)
+  appName: isTest ? "OTG Test" : "OTG",
+  webDir: isTest ? "out" : "public",
+  server: {
+    url: isTest
+      ? "http://100.76.179.83:3001"   // ✅ Tailscale test server
+      : "https://comf-otg.comfyui-otg.win", // ✅ Production HTTPS
+    cleartext: isTest, // true for test (http), false for prod (https)
+  },
+};
+
+export default config;

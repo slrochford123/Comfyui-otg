@@ -1,0 +1,218 @@
+﻿'use client';
+
+import React, { useMemo, useRef, useState } from 'react';
+import { useFloatingQueue } from './FloatingQueueProvider';
+import { useRouter } from 'next/navigation';
+
+function statusSuffix(s: string) {
+  if (s === 'complete') return ' — completed';
+  if (s === 'error') return ' — error';
+  if (s === 'running') return ' — running';
+  return ' — queued';
+}
+
+const POS_KEY = 'otg:queuePos_v2';
+
+type Pos = { x: number; y: number };
+
+export function FloatingQueueWidget() {
+  const router = useRouter();
+  const { items, isOpen, setOpen, clearAll } = useFloatingQueue();
+
+  const activeCount = useMemo(
+    () => items.filter((i) => i.status === 'queued' || i.status === 'running').length,
+    [items]
+  );
+
+  // numbers only
+  const badgeCount = activeCount > 0 ? activeCount : items.length;
+
+  const [pos, setPos] = useState<Pos>(() => {
+    if (typeof window === 'undefined') return { x: 20, y: 20 };
+    try {
+      const raw = window.localStorage.getItem(POS_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') return parsed;
+    } catch {}
+    return { x: 20, y: 20 };
+  });
+
+  const dragRef = useRef<{
+    dragging: boolean;
+    startClientX: number;
+    startClientY: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+    pointerId: number | null;
+  }>({
+    dragging: false,
+    startClientX: 0,
+    startClientY: 0,
+    startX: 0,
+    startY: 0,
+    moved: false,
+    pointerId: null,
+  });
+
+  if (items.length === 0) return null;
+
+  const savePos = (p: Pos) => {
+    try {
+      window.localStorage.setItem(POS_KEY, JSON.stringify(p));
+    } catch {}
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        right: pos.x,
+        bottom: pos.y,
+        zIndex: 9999,
+        userSelect: 'none',
+        touchAction: 'none', // required for touch drag
+      }}
+      onPointerDown={(e) => {
+        // Only drag with primary button/finger
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+        dragRef.current.dragging = true;
+        dragRef.current.pointerId = e.pointerId;
+        dragRef.current.startClientX = e.clientX;
+        dragRef.current.startClientY = e.clientY;
+        dragRef.current.startX = pos.x;
+        dragRef.current.startY = pos.y;
+        dragRef.current.moved = false;
+
+        // capture pointer so drag continues outside element
+        (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        if (!dragRef.current.dragging) return;
+        if (dragRef.current.pointerId !== e.pointerId) return;
+
+        const dx = e.clientX - dragRef.current.startClientX;
+        const dy = e.clientY - dragRef.current.startClientY;
+
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragRef.current.moved = true;
+
+        // right/bottom positioning: subtract movement
+        const nx = Math.max(0, dragRef.current.startX - dx);
+        const ny = Math.max(0, dragRef.current.startY - dy);
+
+        setPos({ x: nx, y: ny });
+      }}
+      onPointerUp={(e) => {
+        if (dragRef.current.pointerId !== e.pointerId) return;
+
+        dragRef.current.dragging = false;
+        dragRef.current.pointerId = null;
+        savePos(pos);
+      }}
+      onPointerCancel={(e) => {
+        if (dragRef.current.pointerId !== e.pointerId) return;
+
+        dragRef.current.dragging = false;
+        dragRef.current.pointerId = null;
+        savePos(pos);
+      }}
+    >
+      <button
+        type="button"
+        aria-label={`Jobs: ${badgeCount}`}
+        onClick={() => {
+          // prevent click after drag
+          if (dragRef.current.moved) return;
+          setOpen(!isOpen);
+        }}
+        style={{
+          background: '#7c3aed',
+          color: '#fff',
+          border: 'none',
+          borderRadius: 999,
+          width: 44,
+          height: 44,
+          padding: 0,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 16,
+          fontWeight: 800,
+          cursor: 'pointer',
+          boxShadow: '0 8px 25px rgba(0,0,0,0.3)',
+        }}
+      >
+        {badgeCount}
+      </button>
+
+      {isOpen && (
+        <div
+          style={{
+            marginTop: 10,
+            width: 320,
+            background: '#111',
+            color: '#fff',
+            borderRadius: 12,
+            padding: 12,
+            boxShadow: '0 15px 40px rgba(0,0,0,0.5)',
+          }}
+        >
+          <div style={{ fontSize: 13, marginBottom: 8, opacity: 0.8 }}>Jobs</div>
+
+          {items.map((item) => {
+            const focus = item.focusId || item.resultName;
+            const clickable = item.status === 'complete' && !!focus;
+
+            return (
+              <button
+                key={item.id}
+                type="button"
+                disabled={!clickable}
+                onClick={() => {
+                  if (!clickable) return;
+                  const f = encodeURIComponent(String(focus));
+                  router.push(`/app?tab=gallery&focus=${f}`);
+                  setOpen(false);
+                }}
+                style={{
+                  width: '100%',
+                  textAlign: 'left',
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#fff',
+                  fontSize: 13,
+                  padding: '8px 0',
+                  cursor: clickable ? 'pointer' : 'default',
+                  opacity: clickable ? 1 : 0.9,
+                  borderBottom: '1px solid rgba(255,255,255,0.1)',
+                }}
+              >
+                {item.title}
+                {statusSuffix(item.status)}
+              </button>
+            );
+          })}
+
+          <button
+            type="button"
+            onClick={clearAll}
+            style={{
+              marginTop: 10,
+              width: '100%',
+              background: '#222',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 8,
+              padding: 8,
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+          >
+            Clear All
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

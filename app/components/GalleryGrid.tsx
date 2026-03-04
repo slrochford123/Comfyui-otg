@@ -52,6 +52,8 @@ export default function GalleryGrid() {
   const [deviceId, setDeviceId] = useState<string>('local');
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  // PERF: avoid mounting lots of <video> elements; only mount on demand.
+  const [openVideoName, setOpenVideoName] = useState<string | null>(null);
 
   const loadGallery = useCallback(async () => {
     setLoading(true);
@@ -132,18 +134,61 @@ export default function GalleryGrid() {
               background: 'rgba(255,255,255,0.03)',
             }}
           >
-            <div style={{ aspectRatio: '1 / 1', background: 'rgba(0,0,0,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div
+              style={{
+                aspectRatio: '1 / 1',
+                background: 'rgba(0,0,0,0.25)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                position: 'relative',
+              }}
+            >
               {video ? (
-                <video
-                  src={src}
-                  controls
-                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                />
+                openVideoName === name ? (
+                  <video
+                    src={src}
+                    controls
+                    preload="metadata"
+                    playsInline
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setOpenVideoName(name)}
+                    title="Play"
+                    style={{ width: '100%', height: '100%', padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
+                  >
+                    <img
+                      src={`/api/thumb?collection=gallery&name=${encodeURIComponent(name)}&w=512`}
+                      alt={name}
+                      loading="lazy"
+                      decoding="async"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    />
+                    <div
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      <div style={{ background: 'rgba(0,0,0,0.55)', color: 'white', borderRadius: 999, padding: '8px 12px', fontSize: 12 }}>
+                        ▶ Video
+                      </div>
+                    </div>
+                  </button>
+                )
               ) : (
                 <img
-                  src={src}
+                  src={`/api/thumb?collection=gallery&name=${encodeURIComponent(name)}&w=512`}
                   alt={name}
                   loading="lazy"
+                  decoding="async"
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                 />
               )}

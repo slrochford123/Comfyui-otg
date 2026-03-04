@@ -1,4 +1,4 @@
-function getDeviceId(): string {
+﻿function getDeviceId(): string {
   if (typeof window === "undefined") return "desktop_default";
   return (
     localStorage.getItem("otg_device_id") ||
@@ -8,16 +8,45 @@ function getDeviceId(): string {
 }
 
 import { NextRequest, NextResponse } from "next/server";
+import { resolveComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import path from "node:path";
 import fs from "node:fs";
 import { loadWorkflowById, extractPromptGraph, validatePromptGraph } from "@/lib/workflows";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { readState, markRunning } from "@/lib/contentState";
 
+function sanitizeFilenamePrefix__otg(title: any) {
+  const t = String(title || "").trim();
+  if (!t) return "";
+  return t
+    .replace(/[\\\/:*?\"<>|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
+function setFilenamePrefix__otg(graph: any, title: any) {
+  const prefix = sanitizeFilenamePrefix__otg(title);
+  if (!prefix) return;
+
+  for (const nodeId of Object.keys(graph || {})) {
+    const node = (graph as any)[nodeId];
+    if (!node || typeof node !== "object") continue;
+    const inputs = (node as any).inputs;
+    if (!inputs || typeof inputs !== "object") continue;
+
+    if (typeof (inputs as any).filename_prefix === "string") {
+      (inputs as any).filename_prefix = prefix;
+    }
+    if (typeof (inputs as any).file_prefix === "string") {
+      (inputs as any).file_prefix = prefix;
+    }
+  }
+}
+
+
 export const runtime = "nodejs";
 
-const COMFY_BASE_URL =
-  (process.env.COMFY_BASE_URL || process.env.COMFY_URL || "http://127.0.0.1:8188").replace(/\/+$/, "");
 
 const OTG_DATA_DIR = process.env.OTG_DATA_DIR || path.join(process.cwd(), "data");
 const JOBS_DIR = path.join(OTG_DATA_DIR, "device_jobs");
@@ -155,30 +184,172 @@ function setTextEncodes(
   if (textLike[1]) setNegativeOnNode(textLike[1].id);
 }
 
+type OtgLoraChoice = { name: string; strengthModel?: number; strengthClip?: number };
 
+function applySelectedLoras(graph: any, loras: OtgLoraChoice[] | null | undefined) {
+  if (!graph || typeof graph !== "object") return { applied: 0, available: 0 };
+  if (!Array.isArray(loras) || loras.length === 0) return { applied: 0, available: 0 };
 
-function setSeed(graph: any, seed: number) {
-  if (!graph || typeof graph !== "object") return;
-  if (!Number.isFinite(seed)) return;
+  const nodes: Record<string, any> = graph;
 
-  for (const node of Object.values(graph) as any[]) {
-    if (!node?.inputs) continue;
-    if (typeof node.inputs.seed === "number") node.inputs.seed = seed;
-    if (typeof node.inputs.noise_seed === "number") node.inputs.noise_seed = seed;
+  const clamp = (v: any, dflt: number) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return dflt;
+    return Math.max(0, Math.min(2, n));
+  };
+
+  // Identify explicit OTG user slots first (WAN high/low)
+  const slotIds: { high?: string; low?: string } = {};
+  const genericSlots: string[] = [];
+  const allLoraNodes: { id: string; node: any }[] = [];
+
+  for (const [id, node] of Object.entries(nodes)) {
+    const ct = String((node as any)?.class_type || "");
+    const inputs = (node as any)?.inputs;
+    if (!inputs || typeof inputs !== "object") continue;
+
+    const hasLoraName = typeof (inputs as any).lora_name === "string" || typeof (inputs as any).lora === "string";
+    const looksLike = /lora/i.test(ct) && hasLoraName;
+    const classic = ct === "LoraLoader" || ct === "LoRALoader" || ct === "LoraLoaderModelOnly";
+    if (!(classic || looksLike)) continue;
+
+    allLoraNodes.push({ id: String(id), node });
+
+    const ln = String((inputs as any).lora_name || (inputs as any).lora || "");
+    if (ln === "__otg_user_high__") slotIds.high = String(id);
+    else if (ln === "__otg_user_low__") slotIds.low = String(id);
+    else if (ln === "__otg_user__") genericSlots.push(String(id));
   }
-}
 
-function setFilenamePrefix(graph: any, prefix: string) {
-  if (!graph || typeof graph !== "object") return;
-  const p = String(prefix || "").trim();
-  if (!p) return;
-  for (const node of Object.values(graph) as any[]) {
-    if (!node?.inputs) continue;
-    if (typeof node.inputs.filename_prefix === "string") {
-      node.inputs.filename_prefix = p;
+  // Stable order for fallback
+  allLoraNodes.sort((a, b) => {
+    const an = Number(a.id);
+    const bn = Number(b.id);
+    const aNum = Number.isFinite(an);
+    const bNum = Number.isFinite(bn);
+    if (aNum && bNum) return an - bn;
+    if (aNum) return -1;
+    if (bNum) return 1;
+    return a.id.localeCompare(b.id);
+  });
+
+  // WAN protection: never overwrite required LightX2V pipeline LoRAs
+  const isWanGraph = Object.values(nodes).some((n: any) => String(n?.class_type || "") === "EmptyHunyuanLatentVideo");
+  const isWanCoreLora = (name: string) => /wan2\.2_.*lightx2v_4steps_lora.*_(high|low)_noise/i.test(name);
+
+  const writeChoiceToNode = (node: any, choice: OtgLoraChoice) => {
+    if (!node?.inputs) return false;
+    const inputs = node.inputs;
+    const name = String(choice?.name || "").trim();
+    if (!name) return false;
+
+    if (typeof inputs.lora_name === "string") inputs.lora_name = name;
+    else if (typeof inputs.lora === "string") inputs.lora = name;
+
+    if (typeof inputs.strength_model === "number") inputs.strength_model = clamp(choice?.strengthModel, inputs.strength_model);
+    if (typeof inputs.strength_clip === "number") inputs.strength_clip = clamp(choice?.strengthClip, inputs.strength_clip);
+    if (typeof inputs.model_strength === "number") inputs.model_strength = clamp(choice?.strengthModel, inputs.model_strength);
+    if (typeof inputs.clip_strength === "number") inputs.clip_strength = clamp(choice?.strengthClip, inputs.clip_strength);
+    return true;
+  };
+
+  let applied = 0;
+
+  if (isWanGraph && (slotIds.high || slotIds.low)) {
+    // Route by filename tag. Untagged goes to low.
+    const highs = loras.filter((l) => /high/i.test(String(l?.name || "")));
+    const lows = loras.filter((l) => !/high/i.test(String(l?.name || "")));
+
+    if (slotIds.high && highs[0]) {
+      if (writeChoiceToNode(nodes[slotIds.high], highs[0])) applied++;
     }
+    if (slotIds.low && (lows[0] || highs[1])) {
+      const pick = lows[0] || highs[1];
+      if (pick && writeChoiceToNode(nodes[slotIds.low], pick)) applied++;
+    }
+    return { applied, available: (slotIds.high ? 1 : 0) + (slotIds.low ? 1 : 0) };
+  }
+
+  // Generic behavior: write into non-core LoRA nodes in order
+  const targetNodes = allLoraNodes.filter(({ node }) => {
+    const inputs = node?.inputs;
+    const ln = String(inputs?.lora_name || inputs?.lora || "");
+    if (isWanGraph && isWanCoreLora(ln)) return false;
+    return true;
+  });
+
+  const count = Math.min(targetNodes.length, loras.length);
+  for (let i = 0; i < count; i++) {
+    if (writeChoiceToNode(targetNodes[i].node, loras[i])) applied++;
+  }
+
+  return { applied, available: targetNodes.length };
+}
+
+
+
+
+function setSeedAuto(graph: any, seedMode: "random" | "fixed" | undefined, seedIn: any) {
+  if (!graph || typeof graph !== "object") return { seed: null as number | null };
+  const mode = seedMode === "fixed" ? "fixed" : "random";
+  let seed = Number(seedIn);
+  if (!Number.isFinite(seed) || seed <= 0 || seed > 2147483647) {
+    // 31-bit positive int
+    seed = Math.floor(Math.random() * 2147483647) + 1;
+  }
+  if (mode === "random") {
+    // Always randomize per submission unless explicitly fixed.
+    seed = Math.floor(Math.random() * 2147483647) + 1;
+  }
+
+  // Apply to all numeric seed/noise_seed inputs (skip wired/linked inputs)
+  const ids = Object.keys(graph).sort((a, b) => {
+    const an = Number(a), bn = Number(b);
+    const aNum = Number.isFinite(an), bNum = Number.isFinite(bn);
+    if (aNum && bNum) return an - bn;
+    if (aNum) return -1;
+    if (bNum) return 1;
+    return a.localeCompare(b);
+  });
+
+  let i = 0;
+  for (const id of ids) {
+    const node = (graph as any)[id];
+    const inputs = node?.inputs;
+    if (!inputs || typeof inputs !== "object") continue;
+
+    const derived = (seed + i * 9973) % 2147483647 || seed;
+    for (const k of ["seed", "noise_seed"]) {
+      const v = (inputs as any)[k];
+      if (typeof v === "number" && Number.isFinite(v)) (inputs as any)[k] = derived;
+    }
+    i++;
+  }
+
+  return { seed }
+
+function setFilenamePrefix(graph: any, titleRaw: any) {
+  if (!graph || typeof graph !== "object") return;
+  const title = String(titleRaw || "").trim();
+  if (!title) return;
+
+  // sanitize for filesystem + ComfyUI prefix
+  const safe = title.replace(/[^\w\- .]+/g, "_").replace(/\s+/g, " ").trim().slice(0, 80);
+  if (!safe) return;
+
+  for (const node of Object.values(graph) as any[]) {
+    const inputs = node?.inputs;
+    if (!inputs || typeof inputs !== "object") continue;
+
+    // Common save nodes use filename_prefix
+    if (typeof inputs.filename_prefix === "string") inputs.filename_prefix = safe;
+    // Some variants use file_prefix
+    if (typeof inputs.file_prefix === "string") inputs.file_prefix = safe;
   }
 }
+;
+}
+
 
 function setSize(graph: any, width: number, height: number) {
   if (!graph || typeof graph !== "object") return;
@@ -200,22 +371,49 @@ function setSize(graph: any, width: number, height: number) {
   }
 }
 
-function setDurationSeconds(graph: any, seconds: number) {
-  if (!graph || typeof graph !== "object") return;
-  if (!Number.isFinite(seconds)) return;
-  const sec = Math.max(0, Math.min(30, Math.floor(seconds)));
-
-  // Try to infer fps from the graph if present; otherwise default to 8.
-  let fps = 8;
+function inferFps(graph: any): number {
+  if (!graph || typeof graph !== "object") return 8;
   for (const node of Object.values(graph) as any[]) {
     const v = node?.inputs?.fps ?? node?.inputs?.frame_rate ?? node?.inputs?.framerate;
     if (typeof v === "number" && Number.isFinite(v) && v >= 1 && v <= 120) {
-      fps = Math.floor(v);
-      break;
+      return Math.floor(v);
     }
   }
+  return 8;
+}
 
-  const frames = Math.max(1, sec === 0 ? 1 : sec * fps);
+
+const OTG_MAX_PIXELS = Number.isFinite(Number(process.env.OTG_MAX_PIXELS))
+  ? Math.floor(Number(process.env.OTG_MAX_PIXELS))
+  : 1280 * 720;
+
+const OTG_MAX_FRAMES = Number.isFinite(Number(process.env.OTG_MAX_FRAMES))
+  ? Math.floor(Number(process.env.OTG_MAX_FRAMES))
+  : 240;
+
+function clampSizeToMaxPixels(width: number, height: number) {
+  const w = Math.max(64, Math.floor(width));
+  const h = Math.max(64, Math.floor(height));
+  const px = w * h;
+  if (px <= OTG_MAX_PIXELS) return { width: w, height: h, clamped: false };
+
+  const scale = Math.sqrt(OTG_MAX_PIXELS / px);
+  const nw = Math.max(64, Math.floor((w * scale) / 8) * 8);
+  const nh = Math.max(64, Math.floor((h * scale) / 8) * 8);
+  return { width: nw, height: nh, clamped: true };
+}
+
+function clampFrames(frames: number) {
+  const f = Math.max(1, Math.floor(frames));
+  if (f <= OTG_MAX_FRAMES) return { frames: f, clamped: false };
+  return { frames: OTG_MAX_FRAMES, clamped: true };
+}
+
+function setFrameCount(graph: any, frames: number) {
+  if (!graph || typeof graph !== "object") return;
+  if (!Number.isFinite(frames)) return;
+  const f = Math.max(1, Math.floor(frames));
+
   const frameKeys = [
     "num_frames",
     "frames",
@@ -229,9 +427,44 @@ function setDurationSeconds(graph: any, seconds: number) {
   for (const node of Object.values(graph) as any[]) {
     if (!node?.inputs) continue;
     for (const k of frameKeys) {
-      if (typeof node.inputs?.[k] === "number") node.inputs[k] = frames;
+      if (typeof node.inputs?.[k] === "number") node.inputs[k] = f;
     }
   }
+}
+
+function setDurationSeconds(graph: any, seconds: number) {
+  if (!Number.isFinite(seconds)) return;
+  const sec = Math.max(0, Math.floor(seconds));
+  const fps = inferFps(graph);
+  const frames = Math.max(1, sec === 0 ? 1 : sec * fps);
+  const cf = clampFrames(frames);
+  setFrameCount(graph, cf.frames);
+}
+
+function inferAnySize(graph: any): { width: number; height: number } | null {
+  if (!graph || typeof graph !== "object") return null;
+  const keysW = ["width", "w", "image_width", "frame_width"];
+  const keysH = ["height", "h", "image_height", "frame_height"];
+  for (const node of Object.values(graph) as any[]) {
+    const inputs = node?.inputs;
+    if (!inputs) continue;
+    let w: number | null = null;
+    let h: number | null = null;
+    for (const k of keysW) {
+      if (typeof inputs?.[k] === "number" && Number.isFinite(inputs[k])) {
+        w = inputs[k];
+        break;
+      }
+    }
+    for (const k of keysH) {
+      if (typeof inputs?.[k] === "number" && Number.isFinite(inputs[k])) {
+        h = inputs[k];
+        break;
+      }
+    }
+    if (w && h) return { width: Math.floor(w), height: Math.floor(h) };
+  }
+  return null;
 }
 
 function applyOtgPlaceholders(
@@ -256,6 +489,14 @@ function applyOtgPlaceholders(
       const m = v.match(/^__OTG_INPUT_IMAGE(?:_(\d+))?__$/);
       if (m) {
         const idx = m[1] ? Math.max(0, Number(m[1]) - 1) : nextImgIdx++;
+        return inputImages[idx] ?? v;
+      }
+
+      // Newer workflow placeholder convention (file-like tokens)
+      // Example: otg__INPUT_1.png, otg__INPUT_2.png ...
+      const m2 = v.match(/^otg__INPUT_(\d+)\.png$/i);
+      if (m2) {
+        const idx = Math.max(0, Number(m2[1]) - 1);
         return inputImages[idx] ?? v;
       }
       return v;
@@ -283,11 +524,16 @@ function applyOtgPlaceholders(
 
 
 
-async function parseOtgBody(req: NextRequest) {
+async function parseOtgBody(req: NextRequest, comfyBaseUrl: string) {
   const ct = (req.headers.get("content-type") || "").toLowerCase();
   // Primary path: JSON (preferred)
   if (!ct.includes("multipart/form-data")) {
-    return await req.json().catch(() => null);
+    try {
+      const rawBody = await req.json();
+      return rawBody as any;
+    } catch {
+      return null;
+    }
   }
 
   // Fallback: multipart/form-data (mobile clients often use FormData)
@@ -298,7 +544,28 @@ async function parseOtgBody(req: NextRequest) {
   const positivePrompt = String(fd.get("prompt") || fd.get("positivePrompt") || "");
   const negativePrompt = String(fd.get("negativePrompt") || "");
   const orientation = String(fd.get("orientation") || "");
-  const durationSeconds = String(fd.get("durationSeconds") || "");
+  const durationSecondsRaw = String(fd.get("durationSeconds") || "").trim();
+  const frameCountRaw = String(fd.get("frameCount") || "").trim();
+  const durationSeconds = durationSecondsRaw ? Number(durationSecondsRaw) : undefined;
+  const frameCount = frameCountRaw ? Number(frameCountRaw) : undefined;
+  const seed = String(fd.get("seed") || "");
+  const width = String(fd.get("width") || "");
+  const height = String(fd.get("height") || "");
+  const promptJson = String(fd.get("promptJson") || fd.get("api") || fd.get("prompt_api") || "");
+  const angleHorizontal = String(fd.get("angleHorizontal") || "").trim();
+  const angleVertical = String(fd.get("angleVertical") || "").trim();
+  const angleZoom = String(fd.get("angleZoom") || "").trim();
+  const angleDefaultPrompts = String(fd.get("angleDefaultPrompts") || "").trim();
+  const angleCameraView = String(fd.get("angleCameraView") || "").trim();
+
+  const lorasRaw = fd.get("loras");
+  let loras: any = null;
+  if (typeof lorasRaw === "string" && lorasRaw.trim()) {
+    try {
+      const parsed = JSON.parse(lorasRaw);
+      if (Array.isArray(parsed)) loras = parsed;
+    } catch {}
+  }
 
   const fileKeys = ["imageA", "imageB", "imageC", "imageD"];
   const inputImages: string[] = [];
@@ -311,7 +578,7 @@ async function parseOtgBody(req: NextRequest) {
       const up = new FormData();
       const filename = (v as any)?.name ? String((v as any).name) : `otg_${Date.now()}_${key}.png`;
       up.append("image", v, filename);
-      const r = await fetch(`${COMFY_BASE_URL}/upload/image`, { method: "POST", body: up });
+      const r = await fetch(`${comfyBaseUrl}/upload/image`, { method: "POST", body: up });
       const j: any = await r.json().catch(() => null);
       if (!r.ok || !j || !j.name) {
         throw new Error(j?.error || `upload failed (${r.status})`);
@@ -329,21 +596,34 @@ async function parseOtgBody(req: NextRequest) {
     negativePrompt,
     orientation,
     durationSeconds,
+    frameCount,
+    seed,
+    width,
+    height,
+    promptJson,
+    angleHorizontal,
+    angleVertical,
+    angleZoom,
+    angleDefaultPrompts,
+    angleCameraView,
     inputImages,
+    loras,
   };
 }
 
 export async function GET(req: NextRequest) {
   const deviceId = safeDeviceId(req.headers.get("x-otg-device-id"));
+  const { baseUrl } = await resolveComfyBaseUrl();
+  const comfyBaseUrl = baseUrl.replace(/\/+$/, "");
 
   try {
-    const r = await fetch(`${COMFY_BASE_URL}/system_stats`, { cache: "no-store" });
+    const r = await fetch(`${comfyBaseUrl}/system_stats`, { cache: "no-store" });
     const j = await r.json().catch(() => ({}));
     return Response.json(
       {
         serverState: r.ok ? "idle" : "down",
         serverHint: r.ok ? "Connected" : "Disconnected",
-        comfyBaseUrl: COMFY_BASE_URL,
+        comfyBaseUrl,
         deviceId: deviceId || null,
         upstreamStatus: r.status,
         system_stats: j,
@@ -364,6 +644,10 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const deviceId = getDeviceIdFromReq(req);
 
+  const { baseUrl, targetId } = await resolveComfyBaseUrl();
+  const COMFY_BASE_URL = baseUrl.replace(/\/+$/, "");
+  const comfyClientId = targetId ? `${deviceId}-${targetId}` : deviceId;
+
 let ownerCtx;
   try {
     ownerCtx = await getOwnerContext(req);
@@ -375,29 +659,38 @@ let ownerCtx;
   }
   const ownerKey = ownerCtx.ownerKey;
 
-  // Enforce single-active *generation* rule.
-  // We only block when a job is currently running. If the previous job
-  // completed (status "ready"), we allow a new generation without requiring
-  // the user to press Clear first.
-  const st = readState(ownerKey);
-  if (st.status === "running") {
-    return Response.json(
-      { ok: false, error: "A generation is already running. Please wait for it to finish.", status: st.status },
-      { status: 409 }
-    );
-  }
+  // NOTE: Do not enforce a single-running lock here.
+  // ComfyUI itself is the source of truth for queuing/concurrency.
+  // We still keep /api/content/state for UI convenience.
+  void readState(ownerKey);
 
-  const body = await parseOtgBody(req).catch(() => null);
+  const body = await parseOtgBody(req, COMFY_BASE_URL).catch(() => null);
   if (!body) return Response.json({ ok: false, error: "Invalid request body" }, { status: 400 });
 
-// 1) Load workflow by ID using the SAME resolver as /api/workflows (respects OTG_WORKFLOWS_ROOT and index.json)
+  // 1) Determine the prompt graph.
+  // Transparent mode:
+  // - If the client provides a ComfyUI API prompt graph, submit it as-is.
+  // Preset mode:
+  // - If the client provides a preset/workflowId, load it and apply ONLY the user-provided overrides.
   let graph: any = null;
   // Optional OTG metadata embedded in workflow JSON (used to target the correct text-encode nodes)
   let otgMeta: any = undefined;
 
-  if (body.prompt && typeof body.prompt === "object") {
-    graph = body.prompt;
-  } else if (body.preset) {
+  // Multipart clients can send a raw JSON string under promptJson/api.
+  if (!graph && typeof (body as any)?.promptJson === "string" && String((body as any).promptJson).trim()) {
+    try {
+      const parsed = JSON.parse(String((body as any).promptJson));
+      if (parsed && typeof parsed === "object") {
+        graph = (parsed as any).prompt && typeof (parsed as any).prompt === "object" ? (parsed as any).prompt : parsed;
+      }
+    } catch {
+      // ignore; fall through
+    }
+  }
+
+  if (!graph && (body as any).prompt && typeof (body as any).prompt === "object") {
+    graph = (body as any).prompt;
+  } else if (!graph && body.preset) {
     const wf = loadWorkflowById(String(body.preset));
     if (!wf.ok) {
       return Response.json({ ok: false, error: `Preset not found: ${String(body.preset)}`, detail: wf.error }, { status: wf.status });
@@ -420,7 +713,7 @@ return Response.json(
       return Response.json({ ok: false, error: validated.error, warnings }, { status: 400 });
     }
     graph = extracted.graph;
-  } else if (typeof body === "object") {
+  } else if (!graph && typeof body === "object") {
     // last resort: treat as prompt graph
     graph = body;
   }
@@ -429,8 +722,9 @@ return Response.json(
     return Response.json({ ok: false, error: "Could not build pr...mpt graph (missing preset or prompt graph)" }, { status: 400 });
   }
 
-  // 2) Apply prompts/seeds/images from OTG payload
-  const positive = String(body.positivePrompt ?? (Array.isArray(body.prompts) ? body.prompts[0] : "") ?? "");
+  // 2) Apply ONLY user-provided overrides (no hidden rewriting).
+  // Prompts/images are applied when provided.
+  const positive = String(body.positivePrompt ?? (Array.isArray((body as any).prompts) ? (body as any).prompts[0] : "") ?? "");
   const negative = String(body.negativePrompt ?? "");
   const inputImages: string[] = Array.isArray((body as any).inputImages) ? (body as any).inputImages.map(String) : [];
 
@@ -440,36 +734,105 @@ return Response.json(
   // Then, as a fallback, try to locate text encoders and set their prompt strings.
   if (positive || negative) setTextEncodes(graph, positive, negative, otgMeta);
 
-  // Seed: default to random each run unless explicitly provided.
-const _seedProvided = Number.isFinite(Number((body as any).seed));
-const _seedValue = _seedProvided
-  ? Math.floor(Number((body as any).seed))
-  : Math.floor(Math.random() * 0xffffffff);
-setSeed(graph, _seedValue);
-  // Optional overrides driven by OTG UI controls
-  const orient = String((body as any).orientation || "").toLowerCase();
-  if (orient === "portrait") {
-    setSize(graph, 720, 1280);
-  } else if (orient === "landscape") {
-    setSize(graph, 1280, 720);
-  } else if (Number.isFinite(Number((body as any).width)) && Number.isFinite(Number((body as any).height))) {
-    setSize(graph, Math.floor(Number((body as any).width)), Math.floor(Number((body as any).height)));
+  // Optional overrides driven by OTG UI controls.
+  // Width/height win if provided.
+  const wRaw = Number((body as any).width);
+  const hRaw = Number((body as any).height);
+  const wOk = Number.isFinite(wRaw);
+  const hOk = Number.isFinite(hRaw);
+  if (wOk && hOk) {
+    const clamped = clampSizeToMaxPixels(Math.floor(wRaw), Math.floor(hRaw));
+    setSize(graph, clamped.width, clamped.height);
+  } else {
+    // Orientation only swaps the existing size (no forced presets).
+    const orient = String((body as any).orientation || "").toLowerCase();
+    if (orient === "portrait" || orient === "landscape") {
+      const cur = inferAnySize(graph);
+      if (cur) {
+        const isPortrait = cur.height >= cur.width;
+        const wantsPortrait = orient === "portrait";
+        if (wantsPortrait !== isPortrait) {
+          setSize(graph, cur.height, cur.width);
+        }
+      }
+    }
   }
-  if (Number.isFinite(Number((body as any).durationSeconds))) {
+
+  // Frame controls: frameCount wins over durationSeconds if provided.
+  const frameCount = Number((body as any).frameCount);
+  if (Number.isFinite(frameCount)) {
+    {
+    const cf = clampFrames(Math.floor(frameCount));
+    setFrameCount(graph, cf.frames);
+  }
+  } else if (Number.isFinite(Number((body as any).durationSeconds))) {
     setDurationSeconds(graph, Math.floor(Number((body as any).durationSeconds)));
   }
 
+  // Seed: default to RANDOM per submission for all workflows.
+  const seedMode = (body as any).seedMode as any;
+  const seedIn = (body as any).seed;
+  const seedRes = setSeedAuto(graph, seedMode, seedIn);
 
-  // 3) Enforce owner-scoped tagging via filename_prefix (reliable even with shared output folder)
   const title = String((body as any)?.title || (body as any)?.name || "").trim();
-  const prefix = `${title || "otg"}__${ownerKey}`;
-  setFilenamePrefix(graph, prefix);
 
-  // 3) Mark running (server-side lock)
+  // Admin/test naming: propagate title into ComfyUI filename_prefix when available.
+  setFilenamePrefix__otg(graph, title);
+
+  // Apply selected LoRAs safely (WAN uses explicit OTG slots; WAN core LoRAs are protected).
+  const loraChoices = Array.isArray((body as any).loras) ? (body as any).loras : null;
+  const loraRes = applySelectedLoras(graph, loraChoices);
+
+  // Angles workflow overrides (QwenMultiangleCameraNode)
+  // Client sends angleHorizontal/angleVertical/angleZoom and flags as form fields.
   try {
-    markRunning(ownerKey, { title: title || null, workflowId: String(body.preset || "") || null });
+    const ah = Number((body as any).angleHorizontal);
+    const av = Number((body as any).angleVertical);
+    const az = Number((body as any).angleZoom);
+    const adpRaw = String((body as any).angleDefaultPrompts ?? "").toLowerCase();
+    const acvRaw = String((body as any).angleCameraView ?? "").toLowerCase();
+    const adp = adpRaw === "true" || adpRaw === "1" || adpRaw === "yes";
+    const acv = acvRaw === "true" || acvRaw === "1" || acvRaw === "yes";
+
+    // Only apply when the graph contains the expected node.
+    const node93: any = (graph as any)?.["93"];
+    if (node93?.class_type === "QwenMultiangleCameraNode" && node93?.inputs) {
+      if (Number.isFinite(ah)) node93.inputs.horizontal_angle = Math.max(0, Math.min(360, Math.floor(ah)));
+      if (Number.isFinite(av)) node93.inputs.vertical_angle = Math.max(0, Math.min(360, Math.floor(av)));
+      if (Number.isFinite(az)) node93.inputs.zoom = Math.max(1, Math.min(10, az));
+      if (adpRaw) node93.inputs.default_prompts = adp;
+      if (acvRaw) node93.inputs.camera_view = acv;
+    }
   } catch {
-    // ignore
+    // ignore (best-effort)
+  }
+
+
+  // Mark this owner as running so /api/progress and /api/gallery can promote outputs
+  // when ComfyUI completes. This does NOT enforce any locking/concurrency.
+  try {
+    markRunning(ownerKey, {
+      title: title || null,
+      workflowId: String((body as any).preset || "").trim() || null,
+      deviceId,
+
+      // Capture prompts + retry payload at submit-time (source of truth for Show Prompt / Redo)
+      positivePrompt: String((body as any).positivePrompt ?? (body as any).prompt ?? "").trim() || null,
+      negativePrompt: String((body as any).negativePrompt ?? (body as any).neg ?? "").trim() || null,
+      submitPayload: {
+        preset: String((body as any).preset || "").trim() || null,
+        positivePrompt: String((body as any).positivePrompt ?? (body as any).prompt ?? "") || "",
+        negativePrompt: String((body as any).negativePrompt ?? (body as any).neg ?? "") || "",
+        loras: (body as any).loras ?? null,
+        orientation: (body as any).orientation ?? null,
+        durationSec: (body as any).durationSeconds ?? (body as any).durationSec ?? (body as any).seconds ?? null,
+        seed: (body as any).seed ?? null,
+        width: (body as any).width ?? null,
+        height: (body as any).height ?? null,
+      },
+    });
+  } catch {
+    // best-effort only
   }
 
   // 3) Submit to ComfyUI with client_id=deviceId
@@ -477,7 +840,7 @@ setSeed(graph, _seedValue);
     method: "POST",
     headers: { "content-type": "application/json" },
     // IMPORTANT: use deviceId so /ws?clientId=<deviceId> progress events match this job.
-    body: JSON.stringify({ prompt: graph, client_id: deviceId }),
+    body: JSON.stringify({ prompt: graph, client_id: comfyClientId }),
   });
 
   const text = await upstream.text();
@@ -511,33 +874,32 @@ setSeed(graph, _seedValue);
         deviceId,
         title: title || null,
         preset: body.preset ?? null,
-        prompts: Array.isArray(body.prompts) ? body.prompts : null,
+        prompts: Array.isArray((body as any).prompts) ? (body as any).prompts : null,
         positivePrompt: body.positivePrompt ?? null,
         negativePrompt: body.negativePrompt ?? null,
-        seed: Number.isFinite(Number(body.seed)) ? Math.floor(Number(body.seed)) : null,
-        useImg2Img: Boolean((body as any)?.useImg2Img),
-        imagePath: String((body as any)?.imagePath || "") || null,
-        loras: Array.isArray((body as any)?.loras) ? (body as any).loras : null,
+        loras: Array.isArray((body as any).loras) ? (body as any).loras : null,
+        lorasApplied: (loraRes as any)?.applied ?? null,
+        lorasAvailable: (loraRes as any)?.available ?? null,
+        seed: (seedRes as any)?.seed ?? null,
         prompt_id,
         rawResponse: parsed,
         // Keep a minimal retry payload. The client can POST this back to /api/comfy.
         submitPayload: {
           preset: body.preset ?? null,
-          prompts: Array.isArray(body.prompts) ? body.prompts : null,
+          prompts: Array.isArray((body as any).prompts) ? (body as any).prompts : null,
           positivePrompt: body.positivePrompt ?? null,
           negativePrompt: body.negativePrompt ?? null,
-          seed: Number.isFinite(Number(body.seed)) ? Math.floor(Number(body.seed)) : null,
-          seedMode: (body as any)?.seedMode ?? null,
-          loras: Array.isArray((body as any)?.loras) ? (body as any).loras : null,
-          imagePath: String((body as any)?.imagePath || "") || "",
-          useImg2Img: Boolean((body as any)?.useImg2Img),
-          forceImg2Img: Boolean((body as any)?.forceImg2Img),
+          loras: Array.isArray((body as any).loras) ? (body as any).loras : null,
+        lorasApplied: (loraRes as any)?.applied ?? null,
+        lorasAvailable: (loraRes as any)?.available ?? null,
+          seed: (seedRes as any)?.seed ?? null,
           title: title || "",
           width: Number.isFinite(Number((body as any).width)) ? Math.floor(Number((body as any).width)) : null,
           height: Number.isFinite(Number((body as any).height)) ? Math.floor(Number((body as any).height)) : null,
           durationSeconds: Number.isFinite(Number((body as any).durationSeconds)) ? Math.floor(Number((body as any).durationSeconds)) : null,
+          frameCount: Number.isFinite(Number((body as any).frameCount)) ? Math.floor(Number((body as any).frameCount)) : null,
           orientation: (body as any).orientation ?? null,
-          enhanceLevel: (body as any).enhanceLevel ?? null,
+          prompt: (body as any).prompt && typeof (body as any).prompt === "object" ? (body as any).prompt : null,
         },
       }) + "\n",
       "utf-8"
@@ -551,3 +913,5 @@ setSeed(graph, _seedValue);
 
   return Response.json(parsed, { status: 200 });
 }
+
+

@@ -1,0 +1,41 @@
+﻿#!/usr/bin/env bash
+set -euo pipefail
+
+sudo tee /etc/systemd/system/otg-staging.service >/dev/null <<'UNIT'
+[Unit]
+Description=OTG Next.js (staging)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/otg/current-staging
+EnvironmentFile=/opt/otg/env/.env.staging
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+sudo tee /etc/systemd/system/otg-prod.service >/dev/null <<'UNIT'
+[Unit]
+Description=OTG Next.js (prod)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/otg/current-prod
+EnvironmentFile=/opt/otg/env/.env.prod
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+sudo systemctl daemon-reload
+sudo systemctl enable otg-staging otg-prod
+
+echo "OK: systemd units installed"

@@ -8,6 +8,20 @@ import { ensureDir } from "@/lib/paths";
 
 export const runtime = "nodejs";
 
+function makeEtag(st: fs.Stats) {
+  return `W/\"${st.size}-${Math.trunc(st.mtimeMs)}\"`;
+}
+
+function isNotModified(req: NextRequest, etag: string, lastModified: string) {
+  const inm = req.headers.get("if-none-match");
+  if (inm && inm === etag) return true;
+  const ims = req.headers.get("if-modified-since");
+  if (!ims) return false;
+  const a = Date.parse(ims);
+  const b = Date.parse(lastModified);
+  return Number.isFinite(a) && Number.isFinite(b) && a >= b;
+}
+
 function favoritesDir(username: string | null, deviceId: string) {
   const root = path.join(process.cwd(), "data", username ? "user_favorites" : "device_favorites");
   return username ? path.join(root, username) : path.join(root, deviceId);
@@ -58,8 +72,11 @@ export async function GET(req: NextRequest) {
     "application/octet-stream";
 
   const stat = fs.statSync(filePath);
-const size = stat.size || 0;
-const range = req.headers.get("range");
+  const size = stat.size || 0;
+  const range = req.headers.get("range");
+
+  const lastModified = new Date(stat.mtimeMs).toUTCString();
+  const etag = makeEtag(stat);
 
 if (range && contentType.startsWith("video/")) {
   const m = /^bytes=(\d+)-(\d*)$/i.exec(range);
@@ -76,20 +93,36 @@ if (range && contentType.startsWith("video/")) {
         "Content-Length": String(chunkSize),
         "Content-Range": `bytes ${start}-${end}/${size}`,
         "Accept-Ranges": "bytes",
-        "Cache-Control": "no-store",
+        ETag: etag,
+        "Last-Modified": lastModified,
+        "Cache-Control": "public, max-age=86400",
       },
     });
   }
 }
 
-const buf = fs.readFileSync(filePath);
-return new NextResponse(buf, {
-  status: 200,
-  headers: {
-    "Content-Type": contentType,
-    "Content-Length": String(buf.length),
-    "Accept-Ranges": contentType.startsWith("video/") ? "bytes" : "none",
-    "Cache-Control": "no-store",
-  },
-});
+  if (isNotModified(req, etag, lastModified)) {
+    return new NextResponse(null, {
+      status: 304,
+      headers: {
+        ETag: etag,
+        "Last-Modified": lastModified,
+        "Cache-Control": "public, max-age=86400",
+      },
+    });
+  }
+
+  const stream = fs.createReadStream(filePath);
+  const body = Readable.toWeb(stream);
+  return new NextResponse(body as any, {
+    status: 200,
+    headers: {
+      "Content-Type": contentType,
+      "Content-Length": String(size),
+      "Accept-Ranges": contentType.startsWith("video/") ? "bytes" : "none",
+      ETag: etag,
+      "Last-Modified": lastModified,
+      "Cache-Control": "public, max-age=86400",
+    },
+  });
 }

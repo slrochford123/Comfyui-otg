@@ -3,6 +3,19 @@ import { cookies } from "next/headers";
 
 import { cookieName } from "@/lib/auth/cookies";
 import { verifySession } from "@/lib/auth/jwt";
+import { isAdminEmail } from "@/lib/auth/admin";
+
+// Optional extra admins via env (comma-separated emails and/or usernames)
+function isAdminIdentifier(username?: string | null): boolean {
+  const hard = new Set(["slrochford123@protonmail.com", "slrochford123"]);
+  const extra = (process.env.ADMIN_IDENTIFIERS || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const allow = new Set<string>([...hard, ...extra]);
+  const u = String(username || "").trim().toLowerCase();
+  return !!u && allow.has(u);
+}
 
 // Alias endpoint used by the UI/router as the single source of truth.
 // Keep this in sync with /api/auth/me.
@@ -27,8 +40,10 @@ export async function GET() {
     const username = (payload as any).username ?? null;
     const tier = (payload as any).tier ?? null;
 
+    const admin = isAdminEmail(email) || isAdminIdentifier(username);
+
     return NextResponse.json(
-      { ok: true, user: { email, username, tier } },
+      { ok: true, user: { email, username, tier, admin } },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch {

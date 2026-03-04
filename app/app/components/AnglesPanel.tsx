@@ -1,0 +1,582 @@
+﻿"use client";
+
+import * as React from "react";
+import { useFloatingQueue } from "./FloatingQueueProvider";
+
+type Preset = { id: string; label: string; horizontal: number; vertical: number; zoom: number };
+
+const PRESETS: Preset[] = [
+  { id: "front", label: "Front", horizontal: 0, vertical: 0, zoom: 0 },
+  { id: "threeq_left", label: "3/4 Left", horizontal: -45, vertical: 0, zoom: 0 },
+  { id: "threeq_right", label: "3/4 Right", horizontal: 45, vertical: 0, zoom: 0 },
+  { id: "profile_left", label: "Profile Left", horizontal: -90, vertical: 0, zoom: 0 },
+  { id: "profile_right", label: "Profile Right", horizontal: 90, vertical: 0, zoom: 0 },
+  { id: "behind", label: "Behind", horizontal: 180, vertical: 0, zoom: 0 },
+  { id: "high", label: "High", horizontal: 0, vertical: 30, zoom: 0 },
+  { id: "low", label: "Low", horizontal: 0, vertical: -30, zoom: 0 },
+  { id: "wide", label: "Wide", horizontal: 0, vertical: 0, zoom: -2 },
+  { id: "tight", label: "Tight", horizontal: 0, vertical: 0, zoom: 2 },
+];
+
+function clamp(n: number, lo: number, hi: number) {
+  if (!Number.isFinite(n)) return lo;
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function getOrCreateDeviceId() {
+  if (typeof window === "undefined") return "desktop_default";
+  const k = "otg_device_id";
+  let id = "";
+  try { id = localStorage.getItem(k) || ""; } catch {}
+  if (!id) {
+    try {
+      id = crypto.randomUUID();
+      localStorage.setItem(k, id);
+    } catch {
+      id = `dev_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      try { localStorage.setItem(k, id); } catch {}
+    }
+  }
+  return id;
+}
+
+// Remap centered sliders to Comfy expectations
+function mapHorizontalDeg(h: number) {
+  const v = Math.round(h);
+  return ((v % 360) + 360) % 360;
+}
+function mapVerticalDeg(v: number) {
+  const vv = Math.round(v);
+  return ((vv % 360) + 360) % 360;
+}
+function mapZoom(z: number) {
+  // z=-5 => 1, z=0 => 5, z=+5 => 10
+  return clamp(5 + z, 1, 10);
+}
+
+// Orbit mapping constants (used both directions)
+const ORBIT_BASE_RADIUS = 2.25; // meters
+const ORBIT_ZOOM_STEP = 0.28;   // larger => zoom slider "feels" stronger
+
+function modelViewerOrbit(horizontal: number, vertical: number, zoom: number) {
+  // "<theta>deg <phi>deg <radius>m"
+  const theta = clamp(Math.round(horizontal), -180, 180);
+  const phi = clamp(90 - Math.round(vertical), 10, 170);
+  const radius = clamp(ORBIT_BASE_RADIUS - zoom * ORBIT_ZOOM_STEP, 0.8, 4.0);
+  return `${theta}deg ${phi}deg ${radius.toFixed(2)}m`;
+}
+
+export default function AnglesPanel() {
+  const fq = useFloatingQueue();
+  // model-viewer custom element must only be loaded on the client
+  const [mvReady, setMvReady] = React.useState(false);
+  React.useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        await import("@google/model-viewer");
+        if (mounted) setMvReady(true);
+      } catch {
+        if (mounted) setMvReady(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const [file, setFile] = React.useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = React.useState<string>("");
+
+  // 3D preview (temporary, not saved)
+  const [modelUrl, setModelUrl] = React.useState<string>("");
+  const [modelBusy, setModelBusy] = React.useState(false);
+  const [modelMsg, setModelMsg] = React.useState<string>("");
+  const modelAbortRef = React.useRef<AbortController | null>(null);
+
+  const mvRef = React.useRef<any>(null);
+  const syncingFromSlidersRef = React.useRef(false);
+
+  // Centered sliders
+  const [horizontal, setHorizontal] = React.useState<number>(0);
+  const [vertical, setVertical] = React.useState<number>(0);
+  const [zoom, setZoom] = React.useState<number>(0);
+
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState("");
+
+  // Progress (best-effort via SSE)
+  const [progressPct, setProgressPct] = React.useState<number>(0);
+  const [progressMsg, setProgressMsg] = React.useState<string>("Idle");
+  const sseRef = React.useRef<EventSource | null>(null);
+
+  const stopProgressStream = React.useCallback(() => {
+    try { sseRef.current?.close(); } catch {}
+    sseRef.current = null;
+  }, []);
+
+  const startProgressStream = React.useCallback((opts?: { promptId?: string | null }) => {
+    const deviceId = getOrCreateDeviceId();
+    const promptId = opts?.promptId ?? null;
+
+    setProgressPct(0);
+    setProgressMsg("Generating...");
+    stopProgressStream();
+
+    const url = `/api/comfy-events?clientId=${encodeURIComponent(deviceId)}`;
+    const es = new EventSource(url);
+    sseRef.current = es;
+
+    const safeJson = (s: string) => { try { return JSON.parse(s); } catch { return null; } };
+
+    es.onmessage = (ev) => {
+      const payload = safeJson(ev.data);
+      if (!payload) return;
+
+      if (Array.isArray(payload)) {
+        if (payload[0] === "__ws_open") setProgressMsg("Connected...");
+        return;
+      }
+
+      const type = String(payload.type || "");
+      const data = payload.data || payload;
+
+      const pid = data?.prompt_id ? String(data.prompt_id) : null;
+      if (promptId && pid && pid !== promptId) return;
+
+      if (type === "execution_start") {
+        setProgressMsg("Starting...");
+        try { if (promptId) fq.update(promptId, { status: "running" }); } catch {}
+      }
+
+      if (type === "progress") {
+        const v = Number(data?.value);
+        const m = Number(data?.max);
+        if (Number.isFinite(v) && Number.isFinite(m) && m > 0) {
+          const pct = Math.max(0, Math.min(100, Math.round((v / m) * 100)));
+          setProgressPct(pct);
+          setProgressMsg(`Generating... ${pct}%`);
+        }
+      }
+
+      if (type === "executing") {
+        const node = data?.node;
+        if (node === null) {
+          setProgressPct(100);
+          setProgressMsg("Done.");
+          try { if (promptId) fq.update(promptId, { status: "complete" }); } catch {}
+          stopProgressStream();
+        }
+      }
+    };
+  }, [stopProgressStream]);
+
+  const orbit = modelViewerOrbit(horizontal, vertical, zoom);
+
+  // File change: set image preview and generate 3D preview
+  React.useEffect(() => {
+    if (!file) {
+      if (imagePreviewUrl) { try { URL.revokeObjectURL(imagePreviewUrl); } catch {} }
+      setImagePreviewUrl("");
+      setModelUrl("");
+      setModelMsg("");
+      setModelBusy(false);
+      try { modelAbortRef.current?.abort(); } catch {}
+      modelAbortRef.current = null;
+      return;
+    }
+
+    const u = URL.createObjectURL(file);
+    setImagePreviewUrl(u);
+
+    const ac = new AbortController();
+    try { modelAbortRef.current?.abort(); } catch {}
+    modelAbortRef.current = ac;
+
+    (async () => {
+      setModelBusy(true);
+      setModelMsg("Please wait, generating image...");
+      setModelUrl("");
+
+      try {
+        const deviceId = getOrCreateDeviceId();
+        const fd = new FormData();
+        fd.append("image", file, file.name);
+
+        const res = await fetch("/api/angles/preview-3d", {
+          method: "POST",
+          credentials: "include",
+          headers: { "x-otg-device-id": deviceId },
+          body: fd,
+          signal: ac.signal,
+        });
+
+        const text = await res.text();
+        let j: any = null;
+        try { j = text ? JSON.parse(text) : null; } catch { j = null; }
+
+        if (res.status === 401) {
+          setModelMsg("Session expired. Please log in again.");
+          window.location.href = "/login?reason=session";
+          return;
+        }
+
+        if (!res.ok || !j?.ok) throw new Error(j?.error || text || `3D preview failed (${res.status})`);
+
+        setModelUrl(String(j.modelUrl || ""));
+        setModelMsg("3D preview ready.");
+      } catch (e: any) {
+        if (String(e?.name || "").toLowerCase() === "aborterror") return;
+        setModelUrl("");
+        setModelMsg(e?.message || "3D preview failed.");
+      } finally {
+        setModelBusy(false);
+      }
+    })();
+
+    return () => {
+      try { URL.revokeObjectURL(u); } catch {}
+      try { ac.abort(); } catch {}
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file]);
+
+  React.useEffect(() => {
+    return () => {
+      stopProgressStream();
+      try { modelAbortRef.current?.abort(); } catch {}
+    };
+  }, [stopProgressStream]);
+
+  // Push slider -> viewer
+  React.useEffect(() => {
+    const el = mvRef.current;
+    if (!el || !modelUrl) return;
+
+    syncingFromSlidersRef.current = true;
+    try { el.cameraOrbit = orbit; } catch {
+      try { el.setAttribute("camera-orbit", orbit); } catch {}
+    }
+    requestAnimationFrame(() => { syncingFromSlidersRef.current = false; });
+  }, [orbit, modelUrl]);
+
+  // Pull viewer -> sliders
+  React.useEffect(() => {
+    const el = mvRef.current;
+    if (!el || !modelUrl) return;
+
+    let raf = 0;
+
+    const toDeg = (x: number) => {
+      if (!Number.isFinite(x)) return NaN;
+      return Math.abs(x) <= Math.PI * 4 ? (x * 180) / Math.PI : x;
+    };
+
+    const onCameraChange = () => {
+      if (syncingFromSlidersRef.current) return;
+
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        try {
+          const o = el.getCameraOrbit?.();
+          if (!o) return;
+
+          const thetaDeg = toDeg(Number(o.theta));
+          const phiDeg = toDeg(Number(o.phi));
+          const radius = Number(o.radius);
+
+          if (!Number.isFinite(thetaDeg) || !Number.isFinite(phiDeg) || !Number.isFinite(radius)) return;
+
+          const nextHorizontal = clamp(Math.round(thetaDeg), -180, 180);
+          const nextVertical = clamp(Math.round(90 - phiDeg), -30, 60);
+          const nextZoom = clamp(
+            Math.round(((ORBIT_BASE_RADIUS - radius) / ORBIT_ZOOM_STEP) * 10) / 10,
+            -5,
+            5
+          );
+
+          setHorizontal((prev) => (Math.abs(prev - nextHorizontal) >= 1 ? nextHorizontal : prev));
+          setVertical((prev) => (Math.abs(prev - nextVertical) >= 1 ? nextVertical : prev));
+          setZoom((prev) => (Math.abs(prev - nextZoom) >= 0.1 ? nextZoom : prev));
+        } catch {}
+      });
+    };
+
+    el.addEventListener("camera-change", onCameraChange as any);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      el.removeEventListener("camera-change", onCameraChange as any);
+    };
+  }, [modelUrl]);
+
+  const applyPreset = (p: Preset) => {
+    setHorizontal(p.horizontal);
+    setVertical(p.vertical);
+    setZoom(p.zoom);
+  };
+
+  const resetPosition = () => {
+    setHorizontal(0);
+    setVertical(0);
+    setZoom(0);
+  };
+
+  const handleCreate = async () => {
+    if (!file) {
+      setMsg("Please upload an image first.");
+      return;
+    }
+
+    setBusy(true);
+    setMsg("");
+    setProgressPct(0);
+    setProgressMsg("Submitting...");
+
+    const deviceId = getOrCreateDeviceId();
+
+    // Bubble queue widget
+    const tempQueueId = `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    let queueId: string = tempQueueId;
+    fq.add({ id: tempQueueId, title: "Angles", status: "queued" });
+
+    try {
+      const fd = new FormData();
+      fd.append("workflowId", "presets/angles");
+      fd.append("prompt", "");
+      fd.append("negativePrompt", "");
+      fd.append("imageA", file, file.name);
+
+      fd.append("angleHorizontal", String(mapHorizontalDeg(horizontal)));
+      fd.append("angleVertical", String(mapVerticalDeg(vertical)));
+      fd.append("angleZoom", String(mapZoom(zoom)));
+
+      const res = await fetch("/api/comfy", {
+        method: "POST",
+        credentials: "include",
+        headers: { "x-otg-device-id": deviceId },
+        body: fd,
+      });
+
+      let j: any = null;
+      try { j = await res.clone().json(); } catch { j = null; }
+      if (!res.ok) throw new Error(j?.error || j?.detail || `Create failed (${res.status})`);
+
+      const promptId = j?.prompt_id ? String(j.prompt_id) : null;
+      if (promptId) {
+        try { fq.remove(tempQueueId); } catch {}
+        fq.add({ id: promptId, title: "Angles", status: "queued" });
+        queueId = promptId;
+      }
+      startProgressStream({ promptId });
+
+      setMsg("Submitted to ComfyUI. Output will appear in Gallery.");
+      setProgressMsg("Generating...");
+    } catch (e: any) {
+      setMsg(e?.message ?? "Failed to submit.");
+      try {
+        if (queueId && queueId.startsWith("local-")) fq.remove(queueId);
+        else if (queueId) fq.update(queueId, { status: "error" });
+      } catch {}
+      stopProgressStream();
+      setProgressMsg("Idle");
+      setProgressPct(0);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const showProgress = progressPct > 0 || (busy && progressMsg !== "Idle");
+
+  const modelViewerEl =
+    modelUrl && mvReady
+      ? React.createElement(
+          "model-viewer",
+          {
+            ref: mvRef,
+            src: modelUrl,
+            style: {
+              width: "100%",
+              height: 420,
+              background: "rgba(0,0,0,0.6)",
+              borderRadius: 12,
+            },
+            "camera-controls": true,
+            "touch-action": "pan-y",
+            "camera-orbit": orbit,
+            "interaction-prompt": "none",
+          } as any
+        )
+      : null;
+
+  return (
+    <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+      <div className="otg-card" style={{ padding: 16 }}>
+        <div className="otg-cardTitle">Angles</div>
+        <div className="otg-help" style={{ marginTop: 6 }}>
+          Upload an image to generate a temporary 3D preview model (not saved). Drag/zoom the model or use sliders/presets.
+        </div>
+
+        <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <div className="otg-card" style={{ padding: 12 }}>
+            <div className="otg-cardTitle" style={{ fontSize: 14 }}>3D Preview</div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              disabled={busy}
+              style={{ display: "none" }}
+            />
+
+            <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center" }}>
+              <button
+                type="button"
+                className="otg-btnGhost"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={busy}
+                style={{ borderRadius: 999, padding: "10px 14px" }}
+              >
+                Choose image
+              </button>
+              <div className="otg-help" style={{ marginTop: 0, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {file?.name || "No file chosen"}
+              </div>
+            </div>
+
+            <div
+              style={{
+                width: "100%",
+                marginTop: 12,
+                background: "rgba(255,255,255,0.03)",
+                borderRadius: 16,
+                padding: 12,
+                overflow: "hidden",
+              }}
+            >
+              {modelViewerEl ? (
+                modelViewerEl
+              ) : (
+                <div className="otg-muted">
+                  {file ? (modelBusy ? "Please wait, generating image..." : (mvReady ? "3D preview not generated yet." : "Loading 3D viewer...")) : "Upload an image to generate the 3D preview."}
+                </div>
+              )}
+            </div>
+
+            {modelMsg ? <div className="otg-help" style={{ marginTop: 10 }}>{modelMsg}</div> : null}
+
+            <div className="otg-cardTitle" style={{ fontSize: 14, marginTop: 14 }}>Original Image</div>
+            {imagePreviewUrl ? (
+              <div
+                style={{
+                  width: "100%",
+                  marginTop: 10,
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  background: "rgba(255,255,255,0.03)",
+                  borderRadius: 16,
+                  padding: 12,
+                  overflow: "hidden",
+                }}
+              >
+                <img
+                  src={imagePreviewUrl}
+                  alt="input"
+                  draggable={false}
+                  style={{ maxWidth: "100%", height: "auto", objectFit: "contain" }}
+                />
+              </div>
+            ) : (
+              <div className="otg-help" style={{ marginTop: 10 }}>No image selected.</div>
+            )}
+          </div>
+
+          <div className="otg-card" style={{ padding: 12 }}>
+            <div className="otg-cardTitle" style={{ fontSize: 14 }}>Presets</div>
+            <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+              {PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className="otg-btnGhost"
+                  onClick={() => applyPreset(p)}
+                  disabled={busy}
+                  style={{ padding: "10px 10px", borderRadius: 14 }}
+                >
+                  {p.label}
+                </button>
+              ))}
+
+              <button
+                type="button"
+                className="otg-btnGhost"
+                onClick={resetPosition}
+                disabled={busy}
+                style={{ padding: "10px 10px", borderRadius: 14, gridColumn: "span 3" }}
+              >
+                Reset position
+              </button>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <div className="otg-row" style={{ justifyContent: "space-between" }}>
+                <div className="otg-help" style={{ marginTop: 0 }}>Horizontal</div>
+                <div className="otg-help" style={{ marginTop: 0 }}>{horizontal}°</div>
+              </div>
+              <input type="range" min={-180} max={180} value={horizontal} onChange={(e) => setHorizontal(Number(e.target.value))} disabled={busy} style={{ width: "100%" }} />
+
+              <div className="otg-row" style={{ justifyContent: "space-between", marginTop: 10 }}>
+                <div className="otg-help" style={{ marginTop: 0 }}>Vertical</div>
+                <div className="otg-help" style={{ marginTop: 0 }}>{vertical}°</div>
+              </div>
+              <input type="range" min={-30} max={60} value={vertical} onChange={(e) => setVertical(Number(e.target.value))} disabled={busy} style={{ width: "100%" }} />
+
+              <div className="otg-row" style={{ justifyContent: "space-between", marginTop: 10 }}>
+                <div className="otg-help" style={{ marginTop: 0 }}>Zoom</div>
+                <div className="otg-help" style={{ marginTop: 0 }}>{zoom}</div>
+              </div>
+              <input type="range" min={-5} max={5} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} disabled={busy} style={{ width: "100%" }} />
+
+              <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
+                <button type="button" className="otg-btnPrimary" onClick={handleCreate} disabled={busy} style={{ flex: 1 }}>
+                  {busy ? "Creating..." : "Create"}
+                </button>
+                <button
+                  type="button"
+                  className="otg-btnGhost"
+                  onClick={() => {
+                    setFile(null);
+                    setMsg("");
+                    setProgressPct(0);
+                    setProgressMsg("Idle");
+                    stopProgressStream();
+                    resetPosition();
+                  }}
+                  disabled={busy}
+                >
+                  Clear
+                </button>
+              </div>
+
+              {msg ? <div className="otg-help" style={{ marginTop: 10 }}>{msg}</div> : null}
+            </div>
+          </div>
+        </div>
+
+        {showProgress ? (
+          <div className="otg-progress" style={{ marginTop: 14 }}>
+            <div className="otg-progressTop">
+              <div className="otg-progressMsg">{progressMsg || "Generating..."}</div>
+              <div className="otg-progressPct">{Math.max(0, Math.min(100, Math.round(progressPct)))}%</div>
+            </div>
+            <div className="otg-progressBar" aria-label="Generation progress">
+              <div className="otg-progressFill" style={{ width: `${Math.max(0, Math.min(100, Math.round(progressPct)))}%` }} />
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+

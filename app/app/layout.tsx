@@ -1,4 +1,6 @@
-import "./globals.css";
+﻿import "./globals.css";
+import { FloatingQueueProvider } from "./components/FloatingQueueProvider";
+import { FloatingQueueWidget } from "./components/FloatingQueueWidget";
 
 // NOTE:
 // We intentionally do NOT declare <html>/<body> here.
@@ -6,5 +8,10 @@ import "./globals.css";
 // This nested layout only provides a lightweight wrapper for the /app route.
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
+  return (
+    <FloatingQueueProvider>
+      <FloatingQueueWidget />
+      {children}
+    </FloatingQueueProvider>
+  );
 }

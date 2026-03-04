@@ -144,7 +144,7 @@ export default function SignupPage() {
           {error ? <div className="otg-authErr">{error}</div> : null}
 
           <button className="otg-authPrimaryBtn otg-authGradientBtn" type="submit" disabled={submitting}>
-            {submitting ? "CreatingÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦" : "Create account"}
+            {submitting ? "Creating..." : "Create account"}
           </button>
 
           <div className="otg-authLinks" style={{ marginTop: 14 }}>

@@ -1,7 +1,9 @@
-export default function Header() {
-  const connected = true; // visual shell for now
+"use client";
 
-  return (
+import ConnectionStatus from "../../components/ConnectionStatus";
+
+export default function Header() {
+return (
     <header className="relative overflow-hidden">
       <img
         src="/bg-slr-studios-otg.svg"
@@ -26,9 +28,7 @@ export default function Header() {
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="otg-pill">
-                {connected ? "ComfyUI Connected" : "ComfyUI Offline"}
-              </div>
+              <ConnectionStatus compact showLabel />
             </div>
           </div>
         </div>

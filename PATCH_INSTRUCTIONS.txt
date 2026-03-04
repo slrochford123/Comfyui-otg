@@ -1,0 +1,46 @@
+OTG — Storyboard Batch Generate (Ollama -> ComfyUI) Patch
+
+What this adds
+- POST /api/storyboard/format
+  - Uses Ollama (OLLAMA_BASE_URL/OLLAMA_MODEL) to format each scene into your required prompt order.
+- POST /api/storyboard/batch-generate
+  - Sequentially: formats scene with Ollama -> injects into storyboard workflow JSON -> submits to ComfyUI -> waits for completion -> next scene.
+
+Files included
+- app/api/storyboard/format/route.ts
+- app/api/storyboard/batch-generate/route.ts
+- lib/storyboard/types.ts
+- lib/storyboard/ollama.ts
+- lib/storyboard/comfyWorkflow.ts
+- comfy_workflows/storyboard/StoryBoard 1.json .. Storyboard 5.json
+
+Required env
+- OLLAMA_BASE_URL (already in your .env.local)
+- OLLAMA_MODEL (already)
+- COMFY_BASE_URL (already)
+- OTG_WORKFLOWS_ROOT or COMFY_WORKFLOWS_DIR (already)
+
+Optional env (override default storyboard workflow filenames)
+- STORYBOARD_WORKFLOW_1=storyboard/StoryBoard 1.json
+- STORYBOARD_WORKFLOW_2=storyboard/Storyboard 2.json
+- STORYBOARD_WORKFLOW_3=storyboard/Storyboard 3.json
+- STORYBOARD_WORKFLOW_4=storyboard/Storyboard 4.json
+- STORYBOARD_WORKFLOW_5=storyboard/Storyboard 5.json
+
+IMPORTANT
+The API expects the workflow file path relative to your workflows root.
+So if you put these files under:
+  C:/AI/OTG-Test/comfy_workflows/storyboard/
+Then set STORYBOARD_WORKFLOW_N to "storyboard/<filename>.json" as shown above.
+
+How to test quickly (PowerShell)
+1) Copy comfy_workflows/storyboard/* into your real comfy_workflows/storyboard/
+2) Add STORYBOARD_WORKFLOW_1..5 env lines (optional but recommended).
+3) Restart OTG.
+4) Call /api/storyboard/format with your current StoryboardPanel payload.
+5) Call /api/storyboard/batch-generate with same payload.
+
+Notes
+- Prompt node detection: finds a node with class_type/title containing "PromptLine".
+- Negative node detection: finds a text node with title containing "negative" or common negative tokens.
+- If your workflow uses different nodes/ids, this still usually works, but if not, we can hard-map node ids for your specific workflow.

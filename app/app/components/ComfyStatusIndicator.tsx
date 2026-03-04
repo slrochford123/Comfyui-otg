@@ -61,7 +61,7 @@ export function ComfyStatusIndicator({
   }, [data, loading]);
 
   const label = useMemo(() => {
-    if (tone === 'checking') return 'Checkingâ€¦';
+    if (tone === 'checking') return 'Checking…';
     if (tone === 'ok') return 'ComfyUI Connected';
     return 'ComfyUI Offline';
   }, [tone]);
@@ -70,7 +70,7 @@ export function ComfyStatusIndicator({
     if (!data) return '';
     if (data.ok) {
       const v = data.system?.comfyui_version ? `v${data.system.comfyui_version}` : '';
-      return [data.comfyBase || data.target, v].filter(Boolean).join(' â€¢ ');
+      return [data.comfyBase || data.target, v].filter(Boolean).join(' • ');
     }
     return data.error || `HTTP ${data.status}`;
   }, [data]);
@@ -87,6 +87,7 @@ export function ComfyStatusIndicator({
         top: 14,
         right: 90, // leave room for Build badge on the far right
         zIndex: 50,
+        pointerEvents: 'none',
         display: 'flex',
         alignItems: 'center',
         gap: 10,

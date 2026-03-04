@@ -1,0 +1,240 @@
+﻿'use client';
+
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useFloatingQueue } from './FloatingQueueProvider';
+import { useRouter } from 'next/navigation';
+
+function statusSuffix(s: string) {
+  if (s === 'complete') return ' â€” completed';
+  if (s === 'error') return ' â€” error';
+  if (s === 'running') return ' â€” running';
+  return ' â€” queued';
+}
+
+const POS_KEY = 'otg:queuePos_v2';
+
+type Pos = { x: number; y: number };
+
+export function FloatingQueueWidget() {
+  const router = useRouter();
+  const { items, isOpen, setOpen, clearAll } = useFloatingQueue();
+
+  const activeCount = useMemo(
+    () => items.filter((i) => i.status === 'queued' || i.status === 'running').length,
+    [items]
+  );
+
+  const anyRunning = useMemo(() => items.some((i) => i.status === 'running'), [items]);
+
+  // numbers only
+  const badgeCount = activeCount > 0 ? activeCount : items.length;
+
+  const [pos, setPos] = useState<Pos>(() => {
+    if (typeof window === 'undefined') return { x: 20, y: 20 };
+    try {
+      const raw = window.localStorage.getItem(POS_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') return parsed;
+    } catch {}
+    return { x: 20, y: 20 };
+  });
+
+  // --- micro-animations (Tailwind-only) ---
+  const prevIdsRef = useRef<string[]>([]);
+  const [newIds, setNewIds] = useState<Set<string>>(new Set());
+  const [popBadge, setPopBadge] = useState(false);
+
+  useEffect(() => {
+    const prev = prevIdsRef.current;
+    const curr = items.map((i) => i.id);
+
+    const added = curr.filter((id) => !prev.includes(id));
+    if (added.length > 0) {
+      setPopBadge(true);
+      setNewIds(new Set(added));
+      const t1 = window.setTimeout(() => setPopBadge(false), 220);
+      const t2 = window.setTimeout(() => setNewIds(new Set()), 1600);
+      return () => {
+        window.clearTimeout(t1);
+        window.clearTimeout(t2);
+      };
+    }
+
+    prevIdsRef.current = curr;
+  }, [items]);
+
+  useEffect(() => {
+    prevIdsRef.current = items.map((i) => i.id);
+  }, []); // initialize once
+
+  const dragRef = useRef<{
+    dragging: boolean;
+    startClientX: number;
+    startClientY: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+    pointerId: number | null;
+  }>({
+    dragging: false,
+    startClientX: 0,
+    startClientY: 0,
+    startX: 0,
+    startY: 0,
+    moved: false,
+    pointerId: null,
+  });
+
+  if (items.length === 0) return null;
+
+  const savePos = (p: Pos) => {
+    try {
+      window.localStorage.setItem(POS_KEY, JSON.stringify(p));
+    } catch {}
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        right: pos.x,
+        bottom: pos.y,
+        zIndex: 9999,
+        userSelect: 'none',
+        touchAction: 'none', // required for touch drag
+      }}
+      onPointerDown={(e) => {
+        // Only drag with primary button/finger
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+        dragRef.current.dragging = true;
+        dragRef.current.pointerId = e.pointerId;
+        dragRef.current.startClientX = e.clientX;
+        dragRef.current.startClientY = e.clientY;
+        dragRef.current.startX = pos.x;
+        dragRef.current.startY = pos.y;
+        dragRef.current.moved = false;
+
+        // capture pointer so drag continues outside element
+        (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        if (!dragRef.current.dragging) return;
+        if (dragRef.current.pointerId !== e.pointerId) return;
+
+        const dx = e.clientX - dragRef.current.startClientX;
+        const dy = e.clientY - dragRef.current.startClientY;
+
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragRef.current.moved = true;
+
+        // right/bottom positioning: subtract movement
+        const nx = Math.max(0, dragRef.current.startX - dx);
+        const ny = Math.max(0, dragRef.current.startY - dy);
+
+        setPos({ x: nx, y: ny });
+      }}
+      onPointerUp={(e) => {
+        if (dragRef.current.pointerId !== e.pointerId) return;
+
+        dragRef.current.dragging = false;
+        dragRef.current.pointerId = null;
+        savePos(pos);
+      }}
+      onPointerCancel={(e) => {
+        if (dragRef.current.pointerId !== e.pointerId) return;
+
+        dragRef.current.dragging = false;
+        dragRef.current.pointerId = null;
+        savePos(pos);
+      }}
+    >
+      <button
+        type="button"
+        aria-label={`Jobs: ${badgeCount}`}
+        onClick={() => {
+          // prevent click after drag
+          if (dragRef.current.moved) return;
+          setOpen(!isOpen);
+        }}
+        className={[
+          'relative inline-flex h-11 w-11 items-center justify-center rounded-full',
+          'font-extrabold text-white shadow-[0_8px_25px_rgba(0,0,0,0.30)]',
+          'transition-transform duration-200 ease-out',
+          popBadge ? 'scale-110' : 'scale-100',
+        ].join(' ')}
+        style={{
+          background: '#7c3aed',
+          border: 'none',
+          padding: 0,
+          cursor: 'pointer',
+        }}
+      >
+        {/* running halo */}
+        {anyRunning && (
+          <>
+            <span className="pointer-events-none absolute inset-0 rounded-full animate-ping opacity-30" style={{ background: '#7c3aed' }} />
+            <span className="pointer-events-none absolute -inset-1 rounded-full animate-pulse opacity-35" style={{ background: '#60a5fa' }} />
+          </>
+        )}
+
+        <span className="relative">{badgeCount}</span>
+      </button>
+
+      {/* panel: keep mounted for smooth open/close */}
+      <div
+        className={[
+          'mt-2 w-80 rounded-xl p-3 text-white shadow-[0_15px_40px_rgba(0,0,0,0.50)]',
+          'transition-all duration-200 ease-out origin-bottom-right',
+          isOpen ? 'opacity-100 scale-100 translate-y-0 pointer-events-auto' : 'opacity-0 scale-95 translate-y-2 pointer-events-none',
+        ].join(' ')}
+        style={{ background: '#111' }}
+      >
+        <div className="mb-2 text-[13px] opacity-80">Jobs</div>
+
+        {items.map((item) => {
+          const focus = item.focusId || item.resultName;
+          const clickable = item.status === 'complete' && !!focus;
+          const isNew = newIds.has(item.id);
+
+          return (
+            <button
+              key={item.id}
+              type="button"
+              disabled={!clickable}
+              onClick={() => {
+                if (!clickable) return;
+                const f = encodeURIComponent(String(focus));
+                router.push(`/app?tab=gallery&focus=${f}`);
+                setOpen(false);
+              }}
+              className={[
+                'w-full border-b border-white/10 bg-transparent py-2 text-left text-[13px]',
+                clickable ? 'cursor-pointer opacity-100' : 'cursor-default opacity-90',
+                'transition-transform duration-200',
+                isNew ? 'animate-bounce' : '',
+              ].join(' ')}
+              style={{
+                borderLeft: 'none',
+                borderRight: 'none',
+                borderTop: 'none',
+                color: '#fff',
+              }}
+            >
+              {item.title}
+              {statusSuffix(item.status)}
+            </button>
+          );
+        })}
+
+        <button
+          type="button"
+          onClick={clearAll}
+          className="mt-2 w-full rounded-lg bg-[#222] px-2 py-2 text-[12px] text-white transition-opacity hover:opacity-90"
+        >
+          Clear All
+        </button>
+      </div>
+    </div>
+  );
+}
+

@@ -71,13 +71,27 @@ async function fetchAndStoreLatestOutput(args: {
     if (!vr.ok) return null;
     const buf = Buffer.from(await vr.arrayBuffer());
 
-    // Ensure unique name in gallery
+    const sanitize = (s: string) =>
+      String(s || "")
+        .trim()
+        .replace(/[^a-zA-Z0-9 _.-]/g, "")
+        .replace(/\s+/g, "_")
+        .slice(0, 80);
+
+    // Prefer admin-provided title (stored in content state) for the saved gallery filename.
+    const st = readState(ownerKey);
+    const title = sanitize(String(st?.workflowTitle || ""));
+
     let outName = filename;
+    if (title) {
+      const ext = path.extname(filename);
+      outName = `${title}_${Date.now()}${ext}`;
+    }
     const outPath = () => path.join(baseDir, outName);
     if (fs.existsSync(outPath())) {
-      const ext = path.extname(filename);
-      const stem = path.basename(filename, ext);
-      outName = `${stem}_${Date.now()}${ext}`;
+      const ext = path.extname(outName);
+      const stem = path.basename(outName, ext);
+      outName = `${stem}_${Math.floor(Math.random() * 1e9)}${ext}`;
     }
     fs.mkdirSync(baseDir, { recursive: true });
     fs.writeFileSync(outPath(), buf);

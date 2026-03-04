@@ -46,7 +46,7 @@ export default function ComfyStatusIndicator() {
   }, []);
 
   const ok = !!st?.ok;
-  const label = st ? (ok ? "ComfyUI Connected" : "ComfyUI Offline") : "Checkingâ€¦";
+  const label = st ? (ok ? "ComfyUI Connected" : "ComfyUI Offline") : "Checking...";
   const sub = st?.error ? st.error : st?.serverHint ? st.serverHint : st?.comfyBaseUrl ? st.comfyBaseUrl : "";
 
   const dotStyle: React.CSSProperties = {

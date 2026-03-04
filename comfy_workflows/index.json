@@ -3,7 +3,7 @@
   "workflows": [
     {
       "id": "presets/slr_text_to_image",
-      "label": "Text to Image",
+      "label": "Create a Picture",
       "type": "preset",
       "path": "presets/slr_text_to_image.json",
       "tags": [],
@@ -11,7 +11,7 @@
     },
     {
       "id": "presets/slr_image_edit",
-      "label": "Image Edit",
+      "label": "Edit Pictures",
       "type": "preset",
       "path": "presets/slr_image_edit.json",
       "tags": [],
@@ -43,7 +43,7 @@
     },
     {
       "id": "presets/slr_ltx_t2v_audio",
-      "label": "LTX Text to Video w/Audio",
+      "label": "Create a Video",
       "type": "preset",
       "path": "presets/slr_ltx_t2v_audio.json",
       "tags": [],
@@ -51,11 +51,23 @@
     },
     {
       "id": "presets/slr_ltx_i2v_audio",
-      "label": "LTX Image to Video w/Audio",
+      "label": "Create a Video from Pictures",
       "type": "preset",
       "path": "presets/slr_ltx_i2v_audio.json",
       "tags": [],
       "enabled": true
+    },
+    {
+      "id": "presets/angles",
+      "label": "Angles",
+      "description": "Change camera angle/perspective of an input image (Qwen Multiangle Camera).",
+      "file": "presets/angles.json",
+      "img2img": true,
+      "tags": [
+        "angles",
+        "camera",
+        "qwen"
+      ]
     }
   ]
 }

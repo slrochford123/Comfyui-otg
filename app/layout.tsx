@@ -1,6 +1,5 @@
 import "./globals.css";
 import "./slr-overrides.css";
-import BuildBadge from "./components/BuildBadge";
 
 export const viewport = {
   width: "device-width",
@@ -15,7 +14,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {children}
 
         {/* Build marker (for support + screenshots) */}
-        <BuildBadge />
       </body>
     </html>
   );

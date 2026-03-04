@@ -1,0 +1,113 @@
+﻿import fs from "node:fs";
+import path from "node:path";
+import { OTG_DATA_ROOT, ensureDir, readJsonSafe, writeJsonSafe } from "@/lib/paths";
+
+export type ContentStatus = "empty" | "running" | "ready";
+
+export type ContentStateStatus = "idle" | "running" | "done" | "error";
+
+export type ContentState = {
+  status?: ContentStateStatus;
+  // metadata only (preview is sourced elsewhere)
+  fileName?: string | null;
+  kind?: "image" | "video" | null;
+
+  // context for completion detection / routing
+  deviceId?: string | null;
+  workflowId?: string | null;
+  workflowTitle?: string | null;
+
+  
+
+  // prompt + retry payload (used for gallery meta + redo)
+  positivePrompt?: string | null;
+  negativePrompt?: string | null;
+  submitPayload?: any | null;favorited?: boolean;
+
+  updatedAt?: number | null;
+  startedAt?: number | null;
+  readyAt?: number | null;
+
+  error?: string | null;
+};
+
+
+const STATE_DIR = path.join(OTG_DATA_ROOT, "content_state");
+
+export function statePath(ownerKey: string) {
+  return path.join(STATE_DIR, `${ownerKey}.json`);
+}
+
+export function readState(ownerKey: string): ContentState {
+  return readJsonSafe<ContentState>(statePath(ownerKey), { status: "idle",
+    fileName: null,
+      positivePrompt: null,
+  negativePrompt: null,
+  submitPayload: null,favorited: false,
+    startedAt: null,
+    readyAt: null,
+    updatedAt: null,
+  });
+}
+
+export function writeState(ownerKey: string, patch: Partial<ContentState>) {
+  const cur = readState(ownerKey);
+  const next: ContentState = {
+    ...cur,
+    ...patch,
+    updatedAt: Date.now(),
+  };
+  ensureDir(path.dirname(statePath(ownerKey)));
+  writeJsonSafe(statePath(ownerKey), next);
+  return next;
+}
+
+export function resetState(ownerKey: string) {
+  return writeState(ownerKey, {
+    status: "idle",
+    fileName: null,
+      positivePrompt: null,
+  negativePrompt: null,
+  submitPayload: null,favorited: false,
+    startedAt: null,
+    readyAt: null,
+  });
+}
+
+export function markRunning(ownerKey: string, meta?: {
+  title?: string | null;
+  workflowId?: string | null;
+  deviceId?: string | null;
+
+  positivePrompt?: string | null;
+  negativePrompt?: string | null;
+  submitPayload?: any | null;
+}) {
+  return writeState(ownerKey, {
+    status: "running",
+    fileName: null,
+      positivePrompt: null,
+  negativePrompt: null,
+  submitPayload: null,kind: null,
+    favorited: false,
+    startedAt: Date.now(),
+    readyAt: null,
+    deviceId: meta?.deviceId ?? null,
+    workflowId: meta?.workflowId ?? null,
+    workflowTitle: meta?.title ?? null,
+  
+    positivePrompt: meta?.positivePrompt ?? null,
+    negativePrompt: meta?.negativePrompt ?? null,
+    submitPayload: meta?.submitPayload ?? null,});
+}
+
+export function markReady(ownerKey: string, fileName: string) {
+  return writeState(ownerKey, {
+    status: "done",
+    fileName,
+    readyAt: Date.now(),
+  });
+}
+
+
+

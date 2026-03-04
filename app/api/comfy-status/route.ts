@@ -8,6 +8,7 @@ function getDeviceId(): string {
 }
 
 import { NextResponse } from "next/server";
+import { resolveComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 
 export const runtime = "nodejs";
 
@@ -22,6 +23,8 @@ function getComfyBaseUrl() {
 }
 
 export async function GET() {
+  const { baseUrl } = await resolveComfyBaseUrl();
+  const COMFY_BASE_URL = baseUrl.replace(/\/+$/, "");
   const base = getComfyBaseUrl();
   const url = `${base}/system_stats`;
   try {

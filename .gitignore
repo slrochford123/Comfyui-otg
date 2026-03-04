@@ -120,8 +120,29 @@ pm2.log
 ecosystem*.log
 
 # -------------------------
+# Python
+# -------------------------
+.venv/
+venv/
+**/.venv/
+**/venv/
+__pycache__/
+*.pyc
+*.safetensors
+*.safetensors.hash
+
+# -------------------------
 # Misc safety
 # -------------------------
 .cache/
 .tmp/
 .temp/
+_backups/
+loras/
+uploads/
+tmp/
+pids/
+
+OTG/
+OTG/
+

@@ -1,4 +1,4 @@
-import fs from "node:fs";
+﻿import fs from "node:fs";
 import path from "node:path";
 import { OTG_DATA_ROOT, ensureDir, readJsonSafe, writeJsonSafe } from "@/lib/paths";
 
@@ -17,7 +17,12 @@ export type ContentState = {
   workflowId?: string | null;
   workflowTitle?: string | null;
 
-  favorited?: boolean;
+  
+
+  // prompt + retry payload (used for gallery meta + redo)
+  positivePrompt?: string | null;
+  negativePrompt?: string | null;
+  submitPayload?: any | null;favorited?: boolean;
 
   updatedAt?: number | null;
   startedAt?: number | null;
@@ -34,10 +39,11 @@ export function statePath(ownerKey: string) {
 }
 
 export function readState(ownerKey: string): ContentState {
-  return readJsonSafe<ContentState>(statePath(ownerKey), {
-    status: "idle",
+  return readJsonSafe<ContentState>(statePath(ownerKey), { status: "idle",
     fileName: null,
-    favorited: false,
+      positivePrompt: null,
+  negativePrompt: null,
+  submitPayload: null,favorited: false,
     startedAt: null,
     readyAt: null,
     updatedAt: null,
@@ -60,27 +66,42 @@ export function resetState(ownerKey: string) {
   return writeState(ownerKey, {
     status: "idle",
     fileName: null,
-    favorited: false,
+      positivePrompt: null,
+  negativePrompt: null,
+  submitPayload: null,favorited: false,
     startedAt: null,
     readyAt: null,
   });
 }
 
-export function markRunning(ownerKey: string, meta?: {
-  title?: string | null;
-  workflowId?: string | null;
-  deviceId?: string | null;
-}) {
-  return writeState(ownerKey, {
+export function markRunning(
+  ownerKey: string,
+  meta?: {
+    title?: string | null;
+    workflowId?: string | null;
+    deviceId?: string | null;
+
+    positivePrompt?: string | null;
+    negativePrompt?: string | null;
+    submitPayload?: any | null;
+  },
+) {
+  const now = Date.now();
+
+  writeState(ownerKey, {
     status: "running",
-    fileName: null,
-    kind: null,
-    favorited: false,
-    startedAt: Date.now(),
-    readyAt: null,
-    deviceId: meta?.deviceId ?? null,
+    startedAt: now,
+    updatedAt: now,
+
     workflowId: meta?.workflowId ?? null,
+    deviceId: meta?.deviceId ?? null,
     workflowTitle: meta?.title ?? null,
+
+    positivePrompt: meta?.positivePrompt ?? null,
+    negativePrompt: meta?.negativePrompt ?? null,
+    submitPayload: meta?.submitPayload ?? null,
+
+    fileName: null,
   });
 }
 
@@ -91,5 +112,7 @@ export function markReady(ownerKey: string, fileName: string) {
     readyAt: Date.now(),
   });
 }
+
+
 
 
