@@ -31,7 +31,7 @@ export default function LoginClient() {
   // If already signed in, go straight to app
   useEffect(() => {
     (async () => {
-      const r = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
+      const r = await fetch("/api/whoami", { credentials: "include", cache: "no-store" });
       const j = (await r.json().catch(() => ({}))) as MeResponse;
       if (r.ok && j?.ok) router.replace(nextPath);
     })();

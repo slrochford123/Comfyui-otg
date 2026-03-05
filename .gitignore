@@ -146,3 +146,13 @@ pids/
 OTG/
 OTG/
 
+
+# local patch artifacts / backups (never commit)
+backups/
+_patch_backups/
+_local_patches_hold/
+.bak/
+ssh/
+*.bak.*
+*.bak
+.env

@@ -1,5 +1,6 @@
 "use client";
 
+import { GalleryAutoPanel } from "../components/GalleryAutoPanel";
 import { Suspense } from "react";
 import { useFloatingQueue } from "./components/FloatingQueueProvider";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -16,6 +17,7 @@ import { type FloatingJob } from "./components/FloatingJobs";
 import SupportPanel from "./components/SupportPanel";
 import Ltx2I2vGraph from "./workflows/LTX2_I2V.json";
 import EditPicturesGraph from "./workflows/Edit_Pictures.json";
+import GalleryVirtualList from "../components/GalleryVirtualList";
 type WorkflowItem = {
   id: string;
   label?: string;
@@ -620,19 +622,17 @@ const canSendToGallery = useMemo(() => {
 
 
   const getOrCreateDeviceId = useCallback(() => {
-    if (typeof window === "undefined") return "desktop_default";
+    // PROD gallery is rooted at deviceId=local:
+    // /mnt/otg_gallery/data/device_galleries/local
+    if (typeof window === "undefined") return "local";
     const k = "otg_device_id";
     let id = "";
     try { id = localStorage.getItem(k) || ""; } catch {}
     if (!id) {
-      try {
-        id = crypto.randomUUID();
-        localStorage.setItem(k, id);
-      } catch {
-        id = `dev_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-      }
+      id = "local";
+      try { localStorage.setItem(k, id); } catch {}
     }
-    return id;
+    return id || "local";
   }, []);
 
   const stopProgressStream = useCallback(() => {
@@ -1246,6 +1246,8 @@ const onClearPreview = useCallback(async () => {
 
   const [favoriteFiles, setFavoriteFiles] = useState<any[]>([]);
 
+  const favoriteNames = useMemo(() => new Set((favoriteFiles || []).map((f: any) => String(f?.name || ""))), [favoriteFiles]);
+
   // Gallery -> Animate (LTX2 I2V)
   const [animateModal, setAnimateModal] = useState<null | { name: string; url: string }>(null);
   const [animatePrompt, setAnimatePrompt] = useState<string>("");
@@ -1263,13 +1265,15 @@ const onClearPreview = useCallback(async () => {
   const favoriteNameSet = useMemo(() => new Set((favoriteFiles || []).map((x: any) => String(x?.name || ""))), [favoriteFiles]);
 
   const loadGallery = useCallback(async () => {
-    const res = await jfetch<{ ok: boolean; files: any[] }>("/api/gallery");
-    setGalleryFiles(res.files || []);
-  }, []);
+    const deviceId = getOrCreateDeviceId();
+    const res = await jfetch<{ ok: boolean; files?: any[]; items?: any[] }>(`/api/gallery?deviceId=${encodeURIComponent(deviceId)}`);
+    setGalleryFiles(res.items ?? res.files ?? []);
+  }, [getOrCreateDeviceId]);
   const loadFavorites = useCallback(async () => {
-    const res = await jfetch<{ ok: boolean; files: any[] }>("/api/favorites");
-    setFavoriteFiles(res.files || []);
-  }, []);
+    const deviceId = getOrCreateDeviceId();
+    const res = await jfetch<{ ok: boolean; files?: any[]; items?: any[] }>(`/api/favorites?deviceId=${encodeURIComponent(deviceId)}`);
+    setFavoriteFiles(res.items ?? res.files ?? []);
+  }, [getOrCreateDeviceId]);
 
   useEffect(() => {
     if (tab === "gallery") {
@@ -1284,7 +1288,7 @@ const onClearPreview = useCallback(async () => {
     setErr(null);
     setBusy(true);
     try {
-      await jfetch(`/api/gallery/delete?name=${encodeURIComponent(name)}`, { method: "POST" });
+      await jfetch(`/api/gallery/delete?name=${encodeURIComponent(name)}&deviceId=${encodeURIComponent(getOrCreateDeviceId())}`, { method: "POST" });
       await loadGallery();
     } catch (e: any) {
       setErr(String(e?.message || e));
@@ -1297,7 +1301,7 @@ const onClearPreview = useCallback(async () => {
     setErr(null);
     setBusy(true);
     try {
-      await jfetch(`/api/favorites/delete?name=${encodeURIComponent(name)}`, { method: "POST" });
+      await jfetch(`/api/favorites/delete?name=${encodeURIComponent(name)}&deviceId=${encodeURIComponent(getOrCreateDeviceId())}`, { method: "POST" });
       await loadFavorites();
     } catch (e: any) {
       setErr(String(e?.message || e));
@@ -1312,9 +1316,9 @@ const onClearPreview = useCallback(async () => {
     try {
       const isFav = favoriteNameSet.has(String(name));
       if (isFav) {
-        await jfetch(`/api/favorites/delete?name=${encodeURIComponent(name)}`, { method: "POST" });
+        await jfetch(`/api/favorites/delete?name=${encodeURIComponent(name)}&deviceId=${encodeURIComponent(getOrCreateDeviceId())}`, { method: "POST" });
       } else {
-        await jfetch(`/api/favorites/add?name=${encodeURIComponent(name)}`, { method: "POST" });
+        await jfetch(`/api/favorites/add?name=${encodeURIComponent(name)}&deviceId=${encodeURIComponent(getOrCreateDeviceId())}`, { method: "POST" });
       }
       await loadFavorites();
     } catch (e: any) {
@@ -1416,7 +1420,7 @@ const onClearPreview = useCallback(async () => {
     // Per Shawn request: redo should resubmit in-place and NOT jump the UI back to Generate.
     setErr(null);
     try {
-      const r = await jfetch<{ ok: boolean; meta?: GalleryMeta }>(`/api/gallery/meta?name=${encodeURIComponent(name)}`);
+      const r = await jfetch<{ ok: boolean; meta?: GalleryMeta }>(`/api/gallery/meta?name=${encodeURIComponent(name)}&deviceId=${encodeURIComponent(getOrCreateDeviceId())}`);
       if (!r?.ok || !r?.meta?.submitPayload) throw new Error("No retry payload found for this item.");
 
       const deviceId = getOrCreateDeviceId();
@@ -2128,155 +2132,7 @@ ${s}` : s;
           <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
             <Card title={`Gallery (${galleryFiles.length})`}>
               <div className="otg-grid2">
-                {galleryFiles.map((f) => (
-                  <div
-                    key={f.name}
-                    ref={(el) => {
-                      if (galleryFocus && String(f.name) === String(galleryFocus)) galleryFocusRef.current = el;
-                    }}
-                    className="otg-card"
-                    style={{
-                      padding: 10,
-                      overflow: "hidden",
-                      outline: galleryFocus && String(f.name) === String(galleryFocus) ? "2px solid rgba(124,58,237,.85)" : "none",
-                      boxShadow: galleryFocus && String(f.name) === String(galleryFocus) ? "0 0 0 3px rgba(59,130,246,.25)" : undefined,
-                    }}
-                  >
-                    {isVideoName(f.name) ? (
-                      <div style={{ position: "relative" }}>
-                        <video style={{ width: "100%", borderRadius: 16 }} controls muted playsInline src={f.url} />
-                        <button
-                          type="button"
-                          className="otg-btnGhost"
-                          style={{ position: "absolute", right: 10, top: 10, padding: "6px 10px" }}
-                          onClick={() => setMediaModal({ name: f.name, url: f.url, kind: "video" })}
-                        >
-                          Expand
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setMediaModal({ name: f.name, url: f.url, kind: "image" })}
-                        style={{ padding: 0, border: 0, background: "transparent", cursor: "pointer" }}
-                        aria-label={`Open ${f.name}`}
-                      >
-                        <img style={{ width: "100%", borderRadius: 16, display: "block" }} src={f.url} alt={f.name} />
-                      </button>
-                    )}
-                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
-                      <div className="otg-help" style={{ marginTop: 0 }}>{f.name}</div>
-                      <div className="otg-row" style={{ flexWrap: "wrap" }}>
-                        {!isVideoName(f.name) ? (
-                          <PrimaryButton
-                            type="button"
-                            disabled={uiLocked}
-                            onClick={() => {
-                              setAnimateErr("");
-                              setAnimateModal({ name: f.name, url: f.url });
-                              setAnimateSeconds(5);
-                              setAnimatePrompt("");
-                            }}
-                            style={{ height: 40, paddingInline: 14, borderRadius: 999 }}
-                            title="Animate (Image â†’ Video)"
-                          >
-                            Animate
-                          </PrimaryButton>
-                        ) : null}
-
-                        {!isVideoName(f.name) ? (
-                          <button
-                            type="button"
-                            className="otg-btnGhost"
-                            title="Edit image"
-                            onClick={() => {
-                              setEditErr("");
-                              setEditModal({ name: f.name, url: f.url });
-                              setEditPosPrompt("");
-                              setEditNegPrompt("");
-                            }}
-                            disabled={uiLocked}
-                            style={{ width: 40, height: 40, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
-                          >
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                              <path d="M12 20h9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
-                            </svg>
-                          </button>
-                        ) : null}
-
-                        <a
-                          href={f.url}
-                          download={f.name}
-                          className="otg-btnGhost"
-                          title="Download"
-                          style={{ width: 40, height: 40, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}
-                        >
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                            <path d="M12 3v10" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                            <path d="M8 11l4 4 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                            <path d="M4 21h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                          </svg>
-                        </a>
-
-                        <button
-                          type="button"
-                          className="otg-btnGhost"
-                          title="Redo / Regenerate"
-                          onClick={() => retryFromGallery(f.name)}
-                          disabled={uiLocked}
-                          style={{ width: 40, height: 40, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
-                        >
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                            <path d="M21 12a9 9 0 1 1-3-6.7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                            <path d="M21 4v6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        </button>
-
-                        <button
-                          type="button"
-                          className="otg-btnGhost"
-                          title="Favorite"
-                          onClick={() => toggleFavoriteFromGallery(f.name)}
-                          disabled={uiLocked}
-                          style={{
-                            width: 40,
-                            height: 40,
-                            borderRadius: 999,
-                            display: "inline-flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            border: favoriteNameSet.has(String(f.name)) ? "1px solid rgba(239,68,68,0.6)" : undefined,
-                            background: favoriteNameSet.has(String(f.name)) ? "rgba(239,68,68,0.18)" : undefined,
-                            color: favoriteNameSet.has(String(f.name)) ? "rgb(239,68,68)" : undefined,
-                          }}
-                        >
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill={favoriteNameSet.has(String(f.name)) ? "currentColor" : "none"} aria-hidden="true">
-                            <path d="M12 21s-7-4.4-9.5-8.2C.5 9.7 2.2 6.5 5.7 6.1c1.8-.2 3.3.7 4.3 2 1-1.3 2.5-2.2 4.3-2 3.5.4 5.2 3.6 3.2 6.7C19 16.6 12 21 12 21Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
-                          </svg>
-                        </button>
-
-                        <button
-                          type="button"
-                          className="otg-btnGhost"
-                          title="Rename"
-                          onClick={() => renameFromGallery(f.name)}
-                          disabled={uiLocked}
-                          style={{ height: 40, paddingInline: 12, borderRadius: 999, display: "inline-flex", alignItems: "center", gap: 8 }}
-                        >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
-                          </svg>
-                          <span>Rename</span>
-                        </button>
-
-                        <button onClick={() => deleteFromGallery(f.name)} disabled={uiLocked} className="otg-btnDanger" style={{ height: 40, borderRadius: 999, paddingInline: 14 }}>
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                <GalleryVirtualList items={galleryFiles} favoriteNames={favoriteNames} />
               </div>
             </Card>
           </div>
@@ -2443,7 +2299,9 @@ ${s}` : s;
               <ul style={{ margin: "8px 0 0 18px" }}>
                 <li>Your profile / login</li>
                 <li>All images/videos in your Gallery</li>
-                <li>All images/videos in your Favorites</li>
+                
+<GalleryAutoPanel />
+<li>All images/videos in your Favorites</li>
               </ul>
               You will be signed out.
             </div>

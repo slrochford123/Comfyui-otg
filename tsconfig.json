@@ -38,6 +38,7 @@
     "**/*.mts"
   ],
   "exclude": [
+    "_local_patches_hold",
     "node_modules",
     "tests",
     "**/*.test.*",
@@ -57,6 +58,8 @@
     "patch_*",
     "patch_*/**",
     "patch_gallery_ui_controls_refresh",
-    "patch_gallery_ui_controls_refresh/**"
+    "patch_gallery_ui_controls_refresh/**",
+    "backups",
+    "backups/**"
   ]
 }

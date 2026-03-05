@@ -1,87 +1,97 @@
 "use client";
 
-function getDeviceId(): string {
-  if (typeof window === "undefined") return "desktop_default";
-  return (
-    localStorage.getItem("otg_device_id") ||
-    sessionStorage.getItem("otg_device_id") ||
-    "desktop_default"
-  );
-}
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { authHeaders } from "@/lib/authClient";
+import { useEffect, useMemo, useState } from "react";
 
-type GalleryItem = {
+type ApiItem = {
   name?: string;
-  filename?: string;
-  fileName?: string;
-  file?: string;
-  path?: string;
-  src?: string;
-  url?: string;
+  video?: boolean;
 };
 
-function pickName(it: GalleryItem): string | null {
-  return it.name || it.filename || it.fileName || it.file || it.path || null;
-}
-
-function pickSrc(it: GalleryItem): string | null {
-  return it.src || it.url || null;
-}
+type Props = {
+  items?: ApiItem[];
+};
 
 function isVideoName(name: string) {
   const n = name.toLowerCase();
-  return n.endsWith(".mp4") || n.endsWith(".webm") || n.endsWith(".mov");
+  return n.endsWith(".mp4") || n.endsWith(".webm") || n.endsWith(".mov") || n.endsWith(".mkv");
 }
 
-export default function GalleryGridMinimal() {
-  const [items, setItems] = useState<GalleryItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/gallery", { cache: "no-store", headers: authHeaders() });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j?.error || `Gallery fetch failed (${res.status})`);
-      setItems(Array.isArray(j?.items) ? j.items : []);
-    } catch (e: any) {
-      setError(e?.message || String(e));
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+export default function GalleryGridMinimal({ items = [] }: Props) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const tiles = useMemo(() => {
-    return (items || []).map((it, idx) => {
-      const name = pickName(it) || `item-${idx}`;
-      const src = pickSrc(it) || `/api/gallery/file?name=${encodeURIComponent(name)}`;
-      const video = isVideoName(name);
-      return { name, src, video };
+    const list = Array.isArray(items) ? items : [];
+    return list.map((it, i) => {
+      const name = String(it?.name || "").trim() || `item-${i}`;
+      const video = typeof it?.video === "boolean" ? it.video : isVideoName(name);
+      const thumb = `/api/gallery/thumb?name=${encodeURIComponent(name)}`;
+      const file = `/api/gallery/file?name=${encodeURIComponent(name)}`;
+      return { key: `${name}::${i}`, name, video, thumb, file };
     });
   }, [items]);
 
-  if (error) return <div className="slr-error">{error}</div>;
-
-  if (loading && tiles.length === 0) return <div className="slr-empty">Loading…</div>;
-
-  if (!loading && tiles.length === 0) return <div className="slr-empty">No outputs yet.</div>;
+  if (!mounted) return <div className="otg-help">Loading…</div>;
+  if (tiles.length === 0) return <div className="otg-help">No outputs yet.</div>;
 
   return (
-    <div className="slr-grid">
-      {tiles.map(({ name, src, video }) => (
-        <div key={name} className="slr-tile">
-          <div className="slr-tileMedia">
-            {video ? <video src={src} controls /> : <img src={src} alt={name} loading="lazy" />}
-          </div>
-        </div>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+        gap: 12,
+      }}
+    >
+      {tiles.map((t) => (
+        <a
+          key={t.key}
+          href={t.file}
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            position: "relative",
+            border: "1px solid rgba(255,255,255,0.12)",
+            borderRadius: 12,
+            overflow: "hidden",
+            background: "rgba(255,255,255,0.03)",
+            textDecoration: "none",
+          }}
+          title={t.name}
+        >
+          <img
+            src={t.thumb}
+            alt={t.name}
+            loading="lazy"
+            decoding="async"
+            style={{
+              width: "100%",
+              height: 180,
+              objectFit: "cover",
+              display: "block",
+              background: "rgba(0,0,0,0.25)",
+            }}
+          />
+
+          {t.video ? (
+            <div
+              style={{
+                position: "absolute",
+                top: 10,
+                left: 10,
+                background: "rgba(0,0,0,0.72)",
+                color: "white",
+                fontSize: 12,
+                padding: "4px 8px",
+                borderRadius: 999,
+                letterSpacing: 0.4,
+              }}
+            >
+              VIDEO
+            </div>
+          ) : null}
+
+          <div style={{ padding: 8, fontSize: 12, opacity: 0.85, wordBreak: "break-all" }}>{t.name}</div>
+        </a>
       ))}
     </div>
   );

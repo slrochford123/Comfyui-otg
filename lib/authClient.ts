@@ -1,9 +1,20 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-export const supabaseClient = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+function missingClient(): SupabaseClient {
+  return new Proxy(
+    {},
+    {
+      get() {
+        throw new Error("Supabase is not configured: set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.");
+      },
+    }
+  ) as any as SupabaseClient;
+}
+
+export const supabaseClient: SupabaseClient = url && anon ? createClient(url, anon) : missingClient();
 
 const TOKEN_KEY = "otg_supabase_access_token";
 
