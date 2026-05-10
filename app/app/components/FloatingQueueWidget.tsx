@@ -4,19 +4,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useFloatingQueue } from './FloatingQueueProvider';
 
-/**
- * Queue bubble UX:
- * - Dragging uses pointer capture.
- * - Drag/toggle ONLY when the pointer starts on the bubble itself.
- *   This prevents clicks inside the expanded panel (Clear All, job buttons) from collapsing the panel.
- *
- * Display rules (per Shawn):
- * - Show "Name (status)".
- * - Only ONE job should display as (running) at a time; any additional "running" items are shown as (queued)
- *   until they actually start running.
- */
-
 const POS_KEY = 'otg:queuePos_v5';
+const OVERLAY_MODE_KEY = 'otg:overlayMode';
 
 type Pos = { x: number; y: number };
 
@@ -43,32 +32,59 @@ function normalizeTitle(raw: string) {
 }
 
 function lineText(name: string, status: string) {
-  // ASCII-only punctuation to prevent mojibake.
   return `${name} (${status})`.trim();
 }
 
 function statusColor(s: string) {
-  // Requested mapping:
-  // - failed/error: red
-  // - running: yellow
-  // - complete: green
-  // - queued: white
-  if (s === 'error' || s === 'failed') return '#fb7185'; // red-ish
-  if (s === 'running') return '#fbbf24'; // yellow
-  if (s === 'complete') return '#34d399'; // green
-  return 'rgba(255,255,255,0.92)'; // queued/other
+  if (s === 'error' || s === 'failed') return '#fb7185';
+  if (s === 'running') return '#fbbf24';
+  if (s === 'complete') return '#34d399';
+  return 'rgba(255,255,255,0.92)';
 }
 
 export function FloatingQueueWidget() {
   const router = useRouter();
   const { items, isOpen, setOpen, clearAll } = useFloatingQueue();
 
+  const [mounted, setMounted] = useState(false);
+  const [hydratedPos, setHydratedPos] = useState(false);
+  const [overlayMode, setOverlayMode] = useState('');
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+
+    const readMode = () => {
+      try {
+        setOverlayMode(window.localStorage.getItem(OVERLAY_MODE_KEY) || '');
+      } catch {
+        setOverlayMode('');
+      }
+    };
+
+    const onOverlayMode = (event: Event) => {
+      const custom = event as CustomEvent<string>;
+      if (typeof custom.detail === 'string') {
+        setOverlayMode(custom.detail);
+        return;
+      }
+      readMode();
+    };
+
+    readMode();
+    window.addEventListener('otg:overlay-mode', onOverlayMode as EventListener);
+    window.addEventListener('storage', readMode);
+    return () => {
+      window.removeEventListener('otg:overlay-mode', onOverlayMode as EventListener);
+      window.removeEventListener('storage', readMode);
+    };
+  }, [mounted]);
+
   const typedItems = items as unknown as QueueItem[];
 
-  /**
-   * Sort items into a stable display order, and enforce "only one running".
-   * We do this only for display; we do NOT mutate provider state.
-   */
   const displayItems = useMemo(() => {
     const rank = (s: QueueItem['status']) => {
       if (s === 'running') return 0;
@@ -87,7 +103,6 @@ export function FloatingQueueWidget() {
           runningSeen = true;
           return it;
         }
-        // Display extra "running" items as queued until they actually start running
         return { ...it, status: 'queued' as const };
       }
       return it;
@@ -103,17 +118,29 @@ export function FloatingQueueWidget() {
 
   const badgeCount = activeCount > 0 ? activeCount : typedItems.length;
 
-  const [pos, setPos] = useState<Pos>(() => {
-    if (typeof window === 'undefined') return { x: 20, y: 20 };
+  const [pos, setPos] = useState<Pos>({ x: 20, y: 20 });
+
+  useEffect(() => {
+    if (!mounted) return;
     try {
       const raw = window.localStorage.getItem(POS_KEY);
       const parsed = raw ? JSON.parse(raw) : null;
-      if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') return parsed;
-    } catch {}
-    return { x: 20, y: 20 };
-  });
+      if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+        setPos(parsed);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setHydratedPos(true);
+    }
+  }, [mounted]);
 
   const bubbleRef = useRef<HTMLDivElement | null>(null);
+  const nextPosRef = useRef<Pos>(pos);
+
+  useEffect(() => {
+    nextPosRef.current = pos;
+  }, [pos]);
 
   const dragRef = useRef<{
     dragging: boolean;
@@ -148,12 +175,16 @@ export function FloatingQueueWidget() {
     prevCountRef.current = typedItems.length;
   }, [typedItems]);
 
+  if (!mounted || !hydratedPos) return null;
+  if (overlayMode === 'production') return null;
   if (typedItems.length === 0) return null;
 
   const savePos = (p: Pos) => {
     try {
       window.localStorage.setItem(POS_KEY, JSON.stringify(p));
-    } catch {}
+    } catch {
+      // ignore
+    }
   };
 
   const visible = displayItems.slice(0, 3);
@@ -177,7 +208,6 @@ export function FloatingQueueWidget() {
         const downOnBubble =
           !!bubbleRef.current && (e.target instanceof Node ? bubbleRef.current.contains(e.target) : false);
 
-        // Only bubble can begin drag or toggle.
         dragRef.current.downOnBubble = downOnBubble;
         if (!downOnBubble) return;
 
@@ -203,16 +233,17 @@ export function FloatingQueueWidget() {
         const nx = Math.max(0, dragRef.current.startX - dx);
         const ny = Math.max(0, dragRef.current.startY - dy);
 
-        setPos({ x: nx, y: ny });
+        const nextPos = { x: nx, y: ny };
+        nextPosRef.current = nextPos;
+        setPos(nextPos);
       }}
       onPointerUp={(e) => {
         if (dragRef.current.pointerId !== e.pointerId) return;
 
         dragRef.current.dragging = false;
         dragRef.current.pointerId = null;
-        savePos(pos);
+        savePos(nextPosRef.current);
 
-        // Toggle only if the pointer started on the bubble and did not move.
         if (dragRef.current.downOnBubble && !dragRef.current.moved) toggleOpen();
 
         dragRef.current.downOnBubble = false;
@@ -222,20 +253,14 @@ export function FloatingQueueWidget() {
         dragRef.current.dragging = false;
         dragRef.current.pointerId = null;
         dragRef.current.downOnBubble = false;
-        savePos(pos);
+        savePos(nextPosRef.current);
       }}
     >
       <style jsx>{`
         @keyframes otg-pop {
-          0% {
-            transform: scale(1);
-          }
-          35% {
-            transform: scale(1.12);
-          }
-          100% {
-            transform: scale(1);
-          }
+          0% { transform: scale(1); }
+          35% { transform: scale(1.12); }
+          100% { transform: scale(1); }
         }
         .otg-pop {
           animation: otg-pop 260ms ease-out;
@@ -256,7 +281,6 @@ export function FloatingQueueWidget() {
         }
       `}</style>
 
-      {/* Bubble */}
       <div
         ref={bubbleRef}
         aria-label={`Queue: ${badgeCount}`}
@@ -310,7 +334,6 @@ export function FloatingQueueWidget() {
         <span style={{ position: 'relative' }}>{badgeCount}</span>
       </div>
 
-      {/* Panel */}
       {isOpen && (
         <div
           className="otg-panelOpen"

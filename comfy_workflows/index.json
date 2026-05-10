@@ -2,72 +2,237 @@
   "version": 1,
   "workflows": [
     {
-      "id": "presets/slr_text_to_image",
-      "label": "Create a Picture",
+      "id": "presets/Create a Picture",
+      "label": "Create Image",
       "type": "preset",
-      "path": "presets/slr_text_to_image.json",
-      "tags": [],
-      "enabled": true
+      "path": "presets/Create a Picture.json",
+      "file": "presets/Create a Picture.json",
+      "tags": [
+        "image",
+        "text-to-image",
+        "ernie-image-turbo",
+        "apache-2.0"
+      ],
+      "enabled": true,
+      "description": "Main TEST text-to-image preset now uses ERNIE-Image-Turbo. Prompt-enhancer nodes are included in the workflow file but disabled by default."
     },
     {
-      "id": "presets/slr_image_edit",
-      "label": "Edit Pictures",
+      "id": "presets/Edit Image",
+      "label": "Edit Image",
       "type": "preset",
-      "path": "presets/slr_image_edit.json",
-      "tags": [],
-      "enabled": true
+      "path": "presets/Edit Image.json",
+      "file": "presets/Edit Image.json",
+      "tags": [
+        "image",
+        "edit",
+        "image-to-image",
+        "qwen",
+        "generate"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "requiresInputImage": true,
+      "description": "Qwen Image Edit workflow. Upload a source image, enter edit instructions, and generate a prompt-guided edited image."
     },
     {
-      "id": "presets/slr_wan_t2v",
-      "label": "Wan Text to Video",
+      "id": "presets/Create Anime Images",
+      "label": "Create Anime Images",
       "type": "preset",
-      "path": "presets/slr_wan_t2v.json",
-      "tags": [],
-      "enabled": true
+      "path": "presets/Create Anime Images.json",
+      "file": "presets/Create Anime Images.json",
+      "tags": [
+        "image",
+        "anime",
+        "text-to-image",
+        "anima-preview"
+      ],
+      "enabled": true,
+      "description": "Anime image generation workflow using anima-preview3-base. Prompt node 67, negative node 65, sampler node 66, SaveImage node 46."
     },
     {
-      "id": "presets/slr_wan_i2v",
-      "label": "Wan Image to Video",
+      "id": "presets/Create a Video",
+      "label": "Create Video",
       "type": "preset",
-      "path": "presets/slr_wan_i2v.json",
-      "tags": [],
-      "enabled": true
+      "path": "presets/Create a Video.json",
+      "file": "presets/Create a Video.json",
+      "tags": [
+        "ltx23",
+        "ltx23-v1.1",
+        "video",
+        "text-to-video",
+        "audio",
+        "landscape-only"
+      ],
+      "enabled": true,
+      "description": "Final LTX 2.3 v1.1 text-to-video API graph. Prompt node 767, negative node 109, frame node 1175, FPS node 126, audio latent/decode preserved, output node 180."
     },
     {
-      "id": "presets/slr_wan_fflf",
-      "label": "Wan FFLF Video",
+      "id": "presets/Create a Video from Images",
+      "label": "Create Video with Starter Image",
       "type": "preset",
-      "path": "presets/slr_wan_fflf.json",
-      "tags": [],
-      "enabled": true
+      "path": "presets/Create a Video from Images.json",
+      "file": "presets/Create a Video from Images.json",
+      "tags": [
+        "ltx23",
+        "ltx23-v1.1",
+        "video",
+        "image-to-video",
+        "audio",
+        "landscape-only"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "description": "Final LTX 2.3 v1.1 image-to-video API graph. Starter image node 187, prompt node 767, negative node 109, frame node 1175, FPS node 126, audio preserved, output node 180."
     },
     {
-      "id": "presets/slr_ltx_t2v_audio",
-      "label": "Create a Video",
+      "id": "presets/Create Video with Custom Audio",
+      "label": "Create Video with Custom Audio",
       "type": "preset",
-      "path": "presets/slr_ltx_t2v_audio.json",
-      "tags": [],
-      "enabled": true
+      "path": "presets/Create Video with Custom Audio.json",
+      "file": "presets/Create Video with Custom Audio.json",
+      "tags": [
+        "ltx23",
+        "ltx23-v1.1",
+        "video",
+        "image-to-video",
+        "custom-audio",
+        "audio",
+        "landscape-only",
+        "generate"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "requiresInputImage": true,
+      "requiresAudio": true,
+      "description": "LTX 2.3 image-to-video workflow with uploaded custom audio. Generate tab sends imageA and audioA, plus prompt, negative prompt, and duration."
     },
     {
-      "id": "presets/slr_ltx_i2v_audio",
-      "label": "Create a Video from Pictures",
+      "id": "presets/Create a Video from Pictures",
+      "label": "Create Video with Starter Image (Legacy Gallery)",
       "type": "preset",
-      "path": "presets/slr_ltx_i2v_audio.json",
-      "tags": [],
-      "enabled": true
+      "path": "presets/Create a Video from Pictures.json",
+      "file": "presets/Create a Video from Pictures.json",
+      "tags": [
+        "ltx23",
+        "ltx23-v1.1",
+        "video",
+        "image-to-video",
+        "audio",
+        "landscape-only",
+        "gallery-only"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "description": "Final LTX 2.3 v1.1 image-to-video API graph for legacy Gallery entry points. Starter image node 187, prompt node 767, negative node 109, frame node 1175, FPS node 126, audio preserved, output node 180."
+    },
+    {
+      "id": "presets/Production IA2V Lip Sync",
+      "label": "Production IA2V Lip Sync",
+      "type": "preset",
+      "path": "presets/Production IA2V Lip Sync.json",
+      "file": "presets/Production IA2V Lip Sync.json",
+      "tags": [
+        "production",
+        "video",
+        "image-to-video",
+        "lip-sync",
+        "audio"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "description": "Production card image + uploaded audio to LTX 2.3 IA2V lip-sync workflow."
     },
     {
       "id": "presets/angles",
-      "label": "Angles",
-      "description": "Change camera angle/perspective of an input image (Qwen Multiangle Camera).",
+      "label": "angles",
+      "type": "preset",
+      "path": "presets/angles.json",
       "file": "presets/angles.json",
-      "img2img": true,
+      "tags": [],
+      "enabled": true
+    },
+    {
+      "id": "internal/characters/character_intro_video_ltx23",
+      "label": "Characters Intro Video LTX 2.3",
+      "type": "internal",
+      "path": "internal/characters/character_intro_video_ltx23.json",
+      "file": "internal/characters/character_intro_video_ltx23.json",
       "tags": [
-        "angles",
-        "camera",
-        "qwen"
-      ]
+        "characters",
+        "video",
+        "image-to-video",
+        "ltx23",
+        "portrait-only",
+        "audio"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "description": "Dedicated Characters-tab intro-video workflow. Portrait 720x1280 LTX 2.3 image-to-video with audio output for later extract-audio."
+    },
+    {
+      "id": "presets/RTX SR Upscaler Video",
+      "label": "Upscale Video (RTX SR)",
+      "type": "preset",
+      "path": "presets/RTX SR Upscaler Video.json",
+      "file": "presets/RTX SR Upscaler Video.json",
+      "tags": [
+        "video",
+        "video-to-video",
+        "upscale",
+        "rtx",
+        "rtx-sr",
+        "vhs"
+      ],
+      "enabled": true,
+      "img2img": false,
+      "video2video": true,
+      "description": "Upscales an uploaded video to 3840x2160 using RTXVideoSuperResolution quality ULTRA, preserving audio through VideoHelperSuite."
+    },
+    {
+      "id": "presets/Create First Image to Last Image Video",
+      "label": "Create First to Last Image Video",
+      "type": "preset",
+      "path": "presets/Create First Image to Last Image Video.json",
+      "file": "presets/Create First Image to Last Image Video.json",
+      "tags": [
+        "ltx23",
+        "ltx23-v1.1",
+        "video",
+        "first-last-image",
+        "image-to-video",
+        "flf2v",
+        "audio",
+        "landscape-only"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "needsImages": 2,
+      "description": "Final LTX 2.3 v1.1 first-frame/last-frame API graph. First image node 187, last image node 411, prompt node 767, negative node 109, frame node 1175, FPS node 126, audio preserved, output node 180."
+    },
+    {
+      "id": "presets/Create Prompt Relay Image Video",
+      "label": "Create Prompt Relay Image Video",
+      "type": "preset",
+      "path": "presets/Create Prompt Relay Image Video.json",
+      "file": "presets/Create Prompt Relay Image Video.json",
+      "tags": [
+        "ltx23",
+        "video",
+        "image-to-video",
+        "prompt-relay",
+        "scene-control",
+        "advanced",
+        "landscape-only"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "description": "Advanced scene-controlled image-to-video mode. Uses PromptRelayEncode to route beat prompts over time while preserving the starter image.",
+      "requirements": {
+        "nodes": [
+          "kijai/ComfyUI-PromptRelay"
+        ],
+        "notes": "Requires ComfyUI-PromptRelay custom node installed and ComfyUI restarted."
+      }
     }
   ]
 }

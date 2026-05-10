@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -28,7 +28,6 @@ export default function LoginClient() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // If already signed in, go straight to app
   useEffect(() => {
     (async () => {
       const r = await fetch("/api/whoami", { credentials: "include", cache: "no-store" });
@@ -71,11 +70,9 @@ export default function LoginClient() {
       <div className="otg-authBg" />
 
       <section className="otg-authCard2 otg-authCardHero">
-        {/* HERO HEADER (inside the card) */}
         <div className="otg-authHero" aria-hidden="true">
-          {/* Use your banner image in /public */}
           <img
-            src="/login-hero.png"
+            src="/Brand/slr-studios-otg-banner.png"
             alt=""
             className="otg-authHeroImg"
             draggable={false}
@@ -83,7 +80,6 @@ export default function LoginClient() {
           <div className="otg-authHeroOverlay" />
         </div>
 
-        {/* FORM */}
         <form className="otg-authForm otg-authFormTight" onSubmit={onSubmit}>
           <label className="otg-authLabel">
             Email

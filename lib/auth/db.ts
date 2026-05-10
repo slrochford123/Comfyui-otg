@@ -2,7 +2,10 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
 
-const dataDir = path.join(process.cwd(), "data");
+const dataDir = process.env.OTG_DATA_DIR
+  ? path.resolve(process.env.OTG_DATA_DIR)
+  : path.join(process.cwd(), "data");
+
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 const dbPath = path.join(dataDir, "otg.db");

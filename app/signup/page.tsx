@@ -1,4 +1,8 @@
-"use client";
+﻿"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 function getDeviceId(): string {
   if (typeof window === "undefined") return "desktop_default";
@@ -8,9 +12,6 @@ function getDeviceId(): string {
     "desktop_default"
   );
 }
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -33,6 +34,7 @@ export default function SignupPage() {
       setError("Password must be at least 8 characters.");
       return;
     }
+
     if (pw !== pw2) {
       setError("Passwords do not match.");
       return;
@@ -42,7 +44,10 @@ export default function SignupPage() {
     try {
       const r = await fetch("/api/auth/signup", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-otg-device-id": (getDeviceId() ?? "desktop_default") },
+        headers: {
+          "Content-Type": "application/json",
+          "x-otg-device-id": getDeviceId() ?? "desktop_default",
+        },
         body: JSON.stringify({ email, username, password: pw }),
       });
 
@@ -63,15 +68,19 @@ export default function SignupPage() {
   return (
     <main className="otg-authPage">
       <div className="otg-authBg" />
-      <section className="otg-authCard2">
-        <div className="otg-authHeaderMini">CREATE ACCOUNT</div>
 
-        <h1 className="otg-authTitle">
-          Comfy<span style={{ color: "rgba(195,104,255,.95)" }}>UI</span> OTG
-        </h1>
-        <p className="otg-authSub">Create your account to start creating on the go.</p>
+      <section className="otg-authCard2 otg-authCardHero">
+        <div className="otg-authHero" aria-hidden="true">
+          <img
+            src="/Brand/slr-studios-otg-banner.png"
+            alt=""
+            className="otg-authHeroImg"
+            draggable={false}
+          />
+          <div className="otg-authHeroOverlay" />
+        </div>
 
-        <form className="otg-authForm" onSubmit={onSubmit}>
+        <form className="otg-authForm otg-authFormTight" onSubmit={onSubmit}>
           <label className="otg-authLabel">
             Email
             <input
@@ -109,7 +118,12 @@ export default function SignupPage() {
                 autoComplete="new-password"
                 required
               />
-              <button type="button" className="otg-authShowBtn" onClick={() => setShowPw((v) => !v)}>
+              <button
+                type="button"
+                className="otg-authShowBtn"
+                onClick={() => setShowPw((v) => !v)}
+                aria-label={showPw ? "Hide password" : "Show password"}
+              >
                 {showPw ? "Hide" : "Show"}
               </button>
             </div>
@@ -127,7 +141,12 @@ export default function SignupPage() {
                 autoComplete="new-password"
                 required
               />
-              <button type="button" className="otg-authShowBtn" onClick={() => setShowPw2((v) => !v)}>
+              <button
+                type="button"
+                className="otg-authShowBtn"
+                onClick={() => setShowPw2((v) => !v)}
+                aria-label={showPw2 ? "Hide password" : "Show password"}
+              >
                 {showPw2 ? "Hide" : "Show"}
               </button>
             </div>
@@ -135,12 +154,18 @@ export default function SignupPage() {
 
           {error ? <div className="otg-authErr">{error}</div> : null}
 
-          <button className="otg-authPrimaryBtn otg-authGradientBtn" type="submit" disabled={submitting}>
-            {submitting ? "Creating…" : "Create account"}
+          <button
+            className="otg-authPrimaryBtn otg-authGradientBtn"
+            type="submit"
+            disabled={submitting}
+          >
+            {submitting ? "Creating..." : "Create account"}
           </button>
 
           <div className="otg-authLinks" style={{ marginTop: 14 }}>
-            <span style={{ color: "rgba(244,244,247,.65)" }}>Already have an account?</span>{" "}
+            <span style={{ color: "rgba(244,244,247,.65)" }}>
+              Already have an account?
+            </span>
             <Link href="/login" className="otg-authLink">
               Sign in
             </Link>
@@ -150,5 +175,3 @@ export default function SignupPage() {
     </main>
   );
 }
-
-

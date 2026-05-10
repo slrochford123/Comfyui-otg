@@ -5,6 +5,7 @@ import path from "path";
 import fssync from "fs";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { markRunning } from "@/lib/contentState";
+import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 
 type SceneInput = {
   id?: string;
@@ -59,7 +60,7 @@ function resolveWorkflowRoot() {
 }
 
 async function comfySubmit(workflow: any, clientId: string) {
-  const baseUrl = env("COMFY_BASE_URL", env("COMFY_URL", "http://127.0.0.1:8188"))!;
+  const baseUrl = configuredImageComfyBaseUrl();
   const res = await fetch(`${baseUrl.replace(/\/$/, "")}/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -71,7 +72,7 @@ async function comfySubmit(workflow: any, clientId: string) {
 }
 
 async function uploadToComfy(absPath: string): Promise<string> {
-  const baseUrl = env("COMFY_BASE_URL", env("COMFY_URL", "http://127.0.0.1:8188"))!;
+  const baseUrl = configuredImageComfyBaseUrl();
   const buf = await fs.readFile(absPath);
   const fd = new FormData();
   const blob = new Blob([buf]);
@@ -92,7 +93,7 @@ function findLoadImageNodes(workflow: any): string[] {
 }
 
 async function comfyWait(promptId: string, timeoutMs: number) {
-  const baseUrl = env("COMFY_BASE_URL", env("COMFY_URL", "http://127.0.0.1:8188"))!;
+  const baseUrl = configuredImageComfyBaseUrl();
   const start = Date.now();
   while (true) {
     if (Date.now() - start > timeoutMs) {

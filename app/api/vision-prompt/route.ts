@@ -1,4 +1,4 @@
-// app/api/vision-prompt/route.ts
+﻿// app/api/vision-prompt/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createRequire } from "module";
 import path from "path";
@@ -40,25 +40,21 @@ function normalizeDescriptor(raw: string) {
 function tryParseJsonLoose(text: string): any | null {
   if (!text) return null;
 
-  // 1) unwrap fenced blocks if present
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   let t = (fenced?.[1] ?? text).trim();
 
-  // 2) strip common junk prefixes/suffixes models emit
   t = t
     .replace(/^\uFEFF/, "")
     .replace(/^\s*,+/, "")
     .replace(/^json\s*/i, "")
     .trim();
 
-  // 3) direct parse
   try {
     return JSON.parse(t);
   } catch {
     // continue
   }
 
-  // 4) extract first object
   const oStart = t.indexOf("{");
   const oEnd = t.lastIndexOf("}");
   if (oStart !== -1 && oEnd !== -1 && oEnd > oStart) {
@@ -70,7 +66,6 @@ function tryParseJsonLoose(text: string): any | null {
     }
   }
 
-  // 5) extract first array (fallback)
   const aStart = t.indexOf("[");
   const aEnd = t.lastIndexOf("]");
   if (aStart !== -1 && aEnd !== -1 && aEnd > aStart) {
@@ -179,10 +174,12 @@ function buildBackgroundFromJson(j: any) {
   return normalizeDescriptor(parts.join(", "));
 }
 
+function isPathInside(root: string, target: string) {
+  const rel = path.relative(root, target);
+  return !(rel.startsWith("..") || path.isAbsolute(rel));
+}
+
 async function ollamaGenerate(baseUrl: string, model: string, prompt: string, b64: string) {
-  // IMPORTANT:
-  // - Do NOT use stop tokens like "\n\n" here; they can truncate JSON and make it invalid.
-  // - Allow enough tokens for JSON + no-code-fence compliance.
   const payload = {
     model,
     stream: false,
@@ -226,23 +223,33 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing imagePath" }, { status: 400 });
     }
 
-    // Restrict reads to OTG_DATA_DIR/uploads/storyboard
     const dataRoot = process.env.OTG_DATA_DIR || path.join(process.cwd(), "data");
     const storyboardRoot = path.resolve(path.join(dataRoot, "uploads", "storyboard"));
+    const charactersUploadsRoot = path.resolve(path.join(dataRoot, "uploads", "characters"));
+    const charactersLegacyRoot = path.resolve(path.join(dataRoot, "voices", "characters"));
 
     const resolved = path.resolve(imagePath);
-    const rel = path.relative(storyboardRoot, resolved);
-    if (rel.startsWith("..") || path.isAbsolute(rel)) {
-      return NextResponse.json({ error: "imagePath is outside storyboard uploads" }, { status: 403 });
+    const allowed =
+      isPathInside(storyboardRoot, resolved) ||
+      isPathInside(charactersUploadsRoot, resolved) ||
+      isPathInside(charactersLegacyRoot, resolved);
+
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "imagePath is outside allowed roots" },
+        { status: 403 }
+      );
     }
+
     if (!fs.existsSync(resolved)) {
       return NextResponse.json({ error: `File not found: ${resolved}` }, { status: 404 });
     }
 
-    const baseUrl = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
+    const baseUrl =
+      process.env.OLLAMA_BASE_URL || process.env.OTG_OLLAMA_BASE_URL || "http://127.0.0.1:11434";
     const envModel = process.env.OLLAMA_VISION_MODEL;
 
-    let model = envModel || (await detectVisionModel(baseUrl)) || "llama3.2-vision";
+    let model = envModel || "redule26/huihui_ai_qwen2.5-vl-7b-abliterated";
     const { b64 } = await fileToVisionBase64(resolved);
 
     const isBackground = (purpose || "character") === "background";
@@ -261,7 +268,6 @@ export async function POST(req: NextRequest) {
       ? `Describe ONLY the background/environment for AI video prompting. ${jsonSchema}${hint}`
       : `Describe the single person for identity/face-lock prompting.${name} ${jsonSchema}${hint}`;
 
-    // 1) initial generate
     let gen = await ollamaGenerate(baseUrl, model, finalPrompt, b64);
     if (!gen.ok && gen.status === 404) {
       const fallback = await detectVisionModel(baseUrl);
@@ -277,7 +283,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2) parse loosely; if fails, try a single repair; if still fails, fall back to text
     let parsed = tryParseJsonLoose(gen.output);
 
     if (!parsed) {
@@ -302,7 +307,6 @@ export async function POST(req: NextRequest) {
       descriptor = isBackground ? buildBackgroundFromJson(parsed) : buildDescriptorFromJson(parsed);
     }
 
-    // Final fallback: NEVER fail the endpoint just because JSON parsing failed
     if (!descriptor) descriptor = normalizeDescriptor(gen.output);
     if (!descriptor) {
       return NextResponse.json({ error: "Empty vision response" }, { status: 500 });

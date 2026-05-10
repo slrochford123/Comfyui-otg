@@ -1,4 +1,4 @@
-type Props = { value: number; onChange: (v: number) => void; max?: number };
+﻿type Props = { value: number; onChange: (v: number) => void; max?: number };
 
 export default function VideoControls({ value, onChange, max = 30 }: Props) {
   const active = value > 0;

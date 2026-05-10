@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "node:path";
 
-import { resolveComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
+import { resolveVoiceComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import { SessionInvalidError } from "@/lib/ownerKey";
 import { requireSessionUser } from "@/lib/sessionUser";
 import { fetchComfyViewBytes, readWorkflowJson, submitWorkflow, uploadFileToComfy, waitForAudio } from "@/lib/comfyVoices";
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
 
     if (!refAudioRel) return NextResponse.json({ ok: false, error: "Voice has no reference audio" }, { status: 400 });
 
-    const { baseUrl } = await resolveComfyBaseUrl();
+    const { baseUrl } = await resolveVoiceComfyBaseUrl();
 
     const refAbs = resolveVoicesFile(refAudioRel);
     const comfyRefName = await uploadFileToComfy(refAbs, "image", baseUrl);
@@ -60,17 +60,13 @@ export async function POST(req: NextRequest) {
     const tmpl = await readWorkflowJson("internal/voices/voice_clone.json");
     const workflow = JSON.parse(JSON.stringify(tmpl));
 
-    // Patch LoadAudio
     if (workflow?.["71"]?.inputs) {
       workflow["71"].inputs.audio = comfyRefName;
       workflow["71"].inputs.audioUI = "";
     }
-
-    // Patch ref_text + target_text
     if (workflow?.["80"]?.inputs) workflow["80"].inputs.value = String(refText || "");
     if (workflow?.["78"]?.inputs) workflow["78"].inputs.value = text;
 
-    // Submit
     const clientId = req.headers.get("x-otg-device-id") || "otg_voices";
     const promptId = await submitWorkflow(workflow, String(clientId), baseUrl);
 
@@ -82,14 +78,17 @@ export async function POST(req: NextRequest) {
     const absOut = path.join(voicesOutputsDir(voiceId), outName);
     writeBinaryFile(absOut, bytes);
 
-    // Touch voice updatedAt
     upsertVoice(user.ownerKey, { ...voice, updatedAt: new Date().toISOString() } as any);
+
+    const bust = `v=${Date.now()}`;
+    const audioUrl = `/api/file?path=${encodeURIComponent(absOut)}&${bust}`;
 
     return NextResponse.json(
       {
         ok: true,
         promptId,
-        audioUrl: `/api/file?path=${encodeURIComponent(absOut)}`,
+        audioUrl,
+        previewUrl: audioUrl,
         audioPath: absOut,
         comfyBaseUrl: baseUrl,
       },

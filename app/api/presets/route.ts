@@ -4,7 +4,7 @@ import path from "path";
 
 export const runtime = "nodejs";
 
-const PRESETS_DIR = path.join(process.cwd(), "presets");
+const PRESETS_DIR = path.join(process.cwd(), "comfy_workflows", "presets");
 
 export async function GET() {
   try {
@@ -16,7 +16,7 @@ export async function GET() {
       .readdirSync(PRESETS_DIR)
       .filter((f) => f.toLowerCase().endsWith(".json"));
 
-    return NextResponse.json({ presets });
+    return NextResponse.json({ presets }, { headers: { "cache-control": "no-store" } });
   } catch (e: any) {
     return NextResponse.json(
       { error: String(e?.message ?? e) },

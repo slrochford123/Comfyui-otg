@@ -1,26 +1,58 @@
+import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
 export type CmdResult = { code: number; stdout: string; stderr: string };
 
+function isExecutableFile(candidate: string): boolean {
+  try {
+    return fs.existsSync(candidate) && fs.statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function commonWindowsCandidates(binName: "ffmpeg" | "ffprobe"): string[] {
+  const exe = `${binName}.exe`;
+  return [
+    path.join("C:\\", "ffmpeg", "bin", exe),
+    path.join("C:\\", "tools", "ffmpeg", "bin", exe),
+    path.join("C:\\", "Program Files", "ffmpeg", "bin", exe),
+    path.join("C:\\", "Program Files (x86)", "ffmpeg", "bin", exe),
+  ];
+}
+
+function resolveBinary(envKeys: string[], fallbackBin: "ffmpeg" | "ffprobe"): string {
+  for (const key of envKeys) {
+    const raw = (process.env[key] || "").trim();
+    if (raw && isExecutableFile(raw)) return raw;
+  }
+
+  if (process.platform === "win32") {
+    for (const candidate of commonWindowsCandidates(fallbackBin)) {
+      if (isExecutableFile(candidate)) return candidate;
+    }
+  }
+
+  return fallbackBin;
+}
+
 export function resolveFfmpegPath(): string {
-  const p = (process.env.FFMPEG_PATH || "").trim();
-  return p.length ? p : "ffmpeg";
+  return resolveBinary(["OTG_FFMPEG_PATH", "FFMPEG_PATH"], "ffmpeg");
 }
 
 export function resolveFfprobePath(): string {
-  const p = (process.env.FFPROBE_PATH || "").trim();
-  if (p.length) return p;
+  const explicit = resolveBinary(["OTG_FFPROBE_PATH", "FFPROBE_PATH"], "ffprobe");
+  if (explicit !== "ffprobe") return explicit;
 
-  // Common case on Windows: ffprobe.exe lives next to ffmpeg.exe.
-  const ff = (process.env.FFMPEG_PATH || "").trim();
-  if (ff && /ffmpeg(\.exe)?$/i.test(ff)) {
-    const dir = path.dirname(ff);
-    const candidate = path.join(dir, process.platform === "win32" ? "ffprobe.exe" : "ffprobe");
-    return candidate;
+  const ffmpeg = resolveFfmpegPath();
+  if (ffmpeg !== "ffmpeg" && /ffmpeg(\.exe)?$/i.test(ffmpeg)) {
+    const dir = path.dirname(ffmpeg);
+    const sibling = path.join(dir, process.platform === "win32" ? "ffprobe.exe" : "ffprobe");
+    if (isExecutableFile(sibling)) return sibling;
   }
 
-  return "ffprobe";
+  return explicit;
 }
 
 export async function runCmd(bin: string, args: string[], opts?: { cwd?: string; timeoutMs?: number }): Promise<CmdResult> {
@@ -54,19 +86,35 @@ export async function runCmd(bin: string, args: string[], opts?: { cwd?: string;
 export async function probeDurationSeconds(filePath: string): Promise<number | null> {
   try {
     const ffprobe = resolveFfprobePath();
-    const r = await runCmd(ffprobe, [
-      "-v",
-      "error",
-      "-show_entries",
-      "format=duration",
-      "-of",
-      "default=noprint_wrappers=1:nokey=1",
-      filePath,
-    ]);
+    const r = await runCmd(
+      ffprobe,
+      [
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        filePath,
+      ],
+      { timeoutMs: 15000 },
+    );
     if (r.code !== 0) return null;
     const s = (r.stdout || "").trim();
     const d = Number(s);
     return Number.isFinite(d) ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getFfmpegVersion(): Promise<string | null> {
+  try {
+    const ffmpeg = resolveFfmpegPath();
+    const r = await runCmd(ffmpeg, ["-version"], { timeoutMs: 10000 });
+    if (r.code !== 0) return null;
+    const first = (r.stdout || "").split(/\r?\n/).find(Boolean) || "";
+    return first.trim() || null;
   } catch {
     return null;
   }

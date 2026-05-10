@@ -1,14 +1,14 @@
 import { NextRequest } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
-
+import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 
 import { optionalUserId } from "@/lib/authServer";
 import { userInboxDir, deviceInboxDir } from "@/lib/paths";
 export const runtime = "nodejs";
 
 // Comfy base URL
-const COMFY_BASE_URL = process.env.COMFY_BASE_URL || "http://127.0.0.1:8188";
+const COMFY_BASE_URL = configuredImageComfyBaseUrl();
 
 type ComfyPromptResponse = { prompt_id?: string; error?: string };
 

@@ -14,6 +14,7 @@ import {
   safeJoin,
   safeSegment,
 } from "@/lib/paths";
+import { resolveFfmpegPath } from "@/lib/ffmpeg";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,7 +42,6 @@ function isVideo(name: string) {
 }
 
 function guessFavoritesDirLegacy(username: string | null, deviceId: string) {
-  // Back-compat with older favorites route that used <repo>/data
   const root = path.join(process.cwd(), "data", username ? "user_favorites" : "device_favorites");
   return username ? path.join(root, username) : path.join(root, deviceId);
 }
@@ -57,7 +57,8 @@ function sha1(input: string) {
 
 function svgFallback(label: string) {
   const safe = (label || "preview").replace(/[<>&"]/g, "");
-  const svg = `<?xml version="1.0" encoding="UTF-8"?>\n` +
+  const svg =
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">\n` +
     `  <defs>\n` +
     `    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">\n` +
@@ -71,10 +72,6 @@ function svgFallback(label: string) {
   return svg;
 }
 
-function getFfmpegPath() {
-  return process.env.FFMPEG_PATH || process.env.OTG_FFMPEG_PATH || "ffmpeg";
-}
-
 function ensureThumbWithFfmpeg(opts: {
   inputAbs: string;
   outputAbs: string;
@@ -82,7 +79,7 @@ function ensureThumbWithFfmpeg(opts: {
   video: boolean;
 }) {
   const { inputAbs, outputAbs, width, video } = opts;
-  const ffmpeg = getFfmpegPath();
+  const ffmpeg = resolveFfmpegPath();
   ensureDir(path.dirname(outputAbs));
 
   const vf = `scale=${width}:-2:flags=lanczos`;
@@ -107,7 +104,9 @@ function ensureThumbWithFfmpeg(opts: {
 
   const r = spawnSync(ffmpeg, args, { windowsHide: true });
   if (r.status !== 0) {
-    try { fs.unlinkSync(outputAbs); } catch {}
+    try {
+      fs.unlinkSync(outputAbs);
+    } catch {}
     return { ok: false, err: (r.stderr || r.stdout || "ffmpeg failed").toString() };
   }
   return { ok: true };
@@ -118,6 +117,7 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const collection = (url.searchParams.get("collection") || "gallery") as Collection;
     const name = url.searchParams.get("name") || "";
+    const scopeHint = url.searchParams.get("scope");
     const w = clampInt(Number(url.searchParams.get("w") || "384"), 128, 1024);
 
     if (collection !== "gallery" && collection !== "favorites") {
@@ -128,14 +128,19 @@ export async function GET(req: NextRequest) {
     }
 
     const { deviceId, username, scope } = await getOwnerContext(req);
+    const effectiveScope = scopeHint === "user" || scopeHint === "device" ? scopeHint : scope;
 
     let dirCandidates: string[] = [];
     if (collection === "gallery") {
-      const dir = scope === "user" && username ? userGalleryDir(username) : deviceGalleryDir(deviceId);
-      dirCandidates = [dir];
+      if (effectiveScope === "user" && username) {
+        dirCandidates = [userGalleryDir(username)];
+      } else {
+        dirCandidates = [deviceGalleryDir(deviceId)];
+      }
     } else {
-      const d1 = favoritesDirDataRoot(scope === "user" ? username : null, deviceId);
-      const d2 = guessFavoritesDirLegacy(scope === "user" ? username : null, deviceId);
+      const favoriteUser = effectiveScope === "user" ? username : null;
+      const d1 = favoritesDirDataRoot(favoriteUser, deviceId);
+      const d2 = guessFavoritesDirLegacy(favoriteUser, deviceId);
       dirCandidates = [d1, d2];
     }
 

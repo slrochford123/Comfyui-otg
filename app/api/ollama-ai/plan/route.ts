@@ -100,12 +100,12 @@ export async function POST(req: NextRequest) {
     const cameraAggressiveness = String((body as any).cameraAggressiveness || "medium") as CameraAggressiveness;
     const locationStability = String((body as any).locationStability || "locked") as LocationStability;
 
-    const baseUrl = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
+    const baseUrl = process.env.OLLAMA_BASE_URL || process.env.OTG_OLLAMA_BASE_URL || "http://127.0.0.1:11434";
     const model =
+      process.env.OLLAMA_SCENE_CREATOR_MODEL ||
       process.env.OLLAMA_TEXT_MODEL ||
       process.env.OLLAMA_MODEL ||
-      (await detectTextModel(baseUrl)) ||
-      "llama3.2";
+      "redule26/huihui_ai_qwen2.5-vl-7b-abliterated";
 
     const prompt = buildPlanPrompt({ transcript, sceneCount, secondsPerScene, style, cameraAggressiveness, locationStability });
 

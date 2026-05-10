@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-type Mode = "clone" | "create" | "control" | "group";
+type Mode = "clone" | "create" | "control" | "group" | "dubbing";
 
 type VoiceStudioType = "cloned" | "created";
 
@@ -93,6 +93,196 @@ async function readJsonSafe(res: Response): Promise<any> {
   }
 }
 
+let __otgVoicePreviewAudio: HTMLAudioElement | null = null;
+function playVoicePreview(url: string) {
+  if (!url) return;
+  try {
+    if (__otgVoicePreviewAudio) {
+      __otgVoicePreviewAudio.pause();
+      __otgVoicePreviewAudio.currentTime = 0;
+    }
+    __otgVoicePreviewAudio = new Audio(url);
+    __otgVoicePreviewAudio.play().catch(() => undefined);
+  } catch {
+    // ignore
+  }
+}
+
+function formatSeconds(sec: number | null | undefined): string {
+  const n = Number(sec);
+  if (!Number.isFinite(n) || n < 0) return "—";
+  return `${n.toFixed(2)}s`;
+}
+
+type VoiceTimingEditorProps = {
+  title?: string;
+  sourceUrl: string;
+  voiceId: string;
+};
+
+function VoiceTimingEditor({ title = "Voice Editor", sourceUrl, voiceId }: VoiceTimingEditorProps) {
+  const [leadingSilenceSec, setLeadingSilenceSec] = React.useState<number>(0);
+  const [trailingSilenceSec, setTrailingSilenceSec] = React.useState<number>(0);
+  const [rawDurationSec, setRawDurationSec] = React.useState<number | null>(null);
+  const [resultDurationSec, setResultDurationSec] = React.useState<number | null>(null);
+  const [previewUrl, setPreviewUrl] = React.useState<string>("");
+  const [savedUrl, setSavedUrl] = React.useState<string>("");
+  const [busy, setBusy] = React.useState<"" | "preview" | "save">("");
+  const [err, setErr] = React.useState<string>("");
+  const [msg, setMsg] = React.useState<string>("");
+
+  React.useEffect(() => {
+    setPreviewUrl("");
+    setSavedUrl("");
+    setErr("");
+    setMsg("");
+    setResultDurationSec(null);
+    if (!sourceUrl) {
+      setRawDurationSec(null);
+      return;
+    }
+
+    let cancelled = false
+    const a = document.createElement("audio");
+    a.preload = "metadata";
+    a.src = sourceUrl;
+    const onLoaded = () => {
+      if (!cancelled) {
+        const d = Number(a.duration);
+        setRawDurationSec(Number.isFinite(d) && d > 0 ? d : null);
+      }
+    };
+    const onError = () => {
+      if (!cancelled) setRawDurationSec(null);
+    };
+    a.addEventListener("loadedmetadata", onLoaded);
+    a.addEventListener("error", onError);
+    return () => {
+      cancelled = true;
+      a.removeEventListener("loadedmetadata", onLoaded);
+      a.removeEventListener("error", onError);
+      a.src = "";
+    };
+  }, [sourceUrl]);
+
+  const estimatedDurationSec = React.useMemo(() => {
+    const base = Number(rawDurationSec || 0);
+    return base + Math.max(0, leadingSilenceSec || 0) + Math.max(0, trailingSilenceSec || 0);
+  }, [rawDurationSec, leadingSilenceSec, trailingSilenceSec]);
+
+  async function runTiming(persist: boolean) {
+    if (!sourceUrl || !voiceId) return;
+    setBusy(persist ? "save" : "preview");
+    setErr("");
+    setMsg("");
+    try {
+      const deviceId = getOrCreateDeviceId();
+      const res = await fetch("/api/voices/timing", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", "x-otg-device-id": deviceId },
+        body: JSON.stringify({
+          sourceUrl,
+          voiceId,
+          leadingSilenceSec: Math.max(0, Number(leadingSilenceSec) || 0),
+          trailingSilenceSec: Math.max(0, Number(trailingSilenceSec) || 0),
+          persist,
+        }),
+      });
+      const j = await readJsonSafe(res);
+      if (res.status === 401) {
+        window.location.href = "/login?reason=session";
+        return;
+      }
+      if (!res.ok || !j?.ok) throw new Error(j?.error || j?.raw || `Timing failed (${res.status})`);
+      const url = String(j.audioUrl || "");
+      if (persist) {
+        setSavedUrl(url);
+        setMsg("Timed clip saved.");
+      } else {
+        setPreviewUrl(url);
+        setMsg("Preview ready.");
+      }
+      const outDur = Number(j.durationSec);
+      setResultDurationSec(Number.isFinite(outDur) ? outDur : null);
+    } catch (e: any) {
+      setErr(e?.message || "Voice timing failed.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <div className="otg-card" style={{ padding: 10, marginTop: 12, background: "rgba(255,255,255,0.03)" }}>
+      <div style={{ fontWeight: 800, marginBottom: 8 }}>{title}</div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+        <label style={{ display: "grid", gap: 6 }}>
+          <span className="otg-label" style={{ margin: 0 }}>Leading silence (sec)</span>
+          <input
+            className="otg-input"
+            type="number"
+            min={0}
+            step={0.1}
+            value={leadingSilenceSec}
+            onChange={(e) => setLeadingSilenceSec(Math.max(0, Number(e.target.value) || 0))}
+          />
+        </label>
+        <label style={{ display: "grid", gap: 6 }}>
+          <span className="otg-label" style={{ margin: 0 }}>Trailing silence (sec)</span>
+          <input
+            className="otg-input"
+            type="number"
+            min={0}
+            step={0.1}
+            value={trailingSilenceSec}
+            onChange={(e) => setTrailingSilenceSec(Math.max(0, Number(e.target.value) || 0))}
+          />
+        </label>
+        <div style={{ display: "grid", gap: 6 }}>
+          <span className="otg-label" style={{ margin: 0 }}>Raw duration</span>
+          <div className="otg-input" style={{ display: "flex", alignItems: "center", minHeight: 40 }}>{formatSeconds(rawDurationSec)}</div>
+        </div>
+        <div style={{ display: "grid", gap: 6 }}>
+          <span className="otg-label" style={{ margin: 0 }}>Final duration</span>
+          <div className="otg-input" style={{ display: "flex", alignItems: "center", minHeight: 40 }}>{formatSeconds(resultDurationSec ?? estimatedDurationSec)}</div>
+        </div>
+      </div>
+
+      <div className="otg-row" style={{ marginTop: 10, gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <button type="button" className="otg-btn" disabled={!!busy} onClick={() => runTiming(false)}>
+          {busy === "preview" ? "Previewing…" : "Preview Timed Clip"}
+        </button>
+        <button type="button" className="otg-btnPrimary" disabled={!!busy} onClick={() => runTiming(true)}>
+          {busy === "save" ? "Saving…" : "Save Timed Clip"}
+        </button>
+        {savedUrl ? <a className="otg-btnGhost" href={savedUrl} download>Download Timed Clip</a> : null}
+      </div>
+
+      <div style={{ marginTop: 8, fontSize: 12, opacity: 0.76 }}>
+        Speech starts after the leading silence. Use this to delay lip-sync for pauses and actions before dialogue.
+      </div>
+
+      {err ? <div className="otg-errorText" style={{ marginTop: 8 }}>{err}</div> : null}
+      {msg ? <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9 }}>{msg}</div> : null}
+
+      {previewUrl ? (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>Preview</div>
+          <audio controls src={previewUrl} style={{ width: "100%" }} />
+        </div>
+      ) : null}
+
+      {savedUrl ? (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>Saved timed clip</div>
+          <audio controls src={savedUrl} style={{ width: "100%" }} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function VoicesPanel({}: { isAdmin?: boolean }) {
   const [mode, setMode] = React.useState<Mode>("clone");
 
@@ -101,8 +291,6 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
   const [voices, setVoices] = React.useState<Voice[]>([]);
   const [limits, setLimits] = React.useState<Limits>({ ttsMaxTextLen: 500, scriptMaxTextLen: 2000, maxUploadMb: 25 });
   const [selectedVoiceId, setSelectedVoiceId] = React.useState<string>("");
-
-  const selectedVoice = React.useMemo(() => voices.find((v) => v.voiceId === selectedVoiceId) || null, [voices, selectedVoiceId]);
 
   const [libBusy, setLibBusy] = React.useState(false);
   const [libErr, setLibErr] = React.useState<string>("");
@@ -145,6 +333,17 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
   const [createAudioUrl, setCreateAudioUrl] = React.useState<string>("");
   const [createTestText, setCreateTestText] = React.useState<string>("This is a short follow-up line to test the generated voice.");
   const [createTestUrl, setCreateTestUrl] = React.useState<string>("");
+  const [createSourceMode, setCreateSourceMode] = React.useState<"new" | "library">("new");
+  const [createLibraryVoiceId, setCreateLibraryVoiceId] = React.useState<string>("");
+  const [createSpeechText, setCreateSpeechText] = React.useState<string>("");
+  const [createSeedRefText, setCreateSeedRefText] = React.useState<string>("");
+
+  const selectedVoice = React.useMemo(() => voices.find((v) => v.voiceId === selectedVoiceId) || null, [voices, selectedVoiceId]);
+  const createdLibraryVoices = React.useMemo(() => voices.filter((v) => v.type === "created"), [voices]);
+  const createLibraryVoice = React.useMemo(
+    () => createdLibraryVoices.find((v) => v.voiceId === createLibraryVoiceId) || null,
+    [createdLibraryVoices, createLibraryVoiceId]
+  );
 
   // Control mode (preset speakers + style/emotion instructions)
   const [ctlSpeaker, setCtlSpeaker] = React.useState<string>("ryan");
@@ -163,6 +362,23 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
   const [groupErr, setGroupErr] = React.useState<string>("");
   const [groupMsg, setGroupMsg] = React.useState<string>("");
   const [groupAudioUrl, setGroupAudioUrl] = React.useState<string>("");
+
+  // Dubbing mode (speech-to-speech via local Seed-VC)
+  const [dubSelectedVoiceId, setDubSelectedVoiceId] = React.useState<string>("");
+  const [dubSourceFile, setDubSourceFile] = React.useState<File | null>(null);
+  const [dubSteps, setDubSteps] = React.useState<number>(30);
+  const [dubLengthAdjust, setDubLengthAdjust] = React.useState<number>(1.0);
+  const [dubIntelligibility, setDubIntelligibility] = React.useState<number>(0.0);
+  const [dubSimilarity, setDubSimilarity] = React.useState<number>(0.7);
+  const [dubTopP, setDubTopP] = React.useState<number>(0.9);
+  const [dubTemperature, setDubTemperature] = React.useState<number>(1.0);
+  const [dubRepetitionPenalty, setDubRepetitionPenalty] = React.useState<number>(1.0);
+  const [dubConvertStyle, setDubConvertStyle] = React.useState<boolean>(true);
+  const [dubAnonymizeOnly, setDubAnonymizeOnly] = React.useState<boolean>(false);
+  const [dubBusy, setDubBusy] = React.useState(false);
+  const [dubErr, setDubErr] = React.useState<string>("");
+  const [dubMsg, setDubMsg] = React.useState<string>("");
+  const [dubAudioUrl, setDubAudioUrl] = React.useState<string>("");
 
   const refreshLibrary = React.useCallback(async () => {
     setLibBusy(true);
@@ -234,6 +450,25 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
   React.useEffect(() => {
     if (selectedVoiceId) refreshPresets(selectedVoiceId);
   }, [selectedVoiceId, refreshPresets]);
+  React.useEffect(() => {
+    if (!dubSelectedVoiceId && selectedVoiceId) setDubSelectedVoiceId(selectedVoiceId);
+  }, [dubSelectedVoiceId, selectedVoiceId]);
+
+  React.useEffect(() => {
+    if (createSourceMode !== "library") return;
+    if (!createLibraryVoiceId && createdLibraryVoices.length) {
+      setCreateLibraryVoiceId(createdLibraryVoices[0].voiceId);
+      return;
+    }
+    const v = createdLibraryVoices.find((x) => x.voiceId === createLibraryVoiceId) || null;
+    if (!v) return;
+    setCreateName(v.name || "");
+    setCreateTags(Array.isArray(v.tags) ? v.tags.join(", ") : "");
+    setCreateSeedRefText(v.refText || "");
+    if (!createSpeechText.trim()) setCreateSpeechText(v.refText || "");
+  }, [createSourceMode, createLibraryVoiceId, createdLibraryVoices]);
+
+
 
   const upsertVoiceClient = (v: Voice) => {
     setVoices((prev) => {
@@ -503,6 +738,58 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
     }
   }
 
+  async function runDubbing() {
+    setDubErr("");
+    setDubMsg("");
+    setDubAudioUrl("");
+
+    const voiceId = String(dubSelectedVoiceId || selectedVoiceId || "").trim();
+    if (!voiceId) {
+      setDubErr("Select a target voice first.");
+      return;
+    }
+    if (!dubSourceFile) {
+      setDubErr("Upload a performance clip first.");
+      return;
+    }
+
+    setDubBusy(true);
+    try {
+      const fd = new FormData();
+      fd.set("voiceId", voiceId);
+      fd.set("source", dubSourceFile);
+      fd.set("steps", String(dubSteps));
+      fd.set("lengthAdjust", String(dubLengthAdjust));
+      fd.set("intelligibilityCfgRate", String(dubIntelligibility));
+      fd.set("similarityCfgRate", String(dubSimilarity));
+      fd.set("topP", String(dubTopP));
+      fd.set("temperature", String(dubTemperature));
+      fd.set("repetitionPenalty", String(dubRepetitionPenalty));
+      fd.set("convertStyle", String(dubConvertStyle));
+      fd.set("anonymizationOnly", String(dubAnonymizeOnly));
+
+      const deviceId = getOrCreateDeviceId();
+      const res = await fetch("/api/voices/dubbing", {
+        method: "POST",
+        credentials: "include",
+        headers: { "x-otg-device-id": deviceId },
+        body: fd,
+      });
+      const j = await readJsonSafe(res);
+      if (res.status === 401) {
+        window.location.href = "/login?reason=session";
+        return;
+      }
+      if (!res.ok || !j?.ok) throw new Error(j?.error || "Voice dubbing failed");
+      setDubAudioUrl(String(j.audioUrl || ""));
+      setDubMsg(String(j.message || "Voice dubbing complete."));
+    } catch (e: any) {
+      setDubErr(e?.message || "Voice dubbing failed.");
+    } finally {
+      setDubBusy(false);
+    }
+  }
+
   async function runGroup() {
     setGroupErr("");
     setGroupMsg("");
@@ -669,6 +956,7 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
               Download
             </a>
           </div>
+          {selectedVoiceId ? <VoiceTimingEditor title="Voice Editor" sourceUrl={libraryPlayerUrl} voiceId={selectedVoiceId} /> : null}
         </div>
       ) : null}
     </div>
@@ -1028,6 +1316,7 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
         {clonePreviewUrl ? (
           <div style={{ marginTop: 12 }}>
             <audio controls src={clonePreviewUrl} style={{ width: "100%" }} />
+            {cloneVoiceId ? <VoiceTimingEditor title="Voice Editor" sourceUrl={clonePreviewUrl} voiceId={cloneVoiceId} /> : null}
           </div>
         ) : null}
       </div>
@@ -1039,11 +1328,94 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
       <div className="otg-cardTitle">Create Voice</div>
 
       <div className="otg-cardBody">
-        <div className="otg-label">Voice name</div>
-        <input className="otg-input" value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder="e.g., Calm Interviewer" />
+        <div className="otg-label">Create from</div>
+        <div className="otg-row" style={{ gap: 10, flexWrap: "wrap", marginTop: 6 }}>
+          <button
+            type="button"
+            className={createSourceMode === "new" ? "otg-pill" : "otg-pill-ghost"}
+            onClick={() => setCreateSourceMode("new")}
+          >
+            New Voice
+          </button>
+          <button
+            type="button"
+            className={createSourceMode === "library" ? "otg-pill" : "otg-pill-ghost"}
+            onClick={() => {
+              setCreateSourceMode("library");
+              if (!createLibraryVoiceId && createdLibraryVoices.length) {
+                setCreateLibraryVoiceId(createdLibraryVoices[0].voiceId);
+              }
+            }}
+          >
+            Voice Library
+          </button>
+        </div>
+
+        {createSourceMode === "library" ? (
+          <>
+            <div className="otg-label" style={{ marginTop: 10 }}>Choose created voice</div>
+            <div className="otg-row" style={{ gap: 8, alignItems: "center", flexWrap: "nowrap" }}>
+              <select
+                className="otg-input"
+                value={createLibraryVoiceId}
+                onChange={(e) => setCreateLibraryVoiceId(e.target.value)}
+                style={{ flex: 1, minWidth: 0 }}
+              >
+                {createdLibraryVoices.length ? null : <option value="">No created voices found</option>}
+                {createdLibraryVoices.map((v) => (
+                  <option key={v.voiceId} value={v.voiceId}>
+                    {v.name}{Array.isArray(v.tags) && v.tags.length ? ` — ${v.tags.slice(0, 3).join(", ")}` : ""}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="otg-btnGhost"
+                disabled={!createLibraryVoice?.refAudioUrl}
+                onClick={() => createLibraryVoice?.refAudioUrl ? playVoicePreview(createLibraryVoice.refAudioUrl) : undefined}
+                title="Play selected voice preview"
+              >
+                ▶
+              </button>
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>
+              Select a saved created voice to reuse its identity. Name and tags are locked. Voice description stays editable.
+            </div>
+          </>
+        ) : null}
+
+        <div className="otg-label" style={{ marginTop: 10 }}>Voice name</div>
+        <input
+          className="otg-input"
+          value={createName}
+          onChange={(e) => setCreateName(e.target.value)}
+          placeholder="e.g., Calm Interviewer"
+          readOnly={createSourceMode === "library"}
+          style={createSourceMode === "library" ? { opacity: 0.8, cursor: "not-allowed" } : undefined}
+        />
 
         <div className="otg-label" style={{ marginTop: 10 }}>Tags (comma-separated)</div>
-        <input className="otg-input" value={createTags} onChange={(e) => setCreateTags(e.target.value)} placeholder="male, warm, narrator" />
+        <input
+          className="otg-input"
+          value={createTags}
+          onChange={(e) => setCreateTags(e.target.value)}
+          placeholder="male, warm, narrator"
+          readOnly={createSourceMode === "library"}
+          style={createSourceMode === "library" ? { opacity: 0.8, cursor: "not-allowed" } : undefined}
+        />
+
+        {createSourceMode === "library" ? (
+          <>
+            <div className="otg-label" style={{ marginTop: 10 }}>Original creation sample / prompt</div>
+            <textarea
+              className="otg-input"
+              rows={3}
+              value={createSeedRefText}
+              readOnly
+              style={{ width: "100%", resize: "vertical", opacity: 0.82 }}
+            />
+          </>
+        ) : null}
 
         <div className="otg-label" style={{ marginTop: 10 }}>Voice description (character details)</div>
         <textarea
@@ -1055,21 +1427,34 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
           style={{ width: "100%", resize: "vertical" }}
         />
 
-        <div className="otg-label" style={{ marginTop: 10 }}>What should the voice say (creation sample)</div>
+        <div className="otg-label" style={{ marginTop: 10 }}>
+          {createSourceMode === "library" ? "What should the person say?" : "What should the voice say (creation sample)"}
+        </div>
         <textarea
           className="otg-input"
           rows={3}
-          value={createLine}
-          onChange={(e) => setCreateLine(e.target.value.slice(0, limits.ttsMaxTextLen))}
+          value={createSourceMode === "library" ? createSpeechText : createLine}
+          onChange={(e) => {
+            const next = e.target.value.slice(0, limits.ttsMaxTextLen);
+            if (createSourceMode === "library") setCreateSpeechText(next);
+            else setCreateLine(next);
+          }}
           style={{ width: "100%", resize: "vertical" }}
         />
-        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>{createLine.length}/{limits.ttsMaxTextLen}</div>
+        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
+          {(createSourceMode === "library" ? createSpeechText : createLine).length}/{limits.ttsMaxTextLen}
+        </div>
 
         <div className="otg-row" style={{ marginTop: 10, gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <button
             type="button"
             className="otg-btnPrimary"
-            disabled={createBusy || !createName.trim() || !createDesc.trim() || !createLine.trim()}
+            disabled={
+              createBusy ||
+              (createSourceMode === "new"
+                ? (!createName.trim() || !createDesc.trim() || !createLine.trim())
+                : (!createLibraryVoiceId || !createSpeechText.trim()))
+            }
             onClick={async () => {
               setCreateBusy(true);
               setCreateErr("");
@@ -1077,29 +1462,43 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
               setCreateAudioUrl("");
               setCreateTestUrl("");
               try {
-                const payload = {
-                  name: createName.trim(),
-                  tags: tagsToArray(createTags),
-                  description: createDesc.trim(),
-                  text: createLine.trim(),
-                };
-                const j = await postJson("/api/voices/studio/design", payload);
-                if (j.voice) {
-                  const v: Voice = j.voice;
-                  upsertVoiceClient(v);
-                  setSelectedVoiceId(v.voiceId);
+                if (createSourceMode === "library") {
+                  if (!createLibraryVoiceId) throw new Error("Select a created voice first.");
+                  const baseVoice = createdLibraryVoices.find((v) => v.voiceId === createLibraryVoiceId) || null;
+                  if (!baseVoice) throw new Error("Selected created voice not found.");
+                  const url = await generateTts(baseVoice.voiceId, createSpeechText.trim());
+                  setCreateAudioUrl(url);
+                  setSelectedVoiceId(baseVoice.voiceId);
+                  setCreateMsg("New audio clip generated from selected voice.");
+                } else {
+                  const payload = {
+                    name: createName.trim(),
+                    tags: tagsToArray(createTags),
+                    description: createDesc.trim(),
+                    text: createLine.trim(),
+                  };
+                  const j = await postJson("/api/voices/studio/design", payload);
+                  if (j.voice) {
+                    const v: Voice = j.voice;
+                    upsertVoiceClient(v);
+                    setSelectedVoiceId(v.voiceId);
+                  }
+                  setCreateAudioUrl(String(j.audioUrl || ""));
+                  setCreateMsg("Voice created.");
+                  await refreshLibrary();
                 }
-                setCreateAudioUrl(String(j.audioUrl || ""));
-                setCreateMsg("Voice created.");
-                await refreshLibrary();
               } catch (e: any) {
-                setCreateErr(e?.message || "Create failed.");
+                setCreateErr(e?.message || (createSourceMode === "library" ? "Clip generation failed." : "Create failed."));
               } finally {
                 setCreateBusy(false);
               }
             }}
           >
-            {createBusy ? "Generating…" : "Generate voice"}
+            {createBusy
+              ? "Generating…"
+              : createSourceMode === "library"
+                ? "Generate clip from selected voice"
+                : "Generate voice"}
           </button>
 
           {createAudioUrl ? (
@@ -1115,6 +1514,9 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
         {createAudioUrl ? (
           <div style={{ marginTop: 12 }}>
             <audio controls src={createAudioUrl} style={{ width: "100%" }} />
+            {(createSourceMode === "library" ? createLibraryVoiceId : selectedVoiceId)
+              ? <VoiceTimingEditor title="Voice Editor" sourceUrl={createAudioUrl} voiceId={createSourceMode === "library" ? createLibraryVoiceId : selectedVoiceId} />
+              : null}
           </div>
         ) : null}
 
@@ -1134,15 +1536,16 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
           <button
             type="button"
             className="otg-btn"
-            disabled={createBusy || !selectedVoiceId || !createTestText.trim()}
+            disabled={createBusy || !(createSourceMode === "library" ? createLibraryVoiceId : selectedVoiceId) || !createTestText.trim()}
             onClick={async () => {
-              if (!selectedVoiceId) return;
+              const voiceId = createSourceMode === "library" ? createLibraryVoiceId : selectedVoiceId;
+              if (!voiceId) return;
               setCreateBusy(true);
               setCreateErr("");
               setCreateMsg("");
               setCreateTestUrl("");
               try {
-                const url = await generateTts(selectedVoiceId, createTestText.trim());
+                const url = await generateTts(voiceId, createTestText.trim());
                 setCreateTestUrl(url);
                 setCreateMsg("Test generated.");
               } catch (e: any) {
@@ -1164,6 +1567,9 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
         {createTestUrl ? (
           <div style={{ marginTop: 12 }}>
             <audio controls src={createTestUrl} style={{ width: "100%" }} />
+            {(createSourceMode === "library" ? createLibraryVoiceId : selectedVoiceId)
+              ? <VoiceTimingEditor title="Voice Editor" sourceUrl={createTestUrl} voiceId={createSourceMode === "library" ? createLibraryVoiceId : selectedVoiceId} />
+              : null}
           </div>
         ) : null}
       </div>
@@ -1516,7 +1922,145 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
     </div>
   );
 
-  const mainPanel = mode === "clone" ? clonePanel : mode === "create" ? createPanel : mode === "control" ? controlPanel : groupPanel;
+  const dubbingPanel = (
+    <div className="otg-card" style={{ padding: 12 }}>
+      <div className="otg-cardTitle">Voice Dubbing</div>
+      <div style={{ fontSize: 12, opacity: 0.82, marginTop: 4 }}>
+        Speech-to-speech dubbing through your local Seed-VC service. Upload a performance clip, pick a target voice from the library, and convert your delivery into that character voice.
+      </div>
+
+      <div className="otg-cardBody">
+        <div className="otg-label">Target voice</div>
+        <select className="otg-input" value={dubSelectedVoiceId} onChange={(e) => setDubSelectedVoiceId(e.target.value)}>
+          <option value="">Select a voice…</option>
+          {voices.map((v) => (
+            <option key={v.voiceId} value={v.voiceId}>
+              {v.name} ({v.type === "created" ? "Created" : "Cloned"})
+            </option>
+          ))}
+        </select>
+
+        <div className="otg-label" style={{ marginTop: 10 }}>Performance clip</div>
+        <label className="otg-btnGhost" style={{ cursor: dubBusy ? "not-allowed" : "pointer" }}>
+          <input
+            type="file"
+            accept="audio/*"
+            style={{ display: "none" }}
+            disabled={dubBusy}
+            onChange={(e) => {
+              const f = e.target.files?.[0] || null;
+              e.currentTarget.value = "";
+              setDubSourceFile(f);
+              setDubErr("");
+            }}
+          />
+          {dubSourceFile ? `Selected: ${dubSourceFile.name}` : "Upload performance audio"}
+        </label>
+
+        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
+          <div>
+            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+              <div className="otg-label">Diffusion Steps</div>
+              <div style={{ fontSize: 12, opacity: 0.86 }}>{dubSteps}</div>
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.72, marginBottom: 6 }}>30 by default, 50-100 for best quality</div>
+            <input type="range" min={1} max={200} step={1} value={dubSteps} onChange={(e) => setDubSteps(Math.max(1, Math.min(200, Number(e.target.value) || 30)))} style={{ width: "100%" }} />
+            <div className="otg-row" style={{ justifyContent: "space-between", fontSize: 12, opacity: 0.72, marginTop: 4 }}><span>1</span><span>200</span></div>
+          </div>
+          <div>
+            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+              <div className="otg-label">Length Adjust</div>
+              <div style={{ fontSize: 12, opacity: 0.86 }}>{dubLengthAdjust.toFixed(1)}</div>
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.72, marginBottom: 6 }}>{'<1.0 for speed-up speech, >1.0 for slow-down speech'}</div>
+            <input type="range" min={0.5} max={2} step={0.1} value={dubLengthAdjust} onChange={(e) => setDubLengthAdjust(Math.max(0.5, Math.min(2, Number(e.target.value) || 1)))} style={{ width: "100%" }} />
+            <div className="otg-row" style={{ justifyContent: "space-between", fontSize: 12, opacity: 0.72, marginTop: 4 }}><span>0.5</span><span>2.0</span></div>
+          </div>
+          <div>
+            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+              <div className="otg-label">Intelligibility CFG Rate</div>
+              <div style={{ fontSize: 12, opacity: 0.86 }}>{dubIntelligibility.toFixed(1)}</div>
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.72, marginBottom: 6 }}>Has subtle influence</div>
+            <input type="range" min={0} max={1} step={0.1} value={dubIntelligibility} onChange={(e) => setDubIntelligibility(Math.max(0, Math.min(1, Number(e.target.value) || 0.5)))} style={{ width: "100%" }} />
+            <div className="otg-row" style={{ justifyContent: "space-between", fontSize: 12, opacity: 0.72, marginTop: 4 }}><span>0.0</span><span>1.0</span></div>
+          </div>
+          <div>
+            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+              <div className="otg-label">Similarity CFG Rate</div>
+              <div style={{ fontSize: 12, opacity: 0.86 }}>{dubSimilarity.toFixed(1)}</div>
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.72, marginBottom: 6 }}>Has subtle influence</div>
+            <input type="range" min={0} max={1} step={0.1} value={dubSimilarity} onChange={(e) => setDubSimilarity(Math.max(0, Math.min(1, Number(e.target.value) || 0.5)))} style={{ width: "100%" }} />
+            <div className="otg-row" style={{ justifyContent: "space-between", fontSize: 12, opacity: 0.72, marginTop: 4 }}><span>0.0</span><span>1.0</span></div>
+          </div>
+          <div>
+            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+              <div className="otg-label">Top-p</div>
+              <div style={{ fontSize: 12, opacity: 0.86 }}>{dubTopP.toFixed(1)}</div>
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.72, marginBottom: 6 }}>Controls diversity of generated audio</div>
+            <input type="range" min={0.1} max={1} step={0.1} value={dubTopP} onChange={(e) => setDubTopP(Math.max(0.1, Math.min(1, Number(e.target.value) || 0.9)))} style={{ width: "100%" }} />
+            <div className="otg-row" style={{ justifyContent: "space-between", fontSize: 12, opacity: 0.72, marginTop: 4 }}><span>0.1</span><span>1.0</span></div>
+          </div>
+          <div>
+            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+              <div className="otg-label">Temperature</div>
+              <div style={{ fontSize: 12, opacity: 0.86 }}>{dubTemperature.toFixed(1)}</div>
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.72, marginBottom: 6 }}>Controls randomness of generated audio</div>
+            <input type="range" min={0.1} max={2} step={0.1} value={dubTemperature} onChange={(e) => setDubTemperature(Math.max(0.1, Math.min(2, Number(e.target.value) || 1)))} style={{ width: "100%" }} />
+            <div className="otg-row" style={{ justifyContent: "space-between", fontSize: 12, opacity: 0.72, marginTop: 4 }}><span>0.1</span><span>2.0</span></div>
+          </div>
+          <div>
+            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+              <div className="otg-label">Repetition Penalty</div>
+              <div style={{ fontSize: 12, opacity: 0.86 }}>{dubRepetitionPenalty.toFixed(1)}</div>
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.72, marginBottom: 6 }}>Penalizes repetition in generated audio</div>
+            <input type="range" min={1} max={3} step={0.1} value={dubRepetitionPenalty} onChange={(e) => setDubRepetitionPenalty(Math.max(1, Math.min(3, Number(e.target.value) || 1)))} style={{ width: "100%" }} />
+            <div className="otg-row" style={{ justifyContent: "space-between", fontSize: 12, opacity: 0.72, marginTop: 4 }}><span>1.0</span><span>3.0</span></div>
+          </div>
+        </div>
+
+        <div className="otg-row" style={{ gap: 12, marginTop: 12, flexWrap: "wrap" }}>
+          <label className="otg-row" style={{ gap: 8, alignItems: "center" }}>
+            <input type="checkbox" checked={dubConvertStyle} onChange={(e) => setDubConvertStyle(e.target.checked)} />
+            <span>Convert style / emotion / accent</span>
+          </label>
+          <label className="otg-row" style={{ gap: 8, alignItems: "center" }}>
+            <input type="checkbox" checked={dubAnonymizeOnly} onChange={(e) => setDubAnonymizeOnly(e.target.checked)} />
+            <span>Anonymization only</span>
+          </label>
+        </div>
+
+        <div className="otg-row" style={{ marginTop: 12, gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <button type="button" className="otg-btnPrimary" disabled={dubBusy} onClick={runDubbing}>
+            {dubBusy ? "Dubbing…" : "Generate Dub"}
+          </button>
+          {dubAudioUrl ? (
+            <a className="otg-btnGhost" href={dubAudioUrl} download>
+              Download
+            </a>
+          ) : null}
+        </div>
+
+        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.78 }}>
+          Recommended start: steps 30, similarity 0.7, convert style on. Use a clean 2–10 second performance clip and a strong target voice reference in the library.
+        </div>
+
+        {dubErr ? <div className="otg-errorText" style={{ marginTop: 10 }}>{dubErr}</div> : null}
+        {dubMsg ? <div style={{ marginTop: 10, color: "#86efac", fontSize: 13 }}>{dubMsg}</div> : null}
+        {dubAudioUrl ? (
+          <div style={{ marginTop: 12 }}>
+            <audio controls src={dubAudioUrl} style={{ width: "100%" }} />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+
+  const mainPanel = mode === "clone" ? clonePanel : mode === "create" ? createPanel : mode === "control" ? controlPanel : mode === "group" ? groupPanel : dubbingPanel;
 
   return (
     <div className="otg-card">
@@ -1531,6 +2075,7 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
             <button type="button" className={mode === "create" ? "otg-pill" : "otg-pill-ghost"} onClick={() => setMode("create")}>Create Voice</button>
             <button type="button" className={mode === "control" ? "otg-pill" : "otg-pill-ghost"} onClick={() => setMode("control")}>Voice Control</button>
             <button type="button" className={mode === "group" ? "otg-pill" : "otg-pill-ghost"} onClick={() => setMode("group")}>Group Voices</button>
+            <button type="button" className={mode === "dubbing" ? "otg-pill" : "otg-pill-ghost"} onClick={() => setMode("dubbing")}>Voice Dubbing</button>
           </div>
         </div>
       </div>
@@ -1625,7 +2170,7 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
 
         {/* quick info */}
         <div style={{ marginTop: 12, fontSize: 12, opacity: 0.75 }}>
-          Tips: Clone = upload a clip, transcribe with Whisper, then generate previews. Create = describe a character voice and generate a reference sample. Group = assign roles and build dialogue lines.
+          Tips: Clone = upload a clip, transcribe with Whisper, then generate previews. Create = describe a character voice and generate a reference sample. Group = assign roles and build dialogue lines. Voice Dubbing = upload a performance clip and convert it into a target library voice using local Seed-VC.
         </div>
       </div>
     </div>

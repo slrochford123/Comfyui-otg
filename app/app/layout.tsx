@@ -1,4 +1,4 @@
-﻿import "./globals.css";
+import "./globals.css";
 import { FloatingQueueProvider } from "./components/FloatingQueueProvider";
 import { FloatingQueueWidget } from "./components/FloatingQueueWidget";
 

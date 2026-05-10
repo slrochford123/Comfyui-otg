@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
+import { resolveImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import fs from "node:fs";
 import path from "node:path";
 
 export const runtime = "nodejs";
 
-const COMFY_BASE_URL = process.env.COMFY_BASE_URL || "http://127.0.0.1:8188";
 const DEVICE_ROOT =
   process.env.OTG_DATA_DIR
     ? path.join(process.env.OTG_DATA_DIR, "device_galleries")
@@ -41,11 +41,11 @@ function extractImages(rec: any): Array<{ filename: string; subfolder?: string; 
   return out;
 }
 
-async function fetchViewBytes(f: { filename: string; subfolder?: string; type?: string }) {
+async function fetchViewBytes(comfyBaseUrl: string, f: { filename: string; subfolder?: string; type?: string }) {
   const filename = encodeURIComponent(f.filename);
   const type = encodeURIComponent(f.type || "output");
   const subfolder = encodeURIComponent(f.subfolder || "");
-  const url = `${COMFY_BASE_URL}/view?filename=${filename}&type=${type}&subfolder=${subfolder}`;
+  const url = `${comfyBaseUrl}/view?filename=${filename}&type=${type}&subfolder=${subfolder}`;
   const r = await fetch(url, { cache: "no-store" });
   if (!r.ok) throw new Error(`Comfy /view ${r.status} for ${f.filename}`);
   return Buffer.from(await r.arrayBuffer());
@@ -61,6 +61,9 @@ export async function POST(req: NextRequest) {
       "local";
 
     const limit = Number(body.limit || 10);
+
+    const { baseUrl } = await resolveImageComfyBaseUrl();
+    const COMFY_BASE_URL = baseUrl.replace(/\/+$/, "");
 
     // 1) get full history (ComfyUI returns a map)
     const histRes = await fetch(`${COMFY_BASE_URL}/history`, { cache: "no-store" });
@@ -92,7 +95,7 @@ export async function POST(req: NextRequest) {
 
         if (fs.existsSync(dst)) continue; // don’t duplicate
 
-        const bytes = await fetchViewBytes(img);
+        const bytes = await fetchViewBytes(COMFY_BASE_URL, img);
         fs.writeFileSync(dst, bytes);
         saved.push(outName);
       }

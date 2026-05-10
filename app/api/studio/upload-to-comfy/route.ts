@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import fs from "node:fs";
 import path from "node:path";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
@@ -6,8 +7,6 @@ import { getOwnerDirs, safeJoin } from "@/lib/paths";
 
 export const runtime = "nodejs";
 
-const COMFY_BASE_URL =
-  (process.env.COMFY_BASE_URL || process.env.COMFY_URL || "http://127.0.0.1:8188").replace(/\/+$/, "");
 
 export async function POST(req: NextRequest) {
   try {
@@ -32,6 +31,8 @@ export async function POST(req: NextRequest) {
     const form = new FormData();
     form.append("image", new Blob([buf]), filename);
 
+    const { baseUrl } = await resolveImageComfyBaseUrl();
+    const COMFY_BASE_URL = baseUrl.replace(/\/+$/, "");
     const r = await fetch(`${COMFY_BASE_URL}/upload/image`, { method: "POST", body: form as any });
     const text = await r.text();
 

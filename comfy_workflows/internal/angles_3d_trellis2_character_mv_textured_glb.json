@@ -1,0 +1,109 @@
+{
+  "1": {
+    "class_type": "Trellis2LoadModel",
+    "inputs": {
+      "modelname": "microsoft/TRELLIS.2-4B",
+      "backend": "flash_attn",
+      "device": "cuda",
+      "low_vram": true,
+      "keep_models_loaded": true
+    }
+  },
+  "2": {
+    "class_type": "Trellis2LoadImageWithTransparency",
+    "inputs": {
+      "image": "__OTG_FRONT_IMAGE__"
+    }
+  },
+  "3": {
+    "class_type": "Trellis2LoadImageWithTransparency",
+    "inputs": {
+      "image": "__OTG_BACK_IMAGE__"
+    }
+  },
+  "4": {
+    "class_type": "Trellis2LoadImageWithTransparency",
+    "inputs": {
+      "image": "__OTG_LEFT_IMAGE__"
+    }
+  },
+  "5": {
+    "class_type": "Trellis2LoadImageWithTransparency",
+    "inputs": {
+      "image": "__OTG_RIGHT_IMAGE__"
+    }
+  },
+  "6": {
+    "class_type": "ImageBatch",
+    "inputs": {
+      "image1": ["2", 2],
+      "image2": ["3", 2]
+    }
+  },
+  "7": {
+    "class_type": "ImageBatch",
+    "inputs": {
+      "image1": ["6", 0],
+      "image2": ["4", 2]
+    }
+  },
+  "8": {
+    "class_type": "ImageBatch",
+    "inputs": {
+      "image1": ["7", 0],
+      "image2": ["5", 2]
+    }
+  },
+  "9": {
+    "class_type": "Trellis2MeshWithVoxelGenerator",
+    "inputs": {
+      "pipeline": ["1", 0],
+      "image": ["8", 0],
+      "seed": 42,
+      "pipeline_type": "1024_cascade",
+      "sparse_structure_steps": 12,
+      "shape_steps": 30,
+      "texture_steps": 25,
+      "max_num_tokens": 49152,
+      "max_views": 4,
+      "sparse_structure_resolution": 32,
+      "generate_texture_slat": true,
+      "use_tiled_decoder": true,
+      "sampler": "euler"
+    }
+  },
+  "10": {
+    "class_type": "Trellis2SimplifyMesh",
+    "inputs": {
+      "mesh": ["9", 0],
+      "target_face_num": 500000,
+      "method": "Cumesh"
+    }
+  },
+  "11": {
+    "class_type": "Trellis2FillHolesWithMeshlib",
+    "inputs": {
+      "mesh": ["10", 0]
+    }
+  },
+  "12": {
+    "class_type": "Trellis2MeshWithVoxelToTrimesh",
+    "inputs": {
+      "mesh": ["11", 0],
+      "reorient_vertices": "90 degrees"
+    }
+  },
+  "13": {
+    "class_type": "Trellis2ExportMesh",
+    "inputs": {
+      "trimesh": ["12", 0],
+      "filename_prefix": "char_mv",
+      "file_format": "glb"
+    }
+  },
+  "__otg": {
+    "label": "Angles Trellis 2 Character MV Textured GLB",
+    "description": "Manual front/back/left/right multiview character mesh+texture workflow for OTG.",
+    "img2img": true
+  }
+}

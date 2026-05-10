@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "node:path";
 
-import { resolveComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
+import { resolveVoiceComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import { SessionInvalidError } from "@/lib/ownerKey";
 import { requireSessionUser } from "@/lib/sessionUser";
 import { fetchComfyViewBytes, readWorkflowJson, submitWorkflow, waitForAudio } from "@/lib/comfyVoices";
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
     // Ensure it exists in library before running.
     const savedBase = upsertVoice(user.ownerKey, baseEntry);
 
-    const { baseUrl } = await resolveComfyBaseUrl();
+    const { baseUrl } = await resolveVoiceComfyBaseUrl();
 
     const tmpl = await readWorkflowJson("internal/voices/voice_creation.json");
     const workflow = JSON.parse(JSON.stringify(tmpl));

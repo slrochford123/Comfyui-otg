@@ -4,7 +4,7 @@ import HeaderBar from "../../app/components/HeaderBar";
 describe("HeaderBar", () => {
   it("renders title", () => {
     render(<HeaderBar isConnected={true} />);
-    expect(screen.getByRole("heading", { name: /comfyui otg/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /slr studios otg/i })).toBeInTheDocument();
   });
 
   it("shows Connected when isConnected=true", () => {

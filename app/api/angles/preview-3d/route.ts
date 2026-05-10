@@ -1,245 +1,379 @@
 import { NextRequest, NextResponse } from "next/server";
-import path from "node:path";
-import fs from "node:fs/promises";
-import fssync from "node:fs";
-
-import { resolveComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
-import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
-import { loadWorkflowById, extractPromptGraph, validatePromptGraph } from "@/lib/workflows";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
-type HistoryFile = { filename: string; subfolder?: string; type?: string };
+const DATA_ROOT = path.resolve(process.env.OTG_DATA_DIR || path.join(process.cwd(), "data"));
+const TMP_ROOT = path.join(DATA_ROOT, "tmp", "angles_models");
+const GRADIO_ROOT = (process.env.OTG_HUNYUAN_GRADIO_ROOT || "http://127.0.0.1:8080").replace(/\/+$/, "");
+const GRADIO_CACHE_ROOT = process.env.OTG_HUNYUAN_GRADIO_CACHE_ROOT || "C:\\AI\\Hunyuan3D-2\\gradio_cache";
+const DEFAULT_TIMEOUT_MS = Number(process.env.OTG_HUNYUAN_GRADIO_TIMEOUT_MS || 1000 * 60 * 5);
 
-function safeDeviceId(raw: string | null) {
-  const v = (raw || "").toString().trim();
-  const cleaned = v.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 96);
-  return cleaned || "local";
+type SavedJob = {
+  jobId: string;
+  createdAt: string;
+  deviceId: string;
+  sourceImagePath: string;
+  sourceImageName: string;
+  sourceMimeType: string;
+  sourceSize: number;
+  baseModelPath?: string;
+  texturedModelPath?: string;
+  gradioSessionHash?: string;
+  gradioEventId?: string | null;
+};
+
+type GradioConfig = {
+  components: Array<{ id: number; type?: string; props?: Record<string, any> }>;
+  dependencies: Array<{ id?: number; inputs?: number[]; outputs?: number[]; targets?: Array<[number, string] | number>; api_name?: string | null }>;
+};
+
+function ensureDir(dir: string) {
+  fs.mkdirSync(dir, { recursive: true });
 }
 
-function ensureDirSync(p: string) {
-  if (!fssync.existsSync(p)) fssync.mkdirSync(p, { recursive: true });
+function sanitizeName(name: string) {
+  return name.replace(/[^\w.\-]+/g, "_");
 }
 
-function randSeed() {
-  // Comfy nodes typically accept up to 64-bit ints; stay within JS safe int.
-  return Math.floor(Math.random() * 9_000_000_000_000_000);
+function newestMtimeMs(filePath: string) {
+  try {
+    return fs.statSync(filePath).mtimeMs;
+  } catch {
+    return 0;
+  }
 }
 
-async function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function extractAnyFilesFromHistory(record: any): HistoryFile[] {
-  const out: HistoryFile[] = [];
-  const outputs = record?.outputs;
-  if (!outputs || typeof outputs !== "object") return out;
-
-  const pushIfFile = (x: any) => {
-    if (!x || typeof x !== "object") return;
-    if (!x.filename) return;
-    out.push({
-      filename: String(x.filename),
-      subfolder: x.subfolder ? String(x.subfolder) : "",
-      type: x.type ? String(x.type) : "output",
-    });
+function buildFileData(filePath: string, origName: string, mimeType: string, size: number) {
+  return {
+    path: filePath,
+    url: null,
+    size,
+    orig_name: origName,
+    mime_type: mimeType,
+    is_stream: false,
+    meta: { _type: "gradio.FileData" },
   };
+}
 
-  for (const nodeId of Object.keys(outputs)) {
-    const nodeOut = outputs[nodeId];
-    if (!nodeOut || typeof nodeOut !== "object") continue;
+async function readUploadedSource(formData: FormData) {
+  const candidateKeys = ["file", "image", "sourceImage", "input", "upload"];
+  for (const key of candidateKeys) {
+    const entry = formData.get(key);
+    if (entry instanceof File) {
+      const arrayBuffer = await entry.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      return {
+        fileName: entry.name || "upload.png",
+        mimeType: entry.type || "application/octet-stream",
+        size: buffer.byteLength,
+        buffer,
+        sourceField: key,
+      };
+    }
+  }
+  return null;
+}
 
-    for (const v of Object.values(nodeOut)) {
-      if (Array.isArray(v)) {
-        for (const item of v) pushIfFile(item);
-      } else if (v && typeof v === "object") {
-        // Some nodes nest under { files: [...] } or similar
-        if (Array.isArray((v as any).files)) {
-          for (const item of (v as any).files) pushIfFile(item);
+function fileExtFromMime(mimeType: string, fallbackName: string) {
+  const existing = path.extname(fallbackName);
+  if (existing) return existing.toLowerCase();
+  if (mimeType === "image/png") return ".png";
+  if (mimeType === "image/jpeg") return ".jpg";
+  if (mimeType === "image/webp") return ".webp";
+  return ".bin";
+}
+
+function writeJob(deviceId: string, job: SavedJob) {
+  const jobsDir = path.join(TMP_ROOT, deviceId, "jobs");
+  ensureDir(jobsDir);
+  fs.writeFileSync(path.join(jobsDir, `${job.jobId}.json`), JSON.stringify(job, null, 2), "utf8");
+}
+
+async function fetchConfig(): Promise<GradioConfig> {
+  const resp = await fetch(`${GRADIO_ROOT}/config`, { cache: "no-store" });
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch Gradio config (${resp.status})`);
+  }
+  return (await resp.json()) as GradioConfig;
+}
+
+function getButtonIdByLabel(config: GradioConfig, label: string) {
+  const component = config.components.find((c) => c.props?.value === label);
+  return component?.id ?? null;
+}
+
+function getDependencyForButton(config: GradioConfig, buttonId: number) {
+  return (
+    config.dependencies.find((dep) =>
+      Array.isArray(dep.targets) &&
+      dep.targets.some((target: any) => (Array.isArray(target) ? target[0] === buttonId : target === buttonId))
+    ) || null
+  );
+}
+
+function getComponent(config: GradioConfig, id: number) {
+  return config.components.find((c) => c.id === id) || null;
+}
+
+function inferDefaultValue(component: { type?: string; props?: Record<string, any> } | null) {
+  if (!component) return null;
+  const props = component.props || {};
+  const label = String(props.label || "").toLowerCase();
+  if (label === "image") return "__IMAGE_FILE__";
+  if (["front", "back", "left", "right"].includes(label)) return null;
+  if (label.includes("text prompt")) return null;
+  if (Object.prototype.hasOwnProperty.call(props, "value")) return props.value;
+  if (component.type === "checkbox") return false;
+  return null;
+}
+
+function buildShapeInputData(config: GradioConfig, dep: NonNullable<ReturnType<typeof getDependencyForButton>>, fileData: any) {
+  return (dep.inputs || []).map((id) => {
+    const component = getComponent(config, id);
+    const inferred = inferDefaultValue(component);
+    return inferred === "__IMAGE_FILE__" ? fileData : inferred;
+  });
+}
+
+async function queueJoin(fnIndex: number, triggerId: number, data: any[], sessionHash: string) {
+  const resp = await fetch(`${GRADIO_ROOT}/gradio_api/queue/join`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify({
+      data,
+      event_data: null,
+      fn_index: fnIndex,
+      trigger_id: triggerId,
+      session_hash: sessionHash,
+    }),
+  });
+  const text = await resp.text();
+  let json: any = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!resp.ok) {
+    throw new Error(json?.detail || json?.error || text || `Gradio queue join failed (${resp.status})`);
+  }
+  return json;
+}
+
+async function waitForQueueResult(sessionHash: string, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(`${GRADIO_ROOT}/gradio_api/queue/data?session_hash=${encodeURIComponent(sessionHash)}`, {
+      method: "GET",
+      headers: { Accept: "text/event-stream" },
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    if (!resp.ok || !resp.body) {
+      throw new Error(`Failed to read Gradio queue data (${resp.status})`);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() || "";
+
+      for (const chunk of chunks) {
+        const dataLines = chunk
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trim());
+
+        for (const dataLine of dataLines) {
+          if (!dataLine || dataLine === "[DONE]") continue;
+          let payload: any = null;
+          try {
+            payload = JSON.parse(dataLine);
+          } catch {
+            continue;
+          }
+
+          if (payload?.msg === "process_completed") {
+            return payload;
+          }
+          if (payload?.msg === "process_failed" || payload?.success === false) {
+            throw new Error(payload?.error || payload?.message || "Gradio process failed");
+          }
         }
       }
     }
+    throw new Error("Gradio queue stream ended before process_completed");
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return out;
 }
 
-async function fetchComfyViewBytes(baseUrl: string, f: HistoryFile) {
-  const filename = encodeURIComponent(f.filename);
-  const type = encodeURIComponent(f.type || "output");
-  const subfolder = encodeURIComponent(f.subfolder || "");
-  const url = `${baseUrl}/view?filename=${filename}&type=${type}&subfolder=${subfolder}`;
-
-  const r = await fetch(url, { cache: "no-store" });
-  if (!r.ok) {
-    const txt = await r.text().catch(() => "");
-    throw new Error(`Comfy /view failed ${r.status} for ${f.filename}: ${txt.slice(0, 140)}`);
+function extractOutputPathFromProcessCompleted(payload: any, index: number) {
+  const item = payload?.output?.data?.[index];
+  if (item && typeof item === "object" && typeof item.path === "string" && item.path) {
+    return item.path;
   }
-  return Buffer.from(await r.arrayBuffer());
+  return "";
+}
+
+function findLatestWhiteMesh(cacheRoot: string, minMtimeMs: number) {
+  if (!fs.existsSync(cacheRoot)) return null;
+
+  let best: { filePath: string; htmlPath: string | null; mtimeMs: number; folder: string } | null = null;
+  const entries = fs.readdirSync(cacheRoot, { withFileTypes: true });
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const folder = path.join(cacheRoot, entry.name);
+    const glbPath = path.join(folder, "white_mesh.glb");
+    if (!fs.existsSync(glbPath)) continue;
+    const mtimeMs = newestMtimeMs(glbPath);
+    if (mtimeMs < minMtimeMs) continue;
+    if (!best || mtimeMs > best.mtimeMs) {
+      const htmlPath = fs.existsSync(path.join(folder, "white_mesh.html")) ? path.join(folder, "white_mesh.html") : null;
+      best = { filePath: glbPath, htmlPath, mtimeMs, folder };
+    }
+  }
+  return best;
 }
 
 export async function POST(req: NextRequest) {
-  // Auth gate (same as the rest of /app)
   try {
-    await getOwnerContext(req);
-  } catch (e: any) {
-    if (e instanceof SessionInvalidError) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
-    throw e;
-  }
-
-  try {
-    const deviceId = safeDeviceId(req.headers.get("x-otg-device-id"));
-
-    const { baseUrl, targetId } = await resolveComfyBaseUrl();
-    const COMFY_BASE_URL = baseUrl.replace(/\/+$/, "");
-    const comfyClientId = targetId ? `${deviceId}-${targetId}-angles3d` : `${deviceId}-angles3d`;
-
-    const fd = await req.formData();
-    const file = fd.get("image");
-    if (!file || typeof file === "string") {
-      return NextResponse.json({ ok: false, error: "Missing image file" }, { status: 400 });
-    }
-
-    // 1) Upload image to ComfyUI input
-    const up = new FormData();
-    const filename = (file as any)?.name ? String((file as any).name) : `otg_angles_${Date.now()}.png`;
-    up.append("image", file as any, filename);
-
-    const upRes = await fetch(`${COMFY_BASE_URL}/upload/image`, { method: "POST", body: up });
-    const upJson: any = await upRes.json().catch(() => null);
-    if (!upRes.ok || !upJson?.name) {
+    const formData = await req.formData();
+    const uploaded = await readUploadedSource(formData);
+    if (!uploaded) {
       return NextResponse.json(
-        { ok: false, error: upJson?.error || `Comfy upload failed (${upRes.status})`, detail: upJson },
-        { status: 502 }
+        { ok: false, error: "Missing file upload", expectedFields: ["file", "image", "sourceImage", "input", "upload"] },
+        { status: 400 }
       );
     }
 
-    const uploadedName = upJson.subfolder
-      ? `${String(upJson.subfolder).replace(/^\/+|\/+$/g, "")}/${upJson.name}`
-      : String(upJson.name);
+    const deviceIdHeader = req.headers.get("x-otg-device-id") || "";
+    const deviceIdForm = String(formData.get("deviceId") || formData.get("device_id") || formData.get("userId") || "").trim();
+    const deviceId = sanitizeName(deviceIdHeader || deviceIdForm || "default-device");
+    const jobId = crypto.randomUUID();
+    const deviceDir = path.join(TMP_ROOT, deviceId);
+    ensureDir(deviceDir);
 
-    // 2) Load the internal Hunyuan3D workflow (prompt graph)
-    // File is shipped under comfy_workflows/internal/angles_3d_preview.json
-    const wf = loadWorkflowById("internal/angles_3d_preview");
-    if (!wf.ok) {
-      return NextResponse.json(
-        { ok: false, error: `3D workflow not found: internal/angles_3d_preview`, detail: wf.error },
-        { status: wf.status }
-      );
+    const sourceExt = fileExtFromMime(uploaded.mimeType, uploaded.fileName);
+    const savedSourceName = `${Date.now()}_${sanitizeName(path.basename(uploaded.fileName || "upload")) || "upload"}${path.extname(uploaded.fileName) ? "" : sourceExt}`;
+    const sourceImagePath = path.join(deviceDir, savedSourceName);
+    fs.writeFileSync(sourceImagePath, uploaded.buffer);
+
+    const config = await fetchConfig();
+    const buttonId = getButtonIdByLabel(config, "Gen Shape");
+    if (buttonId == null) {
+      throw new Error('Could not find "Gen Shape" button in Gradio config');
+    }
+    const dep = getDependencyForButton(config, buttonId);
+    if (!dep || typeof dep.id !== "number") {
+      throw new Error('Could not find dependency for "Gen Shape"');
     }
 
-    const extracted = extractPromptGraph(wf.json);
-    if (!extracted.ok) {
-      return NextResponse.json({ ok: false, error: extracted.error }, { status: 400 });
+    const sessionHash = crypto.randomBytes(8).toString("hex");
+    const fileData = buildFileData(sourceImagePath, uploaded.fileName, uploaded.mimeType, uploaded.size);
+    const data = buildShapeInputData(config, dep, fileData);
+
+    const pendingJob: SavedJob = {
+      jobId,
+      createdAt: new Date().toISOString(),
+      deviceId,
+      sourceImagePath,
+      sourceImageName: uploaded.fileName,
+      sourceMimeType: uploaded.mimeType,
+      sourceSize: uploaded.size,
+      gradioSessionHash: sessionHash,
+    };
+    writeJob(deviceId, pendingJob);
+
+    const join = await queueJoin(dep.id, buttonId, data, sessionHash);
+    const completed = await waitForQueueResult(sessionHash, DEFAULT_TIMEOUT_MS);
+    const baseOutputPath = extractOutputPathFromProcessCompleted(completed, 0);
+
+    let chosenPath = "";
+    let gradioHtmlPath = "";
+    let matchMode = "direct-output";
+    let gradioMeshMtimeMs = 0;
+
+    if (baseOutputPath && fs.existsSync(baseOutputPath)) {
+      chosenPath = baseOutputPath;
+      gradioMeshMtimeMs = newestMtimeMs(baseOutputPath);
+      const folder = path.dirname(baseOutputPath);
+      const htmlPath = path.join(folder, "white_mesh.html");
+      gradioHtmlPath = fs.existsSync(htmlPath) ? htmlPath : "";
+    } else {
+      const fallback = findLatestWhiteMesh(GRADIO_CACHE_ROOT, newestMtimeMs(sourceImagePath));
+      if (!fallback) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "Gradio shape job finished but no white_mesh.glb was found",
+            jobId,
+            gradioRoot: GRADIO_ROOT,
+            gradioCacheRoot: GRADIO_CACHE_ROOT,
+            queueJoinResponse: join,
+            queueCompletedPreview: completed,
+          },
+          { status: 502 }
+        );
+      }
+      chosenPath = fallback.filePath;
+      gradioHtmlPath = fallback.htmlPath || "";
+      gradioMeshMtimeMs = fallback.mtimeMs;
+      matchMode = "cache-fallback";
     }
 
-    const validated = validatePromptGraph(extracted.graph);
-    if (!validated.ok) {
-      return NextResponse.json({ ok: false, error: validated.error }, { status: 400 });
-    }
+    const baseModelPath = path.join(deviceDir, `${Date.now()}_white_mesh.glb`);
+    fs.copyFileSync(chosenPath, baseModelPath);
 
-    // Clone the graph so we can safely mutate
-    const graph: any = JSON.parse(JSON.stringify(extracted.graph));
+    const finalJob: SavedJob = {
+      ...pendingJob,
+      baseModelPath,
+      gradioEventId: join?.event_id || null,
+    };
+    writeJob(deviceId, finalJob);
 
-    // 3) Inject the uploaded image + random seed + unique output prefix
-    // Node 2: LoadImage
-    if (graph?.["2"]?.class_type === "LoadImage" && graph["2"]?.inputs) {
-      graph["2"].inputs.image = uploadedName;
-    }
-
-    // Node 7: KSampler seed
-    if (graph?.["7"]?.class_type === "KSampler" && graph["7"]?.inputs) {
-      graph["7"].inputs.seed = randSeed();
-    }
-
-    // Node 10: SaveGLB filename_prefix
-    if (graph?.["10"]?.class_type === "SaveGLB" && graph["10"]?.inputs) {
-      graph["10"].inputs.filename_prefix = `otg_tmp_angles/${deviceId}/preview_${Date.now()}`;
-    }
-
-    // 4) Submit to Comfy
-    const submit = await fetch(`${COMFY_BASE_URL}/prompt`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt: graph, client_id: comfyClientId }),
+    return NextResponse.json({
+      ok: true,
+      jobId,
+      sourceField: uploaded.sourceField,
+      modelUrl: `/api/file?path=${encodeURIComponent(baseModelPath)}`,
+      file: path.basename(baseModelPath),
+      modelExt: ".glb",
+      previewSupported: true,
+      source: "hunyuan_gradio_queue",
+      textured: false,
+      warning: null,
+      gradioRoot: GRADIO_ROOT,
+      gradioSourceGlb: chosenPath,
+      gradioSourceHtml: gradioHtmlPath || null,
+      gradioCacheRoot: GRADIO_CACHE_ROOT,
+      gradioMeshMtimeMs,
+      matchMode,
     });
-
-    const submitText = await submit.text();
-    let submitJson: any = null;
-    try {
-      submitJson = JSON.parse(submitText);
-    } catch {
-      submitJson = { raw: submitText };
-    }
-
-    if (!submit.ok || !submitJson?.prompt_id) {
-      return NextResponse.json(
-        { ok: false, error: submitJson?.error || `Comfy submit failed (${submit.status})`, detail: submitJson },
-        { status: 502 }
-      );
-    }
-
-    const promptId = String(submitJson.prompt_id);
-
-    // 5) Poll history for the GLB output
-    const maxMs = 180_000;
-    const start = Date.now();
-    let glbFile: HistoryFile | null = null;
-
-    while (Date.now() - start < maxMs) {
-      const hr = await fetch(`${COMFY_BASE_URL}/history/${encodeURIComponent(promptId)}`, { cache: "no-store" });
-      if (hr.ok) {
-        const hjson = await hr.json().catch(() => ({}));
-        const record = hjson?.[promptId] || hjson;
-        const files = extractAnyFilesFromHistory(record);
-        glbFile = files.find((f) => /\.glb$/i.test(f.filename)) || null;
-        if (glbFile) break;
-      }
-      await sleep(800);
-    }
-
-    if (!glbFile) {
-      return NextResponse.json({ ok: false, error: "Timed out waiting for GLB output", promptId }, { status: 504 });
-    }
-
-    // 6) Fetch bytes from Comfy /view
-    const bytes = await fetchComfyViewBytes(COMFY_BASE_URL, glbFile);
-
-    // 7) Save into OTG temp (NOT gallery) and return a local preview URL
-    const dataRoot = process.env.OTG_DATA_DIR || path.join(process.cwd(), "data");
-    const outDir = path.join(dataRoot, "tmp", "angles_preview", deviceId);
-    ensureDirSync(outDir);
-
-    // Clean old previews (best-effort)
-    try {
-      const ents = await fs.readdir(outDir).catch(() => [] as string[]);
-      for (const name of ents) {
-        if (/\.glb$/i.test(name)) {
-          await fs.unlink(path.join(outDir, name)).catch(() => void 0);
-        }
-      }
-    } catch {
-      // ignore
-    }
-
-    const outPath = path.join(outDir, `${promptId}.glb`);
-    await fs.writeFile(outPath, bytes);
-
-    const modelUrl = `/api/file?path=${encodeURIComponent(outPath)}`;
-
+  } catch (error: any) {
     return NextResponse.json(
       {
-        ok: true,
-        promptId,
-        modelUrl,
+        ok: false,
+        error: error?.message || "Unhandled error in /api/angles/model-3d",
       },
-      { headers: { "cache-control": "no-store" } }
+      { status: 500 }
     );
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || String(e) }, { status: 500 });
   }
 }

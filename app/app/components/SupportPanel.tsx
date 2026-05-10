@@ -1,8 +1,19 @@
-﻿"use client";
+"use client";
 
 import React, { useMemo, useState } from "react";
 
-async function safeJson(res: Response) {
+type JsonResult = {
+  ok: boolean;
+  status: number;
+  data: unknown;
+  raw: string;
+};
+
+type TabId = "index" | "faq" | "diagnostics" | "feedback" | "notes";
+type Faq = { q: string; a: React.ReactNode };
+type Severity = "Low" | "Medium" | "High" | "Blocking";
+
+async function safeJson(res: Response): Promise<JsonResult> {
   const text = await res.text();
   try {
     return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : null, raw: text };
@@ -11,8 +22,68 @@ async function safeJson(res: Response) {
   }
 }
 
-type TabId = "index" | "faq" | "feedback" | "notes";
-type Faq = { q: string; a: React.ReactNode };
+async function readEndpoint(path: string): Promise<JsonResult> {
+  try {
+    const res = await fetch(path, { cache: "no-store" });
+    return await safeJson(res);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, status: 0, data: null, raw: message };
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function pickString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function boolLabel(value: unknown): string {
+  return value === true ? "yes" : "no";
+}
+
+function errorText(result: JsonResult): string {
+  if (isRecord(result.data)) {
+    const fromData = pickString(result.data.error) || pickString(result.data.message);
+    if (fromData) return fromData;
+  }
+  return result.raw || `HTTP ${result.status}`;
+}
+
+function summarizeSession(result: JsonResult): string {
+  if (result.ok && isRecord(result.data) && result.data.ok === true && isRecord(result.data.user)) {
+    const user = result.data.user;
+    const email = pickString(user.email);
+    const username = pickString(user.username);
+    const tier = pickString(user.tier);
+    const admin = boolLabel(user.admin);
+    const name = email || username || "signed-in user";
+    return `${name}${tier ? ` / tier: ${tier}` : ""} / admin: ${admin}`;
+  }
+  if (result.status === 401) return "not signed in or session expired";
+  return `check failed: ${errorText(result)}`;
+}
+
+function summarizeComfy(result: JsonResult): string {
+  if (isRecord(result.data)) {
+    const hint = pickString(result.data.serverHint) || (result.ok ? "Connected" : "Disconnected");
+    const state = pickString(result.data.serverState);
+    const baseUrl = pickString(result.data.comfyBaseUrl);
+    const upstreamStatus = result.data.upstreamStatus === undefined ? "" : String(result.data.upstreamStatus);
+    const detail = [state ? `state: ${state}` : "", baseUrl ? `url: ${baseUrl}` : "", upstreamStatus ? `upstream: ${upstreamStatus}` : ""]
+      .filter(Boolean)
+      .join(" / ");
+    return `${hint}${detail ? ` / ${detail}` : ""}`;
+  }
+  return result.ok ? "Connected" : `Disconnected / ${errorText(result)}`;
+}
+
+function compactText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 120)}\n\n[diagnostic report truncated: ${value.length} characters total]`;
+}
 
 function TabButton({
   id,
@@ -30,10 +101,10 @@ function TabButton({
       type="button"
       onClick={() => onClick(id)}
       className={[
-        "px-3 py-2 text-sm rounded-xl border",
+        "px-3 py-2 text-sm rounded-xl border transition",
         active
-          ? "bg-white/10 border-white/20"
-          : "bg-black/20 border-white/10 hover:bg-white/5 hover:border-white/20",
+          ? "bg-white/10 border-white/25 text-white"
+          : "bg-black/20 border-white/10 text-white/80 hover:bg-white/5 hover:border-white/20",
       ].join(" ")}
     >
       {label}
@@ -41,30 +112,65 @@ function TabButton({
   );
 }
 
+function InfoCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/25 p-4 shadow-sm">
+      <div className="text-base font-semibold text-white">{title}</div>
+      <div className="mt-2 text-sm text-white/80">{children}</div>
+    </div>
+  );
+}
+
 export default function SupportPanel() {
   const [tab, setTab] = useState<TabId>("index");
+  const [openFaq, setOpenFaq] = useState<number | null>(0);
+
+  const [diagnosticsText, setDiagnosticsText] = useState<string>("");
+  const [diagnosticsBusy, setDiagnosticsBusy] = useState<boolean>(false);
+  const [diagnosticsStatus, setDiagnosticsStatus] = useState<string>("");
+  const [diagnosticsError, setDiagnosticsError] = useState<string>("");
+
+  const [fbCategory, setFbCategory] = useState<string>("Generate");
+  const [fbSeverity, setFbSeverity] = useState<Severity>("Medium");
+  const [fbMessage, setFbMessage] = useState<string>("");
+  const [fbSteps, setFbSteps] = useState<string>("");
+  const [fbIncludeDiagnostics, setFbIncludeDiagnostics] = useState<boolean>(true);
+  const [fbBusy, setFbBusy] = useState<boolean>(false);
+  const [fbOk, setFbOk] = useState<string>("");
+  const [fbErr, setFbErr] = useState<string>("");
+
+  const categories = useMemo(
+    () => [
+      "Login / Account",
+      "AI Assistance",
+      "Generate",
+      "Angles",
+      "Characters",
+      "Production",
+      "Gallery",
+      "Favorites",
+      "Settings",
+      "Support",
+      "Other",
+    ],
+    [],
+  );
+
+  const severities: Severity[] = useMemo(() => ["Low", "Medium", "High", "Blocking"], []);
 
   const faqs: Faq[] = useMemo(
     () => [
       {
-        q: "How do I generate content?",
+        q: "What should I use each major tab for?",
         a: (
           <div className="space-y-2">
             <p>
-              Go to <b>Generate</b>, pick a workflow, paste your prompt, optionally add LoRAs, then press <b>Generate</b>.
-              Use <b>Show Content</b> after completion to display the latest result under the progress bar.
+              Use <b>Generate</b> for direct ComfyUI image/video jobs, <b>Characters</b> for saved character assets,
+              <b>Production</b> for scene-based projects, and <b>Gallery/Favorites</b> for reviewing saved output.
             </p>
-            <ul className="list-disc pl-5 space-y-1">
-              <li>
-                <b>Default/480p/512p/720p</b> changes output size (Default keeps workflow native size).
-              </li>
-              <li>
-                <b>Duration</b> converts seconds → frames using the workflow FPS.
-              </li>
-              <li>
-                Use <b>Clear pipeline</b> in Settings if you ever get an “already running” error.
-              </li>
-            </ul>
+            <p>
+              Use <b>Settings</b> for account, appearance, connection checks, and safe recovery controls.
+            </p>
           </div>
         ),
       },
@@ -74,68 +180,56 @@ export default function SupportPanel() {
           <div className="space-y-2">
             <ul className="list-disc pl-5 space-y-1">
               <li>
-                <b>OOM / VRAM</b>: drop from 720p → 512p/480p, reduce duration, or close other GPU apps.
+                <b>VRAM/OOM</b>: reduce duration, reduce resolution, or close other GPU-heavy tools.
               </li>
               <li>
-                <b>Queue</b>: if multiple jobs are running, wait for the queue to drain or clear the queue (admin tools).
+                <b>Comfy disconnected</b>: use Settings or Diagnostics here to check the current Comfy target.
               </li>
               <li>
-                <b>Workflow mismatch</b>: confirm the workflow you selected matches the type of content you expect.
+                <b>Workflow mismatch</b>: confirm the selected workflow matches text-to-image, text-to-video, image-to-video, or character-intro use.
+              </li>
+              <li>
+                <b>Custom node drift</b>: check the ComfyUI console for missing node/input errors.
               </li>
             </ul>
           </div>
         ),
       },
       {
-        q: "How do I use AI Assistance?",
+        q: "How does Production save scene work now?",
         a: (
           <div className="space-y-2">
             <p>
-              AI Assistance helps turn your story beats into a multi-scene plan and then into formatted prompts
-              (e.g., <b>Next Scene 1/2/3…</b>). You can type, or record audio and transcribe.
+              Production uses locked scenes. Once a scene video is locked, it should persist through refresh, tab changes,
+              and Continue Production. Completed projects are review-only and should appear under Completed Projects.
             </p>
-            <ul className="list-disc pl-5 space-y-1">
-              <li>
-                <b>Start Mic</b> records audio in the browser (availability depends on device/browser support).
-              </li>
-              <li>
-                <b>Transcribe</b> converts audio to text (requires server tooling).
-              </li>
-              <li>
-                <b>Generate Scene Plan</b> creates editable beats.
-              </li>
-              <li>
-                <b>Generate Prompt</b> converts a plan into scene prompts.
-              </li>
-            </ul>
+            <p>
+              The floating Production widget is guide-only. It should expand and collapse, not jump between workflow steps.
+            </p>
           </div>
         ),
       },
       {
-        q: "How do Gallery actions work?",
+        q: "Why is my Gallery or Favorites list missing recent content?",
         a: (
           <div className="space-y-2">
             <ul className="list-disc pl-5 space-y-1">
-              <li>
-                <b>Open</b>: view the image/video larger.
-              </li>
-              <li>
-                <b>Show Prompt</b>: view the saved prompt/negative/workflow meta that generated it.
-              </li>
-              <li>
-                <b>Redo</b>: resubmits the original payload and shows <b>Sent</b> once queued.
-              </li>
+              <li>Open Gallery and use <b>Update Content</b> if the item was created outside the normal UI flow.</li>
+              <li>Confirm the output is in the expected Comfy output folder and has not been moved or deleted.</li>
+              <li>Favorites only shows items whose favorite metadata is currently saved.</li>
             </ul>
           </div>
         ),
       },
       {
-        q: "How do I report a bug?",
+        q: "What should I include in a bug report?",
         a: (
           <div className="space-y-2">
             <p>
-              Include a screenshot + the failing API route (DevTools → Network). If possible include the response body and
-              console stack trace.
+              Include the tab name, the exact button/action, what you expected, what happened instead, and the diagnostic report from this Support tab.
+            </p>
+            <p>
+              For generation failures, include the workflow name, prompt, size/duration settings, and the ComfyUI console error.
             </p>
           </div>
         ),
@@ -144,33 +238,66 @@ export default function SupportPanel() {
     [],
   );
 
-  const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const canSubmit = fbMessage.trim().length > 0 && !fbBusy;
 
-  // Feedback
-  const categories = useMemo(
-    () => [
-      "Login",
-      "AI Assistant",
-      "Generate",
-      "Angles",
-      "Storyboard",
-      "Gallery",
-      "Favorites",
-      "Voices",
-      "Invoices",
-      "Settings",
-      "Other",
-    ],
-    [],
-  );
+  const collectDiagnostics = async (): Promise<string> => {
+    const now = new Date().toISOString();
+    const url = typeof window !== "undefined" ? window.location.href : "unavailable";
+    const viewport = typeof window !== "undefined" ? `${window.innerWidth}x${window.innerHeight}` : "unavailable";
+    const screenSize = typeof window !== "undefined" && window.screen ? `${window.screen.width}x${window.screen.height}` : "unavailable";
+    const userAgent = typeof navigator !== "undefined" ? navigator.userAgent : "unavailable";
+    const platform = typeof navigator !== "undefined" ? navigator.platform : "unavailable";
+    const language = typeof navigator !== "undefined" ? navigator.language : "unavailable";
 
-  const [fbCategory, setFbCategory] = useState<string>("Generate");
-  const [fbMessage, setFbMessage] = useState<string>("");
-  const [fbBusy, setFbBusy] = useState<boolean>(false);
-  const [fbOk, setFbOk] = useState<string>("");
-  const [fbErr, setFbErr] = useState<string>("");
+    const [sessionResult, comfyResult] = await Promise.all([readEndpoint("/api/whoami"), readEndpoint("/api/comfy-status?mode=video")]);
 
-  const canSubmit = !!fbMessage.trim() && !fbBusy;
+    return [
+      "SLR Studios OTG Support Diagnostics",
+      `Timestamp: ${now}`,
+      `URL: ${url}`,
+      `Viewport: ${viewport}`,
+      `Screen: ${screenSize}`,
+      `Platform: ${platform}`,
+      `Language: ${language}`,
+      `Browser: ${userAgent}`,
+      `Session: ${summarizeSession(sessionResult)}`,
+      `Comfy: ${summarizeComfy(comfyResult)}`,
+    ].join("\n");
+  };
+
+  const runDiagnostics = async () => {
+    setDiagnosticsBusy(true);
+    setDiagnosticsStatus("");
+    setDiagnosticsError("");
+    try {
+      const text = await collectDiagnostics();
+      setDiagnosticsText(text);
+      setDiagnosticsStatus("Diagnostics updated.");
+      return text;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setDiagnosticsError(message);
+      throw error;
+    } finally {
+      setDiagnosticsBusy(false);
+    }
+  };
+
+  const copyDiagnostics = async () => {
+    setDiagnosticsStatus("");
+    setDiagnosticsError("");
+    try {
+      const text = diagnosticsText || (await runDiagnostics());
+      if (typeof navigator === "undefined" || !navigator.clipboard) {
+        throw new Error("Clipboard API is unavailable in this browser.");
+      }
+      await navigator.clipboard.writeText(text);
+      setDiagnosticsStatus("Diagnostics copied.");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setDiagnosticsError(message);
+    }
+  };
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -178,22 +305,48 @@ export default function SupportPanel() {
     setFbOk("");
     setFbErr("");
     try {
+      let diagnostics = diagnosticsText;
+      if (fbIncludeDiagnostics && !diagnostics) {
+        diagnostics = await collectDiagnostics();
+        setDiagnosticsText(diagnostics);
+      }
+
+      const parts = [
+        `Severity: ${fbSeverity}`,
+        "",
+        "Message:",
+        fbMessage.trim(),
+      ];
+
+      if (fbSteps.trim()) {
+        parts.push("", "Steps to reproduce:", fbSteps.trim());
+      }
+
+      if (fbIncludeDiagnostics && diagnostics) {
+        parts.push("", "Diagnostics:", diagnostics);
+      }
+
+      const message = compactText(parts.join("\n"), 7800);
+
       const res = await fetch("/api/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           category: fbCategory,
-          message: fbMessage,
-          page: "/app (Support)",
+          message,
+          page: typeof window !== "undefined" ? window.location.href : "/app (Support)",
         }),
       });
       const j = await safeJson(res);
-      if (!j.ok) throw new Error((j.data as any)?.error || j.raw || `Submit failed (${j.status})`);
-      setFbOk("Submitted. Thank you.");
+      if (!j.ok) throw new Error(isRecord(j.data) ? pickString(j.data.error) || j.raw || `Submit failed (${j.status})` : j.raw || `Submit failed (${j.status})`);
+      setFbOk("Submitted.");
       setFbMessage("");
+      setFbSteps("");
+      setFbSeverity("Medium");
       setFbCategory("Generate");
-    } catch (e: any) {
-      setFbErr(e?.message || String(e));
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setFbErr(message);
     } finally {
       setFbBusy(false);
     }
@@ -203,72 +356,55 @@ export default function SupportPanel() {
     <div className="space-y-4">
       <div className="rounded-2xl border border-white/10 bg-black/30 p-4 shadow">
         <div className="text-lg font-semibold">Support</div>
-        <div className="text-sm opacity-80">
-          Usage notes, quick answers, and feedback. If something is broken, include screenshots and the failing API route.
+        <div className="text-sm text-white/75">
+          Current app guide, quick diagnostics, troubleshooting notes, and bug reports.
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
           <TabButton id="index" label="Index" active={tab === "index"} onClick={setTab} />
           <TabButton id="faq" label="FAQ" active={tab === "faq"} onClick={setTab} />
+          <TabButton id="diagnostics" label="Diagnostics" active={tab === "diagnostics"} onClick={setTab} />
           <TabButton id="feedback" label="Feedback" active={tab === "feedback"} onClick={setTab} />
           <TabButton id="notes" label="Notes" active={tab === "notes"} onClick={setTab} />
         </div>
       </div>
 
       {tab === "index" ? (
-        <div className="rounded-2xl border border-white/10 bg-black/30 p-4 shadow">
-          <div className="text-lg font-semibold">Index</div>
-          <div className="text-sm opacity-80 mt-1">
-            What the main buttons do in each section of the app.
-          </div>
-
-          <div className="mt-4 space-y-4 text-sm opacity-90">
-            <div className="space-y-2">
-              <div className="font-medium">Generate</div>
+        <div className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <InfoCard title="Create">
               <ul className="list-disc pl-5 space-y-1">
-                <li><b>Workflow</b>: selects the generation pipeline.</li>
-                <li><b>Generate</b>: submits a job to ComfyUI.</li>
-                <li><b>Show Content</b>: reveals the latest output preview after completion.</li>
-                <li><b>Duration / Size presets</b>: adjusts frames/output scale for supported workflows.</li>
+                <li><b>AI Assistance</b>: describe images, enhance prompts, and build scene text.</li>
+                <li><b>Generate</b>: submit direct ComfyUI image/video jobs.</li>
+                <li><b>Angles</b>: create and review 3D model/texture outputs when the Hunyuan service is available.</li>
+                <li><b>Characters</b>: save reusable character images, descriptions, intro videos, and reference audio.</li>
               </ul>
-            </div>
+            </InfoCard>
 
-            <div className="space-y-2">
-              <div className="font-medium">AI Assistant</div>
+            <InfoCard title="Organize">
               <ul className="list-disc pl-5 space-y-1">
-                <li><b>Start Mic</b>: records in-browser audio (device/browser dependent).</li>
-                <li><b>Transcribe</b>: converts recorded audio to text (server tool required).</li>
-                <li><b>Generate Scene Plan</b>: builds a multi-scene plan from your text.</li>
-                <li><b>Generate Prompt</b>: turns the plan into scene-formatted prompts.</li>
-                <li><b>Copy</b>: copies prompt text to clipboard.</li>
+                <li><b>Production</b>: build scene-based projects with locked scene persistence.</li>
+                <li><b>Gallery</b>: review generated images/videos and pull in new output with Update Content.</li>
+                <li><b>Favorites</b>: review only favorited Gallery items.</li>
               </ul>
-            </div>
+            </InfoCard>
 
-            <div className="space-y-2">
-              <div className="font-medium">Gallery</div>
+            <InfoCard title="Manage">
               <ul className="list-disc pl-5 space-y-1">
-                <li><b>Open</b>: view in full.</li>
-                <li><b>Show Prompt</b>: shows the prompt/workflow metadata saved with the file.</li>
-                <li><b>Redo</b>: re-submits the original payload.</li>
-                <li><b>Animate → LTX2</b>: uses an image as input to create a video (when available on the item).</li>
+                <li><b>Settings</b>: account controls, theme/font preferences, Comfy connection check, and safe recovery tools.</li>
+                <li><b>Support</b>: diagnostics, troubleshooting, and feedback.</li>
               </ul>
-            </div>
+            </InfoCard>
 
-            <div className="space-y-2">
-              <div className="font-medium">Voices</div>
-              <ul className="list-disc pl-5 space-y-1">
-                <li><b>Upload reference clip</b>: uploads audio or MP4/MOV and extracts audio.</li>
-                <li><b>Create Voice</b>: runs the voice pipeline (requires server models/tools).</li>
-              </ul>
-            </div>
-
-            <div className="space-y-2">
-              <div className="font-medium">Settings</div>
-              <ul className="list-disc pl-5 space-y-1">
-                <li><b>Clear pipeline</b>: resets stuck running states (use if jobs are stuck).</li>
-                <li><b>Comfy targets</b>: selects backend device/instance (if configured).</li>
-              </ul>
-            </div>
+            <InfoCard title="Fast bug report">
+              <p>
+                Run diagnostics, copy the report, then submit Feedback with the tab name, action, expected result, and actual result.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" className="otg-btn" onClick={() => setTab("diagnostics")}>Open Diagnostics</button>
+                <button type="button" className="otg-btnPrimary" onClick={() => setTab("feedback")}>Open Feedback</button>
+              </div>
+            </InfoCard>
           </div>
         </div>
       ) : null}
@@ -276,7 +412,7 @@ export default function SupportPanel() {
       {tab === "faq" ? (
         <div className="space-y-2">
           {faqs.map((x, i) => (
-            <div key={i} className="rounded-2xl border border-white/10 bg-black/25">
+            <div key={x.q} className="rounded-2xl border border-white/10 bg-black/25">
               <button
                 type="button"
                 onClick={() => setOpenFaq((v) => (v === i ? null : i))}
@@ -284,67 +420,112 @@ export default function SupportPanel() {
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="font-medium">{x.q}</div>
-                  <div className="text-xs opacity-70">{openFaq === i ? "Hide" : "Show"}</div>
+                  <div className="text-xs text-white/60">{openFaq === i ? "Hide" : "Show"}</div>
                 </div>
               </button>
-              {openFaq === i ? <div className="px-4 pb-4 text-sm opacity-90">{x.a}</div> : null}
+              {openFaq === i ? <div className="px-4 pb-4 text-sm text-white/85">{x.a}</div> : null}
             </div>
           ))}
+        </div>
+      ) : null}
+
+      {tab === "diagnostics" ? (
+        <div className="rounded-2xl border border-white/10 bg-black/30 p-4 shadow">
+          <div className="text-lg font-semibold">Quick Diagnostics</div>
+          <div className="mt-1 text-sm text-white/75">
+            Checks browser context, session state, and the current Comfy connection target. This does not delete or change anything.
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button type="button" className="otg-btnPrimary" disabled={diagnosticsBusy} onClick={runDiagnostics}>
+              {diagnosticsBusy ? "Checking..." : "Run Diagnostics"}
+            </button>
+            <button type="button" className="otg-btn" disabled={diagnosticsBusy} onClick={copyDiagnostics}>
+              Copy Diagnostic Report
+            </button>
+          </div>
+
+          {diagnosticsError ? <div className="otg-error mt-3">{diagnosticsError}</div> : null}
+          {diagnosticsStatus ? <div className="otg-ok mt-3">{diagnosticsStatus}</div> : null}
+
+          <textarea
+            className="otg-textarea mt-4 font-mono text-xs"
+            value={diagnosticsText}
+            onChange={(event) => setDiagnosticsText(event.target.value)}
+            rows={10}
+            placeholder="Run diagnostics to generate a copyable report."
+          />
         </div>
       ) : null}
 
       {tab === "feedback" ? (
         <div className="rounded-2xl border border-white/10 bg-black/30 p-4 shadow">
           <div className="text-lg font-semibold">Feedback</div>
-          <div className="text-sm opacity-80" style={{ marginTop: 6 }}>
-            Send notes to the admin. Choose a category, write your message, then submit.
+          <div className="mt-1 text-sm text-white/75">
+            Submit an issue or improvement request. Diagnostics can be included automatically.
           </div>
 
           <div className="mt-4 grid gap-3">
-            <div>
-              <div className="text-xs opacity-70" style={{ marginBottom: 6 }}>
-                Category
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <div className="mb-1 text-xs text-white/60">Category</div>
+                <select className="otg-authInput" value={fbCategory} onChange={(event) => setFbCategory(event.target.value)} disabled={fbBusy}>
+                  {categories.map((category) => (
+                    <option key={category} value={category}>{category}</option>
+                  ))}
+                </select>
               </div>
-              <select
-                className="otg-authInput"
-                value={fbCategory}
-                onChange={(e) => setFbCategory(e.target.value)}
-                disabled={fbBusy}
-              >
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
+
+              <div>
+                <div className="mb-1 text-xs text-white/60">Severity</div>
+                <select className="otg-authInput" value={fbSeverity} onChange={(event) => setFbSeverity(event.target.value as Severity)} disabled={fbBusy}>
+                  {severities.map((severity) => (
+                    <option key={severity} value={severity}>{severity}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div>
-              <div className="text-xs opacity-70" style={{ marginBottom: 6 }}>
-                Message
-              </div>
+              <div className="mb-1 text-xs text-white/60">Message</div>
               <textarea
                 className="otg-textarea"
                 value={fbMessage}
-                onChange={(e) => setFbMessage(e.target.value)}
-                placeholder="What should be fixed or improved?"
+                onChange={(event) => setFbMessage(event.target.value)}
+                placeholder="What broke, or what should be improved?"
                 rows={5}
                 disabled={fbBusy}
               />
             </div>
 
+            <div>
+              <div className="mb-1 text-xs text-white/60">Steps to reproduce (optional)</div>
+              <textarea
+                className="otg-textarea"
+                value={fbSteps}
+                onChange={(event) => setFbSteps(event.target.value)}
+                placeholder="Example: Open Gallery -> click Update Content -> expected X -> got Y."
+                rows={4}
+                disabled={fbBusy}
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-sm text-white/80">
+              <input
+                type="checkbox"
+                checked={fbIncludeDiagnostics}
+                onChange={(event) => setFbIncludeDiagnostics(event.target.checked)}
+                disabled={fbBusy}
+              />
+              Include diagnostics with this report
+            </label>
+
             {fbErr ? <div className="otg-error">{fbErr}</div> : null}
             {fbOk ? <div className="otg-ok">{fbOk}</div> : null}
 
             <div className="flex justify-end">
-              <button
-                type="button"
-                className="otg-btnPrimary"
-                disabled={!canSubmit}
-                onClick={submit}
-                style={{ minWidth: 160 }}
-              >
-                {fbBusy ? "Submitting…" : "Submit"}
+              <button type="button" className="otg-btnPrimary" disabled={!canSubmit} onClick={submit} style={{ minWidth: 160 }}>
+                {fbBusy ? "Submitting..." : "Submit"}
               </button>
             </div>
           </div>
@@ -353,38 +534,57 @@ export default function SupportPanel() {
 
       {tab === "notes" ? (
         <div className="rounded-2xl border border-white/10 bg-black/30 p-4 shadow">
-          <div className="text-lg font-semibold">Notes</div>
-          <div className="text-sm opacity-80 mt-1">
-            What to include when reporting problems (so fixes are fast and deterministic).
+          <div className="text-lg font-semibold">Troubleshooting Notes</div>
+          <div className="mt-1 text-sm text-white/75">
+            Use these before reporting a bug. They cover the common failure paths in this app.
           </div>
 
-          <div className="mt-4 text-sm opacity-90 space-y-3">
-            <div className="space-y-1">
-              <div className="font-medium">If a generation failed</div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <InfoCard title="Generation failed">
               <ul className="list-disc pl-5 space-y-1">
-                <li>Screenshot of the error toast or result panel.</li>
-                <li>ComfyUI console error block (node name + stack trace).</li>
-                <li>Workflow name + size/duration settings used.</li>
+                <li>Copy the workflow name, prompt, negative prompt, size, duration, and error text.</li>
+                <li>If the error mentions VRAM or OOM, reduce resolution/duration and retry.</li>
+                <li>If the error mentions a node or missing input, the Comfy workflow/custom node set needs repair.</li>
               </ul>
-            </div>
+            </InfoCard>
 
-            <div className="space-y-1">
-              <div className="font-medium">If a button does nothing</div>
+            <InfoCard title="Job stuck or already running">
               <ul className="list-disc pl-5 space-y-1">
-                <li>Browser + device (iPhone/Android/Desktop) and the exact page.</li>
-                <li>Browser console error (full stack) if present.</li>
-                <li>DevTools → Network: failing request URL + response JSON.</li>
+                <li>Use Settings to check Comfy status.</li>
+                <li>Use the safe clear pipeline/recovery control if a stale running state is blocking new jobs.</li>
+                <li>Do not repeatedly click Generate while a job is queued.</li>
               </ul>
-            </div>
+            </InfoCard>
 
-            <div className="space-y-1">
-              <div className="font-medium">Common causes</div>
+            <InfoCard title="Gallery or Favorites stale">
               <ul className="list-disc pl-5 space-y-1">
-                <li><b>Auth/session</b>: stale cookie → refresh / logout/login.</li>
-                <li><b>OOM</b>: reduce size/duration or stop other GPU apps.</li>
-                <li><b>Backend drift</b>: custom node dependency mismatch in ComfyUI.</li>
+                <li>Use Gallery Update Content.</li>
+                <li>Confirm the file still exists in the output folder.</li>
+                <li>Favorites depends on saved favorite metadata; unfavoriting removes it from Favorites immediately.</li>
               </ul>
-            </div>
+            </InfoCard>
+
+            <InfoCard title="Login or account issue">
+              <ul className="list-disc pl-5 space-y-1">
+                <li>Refresh once, then log out and back in if the session is stale.</li>
+                <li>Use Settings for password changes or account deletion.</li>
+                <li>Run Diagnostics before reporting the issue.</li>
+              </ul>
+            </InfoCard>
+
+            <InfoCard title="Production persistence issue">
+              <ul className="list-disc pl-5 space-y-1">
+                <li>Report whether the scene was locked before leaving the page.</li>
+                <li>Include whether the issue happened after refresh, tab change, Continue Production, or Completed Projects.</li>
+                <li>Completed projects should be read-only.</li>
+              </ul>
+            </InfoCard>
+
+            <InfoCard title="What not to change from Support">
+              <p>
+                Support does not edit workflows, clear projects, delete Gallery files, or change server environment variables. Those controls belong in scoped admin or Settings flows.
+              </p>
+            </InfoCard>
           </div>
         </div>
       ) : null}

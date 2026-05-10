@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import bcrypt from "bcryptjs";
 
 import { cookieName } from "@/lib/auth/cookies";
 import { verifySession } from "@/lib/auth/jwt";
@@ -30,8 +31,7 @@ function rmrf(p: string) {
   }
 }
 
-export async function POST() {
-  // Require a valid logged-in session
+export async function POST(req: Request) {
   const store = await cookies();
   const token = store.get(cookieName())?.value;
   if (!token) {
@@ -42,43 +42,64 @@ export async function POST() {
   try {
     payload = await verifySession(token);
   } catch {
-    // Clear stale cookie
     const res = NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     res.cookies.set(cookieName(), "", { path: "/", maxAge: 0 });
     return res;
   }
 
-  const username = String(payload?.username || "").trim();
-  const email = String(payload?.email || payload?.sub || "").trim().toLowerCase();
+  const body = await req.json().catch(() => ({}));
+  const password = String(body?.password || "");
+  const confirmText = String(body?.confirmText || "").trim();
+
+  if (!password || confirmText !== "DELETE") {
+    return NextResponse.json({ ok: false, error: "Password and DELETE confirmation are required." }, { status: 400 });
+  }
+
+  const userId = String(payload?.sub || "").trim();
+  if (!userId) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  ensureMigrations();
+
+  const user = db.prepare("SELECT id, email, username, password_hash FROM users WHERE id = ?").get(userId) as
+    | { id: string; email: string; username?: string | null; password_hash: string }
+    | undefined;
+
+  if (!user?.password_hash) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  const passwordOk = await bcrypt.compare(password, user.password_hash);
+  if (!passwordOk) {
+    return NextResponse.json({ ok: false, error: "Password is incorrect." }, { status: 401 });
+  }
+
+  const username = String(user.username || payload?.username || "").trim();
+  const email = String(user.email || payload?.email || "").trim().toLowerCase();
 
   if (!username) {
     return NextResponse.json({ ok: false, error: "User profile missing username" }, { status: 400 });
   }
 
-  // 1) Delete user record
   try {
-    ensureMigrations();
-    db.prepare("DELETE FROM users WHERE LOWER(username)=? OR LOWER(email)=?").run(username.toLowerCase(), email);
+    db.prepare("DELETE FROM users WHERE id = ?").run(user.id);
   } catch {
-    // even if DB delete fails, still attempt to remove files and log out
+    return NextResponse.json({ ok: false, error: "Account delete failed." }, { status: 500 });
   }
 
-  // 2) Delete user files (gallery + favorites) best-effort
   try {
-    // New location (OTG_DATA_DIR)
     rmrf(path.join(OTG_USER_OUTPUT_ROOT, username));
     rmrf(path.join(OTG_DATA_ROOT, "user_favorites", username));
 
-    // Legacy locations (CWD-based)
     rmrf(path.join(process.cwd(), "data", "user_galleries", username));
     rmrf(path.join(process.cwd(), "data", "user_favorites", username));
   } catch {
-    // ignore
+    // ignore file cleanup failures after account row was removed
   }
 
-  // 3) Clear auth cookie
   const res = NextResponse.json(
-    { ok: true, deleted: { username } },
+    { ok: true, deleted: { username, email } },
     { headers: { "Cache-Control": "no-store" } }
   );
   res.cookies.set(cookieName(), "", { path: "/", maxAge: 0 });

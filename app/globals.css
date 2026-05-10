@@ -1,4 +1,6 @@
-﻿/* app/globals.css */
+﻿@import "tailwindcss";
+
+/* app/globals.css */
 /* Mobile-first dark UI with purple accent for ComfyUI OTG */
 
 :root{

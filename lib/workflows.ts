@@ -7,6 +7,7 @@ export type WorkflowMeta = {
   label?: string;
   description?: string;
   file: string; // relative to comfy_workflows root
+  path?: string; // legacy alias for file
   img2img?: boolean;
   tags?: string[];
   thumbnail?: string; // relative path within comfy_workflows, e.g. "thumbnails/foo.png"
@@ -51,9 +52,19 @@ export function getWorkflowsIndexPath() {
   return path.join(getWorkflowsRoot(), "index.json");
 }
 
+function normalizeJsonSource(raw: string) {
+  let normalized = String(raw ?? "");
+  normalized = normalized.replace(/^﻿/, "");
+
+  const fenced = normalized.match(/^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$/i);
+  if (fenced?.[1]) normalized = fenced[1];
+
+  return normalized;
+}
+
 export function safeJsonParse(raw: string) {
   try {
-    return { ok: true as const, value: JSON.parse(raw) };
+    return { ok: true as const, value: JSON.parse(normalizeJsonSource(raw)) };
   } catch (e: any) {
     return { ok: false as const, error: String(e?.message ?? e) };
   }
@@ -161,8 +172,14 @@ export function sha256OfString(s: string) {
 
 export function resolveWorkflowFile(meta: WorkflowMeta): { ok: true; filePath: string } | { ok: false; error: string } {
   const root = getWorkflowsRoot();
-  if (!meta?.file || typeof meta.file !== "string") return { ok: false, error: "Workflow meta missing file." };
-  const filePath = path.join(root, meta.file);
+  const relative = typeof meta?.file === "string" && meta.file.trim()
+    ? meta.file.trim()
+    : typeof meta?.path === "string" && meta.path.trim()
+      ? meta.path.trim()
+      : "";
+
+  if (!relative) return { ok: false, error: "Workflow meta missing file." };
+  const filePath = path.join(root, relative);
   return { ok: true, filePath };
 }
 
@@ -334,7 +351,8 @@ const indexMetas: WorkflowMeta[] = (idx.index.workflows || []).map((w: any) => (
   id: String(w.id ?? ""),
   label: typeof w.label === "string" ? w.label : undefined,
   description: typeof w.description === "string" ? w.description : undefined,
-  file: String(w.file ?? ""),
+  file: String(w.file ?? w.path ?? ""),
+  path: typeof w.path === "string" ? w.path : undefined,
   img2img: !!w.img2img,
   tags: Array.isArray(w.tags) ? w.tags.map(String) : undefined,
   thumbnail: typeof w.thumbnail === "string" ? w.thumbnail : undefined,

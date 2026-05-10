@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
-import { cookieName } from "@/lib/auth/cookies";
-import { verifySession } from "@/lib/auth/jwt";
+import { authCookieOptions, cookieName } from "@/lib/auth/cookies";
+import { signSession, verifySession } from "@/lib/auth/jwt";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const store = await cookies();
     const token = store.get(cookieName())?.value;
@@ -21,14 +22,27 @@ export async function GET() {
 
     const payload = await verifySession(token);
 
-    const email = (payload as any).email ?? payload.sub;
+    const sub = String(payload.sub || "");
+    const sid = String((payload as any).sid || "");
+    const email = String((payload as any).email ?? payload.sub ?? "");
     const username = (payload as any).username ?? null;
     const tier = (payload as any).tier ?? null;
 
-    return NextResponse.json(
+    const refreshedToken = await signSession({
+      sub,
+      email,
+      username,
+      tier,
+      sid,
+    });
+
+    const res = NextResponse.json(
       { ok: true, user: { email, username, tier } },
       { headers: { "Cache-Control": "no-store" } }
     );
+
+    res.cookies.set(cookieName(), refreshedToken, authCookieOptions(req));
+    return res;
   } catch {
     return NextResponse.json(
       { ok: false, user: null },

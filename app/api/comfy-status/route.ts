@@ -1,58 +1,82 @@
-function getDeviceId(): string {
-  if (typeof window === "undefined") return "desktop_default";
-  return (
-    localStorage.getItem("otg_device_id") ||
-    sessionStorage.getItem("otg_device_id") ||
-    "desktop_default"
-  );
-}
-
-import { NextResponse } from "next/server";
-import { resolveComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
+import { NextRequest } from "next/server";
+import { isLikelyVideoWorkflowKey } from "@/app/api/_lib/comfyTarget";
 
 export const runtime = "nodejs";
 
-function getComfyBaseUrl() {
-  const raw =
-    // Prefer COMFY_BASE_URL which is used by /api/comfy and our server-side proxy.
-    process.env.COMFY_BASE_URL ||
-    process.env.COMFY_URL ||
-    process.env.NEXT_PUBLIC_COMFY_URL ||
-    "http://127.0.0.1:8188";
-  return raw.replace(/\/$/, "");
+function normalizeComfyBaseUrl(raw: unknown): string | null {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  return value.replace(/\/+$/, "");
 }
 
-export async function GET() {
-  const { baseUrl } = await resolveComfyBaseUrl();
-  const COMFY_BASE_URL = baseUrl.replace(/\/+$/, "");
-  const base = getComfyBaseUrl();
-  const url = `${base}/system_stats`;
-  try {
-    const res = await fetch(url, { cache: "no-store" });
-    const text = await res.text();
-    let json: any = null;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      // ignore
-    }
+function firstComfyBaseUrl(...values: Array<unknown>): string | null {
+  for (const value of values) {
+    const normalized = normalizeComfyBaseUrl(value);
+    if (normalized) return normalized;
+  }
+  return null;
+}
 
-    return NextResponse.json({
-      ok: res.ok,
-      status: res.status,
-      comfyBase: base,
-      target: url,
-      system: json?.system ?? json ?? null,
-      raw: json ? undefined : text,
-    }, { status: res.ok ? 200 : 502 });
-  } catch (e: any) {
-    return NextResponse.json(
+function configuredImageComfyBaseUrl(): string {
+  return (
+    firstComfyBaseUrl(
+      process.env.OTG_IMAGE_COMFY_BASE_URL,
+      process.env.IMAGE_COMFY_BASE_URL,
+      process.env.COMFY_IMAGE_BASE_URL,
+      process.env.NEXT_PUBLIC_IMAGE_COMFY_BASE_URL,
+      process.env.OTG_COMFY_BASE_URL,
+      process.env.COMFY_BASE_URL,
+      process.env.COMFYUI_BASE_URL,
+      process.env.NEXT_PUBLIC_COMFY_BASE_URL,
+      process.env.NEXT_PUBLIC_COMFYUI_BASE_URL
+    ) || "http://127.0.0.1:8288"
+  );
+}
+
+function configuredVideoComfyBaseUrl(): string {
+  return (
+    firstComfyBaseUrl(
+      process.env.OTG_VIDEO_COMFY_BASE_URL,
+      process.env.VIDEO_COMFY_BASE_URL,
+      process.env.COMFY_VIDEO_BASE_URL,
+      process.env.NEXT_PUBLIC_VIDEO_COMFY_BASE_URL,
+      process.env.OTG_COMFY_BASE_URL,
+      process.env.COMFY_BASE_URL,
+      process.env.COMFYUI_BASE_URL,
+      process.env.NEXT_PUBLIC_COMFY_BASE_URL,
+      process.env.NEXT_PUBLIC_COMFYUI_BASE_URL,
+      configuredImageComfyBaseUrl()
+    ) || "http://127.0.0.1:8288"
+  );
+}
+
+export async function GET(req: NextRequest) {
+  const mode = String(req.nextUrl.searchParams.get("mode") || "").toLowerCase();
+  const preset = String(req.nextUrl.searchParams.get("preset") || req.nextUrl.searchParams.get("workflow") || "").trim();
+  const label = String(req.nextUrl.searchParams.get("label") || "").trim();
+  const workflowLooksVideo = mode === "video" || isLikelyVideoWorkflowKey(preset, label);
+  const comfyBaseUrl = workflowLooksVideo ? configuredVideoComfyBaseUrl() : configuredImageComfyBaseUrl();
+
+  try {
+    const r = await fetch(`${comfyBaseUrl}/system_stats`, { cache: "no-store" });
+    const j = await r.json().catch(() => ({}));
+    return Response.json(
       {
-        ok: false,
-        status: 0,
-        comfyBase: base,
-        target: url,
-        error: String(e?.message ?? e),
+        serverState: r.ok ? "idle" : "down",
+        serverHint: r.ok ? "Connected" : "Disconnected",
+        comfyBaseUrl,
+        upstreamStatus: r.status,
+        system_stats: j,
+      },
+      { status: r.ok ? 200 : 502 }
+    );
+  } catch (e: any) {
+    return Response.json(
+      {
+        serverState: "down",
+        serverHint: "Disconnected",
+        comfyBaseUrl,
+        error: String(e?.message || e),
       },
       { status: 502 }
     );

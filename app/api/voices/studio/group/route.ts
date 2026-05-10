@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "node:path";
 
-import { resolveComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
+import { resolveVoiceComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import { SessionInvalidError } from "@/lib/ownerKey";
 import { requireSessionUser } from "@/lib/sessionUser";
 import { fetchComfyViewBytes, readWorkflowJson, submitWorkflow, uploadFileToComfy, waitForAudio } from "@/lib/comfyVoices";
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     if (!script) return NextResponse.json({ ok: false, error: "Missing dialogue" }, { status: 400 });
     if (script.length > maxScriptLen()) return NextResponse.json({ ok: false, error: `Dialogue too long (max ${maxScriptLen()} chars)` }, { status: 400 });
 
-    const { baseUrl } = await resolveComfyBaseUrl();
+    const { baseUrl } = await resolveVoiceComfyBaseUrl();
 
     const tmpl = await readWorkflowJson("internal/voices/group_voice_max8.json");
     const workflow = JSON.parse(JSON.stringify(tmpl));

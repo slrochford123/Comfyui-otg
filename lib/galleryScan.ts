@@ -21,7 +21,7 @@ function isMedia(file: string) {
   return IMG_EXT.has(ext) || VID_EXT.has(ext);
 }
 
-export function listGalleryItems(deviceId: string, dir: string, limit = 200): GalleryItem[] {
+export function listGalleryItems(deviceId: string, dir: string, limit = 5000): GalleryItem[] {
   if (!fs.existsSync(dir)) return [];
 
   const files = fs.readdirSync(dir);

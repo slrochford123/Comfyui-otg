@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
+import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 
 export const runtime = "nodejs"; // IMPORTANT: must be node runtime (not edge)
 export const dynamic = "force-dynamic";
 
 function comfyBase() {
-  const base = process.env.COMFY_BASE_URL || "http://127.0.0.1:8188";
-  return base.replace(/\/$/, "");
+  return configuredImageComfyBaseUrl();
 }
 
 export async function POST(req: Request) {

@@ -96,3 +96,112 @@ export async function resolveComfyBaseUrl(): Promise<{ baseUrl: string; targetId
 
   return { baseUrl: found.baseUrl, targetId: found.id };
 }
+
+
+function normalizeUrlValue(v: string): string {
+  return (v || "").trim().replace(/\/+$/, "");
+}
+
+function preferredTestingRenderBaseUrl(): string {
+  const explicit = normalizeUrlValue(
+    process.env.OTG_RENDER_COMFY_URL ||
+      process.env.OTG_TEST_RENDER_COMFY_URL ||
+      process.env.OTG_IMAGE_COMFY_BASE_URL ||
+      process.env.OTG_VIDEO_COMFY_BASE_URL ||
+      process.env.OTG_IMAGE_COMFY_URL ||
+      process.env.OTG_VIDEO_COMFY_URL ||
+      ""
+  );
+  if (explicit) return explicit;
+
+  const targets = comfyTargets();
+  const preferred =
+    targets.find((t) => t.id.toLowerCase() === "5060ti") ||
+    targets.find((t) => /:8288$/.test(normalizeUrlValue(t.baseUrl))) ||
+    targets.find((t) => /5060/i.test(`${t.id} ${t.label}`));
+
+  if (preferred?.baseUrl) return normalizeUrlValue(preferred.baseUrl);
+
+  return "http://127.0.0.1:8288";
+}
+
+export function configuredVoiceComfyBaseUrl(): string {
+  const explicit = normalizeUrlValue(
+    process.env.OTG_VOICE_COMFY_URL ||
+      process.env.OTG_VOICES_COMFY_URL ||
+      process.env.OTG_TTS_COMFY_URL ||
+      ""
+  );
+  if (explicit) return explicit;
+
+  const targets = comfyTargets();
+  const preferred =
+    targets.find((t) => t.id.toLowerCase() === "5060ti") ||
+    targets.find((t) => /:8288$/.test(normalizeUrlValue(t.baseUrl))) ||
+    targets.find((t) => /5060/i.test(`${t.id} ${t.label}`));
+  if (preferred?.baseUrl) return normalizeUrlValue(preferred.baseUrl);
+
+  return "http://127.0.0.1:8288";
+}
+
+export async function resolveVoiceComfyBaseUrl(): Promise<{ baseUrl: string; targetId: string | null }> {
+  const baseUrl = configuredVoiceComfyBaseUrl();
+  const targets = comfyTargets();
+  const found = targets.find((t) => normalizeUrlValue(t.baseUrl) === baseUrl);
+  return { baseUrl, targetId: found?.id || null };
+}
+
+
+export function configuredImageComfyBaseUrl(): string {
+  const explicit = normalizeUrlValue(
+    process.env.OTG_IMAGE_COMFY_BASE_URL ||
+      process.env.OTG_IMAGE_COMFY_URL ||
+      process.env.IMAGE_COMFY_BASE_URL ||
+      process.env.COMFY_IMAGE_BASE_URL ||
+      process.env.OTG_3060TI_COMFY_URL ||
+      ""
+  );
+  if (explicit) return explicit;
+
+  return preferredTestingRenderBaseUrl();
+}
+export async function resolveImageComfyBaseUrl(): Promise<{ baseUrl: string; targetId: string | null }> {
+  const baseUrl = configuredImageComfyBaseUrl();
+  const targets = comfyTargets();
+  const found = targets.find((t) => normalizeUrlValue(t.baseUrl) === baseUrl);
+  return { baseUrl, targetId: found?.id || null };
+}
+
+
+export function configuredVideoComfyBaseUrl(): string {
+  const explicit = normalizeUrlValue(
+    process.env.OTG_VIDEO_COMFY_BASE_URL ||
+      process.env.OTG_VIDEO_COMFY_URL ||
+      process.env.VIDEO_COMFY_BASE_URL ||
+      process.env.COMFY_VIDEO_BASE_URL ||
+      process.env.COMFY_BASE_URL ||
+      process.env.COMFY_URL ||
+      ""
+  );
+  if (explicit) return explicit;
+
+  return preferredTestingRenderBaseUrl();
+}
+
+
+export function isLikelyVideoWorkflowKey(idRaw: unknown, labelRaw?: unknown): boolean {
+  const id = String(idRaw || "").trim().toLowerCase();
+  const label = String(labelRaw || "").trim().toLowerCase();
+  const key = `${id} ${label}`.trim();
+  if (!key) return false;
+
+  return (
+    key.includes("create a video") ||
+    key.includes("video from pictures") ||
+    key.includes("extend a video") ||
+    key.includes("animate") ||
+    key.includes("ltx") ||
+    key.includes("vhs_") ||
+    key.includes("video")
+  );
+}

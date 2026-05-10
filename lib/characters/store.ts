@@ -1,0 +1,123 @@
+import fs from "node:fs";
+import path from "node:path";
+
+import { OTG_DATA_ROOT, ensureDir, readJsonSafe, safeJoin, safeSegment } from "@/lib/paths";
+
+export type CharacterRecord = {
+  id: string;
+  name: string;
+  imagePath: string;
+  previewImagePath?: string;
+  transparentImagePath?: string;
+  description: string;
+  voiceStyleDefinition: string;
+  introLine: string;
+  introVideoPath?: string;
+  referenceAudioPath?: string;
+  source?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreateCharacterInput = {
+  id?: string;
+  name: string;
+  imagePath: string;
+  previewImagePath?: string;
+  transparentImagePath?: string;
+  description: string;
+  voiceStyleDefinition?: string;
+  introLine?: string;
+  introVideoPath?: string;
+  referenceAudioPath?: string;
+  source?: string;
+};
+
+function charactersRoot(ownerKey: string): string {
+  const dir = path.join(OTG_DATA_ROOT, "characters", safeSegment(ownerKey || "local"));
+  ensureDir(dir);
+  return dir;
+}
+
+function characterFile(ownerKey: string, characterId: string): string {
+  return safeJoin(charactersRoot(ownerKey), `${safeSegment(characterId || "character")}.json`);
+}
+
+function normalizeRecord(input: CreateCharacterInput, existing?: CharacterRecord | null): CharacterRecord {
+  const id = safeSegment(input.id || input.name || `character_${Date.now()}`);
+  const now = new Date().toISOString();
+  return {
+    id,
+    name: String(input.name || "Untitled Character").trim() || "Untitled Character",
+    imagePath: String(input.imagePath || "").trim(),
+    previewImagePath: input.previewImagePath ? String(input.previewImagePath).trim() : undefined,
+    transparentImagePath: input.transparentImagePath ? String(input.transparentImagePath).trim() : undefined,
+    description: String(input.description || "").trim(),
+    voiceStyleDefinition: String(input.voiceStyleDefinition || "").trim(),
+    introLine: String(input.introLine || "").trim(),
+    introVideoPath: input.introVideoPath ? String(input.introVideoPath).trim() : undefined,
+    referenceAudioPath: input.referenceAudioPath ? String(input.referenceAudioPath).trim() : undefined,
+    source: input.source ? String(input.source).trim() : undefined,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  };
+}
+
+export function listCharacters(ownerKey: string): CharacterRecord[] {
+  const root = charactersRoot(ownerKey);
+  const entries = fs.existsSync(root) ? fs.readdirSync(root, { withFileTypes: true }) : [];
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => readJsonSafe<CharacterRecord | null>(path.join(root, entry.name), null))
+    .filter((record): record is CharacterRecord => !!record && !!record.id && !!record.name)
+    .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+}
+
+export function loadCharacter(ownerKey: string, characterId: string): CharacterRecord | null {
+  return readJsonSafe<CharacterRecord | null>(characterFile(ownerKey, characterId), null);
+}
+
+export function createCharacter(ownerKey: string, input: CreateCharacterInput): CharacterRecord {
+  const next = normalizeRecord(input, null);
+  if (!next.imagePath) throw new Error("Character imagePath is required.");
+  const filePath = characterFile(ownerKey, next.id);
+  if (fs.existsSync(filePath)) {
+    throw new Error("Character already exists. Characters are immutable after creation; delete and recreate instead.");
+  }
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, JSON.stringify(next, null, 2), "utf8");
+  return next;
+}
+
+export function deleteCharacter(ownerKey: string, characterId: string): { deleted: boolean; removedFiles: string[] } {
+  const filePath = characterFile(ownerKey, characterId);
+  const existing = readJsonSafe<CharacterRecord | null>(filePath, null);
+  const removedFiles: string[] = [];
+  let deleted = false;
+
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+    deleted = true;
+    removedFiles.push(filePath);
+  }
+
+  const dataRoot = path.resolve(OTG_DATA_ROOT);
+  for (const candidate of [existing?.imagePath, existing?.previewImagePath, existing?.transparentImagePath, existing?.introVideoPath, existing?.referenceAudioPath]) {
+    const target = String(candidate || "").trim();
+    if (!target) continue;
+    const resolved = path.resolve(target);
+    const rel = path.relative(dataRoot, resolved);
+    const insideDataRoot = rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+    if (!insideDataRoot) continue;
+    try {
+      if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+        fs.unlinkSync(resolved);
+        removedFiles.push(resolved);
+      }
+    } catch {
+      // ignore cleanup failure
+    }
+  }
+
+  return { deleted, removedFiles };
+}

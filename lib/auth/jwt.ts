@@ -1,17 +1,9 @@
-import { SignJWT, jwtVerify } from "jose";
+import { SignJWT, jwtVerify, type JWTPayload } from "jose";
+import { SESSION_MAX_AGE_SECONDS } from "@/lib/auth/cookies";
 
-let cachedKey: Uint8Array | null = null;
-
-function getKey(): Uint8Array {
-  if (cachedKey) return cachedKey;
-
-  const secret = process.env.AUTH_SECRET;
-  // Build must not require secrets. Enforce at runtime only.
-  if (!secret) throw new Error("Missing AUTH_SECRET");
-
-  cachedKey = new TextEncoder().encode(secret);
-  return cachedKey;
-}
+const secret = process.env.AUTH_SECRET;
+if (!secret) throw new Error("Missing AUTH_SECRET in .env.local");
+const key = new TextEncoder().encode(secret);
 
 type SignArgs = {
   sub: string;
@@ -21,8 +13,9 @@ type SignArgs = {
   sid: string;
 };
 
-export async function signSession(payload: SignArgs, remember: boolean) {
-  const expiresIn = remember ? "30d" : "12h";
+export async function signSession(payload: SignArgs) {
+  const now = Math.floor(Date.now() / 1000);
+
   const body: any = { email: payload.email, sid: payload.sid };
   if (payload.username) body.username = payload.username;
   if (payload.tier) body.tier = payload.tier;
@@ -30,22 +23,21 @@ export async function signSession(payload: SignArgs, remember: boolean) {
   return await new SignJWT(body)
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(payload.sub)
-    .setIssuedAt()
-    .setExpirationTime(expiresIn)
-    .sign(getKey());
+    .setIssuedAt(now)
+    .setExpirationTime(now + SESSION_MAX_AGE_SECONDS)
+    .sign(key);
 }
 
-export async function verifySession(token: string) {
-  const { payload } = await jwtVerify(token, getKey());
-
-  // Import DB lazily so builds don't eagerly load native modules.
-  const { db, ensureMigrations } = await import("@/lib/auth/db");
+export async function verifySession(token: string): Promise<JWTPayload> {
+  const { payload } = await jwtVerify(token, key);
 
   // Enforce single active session per user.
-  ensureMigrations();
   const userId = String(payload.sub || "");
   const sid = String((payload as any).sid || "");
   if (!userId || !sid) throw new Error("Invalid session");
+
+  const { db, ensureMigrations } = await import("@/lib/auth/db");
+  ensureMigrations();
 
   const row = db.prepare("SELECT current_session_id FROM users WHERE id = ?").get(userId) as any;
   if (!row || String(row.current_session_id || "") !== sid) {

@@ -1,4 +1,5 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 
 export const runtime = "nodejs";
 
@@ -10,10 +11,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing image file" }, { status: 400 });
   }
 
-  const comfyBase = process.env.COMFY_BASE_URL;
-  if (!comfyBase) {
-    return NextResponse.json({ error: "COMFY_BASE_URL not set" }, { status: 500 });
-  }
+  const comfyBase = configuredImageComfyBaseUrl();
 
   const fd = new FormData();
   fd.append("image", file, file.name);

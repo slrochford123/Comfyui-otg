@@ -151,32 +151,14 @@ OTG/
 backups/
 _patch_backups/
 _local_patches_hold/
+.codex-backups/
+_otg_patch_backups/
+otg-clean-reapply-kit/
+playwright-report/
+test-results/
 .bak/
 ssh/
 *.bak.*
 *.bak
+*.lnk
 .env
-
-# OTG local patch/backup artifacts
-_otg_patch_backups/
-.codex-backups/
-otg-clean-reapply-kit/
-otg-hotfix-after-apply/
-otg-final-green-hotfix/
-files/
-*.otg-bak
-*.hotfix-bak
-*.final-hotfix-bak
-*.bak-pathfix
-*.bak_*
-*.bak.*
-
-# Test/build reports
-playwright-report/
-test-results/
-coverage/
-.next/
-
-# Python/cache artifacts
-__pycache__/
-*.pyc

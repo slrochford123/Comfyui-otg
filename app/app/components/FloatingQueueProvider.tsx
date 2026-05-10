@@ -16,12 +16,9 @@ export type QueueItem = {
   title: string;
   status: QueueStatus;
   createdAt: number;
-
-  // Used to deep-link to gallery when completed
-  resultName?: string;     // typically output filename
-  focusId?: string;        // alias for resultName
+  resultName?: string;
+  focusId?: string;
   promptId?: string;
-
   errorMessage?: string;
 };
 
@@ -40,44 +37,86 @@ const STORAGE_KEY = 'otg:queue';
 const FloatingQueueContext =
   createContext<FloatingQueueContextValue | null>(null);
 
+function shouldAutoOpen(status?: QueueStatus | string) {
+  return status === 'queued' || status === 'running' || status === 'complete' || status === 'error';
+}
+
 export function FloatingQueueProvider({ children }: { children: React.ReactNode }) {
-  const [items, setItems] = useState<QueueItem[]>(() => {
-    if (typeof window === 'undefined') return [];
+  const [items, setItems] = useState<QueueItem[]>([]);
+  const [isOpen, setOpen] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       const parsed = raw ? (JSON.parse(raw) as QueueItem[]) : [];
-      return Array.isArray(parsed) ? parsed : [];
+      setItems(Array.isArray(parsed) ? parsed : []);
     } catch {
-      return [];
+      setItems([]);
+    } finally {
+      setHydrated(true);
     }
-  });
+  }, []);
 
-  const [isOpen, setOpen] = useState(false);
-
-  // Persist across refresh
   useEffect(() => {
+    if (!hydrated) return;
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-    } catch {}
+    } catch {
+      // ignore
+    }
+  }, [hydrated, items]);
+
+  useEffect(() => {
+    if (items.some((item) => shouldAutoOpen(item.status))) {
+      setOpen(true);
+    }
   }, [items]);
 
   const add = useCallback((item: Omit<QueueItem, 'createdAt'>) => {
-    setItems((prev) => [{ ...item, createdAt: Date.now() }, ...prev]);
+    setItems((prev) => {
+      const filtered = prev.filter((existing) => existing.id !== item.id);
+      return [{ ...item, createdAt: Date.now() }, ...filtered];
+    });
+    if (shouldAutoOpen(item.status)) setOpen(true);
   }, []);
 
   const update = useCallback((id: string, patch: Partial<QueueItem>) => {
-    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+    setItems((prev) => {
+      const idx = prev.findIndex((existing) => existing.id === id);
+      if (idx === -1) {
+        const created: QueueItem = {
+          id,
+          title: String(patch.title || 'job'),
+          status: (patch.status as QueueStatus) || 'queued',
+          createdAt: Date.now(),
+          resultName: patch.resultName,
+          focusId: patch.focusId,
+          promptId: patch.promptId,
+          errorMessage: patch.errorMessage,
+        };
+        return [created, ...prev];
+      }
+
+      const next = [...prev];
+      next[idx] = { ...next[idx], ...patch };
+      return next;
+    });
+
+    if (shouldAutoOpen(patch.status)) setOpen(true);
   }, []);
 
   const remove = useCallback((id: string) => {
-    setItems((prev) => prev.filter((it) => it.id !== id));
+    setItems((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
   const clearAll = useCallback(() => {
     setItems([]);
     try {
       window.localStorage.removeItem(STORAGE_KEY);
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, []);
 
   const value = useMemo(

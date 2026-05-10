@@ -17,13 +17,6 @@ function statusStyle(status: Job["status"]) {
   return "bg-red-100 text-red-700";
 }
 
-function jobErrorMessage(error: Job["error"]) {
-  if (!error) return "";
-  if (typeof error === "string") return error;
-  if (typeof error === "object" && typeof error.message === "string") return error.message;
-  return "";
-}
-
 export function JobCard({
   job,
   onRerun,
@@ -41,7 +34,6 @@ export function JobCard({
 }) {
   const pct = Math.max(0, Math.min(1, job.progress?.pct ?? 0));
   const pctText = Math.round(pct * 100);
-  const errorMessage = jobErrorMessage(job.error);
 
   return (
     <div className="rounded-2xl border bg-white shadow-sm p-4 flex gap-4">
@@ -123,9 +115,9 @@ export function JobCard({
           </button>
         </div>
 
-        {job.status === "failed" && errorMessage ? (
-          <div className="mt-2 text-xs text-red-600">{errorMessage}</div>
-        ) : null}
+        {job.status === "failed" && job.error?.message && (
+          <div className="mt-2 text-xs text-red-600">{job.error.message}</div>
+        )}
       </div>
     </div>
   );

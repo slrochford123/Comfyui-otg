@@ -1,15 +1,7 @@
-function getDeviceId(): string {
-  if (typeof window === "undefined") return "desktop_default";
-  return (
-    localStorage.getItem("otg_device_id") ||
-    sessionStorage.getItem("otg_device_id") ||
-    "desktop_default"
-  );
-}
-
 import { NextRequest } from "next/server";
 import sharp from "sharp";
 import { createHash } from "crypto";
+import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 
 export const runtime = "nodejs"; // sharp requires node runtime
 
@@ -50,11 +42,7 @@ export async function GET(req: NextRequest) {
 
   // Base Comfy UI URL from env (must match your /api/comfy proxy).
   // If you already use COMFY_HOST/COMFY_BASE_URL elsewhere, keep it consistent.
-  const base =
-    process.env.COMFYUI_URL ||
-    process.env.COMFY_BASE_URL ||
-    process.env.COMFY_HOST ||
-    "http://127.0.0.1:8188";
+  const base = configuredImageComfyBaseUrl();
 
   const isThumb = mode === "thumb";
   const isRaw = mode === "raw";

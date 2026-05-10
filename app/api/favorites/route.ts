@@ -1,53 +1,50 @@
-import fs from "node:fs";
 import path from "node:path";
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
-import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
-import { ensureDir } from "@/lib/paths";
+import { NextRequest, NextResponse } from "next/server";
+import { getGallerySourcesForRequest, listGalleryItemsFromSources } from "@/lib/gallery";
+import { SessionInvalidError } from "@/lib/ownerKey";
 
 export const runtime = "nodejs";
-
-function isMedia(file: string) {
-  const ext = path.extname(file).toLowerCase();
-  return [".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mov"].includes(ext);
-}
-
-function favoritesDir(username: string | null, deviceId: string) {
-  const root = path.join(process.cwd(), "data", username ? "user_favorites" : "device_favorites");
-  return username ? path.join(root, username) : path.join(root, deviceId);
-}
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  let deviceId: string;
-  let ownerKey: string;
-  let username: string | null;
-  let scope: "user" | "device";
   try {
-    ({ deviceId, ownerKey, username, scope } = await getOwnerContext(req));
+    const { owner, sources } = await getGallerySourcesForRequest(req);
+    const result = listGalleryItemsFromSources(sources, { sort: "favorited", per: 5000 });
+    const items = result.items.filter((x) => !!x.meta.favorite);
+
+    const files = items.map((x) => {
+      const fileName = path.basename(x.path);
+      const cacheBust = encodeURIComponent(String(x.updatedAt || x.createdAt || 0));
+
+      return {
+        name: x.name,
+        fileName,
+        sourceName: x.meta.originalName || fileName,
+        url: `${x.url}${x.url.includes("?") ? "&" : "?"}v=${cacheBust}`,
+        ts: x.createdAt,
+        createdAt: x.createdAt,
+        updatedAt: x.updatedAt,
+        video: x.kind === "video",
+        kind: x.kind,
+        source: x.scope,
+        favorite: true,
+        meta: x.meta,
+      };
+    });
+
+    return NextResponse.json({
+      ok: true,
+      scope: owner.scope,
+      ownerKey: owner.ownerKey,
+      username: owner.username,
+      deviceId: owner.deviceId,
+      items: files,
+      files,
+    });
   } catch (e: any) {
     if (e instanceof SessionInvalidError) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    throw e;
+    return NextResponse.json({ ok: false, error: e?.message || "Failed to list favorites" }, { status: 500 });
   }
-  const dir = favoritesDir(username, deviceId);
-  ensureDir(dir);
-
-  const files = fs
-    .readdirSync(dir)
-    .filter(isMedia)
-    .map((name) => {
-      const abs = path.join(dir, name);
-      let st: any;
-      try { st = fs.statSync(abs); } catch { st = null; }
-      return {
-        name,
-        url: `/api/favorites/file?name=${encodeURIComponent(name)}`,
-        ts: st?.mtimeMs || 0,
-        size: st?.size || 0,
-      };
-    })
-    .sort((a, b) => (b.ts || 0) - (a.ts || 0));
-
-  return NextResponse.json({ ok: true, scope, ownerKey, username: username || null, deviceId, files });
 }

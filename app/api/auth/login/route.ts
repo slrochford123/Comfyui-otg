@@ -3,36 +3,32 @@ import { db, ensureMigrations } from "@/lib/auth/db";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { signSession } from "@/lib/auth/jwt";
-import { cookieName } from "@/lib/auth/cookies";
+import { authCookieOptions, cookieName } from "@/lib/auth/cookies";
 
-function isLocalHost(host: string) {
-  return host.includes("localhost") || /^\d+\.\d+\.\d+\.\d+(?::\d+)?$/.test(host);
-}
-
-function isHttpsRequest(req: Request) {
-  try {
-    const u = new URL(req.url);
-    if (u.protocol === "https:") return true;
-  } catch {}
-
-  const xf = req.headers.get("x-forwarded-proto") || req.headers.get("x-forwarded-protocol");
-  if (xf && xf.toLowerCase().includes("https")) return true;
-
-  return false;
-}
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 function normalizeIdentifier(v: string) {
   return String(v || "").trim().toLowerCase();
+}
+
+function makeSafeUsername(raw: string) {
+  const base = String(raw || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, 24);
+
+  return base.length >= 3 ? base : `user${Math.floor(Math.random() * 100000)}`;
 }
 
 export async function POST(req: Request) {
   try {
     ensureMigrations();
 
-    const body = await req.json();
-    const identifier = body?.identifier ?? body?.email; // backwards compatible
+    const body = await req.json().catch(() => ({}));
+    const identifier = body?.identifier ?? body?.email;
     const password = body?.password;
-    const remember = body?.remember !== false;
 
     if (!identifier || !password) {
       return NextResponse.json({ ok: false, error: "Email/username and password required." }, { status: 400 });
@@ -42,23 +38,16 @@ export async function POST(req: Request) {
     const looksEmail = idNorm.includes("@");
 
     let user = (looksEmail
-      ? db.prepare("SELECT id, email, username, password_hash FROM users WHERE email = ?").get(idNorm)
-      : db.prepare("SELECT id, email, username, password_hash FROM users WHERE username = ?").get(idNorm)
+      ? db.prepare("SELECT id, email, username, password_hash FROM users WHERE LOWER(email) = ?").get(idNorm)
+      : db.prepare("SELECT id, email, username, password_hash FROM users WHERE LOWER(username) = ?").get(idNorm)
     ) as { id: string; email: string; username?: string | null; password_hash: string } | undefined;
 
     if (!user) {
       // TEST-SITE ONLY: if OTG_ALLOW_ANY_USER=true, auto-provision a user on first login.
-      // This is safe because the test site uses its own OTG_DATA_DIR (separate SQLite DB).
+      // Keep this enabled only for TEST data directories.
       const allowAny = String(process.env.OTG_ALLOW_ANY_USER || "").toLowerCase() === "true";
-      if (allowAny) {
-        const makeSafeUsername = (raw: string) => {
-          const base = String(raw || "")
-            .toLowerCase()
-            .replace(/[^a-z0-9_-]/g, "")
-            .slice(0, 24);
-          return base.length >= 3 ? base : `user${Math.floor(Math.random() * 100000)}`;
-        };
 
+      if (allowAny) {
         const email = looksEmail ? idNorm : `${makeSafeUsername(idNorm)}@test.local`;
         const username = looksEmail ? makeSafeUsername(idNorm.split("@")[0]) : makeSafeUsername(idNorm);
 
@@ -70,27 +59,21 @@ export async function POST(req: Request) {
             "INSERT INTO users (id, email, username, password_hash, created_at) VALUES (?, ?, ?, ?, ?)"
           ).run(id, email, username, hash, new Date().toISOString());
         } catch {
-          // If a race or uniqueness collision happened, we'll fall through and attempt to read again.
+          // A race or unique collision can happen in dev. Re-fetch below handles it.
         }
 
-        // Re-fetch after creation attempt
-        const created = (looksEmail
-          ? db.prepare("SELECT id, email, username, password_hash FROM users WHERE email = ?").get(email)
-          : db.prepare("SELECT id, email, username, password_hash FROM users WHERE username = ?").get(username)
+        user = (looksEmail
+          ? db.prepare("SELECT id, email, username, password_hash FROM users WHERE LOWER(email) = ?").get(email)
+          : db.prepare("SELECT id, email, username, password_hash FROM users WHERE LOWER(username) = ?").get(username)
         ) as { id: string; email: string; username?: string | null; password_hash: string } | undefined;
+      }
 
-        if (!created) {
-          return NextResponse.json({ ok: false, error: "Invalid email/username or password." }, { status: 401 });
-        }
-
-        // Replace user with created record
-        user = created;
-      } else {
+      if (!user) {
         return NextResponse.json({ ok: false, error: "Invalid email/username or password." }, { status: 401 });
       }
     }
 
-    const ok = await bcrypt.compare(password, user.password_hash);
+    const ok = await bcrypt.compare(String(password), user.password_hash);
     if (!ok) {
       return NextResponse.json({ ok: false, error: "Invalid email/username or password." }, { status: 401 });
     }
@@ -103,25 +86,22 @@ export async function POST(req: Request) {
       user.id
     );
 
-
-    const token = await signSession(
-      { sub: user.id, email: user.email, username: user.username ?? null, sid },
-      remember
-    );
-
-    const res = NextResponse.json({ ok: true });
-
-    const host = req.headers.get("host") || "";
-    const secure = isHttpsRequest(req) && !isLocalHost(host);
-
-    res.cookies.set(cookieName(), token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure,
-      path: "/",
-      maxAge: remember ? 60 * 60 * 24 * 30 : undefined,
+    const token = await signSession({
+      sub: user.id,
+      email: user.email,
+      username: user.username ?? null,
+      sid,
     });
 
+    const res = NextResponse.json({
+      ok: true,
+      user: {
+        email: user.email,
+        username: user.username ?? null,
+      },
+    });
+
+    res.cookies.set(cookieName(), token, authCookieOptions(req));
     return res;
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? "Login failed." }, { status: 500 });
