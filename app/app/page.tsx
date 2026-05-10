@@ -1,14 +1,23 @@
 ﻿"use client";
 
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
-import AnglesPanel from "./components/AnglesPanel";
-import StoryboardPanel from "./components/StoryboardPanel";
-import CharactersPanel from "./components/CharactersPanel";
-import VoicesPanel from "./components/VoicesPanel";
-import SupportPanel from "./components/SupportPanel";
-import EditVideoPanel from "./components/EditVideoPanel";
-import GalleryWorkspace, { type GalleryActionKind } from "./components/GalleryWorkspace";
+import type { GalleryActionKind } from "./components/GalleryWorkspace";
+
+const PanelLoading = () => (
+  <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 text-sm text-white/60">
+    Loading...
+  </div>
+);
+
+const AnglesPanel = dynamic(() => import("./components/AnglesPanel"), { loading: PanelLoading });
+const StoryboardPanel = dynamic(() => import("./components/StoryboardPanel"), { loading: PanelLoading });
+const CharactersPanel = dynamic(() => import("./components/CharactersPanel"), { loading: PanelLoading });
+const VoicesPanel = dynamic(() => import("./components/VoicesPanel"), { loading: PanelLoading });
+const SupportPanel = dynamic(() => import("./components/SupportPanel"), { loading: PanelLoading });
+const EditVideoPanel = dynamic(() => import("./components/EditVideoPanel"), { loading: PanelLoading });
+const GalleryWorkspace = dynamic(() => import("./components/GalleryWorkspace"), { loading: PanelLoading });
 
 type WorkflowItem = {
   id: string;
@@ -191,6 +200,7 @@ type ExtendModalState = {
 const APP_STATE_KEY = "otg:test:page-state:v1";
 const APP_THEME_KEY = "otg:test:theme:v1";
 const APP_FONT_SCALE_KEY = "otg:test:font-scale:v1";
+const APP_USER_CACHE_KEY = "otg:test:last-user:v1";
 
 type AppThemeOption = {
   id: AppThemeId;
@@ -678,7 +688,7 @@ function buildPromptAssessment(args: {
     missing.push("Add camera language such as close-up, push-in, hard cut, pan, or tracking.");
   }
 
-  const hasDialogue = /["ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÂ¢Ã¢â€šÂ¬Ã‚Â']/.test(rawPrompt) || hasAnyTerm(text, DIALOGUE_TERMS);
+  const hasDialogue = /["\u201C\u201D']/.test(rawPrompt) || hasAnyTerm(text, DIALOGUE_TERMS);
   if (hasDialogue) {
     correct.push("Dialogue or speaker direction is present.");
     score += 10;
@@ -1003,10 +1013,36 @@ function normalizeGalleryItem(raw: any): GalleryItem {
   };
 }
 
+function readCachedUsername() {
+  if (typeof window === "undefined") return "Guest";
+  try {
+    const raw = window.localStorage.getItem(APP_USER_CACHE_KEY);
+    const cached = raw ? JSON.parse(raw) : null;
+    const name = typeof cached?.username === "string" ? cached.username.trim() : "";
+    return name || "Guest";
+  } catch {
+    return "Guest";
+  }
+}
+
+function writeCachedUsername(username: string) {
+  if (typeof window === "undefined") return;
+  const name = username.trim();
+  try {
+    if (!name || name === "Guest") {
+      window.localStorage.removeItem(APP_USER_CACHE_KEY);
+      return;
+    }
+    window.localStorage.setItem(APP_USER_CACHE_KEY, JSON.stringify({ username: name, updatedAt: Date.now() }));
+  } catch {
+    // ignore storage failures
+  }
+}
+
 export default function AppPage() {
   const [tab, setTab] = useState<SpinTabId>("generate");
   const [assistanceTab, setAssistanceTab] = useState<AssistanceTab>("describe");
-  const [username, setUsername] = useState("Guest");
+  const [username, setUsername] = useState(() => readCachedUsername());
   const [connected, setConnected] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
@@ -2101,11 +2137,20 @@ ${sceneReferenceCard || ""}`.toLowerCase();
           credentials: "include",
         });
 
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (!cancelled && res.status === 401) {
+            setUsername("Guest");
+            setIsAdmin(false);
+            writeCachedUsername("Guest");
+          }
+          return;
+        }
         const data = (await res.json()) as WhoAmIResponse;
         if (cancelled) return;
 
-        setUsername(data?.username || data?.user?.username || data?.user?.name || data?.user?.email || "Guest");
+        const nextUsername = data?.username || data?.user?.username || data?.user?.name || data?.user?.email || "Guest";
+        setUsername(nextUsername);
+        writeCachedUsername(nextUsername);
         setIsAdmin(Boolean(data?.user?.admin));
       } catch {
         // ignore
@@ -5192,7 +5237,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                         </div>
                         <div className="flex items-center gap-2">
                           <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100">
-                            Grade {promptAssessment.grade} Ãƒâ€šÃ‚Â· {promptAssessment.score}/100
+                            Grade {promptAssessment.grade} - {promptAssessment.score}/100
                           </div>
                           <GhostButton onClick={() => setPromptAssessmentOpen(false)}>Hide</GhostButton>
                         </div>
@@ -5203,9 +5248,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                           <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100/70">Correct</div>
                           <ul className="space-y-2 text-sm leading-6 text-emerald-50/90">
                             {promptAssessment.correct.length ? (
-                              promptAssessment.correct.map((item) => <li key={item}>ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {item}</li>)
+                              promptAssessment.correct.map((item) => <li key={item}>- {item}</li>)
                             ) : (
-                              <li>ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ No strong elements were detected yet.</li>
+                              <li>- No strong elements were detected yet.</li>
                             )}
                           </ul>
                         </div>
@@ -5213,9 +5258,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                           <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-100/70">Weak</div>
                           <ul className="space-y-2 text-sm leading-6 text-amber-50/90">
                             {promptAssessment.weak.length ? (
-                              promptAssessment.weak.map((item) => <li key={item}>ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {item}</li>)
+                              promptAssessment.weak.map((item) => <li key={item}>- {item}</li>)
                             ) : (
-                              <li>ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ No weak areas were detected.</li>
+                              <li>- No weak areas were detected.</li>
                             )}
                           </ul>
                         </div>
@@ -5223,9 +5268,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                           <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-rose-100/70">Missing</div>
                           <ul className="space-y-2 text-sm leading-6 text-rose-50/90">
                             {promptAssessment.missing.length ? (
-                              promptAssessment.missing.map((item) => <li key={item}>ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {item}</li>)
+                              promptAssessment.missing.map((item) => <li key={item}>- {item}</li>)
                             ) : (
-                              <li>ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ No critical missing elements were detected.</li>
+                              <li>- No critical missing elements were detected.</li>
                             )}
                           </ul>
                         </div>
@@ -5446,7 +5491,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                   <div className="border-t border-white/10 px-4 py-3">
                     <div className="text-xs text-white/52">
                       {uploadedImageMeta
-                        ? `Starter image: ${uploadedImageMeta.width} x ${uploadedImageMeta.height}${uploadedImageMeta.height > uploadedImageMeta.width ? " ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ portrait" : " ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ landscape"}`
+                        ? `Starter image: ${uploadedImageMeta.width} x ${uploadedImageMeta.height}${uploadedImageMeta.height > uploadedImageMeta.width ? " - portrait" : " - landscape"}`
                         : isVideoUpscalerWorkflowSelected
                       ? "Upload the source video you want to upscale with RTX SR."
                       : "Upload a starter image if you want to build image-to-video from a still frame."}
@@ -5605,7 +5650,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                     <div className="truncate">{latestPreviewName || "No completed output yet"}</div>
                     <div className="text-xs text-white/45">
                       {latestPreviewKind === "image" && latestPreviewMeta
-                        ? `Generated image: ${latestPreviewMeta.width} x ${latestPreviewMeta.height}${latestPreviewMeta.height > latestPreviewMeta.width ? " ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ portrait" : " ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ landscape"}`
+                        ? `Generated image: ${latestPreviewMeta.width} x ${latestPreviewMeta.height}${latestPreviewMeta.height > latestPreviewMeta.width ? " - portrait" : " - landscape"}`
                         : latestPreviewKind === "video"
                           ? "Create Character works only with generated portrait images."
                           : "Create Character works only with generated portrait images."}

@@ -397,6 +397,57 @@ function buildPaginationModel(currentPage: number, totalPages: number) {
   return pages;
 }
 
+function preloadImageUrl(url: string) {
+  if (typeof window === "undefined" || !url) return;
+  const img = new Image();
+  img.decoding = "async";
+  img.src = url;
+}
+
+function preloadVideoUrl(url: string) {
+  if (typeof document === "undefined" || !url) return;
+  const video = document.createElement("video");
+  video.preload = "metadata";
+  video.muted = true;
+  video.playsInline = true;
+  video.src = url;
+  video.load();
+}
+
+function useGalleryMediaWarmup(args: {
+  activeTab: string | null;
+  visibleGalleryItems: GalleryItem[];
+  visibleFavoriteItems: GalleryItem[];
+  viewerItem: GalleryItem | null;
+  viewerItems: GalleryItem[];
+  viewerIndex: number;
+}) {
+  const { activeTab, visibleGalleryItems, visibleFavoriteItems, viewerItem, viewerItems, viewerIndex } = args;
+
+  React.useEffect(() => {
+    if (activeTab !== "gallery" && activeTab !== "favorites") return;
+    const items = activeTab === "favorites" ? visibleFavoriteItems : visibleGalleryItems;
+    for (const item of items.slice(0, 12)) {
+      preloadImageUrl(buildGalleryThumbUrl(item, 768));
+    }
+  }, [activeTab, visibleFavoriteItems, visibleGalleryItems]);
+
+  React.useEffect(() => {
+    if (!viewerItem) return;
+    const neighbors = [viewerItems[viewerIndex - 1], viewerItems[viewerIndex + 1]].filter(Boolean);
+    for (const item of neighbors) {
+      const url = String(item.url || "").trim();
+      if (!url) continue;
+      if (item.video || item.kind === "video") {
+        preloadImageUrl(buildGalleryThumbUrl(item, 1280));
+        preloadVideoUrl(url);
+      } else {
+        preloadImageUrl(url);
+      }
+    }
+  }, [viewerIndex, viewerItem, viewerItems]);
+}
+
 const PaginationBar = React.memo(function PaginationBar({
   totalItems,
   page,
@@ -659,6 +710,15 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
   const handleFavoritesFilterChange = onFavoritesFilterChange ?? (() => undefined);
   const handleFavoritesSortChange = onFavoritesSortChange ?? (() => undefined);
   const handleFavoritesViewModeChange = onFavoritesViewModeChange ?? (() => undefined);
+
+  useGalleryMediaWarmup({
+    activeTab,
+    visibleGalleryItems,
+    visibleFavoriteItems,
+    viewerItem,
+    viewerItems,
+    viewerIndex,
+  });
 
   const galleryHasRefinements = safeGallerySearch.trim().length > 0 || galleryFilter !== "all" || gallerySort !== "newest";
   const gallerySummary = galleryHasRefinements
@@ -947,11 +1007,11 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
                   className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full border border-white/10 bg-black/55 px-3 py-3 text-sm font-semibold text-white/90 hover:bg-black/75"
                   aria-label="Previous item"
                 >
-                  {"â€¹"}
+                  {"<"}
                 </button>
               ) : null}
               {viewerIsVideo ? (
-                <video src={viewerUrl} poster={buildGalleryThumbUrl(viewerItem, 1280)} className="max-h-[78vh] w-full object-contain" controls autoPlay playsInline preload="metadata" />
+                <video src={viewerUrl} poster={buildGalleryThumbUrl(viewerItem, 1280)} className="max-h-[78vh] w-full object-contain" controls autoPlay playsInline preload="auto" />
               ) : (
                 <img src={viewerUrl} alt={viewerTitle} className="max-h-[78vh] w-full object-contain" />
               )}
@@ -962,7 +1022,7 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
                   className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full border border-white/10 bg-black/55 px-3 py-3 text-sm font-semibold text-white/90 hover:bg-black/75"
                   aria-label="Next item"
                 >
-                  {"â€º"}
+                  {">"}
                 </button>
               ) : null}
             </div>

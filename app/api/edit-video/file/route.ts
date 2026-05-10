@@ -17,7 +17,7 @@ function buildHeaders(args: { size: number; full: string; stat: fs.Stats; downlo
   return {
     "Content-Type": "video/mp4",
     "Content-Length": String(args.size),
-    "Cache-Control": "private, no-cache",
+    "Cache-Control": "private, no-transform, max-age=86400, stale-while-revalidate=604800",
     "Last-Modified": new Date(args.stat.mtimeMs).toUTCString(),
     ETag: etag,
     "Accept-Ranges": "bytes",
