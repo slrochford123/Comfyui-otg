@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { deviceGalleryDir, OTG_DATA_ROOT, userGalleryDir } from "@/lib/paths";
 import { ensureGalleryMetaForFile, readMetaForFile } from "@/lib/gallery";
+import { warmGalleryThumb } from "@/lib/galleryThumbs";
 import { markError, markReady, readState, writeState } from "@/lib/contentState";
 import { readPromptRequestMeta } from "@/lib/promptRequestMeta";
 
@@ -873,6 +874,8 @@ export async function syncPromptOutputsForOwner(args: SyncArgs): Promise<{
     });
 
     saved.push(dest.name);
+    warmGalleryThumb(absPath, 768);
+    warmGalleryThumb(absPath, 512);
   }
 
   const importedAfterSave = importedPayloadKeysForPrompt(galleryDir, promptId);

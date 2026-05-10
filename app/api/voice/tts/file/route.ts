@@ -2,10 +2,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { Readable } from "node:stream";
 
 import { NextRequest, NextResponse } from "next/server";
 
+import { mediaFileResponse } from "@/lib/mediaResponse";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 
@@ -14,15 +14,6 @@ export const dynamic = "force-dynamic";
 
 function ownerTtsRoot(ownerKey: string) {
   return path.join(OTG_DATA_ROOT, "voice_tts_jobs", safeSegment(ownerKey || "local"));
-}
-
-function contentType(name: string) {
-  const ext = path.extname(name).toLowerCase();
-  if (ext === ".mp3") return "audio/mpeg";
-  if (ext === ".m4a") return "audio/mp4";
-  if (ext === ".ogg") return "audio/ogg";
-  if (ext === ".flac") return "audio/flac";
-  return "audio/wav";
 }
 
 export async function GET(req: NextRequest) {
@@ -36,30 +27,7 @@ export async function GET(req: NextRequest) {
     const full = safeJoin(ownerTtsRoot(owner.ownerKey), jobId, name);
     if (!fs.existsSync(full) || !fs.statSync(full).isFile()) return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
 
-    const stat = fs.statSync(full);
-    const size = stat.size || 0;
-    const range = req.headers.get("range");
-    const baseHeaders = {
-      "Content-Type": contentType(name),
-      "Cache-Control": "private, no-cache",
-      "Accept-Ranges": "bytes",
-      "Last-Modified": new Date(stat.mtimeMs).toUTCString(),
-      ...(download ? { "Content-Disposition": `attachment; filename="${name}"` } : {}),
-    };
-
-    if (range) {
-      const match = /^bytes=(\d+)-(\d*)$/i.exec(range);
-      if (!match) return new NextResponse(null, { status: 416, headers: { ...baseHeaders, "Content-Range": `bytes */${size}` } });
-      const start = parseInt(match[1], 10);
-      const requestedEnd = match[2] ? parseInt(match[2], 10) : Math.min(start + 1024 * 1024 - 1, size - 1);
-      if (!Number.isFinite(start) || start < 0 || start >= size) return new NextResponse(null, { status: 416, headers: { ...baseHeaders, "Content-Range": `bytes */${size}` } });
-      const end = Math.min(Math.max(start, requestedEnd), size - 1);
-      const stream = fs.createReadStream(full, { start, end });
-      return new NextResponse(Readable.toWeb(stream as any) as any, { status: 206, headers: { ...baseHeaders, "Content-Length": String(end - start + 1), "Content-Range": `bytes ${start}-${end}/${size}` } });
-    }
-
-    const stream = fs.createReadStream(full);
-    return new NextResponse(Readable.toWeb(stream as any) as any, { status: 200, headers: { ...baseHeaders, "Content-Length": String(size) } });
+    return mediaFileResponse(req, full, { download, fileName: name });
   } catch (error: any) {
     if (error instanceof SessionInvalidError) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     return NextResponse.json({ ok: false, error: error?.message || "TTS audio read failed" }, { status: 500 });

@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/cn";
 
 export type GalleryItem = {
@@ -218,6 +219,13 @@ const MediaGrid = React.memo(function MediaGrid({
   onDelete?: (item: GalleryItem) => void;
   onOpenViewer?: (item: GalleryItem) => void;
 }) {
+  const listVirtualizer = useWindowVirtualizer({
+    count: items.length,
+    estimateSize: () => 116,
+    overscan: 8,
+    enabled: viewMode === "list" && items.length > 100,
+  });
+
   if (!items.length) {
     return <EmptyStateCard title={emptyStateTitle} detail={emptyStateDetail} />;
   }
@@ -228,6 +236,93 @@ const MediaGrid = React.memo(function MediaGrid({
       : viewMode === "grid"
         ? "grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-5"
         : "grid gap-4 md:grid-cols-2 xl:grid-cols-3";
+
+  if (viewMode === "list" && items.length > 100) {
+    return (
+      <div className="relative" style={{ height: `${listVirtualizer.getTotalSize()}px` }}>
+        {listVirtualizer.getVirtualItems().map((virtualRow) => {
+          const item = items[virtualRow.index];
+          const itemKey = getGalleryItemKey(item);
+          const isCurrentBusyItem = !!busyName && busyName === itemKey;
+          const isBusy = actionsLocked || isCurrentBusyItem;
+          const favorite = Boolean(item.meta?.favorite);
+          const favoriteLabel = isCurrentBusyItem && busyKind === "favorite" ? (favorite ? "Saving..." : "Updating...") : favorite ? "Saved" : "Heart";
+          const renameLabel = isCurrentBusyItem && busyKind === "rename" ? "Renaming..." : "Rename";
+          const redoLabel = isCurrentBusyItem && busyKind === "redo" ? "Retrying..." : "Redo";
+          const deleteLabel = isCurrentBusyItem && busyKind === "delete" ? "Deleting..." : "Delete";
+          const isImage = !item.video && item.kind !== "video";
+          const createdLabel = item.updatedAt || item.createdAt ? new Date(item.updatedAt || item.createdAt || Date.now()).toLocaleString() : "Unknown time";
+
+          return (
+            <div
+              key={`${itemKey || "item"}-${virtualRow.index}`}
+              ref={listVirtualizer.measureElement}
+              data-index={virtualRow.index}
+              className="absolute left-0 right-0"
+              style={{ transform: `translateY(${virtualRow.start}px)` }}
+            >
+              <div className="mb-3 overflow-hidden rounded-[24px] border border-white/10 bg-black/35 p-3 md:p-4" style={MEDIA_CARD_STYLE}>
+                <div className="flex min-w-0 flex-1 flex-col justify-between gap-4 md:flex-row md:items-center">
+                  <button type="button" onClick={() => onOpenViewer?.(item)} className="min-w-0 text-left">
+                    <div className="space-y-2">
+                      <div className="break-all text-base font-semibold text-white/90 hover:text-white">{item.name || "Unnamed item"}</div>
+                      <div className="text-sm text-white/50">{createdLabel}</div>
+                      <div className="text-xs uppercase tracking-[0.18em] text-white/35">{item.video ? "Video" : "Image"}</div>
+                    </div>
+                  </button>
+                  <div className="flex flex-wrap gap-2 md:shrink-0">
+                    <button type="button" onClick={() => onDownload?.(item)} disabled={actionsLocked} className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/85 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50">
+                      Download
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onFavorite?.(item)}
+                      disabled={isBusy}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold disabled:opacity-50",
+                        favorite ? "border-pink-400/30 bg-pink-500/15 text-pink-100" : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
+                      )}
+                    >
+                      <IconHeart filled={favorite} />
+                      <span>{favoriteLabel}</span>
+                    </button>
+                    {isImage ? (
+                      <>
+                        <button type="button" onClick={() => onEdit?.(item)} disabled={isBusy} className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-50">
+                          Edit
+                        </button>
+                        <button type="button" onClick={() => onAnimate?.(item)} disabled={isBusy} className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-100 hover:bg-violet-500/15 disabled:opacity-50">
+                          Animate
+                        </button>
+                        {onCreateCharacter ? (
+                          <button type="button" onClick={() => onCreateCharacter?.(item)} disabled={isBusy} className="rounded-full border border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 hover:bg-cyan-500/15 disabled:opacity-50">
+                            Characters
+                          </button>
+                        ) : null}
+                      </>
+                    ) : (
+                      <button type="button" onClick={() => onExtend?.(item)} disabled={isBusy} className="rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-100 hover:bg-amber-500/15 disabled:opacity-50">
+                        Extend
+                      </button>
+                    )}
+                    <button type="button" onClick={() => onRename?.(item)} disabled={isBusy} className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/80 hover:bg-white/10 disabled:opacity-50">
+                      {renameLabel}
+                    </button>
+                    <button type="button" onClick={() => onRedo?.(item)} disabled={isBusy} className="rounded-full border border-cyan-400/20 bg-[linear-gradient(90deg,rgba(145,92,255,0.30),rgba(40,200,255,0.22))] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+                      {redoLabel}
+                    </button>
+                    <button type="button" onClick={() => onDelete?.(item)} disabled={isBusy} className="rounded-full border border-red-400/20 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-100 hover:bg-red-500/15 disabled:opacity-50">
+                      {deleteLabel}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   return (
     <div className={containerClass}>

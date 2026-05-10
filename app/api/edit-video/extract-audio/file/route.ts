@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { NextRequest, NextResponse } from "next/server";
 
+import { mediaFileResponse } from "@/lib/mediaResponse";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 
@@ -12,16 +13,6 @@ export const revalidate = 0;
 
 function voiceGalleryRoot(ownerKey: string) {
   return path.join(OTG_DATA_ROOT, "voice_gallery", safeSegment(ownerKey || "local"));
-}
-
-function contentType(fileName: string) {
-  const ext = path.extname(fileName).toLowerCase();
-  if (ext === ".wav") return "audio/wav";
-  if (ext === ".mp3") return "audio/mpeg";
-  if (ext === ".m4a" || ext === ".aac") return "audio/mp4";
-  if (ext === ".flac") return "audio/flac";
-  if (ext === ".ogg") return "audio/ogg";
-  return "application/octet-stream";
 }
 
 export async function GET(req: NextRequest) {
@@ -34,14 +25,8 @@ export async function GET(req: NextRequest) {
     if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
       return NextResponse.json({ ok: false, error: "Not found." }, { status: 404 });
     }
-    const data = fs.readFileSync(filePath);
-    const headers = new Headers();
-    headers.set("Content-Type", contentType(name));
-    headers.set("Content-Length", String(data.length));
-    headers.set("Cache-Control", "no-store");
     const download = url.searchParams.get("download") === "1" || url.searchParams.get("download") === "true";
-    if (download) headers.set("Content-Disposition", `attachment; filename="${name.replace(/"/g, "_")}"`);
-    return new NextResponse(data, { headers });
+    return mediaFileResponse(req, filePath, { download, fileName: name });
   } catch (error: any) {
     if (error instanceof SessionInvalidError) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });

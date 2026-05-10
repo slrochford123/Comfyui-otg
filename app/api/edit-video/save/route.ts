@@ -4,6 +4,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { getGallerySourcesForRequest, safeGalleryName, writeMetaForFile } from "@/lib/gallery";
+import { warmGalleryThumb } from "@/lib/galleryThumbs";
 import { OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import { SessionInvalidError } from "@/lib/ownerKey";
 
@@ -65,6 +66,8 @@ export async function POST(req: NextRequest) {
     const targetPath = uniqueTargetPath(targetSource.dir, `${safeTitle}${ext}`);
 
     await fsp.copyFile(sourcePath, targetPath);
+    warmGalleryThumb(targetPath, 768);
+    warmGalleryThumb(targetPath, 512);
     const stat = fs.statSync(targetPath);
     const savedName = path.basename(targetPath);
     const clipNames = cleanArray(body?.clipNames).map((item) => String(item || "").trim()).filter(Boolean);

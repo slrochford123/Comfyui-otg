@@ -1,34 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { mediaFileResponse, contentTypeForMedia } from "@/lib/mediaResponse";
 
 function sanitizeFilename(name: string) {
   const trimmed = String(name || "").trim();
   const fallback = "download.bin";
   const base = trimmed || fallback;
   return base.replace(/[\r\n\\/:*?"<>|]+/g, "_");
-}
-
-function getContentType(ext: string) {
-  switch (ext) {
-    case ".glb":
-      return "model/gltf-binary";
-    case ".gltf":
-      return "model/gltf+json";
-    case ".png":
-      return "image/png";
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg";
-    case ".webp":
-      return "image/webp";
-    case ".mp4":
-      return "video/mp4";
-    case ".json":
-      return "application/json; charset=utf-8";
-    default:
-      return "application/octet-stream";
-  }
 }
 
 function uniqueStrings(values: Array<string | null | undefined>) {
@@ -104,20 +83,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Not a file" }, { status: 400 });
     }
 
-    const fileBuffer = fs.readFileSync(resolved);
-    const ext = path.extname(resolved).toLowerCase();
-    const contentType = getContentType(ext);
     const fileName = sanitizeFilename(path.basename(resolved));
-    const encodedFileName = encodeURIComponent(fileName);
-
-    return new NextResponse(fileBuffer, {
-      headers: {
-        "Content-Type": contentType,
-        "Content-Length": String(fileBuffer.byteLength),
-        "Content-Disposition": `inline; filename="${fileName}"; filename*=UTF-8''${encodedFileName}`,
-        "X-Content-Type-Options": "nosniff",
-        "Cache-Control": "no-store",
-      },
+    return mediaFileResponse(req, resolved, {
+      fileName,
+      contentType: contentTypeForMedia(resolved),
     });
   } catch (err: any) {
     return NextResponse.json(

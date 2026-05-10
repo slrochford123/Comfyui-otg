@@ -1,4 +1,5 @@
 import "./globals.css";
+import AppQueryProvider from "./components/AppQueryProvider";
 import { FloatingQueueProvider } from "./components/FloatingQueueProvider";
 import { FloatingQueueWidget } from "./components/FloatingQueueWidget";
 
@@ -9,9 +10,11 @@ import { FloatingQueueWidget } from "./components/FloatingQueueWidget";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <FloatingQueueProvider>
-      <FloatingQueueWidget />
-      {children}
-    </FloatingQueueProvider>
+    <AppQueryProvider>
+      <FloatingQueueProvider>
+        <FloatingQueueWidget />
+        {children}
+      </FloatingQueueProvider>
+    </AppQueryProvider>
   );
 }
