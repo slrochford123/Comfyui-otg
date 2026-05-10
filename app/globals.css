@@ -1578,6 +1578,95 @@ nav [data-otg-build-badge]{
   overflow: hidden; /* ensures hero image respects rounded corners */
 }
 
+/* Clean UI mode: reversible minimalist shell for the main OTG app. */
+html[data-otg-ui-mode="clean"] body{
+  background:#08090d;
+}
+
+main[data-otg-ui-mode="clean"]{
+  --otg-clean-surface: rgba(255,255,255,.045);
+  --otg-clean-surface-strong: rgba(255,255,255,.07);
+  --otg-clean-border: rgba(255,255,255,.09);
+  --otg-clean-muted: rgba(255,255,255,.58);
+}
+
+main[data-otg-ui-mode="clean"] [class*="shadow-"]{
+  box-shadow:none !important;
+}
+
+main[data-otg-ui-mode="clean"] [class*="backdrop-blur"]{
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+
+main[data-otg-ui-mode="clean"] [class*="rounded-[28px]"],
+main[data-otg-ui-mode="clean"] [class*="rounded-[24px]"],
+main[data-otg-ui-mode="clean"] [class*="rounded-[22px]"],
+main[data-otg-ui-mode="clean"] [class*="rounded-[20px]"],
+main[data-otg-ui-mode="clean"] [class*="rounded-[18px]"],
+main[data-otg-ui-mode="clean"] [class*="rounded-[16px]"]{
+  border-radius:14px !important;
+}
+
+main[data-otg-ui-mode="clean"] button,
+main[data-otg-ui-mode="clean"] input,
+main[data-otg-ui-mode="clean"] textarea,
+main[data-otg-ui-mode="clean"] select,
+main[data-otg-ui-mode="clean"] video,
+main[data-otg-ui-mode="clean"] img{
+  border-radius:10px !important;
+}
+
+main[data-otg-ui-mode="clean"] section,
+main[data-otg-ui-mode="clean"] [class*="border-white/10"],
+main[data-otg-ui-mode="clean"] [class*="border-white/12"],
+main[data-otg-ui-mode="clean"] [class*="border-white/14"],
+main[data-otg-ui-mode="clean"] [class*="border-white/15"]{
+  border-color:var(--otg-clean-border) !important;
+}
+
+main[data-otg-ui-mode="clean"] [class*="bg-black/45"],
+main[data-otg-ui-mode="clean"] [class*="bg-black/55"],
+main[data-otg-ui-mode="clean"] [class*="bg-black/60"],
+main[data-otg-ui-mode="clean"] [class*="bg-black/35"],
+main[data-otg-ui-mode="clean"] [class*="bg-black/30"]{
+  background-color:var(--otg-clean-surface) !important;
+}
+
+main[data-otg-ui-mode="clean"] [class*="bg-white/[0.04]"],
+main[data-otg-ui-mode="clean"] [class*="bg-white/[0.05]"],
+main[data-otg-ui-mode="clean"] [class*="bg-white/[0.06]"]{
+  background-color:var(--otg-clean-surface) !important;
+}
+
+main[data-otg-ui-mode="clean"] h1{
+  font-size:clamp(1.55rem,2vw,2.25rem) !important;
+  letter-spacing:0 !important;
+}
+
+main[data-otg-ui-mode="clean"] h2{
+  letter-spacing:0 !important;
+}
+
+main[data-otg-ui-mode="clean"] [class*="tracking-[0.24em]"],
+main[data-otg-ui-mode="clean"] [class*="tracking-[0.22em]"],
+main[data-otg-ui-mode="clean"] [class*="tracking-[0.18em]"],
+main[data-otg-ui-mode="clean"] [class*="tracking-[0.16em]"]{
+  letter-spacing:.08em !important;
+}
+
+main[data-otg-ui-mode="clean"] p,
+main[data-otg-ui-mode="clean"] [class*="text-white/60"],
+main[data-otg-ui-mode="clean"] [class*="text-white/62"],
+main[data-otg-ui-mode="clean"] [class*="text-white/65"],
+main[data-otg-ui-mode="clean"] [class*="text-white/68"]{
+  color:var(--otg-clean-muted) !important;
+}
+
+main[data-otg-ui-mode="clean"] .otg-clean-hide{
+  display:none !important;
+}
+
 .otg-authHero {
   position: relative;
   width: 100%;

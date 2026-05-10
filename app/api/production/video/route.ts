@@ -261,7 +261,101 @@ function setInputIfNodeExists(workflow: AnyObj, nodeId: string, key: string, val
   node.inputs[key] = value;
 }
 
+function normalizeTimelineScenes(raw: any[]) {
+  return (Array.isArray(raw) ? raw : [])
+    .map((scene, index) => {
+      const prompt = String(scene?.prompt || "").trim();
+      const durationSec = Math.max(1, Math.min(30, Number(scene?.durationSec || scene?.seconds || 5) || 5));
+      const hardCut = scene?.hardCut !== false;
+      const title = String(scene?.title || `Scene ${index + 1}`).trim() || `Scene ${index + 1}`;
+      const characterNames = Array.isArray(scene?.characterNames)
+        ? scene.characterNames.map((name: any) => String(name || "").trim()).filter(Boolean)
+        : [];
+      return prompt ? { prompt, durationSec, hardCut, title, characterNames } : null;
+    })
+    .filter(Boolean) as Array<{
+      prompt: string;
+      durationSec: number;
+      hardCut: boolean;
+      title: string;
+      characterNames: string[];
+    }>;
+}
+
+function patchPromptRelayTimelineWorkflow(workflow: AnyObj, body: AnyObj) {
+  const relayNode = workflow?.["5837"];
+  if (!relayNode?.inputs) return false;
+
+  const fps = Math.max(1, Math.min(60, Math.floor(Number(body.timelineFps || body.frameRate || body.fps || 24) || 24)));
+  const scenes = normalizeTimelineScenes(body.timelineScenes);
+  if (!scenes.length) {
+    throw new StageError("workflow_patch", "Prompt Relay timeline requires at least one scene prompt.", 400);
+  }
+
+  const segmentLengths = scenes.map((scene) => Math.max(1, Math.round(scene.durationSec * fps)));
+  const totalFrames = segmentLengths.reduce((sum, value) => sum + value, 0);
+  const totalSeconds = Math.max(1, Math.ceil(totalFrames / fps));
+  const globalPrompt = String(body.timelineGlobalPrompt || body.globalPrompt || body.positivePrompt || "").trim();
+  const colors = ["#4f8edc", "#e07b3a", "#5cb85c", "#b46cff", "#f0b84f", "#5ec9b8", "#df6f9f", "#8a9cff"];
+  const localPrompts = scenes.map((scene, index) => {
+    const characterLine = scene.characterNames.length ? `Characters in scene: ${scene.characterNames.join(", ")}.` : "";
+    const cutLine =
+      scene.hardCut && index > 0
+        ? "Hard cut from the previous scene; establish the new shot clearly before continuing the action."
+        : "";
+    return [characterLine, cutLine, scene.prompt].filter(Boolean).join(" ");
+  });
+
+  relayNode.inputs.global_prompt = globalPrompt;
+  relayNode.inputs.max_frames = totalFrames;
+  relayNode.inputs.timeline_data = JSON.stringify({
+    segments: localPrompts.map((prompt, index) => ({
+      prompt,
+      length: segmentLengths[index],
+      color: colors[index % colors.length],
+    })),
+  });
+  relayNode.inputs.local_prompts = localPrompts.join(" | ");
+  relayNode.inputs.segment_lengths = segmentLengths.join(", ");
+  relayNode.inputs.fps = fps;
+  relayNode.inputs.time_units = "frames";
+
+  setInputIfNodeExists(workflow, "616", "value", fps);
+  setInputIfNodeExists(workflow, "615", "value", totalSeconds);
+  setInputIfNodeExists(workflow, "612", "value", Math.max(512, Math.floor(Number(body.longerEdge || body.width || 1280) || 1280)));
+  setInputIfNodeExists(workflow, "608", "image", String(body.imagePathAbs || body.imagePath || ""));
+  setInputIfNodeExists(workflow, "5827", "image", String(body.imagePathAbs || body.imagePath || ""));
+  setInputIfNodeExists(workflow, "5831", "image", String(body.imagePathAbs || body.imagePath || ""));
+
+  const imageInject = workflow?.["582"];
+  if (imageInject?.inputs) {
+    imageInject.inputs.num_images = "1";
+    imageInject.inputs["num_images.index_1"] = 0;
+    imageInject.inputs["num_images.strength_1"] = Number.isFinite(Number(body.startImageStrength))
+      ? Math.max(0, Math.min(1, Number(body.startImageStrength)))
+      : 1;
+  }
+
+  setInputIfNodeExists(workflow, "604", "filename_prefix", String(body.filenamePrefix || "otg_production/prompt_relay"));
+  setInputIfNodeExists(workflow, "604", "frame_rate", fps);
+
+  setInputIfNodeExists(workflow, "5756", "strength_model", body.useVideoReasoning ? 1 : 0);
+  setInputIfNodeExists(workflow, "622", "strength_model", body.useCrispEnhance ? 0.85 : 0);
+
+  return {
+    fps,
+    totalFrames,
+    totalSeconds,
+    segmentLengths,
+    sceneCount: scenes.length,
+    globalPrompt,
+  };
+}
+
 function patchWorkflow(workflow: AnyObj, body: AnyObj) {
+  const timelineDebug = patchPromptRelayTimelineWorkflow(workflow, body);
+  if (timelineDebug) return { timelineDebug };
+
   const width = Math.max(64, Math.floor(Number(body.width || 1280) || 1280));
   const height = Math.max(64, Math.floor(Number(body.height || 720) || 720));
   const frameRate = Math.max(1, Math.floor(Number(body.frameRate || body.fps || 24) || 24));
@@ -330,7 +424,7 @@ function patchWorkflow(workflow: AnyObj, body: AnyObj) {
       : 1;
   }
 
-  return workflow;
+  return {};
 }
 
 function workflowRequiresAudioInput(workflow: AnyObj) {
@@ -488,9 +582,10 @@ export async function POST(req: NextRequest) {
     const stamp = Date.now();
     const filenamePrefix = `otg_production/${productionId}/card_${cardIndex}_${stamp}`;
 
-    patchWorkflow(workflow, {
+    const patchDebug = patchWorkflow(workflow, {
       ...body,
       imageFilename: uploadedImage.filename,
+      imagePathAbs: imageAbs,
       audioFilename: uploadedAudio?.filename || "",
       filenamePrefix,
     });
@@ -567,6 +662,7 @@ export async function POST(req: NextRequest) {
         uploadedAudio,
         requiresAudioInput,
         filenamePrefix,
+        ...patchDebug,
       },
     });
   } catch (error: any) {

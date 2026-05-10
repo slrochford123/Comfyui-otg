@@ -19,6 +19,7 @@ type Props = {
   tab: SpinTabId;
   onTab: (t: SpinTabId) => void;
   isAdmin?: boolean;
+  uiMode?: "clean" | "classic";
 };
 
 type Item = {
@@ -31,7 +32,7 @@ function classNames(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-export default function SpinDialNav({ tab, onTab, isAdmin = false }: Props) {
+export default function SpinDialNav({ tab, onTab, isAdmin = false, uiMode = "classic" }: Props) {
   const items: Item[] = useMemo(
     () => [
       { id: "gethelp", label: "AI Assistance" },
@@ -50,8 +51,13 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false }: Props) {
   );
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-black/75 px-2 py-3 backdrop-blur-md">
-      <div className="mx-auto flex max-w-[1400px] gap-2 overflow-x-auto pb-1">
+    <nav
+      className={classNames(
+        "fixed inset-x-0 bottom-0 z-40 border-t px-2 backdrop-blur-md",
+        uiMode === "clean" ? "border-white/8 bg-[#08090d]/95 py-2" : "border-white/10 bg-black/75 py-3"
+      )}
+    >
+      <div className={classNames("mx-auto flex overflow-x-auto pb-1", uiMode === "clean" ? "max-w-[1480px] gap-1.5" : "max-w-[1400px] gap-2")}>
         {items.map((item) => {
           const active = tab === item.id;
           return (
@@ -62,9 +68,14 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false }: Props) {
               disabled={item.disabled}
               className={classNames(
                 "inline-flex min-w-[120px] items-center justify-center rounded-full border px-4 py-3 text-base font-semibold whitespace-nowrap transition",
-                active
-                  ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))] text-white shadow-[0_0_24px_rgba(90,160,255,0.18)]"
-                  : "border-white/10 bg-white/5 text-white/88 hover:bg-white/10",
+                uiMode === "clean" ? "min-w-[104px] rounded-[10px] px-3 py-2 text-sm" : "",
+                active && uiMode === "clean"
+                  ? "border-cyan-300/45 bg-cyan-400 text-slate-950 shadow-none"
+                  : active
+                    ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))] text-white shadow-[0_0_24px_rgba(90,160,255,0.18)]"
+                    : uiMode === "clean"
+                      ? "border-white/8 bg-white/[0.035] text-white/68 hover:bg-white/[0.07] hover:text-white"
+                      : "border-white/10 bg-white/5 text-white/88 hover:bg-white/10",
                 item.disabled ? "cursor-not-allowed opacity-45" : ""
               )}
             >

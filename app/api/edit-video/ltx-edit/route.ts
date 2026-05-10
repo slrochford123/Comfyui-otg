@@ -279,9 +279,62 @@ function setNodeInput(graph: any, nodeId: string, inputs: Record<string, any>) {
 function compileInstruction(task: string, instruction: string) {
   const raw = instruction.trim();
   if (!raw) return raw;
+  if (task === "obscura_remova") return `remove obstruction: ${raw}`;
   const normalizedTask = String(task || "add").replace(/_/g, " ").trim();
   if (/^(add|remove|replace|convert style|style)\s*[:\-]/i.test(raw)) return raw;
   return `${normalizedTask}: ${raw}`;
+}
+
+function nextNumericNodeId(graph: Record<string, unknown>) {
+  return String(
+    Math.max(
+      0,
+      ...Object.keys(graph)
+        .map((key) => Number(key))
+        .filter((value) => Number.isFinite(value)),
+    ) + 1,
+  );
+}
+
+function findFirstNodeByClass(graph: Record<string, any>, classType: string) {
+  return Object.entries(graph).find(([, node]) => String(node?.class_type || "") === classType) || null;
+}
+
+function insertModelOnlyLora(graph: Record<string, any>, args: { loraName: string; strength: number; beforeModelConsumerClass?: string }) {
+  const consumerEntry = args.beforeModelConsumerClass ? findFirstNodeByClass(graph, args.beforeModelConsumerClass) : null;
+  const consumer = consumerEntry?.[1];
+  const modelInput = consumer?.inputs?.model;
+  if (!Array.isArray(modelInput) || !modelInput[0]) return false;
+
+  const loraId = nextNumericNodeId(graph);
+  graph[loraId] = {
+    class_type: "LoraLoaderModelOnly",
+    inputs: {
+      lora_name: args.loraName,
+      strength_model: args.strength,
+      model: modelInput,
+    },
+  };
+  consumer.inputs.model = [loraId, 0];
+  return true;
+}
+
+function applyOptionalLtxLoras(graph: Record<string, any>, args: { task: string; useVideoReasoning: boolean; obscuraStrength: number }) {
+  if (args.task === "obscura_remova") {
+    insertModelOnlyLora(graph, {
+      loraName: process.env.OTG_OBSCURA_REMOVA_LORA || "LTX23_Obscura_Remova_v1.safetensors",
+      strength: Math.max(0, Math.min(3, Number(args.obscuraStrength) || 2.3)),
+      beforeModelConsumerClass: "BasicScheduler",
+    });
+  }
+
+  if (args.useVideoReasoning) {
+    insertModelOnlyLora(graph, {
+      loraName: process.env.OTG_LTX_VIDEO_REASONING_LORA || "Ltx2.3-Licon-VBVR-I2V-390K-R32.safetensors",
+      strength: Math.max(0, Math.min(2, Number(process.env.OTG_LTX_VIDEO_REASONING_STRENGTH || 1) || 1)),
+      beforeModelConsumerClass: "BasicScheduler",
+    });
+  }
 }
 
 function buildGraph(params: {
@@ -294,6 +347,8 @@ function buildGraph(params: {
   longerSide: number;
   seed: number;
   outputPrefix: string;
+  useVideoReasoning: boolean;
+  obscuraStrength: number;
 }) {
   const workflowPath = path.join(process.cwd(), "comfy_workflows", "internal", "edit-video", "ltx23_edit_anything.json");
   const raw = fs.readFileSync(workflowPath, "utf8");
@@ -310,6 +365,11 @@ function buildGraph(params: {
   setNodeInput(graph, "139", { value: params.longerSide });
   setNodeInput(graph, "77", { noise_seed: seed });
   setNodeInput(graph, "146", { filename_prefix: params.outputPrefix });
+  applyOptionalLtxLoras(graph, {
+    task: params.task,
+    useVideoReasoning: params.useVideoReasoning,
+    obscuraStrength: params.obscuraStrength,
+  });
 
   return graph;
 }
@@ -433,11 +493,13 @@ export async function POST(req: NextRequest) {
     const fps = clamp(Number(firstText(form.get("fps"))) || 24, 8, 60);
     const longerSide = clamp(Number(firstText(form.get("longerSide"))) || 1024, 512, 1536);
     const seed = Number(firstText(form.get("seed")) || -1);
+    const useVideoReasoning = /^(true|1|yes|on)$/i.test(firstText(form.get("useVideoReasoning")));
+    const obscuraStrength = Number(firstText(form.get("obscuraStrength")) || 2.3);
     const outputBase = cleanOutputBase(firstText(form.get("outputTitle")) || "ltx_edit_anything");
     const outputPrefix = `EditVideo/LTX_Edit_${jobId}`;
 
     const comfyVideoName = await uploadLocalFileToComfy({ comfyBaseUrl, filePath: inputVideo.path, fileName: inputVideo.label });
-    const graph = buildGraph({ sourceVideoName: comfyVideoName, task, instruction, negativePrompt, durationSeconds, fps, longerSide, seed, outputPrefix });
+    const graph = buildGraph({ sourceVideoName: comfyVideoName, task, instruction, negativePrompt, durationSeconds, fps, longerSide, seed, outputPrefix, useVideoReasoning, obscuraStrength });
     const promptId = await submitPrompt(comfyBaseUrl, graph);
     const history = await pollHistory(comfyBaseUrl, promptId);
 
@@ -463,6 +525,8 @@ export async function POST(req: NextRequest) {
       durationSeconds,
       fps,
       longerSide,
+      useVideoReasoning,
+      obscuraStrength: task === "obscura_remova" ? obscuraStrength : undefined,
       sizeBytes: stat.size,
     });
   } catch (error: any) {

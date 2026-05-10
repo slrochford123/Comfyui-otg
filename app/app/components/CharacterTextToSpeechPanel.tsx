@@ -25,6 +25,8 @@ type TtsResult = {
   message?: string;
 };
 
+type TtsProvider = "indextts2" | "omnivoice";
+
 const EMOTION_PRESETS = [
   "angry but controlled",
   "grieving and broken",
@@ -65,6 +67,7 @@ export default function CharacterTextToSpeechPanel({
   const [voiceSampleFile, setVoiceSampleFile] = React.useState<File | null>(null);
   const [voiceSampleUrl, setVoiceSampleUrl] = React.useState("");
   const [dialogue, setDialogue] = React.useState("I need you to listen carefully. This is not just a line. This is a performance.");
+  const [provider, setProvider] = React.useState<TtsProvider>("indextts2");
   const [emotion, setEmotion] = React.useState("calm, wise, fatherly");
   const [language, setLanguage] = React.useState("en");
   const [speed, setSpeed] = React.useState(1);
@@ -126,6 +129,7 @@ export default function CharacterTextToSpeechPanel({
 
     const form = new FormData();
     form.append("text", dialogue.trim());
+    form.append("provider", provider);
     form.append("emotion", emotion.trim());
     form.append("language", language.trim() || "en");
     form.append("speed", String(speed));
@@ -143,7 +147,7 @@ export default function CharacterTextToSpeechPanel({
 
     setBusy(true);
     setResult(null);
-    setStatus("Generating expressive character speech with IndexTTS2...");
+    setStatus(`Generating expressive character speech with ${provider === "omnivoice" ? "OmniVoice" : "IndexTTS2"}...`);
     try {
       const response = await fetch("/api/voice/tts", { method: "POST", body: form });
       const data = await response.json().catch(() => ({}));
@@ -152,7 +156,7 @@ export default function CharacterTextToSpeechPanel({
         jobId: String(data.jobId || ""),
         fileName: String(data.fileName || "character_tts.wav"),
         url: String(data.url || ""),
-        engine: String(data.engine || "indextts2"),
+        engine: String(data.engine || provider),
         modelName: String(data.modelName || selectedModel?.name || "Manual voice sample"),
         message: String(data.message || ""),
       });
@@ -176,7 +180,7 @@ export default function CharacterTextToSpeechPanel({
           jobId: result.jobId,
           fileName: result.fileName,
           title: cleanName(title),
-          engine: result.engine || "indextts2",
+          engine: result.engine || provider,
           modelName: result.modelName || selectedModel?.name || "Manual voice sample",
           emotion,
           language,
@@ -212,9 +216,9 @@ export default function CharacterTextToSpeechPanel({
   return (
     <div className="mt-5 space-y-4">
       <div className="rounded-[22px] border border-cyan-400/15 bg-cyan-400/[0.04] p-4">
-        <h3 className="text-sm font-black text-white">IndexTTS2 character Text-to-Speech</h3>
+        <h3 className="text-sm font-black text-white">Character Text-to-Speech</h3>
         <p className="mt-2 text-sm leading-6 text-white/60">
-          Type dialogue, choose a saved character voice or upload a manual sample, then give the model a performance instruction. This mode is for script-driven expressive speech, not voice-to-voice conversion.
+          Type dialogue, choose a saved character voice or upload a manual sample, then pick IndexTTS2 or OmniVoice for script-driven expressive speech.
         </p>
       </div>
 
@@ -291,7 +295,14 @@ export default function CharacterTextToSpeechPanel({
             </button>
           ))}
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-5">
+        <div className="mt-4 grid gap-3 md:grid-cols-6">
+          <div>
+            <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Provider</label>
+            <select value={provider} onChange={(event) => setProvider(event.target.value as TtsProvider)} className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none">
+              <option value="indextts2">IndexTTS2</option>
+              <option value="omnivoice">OmniVoice</option>
+            </select>
+          </div>
           <div>
             <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Language</label>
             <input value={language} onChange={(event) => setLanguage(event.target.value)} className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none" />

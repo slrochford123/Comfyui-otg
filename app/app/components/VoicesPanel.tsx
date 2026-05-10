@@ -1325,7 +1325,15 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
 
   const createPanel = (
     <div className="otg-card" style={{ padding: 12 }}>
-      <div className="otg-cardTitle">Create Voice</div>
+      <div className="otg-row" style={{ justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div>
+          <div className="otg-cardTitle">Create Voice</div>
+          <div style={{ fontSize: 12, opacity: 0.78, marginTop: 4, maxWidth: 760 }}>
+            Design a new custom voice from text instructions. Name the voice, describe its age, tone, accent, pace, and emotional baseline, then generate a reference sample that saves into the voice library.
+          </div>
+        </div>
+        <div className="otg-pill" style={{ pointerEvents: "none" }}>Custom Voice Designer</div>
+      </div>
 
       <div className="otg-cardBody">
         <div className="otg-label">Create from</div>
@@ -1417,15 +1425,81 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
           </>
         ) : null}
 
-        <div className="otg-label" style={{ marginTop: 10 }}>Voice description (character details)</div>
+        {createSourceMode === "new" ? (
+          <div className="otg-card" style={{ padding: 10, marginTop: 12, background: "rgba(255,255,255,0.03)" }}>
+            <div className="otg-label" style={{ marginTop: 0 }}>Voice recipe starters</div>
+            <div className="otg-row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+              {[
+                {
+                  label: "Warm Narrator",
+                  tags: "narrator, warm, calm",
+                  desc: "A warm adult narrator with a calm, reassuring tone. Smooth pacing, clear diction, gentle emotional weight, natural pauses, and a polished documentary voice.",
+                  line: "Every story has a moment where the world becomes quiet enough for the truth to be heard.",
+                },
+                {
+                  label: "Hero Lead",
+                  tags: "hero, confident, cinematic",
+                  desc: "A confident young adult hero voice. Clear, steady, emotionally grounded, brave under pressure, medium pace, cinematic delivery, no exaggerated announcer tone.",
+                  line: "I know the odds are against us, but we move forward anyway.",
+                },
+                {
+                  label: "Villain",
+                  tags: "villain, controlled, intense",
+                  desc: "A controlled villain voice with quiet intensity. Low energy but threatening, precise pronunciation, slow pacing, restrained anger, and a cold confident tone.",
+                  line: "You still think this is a choice. That is what makes this moment so useful.",
+                },
+                {
+                  label: "Comedy",
+                  tags: "comedy, bright, expressive",
+                  desc: "A bright comedic sidekick voice. Fast but understandable pacing, playful rhythm, expressive reactions, light sarcasm, and a friendly animated tone.",
+                  line: "I had a plan. Then the plan saw what was happening and left without me.",
+                },
+                {
+                  label: "Elder Mentor",
+                  tags: "mentor, elder, wise",
+                  desc: "An older wise mentor voice. Slow thoughtful pacing, warm texture, calm authority, soft breath, patient pauses, and emotional depth without sounding weak.",
+                  line: "Strength is not proven by what you can destroy. It is proven by what you can carry.",
+                },
+                {
+                  label: "Studio Host",
+                  tags: "host, clear, upbeat",
+                  desc: "A clear studio host voice. Friendly, professional, lightly upbeat, clean articulation, steady pace, modern podcast tone, and confident transitions.",
+                  line: "Welcome back. Today we are going to break this down step by step.",
+                },
+              ].map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  className="otg-btnGhost"
+                  onClick={() => {
+                    setCreateTags(preset.tags);
+                    setCreateDesc(preset.desc);
+                    setCreateLine(preset.line);
+                    if (!createName.trim()) setCreateName(preset.label);
+                  }}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.72, marginTop: 8 }}>
+              Pick a starter, then edit the details below. The description is the main control for the generated voice identity.
+            </div>
+          </div>
+        ) : null}
+
+        <div className="otg-label" style={{ marginTop: 10 }}>Voice description / identity</div>
         <textarea
           className="otg-input"
           rows={5}
           value={createDesc}
           onChange={(e) => setCreateDesc(e.target.value)}
-          placeholder="Describe tone, accent, age, energy, pacing, and any constraints."
+          placeholder="Example: A warm adult narrator with calm pacing, clear diction, slight Southern accent, gentle authority, natural pauses, and emotional sincerity."
           style={{ width: "100%", resize: "vertical" }}
         />
+        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
+          Include age range, gender presentation if needed, accent, pitch, pace, emotion, and what the voice should avoid.
+        </div>
 
         <div className="otg-label" style={{ marginTop: 10 }}>
           {createSourceMode === "library" ? "What should the person say?" : "What should the voice say (creation sample)"}
@@ -1441,6 +1515,19 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
           }}
           style={{ width: "100%", resize: "vertical" }}
         />
+        {createSourceMode === "new" ? (
+          <div className="otg-row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+            {[
+              "This is the first custom voice sample for my project.",
+              "I need you to listen carefully, because this scene changes everything.",
+              "Welcome back. Let us build something that feels real.",
+            ].map((line) => (
+              <button key={line} type="button" className="otg-btnGhost" onClick={() => setCreateLine(line.slice(0, limits.ttsMaxTextLen))}>
+                Use Sample Line
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
           {(createSourceMode === "library" ? createSpeechText : createLine).length}/{limits.ttsMaxTextLen}
         </div>
@@ -1506,6 +1593,9 @@ export default function VoicesPanel({}: { isAdmin?: boolean }) {
               Download sample
             </a>
           ) : null}
+        </div>
+        <div style={{ fontSize: 12, opacity: 0.72, marginTop: 8 }}>
+          New voices are saved to the Voice Library after generation. Reuse a saved created voice from the Voice Library option to generate more lines with the same identity.
         </div>
 
         {createErr ? <div className="otg-errorText" style={{ marginTop: 10 }}>{createErr}</div> : null}

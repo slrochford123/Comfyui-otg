@@ -59,6 +59,9 @@ export async function POST(req: NextRequest) {
     const ext = path.extname(fileName).toLowerCase() || ".mp4";
     const safeTitle = safeGalleryName(titleRaw || "ltx_edit_anything") || "ltx_edit_anything";
     const targetPath = uniqueTargetPath(targetSource.dir, `${safeTitle}${ext}`);
+    const task = String(body?.task || "add");
+    const useVideoReasoning = Boolean(body?.useVideoReasoning);
+    const isObscura = task === "obscura_remova";
 
     await fsp.copyFile(sourcePath, targetPath);
     warmGalleryThumb(targetPath, 768);
@@ -70,21 +73,30 @@ export async function POST(req: NextRequest) {
       {
         originalName: savedName,
         renamedName: savedName,
-        sourceType: "edit-video-ltx-edit-anything",
-        requestKind: "edit-video-ltx-edit-anything",
-        workflowId: "internal/edit-video/ltx23_edit_anything",
-        workflowTitle: "Edit Video - LTX 2.3 Edit Anything",
+        sourceType: isObscura ? "edit-video-obscura-remova" : "edit-video-ltx-edit-anything",
+        requestKind: isObscura ? "edit-video-obscura-remova" : "edit-video-ltx-edit-anything",
+        workflowId: isObscura ? "internal/edit-video/ltx23_edit_anything+obscura_remova" : "internal/edit-video/ltx23_edit_anything",
+        workflowTitle: isObscura ? "Edit Video - Obscura Remova" : "Edit Video - LTX 2.3 Edit Anything",
+        editVideo: {
+          version: 1,
+          operation: isObscura ? "obscura-remova" : "ltx-edit-anything",
+          task,
+          useVideoReasoning,
+          obscuraStrength: isObscura ? body?.obscuraStrength ?? null : null,
+        },
         submitPayload: {
-          requestKind: "edit-video-ltx-edit-anything",
+          requestKind: isObscura ? "edit-video-obscura-remova" : "edit-video-ltx-edit-anything",
           sourceJobId: jobId,
           title: titleRaw,
           sourceVideoName: body?.sourceVideoName || "Selected video",
-          task: body?.task || "add",
+          task,
           instruction: body?.instruction || "",
           negativePrompt: body?.negativePrompt || "",
           durationSeconds: body?.durationSeconds || null,
           fps: body?.fps || null,
           longerSide: body?.longerSide || null,
+          useVideoReasoning,
+          obscuraStrength: isObscura ? body?.obscuraStrength ?? null : null,
         },
         ownerKey: targetSource.ownerKey,
         username: targetSource.username,

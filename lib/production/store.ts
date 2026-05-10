@@ -35,6 +35,15 @@ export type PersistedProductionScene = {
   characterNames?: string[];
 };
 
+export type PersistedProductionTimelineScene = {
+  id: string;
+  title?: string;
+  prompt: string;
+  durationSec: number;
+  characterNames?: string[];
+  hardCut?: boolean;
+};
+
 export type PersistedProductionState = {
   productionId: string;
   name: string;
@@ -52,6 +61,11 @@ export type PersistedProductionState = {
   defaultIdentity: string;
   positivePrompt: string;
   negativePrompt: string;
+  timelineGlobalPrompt?: string;
+  timelineScenes?: PersistedProductionTimelineScene[];
+  timelineFps?: number;
+  timelineUseVideoReasoning?: boolean;
+  timelineUseCrispEnhance?: boolean;
   usePreviousLength: boolean;
   usePreviousIdentityLock: boolean;
   usePreviousStyleLock: boolean;
@@ -131,6 +145,23 @@ function normalizeScene(scene: any): PersistedProductionScene | null {
   };
 }
 
+function normalizeTimelineScene(scene: any, index: number): PersistedProductionTimelineScene | null {
+  const prompt = String(scene?.prompt || "").trim();
+  if (!prompt) return null;
+  const durationSec = Math.max(1, Math.min(30, Number(scene?.durationSec || scene?.seconds || scene?.duration || 5) || 5));
+  const characterNames = Array.isArray(scene?.characterNames)
+    ? scene.characterNames.map((name: any) => String(name || "").trim()).filter(Boolean)
+    : [];
+  return {
+    id: String(scene?.id || `scene-${index + 1}`),
+    title: scene?.title ? String(scene.title) : undefined,
+    prompt,
+    durationSec,
+    characterNames,
+    hardCut: scene?.hardCut !== false,
+  };
+}
+
 function normalizeState(input: PersistedProductionState): PersistedProductionState {
   const safeCount =
     input.characterCount == null
@@ -161,6 +192,12 @@ function normalizeState(input: PersistedProductionState): PersistedProductionSta
         .sort((a, b) => a.card - b.card)
     : [];
 
+  const timelineScenes = Array.isArray(input.timelineScenes)
+    ? input.timelineScenes
+        .map((scene, index) => normalizeTimelineScene(scene, index))
+        .filter((scene): scene is PersistedProductionTimelineScene => !!scene)
+    : [];
+
   return {
     productionId: normalizeId(input.name || "production", input.productionId),
     name: (input.name || "Untitled Production").toString().trim() || "Untitled Production",
@@ -179,6 +216,11 @@ function normalizeState(input: PersistedProductionState): PersistedProductionSta
     defaultIdentity: (input.defaultIdentity || "").toString(),
     positivePrompt: (input.positivePrompt || "").toString(),
     negativePrompt: (input.negativePrompt || "").toString(),
+    timelineGlobalPrompt: input.timelineGlobalPrompt ? String(input.timelineGlobalPrompt) : undefined,
+    timelineScenes,
+    timelineFps: Math.max(1, Math.min(60, Number(input.timelineFps || 24) || 24)),
+    timelineUseVideoReasoning: !!input.timelineUseVideoReasoning,
+    timelineUseCrispEnhance: !!input.timelineUseCrispEnhance,
     usePreviousLength: !!input.usePreviousLength,
     usePreviousIdentityLock: !!input.usePreviousIdentityLock,
     usePreviousStyleLock: !!input.usePreviousStyleLock,

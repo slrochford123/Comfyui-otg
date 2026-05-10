@@ -37,7 +37,7 @@ type SelectedVideo = {
   sizeBytes?: number;
 };
 
-type EditTask = "add" | "remove" | "replace" | "convert_style";
+type EditTask = "add" | "remove" | "replace" | "convert_style" | "obscura_remova";
 
 type LtxEditResult = {
   ok: boolean;
@@ -63,6 +63,7 @@ const taskLabels: Record<EditTask, string> = {
   remove: "Remove object / detail",
   replace: "Replace subject / object",
   convert_style: "Convert style",
+  obscura_remova: "Remove foreground obstruction",
 };
 
 const taskExamples: Record<EditTask, string> = {
@@ -70,6 +71,7 @@ const taskExamples: Record<EditTask, string> = {
   remove: "Remove the object on the table while preserving the camera movement and scene lighting.",
   replace: "Replace the red car with a black sports car while keeping the same road motion and camera angle.",
   convert_style: "Convert the video into a clean cinematic anime style while preserving the original movement and composition.",
+  obscura_remova: "Remove the foreground obstruction and reveal the clean scene behind it with stable camera motion.",
 };
 
 function cleanTitle(value: string) {
@@ -122,6 +124,8 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
   const [fps, setFps] = React.useState(24);
   const [longerSide, setLongerSide] = React.useState(1024);
   const [seed, setSeed] = React.useState(-1);
+  const [useVideoReasoning, setUseVideoReasoning] = React.useState(false);
+  const [obscuraStrength, setObscuraStrength] = React.useState(2.3);
 
   const [busy, setBusy] = React.useState(false);
   const [saveBusy, setSaveBusy] = React.useState(false);
@@ -238,6 +242,8 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
       form.set("fps", String(rate));
       form.set("longerSide", String(side));
       form.set("seed", String(seed));
+      form.set("useVideoReasoning", useVideoReasoning ? "true" : "false");
+      form.set("obscuraStrength", String(obscuraStrength));
 
       const response = await fetch("/api/edit-video/ltx-edit", {
         method: "POST",
@@ -275,6 +281,8 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
           durationSeconds,
           fps,
           longerSide,
+          useVideoReasoning,
+          obscuraStrength: task === "obscura_remova" ? obscuraStrength : undefined,
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -372,6 +380,38 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
                 className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none focus:border-cyan-300/40"
               />
             </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <label className="flex min-h-[54px] items-center justify-between gap-3 rounded-[18px] border border-white/10 bg-black/25 px-4 py-3 text-sm text-white/75">
+              <span>Use Video Reasoning LoRA</span>
+              <input
+                type="checkbox"
+                checked={useVideoReasoning}
+                onChange={(event) => setUseVideoReasoning(event.target.checked)}
+              />
+            </label>
+            {task === "obscura_remova" ? (
+              <div className="rounded-[18px] border border-white/10 bg-black/25 px-4 py-3">
+                <div className="flex items-center justify-between text-sm text-white/75">
+                  <span>Obscura strength</span>
+                  <span>{obscuraStrength.toFixed(1)}</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.5}
+                  max={3}
+                  step={0.1}
+                  value={obscuraStrength}
+                  onChange={(event) => setObscuraStrength(Number(event.target.value) || 2.3)}
+                  className="mt-3 w-full"
+                />
+              </div>
+            ) : (
+              <div className="rounded-[18px] border border-white/10 bg-black/25 px-4 py-3 text-sm leading-5 text-white/55">
+                Video Reasoning is useful for physics, object motion, and temporal stability.
+              </div>
+            )}
           </div>
 
           <label className="mt-4 block text-xs font-black uppercase tracking-[0.18em] text-white/45">Instruction</label>

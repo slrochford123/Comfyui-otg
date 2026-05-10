@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 export type ServiceKind = 'http' | 'command';
-export type ServiceId = 'comfy-image' | 'comfy-video' | 'hunyuan' | 'indextts2' | 'ollama' | 'bg-remove' | 'ffmpeg';
+export type ServiceId = 'comfy-image' | 'comfy-video' | 'hunyuan' | 'indextts2' | 'omnivoice' | 'ollama' | 'bg-remove' | 'ffmpeg';
 
 export type ServiceConfig = {
   id: ServiceId;
@@ -58,6 +58,14 @@ export function getServiceRegistry(env: NodeJS.ProcessEnv = process.env): Record
       env: ['INDEXTTS2_BASE_URL', 'INDEXTTS2_URL'],
       baseUrl: trimUrl(env.INDEXTTS2_BASE_URL || env.INDEXTTS2_URL, 'http://127.0.0.1:7860'),
       healthPath: env.INDEXTTS2_HEALTH_PATH || '/health',
+    },
+    omnivoice: {
+      id: 'omnivoice',
+      label: 'OmniVoice',
+      kind: 'http',
+      env: ['OMNIVOICE_BASE_URL', 'OMNIVOICE_URL', 'OMNIVOICE_TTS_URL'],
+      baseUrl: trimUrl(env.OMNIVOICE_BASE_URL || env.OMNIVOICE_URL || env.OMNIVOICE_TTS_URL, 'http://127.0.0.1:7864'),
+      healthPath: env.OMNIVOICE_HEALTH_PATH || '/health',
     },
     ollama: {
       id: 'ollama',

@@ -38,7 +38,7 @@ type VideoDubResult = {
   message?: string;
 };
 
-type VideoTtsEngine = "xtts" | "qwen3";
+type VideoTtsEngine = "xtts" | "qwen3" | "omnivoice";
 
 function cleanName(value: string) {
   return (
@@ -360,7 +360,7 @@ export default function EditVideoVoiceDubbingPanel({
     form.append("title", cleanName(videoTitle));
     setVideoBusy(true);
     setVideoResult(null);
-    const engineLabel = videoTtsEngine === "qwen3" ? "Qwen3-TTS" : "XTTS";
+    const engineLabel = videoTtsEngine === "omnivoice" ? "OmniVoice" : videoTtsEngine === "qwen3" ? "Qwen3-TTS" : "XTTS";
     setVideoStatus(
       videoTranscript.trim()
         ? `Generating ${engineLabel} speech and replacing video audio...`
@@ -685,14 +685,14 @@ export default function EditVideoVoiceDubbingPanel({
         <div className="mt-5 space-y-4">
           <div className="rounded-[22px] border border-cyan-400/15 bg-cyan-400/[0.04] p-4">
             <h3 className="text-sm font-black text-white">
-              XTTS / Qwen3-TTS + Whisper video dubbing
+              XTTS / Qwen3-TTS / OmniVoice + Whisper video dubbing
             </h3>
             <p className="mt-2 text-sm leading-6 text-white/60">
               V1 is simple whole-clip dubbing: extract video audio, use
               transcript text or local Whisper, generate cloned speech with
               the selected local TTS engine, then replace or lightly overlay
               the original audio with FFmpeg. Qwen3-TTS requires a configured
-              local command or service. No lip-sync or sentence timing yet.
+              local command or service. OmniVoice requires its own install command/service. No lip-sync or sentence timing yet.
             </p>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
@@ -784,6 +784,7 @@ export default function EditVideoVoiceDubbingPanel({
                 >
                   <option value="xtts">XTTS v2</option>
                   <option value="qwen3">Qwen3-TTS</option>
+                  <option value="omnivoice">OmniVoice</option>
                 </select>
               </div>
               <div>
@@ -828,6 +829,8 @@ export default function EditVideoVoiceDubbingPanel({
             >
               {videoBusy
                 ? "Generating Dub..."
+                : videoTtsEngine === "omnivoice"
+                  ? "Generate OmniVoice Video Dub"
                 : videoTtsEngine === "qwen3"
                   ? "Generate Qwen3 Video Dub"
                   : "Generate XTTS Video Dub"}

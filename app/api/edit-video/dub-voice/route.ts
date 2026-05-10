@@ -21,7 +21,7 @@ const VIDEO_EXT_RE = /\.(mp4|webm|mov|mkv)$/i;
 const IGNORE_RE = /[\\/](venv|\.venv|env|node_modules|site-packages|test_data|tests|__pycache__|\.git|scipy)[\\/]/i;
 
 type DubMode = "replace" | "overlay";
-type TtsEngine = "xtts" | "qwen3";
+type TtsEngine = "xtts" | "qwen3" | "omnivoice";
 
 function jobRoot(ownerKey: string) {
   return path.join(OTG_DATA_ROOT, "edit_video_dub_voice_jobs", safeSegment(ownerKey || "local"));
@@ -38,10 +38,14 @@ function cleanTitle(value: string) {
 }
 
 function normalizeTtsEngine(value: string): TtsEngine {
-  return String(value || "xtts").toLowerCase() === "qwen3" ? "qwen3" : "xtts";
+  const raw = String(value || "xtts").toLowerCase();
+  if (raw === "qwen3") return "qwen3";
+  if (raw === "omnivoice" || raw === "omni") return "omnivoice";
+  return "xtts";
 }
 
 function ttsEngineLabel(engine: TtsEngine) {
+  if (engine === "omnivoice") return "OmniVoice";
   return engine === "qwen3" ? "Qwen3-TTS" : "XTTS";
 }
 
@@ -236,7 +240,58 @@ async function synthesizeQwen3(text: string, speakerWav: string, outWav: string)
   if (!fs.existsSync(outWav) || fs.statSync(outWav).size <= 0) throw new Error("Qwen3-TTS finished without writing dubbed speech output.");
 }
 
+async function synthesizeOmniVoice(text: string, speakerWav: string, outWav: string) {
+  const command = process.env.OMNIVOICE_VIDEO_DUB_COMMAND || process.env.OMNIVOICE_TTS_COMMAND || "";
+  const values = {
+    text,
+    prompt: text,
+    speaker: speakerWav,
+    voice: speakerWav,
+    reference: speakerWav,
+    output: outWav,
+    output_path: outWav,
+    language: process.env.OMNIVOICE_LANGUAGE || process.env.XTTS_LANGUAGE || "auto",
+  };
+
+  if (command.trim()) {
+    await runCommand(command, values, process.env.OMNIVOICE_ROOT || path.join(VOICES_ROOT, "OmniVoice"));
+  } else {
+    const serviceUrl = String(process.env.OMNIVOICE_TTS_URL || process.env.OMNIVOICE_URL || "").replace(/\/+$/, "");
+    if (!serviceUrl) {
+      throw new Error("OmniVoice is not configured. Set OMNIVOICE_VIDEO_DUB_COMMAND, OMNIVOICE_TTS_COMMAND, or OMNIVOICE_TTS_URL after installing OmniVoice.");
+    }
+    let response: Response;
+    try {
+      response = await fetch(serviceUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text,
+          prompt: text,
+          reference_audio: speakerWav,
+          voice: speakerWav,
+          output_path: outWav,
+          language: values.language,
+        }),
+      });
+    } catch (error: any) {
+      throw new Error(`OmniVoice service is not reachable at ${serviceUrl}. ${error?.message || ""}`.trim());
+    }
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(`OmniVoice failed with HTTP ${response.status}. ${detail}`.slice(0, 2000));
+    }
+    const contentType = response.headers.get("content-type") || "";
+    if ((contentType.includes("audio/") || contentType.includes("octet-stream")) && !fs.existsSync(outWav)) {
+      await fsp.writeFile(outWav, Buffer.from(await response.arrayBuffer()));
+    }
+  }
+
+  if (!fs.existsSync(outWav) || fs.statSync(outWav).size <= 0) throw new Error("OmniVoice finished without writing dubbed speech output.");
+}
+
 async function synthesizeSpeech(engine: TtsEngine, text: string, speakerWav: string, outWav: string) {
+  if (engine === "omnivoice") return synthesizeOmniVoice(text, speakerWav, outWav);
   if (engine === "qwen3") return synthesizeQwen3(text, speakerWav, outWav);
   return synthesizeXtts(text, speakerWav, outWav);
 }

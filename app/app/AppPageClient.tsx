@@ -80,6 +80,7 @@ type GalleryItem = {
 type GalleryViewMode = "default" | "grid" | "list";
 type AppThemeId = "midnight" | "violet" | "ocean" | "ember" | "forest";
 type AppFontScale = "small" | "normal" | "large" | "xl";
+type AppUiMode = "clean" | "classic";
 
 type AssistanceTab = "describe" | "enhance" | "scene" | "ask";
 type MicTarget = "generate" | "enhance" | "scene" | "ask";
@@ -208,6 +209,7 @@ type ExtendModalState = {
 const APP_STATE_KEY = "otg:test:page-state:v1";
 const APP_THEME_KEY = "otg:test:theme:v1";
 const APP_FONT_SCALE_KEY = "otg:test:font-scale:v1";
+const APP_UI_MODE_KEY = "otg:test:ui-mode:v1";
 const APP_USER_CACHE_KEY = "otg:test:last-user:v1";
 
 type AppThemeOption = {
@@ -274,6 +276,25 @@ const APP_FONT_SCALE_OPTIONS: { id: AppFontScale; label: string; rootSize: strin
   { id: "large", label: "Large", rootSize: "18px", description: "Larger text and controls." },
   { id: "xl", label: "Extra large", rootSize: "20px", description: "Maximum readable UI size." },
 ];
+
+const APP_UI_MODE_OPTIONS: { id: AppUiMode; label: string; description: string }[] = [
+  { id: "clean", label: "Clean", description: "Minimal shell, tighter panels, calmer navigation." },
+  { id: "classic", label: "Classic", description: "Original neon shell and full visual treatment." },
+];
+
+const APP_TAB_LABELS: Record<SpinTabId, string> = {
+  gethelp: "AI Assistance",
+  generate: "Generate",
+  angles: "Angles",
+  storyboard: "Production",
+  characters: "Characters",
+  gallery: "Gallery",
+  voices: "Voices",
+  favorites: "Favorites",
+  editvideo: "Edit Video",
+  settings: "Settings",
+  support: "Support",
+};
 
 const WORKFLOW_FALLBACKS: WorkflowItem[] = [
   { id: "create-picture", label: "Create a Picture", runtime: "Estimated runtime: about 20 to 60 seconds." },
@@ -1142,6 +1163,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [settingsLocalMessage, setSettingsLocalMessage] = useState("");
   const [appThemeId, setAppThemeId] = useState<AppThemeId>("midnight");
   const [appFontScale, setAppFontScale] = useState<AppFontScale>("normal");
+  const [appUiMode, setAppUiMode] = useState<AppUiMode>("clean");
   const [settingsAppearanceMessage, setSettingsAppearanceMessage] = useState("");
   const [passwordCurrent, setPasswordCurrent] = useState("");
   const [passwordNew, setPasswordNew] = useState("");
@@ -1948,6 +1970,11 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       if (savedFontScale && APP_FONT_SCALE_OPTIONS.some((option) => option.id === savedFontScale)) {
         setAppFontScale(savedFontScale);
       }
+
+      const savedUiMode = window.localStorage.getItem(APP_UI_MODE_KEY) as AppUiMode | null;
+      if (savedUiMode === "clean" || savedUiMode === "classic") {
+        setAppUiMode(savedUiMode);
+      }
     } catch {
       // ignore
     }
@@ -2022,14 +2049,16 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     root.style.setProperty("--otg-accent-soft", selectedAppTheme.accentSoft);
     root.style.setProperty("--otg-panel", selectedAppTheme.panel);
     root.style.fontSize = selectedFontScale.rootSize;
+    root.dataset.otgUiMode = appUiMode;
 
     try {
       window.localStorage.setItem(APP_THEME_KEY, appThemeId);
       window.localStorage.setItem(APP_FONT_SCALE_KEY, appFontScale);
+      window.localStorage.setItem(APP_UI_MODE_KEY, appUiMode);
     } catch {
       // ignore
     }
-  }, [appThemeId, appFontScale, selectedAppTheme.accent, selectedAppTheme.accentSoft, selectedAppTheme.panel, selectedFontScale.rootSize]);
+  }, [appThemeId, appFontScale, appUiMode, selectedAppTheme.accent, selectedAppTheme.accentSoft, selectedAppTheme.panel, selectedFontScale.rootSize]);
 
   useEffect(() => {
     return () => {
@@ -4198,6 +4227,12 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     setSettingsAppearanceMessage(`Font size changed to ${label}.`);
   }
 
+  function handleUiModeChange(nextUiMode: AppUiMode) {
+    setAppUiMode(nextUiMode);
+    const label = APP_UI_MODE_OPTIONS.find((option) => option.id === nextUiMode)?.label || "selected";
+    setSettingsAppearanceMessage(`${label} UI enabled. You can switch back here any time.`);
+  }
+
   async function handleChangePassword() {
     if (passwordBusy) return;
 
@@ -4980,27 +5015,69 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     }
   }
 
+  const activeTabLabel = APP_TAB_LABELS[tab] || "OTG";
+  const appShellBackground = appUiMode === "clean" ? "#08090d" : selectedAppTheme.background;
+
   return (
-    <main className="min-h-screen text-white transition-[background] duration-300" style={{ background: selectedAppTheme.background }} data-otg-theme={appThemeId} data-otg-font-scale={appFontScale}>
-      <div className="pointer-events-none fixed inset-0 z-0">
+    <main className="min-h-screen text-white transition-[background] duration-300" style={{ background: appShellBackground }} data-otg-theme={appThemeId} data-otg-font-scale={appFontScale} data-otg-ui-mode={appUiMode}>
+      <div className={cn("pointer-events-none fixed inset-0 z-0", appUiMode === "clean" ? "hidden" : "")}>
         <div className="absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_center,rgba(80,120,255,0.18),rgba(120,60,255,0.10),transparent_62%)]" />
       </div>
 
+      {appUiMode === "clean" ? (
+        <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-[#08090d]/95 px-3 py-3 backdrop-blur-md md:px-5">
+          <div className="mx-auto flex max-w-[1480px] flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11px] font-black uppercase tracking-[0.18em] text-white/42">SLR Studios OTG</div>
+              <div className="mt-0.5 flex items-center gap-3">
+                <h1 className="truncate text-xl font-black tracking-tight text-white">{activeTabLabel}</h1>
+                <span className="hidden rounded-full border border-white/10 px-2.5 py-1 text-xs font-semibold text-white/52 sm:inline-flex">
+                  {connected ? "Comfy connected" : "Comfy offline"}
+                </span>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => handleUiModeChange(appUiMode === "clean" ? "classic" : "clean")}
+                className="rounded-[10px] border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-black text-white/72 transition hover:bg-white/[0.08]"
+              >
+                {appUiMode === "clean" ? "Classic UI" : "Clean UI"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab("settings")}
+                className="rounded-[10px] border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-black text-white/72 transition hover:bg-white/[0.08]"
+              >
+                Settings
+              </button>
+              <div className="max-w-[160px] truncate rounded-[10px] border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-white/62">
+                {username || "Guest"}
+              </div>
+            </div>
+          </div>
+        </header>
+      ) : null}
+
+      {appUiMode === "classic" ? (
       <div className="pointer-events-none fixed left-3 top-4 z-30 md:left-5 md:top-5">
         <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-2 text-sm font-semibold text-white shadow-[0_0_20px_rgba(0,0,0,0.35)]">
           <span className="inline-block h-2.5 w-2.5 rounded-full bg-cyan-400" />
           <span className="max-w-[180px] truncate">{username}</span>
         </div>
       </div>
+      ) : null}
 
+      {appUiMode === "classic" ? (
       <div className="pointer-events-none fixed right-3 top-4 z-30 md:right-5 md:top-5">
         <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-2 text-sm font-semibold text-white shadow-[0_0_20px_rgba(0,0,0,0.35)]">
           <span className={cn("inline-block h-2.5 w-2.5 rounded-full", connected ? "bg-green-400" : "bg-red-400")} />
           <span>{connected ? "Connected" : "Disconnected"}</span>
         </div>
       </div>
+      ) : null}
 
-      <div className="relative z-10 mx-auto max-w-[1400px] px-3 pb-28 pt-24 md:px-5 md:pt-28">
+      <div className={cn("relative z-10 mx-auto px-3 pb-28 pt-24 md:px-5 md:pt-28", appUiMode === "clean" ? "max-w-[1480px]" : "max-w-[1400px]")}>
         {statusMessage ? (
           <div className="mb-3 rounded-[20px] border border-red-600/40 bg-red-950/60 px-4 py-3 text-sm font-semibold text-red-100">
             {statusMessage}
@@ -6672,6 +6749,27 @@ ${sceneReferenceCard || ""}`.toLowerCase();
             <div className="grid gap-4 lg:grid-cols-2">
               <Card title="Appearance">
                 <div className="space-y-5">
+                  <div className="rounded-[22px] border border-white/10 bg-black/35 p-4">
+                    <p className="text-sm font-semibold text-white">Interface mode</p>
+                    <p className="mt-1 text-sm leading-6 text-white/60">Use Clean for a simplified app shell, or switch back to Classic if you prefer the original layout.</p>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      {APP_UI_MODE_OPTIONS.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => handleUiModeChange(option.id)}
+                          className={cn(
+                            "rounded-[18px] border px-4 py-3 text-left transition",
+                            appUiMode === option.id ? "border-cyan-300/45 bg-cyan-500/12 text-white" : "border-white/10 bg-black/30 text-white/72 hover:bg-white/[0.06]"
+                          )}
+                        >
+                          <span className="block font-semibold">{option.label}</span>
+                          <span className="mt-1 block text-xs text-white/50">{option.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <div>
                     <div className="flex items-center justify-between gap-3">
                       <div>
@@ -6967,7 +7065,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         onSubmitExtend={() => void submitGalleryExtend()}
       />
 
-      <SpinDialNav tab={tab} onTab={setTab} isAdmin={isAdmin} />
+      <SpinDialNav tab={tab} onTab={setTab} isAdmin={isAdmin} uiMode={appUiMode} />
     </main>
   );
 }
