@@ -3,10 +3,10 @@
 const config: CapacitorConfig = {
   appId: 'com.slr.otg',
   appName: 'SLR OTG',
-  webDir: '.next',
+  webDir: 'public',
   server: {
-    url: 'http://100.76.179.83:3001',
-    cleartext: true
+    url: 'https://comf-otg.comfyui-otg.win',
+    cleartext: false
   }
 };
 
