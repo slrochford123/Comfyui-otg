@@ -322,9 +322,53 @@ function normalizeTimelineCharacters(raw: any[]) {
       id: String(character?.id || "").trim(),
       name: String(character?.name || "").trim(),
       description: String(character?.description || character?.descriptor || "").trim(),
+      imagePath: String(character?.imagePath || character?.serverPath || character?.previewImagePath || "").trim(),
     }))
     .filter((character) => character.id && character.name)
     .slice(0, 40);
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function nextWorkflowNodeId(workflow: AnyObj, start = 9000) {
+  const used = new Set(Object.keys(workflow || {}));
+  let id = start;
+  while (used.has(String(id))) id += 1;
+  return String(id);
+}
+
+function addCharacterReferenceImageNodes(workflow: AnyObj, imagePath: string) {
+  const loadTemplate = workflow?.["608"];
+  const resizeTemplate = workflow?.["5751"];
+  const preprocessTemplate = workflow?.["586"];
+  if (!loadTemplate || !resizeTemplate || !preprocessTemplate) return null;
+
+  const loadId = nextWorkflowNodeId(workflow);
+  const resizeId = nextWorkflowNodeId({ ...workflow, [loadId]: true });
+  const preprocessId = nextWorkflowNodeId({ ...workflow, [loadId]: true, [resizeId]: true });
+
+  const loadNode = cloneJson(loadTemplate);
+  const resizeNode = cloneJson(resizeTemplate);
+  const preprocessNode = cloneJson(preprocessTemplate);
+
+  loadNode.inputs = { ...(loadNode.inputs || {}), image: imagePath };
+  resizeNode.inputs = {
+    ...(resizeNode.inputs || {}),
+    input: [loadId, 0],
+    "resize_type.longer_size": ["612", 0],
+  };
+  preprocessNode.inputs = {
+    ...(preprocessNode.inputs || {}),
+    image: [resizeId, 0],
+  };
+
+  workflow[loadId] = loadNode;
+  workflow[resizeId] = resizeNode;
+  workflow[preprocessId] = preprocessNode;
+
+  return { loadId, resizeId, preprocessId };
 }
 
 function patchPromptRelayTimelineWorkflow(workflow: AnyObj, body: AnyObj) {
@@ -343,9 +387,14 @@ function patchPromptRelayTimelineWorkflow(workflow: AnyObj, body: AnyObj) {
   const globalPrompt = String(body.timelineGlobalPrompt || body.globalPrompt || body.positivePrompt || "").trim();
   const timelineCharacters = normalizeTimelineCharacters(body.timelineCharacters);
   const characterById = new Map(timelineCharacters.map((character) => [character.id, character]));
+  const sceneStartFrames: number[] = [];
+  segmentLengths.reduce((offset, length) => {
+    sceneStartFrames.push(offset);
+    return offset + length;
+  }, 0);
   const colors = ["#4f8edc", "#e07b3a", "#5cb85c", "#b46cff", "#f0b84f", "#5ec9b8", "#df6f9f", "#8a9cff"];
   const localPrompts = scenes.map((scene, index) => {
-    const selectedCharacters = scene.characterIds.map((id) => characterById.get(id)).filter((character): character is { id: string; name: string; description: string } => !!character);
+    const selectedCharacters = scene.characterIds.map((id) => characterById.get(id)).filter((character): character is { id: string; name: string; description: string; imagePath: string } => !!character);
     const characterNames = selectedCharacters.length ? selectedCharacters.map((character) => character.name) : scene.characterNames;
     const characterLine = characterNames.length ? `Characters in scene: ${characterNames.join(", ")}.` : "";
     const referenceLine = selectedCharacters.length
@@ -382,12 +431,51 @@ function patchPromptRelayTimelineWorkflow(workflow: AnyObj, body: AnyObj) {
   setInputIfNodeExists(workflow, "5831", "image", String(body.imagePathAbs || body.imagePath || ""));
 
   const imageInject = workflow?.["582"];
+  const characterImageRefs: Array<{ characterId: string; name: string; imagePath: string; frameIndex: number; nodeId: string }> = [];
   if (imageInject?.inputs) {
-    imageInject.inputs.num_images = "1";
+    const firstCharacterFrame = new Map<string, number>();
+    scenes.forEach((scene, sceneIndex) => {
+      scene.characterIds.forEach((characterId) => {
+        if (!firstCharacterFrame.has(characterId)) {
+          firstCharacterFrame.set(characterId, sceneStartFrames[sceneIndex] || 0);
+        }
+      });
+    });
+    const visualCharacters = Array.from(firstCharacterFrame.entries())
+      .map(([characterId, frameIndex]) => ({ character: characterById.get(characterId), frameIndex }))
+      .filter((item): item is { character: { id: string; name: string; description: string; imagePath: string }; frameIndex: number } => !!item.character && !!item.character.imagePath)
+      .slice(0, 4);
+
     imageInject.inputs["num_images.index_1"] = 0;
     imageInject.inputs["num_images.strength_1"] = Number.isFinite(Number(body.startImageStrength))
       ? Math.max(0, Math.min(1, Number(body.startImageStrength)))
       : 1;
+    imageInject.inputs["num_images.image_1"] = ["586", 0];
+
+    let slot = 2;
+    const characterStrength = Number.isFinite(Number(body.characterReferenceStrength))
+      ? Math.max(0, Math.min(1, Number(body.characterReferenceStrength)))
+      : 0.35;
+
+    for (const { character, frameIndex } of visualCharacters) {
+      const absImagePath = resolveLocalInput(character.imagePath);
+      if (!absImagePath) continue;
+      const nodes = addCharacterReferenceImageNodes(workflow, absImagePath);
+      if (!nodes) continue;
+      imageInject.inputs[`num_images.image_${slot}`] = [nodes.preprocessId, 0];
+      imageInject.inputs[`num_images.index_${slot}`] = Math.max(0, Math.min(totalFrames - 1, frameIndex));
+      imageInject.inputs[`num_images.strength_${slot}`] = characterStrength;
+      characterImageRefs.push({
+        characterId: character.id,
+        name: character.name,
+        imagePath: absImagePath,
+        frameIndex: Math.max(0, Math.min(totalFrames - 1, frameIndex)),
+        nodeId: nodes.preprocessId,
+      });
+      slot += 1;
+    }
+
+    imageInject.inputs.num_images = String(Math.max(1, slot - 1));
   }
 
   setInputIfNodeExists(workflow, "604", "filename_prefix", String(body.filenamePrefix || "otg_production/prompt_relay"));
@@ -403,6 +491,7 @@ function patchPromptRelayTimelineWorkflow(workflow: AnyObj, body: AnyObj) {
     segmentLengths,
     sceneCount: scenes.length,
     globalPrompt,
+    characterImageRefs,
   };
 }
 
