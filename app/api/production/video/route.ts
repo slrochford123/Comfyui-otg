@@ -261,6 +261,36 @@ function setInputIfNodeExists(workflow: AnyObj, nodeId: string, key: string, val
   node.inputs[key] = value;
 }
 
+function bypassNodeOutput(workflow: AnyObj, nodeId: string, inputKey: string) {
+  const replacement = workflow?.[nodeId]?.inputs?.[inputKey];
+  if (!Array.isArray(replacement)) return false;
+
+  for (const node of Object.values<any>(workflow || {})) {
+    const inputs = node?.inputs && typeof node.inputs === "object" ? node.inputs : null;
+    if (!inputs) continue;
+    for (const [key, value] of Object.entries<any>(inputs)) {
+      if (Array.isArray(value) && String(value[0]) === nodeId) {
+        inputs[key] = replacement;
+      }
+    }
+  }
+
+  return true;
+}
+
+function prepareWorkflowForApiExecution(workflow: AnyObj) {
+  const disabled: string[] = [];
+
+  for (const [nodeId, node] of Object.entries<any>(workflow || {})) {
+    const classType = String(node?.class_type || "").toLowerCase();
+    if (classType === "ltx2samplingpreviewoverride" || classType.includes("samplingpreviewoverride")) {
+      if (bypassNodeOutput(workflow, nodeId, "model")) disabled.push(nodeId);
+    }
+  }
+
+  return disabled;
+}
+
 function normalizeTimelineScenes(raw: any[]) {
   return (Array.isArray(raw) ? raw : [])
     .map((scene, index) => {
@@ -582,6 +612,7 @@ export async function POST(req: NextRequest) {
     const rawWorkflow = await fs.readFile(resolvedWorkflowFile, "utf8");
     const workflow = JSON.parse(rawWorkflow) as AnyObj;
     const requiresAudioInput = workflowRequiresAudioInput(workflow);
+    const disabledApiNodes = prepareWorkflowForApiExecution(workflow);
 
     const imageAbs = resolveLocalInput(imagePath);
     if (!imageAbs) {
@@ -685,6 +716,7 @@ export async function POST(req: NextRequest) {
         uploadedImage,
         uploadedAudio,
         requiresAudioInput,
+        disabledApiNodes,
         filenamePrefix,
         ...patchDebug,
       },
