@@ -36,6 +36,8 @@ android/.idea/
 android/build/
 android/app/build/
 android/app/release/
+android/release/
+android/keystore.properties
 android/local.properties
 ios/build/
 ios/Pods/
