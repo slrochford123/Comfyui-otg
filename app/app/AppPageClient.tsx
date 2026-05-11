@@ -2279,7 +2279,16 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         const data = await res.json();
         if (cancelled) return;
 
-        setConnected(Boolean(data?.connected || data?.ok || data?.status === "connected"));
+        setConnected(
+          Boolean(
+            data?.connected ||
+              data?.ok ||
+              data?.status === "connected" ||
+              data?.serverState === "idle" ||
+              data?.serverState === "running" ||
+              data?.serverHint === "Connected"
+          )
+        );
         if (typeof data?.message === "string" && data.message.trim()) {
           setStatusMessage(data.message.trim());
         }
@@ -5032,7 +5041,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               <div className="mt-0.5 flex items-center gap-3">
                 <h1 className="truncate text-xl font-black tracking-tight text-white">{activeTabLabel}</h1>
                 <span className="hidden rounded-full border border-white/10 px-2.5 py-1 text-xs font-semibold text-white/52 sm:inline-flex">
-                  {connected ? "Comfy connected" : "Comfy offline"}
+                  {connected ? "ComfyUI Connected" : "ComfyUI Offline"}
                 </span>
               </div>
             </div>
