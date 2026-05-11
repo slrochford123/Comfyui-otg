@@ -1,11 +1,19 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 REPO_DIR=${REPO_DIR:-/opt/otg/repo}
 REL_ID=${REL_ID:-$(date +%Y%m%d-%H%M%S)}
+ENV_FILE=${ENV_FILE:-/opt/otg/env/.env.staging}
 OUT_DIR="/opt/otg/releases/$REL_ID"
 
 cd "$REPO_DIR"
+
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
 
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
