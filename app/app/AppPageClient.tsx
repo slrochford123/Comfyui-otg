@@ -106,6 +106,7 @@ type ProgressResponse = {
   queue?: number;
   queue_remaining?: number;
   prompt_id?: string | null;
+  fileName?: string | null;
   file_name?: string | null;
   error?: string | null;
 };
@@ -211,6 +212,8 @@ const APP_THEME_KEY = "otg:test:theme:v1";
 const APP_FONT_SCALE_KEY = "otg:test:font-scale:v1";
 const APP_UI_MODE_KEY = "otg:test:ui-mode:v1";
 const APP_USER_CACHE_KEY = "otg:test:last-user:v1";
+const APP_NOTIFICATION_HISTORY_KEY = "otg:test:android-notified-completions:v1";
+const APP_NOTIFICATION_CHANNEL_ID = "otg-generation-complete";
 
 type AppThemeOption = {
   id: AppThemeId;
@@ -1065,6 +1068,100 @@ function writeCachedUsername(username: string) {
     window.localStorage.setItem(APP_USER_CACHE_KEY, JSON.stringify({ username: name, updatedAt: Date.now() }));
   } catch {
     // ignore storage failures
+  }
+}
+
+function readNotifiedCompletionKeys() {
+  if (typeof window === "undefined") return new Set<string>();
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(APP_NOTIFICATION_HISTORY_KEY) || "[]");
+    return new Set(Array.isArray(parsed) ? parsed.map((value) => String(value)).filter(Boolean) : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function writeNotifiedCompletionKeys(keys: Set<string>) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(APP_NOTIFICATION_HISTORY_KEY, JSON.stringify(Array.from(keys).slice(-50)));
+  } catch {
+    // ignore storage failures
+  }
+}
+
+let androidNotificationReadyPromise: Promise<boolean> | null = null;
+
+async function ensureAndroidNotificationsReady() {
+  if (typeof window === "undefined") return false;
+  if (!androidNotificationReadyPromise) {
+    androidNotificationReadyPromise = (async () => {
+      try {
+        const [{ Capacitor }, { LocalNotifications }] = await Promise.all([
+          import("@capacitor/core"),
+          import("@capacitor/local-notifications"),
+        ]);
+
+        if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "android") return false;
+
+        const checked = await LocalNotifications.checkPermissions();
+        let displayPermission = checked.display;
+        if (displayPermission !== "granted") {
+          const requested = await LocalNotifications.requestPermissions();
+          displayPermission = requested.display;
+        }
+        if (displayPermission !== "granted") return false;
+
+        await LocalNotifications.createChannel({
+          id: APP_NOTIFICATION_CHANNEL_ID,
+          name: "Generation complete",
+          description: "Alerts when OTG content finishes rendering.",
+          importance: 5,
+          visibility: 1,
+          lights: true,
+          vibration: true,
+        }).catch(() => null);
+
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+  }
+
+  return androidNotificationReadyPromise;
+}
+
+async function notifyAndroidContentComplete(args: { key: string; fileName?: string | null; kind?: "image" | "video" | "" }) {
+  if (!args.key) return;
+
+  const notifiedKeys = readNotifiedCompletionKeys();
+  if (notifiedKeys.has(args.key)) return;
+
+  const ready = await ensureAndroidNotificationsReady();
+  if (!ready) return;
+
+  try {
+    const { LocalNotifications } = await import("@capacitor/local-notifications");
+    const title = args.kind === "video" ? "Video complete" : args.kind === "image" ? "Image complete" : "Content complete";
+    const fileName = String(args.fileName || "").trim();
+
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: Math.floor(Date.now() % 2147483647),
+          channelId: APP_NOTIFICATION_CHANNEL_ID,
+          title,
+          body: fileName ? `${fileName} is ready in Gallery.` : "Your OTG content is ready in Gallery.",
+          schedule: { at: new Date(Date.now() + 250) },
+        },
+      ],
+    });
+
+    notifiedKeys.add(args.key);
+    writeNotifiedCompletionKeys(notifiedKeys);
+  } catch {
+    // Notification delivery is best-effort; the polling UI should continue normally.
   }
 }
 
@@ -2393,6 +2490,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       const queueCount = Number(data?.queue_remaining ?? data?.queue ?? 0) || 0;
       const running = Boolean(data?.running) || nextStatus === "running";
       const promptId = String(data?.prompt_id || "").trim();
+      const completedFileName = String(data?.fileName || data?.file_name || "").trim();
 
       setProgressQueue(queueCount);
       if (promptId) setActivePromptId(promptId);
@@ -2416,13 +2514,18 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       }
 
       if (nextStatus === "complete") {
-        const completionKey = promptId || "__complete__";
+        const completionKey = promptId || completedFileName || "__complete__";
         setProgressStatus("complete");
         setProgressPercent(100);
 
         if (refreshedCompletePromptRef.current !== completionKey) {
           refreshedCompletePromptRef.current = completionKey;
           await refreshLatestContent();
+          void notifyAndroidContentComplete({
+            key: completionKey,
+            fileName: completedFileName || latestPreviewName,
+            kind: latestPreviewKind,
+          });
         }
         return;
       }
