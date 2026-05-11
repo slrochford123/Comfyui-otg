@@ -20,7 +20,7 @@ export NVM_DIR="$HOME/.nvm"
 NODE_VER=$(cat .nvmrc | tr -d '\r\n\t ')
 command -v nvm >/dev/null 2>&1 && nvm use "$NODE_VER" >/dev/null
 
-npm ci
+npm ci --include=dev
 npm run build
 
 mkdir -p "$OUT_DIR"
