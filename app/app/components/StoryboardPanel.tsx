@@ -8,8 +8,20 @@ type SceneDraft = {
   title: string;
   prompt: string;
   durationSec: number;
+  characterIds?: string[];
   characterNames: string[];
   hardCut: boolean;
+};
+
+type SavedCharacterRecord = {
+  id: string;
+  name: string;
+  imagePath: string;
+  previewImagePath?: string;
+  transparentImagePath?: string;
+  description: string;
+  voiceStyleDefinition?: string;
+  introLine?: string;
 };
 
 type SavedScene = {
@@ -58,7 +70,7 @@ type PersistedProductionRecord = {
     stitchedVideoPath?: string;
     completedAt?: string;
     status?: "active" | "completed";
-    characters?: Array<{ id: string; name: string; descriptor: string }>;
+    characters?: Array<{ id: string; name: string; descriptor: string; sourceCharacterId?: string; serverPath?: string }>;
   };
 };
 
@@ -92,6 +104,7 @@ function createScene(index = 0, names: string[] = []): SceneDraft {
     title: `Scene ${index + 1}`,
     prompt: "",
     durationSec: 5,
+    characterIds: [],
     characterNames: names,
     hardCut: index > 0,
   };
@@ -105,14 +118,20 @@ function parseNames(value: string) {
 }
 
 function normalizeScene(scene: Partial<SceneDraft>, index: number, names: string[]): SceneDraft {
+  const characterIds = Array.isArray(scene.characterIds) ? scene.characterIds.map((id) => String(id || "").trim()).filter(Boolean).slice(0, 4) : [];
   return {
     id: scene.id || makeId("scene"),
     title: scene.title || `Scene ${index + 1}`,
     prompt: String(scene.prompt || ""),
     durationSec: Math.max(1, Math.min(30, Number(scene.durationSec || 5) || 5)),
-    characterNames: Array.isArray(scene.characterNames) && scene.characterNames.length ? scene.characterNames : names,
+    characterIds,
+    characterNames: Array.isArray(scene.characterNames) && scene.characterNames.length ? scene.characterNames.slice(0, 4) : names.slice(0, 4),
     hardCut: index > 0 ? scene.hardCut !== false : false,
   };
+}
+
+function characterPreviewPath(character: SavedCharacterRecord) {
+  return character.previewImagePath || character.transparentImagePath || character.imagePath || "";
 }
 
 async function uploadImage(file: File): Promise<{ serverPath: string; previewUrl: string }> {
@@ -171,6 +190,7 @@ export default function StoryboardPanel() {
   const [useVideoReasoning, setUseVideoReasoning] = useState(false);
   const [useCrispEnhance, setUseCrispEnhance] = useState(false);
   const [scenes, setScenes] = useState<SceneDraft[]>(() => [createScene(0, ["Character 1"])]);
+  const [savedCharacters, setSavedCharacters] = useState<SavedCharacterRecord[]>([]);
   const [savedVideos, setSavedVideos] = useState<SavedScene[]>([]);
   const [activeVideoPath, setActiveVideoPath] = useState("");
   const [activeVideoUrl, setActiveVideoUrl] = useState("");
@@ -183,27 +203,50 @@ export default function StoryboardPanel() {
 
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const characterNames = useMemo(() => parseNames(characterText), [characterText]);
+  const characterById = useMemo(() => new Map(savedCharacters.map((character) => [character.id, character])), [savedCharacters]);
+  const productionCharacters = useMemo(() => {
+    const selected = new Map<string, SavedCharacterRecord>();
+    scenes.forEach((scene) => {
+      (scene.characterIds || []).forEach((id) => {
+        const character = characterById.get(id);
+        if (character) selected.set(character.id, character);
+      });
+    });
+    return Array.from(selected.values());
+  }, [characterById, scenes]);
   const validScenes = useMemo(
     () =>
       scenes
-        .map((scene, index) => normalizeScene(scene, index, characterNames))
+        .map((scene, index) => {
+          const normalized = normalizeScene(scene, index, characterNames);
+          const selectedNames = (normalized.characterIds || [])
+            .map((id) => characterById.get(id)?.name)
+            .filter((name): name is string => !!name);
+          return selectedNames.length ? { ...normalized, characterNames: selectedNames } : normalized;
+        })
         .filter((scene) => scene.prompt.trim()),
-    [scenes, characterNames]
+    [characterById, scenes, characterNames]
   );
   const totalSeconds = validScenes.reduce((sum, scene) => sum + scene.durationSec, 0);
   const totalFrames = validScenes.reduce((sum, scene) => sum + Math.round(scene.durationSec * fps), 0);
   const comfyTimelinePreview = useMemo(() => {
     const sceneBlocks = validScenes.map((scene, index) => {
       const characters = scene.characterNames.length ? scene.characterNames.join(", ") : "none selected";
+      const characterDetails = (scene.characterIds || [])
+        .map((id) => characterById.get(id))
+        .filter((character): character is SavedCharacterRecord => !!character)
+        .map((character) => `${character.name}: ${character.description || "no saved description"}`)
+        .join("\n");
       const transition = scene.hardCut && index > 0 ? "hard cut from previous scene" : "opening scene";
       return [
         `SCENE ${index + 1}: ${scene.title || `Scene ${index + 1}`}`,
         `SECONDS: ${scene.durationSec}`,
         `FRAMES: ${Math.round(scene.durationSec * fps)}`,
         `CHARACTERS: ${characters}`,
+        characterDetails ? `CHARACTER REFERENCES:\n${characterDetails}` : "",
         `TRANSITION: ${transition}`,
         `PROMPT: ${scene.prompt.trim() || "(empty)"}`,
-      ].join("\n");
+      ].filter(Boolean).join("\n");
     });
 
     return [
@@ -214,12 +257,13 @@ export default function StoryboardPanel() {
       "",
       ...sceneBlocks,
     ].join("\n\n");
-  }, [fps, globalPrompt, negativePrompt, totalFrames, totalSeconds, validScenes]);
+  }, [characterById, fps, globalPrompt, negativePrompt, totalFrames, totalSeconds, validScenes]);
   const activeSummaries = summaries.filter((item) => item.status !== "completed" && !item.completedAt);
   const completedSummaries = summaries.filter((item) => item.status === "completed" || item.completedAt);
 
   useEffect(() => {
     void refreshProductions();
+    void refreshCharacters();
   }, []);
 
   async function refreshProductions() {
@@ -234,6 +278,17 @@ export default function StoryboardPanel() {
       setError(err?.message || String(err));
     } finally {
       setBusy("");
+    }
+  }
+
+  async function refreshCharacters() {
+    try {
+      const res = await fetch("/api/characters", { cache: "no-store", headers: withDeviceHeader() });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || "Failed to load characters");
+      setSavedCharacters(Array.isArray(data?.items) ? data.items : []);
+    } catch {
+      setSavedCharacters([]);
     }
   }
 
@@ -266,7 +321,7 @@ export default function StoryboardPanel() {
 
   function hydrate(record: PersistedProductionRecord) {
     const state = record.state || ({} as PersistedProductionRecord["state"]);
-    const names = Array.isArray(state.characters) && state.characters.length ? state.characters.map((item) => item.name).filter(Boolean) : ["Character 1"];
+    const names = Array.isArray(state.characters) && state.characters.length ? state.characters.map((item) => item.name).filter(Boolean).slice(0, 4) : ["Character 1"];
     setProductionId(record.id || state.productionId || fallbackProductionId(record.name));
     setProjectName(record.name || state.name || "Untitled Production");
     setStartingImagePath(String(state.backgroundImagePath || ""));
@@ -320,7 +375,7 @@ export default function StoryboardPanel() {
       activeStep: "video",
       currentCard: 1,
       totalCards: 5,
-      characterCount: Math.max(1, characterNames.length) as 1 | 2 | 3 | 4 | 5,
+      characterCount: Math.max(1, Math.min(4, productionCharacters.length || characterNames.length)) as 1 | 2 | 3 | 4,
       backgroundPrompt: globalPrompt,
       backgroundPreset: "realistic",
       backgroundImagePath: startingImagePath || undefined,
@@ -332,14 +387,28 @@ export default function StoryboardPanel() {
       positivePrompt: validScenes.map((scene) => scene.prompt).join("\n\n"),
       negativePrompt,
       timelineGlobalPrompt: globalPrompt,
-      timelineScenes: scenes.map((scene, index) => normalizeScene(scene, index, characterNames)),
+      timelineScenes: scenes.map((scene, index) => {
+        const normalized = normalizeScene(scene, index, characterNames);
+        const selectedNames = (normalized.characterIds || [])
+          .map((id) => characterById.get(id)?.name)
+          .filter((name): name is string => !!name);
+        return selectedNames.length ? { ...normalized, characterNames: selectedNames } : normalized;
+      }),
       timelineFps: fps,
       timelineUseVideoReasoning: useVideoReasoning,
       timelineUseCrispEnhance: useCrispEnhance,
       usePreviousLength: true,
       usePreviousIdentityLock: true,
       usePreviousStyleLock: true,
-      characters: characterNames.map((name, index) => ({ id: `c${index + 1}`, name, descriptor: `Character visible or referenced in ${projectName || "production"}.` })),
+      characters: productionCharacters.length
+        ? productionCharacters.map((character, index) => ({
+            id: `c${index + 1}`,
+            name: character.name,
+            descriptor: character.description || `Character visible or referenced in ${projectName || "production"}.`,
+            sourceCharacterId: character.id,
+            serverPath: characterPreviewPath(character),
+          }))
+        : characterNames.slice(0, 4).map((name, index) => ({ id: `c${index + 1}`, name, descriptor: `Character visible or referenced in ${projectName || "production"}.` })),
       savedCardVideos: savedVideos,
       stitchedVideoPath: stitchedVideoPath || undefined,
       completedAt: status === "completed" ? new Date().toISOString() : undefined,
@@ -414,6 +483,25 @@ export default function StoryboardPanel() {
     setScenes((prev) => prev.map((scene) => (scene.id === id ? { ...scene, ...patch } : scene)));
   }
 
+  function toggleSceneCharacter(scene: SceneDraft, character: SavedCharacterRecord, checked: boolean) {
+    const currentIds = Array.isArray(scene.characterIds) ? scene.characterIds : [];
+    const currentNames = Array.isArray(scene.characterNames) ? scene.characterNames : [];
+
+    if (checked && currentIds.length >= 4 && !currentIds.includes(character.id)) {
+      setNotice("Each scene supports up to 4 saved characters.");
+      return;
+    }
+
+    const nextIds = checked
+      ? Array.from(new Set([...currentIds, character.id])).slice(0, 4)
+      : currentIds.filter((id) => id !== character.id);
+    const nextNames = checked
+      ? Array.from(new Set([...currentNames, character.name])).slice(0, 4)
+      : currentNames.filter((name) => name !== character.name);
+
+    updateScene(scene.id, { characterIds: nextIds, characterNames: nextNames });
+  }
+
   function addScene(afterId?: string) {
     setScenes((prev) => {
       const nextScene = createScene(prev.length, characterNames);
@@ -483,6 +571,12 @@ export default function StoryboardPanel() {
           negativePrompt,
           timelineGlobalPrompt: globalPrompt,
           timelineScenes: validScenes,
+          timelineCharacters: productionCharacters.map((character) => ({
+            id: character.id,
+            name: character.name,
+            description: character.description,
+            imagePath: characterPreviewPath(character),
+          })),
           timelineFps: fps,
           useVideoReasoning,
           useCrispEnhance,
@@ -504,7 +598,7 @@ export default function StoryboardPanel() {
         videoPath: nextPath,
         videoUrl: nextUrl,
         prompt: validScenes.map((scene, index) => `${index + 1}. ${scene.title} (${scene.durationSec}s): ${scene.prompt}`).join("\n\n"),
-        characterNames,
+        characterNames: productionCharacters.length ? productionCharacters.map((character) => character.name) : characterNames.slice(0, 4),
       };
       const nextVideos = [...savedVideos, entry];
       setSavedVideos(nextVideos);
@@ -653,7 +747,7 @@ export default function StoryboardPanel() {
           </button>
         </div>
         <div>
-          <label className="text-xs font-black uppercase tracking-[0.18em] text-white/42">Characters In Image</label>
+          <label className="text-xs font-black uppercase tracking-[0.18em] text-white/42">Fallback Character Names</label>
           <textarea
             rows={3}
             value={characterText}
@@ -661,7 +755,39 @@ export default function StoryboardPanel() {
             className="mt-2 w-full rounded-[14px] border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none focus:border-cyan-300/50"
             placeholder="Sarah, Marcus"
           />
-          <div className="mt-2 text-xs text-white/42">Separate names with commas.</div>
+          <div className="mt-2 text-xs text-white/42">Used only when a scene has no saved Characters selected.</div>
+        </div>
+        <div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-black uppercase tracking-[0.18em] text-white/42">Saved Characters</div>
+            <button type="button" onClick={() => void refreshCharacters()} className="rounded-[10px] border border-white/10 px-2 py-1 text-[11px] font-semibold text-white/64">
+              Refresh
+            </button>
+          </div>
+          <div className="mt-2 max-h-56 space-y-2 overflow-y-auto pr-1">
+            {savedCharacters.length ? (
+              savedCharacters.slice(0, 24).map((character) => {
+                const preview = fileUrlFor(characterPreviewPath(character));
+                return (
+                  <div key={character.id} className="flex items-center gap-3 rounded-[14px] border border-white/10 bg-white/[0.04] p-2">
+                    {preview ? (
+                      <img src={preview} alt={character.name} className="h-12 w-12 rounded-[10px] border border-white/10 object-cover" />
+                    ) : (
+                      <div className="h-12 w-12 rounded-[10px] border border-white/10 bg-black/40" />
+                    )}
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-black text-white">{character.name}</div>
+                      <div className="line-clamp-2 text-xs text-white/45">{character.description || "No saved description."}</div>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="rounded-[14px] border border-dashed border-white/10 bg-black/30 px-3 py-4 text-xs text-white/45">
+                No saved Characters found. Create them in the Characters tab, then refresh here.
+              </div>
+            )}
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-2">
           <button type="button" onClick={() => void saveProduction("active")} className="rounded-[14px] border border-cyan-300/30 bg-cyan-500/10 px-3 py-3 text-sm font-black text-cyan-100">Save</button>
@@ -741,26 +867,53 @@ export default function StoryboardPanel() {
                   placeholder="Describe this scene, the action, dialogue, camera, and what changes from the prior scene."
                 />
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {characterNames.map((name) => {
-                    const checked = scene.characterNames.includes(name);
-                    return (
-                      <label key={`${scene.id}-${name}`} className="flex items-center gap-2 rounded-full border border-white/10 bg-black/35 px-3 py-2 text-xs text-white/78">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(event) => {
-                            const next = event.target.checked ? Array.from(new Set([...scene.characterNames, name])) : scene.characterNames.filter((item) => item !== name);
-                            updateScene(scene.id, { characterNames: next });
-                          }}
-                        />
-                        {name}
-                      </label>
-                    );
-                  })}
+                  {savedCharacters.length ? (
+                    savedCharacters.map((character) => {
+                      const ids = Array.isArray(scene.characterIds) ? scene.characterIds : [];
+                      const checked = ids.includes(character.id);
+                      const disabled = !checked && ids.length >= 4;
+                      return (
+                        <label
+                          key={`${scene.id}-${character.id}`}
+                          className={`flex items-center gap-2 rounded-full border px-3 py-2 text-xs ${
+                            checked ? "border-cyan-300/45 bg-cyan-400/12 text-cyan-50" : "border-white/10 bg-black/35 text-white/78"
+                          } ${disabled ? "opacity-45" : ""}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={disabled}
+                            onChange={(event) => toggleSceneCharacter(scene, character, event.target.checked)}
+                          />
+                          {character.name}
+                        </label>
+                      );
+                    })
+                  ) : (
+                    characterNames.map((name) => {
+                      const checked = scene.characterNames.includes(name);
+                      return (
+                        <label key={`${scene.id}-${name}`} className="flex items-center gap-2 rounded-full border border-white/10 bg-black/35 px-3 py-2 text-xs text-white/78">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) => {
+                              const next = event.target.checked ? Array.from(new Set([...scene.characterNames, name])).slice(0, 4) : scene.characterNames.filter((item) => item !== name);
+                              updateScene(scene.id, { characterNames: next });
+                            }}
+                          />
+                          {name}
+                        </label>
+                      );
+                    })
+                  )}
                   <label className="flex items-center gap-2 rounded-full border border-white/10 bg-black/35 px-3 py-2 text-xs text-white/78">
                     <input type="checkbox" disabled={index === 0} checked={scene.hardCut} onChange={(event) => updateScene(scene.id, { hardCut: event.target.checked })} />
                     Hard cut
                   </label>
+                </div>
+                <div className="mt-2 text-xs text-white/42">
+                  Select up to 4 saved Characters for this scene. Selected characters are injected into the Prompt Relay scene text.
                 </div>
                 <div className="mt-4 flex justify-end">
                   <button type="button" onClick={() => addScene(scene.id)} className="rounded-[14px] bg-cyan-400 px-4 py-2 text-sm font-black text-slate-950">

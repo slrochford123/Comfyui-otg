@@ -40,6 +40,7 @@ export type PersistedProductionTimelineScene = {
   title?: string;
   prompt: string;
   durationSec: number;
+  characterIds?: string[];
   characterNames?: string[];
   hardCut?: boolean;
 };
@@ -152,12 +153,16 @@ function normalizeTimelineScene(scene: any, index: number): PersistedProductionT
   const characterNames = Array.isArray(scene?.characterNames)
     ? scene.characterNames.map((name: any) => String(name || "").trim()).filter(Boolean)
     : [];
+  const characterIds = Array.isArray(scene?.characterIds)
+    ? scene.characterIds.map((id: any) => String(id || "").trim()).filter(Boolean).slice(0, 4)
+    : [];
   return {
     id: String(scene?.id || `scene-${index + 1}`),
     title: scene?.title ? String(scene.title) : undefined,
     prompt,
     durationSec,
-    characterNames,
+    characterIds,
+    characterNames: characterNames.slice(0, 4),
     hardCut: scene?.hardCut !== false,
   };
 }

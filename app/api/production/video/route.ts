@@ -268,18 +268,33 @@ function normalizeTimelineScenes(raw: any[]) {
       const durationSec = Math.max(1, Math.min(30, Number(scene?.durationSec || scene?.seconds || 5) || 5));
       const hardCut = scene?.hardCut !== false;
       const title = String(scene?.title || `Scene ${index + 1}`).trim() || `Scene ${index + 1}`;
-      const characterNames = Array.isArray(scene?.characterNames)
-        ? scene.characterNames.map((name: any) => String(name || "").trim()).filter(Boolean)
+      const characterIds = Array.isArray(scene?.characterIds)
+        ? scene.characterIds.map((id: any) => String(id || "").trim()).filter(Boolean).slice(0, 4)
         : [];
-      return prompt ? { prompt, durationSec, hardCut, title, characterNames } : null;
+      const characterNames = Array.isArray(scene?.characterNames)
+        ? scene.characterNames.map((name: any) => String(name || "").trim()).filter(Boolean).slice(0, 4)
+        : [];
+      return prompt ? { prompt, durationSec, hardCut, title, characterIds, characterNames } : null;
     })
     .filter(Boolean) as Array<{
       prompt: string;
       durationSec: number;
       hardCut: boolean;
       title: string;
+      characterIds: string[];
       characterNames: string[];
     }>;
+}
+
+function normalizeTimelineCharacters(raw: any[]) {
+  return (Array.isArray(raw) ? raw : [])
+    .map((character) => ({
+      id: String(character?.id || "").trim(),
+      name: String(character?.name || "").trim(),
+      description: String(character?.description || character?.descriptor || "").trim(),
+    }))
+    .filter((character) => character.id && character.name)
+    .slice(0, 40);
 }
 
 function patchPromptRelayTimelineWorkflow(workflow: AnyObj, body: AnyObj) {
@@ -296,14 +311,23 @@ function patchPromptRelayTimelineWorkflow(workflow: AnyObj, body: AnyObj) {
   const totalFrames = segmentLengths.reduce((sum, value) => sum + value, 0);
   const totalSeconds = Math.max(1, Math.ceil(totalFrames / fps));
   const globalPrompt = String(body.timelineGlobalPrompt || body.globalPrompt || body.positivePrompt || "").trim();
+  const timelineCharacters = normalizeTimelineCharacters(body.timelineCharacters);
+  const characterById = new Map(timelineCharacters.map((character) => [character.id, character]));
   const colors = ["#4f8edc", "#e07b3a", "#5cb85c", "#b46cff", "#f0b84f", "#5ec9b8", "#df6f9f", "#8a9cff"];
   const localPrompts = scenes.map((scene, index) => {
-    const characterLine = scene.characterNames.length ? `Characters in scene: ${scene.characterNames.join(", ")}.` : "";
+    const selectedCharacters = scene.characterIds.map((id) => characterById.get(id)).filter((character): character is { id: string; name: string; description: string } => !!character);
+    const characterNames = selectedCharacters.length ? selectedCharacters.map((character) => character.name) : scene.characterNames;
+    const characterLine = characterNames.length ? `Characters in scene: ${characterNames.join(", ")}.` : "";
+    const referenceLine = selectedCharacters.length
+      ? `Character references: ${selectedCharacters
+          .map((character) => `${character.name}: ${character.description || "use the saved character reference image and keep identity consistent"}`)
+          .join(" ")}`
+      : "";
     const cutLine =
       scene.hardCut && index > 0
         ? "Hard cut from the previous scene; establish the new shot clearly before continuing the action."
         : "";
-    return [characterLine, cutLine, scene.prompt].filter(Boolean).join(" ");
+    return [characterLine, referenceLine, cutLine, scene.prompt].filter(Boolean).join(" ");
   });
 
   relayNode.inputs.global_prompt = globalPrompt;

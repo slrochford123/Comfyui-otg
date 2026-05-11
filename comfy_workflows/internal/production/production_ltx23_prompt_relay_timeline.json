@@ -44,8 +44,8 @@
   },
   "416": {
     "inputs": {
-      "clip_name1": "gemma_3_12B_it_fp8_scaled.safetensors",
-      "clip_name2": "ltx2\\ltx-2.3_text_projection_bf16.safetensors",
+      "clip_name1": "gemma_3_12B_it_fp4_mixed.safetensors",
+      "clip_name2": "ltx-2.3_text_projection_bf16.safetensors",
       "type": "ltxv",
       "device": "default"
     },
@@ -88,27 +88,13 @@
       "steps": 12,
       "denoise": 1,
       "model": [
-        "542",
+        "5756",
         0
       ]
     },
     "class_type": "BasicScheduler",
     "_meta": {
       "title": "BasicScheduler"
-    }
-  },
-  "542": {
-    "inputs": {
-      "sage_attention": "auto",
-      "allow_compile": false,
-      "model": [
-        "5756",
-        0
-      ]
-    },
-    "class_type": "PathchSageAttentionKJ",
-    "_meta": {
-      "title": "Patch Sage Attention KJ"
     }
   },
   "547": {
@@ -139,7 +125,7 @@
         0
       ],
       "audio_latent": [
-        "5792",
+        "547",
         0
       ]
     },
@@ -179,7 +165,7 @@
   "561": {
     "inputs": {
       "add_noise": true,
-      "noise_seed": 60977062423349,
+      "noise_seed": 488694348314042,
       "cfg": 1,
       "model": [
         "588",
@@ -246,13 +232,9 @@
   },
   "582": {
     "inputs": {
-      "num_images": "3",
+      "num_images": "1",
       "num_images.strength_1": 1,
-      "num_images.strength_2": 1,
-      "num_images.strength_3": 1,
       "num_images.index_1": 0,
-      "num_images.index_2": 121,
-      "num_images.index_3": 241,
       "vae": [
         "5808",
         0
@@ -263,14 +245,6 @@
       ],
       "num_images.image_1": [
         "586",
-        0
-      ],
-      "num_images.image_2": [
-        "5834",
-        0
-      ],
-      "num_images.image_3": [
-        "5833",
         0
       ]
     },
@@ -307,12 +281,9 @@
   },
   "604": {
     "inputs": {
-      "frame_rate": [
-        "616",
-        0
-      ],
+      "frame_rate": 24,
       "loop_count": 0,
-      "filename_prefix": "ltx2.3\\prompt_reply_1",
+      "filename_prefix": "otg_production/untitled_production_1778497230123/card_1_1778497417039",
       "format": "video/h264-mp4",
       "pix_fmt": "yuv420p",
       "crf": 19,
@@ -336,7 +307,7 @@
   },
   "606": {
     "inputs": {
-      "lora_name": "ltx2\\ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+      "lora_name": "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
       "strength_model": 0.45,
       "model": [
         "607",
@@ -350,7 +321,7 @@
   },
   "607": {
     "inputs": {
-      "ckpt_name": "ltx2\\ltx-2.3-22b-dev.safetensors"
+      "ckpt_name": "ltx-2.3-22b-distilled-1.1.safetensors"
     },
     "class_type": "CheckpointLoaderSimple",
     "_meta": {
@@ -359,7 +330,7 @@
   },
   "608": {
     "inputs": {
-      "image": ""
+      "image": "C:\\AI\\OTG-Test2\\data\\uploads\\storyboard\\sb_b1fd3b5f-392a-43eb-b99f-fe2ec1632891.png"
     },
     "class_type": "LoadImageFromPath",
     "_meta": {
@@ -394,7 +365,7 @@
   },
   "615": {
     "inputs": {
-      "value": 15
+      "value": 5
     },
     "class_type": "PrimitiveInt",
     "_meta": {
@@ -412,8 +383,8 @@
   },
   "622": {
     "inputs": {
-      "lora_name": "ltx2\\LTX2.3_Crisp_Enhance.safetensors",
-      "strength_model": 0.85,
+      "lora_name": "ltxx\\LTX2.3_Crisp_Enhance.safetensors",
+      "strength_model": 0,
       "model": [
         "606",
         0
@@ -456,8 +427,8 @@
   },
   "5756": {
     "inputs": {
-      "lora_name": "ltx2\\Ltx2.3-Licon-VBVR-I2V-240K-R32.safetensors",
-      "strength_model": 1,
+      "lora_name": "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+      "strength_model": 0,
       "model": [
         "622",
         0
@@ -504,18 +475,6 @@
       "title": "Clean VRAM Used"
     }
   },
-  "5792": {
-    "inputs": {
-      "any_01": [
-        "547",
-        0
-      ]
-    },
-    "class_type": "Any Switch (rgthree)",
-    "_meta": {
-      "title": "Any Switch (rgthree)"
-    }
-  },
   "5808": {
     "inputs": {
       "vae_name": "LTX23_video_vae_bf16.safetensors"
@@ -527,7 +486,7 @@
   },
   "5809": {
     "inputs": {
-      "ckpt_name": "ltx2\\ltx-2.3-22b-dev.safetensors"
+      "ckpt_name": "LTX2_audio_vae_bf16.safetensors"
     },
     "class_type": "LTXVAudioVAELoader",
     "_meta": {
@@ -560,7 +519,7 @@
   },
   "5827": {
     "inputs": {
-      "image": ""
+      "image": "C:\\AI\\OTG-Test2\\data\\uploads\\storyboard\\sb_b1fd3b5f-392a-43eb-b99f-fe2ec1632891.png"
     },
     "class_type": "LoadImageFromPath",
     "_meta": {
@@ -599,7 +558,7 @@
   },
   "5831": {
     "inputs": {
-      "image": ""
+      "image": "C:\\AI\\OTG-Test2\\data\\uploads\\storyboard\\sb_b1fd3b5f-392a-43eb-b99f-fe2ec1632891.png"
     },
     "class_type": "LoadImageFromPath",
     "_meta": {
@@ -652,16 +611,16 @@
   },
   "5837": {
     "inputs": {
-      "global_prompt": "Japanese Anime scenes , Mei gets caught in heavy rain on her way to the antique shop. Ren suddenly appears with a big black umbrella, holding it over both of them. They walk slowly down the wet street together. Anime style.",
-      "max_frames": 361,
-      "timeline_data": "{\"segments\":[{\"prompt\":\"Japanese Anime scenes , Wide shot of the old street in heavy rain, cobblestone slick and reflective, rain streaking diagonally, Mei stands alone under eaves hugging her sketchbook, shivering.\\n\\nMei looking down the empty rain-soaked street, frustrated expression, rain dripping from her chestnut hair.\",\"length\":121,\"color\":\"#4f8edc\"},{\"prompt\":\"Medium shot of Ren stepping into frame with a big black umbrella, tilting it over Mei, he speaks dryly with a hint of warmth\",\"length\":120,\"color\":\"#e07b3a\"},{\"prompt\":\"Two-shot from behind, Mei and Ren walking slowly under the umbrella, shoulders almost touching, Mei looks up at him and thanks him quietly\",\"length\":120,\"color\":\"#5cb85c\"}]}",
-      "local_prompts": "Japanese Anime scenes , Wide shot of the old street in heavy rain, cobblestone slick and reflective, rain streaking diagonally, Mei stands alone under eaves hugging her sketchbook, shivering.\n\nMei looking down the empty rain-soaked street, frustrated expression, rain dripping from her chestnut hair. | Medium shot of Ren stepping into frame with a big black umbrella, tilting it over Mei, he speaks dryly with a hint of warmth | Two-shot from behind, Mei and Ren walking slowly under the umbrella, shoulders almost touching, Mei looks up at him and thanks him quietly",
-      "segment_lengths": "121, 120, 120",
+      "global_prompt": "cinematic LTX 2.3 production, consistent characters, clear hard cuts between scenes",
+      "max_frames": 120,
+      "timeline_data": "{\"segments\":[{\"prompt\":\"Characters in scene: broy. broy walk through the forest\",\"length\":120,\"color\":\"#4f8edc\"}]}",
+      "local_prompts": "Characters in scene: broy. broy walk through the forest",
+      "segment_lengths": "120",
       "epsilon": 0.001,
       "fps": 24,
       "time_units": "frames",
       "model": [
-        "542",
+        "5756",
         0
       ],
       "clip": [
