@@ -17,6 +17,6 @@ ln -sfn "$REL_DIR" /opt/otg/current-staging
 sudo systemctl restart otg-staging
 
 BASE_URL=${BASE_URL:-http://127.0.0.1:3002}
-/opt/otg/repo/ops/ubuntu/05-smoke-test.sh "$BASE_URL"
+bash /opt/otg/repo/ops/ubuntu/05-smoke-test.sh "$BASE_URL"
 
 echo "OK: staging activated -> $REL_ID"
