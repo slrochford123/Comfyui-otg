@@ -24,7 +24,7 @@ npm ci --include=dev
 npm run build
 
 mkdir -p "$OUT_DIR"
-cp -R .next/standalone/* "$OUT_DIR/"
+cp -R .next/standalone/. "$OUT_DIR/"
 mkdir -p "$OUT_DIR/.next"
 cp -R .next/static "$OUT_DIR/.next/static"
 
