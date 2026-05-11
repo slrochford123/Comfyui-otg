@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 sudo tee /etc/systemd/system/otg-staging.service >/dev/null <<'UNIT'

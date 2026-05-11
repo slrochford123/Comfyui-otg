@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 sudo mkdir -p /opt/otg/{repo,releases} /opt/otg/env /var/lib/otg

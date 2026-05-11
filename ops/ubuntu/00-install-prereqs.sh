@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Ubuntu prerequisites for Next.js + native deps (better-sqlite3, sharp)
