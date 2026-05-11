@@ -15,8 +15,14 @@ req() {
 }
 
 req "$BASE_URL/api/healthz"
-req "$BASE_URL/api/whoami"
 req "$BASE_URL/login"
+
+whoami_code=$(curl -sS -o /dev/null -w "%{http_code}" "$BASE_URL/api/whoami")
+echo "$whoami_code $BASE_URL/api/whoami"
+if [ "$whoami_code" != "200" ] && [ "$whoami_code" != "401" ]; then
+  echo "FAIL: /api/whoami expected 200 or unauthenticated 401, got $whoami_code" >&2
+  exit 1
+fi
 
 code=$(curl -sS -o /dev/null -w "%{http_code}" -I "$BASE_URL/app")
 echo "$code $BASE_URL/app"
