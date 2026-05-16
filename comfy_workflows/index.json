@@ -143,6 +143,26 @@
       "description": "Production card image + uploaded audio to LTX 2.3 IA2V lip-sync workflow."
     },
     {
+      "id": "internal/production/qwen_image_edit_2511_storyboard",
+      "label": "Production Qwen 2511 Storyboard",
+      "type": "internal",
+      "path": "internal/production/qwen_image_edit_2511_storyboard.json",
+      "file": "internal/production/qwen_image_edit_2511_storyboard.json",
+      "tags": [
+        "production",
+        "storyboard",
+        "qwen",
+        "image-edit",
+        "next-scene",
+        "multi-character"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "description": "Qwen Image Edit 2511 workflow for scene-by-scene storyboard image production. Prompt node 30 uses Next Scene lines and up to five optional character references.",
+      "promptNodeId": "30",
+      "characterReferenceMax": 5
+    },
+    {
       "id": "presets/angles",
       "label": "angles",
       "type": "preset",

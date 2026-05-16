@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { OTG_DATA_ROOT, ensureDir, safeSegment } from "@/lib/paths";
+import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,6 +55,8 @@ function concatLine(filePath: string) {
 }
 
 export async function POST(req: NextRequest) {
+  if (!isProductionFeatureEnabled()) return productionDisabledResponse();
+
   try {
     const owner = await getOwnerContext(req);
     const ownerKey = owner.ownerKey;

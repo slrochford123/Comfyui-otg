@@ -1,0 +1,498 @@
+{
+  "__otg": {
+    "label": "Production Qwen 2511 Storyboard",
+    "type": "internal",
+    "tags": [
+      "production",
+      "storyboard",
+      "qwen",
+      "image-edit",
+      "next-scene",
+      "multi-character"
+    ],
+    "promptNodeId": "30",
+    "characterReferenceMax": 5,
+    "characterReferenceLoadNodeIds": [
+      "28",
+      "21",
+      "14",
+      "39",
+      "38"
+    ],
+    "characterReferenceScaleNodeIds": [
+      "15",
+      "16",
+      "17",
+      "40",
+      "41"
+    ],
+    "characterReferenceEncodeNodeIds": [
+      "36",
+      "37"
+    ],
+    "description": "Qwen Image Edit 2511 storyboard workflow. Node 30 receives one Next Scene line per submitted storyboard image. Up to five character reference images can be enabled per request."
+  },
+  "1": {
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "2": {
+    "inputs": {
+      "shift": 3.1,
+      "model": [
+        "23",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "3": {
+    "inputs": {
+      "reference_latents_method": "index_timestep_zero",
+      "conditioning": [
+        "37",
+        0
+      ]
+    },
+    "class_type": "FluxKontextMultiReferenceLatentMethod",
+    "_meta": {
+      "title": "Edit Model Reference Method"
+    }
+  },
+  "4": {
+    "inputs": {
+      "reference_latents_method": "index_timestep_zero",
+      "conditioning": [
+        "36",
+        0
+      ]
+    },
+    "class_type": "FluxKontextMultiReferenceLatentMethod",
+    "_meta": {
+      "title": "Edit Model Reference Method"
+    }
+  },
+  "5": {
+    "inputs": {
+      "strength": 1,
+      "model": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "CFGNorm",
+    "_meta": {
+      "title": "CFGNorm"
+    }
+  },
+  "9": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "11": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "26",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "12": {
+    "inputs": {
+      "width": 1920,
+      "height": 1088,
+      "batch_size": 1
+    },
+    "class_type": "EmptySD3LatentImage",
+    "_meta": {
+      "title": "EmptySD3LatentImage"
+    }
+  },
+  "13": {
+    "inputs": {
+      "pixels": [
+        "15",
+        0
+      ],
+      "vae": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "14": {
+    "inputs": {
+      "image": "ComfyUI_00106_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "15": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "megapixels": 3,
+      "resolution_steps": 1,
+      "image": [
+        "28",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "ImageScaleToTotalPixels"
+    }
+  },
+  "16": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "megapixels": 3,
+      "resolution_steps": 1,
+      "image": [
+        "21",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "ImageScaleToTotalPixels"
+    }
+  },
+  "17": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "megapixels": 3,
+      "resolution_steps": 1,
+      "image": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "ImageScaleToTotalPixels"
+    }
+  },
+  "18": {
+    "inputs": {
+      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "20": {
+    "inputs": {
+      "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+      "strength_model": 1,
+      "model": [
+        "18",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "21": {
+    "inputs": {
+      "image": "pasted/752dd38453050c27fcb49f64e6747582d168571a5f35227c1b2bd1d207e21027.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "22": {
+    "inputs": {
+      "seed": 473146755093516,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "5",
+        0
+      ],
+      "positive": [
+        "4",
+        0
+      ],
+      "negative": [
+        "3",
+        0
+      ],
+      "latent_image": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "23": {
+    "inputs": {
+      "lora_name": "consistence_edit_v2.safetensors",
+      "strength_model": 0.8000000000000002,
+      "model": [
+        "33",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "25": {
+    "inputs": {
+      "samples": [
+        "22",
+        0
+      ],
+      "vae": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "26": {
+    "inputs": {
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 64,
+      "temporal_overlap": 8,
+      "samples": [
+        "22",
+        0
+      ],
+      "vae": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeTiled",
+    "_meta": {
+      "title": "VAE Decode (Tiled)"
+    }
+  },
+  "27": {
+    "inputs": {
+      "images": [
+        "26",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "28": {
+    "inputs": {
+      "image": "10728.jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "30": {
+    "inputs": {
+      "prompt": "Next Scene 1: The camera holds a steady, atmospheric medium shot (35mm) centered on the same wooden kitchen table at night; the young woman from Reference Image 2 sits upright on the tabletop, hands folded neatly, bathed in warm amber candlelight; the kitchen stays silent, background softly blurred, calm but mysterious. Identity/Face lock: match Reference Image 2 exactly (same face, silver braids, outfit, age); natural skin texture. realistic cinematic style\nNext Scene 2: The camera makes a very slow push-in toward her face without changing the room layout; her eyes shift from the dark corners to the flickering candle, then down to the white pizza plate; her posture tightens almost imperceptibly. Identity/Face lock: match Reference Image 2 exactly; keep braids/outfit consistent. realistic cinematic style\nNext Scene 3: The camera tilts down from her face to the tabletop; candle wax drips in slow detail, a faint draft ripples the flame, and shadows tremble across the wood; the pizza plate slides a millimeter as if nudged by air, stopping dead. Identity/Face lock: same woman; hands/skin tone consistent; realistic anatomy. realistic cinematic style\nNext Scene 4: The camera tilts back up to a tight close-up on her face; she lowers her chin, pupils sharpening on the unseen disturbance; the candlelight edges her cheekbones, emphasizing the hush. Identity/Face lock: match Reference Image 2 exactly; same eye color; no redesign. realistic cinematic style\nNext Scene 5: The camera eases back just enough to include her torso while keeping the same table framing; she reaches for the pizza with deliberate precision and lifts a slice with restrained, “student-like” elegance; the gesture stays small, formal, controlled. Identity/Face lock: same woman; braids/clothing unchanged. realistic cinematic style\nNext Scene 6: The camera holds shallow focus on her face as she takes a small bite; she freezes mid-chew, eyes widening slightly as if tasting something off or catching a tiny sound; the candle flicker feels momentarily stronger, reflected in her eyes. Identity/Face lock: match Reference Image 2 exactly; natural skin texture. realistic cinematic style\nNext Scene 7: The camera follows her hand in a compact movement as she pulls the slice away; a cheese strand stretches and snaps; she cough-laughs once, then regains composure, fanning her fingers subtly to cool them—still seated on the tabletop. Identity/Face lock: same woman; realistic hands; lighting unchanged. realistic cinematic style\nNext Scene 8: The camera tilts down to the plate as she sets the slice back; her fingertips hover, then she nudges a napkin aside on the same table surface, revealing a small folded note that had been tucked under the edge. Identity/Face lock: same woman; realistic anatomy. realistic cinematic style\nNext Scene 9: The camera locks into a close-up on her hands unfolding the note on the tabletop; cryptic symbols and a tiny key icon appear in ink; candlelight stays warm and intimate, highlighting paper fibers and skin texture. Identity/Face lock: match Reference Image 2 exactly; hands/skin tone consistent. realistic cinematic style\nNext Scene 10: The camera pans only a few inches laterally to keep her centered as she slides off the tabletop with controlled grace; her feet land softly on the kitchen floor right beside the same table, and she turns her gaze toward the nearby countertop area—no change in room setup. Identity/Face lock: same woman; outfit unchanged. realistic cinematic style\nNext Scene 11: The camera tracks a short step or two within the same frame as she reaches the nearest cabinet above the counter; she opens it and rummages among jars with minimal movement; the candlelit table remains in the background blur, unchanged. Identity/Face lock: match Reference Image 2 exactly. realistic cinematic style\nNext Scene 12: The camera pushes in to her hand at the counter; she gently shakes one glass jar, and a tiny metal key taps the glass, then drops into her palm with a crisp clink; her attention locks onto it, linking it to the note. Identity/Face lock: same woman; key small and realistic. realistic cinematic style\nNext Scene 13: The camera performs a quick but short whip/pan as she pivots back toward the table—still inside the same kitchen; her silver braids sweep her shoulder with a hint of motion blur; urgency rises without changing location. Identity/Face lock: match Reference Image 2 exactly; lighting warm and consistent. realistic cinematic style\nNext Scene 14: The camera stabilizes at the table edge as she crouches slightly and inserts the tiny key into a concealed latch built into the table’s underside/side panel; click—the small hidden compartment releases. Identity/Face lock: same woman; realistic hands; same table and candle visible. realistic cinematic style\nNext Scene 15: The camera peeks close over her shoulder into the table compartment; she retrieves a small box wrapped in dark cloth; the candle behind her throws long, soft shadows across the wood grain, keeping everything anchored to the same table. Identity/Face lock: match Reference Image 2 exactly. realistic cinematic style\nNext Scene 16: The camera tracks up to her face as she straightens beside the table holding the box; her expression shifts into triumphant curiosity; she returns to her seated position atop the tabletop in one smooth, compact motion. Identity/Face lock: match Reference Image 2 exactly; same eye color; no redesign. realistic cinematic style\nNext Scene 17: The camera returns to the original medium table shot; she places the box next to the candle and unwraps it, revealing an antique metal compass; the flame bends toward it, as if drawn by a subtle force. Identity/Face lock: same woman; same kitchen table setting; scene unchanged. realistic cinematic style\nNext Scene 18: The camera slowly pulls back just a touch—still the same kitchen, same table, same layout; the compass clicks open and projects a soft, luminous map hovering above the wood; she looks up with a quiet, victorious smile as candlelight and magic glow mingle without altering the room. Identity/Face lock: match Reference Image 2 exactly; consistent hair and skin. realistic cinematic style",
+      "start_index": 0,
+      "max_rows": 1000,
+      "remove_empty_lines": ""
+    },
+    "class_type": "easy promptLine",
+    "_meta": {
+      "title": "PromptLine"
+    }
+  },
+  "33": {
+    "inputs": {
+      "lora_name": "next-scene_lora-v2-3000.safetensors",
+      "strength_model": 1,
+      "model": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "36": {
+    "inputs": {
+      "prompt": [
+        "30",
+        0
+      ],
+      "enable_resize": true,
+      "enable_vl_resize": true,
+      "skip_first_image_resize": false,
+      "upscale_method": "lanczos",
+      "crop": "disabled",
+      "instruction": "Describe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate.",
+      "clip": [
+        "1",
+        0
+      ],
+      "vae": [
+        "9",
+        0
+      ],
+      "image1": [
+        "15",
+        0
+      ],
+      "image2": [
+        "16",
+        0
+      ],
+      "image3": [
+        "17",
+        0
+      ],
+      "image4": [
+        "40",
+        0
+      ],
+      "image5": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus_lrzjason",
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus lrzjason"
+    }
+  },
+  "37": {
+    "inputs": {
+      "prompt": "",
+      "enable_resize": true,
+      "enable_vl_resize": true,
+      "skip_first_image_resize": false,
+      "upscale_method": "lanczos",
+      "crop": "disabled",
+      "instruction": "Describe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate.",
+      "clip": [
+        "1",
+        0
+      ],
+      "vae": [
+        "9",
+        0
+      ],
+      "image1": [
+        "15",
+        0
+      ],
+      "image2": [
+        "16",
+        0
+      ],
+      "image3": [
+        "40",
+        0
+      ],
+      "image4": [
+        "39",
+        0
+      ],
+      "image5": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus_lrzjason",
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus lrzjason"
+    }
+  },
+  "38": {
+    "inputs": {
+      "image": "ComfyUI_00106_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "39": {
+    "inputs": {
+      "image": "pasted/752dd38453050c27fcb49f64e6747582d168571a5f35227c1b2bd1d207e21027.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "40": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "megapixels": 3,
+      "resolution_steps": 1,
+      "image": [
+        "39",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "ImageScaleToTotalPixels"
+    }
+  },
+  "41": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "megapixels": 3,
+      "resolution_steps": 1,
+      "image": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "ImageScaleToTotalPixels"
+    }
+  }
+}

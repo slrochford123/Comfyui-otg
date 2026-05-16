@@ -6,6 +6,7 @@ import fssync from "node:fs";
 import { configuredVideoComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { OTG_DATA_ROOT, ensureDir, safeSegment } from "@/lib/paths";
+import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +26,29 @@ const VIEW_RETRY_MS = Math.max(750, Number(process.env.OTG_PRODUCTION_VIDEO_VIEW
 
 const DEFAULT_WORKFLOW_REL = "internal/production/production_ltx23_ia2v_lipsync_api_template.json";
 const LEGACY_WORKFLOW_BASENAME = "LTX-2.3 Image Audio 2 Video GGUF 12GB.json";
+
+function boundedIntEnv(name: string, fallback: number, min: number, max: number) {
+  const value = Number(process.env[name]);
+  const n = Number.isFinite(value) ? Math.floor(value) : fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+const PROMPT_RELAY_DEFAULT_FPS = boundedIntEnv("OTG_PRODUCTION_PROMPT_RELAY_FPS", 16, 1, 60);
+const PROMPT_RELAY_MAX_FPS = boundedIntEnv(
+  "OTG_PRODUCTION_PROMPT_RELAY_MAX_FPS",
+  PROMPT_RELAY_DEFAULT_FPS,
+  1,
+  60
+);
+const PROMPT_RELAY_MAX_SCENE_SECONDS = boundedIntEnv("OTG_PRODUCTION_PROMPT_RELAY_MAX_SCENE_SECONDS", 6, 1, 30);
+const PROMPT_RELAY_DEFAULT_LONGER_EDGE = boundedIntEnv("OTG_PRODUCTION_PROMPT_RELAY_LONGER_EDGE", 960, 512, 1280);
+const PROMPT_RELAY_MAX_LONGER_EDGE = boundedIntEnv(
+  "OTG_PRODUCTION_PROMPT_RELAY_MAX_LONGER_EDGE",
+  PROMPT_RELAY_DEFAULT_LONGER_EDGE,
+  512,
+  1280
+);
+const PROMPT_RELAY_MAX_TOTAL_FRAMES = boundedIntEnv("OTG_PRODUCTION_PROMPT_RELAY_MAX_TOTAL_FRAMES", 96, 16, 240);
 
 class StageError extends Error {
   stage: string;
@@ -295,7 +319,10 @@ function normalizeTimelineScenes(raw: any[]) {
   return (Array.isArray(raw) ? raw : [])
     .map((scene, index) => {
       const prompt = String(scene?.prompt || "").trim();
-      const durationSec = Math.max(1, Math.min(30, Number(scene?.durationSec || scene?.seconds || 5) || 5));
+      const durationSec = Math.max(
+        1,
+        Math.min(PROMPT_RELAY_MAX_SCENE_SECONDS, Number(scene?.durationSec || scene?.seconds || 5) || 5)
+      );
       const hardCut = scene?.hardCut !== false;
       const title = String(scene?.title || `Scene ${index + 1}`).trim() || `Scene ${index + 1}`;
       const characterIds = Array.isArray(scene?.characterIds)
@@ -326,6 +353,37 @@ function normalizeTimelineCharacters(raw: any[]) {
     }))
     .filter((character) => character.id && character.name)
     .slice(0, 40);
+}
+
+function fitSegmentLengthsToFrameBudget(lengths: number[], maxFrames: number) {
+  const raw = lengths.map((value) => Math.max(1, Math.floor(value)));
+  const requestedTotalFrames = raw.reduce((sum, value) => sum + value, 0);
+  const budget = Math.max(raw.length, Math.floor(maxFrames));
+
+  if (!raw.length || requestedTotalFrames <= budget) {
+    return { segmentLengths: raw, requestedTotalFrames, frameBudgetClamped: false };
+  }
+
+  const scale = budget / requestedTotalFrames;
+  const segmentLengths = raw.map((value) => Math.max(1, Math.floor(value * scale)));
+  let used = segmentLengths.reduce((sum, value) => sum + value, 0);
+
+  for (let index = 0; used < budget && segmentLengths.length; index = (index + 1) % segmentLengths.length) {
+    segmentLengths[index] += 1;
+    used += 1;
+  }
+
+  while (used > budget) {
+    let largestIndex = 0;
+    for (let index = 1; index < segmentLengths.length; index += 1) {
+      if (segmentLengths[index] > segmentLengths[largestIndex]) largestIndex = index;
+    }
+    if (segmentLengths[largestIndex] <= 1) break;
+    segmentLengths[largestIndex] -= 1;
+    used -= 1;
+  }
+
+  return { segmentLengths, requestedTotalFrames, frameBudgetClamped: true };
 }
 
 function cloneJson<T>(value: T): T {
@@ -375,15 +433,30 @@ function patchPromptRelayTimelineWorkflow(workflow: AnyObj, body: AnyObj) {
   const relayNode = workflow?.["5837"];
   if (!relayNode?.inputs) return false;
 
-  const fps = Math.max(1, Math.min(60, Math.floor(Number(body.timelineFps || body.frameRate || body.fps || 24) || 24)));
+  const requestedFps = Math.max(
+    1,
+    Math.min(60, Math.floor(Number(body.timelineFps || body.frameRate || body.fps || PROMPT_RELAY_DEFAULT_FPS) || PROMPT_RELAY_DEFAULT_FPS))
+  );
+  const fps = Math.min(PROMPT_RELAY_MAX_FPS, requestedFps);
   const scenes = normalizeTimelineScenes(body.timelineScenes);
   if (!scenes.length) {
     throw new StageError("workflow_patch", "Prompt Relay timeline requires at least one scene prompt.", 400);
   }
 
-  const segmentLengths = scenes.map((scene) => Math.max(1, Math.round(scene.durationSec * fps)));
+  const requestedSegmentLengths = scenes.map((scene) => Math.max(1, Math.round(scene.durationSec * fps)));
+  const { segmentLengths, requestedTotalFrames, frameBudgetClamped } = fitSegmentLengthsToFrameBudget(
+    requestedSegmentLengths,
+    PROMPT_RELAY_MAX_TOTAL_FRAMES
+  );
   const totalFrames = segmentLengths.reduce((sum, value) => sum + value, 0);
   const totalSeconds = Math.max(1, Math.ceil(totalFrames / fps));
+  const requestedLongerEdge = Math.max(
+    PROMPT_RELAY_DEFAULT_LONGER_EDGE,
+    Math.floor(Number(body.longerEdge || 0) || 0),
+    Math.floor(Number(body.width || 0) || 0),
+    Math.floor(Number(body.height || 0) || 0)
+  );
+  const longerEdge = Math.max(512, Math.min(PROMPT_RELAY_MAX_LONGER_EDGE, requestedLongerEdge));
   const globalPrompt = String(body.timelineGlobalPrompt || body.globalPrompt || body.positivePrompt || "").trim();
   const timelineCharacters = normalizeTimelineCharacters(body.timelineCharacters);
   const characterById = new Map(timelineCharacters.map((character) => [character.id, character]));
@@ -425,7 +498,7 @@ function patchPromptRelayTimelineWorkflow(workflow: AnyObj, body: AnyObj) {
 
   setInputIfNodeExists(workflow, "616", "value", fps);
   setInputIfNodeExists(workflow, "615", "value", totalSeconds);
-  setInputIfNodeExists(workflow, "612", "value", Math.max(512, Math.floor(Number(body.longerEdge || body.width || 1280) || 1280)));
+  setInputIfNodeExists(workflow, "612", "value", longerEdge);
   setInputIfNodeExists(workflow, "608", "image", String(body.imagePathAbs || body.imagePath || ""));
   setInputIfNodeExists(workflow, "5827", "image", String(body.imagePathAbs || body.imagePath || ""));
   setInputIfNodeExists(workflow, "5831", "image", String(body.imagePathAbs || body.imagePath || ""));
@@ -486,8 +559,13 @@ function patchPromptRelayTimelineWorkflow(workflow: AnyObj, body: AnyObj) {
 
   return {
     fps,
+    requestedFps,
     totalFrames,
+    requestedTotalFrames,
     totalSeconds,
+    frameBudgetClamped,
+    longerEdge,
+    requestedLongerEdge,
     segmentLengths,
     sceneCount: scenes.length,
     globalPrompt,
@@ -680,6 +758,8 @@ async function appendDeviceJob(deviceId: string, promptId: string) {
 }
 
 export async function POST(req: NextRequest) {
+  if (!isProductionFeatureEnabled()) return productionDisabledResponse();
+
   try {
     const owner = await getOwnerContext(req);
     const body = (await req.json()) as AnyObj;

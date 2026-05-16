@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SessionInvalidError } from "@/lib/ownerKey";
 import { getSessionUser } from "@/lib/sessionUser";
+import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
 import {
   deleteProduction,
   getActiveProduction,
@@ -15,6 +16,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  if (!isProductionFeatureEnabled()) return productionDisabledResponse();
+
   try {
     const user = await getSessionUser(req);
     const ownerKey = user.ownerKey;
@@ -47,6 +50,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  if (!isProductionFeatureEnabled()) return productionDisabledResponse();
+
   try {
     const user = await getSessionUser(req);
     const ownerKey = user.ownerKey;

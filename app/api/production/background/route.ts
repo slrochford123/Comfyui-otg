@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import crypto from "node:crypto";
 import { loadWorkflowById, extractPromptGraph, validatePromptGraph, stripPromptMeta } from "@/lib/workflows";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -134,6 +135,8 @@ async function sleep(ms: number) {
 }
 
 export async function POST(req: NextRequest) {
+  if (!isProductionFeatureEnabled()) return productionDisabledResponse();
+
   try {
     await getOwnerContext(req);
   } catch (e: any) {

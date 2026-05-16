@@ -339,7 +339,7 @@
   },
   "612": {
     "inputs": {
-      "value": 1280
+      "value": 960
     },
     "class_type": "PrimitiveInt",
     "_meta": {
@@ -374,7 +374,7 @@
   },
   "616": {
     "inputs": {
-      "value": 24
+      "value": 16
     },
     "class_type": "PrimitiveFloat",
     "_meta": {
@@ -612,12 +612,12 @@
   "5837": {
     "inputs": {
       "global_prompt": "cinematic LTX 2.3 production, consistent characters, clear hard cuts between scenes",
-      "max_frames": 120,
-      "timeline_data": "{\"segments\":[{\"prompt\":\"Characters in scene: broy. broy walk through the forest\",\"length\":120,\"color\":\"#4f8edc\"}]}",
+      "max_frames": 80,
+      "timeline_data": "{\"segments\":[{\"prompt\":\"Characters in scene: broy. broy walk through the forest\",\"length\":80,\"color\":\"#4f8edc\"}]}",
       "local_prompts": "Characters in scene: broy. broy walk through the forest",
-      "segment_lengths": "120",
+      "segment_lengths": "80",
       "epsilon": 0.001,
-      "fps": 24,
+      "fps": 16,
       "time_units": "frames",
       "model": [
         "5756",

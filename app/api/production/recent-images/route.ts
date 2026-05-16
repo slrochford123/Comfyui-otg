@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGallerySourcesForRequest, listGalleryItemsFromSources } from "@/lib/gallery";
 import { SessionInvalidError } from "@/lib/ownerKey";
+import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,8 @@ function clampLimit(value: string | null) {
 }
 
 export async function GET(req: NextRequest) {
+  if (!isProductionFeatureEnabled()) return productionDisabledResponse();
+
   try {
     const limit = clampLimit(req.nextUrl.searchParams.get("limit"));
     const { sources } = await getGallerySourcesForRequest(req);

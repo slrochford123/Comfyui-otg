@@ -1,10 +1,12 @@
-﻿"use client";
+"use client";
 
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
 import type { GalleryActionKind } from "./components/GalleryWorkspace";
+import "./components/ProductionAnimateModeSwitch";
+import "./components/ProductionDirectorModeUI";
 
 const PanelLoading = () => (
   <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 text-sm text-white/60">
@@ -19,6 +21,7 @@ const VoicesPanel = dynamic(() => import("./components/VoicesPanel"), { loading:
 const SupportPanel = dynamic(() => import("./components/SupportPanel"), { loading: PanelLoading });
 const EditVideoPanel = dynamic(() => import("./components/EditVideoPanel"), { loading: PanelLoading });
 const GalleryWorkspace = dynamic(() => import("./components/GalleryWorkspace"), { loading: PanelLoading });
+const ProductionCharacterReferencePickerBridge = dynamic(() => import("./components/ProductionCharacterReferencePickerBridge"), { ssr: false, loading: () => null });
 
 type WorkflowItem = {
   id: string;
@@ -96,6 +99,13 @@ type SceneTransitionMode =
 
 
 type SceneReferenceSlotKey = "char1" | "char2" | "char3" | "bg";
+
+type SceneCharacterPickerItem = {
+  id: string;
+  name: string;
+  imagePath: string;
+  imageUrl: string;
+};
 
 type SceneReferenceSlotStatus = "idle" | "running" | "done";
 
@@ -208,6 +218,7 @@ type ExtendModalState = {
 };
 
 const APP_STATE_KEY = "otg:test:page-state:v1";
+const PRODUCTION_FEATURE_ENABLED = process.env.NEXT_PUBLIC_OTG_ENABLE_PRODUCTION === "1";
 const APP_THEME_KEY = "otg:test:theme:v1";
 const APP_FONT_SCALE_KEY = "otg:test:font-scale:v1";
 const APP_UI_MODE_KEY = "otg:test:ui-mode:v1";
@@ -1390,6 +1401,12 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [scenePreviewModalLabel, setScenePreviewModalLabel] = useState("");
   const [sceneVisionSummary, setSceneVisionSummary] = useState("");
   const [sceneReferencePickerOpen, setSceneReferencePickerOpen] = useState(false);
+  // SCENE_REFERENCE_FROM_CHARACTERS_PATCH
+  const [sceneCharacterPickerSlot, setSceneCharacterPickerSlot] = useState<SceneReferenceSlotKey | null>(null);
+  const [sceneCharacterPickerItems, setSceneCharacterPickerItems] = useState<SceneCharacterPickerItem[]>([]);
+  const [sceneCharacterPickerLoading, setSceneCharacterPickerLoading] = useState(false);
+  const [sceneCharacterPickerError, setSceneCharacterPickerError] = useState("");
+  const [sceneCharacterPickerSelectingId, setSceneCharacterPickerSelectingId] = useState("");
   const [sceneReferenceBusySlot, setSceneReferenceBusySlot] = useState<SceneReferenceSlotKey | "">("");
   const [sceneReferenceAnalyses, setSceneReferenceAnalyses] = useState<Record<SceneReferenceSlotKey, string>>({
     char1: "",
@@ -1750,7 +1767,8 @@ const handleCreateCharacterFromGenerate = useCallback(async () => {
         headers: { "x-otg-device-id": "web_generate_character_import" },
         body: form,
       });
-      const data = await res.json().catch(() => null);
+      const data = await res.json().catch(() =>
+      null);
       if (!res.ok || !data?.ok || !data?.serverPath) {
         throw new Error(data?.error || `Character image upload failed (${res.status})`);
       }
@@ -2028,7 +2046,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   useEffect(() => {
     const persisted = readPersistedState();
     if (persisted) {
-      if (persisted.tab) setTab(persisted.tab);
+      if (persisted.tab) setTab(!PRODUCTION_FEATURE_ENABLED && persisted.tab === "storyboard" ? "generate" : persisted.tab);
       if (persisted.assistanceTab) setAssistanceTab(persisted.assistanceTab);
       if (typeof persisted.prompt === "string") setPrompt(persisted.prompt);
       if (typeof persisted.negativePrompt === "string") setNegativePrompt(persisted.negativePrompt);
@@ -2092,7 +2110,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         tabParam === "settings" ||
         tabParam === "support"
       ) {
-        setTab(tabParam);
+        setTab(!PRODUCTION_FEATURE_ENABLED && tabParam === "storyboard" ? "generate" : tabParam);
       }
     } catch {
       // ignore
@@ -2332,6 +2350,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }, [stopMicCapture]);
 
   useEffect(() => {
+    if (!PRODUCTION_FEATURE_ENABLED && tab === "storyboard") {
+      setTab("generate");
+      return;
+    }
     if (!isAdmin && tab === "voices") {
       setTab("generate");
     }
@@ -4318,7 +4340,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   function handleSettingsClearLocalState() {
     try {
       window.localStorage.removeItem(APP_STATE_KEY);
-      setSettingsLocalMessage("Local UI state cleared. Server files, Gallery, Favorites, and Production projects were not deleted.");
+      setSettingsLocalMessage("Local UI state cleared. Server files, Gallery, and Favorites were not deleted.");
       setStatusMessage("Local UI state cleared.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Local UI state clear failed.";
@@ -4694,6 +4716,137 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     setSceneBgPreviewUrl(URL.createObjectURL(file));
   }
 
+  function sceneReferenceSlotLabel(slot: SceneReferenceSlotKey) {
+    if (slot === "char1") return "Character 1";
+    if (slot === "char2") return "Character 2";
+    if (slot === "char3") return "Character 3";
+    return "Background";
+  }
+
+  function sceneCharacterImageUrl(imagePath: string) {
+    return `/api/file?path=${encodeURIComponent(imagePath)}`;
+  }
+
+  function sceneCharacterFileName(item: SceneCharacterPickerItem, mime: string) {
+    const source = item.imagePath || item.name || "character";
+    const base =
+      String(item.name || source.split(/[\\/]/).pop() || "character")
+        .replace(/\.[^.]+$/, "")
+        .replace(/[^a-z0-9_-]+/gi, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 80) || "character";
+
+    const ext = mime.includes("jpeg")
+      ? "jpg"
+      : mime.includes("webp")
+        ? "webp"
+        : mime.includes("gif")
+          ? "gif"
+          : "png";
+
+    return `${base}.${ext}`;
+  }
+
+  async function loadSceneCharacterPickerItems() {
+    setSceneCharacterPickerLoading(true);
+    setSceneCharacterPickerError("");
+
+    try {
+      const res = await fetch("/api/characters", {
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : `Character load failed (${res.status})`);
+      }
+
+      const raw: any[] = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.characters)
+          ? data.characters
+          : Array.isArray(data?.items)
+            ? data.items
+            : [];
+
+      const seen = new Set<string>();
+
+      const items: SceneCharacterPickerItem[] = raw
+        .map((entry: any, index: number) => {
+          const imagePath = String(entry?.imagePath || "").trim();
+          const name = String(entry?.name || entry?.title || entry?.label || `Character ${index + 1}`).trim();
+
+          return {
+            id: String(entry?.id || imagePath || name || index),
+            name,
+            imagePath,
+            imageUrl: imagePath ? sceneCharacterImageUrl(imagePath) : "",
+          };
+        })
+        .filter((item) => {
+          if (!item.imagePath || !item.imageUrl) return false;
+          if (seen.has(item.imagePath)) return false;
+          seen.add(item.imagePath);
+          return true;
+        });
+
+      setSceneCharacterPickerItems(items);
+
+      if (!items.length) {
+        setSceneCharacterPickerError("No saved characters with images were found.");
+      }
+    } catch (error) {
+      setSceneCharacterPickerItems([]);
+      setSceneCharacterPickerError(error instanceof Error ? error.message : "Could not load saved characters.");
+    } finally {
+      setSceneCharacterPickerLoading(false);
+    }
+  }
+
+  function openSceneCharacterPicker(slot: SceneReferenceSlotKey) {
+    setSceneCharacterPickerSlot(slot);
+    setSceneCharacterPickerError("");
+    setSceneCharacterPickerSelectingId("");
+    void loadSceneCharacterPickerItems();
+  }
+
+  async function applySceneCharacterToReference(slot: SceneReferenceSlotKey, item: SceneCharacterPickerItem) {
+    if (!item.imageUrl) return;
+
+    setSceneCharacterPickerSelectingId(item.id);
+    setSceneCharacterPickerError("");
+
+    try {
+      const res = await fetch(item.imageUrl, {
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        throw new Error(`Could not load character image (${res.status}).`);
+      }
+
+      const blob = await res.blob();
+      if (!String(blob.type || "").startsWith("image/")) {
+        throw new Error("Selected character file is not an image.");
+      }
+
+      const file = new File([blob], sceneCharacterFileName(item, blob.type || "image/png"), {
+        type: blob.type || "image/png",
+      });
+
+      setSceneReference(slot, file);
+      setSceneCharacterPickerSlot(null);
+      setSceneCharacterPickerSelectingId("");
+      setStatusMessage(`${item.name} selected for ${sceneReferenceSlotLabel(slot)}.`);
+    } catch (error) {
+      setSceneCharacterPickerError(error instanceof Error ? error.message : "Could not select character.");
+    } finally {
+      setSceneCharacterPickerSelectingId("");
+    }
+  }
   async function resizeImageFileToBase64(file: File, maxDimension = 768): Promise<string> {
     const objectUrl = URL.createObjectURL(file);
     try {
@@ -6188,6 +6341,13 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                             onChange={(e) => setSceneReference("char1", e.target.files?.[0] || null)}
                           />
                         </label>
+                        <button
+                          type="button"
+                          onClick={() => openSceneCharacterPicker("char1")}
+                          className="inline-flex w-full items-center justify-center rounded-[18px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/15"
+                        >
+                          From Characters
+                        </button>
                         <div className="overflow-hidden rounded-[14px] border border-white/10 bg-black/35 p-2">
                           {sceneChar1PreviewUrl ? (
                             <img src={sceneChar1PreviewUrl} alt="Character 1 reference" className="h-20 w-full rounded-[10px] object-cover" />
@@ -6209,6 +6369,13 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                             onChange={(e) => setSceneReference("char2", e.target.files?.[0] || null)}
                           />
                         </label>
+                        <button
+                          type="button"
+                          onClick={() => openSceneCharacterPicker("char2")}
+                          className="inline-flex w-full items-center justify-center rounded-[18px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/15"
+                        >
+                          From Characters
+                        </button>
                         <div className="overflow-hidden rounded-[14px] border border-white/10 bg-black/35 p-2">
                           {sceneChar2PreviewUrl ? (
                             <img src={sceneChar2PreviewUrl} alt="Character 2 reference" className="h-20 w-full rounded-[10px] object-cover" />
@@ -6230,6 +6397,13 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                             onChange={(e) => setSceneReference("char3", e.target.files?.[0] || null)}
                           />
                         </label>
+                        <button
+                          type="button"
+                          onClick={() => openSceneCharacterPicker("char3")}
+                          className="inline-flex w-full items-center justify-center rounded-[18px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/15"
+                        >
+                          From Characters
+                        </button>
                         <div className="overflow-hidden rounded-[14px] border border-white/10 bg-black/35 p-2">
                           {sceneChar3PreviewUrl ? (
                             <img src={sceneChar3PreviewUrl} alt="Character 3 reference" className="h-20 w-full rounded-[10px] object-cover" />
@@ -6251,6 +6425,13 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                             onChange={(e) => setSceneReference("bg", e.target.files?.[0] || null)}
                           />
                         </label>
+                        <button
+                          type="button"
+                          onClick={() => openSceneCharacterPicker("bg")}
+                          className="inline-flex w-full items-center justify-center rounded-[18px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/15"
+                        >
+                          From Characters
+                        </button>
                         <div className="overflow-hidden rounded-[14px] border border-white/10 bg-black/35 p-2">
                           {sceneBgPreviewUrl ? (
                             <img src={sceneBgPreviewUrl} alt="Background reference" className="h-20 w-full rounded-[10px] object-cover" />
@@ -6542,6 +6723,81 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                   </div>
                 </div>
               </Card>
+            ) : null}
+            {sceneCharacterPickerSlot ? (
+              <div
+                className="fixed inset-0 z-[135] overflow-y-auto bg-black/82 px-4 py-6 backdrop-blur-sm"
+                onClick={() => setSceneCharacterPickerSlot(null)}
+              >
+                <div
+                  className="mx-auto flex max-h-[86vh] max-w-5xl flex-col overflow-hidden rounded-[28px] border border-cyan-400/20 bg-[#070b16] shadow-[0_0_60px_rgba(0,0,0,0.55)]"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-4">
+                    <div>
+                      <h3 className="text-lg font-semibold text-white">
+                        Choose Character for {sceneReferenceSlotLabel(sceneCharacterPickerSlot)}
+                      </h3>
+                      <p className="text-sm text-white/55">
+                        Uses saved Characters tab images and applies the selected image to this Scene Creator reference slot.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <ActionButton onClick={() => void loadSceneCharacterPickerItems()} disabled={sceneCharacterPickerLoading}>
+                        {sceneCharacterPickerLoading ? "Loading..." : "Refresh"}
+                      </ActionButton>
+                      <ActionButton onClick={() => setSceneCharacterPickerSlot(null)}>Close</ActionButton>
+                    </div>
+                  </div>
+
+                  <div className="min-h-[260px] overflow-y-auto p-5">
+                    {sceneCharacterPickerError ? (
+                      <div className="mb-4 rounded-2xl border border-red-400/20 bg-red-500/10 p-4 text-sm text-red-100">
+                        {sceneCharacterPickerError}
+                      </div>
+                    ) : null}
+
+                    {sceneCharacterPickerLoading ? (
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/65">
+                        Loading saved characters...
+                      </div>
+                    ) : null}
+
+                    {!sceneCharacterPickerLoading && !sceneCharacterPickerError && sceneCharacterPickerItems.length === 0 ? (
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/65">
+                        No saved characters found.
+                      </div>
+                    ) : null}
+
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                      {sceneCharacterPickerItems.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => void applySceneCharacterToReference(sceneCharacterPickerSlot, item)}
+                          disabled={Boolean(sceneCharacterPickerSelectingId)}
+                          className="group overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] text-left transition hover:border-cyan-300/40 hover:bg-white/[0.07] disabled:cursor-wait disabled:opacity-60"
+                        >
+                          <div className="aspect-square bg-black/45">
+                            <img
+                              src={item.imageUrl}
+                              alt={item.name}
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                            />
+                          </div>
+                          <div className="border-t border-white/10 px-3 py-2">
+                            <div className="truncate text-xs font-semibold text-white">{item.name}</div>
+                            {sceneCharacterPickerSelectingId === item.id ? (
+                              <div className="mt-1 text-[11px] text-cyan-200">Selecting...</div>
+                            ) : null}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
             ) : null}
             {sceneTutorialOpen ? (
               <>
@@ -6844,7 +7100,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         ) : null}
 
         {tab === "angles" ? <AnglesPanel /> : null}
-        {tab === "storyboard" ? <StoryboardPanel /> : null}
+        {PRODUCTION_FEATURE_ENABLED && tab === "storyboard" ? <StoryboardPanel /> : null}
         {tab === "characters" ? <CharactersPanel importedDraft={characterImportDraft} onImportedDraftConsumed={() => setCharacterImportDraft(null)} /> : null}
         {tab === "editvideo" ? <EditVideoPanel onRefreshGallery={() => void loadGallery()} /> : null}
 
@@ -6855,7 +7111,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
             <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm">
               <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-200/70">App controls</p>
               <h1 className="mt-2 text-4xl font-black tracking-tight text-white">Settings</h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">Check your account, verify the active Comfy connection, and recover stuck local pipeline state without deleting Gallery, Favorites, or Production projects.</p>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">Check your account, verify the active Comfy connection, and recover stuck local pipeline state without deleting Gallery or Favorites.</p>
             </div>
 
             <div className="grid gap-4 lg:grid-cols-2">
@@ -7024,7 +7280,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               </Card>
 
               <Card title="Pipeline recovery">
-                <p className="text-sm leading-6 text-white/65">Use this only when the current generation/progress state is stuck. It unlocks the OTG pipeline state and clears the current preview pointer. It does not delete Gallery, Favorites, or Production projects.</p>
+                <p className="text-sm leading-6 text-white/65">Use this only when the current generation/progress state is stuck. It unlocks the OTG pipeline state and clears the current preview pointer. It does not delete Gallery or Favorites.</p>
                 <div className="flex flex-wrap gap-3">
                   <ActionButton onClick={() => void handleSettingsClearPipeline()} disabled={settingsPipelineBusy}>
                     {settingsPipelineBusy ? "Clearing..." : "Clear Current Pipeline"}
@@ -7036,7 +7292,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               </Card>
 
               <Card title="Local app state">
-                <p className="text-sm leading-6 text-white/65">Clears saved browser UI state for this app on this device, including remembered tab/view preferences. Server files, Gallery, Favorites, and Production projects are not touched.</p>
+                <p className="text-sm leading-6 text-white/65">Clears saved browser UI state for this app on this device, including remembered tab/view preferences. Server files, Gallery, and Favorites are not touched.</p>
                 <div className="flex flex-wrap gap-3">
                   <GhostButton onClick={handleSettingsClearLocalState}>Clear Local UI State</GhostButton>
                 </div>
@@ -7177,7 +7433,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         onSubmitExtend={() => void submitGalleryExtend()}
       />
 
-      <SpinDialNav tab={tab} onTab={setTab} isAdmin={isAdmin} uiMode={appUiMode} />
+            <ProductionCharacterReferencePickerBridge />
+<SpinDialNav tab={tab} onTab={setTab} isAdmin={isAdmin} showProduction={PRODUCTION_FEATURE_ENABLED} uiMode={appUiMode} />
     </main>
   );
 }

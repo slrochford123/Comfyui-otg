@@ -6,6 +6,7 @@ import fssync from "node:fs";
 import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { OTG_DATA_ROOT, ensureDir, safeSegment } from "@/lib/paths";
+import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -501,6 +502,8 @@ function appendJobLog(entry: Record<string, any>, deviceId: string) {
 }
 
 export async function POST(req: NextRequest) {
+  if (!isProductionFeatureEnabled()) return productionDisabledResponse();
+
   let ownerCtx: Awaited<ReturnType<typeof getOwnerContext>>;
   try {
     ownerCtx = await getOwnerContext(req);
