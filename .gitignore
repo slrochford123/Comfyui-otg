@@ -39,6 +39,7 @@ android/app/release/
 android/release/
 android/keystore.properties
 android/local.properties
+keystore.properties
 ios/build/
 ios/Pods/
 ios/DerivedData/
