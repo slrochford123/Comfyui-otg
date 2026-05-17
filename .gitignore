@@ -154,8 +154,11 @@ backups/
 _patch_backups/
 _local_patches_hold/
 .codex-backups/
+.otg_backups/
 _otg_patch_backups/
 otg-clean-reapply-kit/
+otg-improvements-kit/
+patch_full_feature_batch/
 playwright-report/
 test-results/
 .bak/
@@ -164,3 +167,9 @@ ssh/
 *.bak
 *.lnk
 .env
+.aider*
+Java/
+dev-*.log
+repo folder test app.zip
+comfy-history-latest.json
+baseline-i2v-5s-audio-*.json
