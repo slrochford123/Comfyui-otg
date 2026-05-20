@@ -1,6 +1,6 @@
 {
   "name": "otg",
-  "version": "1.0.15",
+  "version": "1.0.17",
   "private": true,
   "scripts": {
     "predev": "node scripts/ensure-native-deps.cjs",

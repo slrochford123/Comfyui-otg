@@ -22,6 +22,12 @@ REM Heavy / optional services
 REM Hunyuan3D is needed for Angles / 3D model features, but it is GPU-heavy.
 set "START_HUNYUAN3D=1"
 
+REM ACE-Step 1.5 is a local music generation service.
+REM UI runs on port 7860 by default.
+REM API runs on port 8001 by default.
+set "START_ACE_STEP_15=1"
+set "START_ACE_STEP_15_API=0"
+
 REM Not required by OTG for normal conversion. OTG calls Seed-VC per job.
 REM Turn this on only if you want the manual Seed-VC UI open.
 set "START_SEEDVC_UI=0"
@@ -38,6 +44,11 @@ set "QWEN3_API_BAT=%REPO_ROOT%\scripts\voice\run_qwen3_tts_api.bat"
 set "QWEN3_UI_BAT=%REPO_ROOT%\scripts\voice\run_qwen3_tts_ui.bat"
 set "SEEDVC_BAT=%REPO_ROOT%\scripts\voice\run_seedvc.bat"
 set "BG_REMOVE_BAT=%REPO_ROOT%\services\bg_remove\run_bg_remove.bat"
+
+REM ACE-Step 1.5 path fallbacks.
+set "ACE_STEP_ROOT_A=C:\AI\ACE-Step-1.5"
+set "ACE_STEP_ROOT_B=C:\AI\ACE-Step\ACE-Step-1.5"
+set "ACE_STEP_ROOT_C=%USERPROFILE%\ACE-Step-1.5"
 
 REM Hunyuan3D path fallback A.
 set "HUNYUAN_ROOT_A=C:\AI\Hunyuan3D\Hunyuan3D-2"
@@ -62,6 +73,8 @@ if "%START_QWEN3_API%"=="1" call :StartBat "OTG Qwen3 TTS API 7863" 7863 "%QWEN3
 if "%START_BG_REMOVE%"=="1" call :StartBat "OTG BG Remove 3333" 3333 "%BG_REMOVE_BAT%"
 
 if "%START_HUNYUAN3D%"=="1" call :StartHunyuan3D
+if "%START_ACE_STEP_15%"=="1" call :StartAceStep15UI
+if "%START_ACE_STEP_15_API%"=="1" call :StartAceStep15API
 
 if "%START_SEEDVC_UI%"=="1" call :StartBat "OTG Seed-VC UI 7864" 7864 "%SEEDVC_BAT%"
 if "%START_QWEN3_UI%"=="1" call :StartBat "OTG Qwen3 TTS UI 8000" 8000 "%QWEN3_UI_BAT%"
@@ -84,6 +97,13 @@ echo   XTTS:                http://127.0.0.1:7862/health
 echo   Qwen3 TTS API:       http://127.0.0.1:7863/health
 echo   BG Remove:           http://127.0.0.1:3333
 echo   Hunyuan3D:           http://127.0.0.1:8080
+echo   ACE-Step 1.5 UI:     http://127.0.0.1:7860
+echo   ACE-Step 1.5 API:    http://127.0.0.1:8001
+echo.
+echo ACE-Step note:
+echo   ACE-Step 1.5 UI is enabled by default: START_ACE_STEP_15=1
+echo   ACE-Step 1.5 API is disabled by default: START_ACE_STEP_15_API=0
+echo   Expected install path fallback A: %ACE_STEP_ROOT_A%
 echo.
 echo Seed-VC note:
 echo   Seed-VC is normally called by OTG per conversion job.
@@ -173,6 +193,97 @@ echo [START] Hunyuan3D on port 8080
 echo         Root: %HUNYUAN_ROOT%
 echo         Python: %HUNYUAN_PY%
 start "OTG Hunyuan3D 8080" cmd /k "cd /d ""%HUNYUAN_ROOT%"" && ""%HUNYUAN_PY%"" -s gradio_app.py --mini --enable_t23d --profile 5 --turbo"
+timeout /t 2 /nobreak >nul
+exit /b 0
+
+
+:ResolveAceStep15
+set "ACE_STEP_ROOT="
+
+for %%D in ("%ACE_STEP_ROOT_A%" "%ACE_STEP_ROOT_B%" "%ACE_STEP_ROOT_C%") do (
+  if "%ACE_STEP_ROOT%"=="" (
+    if exist "%%~D\pyproject.toml" set "ACE_STEP_ROOT=%%~D"
+  )
+)
+
+exit /b 0
+
+
+:StartAceStep15UI
+call :IsPortOpen 7860
+if "%PORT_OPEN%"=="1" (
+  echo [SKIP] ACE-Step 1.5 UI already responds on port 7860.
+  exit /b 0
+)
+
+call :ResolveAceStep15
+
+if "%ACE_STEP_ROOT%"=="" (
+  echo [WARN] ACE-Step 1.5 root not found.
+  echo        Tried:
+  echo        %ACE_STEP_ROOT_A%
+  echo        %ACE_STEP_ROOT_B%
+  echo        %ACE_STEP_ROOT_C%
+  echo.
+  echo        Install expected:
+  echo        git clone https://github.com/ACE-Step/ACE-Step-1.5.git C:\AI\ACE-Step-1.5
+  echo        cd /d C:\AI\ACE-Step-1.5
+  echo        uv sync
+  exit /b 0
+)
+
+echo [START] ACE-Step 1.5 UI on port 7860
+echo         Root: %ACE_STEP_ROOT%
+
+if exist "%ACE_STEP_ROOT%\start_gradio_ui.bat" (
+  start "OTG ACE-Step 1.5 UI 7860" cmd /k "cd /d ""%ACE_STEP_ROOT%"" && set PORT=7860 && call start_gradio_ui.bat"
+) else (
+  where uv >nul 2>nul
+  if errorlevel 1 (
+    echo [WARN] uv was not found on PATH. Cannot start ACE-Step 1.5 UI.
+    echo        Install uv or use ACE-Step's portable package.
+    exit /b 0
+  )
+  start "OTG ACE-Step 1.5 UI 7860" cmd /k "cd /d ""%ACE_STEP_ROOT%"" && set PORT=7860 && uv run acestep"
+)
+
+timeout /t 2 /nobreak >nul
+exit /b 0
+
+
+:StartAceStep15API
+call :IsPortOpen 8001
+if "%PORT_OPEN%"=="1" (
+  echo [SKIP] ACE-Step 1.5 API already responds on port 8001.
+  exit /b 0
+)
+
+call :ResolveAceStep15
+
+if "%ACE_STEP_ROOT%"=="" (
+  echo [WARN] ACE-Step 1.5 root not found.
+  echo        Tried:
+  echo        %ACE_STEP_ROOT_A%
+  echo        %ACE_STEP_ROOT_B%
+  echo        %ACE_STEP_ROOT_C%
+  exit /b 0
+)
+
+echo [START] ACE-Step 1.5 API on port 8001
+echo         Root: %ACE_STEP_ROOT%
+
+if exist "%ACE_STEP_ROOT%\start_api_server.bat" (
+  start "OTG ACE-Step 1.5 API 8001" cmd /k "cd /d ""%ACE_STEP_ROOT%"" && set PORT=8001 && call start_api_server.bat"
+) else (
+  where uv >nul 2>nul
+  if errorlevel 1 (
+    echo [WARN] uv was not found on PATH. Cannot start ACE-Step 1.5 API.
+    echo        Install uv or use ACE-Step's portable package.
+    exit /b 0
+  )
+  start "OTG ACE-Step 1.5 API 8001" cmd /k "cd /d ""%ACE_STEP_ROOT%"" && set PORT=8001 && uv run acestep-api"
+)
+
 timeout /t 2 /nobreak >nul
 exit /b 0
 

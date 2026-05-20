@@ -233,6 +233,7 @@ type ProductionClipEditManifest = {
   status: ProductionEditStatus;
   editedUrl?: string;
   editedFileName?: string;
+  renderedDurationSeconds?: number;
   error?: string;
   updatedAt: string;
 };
@@ -4290,6 +4291,7 @@ function renderDefaultAnimateStage() {
       status: normalizeProductionEditStatus(raw.status),
       editedUrl: String(raw.editedUrl || ""),
       editedFileName: String(raw.editedFileName || ""),
+      renderedDurationSeconds: Number.isFinite(Number(raw.renderedDurationSeconds)) ? Number(raw.renderedDurationSeconds) : undefined,
       error: raw.error ? String(raw.error) : undefined,
       updatedAt: String(raw.updatedAt || new Date().toISOString()),
     };
@@ -5256,8 +5258,18 @@ function handleRenderedEditReplacementResponse(
       return;
     }
 
-    if (Math.abs(manifest.playbackRate - 1) > 0.001 || manifest.expandMode !== "none") {
-      setNotice("Current render supports trim and basic audio cleanup only. Set playback rate to 1 and expand mode to None before rendering.");
+    if (manifest.expandMode === "freeze_start" || manifest.expandMode === "freeze_end") {
+      setNotice("Freeze start/end expand modes are not supported by this render path yet. Use None or Slow down.");
+      return;
+    }
+
+    if (manifest.expandMode === "slow_down" && manifest.playbackRate >= 1) {
+      setNotice("Slow down requires playback rate below 1.");
+      return;
+    }
+
+    if (manifest.expandMode === "none" && Math.abs(manifest.playbackRate - 1) > 0.001) {
+      setNotice("Playback rate changes require expand mode Slow down.");
       return;
     }
 
@@ -5302,7 +5314,7 @@ function handleRenderedEditReplacementResponse(
         status: "render_ready",
         editedUrl: String(data.editedUrl || ""),
         editedFileName: String(data.editedFileName || ""),
-        trimEndSeconds: Number(data.durationSeconds) > 0 ? manifest.trimStartSeconds + Number(data.durationSeconds) : manifest.trimEndSeconds,
+        renderedDurationSeconds: Number(data.durationSeconds) > 0 ? Number(data.durationSeconds) : undefined,
         error: "",
         updatedAt: new Date().toISOString(),
       }, durationSec);
@@ -5748,6 +5760,10 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
     const durationSec = activeRow?.durationSec || clampStoryboardDuration(scene?.durationSeconds ?? DEFAULT_SCENE_DURATION_SECONDS);
     const draft = activeKey ? editDraftForClip(activeKey, durationSec) : createDefaultProductionEditManifest(activeRow, durationSec);
     const visualRange = draft.visualFxRanges[0] || createProductionEditVisualFxRange(0, durationSec);
+    const unsupportedEditExpandMode = draft.expandMode === "freeze_start" || draft.expandMode === "freeze_end";
+    const invalidSlowDownEditTiming = draft.expandMode === "slow_down" && draft.playbackRate >= 1;
+    const invalidPlaybackRateWithoutSlowDown = draft.expandMode === "none" && Math.abs(draft.playbackRate - 1) > 0.001;
+    const editRenderBlockedByTiming = unsupportedEditExpandMode || invalidSlowDownEditTiming || invalidPlaybackRateWithoutSlowDown;
     const readyCount = rows.filter((row) => {
       const rowDraft = normalizeProductionEditManifest(row, editDraftsByClipKey[row.key] || row.clip.editManifest, row.durationSec);
       return rowDraft.status === "manifest_saved" || rowDraft.status === "render_ready";
@@ -6131,8 +6147,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                     disabled={
                       !activeKey ||
                       Boolean(renderingEditClipKey) ||
-                      Math.abs(draft.playbackRate - 1) > 0.001 ||
-                      draft.expandMode !== "none"
+                      editRenderBlockedByTiming
                     }
                     onClick={() => renderTrimOnlyEditClip(activeKey, durationSec)}
                     className="mt-2 w-full rounded-[12px] border border-emerald-300/30 bg-emerald-300/10 px-4 py-3 text-sm font-black text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
@@ -6154,9 +6169,17 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                       {draft.error}
                     </div>
                   ) : null}
-                  {(Math.abs(draft.playbackRate - 1) > 0.001 || draft.expandMode !== "none") ? (
+                  {unsupportedEditExpandMode ? (
                     <div className="mt-2 rounded-[12px] border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-xs font-bold text-amber-100">
-                      Current render supports trim and basic audio cleanup only. Use playback rate 1 and expand mode None.
+                      Freeze start/end expand modes are not supported by this render path yet. Use None or Slow down.
+                    </div>
+                  ) : invalidSlowDownEditTiming ? (
+                    <div className="mt-2 rounded-[12px] border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-xs font-bold text-amber-100">
+                      Slow down requires playback rate below 1.
+                    </div>
+                  ) : invalidPlaybackRateWithoutSlowDown ? (
+                    <div className="mt-2 rounded-[12px] border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-xs font-bold text-amber-100">
+                      Playback rate changes require expand mode Slow down.
                     </div>
                   ) : null}
                 </div>
@@ -7052,7 +7075,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
         originalFileName: row.sourceFileName,
         editedFileName: manifest.editedFileName || "",
         manifestStatus: manifest.status,
-        durationSec: row.durationSec,
+        durationSec: hasEdited && manifest.renderedDurationSeconds ? manifest.renderedDurationSeconds : row.durationSec,
       };
     });
   }
