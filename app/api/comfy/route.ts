@@ -6,6 +6,7 @@ import { loadWorkflowById, extractPromptGraph, validatePromptGraph } from "@/lib
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { readState, markRunning, writeState } from "@/lib/contentState";
 import { writePromptRequestMeta } from "@/lib/promptRequestMeta";
+import { ensureComfyClientProgressMonitor, recordComfyPromptSubmitted, waitForComfyClientProgressMonitor } from "@/lib/comfyProgress";
 
 export const runtime = "nodejs";
 
@@ -140,6 +141,11 @@ function getDeviceIdFromReq(req: NextRequest) {
   if (fromCookie) return fromCookie;
 
   return makeFallbackDeviceId();
+}
+
+function makeComfyClientId(deviceId: string) {
+  const safe = safeDeviceId(deviceId) || "device";
+  return `otg_${safe}_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 10)}`;
 }
 
 function ensureDir(p: string) {
@@ -690,6 +696,27 @@ async function uploadFormFileToComfy(
 
   throw new Error("Comfy upload failed for " + kind + ". " + failures.join(" | "));
 }
+
+async function uploadServerImagePathToComfy(rawPath: string, comfyBaseUrl: string) {
+  const resolved = path.resolve(String(rawPath || ""));
+  const dataRoot = path.resolve(OTG_DATA_DIR);
+
+  if (!resolved.startsWith(dataRoot + path.sep)) {
+    throw new Error("Storyboard source image path is outside the OTG data directory.");
+  }
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+    throw new Error("Storyboard source image file was not found.");
+  }
+
+  const ext = path.extname(resolved).toLowerCase();
+  if (![".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"].includes(ext)) {
+    throw new Error("Storyboard source file must be an image.");
+  }
+
+  const bytes = fs.readFileSync(resolved);
+  const file = new File([bytes], path.basename(resolved));
+  return uploadFormFileToComfy(file, comfyBaseUrl, "image");
+}
 function setNodeIfPresent(graph: any, nodeId: string, patch: Record<string, any>) {
   if (!graph || typeof graph !== "object") return;
   const node = graph?.[nodeId];
@@ -764,6 +791,112 @@ function setFirstLoadImageNode(graph: any, imageName: string): string | null {
   }
 
   return null;
+}
+
+function isProductionQwenStoryboardWorkflow(body: any, otgMeta?: any) {
+  const hay = [
+    body?.workflowId,
+    body?.preset,
+    body?.id,
+    body?.workflowLabel,
+    body?.label,
+    otgMeta?.label,
+    otgMeta?.description,
+  ]
+    .map((value) => String(value || "").toLowerCase())
+    .join(" ");
+  return hay.includes("qwen_image_edit_2511_storyboard") || hay.includes("production qwen 2511 storyboard");
+}
+
+function applyQwenStoryboardCharacterReferences(graph: any, body: any, otgMeta?: any) {
+  const emptyMapping = {
+    usesDeclaredReferenceInputs: false,
+    applied: 0,
+    maxSlots: 0,
+    loadNodeIds: [] as string[],
+    scaleNodeIds: [] as string[],
+    encodeNodeIds: [] as string[],
+    inputImages: [] as string[],
+  };
+
+  if (!graph || typeof graph !== "object") return emptyMapping;
+  if (!isProductionQwenStoryboardWorkflow(body, otgMeta)) return emptyMapping;
+
+  const inputImagesRaw = Array.isArray(body?.inputImages)
+    ? body.inputImages.map((value: any) => String(value || "").trim()).filter(Boolean)
+    : [];
+  const seenImages = new Set<string>();
+  const inputImages = inputImagesRaw
+    .filter((name: string) => {
+      const key = name.toLowerCase();
+      if (seenImages.has(key)) return false;
+      seenImages.add(key);
+      return true;
+    })
+    .slice(0, 5);
+
+  const loadNodeIds = Array.isArray(otgMeta?.characterReferenceLoadNodeIds)
+    ? otgMeta.characterReferenceLoadNodeIds.map(String)
+    : ["28", "21", "14", "39", "38"];
+  const scaleNodeIds = Array.isArray(otgMeta?.characterReferenceScaleNodeIds)
+    ? otgMeta.characterReferenceScaleNodeIds.map(String)
+    : ["15", "16", "17", "40", "41"];
+  const encodeNodeIds = Array.isArray(otgMeta?.characterReferenceEncodeNodeIds)
+    ? otgMeta.characterReferenceEncodeNodeIds.map(String)
+    : ["36", "37"];
+
+  const usesDeclaredReferenceInputs = loadNodeIds.length > 0 && scaleNodeIds.length > 0 && encodeNodeIds.length > 0;
+  if (!usesDeclaredReferenceInputs) return emptyMapping;
+
+  const maxRefs = Math.min(5, loadNodeIds.length, scaleNodeIds.length);
+  const activeCount = Math.min(maxRefs, inputImages.length);
+  const activeScaleNodeIds = scaleNodeIds.slice(0, activeCount);
+
+  for (let i = 0; i < maxRefs; i++) {
+    const loadNodeId = loadNodeIds[i];
+    const scaleNodeId = scaleNodeIds[i];
+    if (i < activeCount) {
+      setNodeIfPresent(graph, loadNodeId, { image: inputImages[i] });
+      setNodeIfPresent(graph, scaleNodeId, { image: [loadNodeId, 0] });
+    } else {
+      delete graph?.[scaleNodeId];
+      delete graph?.[loadNodeId];
+    }
+  }
+
+  const qwenEncodeNodeIds = Array.from(
+    new Set([
+      ...encodeNodeIds,
+      ...Object.entries<any>(graph)
+        .filter(([, node]) =>
+          ["TextEncodeQwenImageEditPlus_lrzjason", "TextEncodeQwenImageEditPlus5_OTG"].includes(String(node?.class_type || ""))
+        )
+        .map(([id]) => String(id)),
+    ])
+  );
+
+  for (const encodeNodeId of qwenEncodeNodeIds) {
+    const node = graph?.[encodeNodeId];
+    if (!node?.inputs || typeof node.inputs !== "object") continue;
+    for (let i = 0; i < maxRefs; i++) {
+      const key = `image${i + 1}`;
+      if (i < activeCount) {
+        node.inputs[key] = [activeScaleNodeIds[i], 0];
+      } else {
+        delete node.inputs[key];
+      }
+    }
+  }
+
+  return {
+    usesDeclaredReferenceInputs: true,
+    applied: activeCount,
+    maxSlots: maxRefs,
+    loadNodeIds,
+    scaleNodeIds,
+    encodeNodeIds,
+    inputImages: inputImages.slice(0, activeCount),
+  };
 }
 
 function setFirstLoadVideoNode(graph: any, videoName: string): string | null {
@@ -1247,17 +1380,34 @@ async function parseOtgBody(req: NextRequest, comfyBaseUrl: string) {
   let videoA: string | null = null;
   let audioA: string | null = null;
 
-  for (const key of ["imageA", "imageB", "imageC", "imageD"]) {
+  for (const key of ["imageA", "imageB", "imageC", "imageD", "imageE"]) {
     const v = fd.get(key);
-    if (!v || typeof v === "string") continue;
+    const serverPath = String(fd.get(`${key}Path`) || "").trim();
+    if ((!v || typeof v === "string") && !serverPath) continue;
     try {
-      const name = await uploadFormFileToComfy(v as File, comfyBaseUrl, "image");
+      const name = serverPath
+        ? await uploadServerImagePathToComfy(serverPath, comfyBaseUrl)
+        : await uploadFormFileToComfy(v as File, comfyBaseUrl, "image");
       inputImages.push(name);
       if (key === "imageA") imageA = name;
       if (key === "imageB") imageB = name;
     } catch (e: any) {
       throw new Error(`Image upload failed for ${key}: ${String(e?.message || e)}`);
     }
+  }
+
+  if (inputImages.length > 1) {
+    const seenImages = new Set<string>();
+    const uniqueInputImages = inputImages.filter((name) => {
+      const dedupeKey = String(name || "").trim().toLowerCase();
+      if (!dedupeKey || seenImages.has(dedupeKey)) return false;
+      seenImages.add(dedupeKey);
+      return true;
+    });
+    inputImages.length = 0;
+    inputImages.push(...uniqueInputImages);
+    imageA = inputImages[0] || null;
+    imageB = inputImages[1] || null;
   }
 
   const rawVideo = fd.get("videoA");
@@ -1493,7 +1643,8 @@ export async function POST(req: NextRequest) {
   const descriptor = await peekWorkflowDescriptor(req);
   const workflowLooksVideo = isLikelyVideoWorkflowKey(descriptor.preset, descriptor.label);
   const COMFY_BASE_URL = workflowLooksVideo ? configuredVideoComfyBaseUrl() : configuredImageComfyBaseUrl();
-  const comfyClientId = deviceId;
+  const comfyClientId = makeComfyClientId(deviceId);
+  await waitForComfyClientProgressMonitor({ comfyBaseUrl: COMFY_BASE_URL, clientId: comfyClientId, timeoutMs: 1500 });
 
   let ownerCtx;
   try {
@@ -1605,9 +1756,11 @@ export async function POST(req: NextRequest) {
   const inputImages: string[] = Array.isArray((body as any).inputImages) ? (body as any).inputImages.map(String) : [];
 
   applyOtgPlaceholders(graph, { positive, negative, inputImages });
+  const productionQwenStoryboardWorkflow = isProductionQwenStoryboardWorkflow(body, otgMeta);
+  const referenceInputMapping = applyQwenStoryboardCharacterReferences(graph, body, otgMeta);
 
   const editImageWorkflow = isEditImageWorkflow(body, graph);
-  if (editImageWorkflow) {
+  if (editImageWorkflow && !productionQwenStoryboardWorkflow) {
     applyEditImageOverrides(graph, body);
   }
 
@@ -1686,7 +1839,7 @@ export async function POST(req: NextRequest) {
 
   if (animeImagesWorkflow) {
     applyAnimeImagesOverrides(graph, body);
-  } else {
+  } else if (!referenceInputMapping.usesDeclaredReferenceInputs) {
     applyLtx23Overrides(graph, body, {
       imageA: ltxImageA,
       imageB: ltxImageB,
@@ -1727,6 +1880,9 @@ export async function POST(req: NextRequest) {
       title: title || null,
       workflowId: String((body as any).preset || (body as any).workflowId || "").trim() || null,
       deviceId,
+      comfyClientId,
+      comfyBaseUrl: COMFY_BASE_URL,
+      totalNodes: graph && typeof graph === "object" ? Object.keys(graph).length : null,
       positivePrompt: String((body as any).positivePrompt ?? (body as any).prompt ?? "").trim() || null,
       negativePrompt: String((body as any).negativePrompt ?? (body as any).neg ?? "").trim() || null,
       submitPayload: {
@@ -1781,7 +1937,25 @@ export async function POST(req: NextRequest) {
 
     try {
       if (prompt_id) {
-        writeState(ownerKey, { promptId: prompt_id, status: "running", error: null });
+        recordComfyPromptSubmitted({
+          promptId: prompt_id,
+          ownerKey,
+          deviceId,
+          clientId: comfyClientId,
+          comfyBaseUrl: COMFY_BASE_URL,
+          totalNodes: graph && typeof graph === "object" ? Object.keys(graph).length : null,
+        });
+        ensureComfyClientProgressMonitor({ comfyBaseUrl: COMFY_BASE_URL, clientId: comfyClientId });
+        writeState(ownerKey, {
+          promptId: prompt_id,
+          status: "running",
+          error: null,
+          comfyClientId,
+          comfyBaseUrl: COMFY_BASE_URL,
+          totalNodes: graph && typeof graph === "object" ? Object.keys(graph).length : null,
+          progressPercent: 0,
+          progressUpdatedAt: Date.now(),
+        });
         const promptMeta = writePromptRequestMeta(ownerKey, prompt_id, {
           username: ownerCtx.username ?? null,
           deviceId,
@@ -1841,6 +2015,8 @@ export async function POST(req: NextRequest) {
         lorasAvailable: (loraRes as any)?.available ?? null,
         seed: (seedRes as any)?.seed ?? null,
         prompt_id,
+        comfyClientId,
+        comfyBaseUrl: COMFY_BASE_URL,
         rawResponse: parsed,
         promptMetaPath,
         submitPayload: {
@@ -1895,6 +2071,7 @@ export async function POST(req: NextRequest) {
         extendMode: (body as any).extendMode ?? null,
         hasOtgMeta: !!((body as any).requestKind || (body as any).extendRequestId || (body as any).extendedFromName || (body as any).extendSourceFrame || (body as any).extendMode),
         promptMetaPath,
+        referenceInputMapping,
       },
     },
     { status: 200 },

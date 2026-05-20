@@ -97,13 +97,9 @@ const ThumbImage = React.memo(function ThumbImage({
   alt: string;
   eager?: boolean;
 }) {
-  const [src, setSrc] = React.useState(thumbUrl);
-
-  React.useEffect(() => {
-    setSrc(thumbUrl);
-  }, [thumbUrl]);
-
+  const [failedThumbUrl, setFailedThumbUrl] = React.useState("");
   const fallbackUrl = String(item.url || "").trim();
+  const src = failedThumbUrl === thumbUrl && fallbackUrl ? fallbackUrl : thumbUrl;
 
   return (
     <img
@@ -114,8 +110,8 @@ const ThumbImage = React.memo(function ThumbImage({
       decoding="async"
       fetchPriority={eager ? "high" : "low"}
       onError={() => {
-        if (fallbackUrl && src !== fallbackUrl) {
-          setSrc(fallbackUrl);
+        if (fallbackUrl && failedThumbUrl !== thumbUrl) {
+          setFailedThumbUrl(thumbUrl);
         }
       }}
     />
@@ -251,7 +247,8 @@ const MediaGrid = React.memo(function MediaGrid({
           const redoLabel = isCurrentBusyItem && busyKind === "redo" ? "Retrying..." : "Redo";
           const deleteLabel = isCurrentBusyItem && busyKind === "delete" ? "Deleting..." : "Delete";
           const isImage = !item.video && item.kind !== "video";
-          const createdLabel = item.updatedAt || item.createdAt ? new Date(item.updatedAt || item.createdAt || Date.now()).toLocaleString() : "Unknown time";
+          const createdAtMs = item.updatedAt || item.createdAt || 0;
+          const createdLabel = createdAtMs ? new Date(createdAtMs).toLocaleString() : "Unknown time";
 
           return (
             <div
@@ -337,10 +334,10 @@ const MediaGrid = React.memo(function MediaGrid({
         const deleteLabel = isCurrentBusyItem && busyKind === "delete" ? "Deleting..." : "Delete";
         const animateLabel = isCurrentBusyItem && busyKind === "extend-prepare" ? "Preparing..." : "Animate";
         const characterLabel = isCurrentBusyItem && busyKind === "character-import" ? "Sending..." : "Characters";
-        const extendLabel = isCurrentBusyItem && busyKind === "extend-prepare" ? "Preparing..." : "Extend";
         const isImage = !item.video && item.kind !== "video";
         const isCharacterCandidate = isImage;
-        const createdLabel = item.updatedAt || item.createdAt ? new Date(item.updatedAt || item.createdAt || Date.now()).toLocaleString() : "Unknown time";
+        const createdAtMs = item.updatedAt || item.createdAt || 0;
+        const createdLabel = createdAtMs ? new Date(createdAtMs).toLocaleString() : "Unknown time";
         const mediaAspectClass = viewMode === "grid" ? "aspect-square" : "aspect-[4/3]";
         const thumbUrl = buildGalleryThumbUrl(item, viewMode === "grid" ? 512 : 768);
         const thumbEager = index < (viewMode === "grid" ? 12 : 6);
@@ -1106,7 +1103,7 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
                 </button>
               ) : null}
               {viewerIsVideo ? (
-                <video src={viewerUrl} poster={buildGalleryThumbUrl(viewerItem, 1280)} className="max-h-[78vh] w-full object-contain" controls autoPlay playsInline preload="auto" />
+                <video src={viewerUrl} poster={buildGalleryThumbUrl(viewerItem, 1280)} className="max-h-[78vh] w-full object-contain" controls autoPlay playsInline preload="metadata" />
               ) : (
                 <img src={viewerUrl} alt={viewerTitle} className="max-h-[78vh] w-full object-contain" />
               )}

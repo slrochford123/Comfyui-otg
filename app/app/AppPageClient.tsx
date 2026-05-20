@@ -115,11 +115,34 @@ type ProgressResponse = {
   running?: boolean;
   queue?: number;
   queue_remaining?: number;
+  pct?: number;
+  percent?: number;
+  progressPercent?: number;
   prompt_id?: string | null;
   fileName?: string | null;
   file_name?: string | null;
+  nodeName?: string | null;
+  currentNodeId?: string | null;
+  currentNodeProgress?: { value?: number; max?: number } | null;
+  doneNodes?: number;
+  cachedNodes?: number;
+  totalNodes?: number;
+  elapsedMs?: number | null;
+  estimatedRemainingMs?: number | null;
   error?: string | null;
 };
+
+function formatProgressDuration(ms: number | null | undefined) {
+  const totalSeconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const remMinutes = minutes % 60;
+    return `${hours}h ${remMinutes}m`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
 
 type LatestContentResponse = {
   ok?: boolean;
@@ -1249,6 +1272,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [uploadedInputIsVideo, setUploadedInputIsVideo] = useState(false);
   const [uploadedImageMeta, setUploadedImageMeta] = useState<{ width: number; height: number } | null>(null);
   const [generateGalleryPickerOpen, setGenerateGalleryPickerOpen] = useState(false);
+  const [generateGalleryPickerTarget, setGenerateGalleryPickerTarget] = useState<"input" | "lastFrame">("input");
   const [generateGalleryItems, setGenerateGalleryItems] = useState<GalleryItem[]>([]);
   const [generateGalleryLoading, setGenerateGalleryLoading] = useState(false);
   const [generateGalleryError, setGenerateGalleryError] = useState("");
@@ -1287,6 +1311,21 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [progressStatus, setProgressStatus] = useState<"idle" | "running" | "complete" | "error">("idle");
   const [progressQueue, setProgressQueue] = useState(0);
   const [progressPercent, setProgressPercent] = useState(0);
+  const [progressTiming, setProgressTiming] = useState<{
+    elapsedMs: number | null;
+    estimatedRemainingMs: number | null;
+    doneNodes: number;
+    totalNodes: number;
+    currentNodeId: string;
+    currentNodeProgress: string;
+  }>({
+    elapsedMs: null,
+    estimatedRemainingMs: null,
+    doneNodes: 0,
+    totalNodes: 0,
+    currentNodeId: "",
+    currentNodeProgress: "",
+  });
   const [activePromptId, setActivePromptId] = useState("");
   const [latestPreviewUrl, setLatestPreviewUrl] = useState("");
   const [latestPreviewName, setLatestPreviewName] = useState("");
@@ -1656,43 +1695,6 @@ const activeGenerateStylePreset = useMemo(
     void loadGenerateGalleryItems();
   }, [generateGalleryPickerOpen, loadGenerateGalleryItems]);
 
-  const handleSelectGenerateGalleryItem = useCallback(
-    async (item: GalleryItem) => {
-      const url = item.url;
-      if (!url) {
-        setGenerateGalleryError("This Gallery image is missing a usable URL.");
-        return;
-      }
-
-      const displayName = getGenerateGalleryItemName(item);
-      setGenerateGallerySelecting(displayName);
-      setGenerateGalleryError("");
-
-      try {
-        const res = await fetch(url, { cache: "no-store" });
-        if (!res.ok) {
-          throw new Error("Could not read Gallery image (" + res.status + ")");
-        }
-
-        const blob = await res.blob();
-        const inferredType = blob.type || (displayName.toLowerCase().endsWith(".webp") ? "image/webp" : displayName.toLowerCase().endsWith(".jpg") || displayName.toLowerCase().endsWith(".jpeg") ? "image/jpeg" : "image/png");
-        const safeName = /\.(png|jpe?g|webp|gif)$/i.test(displayName) ? displayName : displayName + ".png";
-        const file = new File([blob], safeName, { type: inferredType });
-
-        uploadedFileRef.current = file;
-        setUploadedFileName(safeName);
-        updateGenerateInputPreview(file);
-        setGenerateGalleryPickerOpen(false);
-        setStatusMessage("Selected Gallery image: " + safeName);
-      } catch (e: any) {
-        setGenerateGalleryError(String(e?.message || e));
-      } finally {
-        setGenerateGallerySelecting("");
-      }
-    },
-    [getGenerateGalleryItemName, updateGenerateInputPreview]
-  );
-
     const updateGenerateCustomAudioPreview = useCallback((file: File | null) => {
     if (customAudioUrlRef.current) {
       URL.revokeObjectURL(customAudioUrlRef.current);
@@ -1734,6 +1736,50 @@ const activeGenerateStylePreset = useMemo(
     };
     img.src = nextUrl;
   }, []);
+
+  const handleSelectGenerateGalleryItem = useCallback(
+    async (item: GalleryItem) => {
+      const url = item.url;
+      if (!url) {
+        setGenerateGalleryError("This Gallery image is missing a usable URL.");
+        return;
+      }
+
+      const displayName = getGenerateGalleryItemName(item);
+      setGenerateGallerySelecting(displayName);
+      setGenerateGalleryError("");
+
+      try {
+        const res = await fetch(url, { cache: "no-store" });
+        if (!res.ok) {
+          throw new Error("Could not read Gallery image (" + res.status + ")");
+        }
+
+        const blob = await res.blob();
+        const inferredType = blob.type || (displayName.toLowerCase().endsWith(".webp") ? "image/webp" : displayName.toLowerCase().endsWith(".jpg") || displayName.toLowerCase().endsWith(".jpeg") ? "image/jpeg" : "image/png");
+        const safeName = /\.(png|jpe?g|webp|gif)$/i.test(displayName) ? displayName : displayName + ".png";
+        const file = new File([blob], safeName, { type: inferredType });
+
+        if (generateGalleryPickerTarget === "lastFrame") {
+          lastFrameFileRef.current = file;
+          setLastFrameFileName(safeName);
+          updateLastFrameInputPreview(file);
+        } else {
+          uploadedFileRef.current = file;
+          setUploadedFileName(safeName);
+          updateGenerateInputPreview(file);
+        }
+        setGenerateGalleryPickerOpen(false);
+        setStatusMessage(`${generateGalleryPickerTarget === "lastFrame" ? "Selected Gallery last frame" : "Selected Gallery image"}: ${safeName}`);
+      } catch (e: any) {
+        setGenerateGalleryError(String(e?.message || e));
+      } finally {
+        setGenerateGallerySelecting("");
+      }
+    },
+    [generateGalleryPickerTarget, getGenerateGalleryItemName, updateGenerateInputPreview, updateLastFrameInputPreview]
+  );
+
 const handleCreateCharacterFromGenerate = useCallback(async () => {
     if (!latestPreviewUrl || latestPreviewKind !== "image") {
       setStatusMessage("Generate a portrait image first.");
@@ -2513,25 +2559,38 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       const running = Boolean(data?.running) || nextStatus === "running";
       const promptId = String(data?.prompt_id || "").trim();
       const completedFileName = String(data?.fileName || data?.file_name || "").trim();
+      const rawPercent = Number(data?.progressPercent ?? data?.percent ?? data?.pct);
+      const nextPercent = Number.isFinite(rawPercent) ? Math.max(0, Math.min(100, Math.round(rawPercent))) : 0;
+      const nodeProgress = data?.currentNodeProgress;
+      const nodeValue = Number(nodeProgress?.value);
+      const nodeMax = Number(nodeProgress?.max);
+      const currentNodeProgress =
+        Number.isFinite(nodeValue) && Number.isFinite(nodeMax) && nodeMax > 0
+          ? `${Math.round(nodeValue)}/${Math.round(nodeMax)}`
+          : "";
 
       setProgressQueue(queueCount);
       if (promptId) setActivePromptId(promptId);
+      setProgressTiming({
+        elapsedMs: Number.isFinite(Number(data?.elapsedMs)) ? Number(data?.elapsedMs) : null,
+        estimatedRemainingMs: Number.isFinite(Number(data?.estimatedRemainingMs)) ? Number(data?.estimatedRemainingMs) : null,
+        doneNodes: Number.isFinite(Number(data?.doneNodes)) ? Math.max(0, Math.floor(Number(data?.doneNodes))) : 0,
+        totalNodes: Number.isFinite(Number(data?.totalNodes)) ? Math.max(0, Math.floor(Number(data?.totalNodes))) : 0,
+        currentNodeId: String(data?.currentNodeId || data?.nodeName || "").trim(),
+        currentNodeProgress,
+      });
 
       if (nextStatus === "error") {
         refreshedCompletePromptRef.current = "";
         setProgressStatus("error");
-        setProgressPercent(100);
+        setProgressPercent(nextPercent || 100);
         return;
       }
 
       if (running) {
         refreshedCompletePromptRef.current = "";
         setProgressStatus("running");
-        setProgressPercent((prev) => {
-          const base = prev > 5 ? prev : 12;
-          const next = queueCount > 0 ? Math.min(base + 8, 92) : Math.min(base + 5, 88);
-          return next;
-        });
+        setProgressPercent(nextPercent);
         return;
       }
 
@@ -2555,6 +2614,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       refreshedCompletePromptRef.current = "";
       setProgressStatus("idle");
       setProgressPercent(0);
+      setProgressTiming({
+        elapsedMs: null,
+        estimatedRemainingMs: null,
+        doneNodes: 0,
+        totalNodes: 0,
+        currentNodeId: "",
+        currentNodeProgress: "",
+      });
     } catch {
       // ignore
     }
@@ -2745,7 +2812,15 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       }
 
       setProgressStatus("running");
-      setProgressPercent(8);
+      setProgressPercent(0);
+      setProgressTiming({
+        elapsedMs: null,
+        estimatedRemainingMs: null,
+        doneNodes: 0,
+        totalNodes: 0,
+        currentNodeId: "",
+        currentNodeProgress: "",
+      });
       refreshedCompletePromptRef.current = "";
       await Promise.all([refreshProgress(), loadGallery(), loadFavorites()]);
     },
@@ -3154,20 +3229,28 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       return;
     }
 
+    if (isFirstLastImageVideoWorkflowSelected && (!uploadedFileRef.current || !lastFrameFileRef.current)) {
+      setStatusMessage("Upload both a first image and a last image first.");
+      return;
+    }
+
     setGenerateBusy(true);
     setStatusMessage("");
     refreshedCompletePromptRef.current = "";
     latestPreviewIdentityRef.current = "";
     setProgressStatus("running");
-    setProgressPercent(8);
+    setProgressPercent(0);
+    setProgressTiming({
+      elapsedMs: null,
+      estimatedRemainingMs: null,
+      doneNodes: 0,
+      totalNodes: 0,
+      currentNodeId: "",
+      currentNodeProgress: "",
+    });
     setLatestPreviewUrl("");
     setLatestPreviewName("");
     setLatestPreviewKind("");
-
-    if (isFirstLastImageVideoWorkflowSelected && (!uploadedFileRef.current || !lastFrameFileRef.current)) {
-      setStatusMessage("Upload both a first image and a last image first.");
-      return;
-    }
 
     try {
       const body = new FormData();
@@ -4321,6 +4404,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setProgressStatus("idle");
       setProgressQueue(0);
       setProgressPercent(0);
+      setProgressTiming({
+        elapsedMs: null,
+        estimatedRemainingMs: null,
+        doneNodes: 0,
+        totalNodes: 0,
+        currentNodeId: "",
+        currentNodeProgress: "",
+      });
       setActivePromptId("");
       setLatestPreviewUrl("");
       setLatestPreviewName("");
@@ -5842,12 +5933,13 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                   <ActionButton onClick={() => imageInputRef.current?.click()}>{isVideoUpscalerWorkflowSelected ? "Upload video" : "Upload image"}</ActionButton>
                   <ActionButton
                     onClick={() => {
+                      setGenerateGalleryPickerTarget("input");
                       setGenerateGalleryPickerOpen(true);
                       void loadGenerateGalleryItems();
                     }}
                     disabled={isVideoUpscalerWorkflowSelected}
                   >
-                    Gallery
+                    Choose from Gallery
                   </ActionButton>
                   <span className="text-sm text-white/60">{uploadedFileName || "No file selected"}</span>
                 </div>
@@ -5893,8 +5985,12 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                   <div className="mx-auto flex max-h-[86vh] max-w-5xl flex-col overflow-hidden rounded-[28px] border border-cyan-400/20 bg-[#070b16] shadow-[0_0_60px_rgba(0,0,0,0.55)]">
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-4">
                       <div>
-                        <h3 className="text-lg font-semibold text-white">Choose Gallery image</h3>
-                        <p className="text-sm text-white/55">Only image files are shown. Selecting one uses it as the Generate input image.</p>
+                        <h3 className="text-lg font-semibold text-white">
+                          {generateGalleryPickerTarget === "lastFrame" ? "Choose Gallery last frame" : "Choose Gallery input image"}
+                        </h3>
+                        <p className="text-sm text-white/55">
+                          Only image files are shown. Selecting one uses it as the {generateGalleryPickerTarget === "lastFrame" ? "last frame image" : "Generate input image"}.
+                        </p>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <ActionButton onClick={loadGenerateGalleryItems} disabled={generateGalleryLoading}>
@@ -5981,6 +6077,15 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                 <Card title="Last frame image">
                   <div className="flex flex-wrap items-center gap-3">
                     <ActionButton onClick={() => lastFrameInputRef.current?.click()}>Upload last image</ActionButton>
+                    <ActionButton
+                      onClick={() => {
+                        setGenerateGalleryPickerTarget("lastFrame");
+                        setGenerateGalleryPickerOpen(true);
+                        void loadGenerateGalleryItems();
+                      }}
+                    >
+                      Choose from Gallery
+                    </ActionButton>
                     <span className="text-sm text-white/60">{lastFrameFileName || "No last image selected"}</span>
                   </div>
                   <input
@@ -6080,10 +6185,23 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                   </div>
                   <div className="space-y-1 text-sm text-white/60">
                     <div>Queue remaining: {progressQueue}</div>
+                    <div>
+                      Elapsed: {progressTiming.elapsedMs !== null ? formatProgressDuration(progressTiming.elapsedMs) : "--"}
+                      {" | "}
+                      ETA: {progressTiming.estimatedRemainingMs !== null ? formatProgressDuration(progressTiming.estimatedRemainingMs) : "--"}
+                    </div>
+                    {progressTiming.totalNodes > 0 ? (
+                      <div>
+                        Nodes: {Math.min(progressTiming.doneNodes, progressTiming.totalNodes)}/{progressTiming.totalNodes}
+                        {progressTiming.currentNodeId ? ` | Current ${progressTiming.currentNodeId}${progressTiming.currentNodeProgress ? ` (${progressTiming.currentNodeProgress})` : ""}` : ""}
+                      </div>
+                    ) : progressTiming.currentNodeProgress ? (
+                      <div>Current node: {progressTiming.currentNodeProgress}</div>
+                    ) : null}
                     <div className="break-all">Prompt ID: {activePromptId || "Not submitted yet"}</div>
                     <div>
                       {progressStatus === "running"
-                        ? "ComfyUI is still generating."
+                        ? "Progress is coming from ComfyUI execution events."
                         : progressStatus === "complete"
                           ? "Generation complete."
                           : progressStatus === "error"

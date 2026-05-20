@@ -76,6 +76,19 @@ export type GalleryResolvedItem = {
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const VIDEO_EXTS = new Set([".mp4", ".webm", ".mov", ".mkv"]);
 const MEDIA_EXTS = new Set([...IMAGE_EXTS, ...VIDEO_EXTS]);
+const GALLERY_LIST_CACHE_TTL_MS = 2_000;
+
+type GallerySourceCacheEntry = {
+  dirMtimeMs: number;
+  cachedAt: number;
+  items: GalleryResolvedItem[];
+};
+
+const gallerySourceCache = new Map<string, GallerySourceCacheEntry>();
+
+export function clearGalleryListCache() {
+  gallerySourceCache.clear();
+}
 
 export function safeGalleryName(name: string): string {
   if (!name) return "item";
@@ -122,6 +135,7 @@ export function writeMetaForFile(absPath: string, patch: GalleryMeta, sourceHint
 
   ensureDir(path.dirname(metaPath));
   fs.writeFileSync(metaPath, JSON.stringify(next, null, 2), "utf8");
+  clearGalleryListCache();
   return next;
 }
 
@@ -254,6 +268,21 @@ export async function getGallerySourcesForRequest(req: NextRequest): Promise<{
 
 function listFilesFromSource(source: GallerySource): GalleryResolvedItem[] {
   ensureDir(source.dir);
+  const cacheKey = `${source.scope}|${source.ownerKey}|${source.dir}`;
+  const now = Date.now();
+
+  let dirMtimeMs = 0;
+  try {
+    dirMtimeMs = fs.statSync(source.dir).mtimeMs;
+  } catch {
+    dirMtimeMs = 0;
+  }
+
+  const cached = gallerySourceCache.get(cacheKey);
+  if (cached && cached.dirMtimeMs === dirMtimeMs && now - cached.cachedAt < GALLERY_LIST_CACHE_TTL_MS) {
+    return cached.items.map((item) => ({ ...item, meta: { ...item.meta } }));
+  }
+
   const out: GalleryResolvedItem[] = [];
 
   for (const entry of fs.readdirSync(source.dir)) {
@@ -267,13 +296,17 @@ function listFilesFromSource(source: GallerySource): GalleryResolvedItem[] {
       continue;
     }
 
-    const meta = ensureGalleryMetaForFile(
-      absPath,
-      {
-        sourceType: readMetaForFile(absPath).sourceType || "legacy-gallery-item",
-      },
-      source,
-    );
+    const existingMeta = readMetaForFile(absPath);
+    const hasExistingMeta = Object.keys(existingMeta).length > 0;
+    const meta = hasExistingMeta
+      ? existingMeta
+      : ensureGalleryMetaForFile(
+          absPath,
+          {
+            sourceType: "legacy-gallery-item",
+          },
+          source,
+        );
     const displayName = String(meta.renamedName || entry).trim() || entry;
 
     out.push({
@@ -287,6 +320,12 @@ function listFilesFromSource(source: GallerySource): GalleryResolvedItem[] {
       meta,
     });
   }
+
+  gallerySourceCache.set(cacheKey, {
+    dirMtimeMs,
+    cachedAt: now,
+    items: out.map((item) => ({ ...item, meta: { ...item.meta } })),
+  });
 
   return out;
 }

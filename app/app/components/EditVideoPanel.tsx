@@ -75,6 +75,7 @@ type AudioMixResult = {
 };
 
 type AceMusicModel = "turbo" | "base" | "sft";
+type AceMusicMode = "reference" | "text";
 
 type GeneratedMusicResult = {
   jobId: string;
@@ -203,6 +204,7 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
 
   const [musicGeneratorPrompt, setMusicGeneratorPrompt] = React.useState("cinematic ambient background music, emotional, clean mix, no copyrighted melody");
   const [musicGeneratorModel, setMusicGeneratorModel] = React.useState<AceMusicModel>("turbo");
+  const [musicGeneratorMode, setMusicGeneratorMode] = React.useState<AceMusicMode>("reference");
   const [musicGeneratorDuration, setMusicGeneratorDuration] = React.useState(30);
   const [musicGeneratorBpm, setMusicGeneratorBpm] = React.useState(95);
   const [musicGeneratorKey, setMusicGeneratorKey] = React.useState("E minor");
@@ -629,28 +631,47 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
 
     setMusicGenerateBusy(true);
     setGeneratedMusicResult(null);
-    setMusicGeneratorStatus("Submitting ACE-Step music generation to ComfyUI...");
+    setMusicGeneratorStatus("Submitting ACE-Step 1.5 API music generation...");
 
     try {
-      const response = await fetch("/api/edit-video/music-generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: musicGeneratorModel,
-          prompt,
-          // OTG_PHASE3B_MUSIC_PAYLOAD_KEYS: send redundant prompt keys for route compatibility.
-          musicPrompt: prompt,
-          musicGeneratorPrompt: prompt,
-          generationPrompt: prompt,
-          tags: prompt,
-          vibe: prompt,
-          title: cleanTitle(audioOutputTitle || "generated_music") || "generated_music",
-          durationSeconds: Math.max(5, Math.min(180, Number(musicGeneratorDuration) || 30)),
-          bpm: Math.max(40, Math.min(220, Number(musicGeneratorBpm) || 95)),
-          keyscale: musicGeneratorKey || "E minor",
-          seed: Number(musicGeneratorSeed),
-        }),
-      });
+      const durationSeconds = Math.max(10, Math.min(600, Number(musicGeneratorDuration) || 30));
+      const bpm = Math.max(40, Math.min(220, Number(musicGeneratorBpm) || 95));
+      let response: Response;
+
+      if (musicGeneratorMode === "reference" && audioVideo?.source === "upload" && audioVideo.file) {
+        const form = new FormData();
+        form.append("prompt", prompt);
+        form.append("title", cleanTitle(audioOutputTitle || "generated_music") || "generated_music");
+        form.append("durationSeconds", String(durationSeconds));
+        form.append("bpm", String(bpm));
+        form.append("keyscale", musicGeneratorKey || "E minor");
+        form.append("seed", String(Number(musicGeneratorSeed)));
+        form.append("referenceVideoFile", audioVideo.file, audioVideo.file.name);
+        response = await fetch("/api/edit-video/ace-music", {
+          method: "POST",
+          body: form,
+        });
+      } else {
+        response = await fetch("/api/edit-video/ace-music", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: musicGeneratorModel,
+            prompt,
+            title: cleanTitle(audioOutputTitle || "generated_music") || "generated_music",
+            durationSeconds,
+            bpm,
+            keyscale: musicGeneratorKey || "E minor",
+            seed: Number(musicGeneratorSeed),
+            referenceVideo: musicGeneratorMode === "reference" && audioVideo?.source === "gallery"
+              ? {
+                  fileName: audioVideo.fileName || "",
+                  scope: audioVideo.scope || "",
+                }
+              : null,
+          }),
+        });
+      }
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data?.ok === false) {
         const detailBits = [];
@@ -674,7 +695,7 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
         bpm: Number(data.bpm || musicGeneratorBpm) || undefined,
         sizeBytes: Number(data.sizeBytes || 0) || undefined,
       });
-      setMusicGeneratorStatus("Generated music is ready. Preview it, use it as background music, or save it to the music library.");
+      setMusicGeneratorStatus(data?.referenceUsed ? "Generated reference-based music is ready. Preview it, use it as background music, or save it to the music library." : "Generated music is ready. Preview it, use it as background music, or save it to the music library.");
     } catch (error: any) {
       setMusicGeneratorStatus(error?.message || "ACE-Step music generation failed.");
     } finally {
@@ -1214,15 +1235,51 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
           <div className="mt-5 rounded-[24px] border border-white/10 bg-white/[0.035] p-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
-                <h3 className="text-xs font-black uppercase tracking-[0.18em] text-white/60">Optional: Generate original music</h3>
-                <p className="mt-2 text-sm text-white/55">ACE-Step creates an MP3 from a text prompt. Start with Turbo for speed; Base/SFT are slower quality tests.</p>
+                <h3 className="text-xs font-black uppercase tracking-[0.18em] text-white/60">Optional: Generate or extend music</h3>
+                <p className="mt-2 text-sm text-white/55">ACE-Step 1.5 API can create a music bed from text, or use the selected video audio as a 4-second style reference.</p>
               </div>
               <div className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-cyan-50">Phase 3B</div>
             </div>
 
             <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_260px]">
-              <div>
-                <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Music prompt / vibe</label>
+                <div className="rounded-[18px] border border-white/10 bg-black/25 p-3">
+                  <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Generation mode</label>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => setMusicGeneratorMode("reference")}
+                      className={cn(
+                        "min-h-11 rounded-[14px] border px-3 py-2 text-sm font-black transition",
+                        musicGeneratorMode === "reference"
+                          ? "border-cyan-300/40 bg-cyan-300/20 text-cyan-50"
+                          : "border-white/10 bg-white/[0.06] text-white/70 hover:bg-white/10"
+                      )}
+                    >
+                      Use Video Reference
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMusicGeneratorMode("text")}
+                      className={cn(
+                        "min-h-11 rounded-[14px] border px-3 py-2 text-sm font-black transition",
+                        musicGeneratorMode === "text"
+                          ? "border-cyan-300/40 bg-cyan-300/20 text-cyan-50"
+                          : "border-white/10 bg-white/[0.06] text-white/70 hover:bg-white/10"
+                      )}
+                    >
+                      Text Only
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-white/45">
+                    {musicGeneratorMode === "reference"
+                      ? audioVideo
+                        ? `Reference source: ${audioVideo.title || audioVideo.fileName || "selected video"}`
+                        : "Select or upload a video in Step 1 to use its first seconds as the reference."
+                      : "Text-only mode ignores the selected video."}
+                  </p>
+                </div>
+                <div>
+                  <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Music prompt / vibe</label>
                 <textarea
                   value={musicGeneratorPrompt}
                   onChange={(event) => setMusicGeneratorPrompt(event.target.value)}
@@ -1246,7 +1303,7 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Seconds</label>
-                    <input type="number" min="5" max="180" value={musicGeneratorDuration} onChange={(event) => setMusicGeneratorDuration(Number(event.target.value))} className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none" />
+                    <input type="number" min="10" max="600" value={musicGeneratorDuration} onChange={(event) => setMusicGeneratorDuration(Number(event.target.value))} className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none" />
                   </div>
                   <div>
                     <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">BPM</label>
@@ -1275,7 +1332,7 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
               >
                 {musicGenerateBusy ? "Generating..." : "Generate Music"}
               </button>
-              <p className="text-sm text-white/50">Turbo is the recommended first test target.</p>
+              <p className="text-sm text-white/50">Use 30 seconds for a standard background bed; the first run may initialize ACE models.</p>
             </div>
 
             {musicGeneratorStatus ? <div className="mt-4 rounded-[18px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/72">{musicGeneratorStatus}</div> : null}

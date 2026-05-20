@@ -19,6 +19,7 @@ type Props = {
   tab: SpinTabId;
   onTab: (t: SpinTabId) => void;
   isAdmin?: boolean;
+  showProduction?: boolean;
   uiMode?: "clean" | "classic";
 };
 
@@ -32,13 +33,13 @@ function classNames(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-export default function SpinDialNav({ tab, onTab, isAdmin = false, uiMode = "classic" }: Props) {
+export default function SpinDialNav({ tab, onTab, isAdmin = false, showProduction = false, uiMode = "classic" }: Props) {
   const items: Item[] = useMemo(
     () => [
       { id: "gethelp", label: "AI Assistance" },
       { id: "generate", label: "Generate" },
       { id: "angles", label: "Angles" },
-      { id: "storyboard", label: "Production" },
+      ...(showProduction ? [{ id: "storyboard", label: "Production" } as Item] : []),
       { id: "characters", label: "Characters" },
       { id: "gallery", label: "Gallery" },
       ...(isAdmin ? [{ id: "voices", label: "Voices" } as Item] : []),
@@ -47,7 +48,7 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, uiMode = "cla
       { id: "settings", label: "Settings" },
       { id: "support", label: "Support" },
     ],
-    [isAdmin]
+    [isAdmin, showProduction]
   );
 
   return (

@@ -1,10 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { getGallerySourcesForRequest, resolveGalleryItemByName } from "@/lib/gallery";
+import { SessionInvalidError } from "@/lib/ownerKey";
+import { mediaFileResponse } from "@/lib/mediaResponse";
 
 export const runtime = "nodejs";
 
-const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"]);
+const MEDIA_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".bmp",
+  ".mp4",
+  ".webm",
+  ".mov",
+  ".m4v",
+  ".mp3",
+  ".wav",
+  ".m4a",
+  ".ogg",
+]);
 
 function contentTypeFor(filePath: string) {
   const ext = path.extname(filePath).toLowerCase();
@@ -14,6 +32,13 @@ function contentTypeFor(filePath: string) {
   if (ext === ".webp") return "image/webp";
   if (ext === ".gif") return "image/gif";
   if (ext === ".bmp") return "image/bmp";
+  if (ext === ".mp4" || ext === ".m4v") return "video/mp4";
+  if (ext === ".webm") return "video/webm";
+  if (ext === ".mov") return "video/quicktime";
+  if (ext === ".mp3") return "audio/mpeg";
+  if (ext === ".wav") return "audio/wav";
+  if (ext === ".m4a") return "audio/mp4";
+  if (ext === ".ogg") return "audio/ogg";
 
   return "application/octet-stream";
 }
@@ -98,12 +123,13 @@ async function resolveGalleryFile(req: NextRequest) {
   const url = req.nextUrl;
   const directPath = String(url.searchParams.get("path") || "").trim();
   const rawName = String(url.searchParams.get("name") || "").trim();
+  const scopeHint = String(url.searchParams.get("scope") || "").trim();
 
   if (directPath) {
     const normalized = path.normalize(directPath);
     const ext = path.extname(normalized).toLowerCase();
 
-    if (IMAGE_EXTENSIONS.has(ext) && path.isAbsolute(normalized) && (await fileExists(normalized))) {
+    if (MEDIA_EXTENSIONS.has(ext) && path.isAbsolute(normalized) && (await fileExists(normalized))) {
       return normalized;
     }
   }
@@ -113,13 +139,27 @@ async function resolveGalleryFile(req: NextRequest) {
   if (!wantedName) return "";
 
   const wantedExt = path.extname(wantedName).toLowerCase();
-  if (!IMAGE_EXTENSIONS.has(wantedExt)) return "";
+  if (!MEDIA_EXTENSIONS.has(wantedExt)) return "";
+
+  try {
+    const { sources } = await getGallerySourcesForRequest(req);
+    const item = resolveGalleryItemByName({ sources, name: wantedName, scopeHint });
+    if (item?.path && (await fileExists(item.path))) {
+      return item.path;
+    }
+  } catch (error) {
+    if (error instanceof SessionInvalidError) throw error;
+  }
 
   for (const root of candidateRoots()) {
     const directCandidate = path.join(root, wantedName);
 
     if (await fileExists(directCandidate)) {
       return directCandidate;
+    }
+
+    if (url.searchParams.get("legacySearch") !== "1") {
+      continue;
     }
 
     const found = await findByName(root, wantedName);
@@ -129,23 +169,39 @@ async function resolveGalleryFile(req: NextRequest) {
   return "";
 }
 
-// GALLERY_FILE_SERVING_FALLBACK_PATCH
+// GALLERY_FILE_STREAMING_FAST_PATH_V1
 
-export async function GET(req: NextRequest) {
-  const filePath = await resolveGalleryFile(req);
+async function serveGalleryFile(req: NextRequest, method: "GET" | "HEAD") {
+  let filePath = "";
+  try {
+    filePath = await resolveGalleryFile(req);
+  } catch (error) {
+    if (error instanceof SessionInvalidError) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+    throw error;
+  }
 
   if (!filePath) {
     return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
   }
 
-  const bytes = await fs.readFile(filePath);
-
-  return new NextResponse(new Uint8Array(bytes), {
-    status: 200,
-    headers: {
-      "Content-Type": contentTypeFor(filePath),
-      "Cache-Control": "public, max-age=31536000, immutable",
-      "X-OTG-Resolved-File": path.basename(filePath),
-    },
+  const response = mediaFileResponse(req, filePath, {
+    method,
+    contentType: contentTypeFor(filePath),
+    download: req.nextUrl.searchParams.get("download") === "1",
+    fileName: path.basename(filePath),
+    cacheControl: "private, no-transform, max-age=86400, stale-while-revalidate=604800",
   });
+  response.headers.set("X-OTG-Resolved-File", path.basename(filePath));
+  response.headers.set("X-OTG-File-Stream", "1");
+  return response;
+}
+
+export async function GET(req: NextRequest) {
+  return serveGalleryFile(req, "GET");
+}
+
+export async function HEAD(req: NextRequest) {
+  return serveGalleryFile(req, "HEAD");
 }

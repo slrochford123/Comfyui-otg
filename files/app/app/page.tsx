@@ -1,2493 +1,2354 @@
 ﻿"use client";
-import { useFloatingQueue } from "./components/FloatingQueueProvider";
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
-import { useSearchParams } from "next/navigation";
 import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
-import ComfyStatusIndicator from "../components/ComfyStatusIndicator";
-import { withDeviceHeader } from "./studio/deviceHeader";
-import VoicesPanel from "./components/VoicesPanel";
 import AnglesPanel from "./components/AnglesPanel";
 import StoryboardPanel from "./components/StoryboardPanel";
-import GetHelpPanel from "./components/GetHelpPanel";
-import { type FloatingJob } from "./components/FloatingJobs";
+import VoicesPanel from "./components/VoicesPanel";
 import SupportPanel from "./components/SupportPanel";
-import Ltx2I2vGraph from "./workflows/LTX2_I2V.json";
-
 
 type WorkflowItem = {
   id: string;
+  label: string;
+  runtime: string;
+};
+
+type WorkflowApiItem = {
+  id?: string;
+  key?: string;
+  slug?: string;
+  name?: string;
   label?: string;
-  description?: string;
-  format: "prompt_graph" | "ui_workflow" | "unknown";
-  canRun?: boolean;
-  needsImages?: number;
+  title?: string;
 };
 
-type OtgLoraChoice = { name: string; strengthModel: number; strengthClip: number };
-
-type LoraListItem = {
-  name: string;
-  label?: string;
-  file?: string;
-  size?: number;
-  mtimeMs?: number;
+type WhoAmIResponse = {
+  ok?: boolean;
+  authenticated?: boolean;
+  username?: string | null;
+  user?: {
+    admin?: boolean;
+    username?: string | null;
+    email?: string | null;
+    name?: string | null;
+  } | null;
 };
 
-type LastContent = {
-  status: "empty" | "idle" | "running" | "ready" | "done" | "error";
-  file: null | { name: string; kind: "image" | "video"; url: string };
-
-
-
+type GalleryItem = {
+  name?: string;
+  sourceName?: string;
+  url?: string;
+  video?: boolean;
+  kind?: "image" | "video";
+  source?: "user" | "device" | string;
+  createdAt?: number;
+  updatedAt?: number;
+  meta?: {
+    favorite?: boolean;
+    renamedName?: string | null;
+    originalName?: string | null;
+    positivePrompt?: string | null;
+    negativePrompt?: string | null;
+    submitPayload?: Record<string, any> | null;
+    workflowId?: string | null;
+    workflowTitle?: string | null;
+  };
 };
 
-type GalleryFile = { name: string; ts?: number; size?: number; url: string };
+type AssistanceTab = "describe" | "enhance" | "scene" | "ask";
 
-type GalleryMeta = {
+type ProgressResponse = {
+  ok?: boolean;
+  status?: "idle" | "running" | "complete" | "error" | string;
+  running?: boolean;
+  queue?: number;
+  queue_remaining?: number;
   prompt_id?: string | null;
-  preset?: string | null;
-  title?: string | null;
-  positivePrompt?: string | null;
-  negativePrompt?: string | null;
-  prompts?: any;
-  loras?: any;
-  seed?: any;
-  submitPayload?: any;
-};
-
-type PreviewFile = { name: string; kind: "image" | "video"; url: string };
-
-type ContentState = {
-  status: "idle" | "running" | "ready" | "error";
-  file: PreviewFile | null;
-  favorited: boolean;
-  updatedAt?: number | null;
-  startedAt?: number | null;
-  readyAt?: number | null;
+  file_name?: string | null;
   error?: string | null;
 };
 
-function isVideoName(name: string) {
-  return /\.(mp4|webm|mov)$/i.test(name || "");
+type LatestContentResponse = {
+  ok?: boolean;
+  status?: string;
+  file?: {
+    name?: string;
+    kind?: "image" | "video";
+    url?: string;
+    sourceName?: string;
+  } | null;
+};
+
+type PersistedGenerateState = {
+  tab?: SpinTabId;
+  prompt?: string;
+  negativePrompt?: string;
+  workflowId?: string;
+  orientation?: "portrait" | "landscape";
+  durationSeconds?: number;
+  uploadedFileName?: string;
+  gpuTarget?: string;
+  assistanceTab?: AssistanceTab;
+};
+
+type ViewerState = {
+  item: GalleryItem;
+  title: string;
+  url: string;
+  isVideo: boolean;
+};
+
+type EditModalState = {
+  item: GalleryItem;
+  positivePrompt: string;
+  negativePrompt: string;
+  enhancing: boolean;
+};
+
+type AnimateModalState = {
+  item: GalleryItem;
+  positivePrompt: string;
+  negativePrompt: string;
+  durationSeconds: number;
+  enhancing: boolean;
+};
+
+const APP_STATE_KEY = "otg:test:page-state:v1";
+
+const WORKFLOW_FALLBACKS: WorkflowItem[] = [
+  { id: "create-picture", label: "Create a Picture", runtime: "Estimated runtime: about 20 to 60 seconds." },
+  { id: "animate-image", label: "Animate an Image", runtime: "Estimated runtime: about 2 to 6 minutes." },
+  { id: "edit-picture", label: "Edit a Picture", runtime: "Estimated runtime: about 30 to 90 seconds." },
+  { id: "skyreels-v3", label: "SkyReels V3", runtime: "Estimated runtime: about 3 to 10 minutes." },
+];
+
+const GALLERY_EDIT_WORKFLOW_ID = "presets/Edit Pictures";
+const GALLERY_ANIMATE_WORKFLOW_ID = "presets/Create a Video from Pictures";
+const GPU_OPTIONS = [
+  { value: "3090", label: "RTX 3090" },
+  { value: "5060ti", label: "RTX 5060 Ti" },
+  { value: "3060ti", label: "RTX 3060 Ti" },
+];
+
+function cn(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
 }
 
-async function safeJson(res: Response) {
-  const text = await res.text();
-  try {
-    return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : null, raw: text };
-  } catch {
-    return { ok: res.ok, status: res.status, data: null, raw: text };
-  }
+function randomSeed() {
+  return Math.floor(Math.random() * 2147483647) + 1;
 }
 
-async function jfetch<T = any>(url: string, init?: RequestInit) {
-  const r = await fetch(url, { credentials: "include", ...init, cache: "no-store" });
-  const text = await r.text();
-  let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = { raw: text };
-  }
-  if (!r.ok) {
-    const msg = (data && (data.error || data.message)) || `HTTP ${r.status}`;
-    throw new Error(typeof msg === "string" ? msg : `HTTP ${r.status}`);
-  }
-  return data as T;
-}
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
+function Card({
+  title,
+  children,
+  right,
+}: {
+  title: string;
+  children: React.ReactNode;
+  right?: React.ReactNode;
+}) {
   return (
-    <div className="otg-card">
-      <div className="otg-cardTitle">{title}</div>
-      <div className="otg-cardBody">{children}</div>
+    <section className="rounded-[28px] border border-white/10 bg-black/45 p-4 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm md:p-5">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-black uppercase tracking-[0.18em] text-white/78">{title}</h2>
+        {right}
+      </div>
+      <div className="space-y-4">{children}</div>
+    </section>
+  );
+}
+
+function PillButton({
+  active,
+  children,
+  onClick,
+}: {
+  active?: boolean;
+  children: React.ReactNode;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex min-h-12 items-center justify-center rounded-full border px-4 py-3 text-sm font-semibold text-white transition",
+        active
+          ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))] shadow-[0_0_24px_rgba(90,160,255,0.18)]"
+          : "border-white/10 bg-white/5 hover:bg-white/10"
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ActionButton({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex min-h-12 items-center justify-center rounded-full border border-cyan-400/20 bg-[linear-gradient(90deg,rgba(145,92,255,0.35),rgba(40,200,255,0.28))] px-5 py-3 text-base font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {children}
+    </button>
+  );
+}
+
+function GhostButton({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex min-h-12 items-center justify-center rounded-full border border-white/10 bg-white/5 px-5 py-3 text-base font-semibold text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {children}
+    </button>
+  );
+}
+
+function IconMic() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+      <path d="M12 15a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M18 11.5a6 6 0 0 1-12 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M12 17.5V21" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M9 21h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function getGalleryItemKey(item: GalleryItem) {
+  return String(item.sourceName || item.meta?.originalName || item.name || "").trim();
+}
+
+function ModalShell({
+  title,
+  children,
+  onClose,
+}: {
+  title: string;
+  children: React.ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
+      <div
+        className="w-full max-w-3xl rounded-[28px] border border-white/10 bg-[#060912] p-5 shadow-[0_0_50px_rgba(0,0,0,0.55)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="text-xl font-black tracking-tight text-white">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10"
+          >
+            Close
+          </button>
+        </div>
+        {children}
+      </div>
     </div>
   );
 }
 
+function MediaGrid({
+  items,
+  busyName,
+  onDownload,
+  onFavorite,
+  onRename,
+  onRedo,
+  onEdit,
+  onAnimate,
+  onDelete,
+  onOpenViewer,
+}: {
+  items: GalleryItem[];
+  busyName?: string;
+  onDownload?: (item: GalleryItem) => void;
+  onFavorite?: (item: GalleryItem) => void;
+  onRename?: (item: GalleryItem) => void;
+  onRedo?: (item: GalleryItem) => void;
+  onEdit?: (item: GalleryItem) => void;
+  onAnimate?: (item: GalleryItem) => void;
+  onDelete?: (item: GalleryItem) => void;
+  onOpenViewer?: (item: GalleryItem) => void;
+}) {
+  if (!items.length) {
+    return <div className="rounded-[22px] border border-white/10 bg-black/35 p-5 text-white/60">No items found.</div>;
+  }
 
-function PrimaryButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  const { children, ...rest } = props;
   return (
-    <button
-      {...rest}
-      className={("otg-btnPrimary " + (props.className || "")).trim()}
-    >
-      {children}
-    </button>
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {items.map((item, index) => {
+        const itemKey = getGalleryItemKey(item);
+        const isBusy = busyName === itemKey;
+        const favorite = Boolean(item.meta?.favorite);
+        const createdLabel = item.createdAt ? new Date(item.createdAt).toLocaleString() : item.video ? "Video" : "Image";
+        const isImage = !item.video && item.kind !== "video";
+
+        return (
+          <div
+            key={`${itemKey || "item"}-${index}`}
+            className="overflow-hidden rounded-[24px] border border-white/10 bg-black/35"
+          >
+            <button
+              type="button"
+              onClick={() => onOpenViewer?.(item)}
+              className="block aspect-[4/3] w-full bg-black/50 text-left"
+            >
+              {item.video ? (
+                <video src={item.url} className="h-full w-full object-contain" playsInline preload="metadata" muted />
+              ) : (
+                <img src={item.url} alt={item.name || "media"} className="h-full w-full object-contain" loading="lazy" />
+              )}
+            </button>
+            <div className="space-y-3 p-4">
+              <div>
+                <div className="break-all text-sm font-semibold text-white/85">{item.name || "Unnamed item"}</div>
+                <div className="text-xs text-white/45">{createdLabel}</div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onDownload?.(item)}
+                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/85 hover:bg-white/10"
+                >
+                  Download
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onFavorite?.(item)}
+                  disabled={isBusy}
+                  className={cn(
+                    "rounded-full border px-3 py-1.5 text-xs font-semibold disabled:opacity-50",
+                    favorite
+                      ? "border-pink-400/30 bg-pink-500/15 text-pink-100"
+                      : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
+                  )}
+                >
+                  {favorite ? "♥ Saved" : "♡ Heart"}
+                </button>
+                {isImage ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onEdit?.(item)}
+                      disabled={isBusy}
+                      className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-50"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onAnimate?.(item)}
+                      disabled={isBusy}
+                      className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-100 hover:bg-violet-500/15 disabled:opacity-50"
+                    >
+                      Animate
+                    </button>
+                  </>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => onRename?.(item)}
+                  disabled={isBusy}
+                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/80 hover:bg-white/10 disabled:opacity-50"
+                >
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRedo?.(item)}
+                  disabled={isBusy}
+                  className="rounded-full border border-cyan-400/20 bg-[linear-gradient(90deg,rgba(145,92,255,0.30),rgba(40,200,255,0.22))] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  Redo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete?.(item)}
+                  disabled={isBusy}
+                  className="rounded-full border border-red-400/20 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-100 hover:bg-red-500/15 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
+function readPersistedState(): PersistedGenerateState | null {
+  if (typeof window === "undefined") return null;
 
-function GhostButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  const { children, ...rest } = props;
+  try {
+    const raw = window.localStorage.getItem(APP_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as PersistedGenerateState) : null;
+  } catch {
+    return null;
+  }
+}
+
+function clampDuration(value: number) {
+  if (!Number.isFinite(value)) return 8;
+  return Math.max(5, Math.min(15, Math.round(value)));
+}
+
+function guessRuntime(id: string, label: string) {
+  const haystack = `${id} ${label}`.toLowerCase();
+  if (haystack.includes("skyreels") || haystack.includes("video")) return "Estimated runtime: about 3 to 10 minutes.";
+  if (haystack.includes("ltx") || haystack.includes("animate")) return "Estimated runtime: about 2 to 6 minutes.";
+  if (haystack.includes("edit")) return "Estimated runtime: about 30 to 90 seconds.";
+  return "Estimated runtime: about 20 to 60 seconds.";
+}
+
+function shouldSendSizeOverride(workflow: WorkflowItem | undefined) {
+  const id = String(workflow?.id || "").toLowerCase();
+  const label = String(workflow?.label || "").toLowerCase();
   return (
-    <button
-      {...rest}
-      className={("otg-btnGhost " + (props.className || "")).trim()}
-    >
-      {children}
-    </button>
+    label.includes("create a picture") ||
+    label.includes("edit picture") ||
+    label.includes("edit a picture") ||
+    id.includes("text_to_image") ||
+    id.includes("image_edit")
   );
 }
 
+function normalizeGalleryItem(raw: any): GalleryItem {
+  return {
+    name: raw?.name || raw?.sourceName || "",
+    sourceName: raw?.sourceName || raw?.name || "",
+    url: raw?.url || "",
+    video: Boolean(raw?.video || raw?.kind === "video"),
+    kind: raw?.kind === "video" ? "video" : "image",
+    source: raw?.source || raw?.scope || "user",
+    createdAt: Number(raw?.createdAt || raw?.ts || 0) || undefined,
+    updatedAt: Number(raw?.updatedAt || 0) || undefined,
+    meta: {
+      favorite: Boolean(raw?.meta?.favorite ?? raw?.favorite),
+      renamedName: raw?.meta?.renamedName ?? null,
+      originalName: raw?.meta?.originalName ?? raw?.sourceName ?? raw?.name ?? null,
+      positivePrompt: raw?.meta?.positivePrompt ?? null,
+      negativePrompt: raw?.meta?.negativePrompt ?? null,
+      submitPayload: raw?.meta?.submitPayload ?? null,
+      workflowId: raw?.meta?.workflowId ?? null,
+      workflowTitle: raw?.meta?.workflowTitle ?? null,
+    },
+  };
+}
 
 export default function AppPage() {
-  const fq = useFloatingQueue();
-  const searchParams = useSearchParams();
   const [tab, setTab] = useState<SpinTabId>("generate");
-  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [assistanceTab, setAssistanceTab] = useState<AssistanceTab>("describe");
+  const [username, setUsername] = useState("Guest");
+  const [connected, setConnected] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  const [comfyTargets, setComfyTargets] = useState<{ id: string; label: string; baseUrl: string }[]>([]);
-  const [comfyTargetId, setComfyTargetId] = useState<string | null>(null);
-  const [comfyStatuses, setComfyStatuses] = useState<Record<string, boolean | null>>({});
-  const [gpuMenuOpen, setGpuMenuOpen] = useState<boolean>(false);
+  const [workflows, setWorkflows] = useState<WorkflowItem[]>(WORKFLOW_FALLBACKS);
+  const [workflowId, setWorkflowId] = useState(WORKFLOW_FALLBACKS[0].id);
+  const [prompt, setPrompt] = useState("");
+  const [negativePrompt, setNegativePrompt] = useState("");
+  const [orientation, setOrientation] = useState<"portrait" | "landscape">("portrait");
+  const [durationSeconds, setDurationSeconds] = useState(8);
+  const [uploadedFileName, setUploadedFileName] = useState("");
+  const [gpuTarget, setGpuTarget] = useState(GPU_OPTIONS[0].value);
+  const [enhancing, setEnhancing] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState(false);
+
+  const [generateBusy, setGenerateBusy] = useState(false);
+  const [progressStatus, setProgressStatus] = useState<"idle" | "running" | "complete" | "error">("idle");
+  const [progressQueue, setProgressQueue] = useState(0);
+  const [progressPercent, setProgressPercent] = useState(0);
+  const [activePromptId, setActivePromptId] = useState("");
+  const [latestPreviewUrl, setLatestPreviewUrl] = useState("");
+  const [latestPreviewName, setLatestPreviewName] = useState("");
+  const [latestPreviewKind, setLatestPreviewKind] = useState<"image" | "video" | "">("");
+
+  const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
+  const [favoriteItems, setFavoriteItems] = useState<GalleryItem[]>([]);
+  const [galleryBusy, setGalleryBusy] = useState(false);
+  const [favoritesBusy, setFavoritesBusy] = useState(false);
+  const [galleryFilter, setGalleryFilter] = useState<"all" | "images" | "videos">("all");
+  const [gallerySort, setGallerySort] = useState<"newest" | "oldest" | "name">("newest");
+  const [gallerySearch, setGallerySearch] = useState("");
+  const [galleryActionBusyName, setGalleryActionBusyName] = useState("");
+  const [viewerState, setViewerState] = useState<ViewerState | null>(null);
+  const [editModal, setEditModal] = useState<EditModalState | null>(null);
+  const [animateModal, setAnimateModal] = useState<AnimateModalState | null>(null);
+
+  const [describeMode, setDescribeMode] = useState<"background" | "identity">("background");
+  const [describeImageName, setDescribeImageName] = useState("");
+  const [describeOutput, setDescribeOutput] = useState("");
+  const [describeBusy, setDescribeBusy] = useState(false);
+
+  const [enhanceDraft, setEnhanceDraft] = useState("");
+  const [sceneDraft, setSceneDraft] = useState("");
+  const [askInput, setAskInput] = useState("");
+  const [askAnswer, setAskAnswer] = useState("");
+  const [askBusy, setAskBusy] = useState(false);
+
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const describeInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadedFileRef = useRef<File | null>(null);
+  const describeFileRef = useRef<File | null>(null);
+  const refreshedCompletePromptRef = useRef("");
+  const inputImageUrlRef = useRef<string | null>(null);
+
+  const selectedWorkflow = useMemo(() => {
+    return workflows.find((workflow) => workflow.id === workflowId) || workflows[0] || WORKFLOW_FALLBACKS[0];
+  }, [workflowId, workflows]);
+
+  const findWorkflowByHint = useCallback(
+    (kind: "edit" | "animate") => {
+      const match = workflows.find((w) => {
+        const hay = `${w.id} ${w.label}`.toLowerCase();
+        if (kind === "edit") {
+          return hay.includes("edit");
+        }
+        return hay.includes("ltx") || hay.includes("animate") || hay.includes("video");
+      });
+      if (match) return match;
+
+      if (kind === "edit") {
+        return WORKFLOW_FALLBACKS.find((w) => w.id === "edit-picture") || WORKFLOW_FALLBACKS[2];
+      }
+
+      return WORKFLOW_FALLBACKS.find((w) => w.id === "animate-image") || WORKFLOW_FALLBACKS[1];
+    },
+    [workflows]
+  );
 
   useEffect(() => {
-    if (!isAdmin) return;
-    (async () => {
+    const persisted = readPersistedState();
+    if (persisted) {
+      if (persisted.tab) setTab(persisted.tab);
+      if (persisted.assistanceTab) setAssistanceTab(persisted.assistanceTab);
+      if (typeof persisted.prompt === "string") setPrompt(persisted.prompt);
+      if (typeof persisted.negativePrompt === "string") setNegativePrompt(persisted.negativePrompt);
+      if (typeof persisted.workflowId === "string") setWorkflowId(persisted.workflowId);
+      if (persisted.orientation === "portrait" || persisted.orientation === "landscape") setOrientation(persisted.orientation);
+      if (typeof persisted.durationSeconds === "number") setDurationSeconds(clampDuration(persisted.durationSeconds));
+      if (typeof persisted.uploadedFileName === "string") setUploadedFileName(persisted.uploadedFileName);
+      if (typeof persisted.gpuTarget === "string") setGpuTarget(persisted.gpuTarget);
+    }
+
+    try {
+      const url = new URL(window.location.href);
+      const tabParam = url.searchParams.get("tab");
+      if (
+        tabParam === "gethelp" ||
+        tabParam === "generate" ||
+        tabParam === "angles" ||
+        tabParam === "storyboard" ||
+        tabParam === "gallery" ||
+        tabParam === "voices" ||
+        tabParam === "favorites" ||
+        tabParam === "settings" ||
+        tabParam === "support"
+      ) {
+        setTab(tabParam);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      const nextState: PersistedGenerateState = {
+        tab,
+        assistanceTab,
+        prompt,
+        negativePrompt,
+        workflowId,
+        orientation,
+        durationSeconds: clampDuration(durationSeconds),
+        uploadedFileName,
+        gpuTarget,
+      };
+      window.localStorage.setItem(APP_STATE_KEY, JSON.stringify(nextState));
+    } catch {
+      // ignore
+    }
+  }, [tab, assistanceTab, prompt, negativePrompt, workflowId, orientation, durationSeconds, uploadedFileName, gpuTarget]);
+
+  useEffect(() => {
+    return () => {
+      if (inputImageUrlRef.current) {
+        URL.revokeObjectURL(inputImageUrlRef.current);
+        inputImageUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  const loadGallery = useCallback(async () => {
+    setGalleryBusy(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("sort", gallerySort);
+      params.set("filter", galleryFilter);
+      if (gallerySearch.trim()) params.set("search", gallerySearch.trim());
+
+      const res = await fetch(`/api/gallery?${params.toString()}`, {
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      const data = await res.json().catch(() => ({}));
+      const items = Array.isArray(data?.items) ? data.items : Array.isArray(data?.files) ? data.files : [];
+      setGalleryItems(items.map(normalizeGalleryItem));
+    } catch {
+      setGalleryItems([]);
+    } finally {
+      setGalleryBusy(false);
+    }
+  }, [galleryFilter, gallerySearch, gallerySort]);
+
+  const loadFavorites = useCallback(async () => {
+    setFavoritesBusy(true);
+    try {
+      const res = await fetch("/api/favorites", {
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      const data = await res.json().catch(() => ({}));
+      const items = Array.isArray(data?.items) ? data.items : Array.isArray(data?.files) ? data.files : [];
+      setFavoriteItems(items.map(normalizeGalleryItem));
+    } catch {
+      setFavoriteItems([]);
+    } finally {
+      setFavoritesBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadWhoAmI() {
       try {
-        const j = await jfetch<{ ok: boolean; current: string | null; targets: any[] }>("/api/admin/comfy-target");
-        if (j?.ok) {
-          setComfyTargets(Array.isArray(j.targets) ? (j.targets as any) : []);
-          setComfyTargetId(j.current || null);
+        const res = await fetch("/api/whoami", {
+          cache: "no-store",
+          credentials: "include",
+        });
+
+        if (!res.ok) return;
+        const data = (await res.json()) as WhoAmIResponse;
+        if (cancelled) return;
+
+        setUsername(data?.username || data?.user?.username || data?.user?.name || data?.user?.email || "Guest");
+        setIsAdmin(Boolean(data?.user?.admin));
+      } catch {
+        // ignore
+      }
+    }
+
+    async function loadStatus() {
+      try {
+        const res = await fetch("/api/comfy-status", {
+          cache: "no-store",
+          credentials: "include",
+        });
+
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+
+        setConnected(Boolean(data?.connected || data?.ok || data?.status === "connected"));
+        if (typeof data?.message === "string" && data.message.trim()) {
+          setStatusMessage(data.message.trim());
         }
       } catch {
         // ignore
       }
-    })();
-  }, [isAdmin]);
-
-  const setAdminComfyTarget = useCallback(async (id: string | null) => {
-    if (!isAdmin) return;
-    try {
-      const j = await jfetch<{ ok: boolean; current: string | null }>("/api/admin/comfy-target", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: id || "" }),
-      });
-      if (j?.ok) setComfyTargetId(j.current || null);
-    } catch {
-      // ignore
     }
-  }, [isAdmin]);
 
-  const pickTargetId = useCallback(
-    (needle: string) =>
-      comfyTargets.find(
-        (t) =>
-          String(t.id).toLowerCase().includes(needle) || String(t.label || "").toLowerCase().includes(needle)
-      )?.id || null,
-    [comfyTargets]
-  );
-
-  const refreshComfyStatuses = useCallback(async () => {
-    if (!isAdmin) return;
-    try {
-      const j = await jfetch<{ ok: boolean; statuses: { id: string; online: boolean }[] }>(
-        "/api/admin/comfy-target/status"
-      );
-      if (j?.ok && Array.isArray(j.statuses)) {
-        const next: Record<string, boolean> = {};
-        for (const s of j.statuses) next[String(s.id)] = Boolean((s as any).online);
-        setComfyStatuses(next);
-      }
-    } catch {
-      // ignore
-    }
-  }, [isAdmin]);
-
-  useEffect(() => {
-    if (!isAdmin) return;
-    refreshComfyStatuses();
-    const t = setInterval(refreshComfyStatuses, 8000);
-    return () => clearInterval(t);
-  }, [isAdmin, refreshComfyStatuses]);
-
-
-
-
-  useEffect(() => {
-    (async () => {
+    async function loadWorkflows() {
       try {
-        const r = await fetch("/api/whoami", { credentials: "include", cache: "no-store" });
-        const data = await r.json().catch(() => null);
-        setIsAdmin(Boolean(data?.user?.admin));
+        const res = await fetch("/api/workflows", {
+          cache: "no-store",
+          credentials: "include",
+        });
+
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : Array.isArray(data?.workflows) ? data.workflows : [];
+
+        const mapped = list
+          .map((item: WorkflowApiItem, index: number) => {
+            const rawId = item?.id || item?.key || item?.slug || `workflow-${index + 1}`;
+            const rawLabel = item?.label || item?.name || item?.title || rawId;
+            return {
+              id: String(rawId),
+              label: String(rawLabel),
+              runtime: guessRuntime(String(rawId), String(rawLabel)),
+            } satisfies WorkflowItem;
+          })
+          .filter((item: WorkflowItem) => item.id && item.label);
+
+        if (!cancelled && mapped.length > 0) {
+          setWorkflows(mapped);
+          setWorkflowId((current) => (mapped.some((w) => w.id === current) ? current : mapped[0].id));
+        }
       } catch {
-        setIsAdmin(false);
-      }
-    })();
-  }, []);
-
-  const [fontDelta, setFontDelta] = useState<number>(0); // -150 .. 150 (0 baseline)
-
-  // Workflows
-  const [workflows, setWorkflows] = useState<WorkflowItem[]>([]);
-  const [workflowId, setWorkflowId] = useState<string>("presets/t2i");
-  const [activeWorkflowText, setActiveWorkflowText] = useState<string | null>(null);
-  const activeWorkflow = useMemo(() => workflows.find((w) => w.id === workflowId) || null, [workflows, workflowId]);
-
-  // Load workflow JSON text so we can detect how many image inputs it needs
-  useEffect(() => {
-    (async () => {
-      if (!activeWorkflow?.id) {
-        setActiveWorkflowText(null);
-        return;
-      }
-      try {
-        const r = await fetch(`/api/workflows/${encodeURIComponent(activeWorkflow.id)}`);
-        const txt = await r.text();
-        setActiveWorkflowText(txt);
-      } catch {
-        setActiveWorkflowText(null);
-      }
-    })();
-  }, [activeWorkflow?.id]);
-
-  const isWanWorkflow = useMemo(() => {
-    const id = String(activeWorkflow?.id || "");
-    const label = String(activeWorkflow?.label || "");
-    if (/\bwan\b/i.test(id) || /\bwan\b/i.test(label)) return true;
-    const txt = String(activeWorkflowText || "");
-    return /WanImageToVideo|EmptyHunyuanLatentVideo/i.test(txt);
-  }, [activeWorkflow?.id, activeWorkflow?.label, activeWorkflowText]);
-
-
-// Compute required image inputs from workflow metadata or placeholders.
-const needsImages = useMemo(() => {
-  // Prefer explicit workflow metadata when present
-  if (activeWorkflow && typeof (activeWorkflow as any).needsImages === "number") {
-    const n = Number((activeWorkflow as any).needsImages);
-    return Number.isFinite(n) ? Math.max(0, Math.min(4, n)) : 0;
-  }
-
-  // Fall back to scanning the workflow JSON text for placeholders.
-  const txt = activeWorkflowText || "";
-  // Common placeholders used by OTG (legacy + newer compatible workflows)
-  const legacySlots = ["__OTG_IMAGE_A__", "__OTG_IMAGE_B__", "__OTG_IMAGE_C__", "__OTG_IMAGE_D__"];
-  const newSlots = ["otg__INPUT_1.png", "otg__INPUT_2.png", "otg__INPUT_3.png", "otg__INPUT_4.png"];
-
-  let legacyMax = -1;
-  for (let i = 0; i < legacySlots.length; i++) {
-    if (txt.includes(legacySlots[i])) legacyMax = i;
-  }
-  const legacyCount = legacyMax >= 0 ? legacyMax + 1 : 0;
-
-  let newMax = -1;
-  for (let i = 0; i < newSlots.length; i++) {
-    if (txt.includes(newSlots[i])) newMax = i;
-  }
-  const newCount = newMax >= 0 ? newMax + 1 : 0;
-
-  return Math.max(legacyCount, newCount);
-}, [activeWorkflow, activeWorkflowText]);
-
-
-
-
-  // Generate form
-  const [positivePrompt, setPositivePrompt] = useState<string>("");
-  const [negativePrompt, setNegativePrompt] = useState<string>("");
-  const [enhanceBusy, setEnhanceBusy] = useState<boolean>(false);
-  const [enhanceMsg, setEnhanceMsg] = useState<string | null>(null);
-
-  // Delete account confirmation
-  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
-  const [deleteAccountBusy, setDeleteAccountBusy] = useState(false);
-  const [deleteAccountErr, setDeleteAccountErr] = useState<string | null>(null);
-  const [orientation, setOrientation] = useState<"portrait" | "landscape">("portrait");
-  const [durationSeconds, setDurationSeconds] = useState<string>("5");
-
-// WAN 2.2: hard cap duration to 9s (10s reliably OOMs).
-useEffect(() => {
-  if (!isWanWorkflow) return;
-  if (String(durationSeconds) === "10") setDurationSeconds("9");
-}, [isWanWorkflow, durationSeconds]);
-
-  const [generationTitle, setGenerationTitle] = useState<string>("");
-  // "default" means: do not inject width/height overrides at all (leave workflow unchanged).
-  const [sizePreset, setSizePreset] = useState<"default" | "480p" | "512p" | "720p">("default");
-
-  // LoRAs (optional)
-  const [loras, setLoras] = useState<OtgLoraChoice[]>([]);
-  const [loraOpen, setLoraOpen] = useState(false);
-  const [loraList, setLoraList] = useState<LoraListItem[]>([]);
-  const [loraLoading, setLoraLoading] = useState(false);
-  const [loraErr, setLoraErr] = useState<string | null>(null);
-  const [renderConfirm, setRenderConfirm] = useState<null | {
-    title?: string;
-    workflow: string;
-    orientation: string;
-    size: string;
-    duration: string;
-    loras: OtgLoraChoice[];
-    gpu: string;
-  }>(null);
-  const [renderConfirmStatus, setRenderConfirmStatus] = useState<"idle" | "submitted" | "done">("idle");
-const currentRenderConfirm = useMemo(() => {
-  const wfName = activeWorkflow?.label || activeWorkflow?.id || "-";
-  const sizeLabel = sizePreset === "default" ? "Default (workflow native)" : sizePreset;
-  const gpuLabel = (() => {
-    const id = comfyTargetId || "";
-    const tgt = comfyTargets.find((x) => String(x.id) === String(id));
-    return tgt ? String(tgt.label || tgt.id) : (id ? String(id) : "-");
-  })();
-  return {
-    title: isAdmin ? (generationTitle || "") : "",
-    workflow: wfName,
-    orientation,
-    size: sizeLabel,
-    duration: `${durationSeconds}s`,
-    loras,
-    gpu: gpuLabel,
-  };
-}, [activeWorkflow?.id, activeWorkflow?.label, orientation, sizePreset, durationSeconds, loras, comfyTargetId, comfyTargets, isAdmin, generationTitle]);
-
-const confirmView = renderConfirm || currentRenderConfirm;
-
-
-  const [imgA, setImgA] = useState<File | null>(null);
-  const [imgB, setImgB] = useState<File | null>(null);
-  const [imgC, setImgC] = useState<File | null>(null);
-
-  // Local small previews for selected input images (client-only)
-  const [imgAPreviewUrl, setImgAPreviewUrl] = useState<string | null>(null);
-  const [imgBPreviewUrl, setImgBPreviewUrl] = useState<string | null>(null);
-  const [imgCPreviewUrl, setImgCPreviewUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!imgA) {
-      setImgAPreviewUrl(null);
-      return;
-    }
-    const u = URL.createObjectURL(imgA);
-    setImgAPreviewUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [imgA]);
-
-  useEffect(() => {
-    if (!imgB) {
-      setImgBPreviewUrl(null);
-      return;
-    }
-    const u = URL.createObjectURL(imgB);
-    setImgBPreviewUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [imgB]);
-
-  useEffect(() => {
-    if (!imgC) {
-      setImgCPreviewUrl(null);
-      return;
-    }
-    const u = URL.createObjectURL(imgC);
-    setImgCPreviewUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [imgC]);
-
-  // Preview
-  const [last, setLast] = useState<LastContent | null>(null);
-  const [latestPreview, setLatestPreview] = useState<PreviewFile | null>(null);
-  const [showGeneratedPreview, setShowGeneratedPreview] = useState<boolean>(false);
-  
-
-const effectivePreview = useMemo<PreviewFile | null>(() => {
-  // While a job is running, show the animated loader (stable UI, no blinking).
-  // Once the job is complete, this will be replaced by the real media.
-  if (last?.status === "running") {
-    return { name: "SLR.gif", url: "/SLR.gif", kind: "image" } as any;
-  }
-  return (last?.file as any) || latestPreview || null;
-}, [last, latestPreview]);
-
-const isLoaderPreview = effectivePreview?.url === "/SLR.gif";
-
-
-
-
-const canSendToGallery = useMemo(() => {
-  // Videos are not sent to Gallery in this UX.
-  const k = (effectivePreview as any)?.kind;
-  return k !== "video";
-}, [effectivePreview]);
-
-  const [busy, setBusy] = useState<boolean>(false);
-  // Per Shawn request: unlock UI for all users (no single-generation lock).
-  const uiLocked = false;
-
-  const [mediaModal, setMediaModal] = useState<null | { name: string; url: string; kind: "image" | "video" }>(null);
-  const [promptModal, setPromptModal] = useState<null | { name: string; meta: GalleryMeta }>(null);
-  const [gallerySent, setGallerySent] = useState<Record<string, boolean>>({});
-  const [err, setErr] = useState<string | null>(null);
-  const [pipelineStuck, setPipelineStuck] = useState<boolean>(false);
-
-  const [jobs, setJobs] = useState<FloatingJob[]>([]);
-
-  // Realtime progress (ComfyUI ws -> OTG SSE)
-  const [progressPct, setProgressPct] = useState<number>(0);
-  const [progressMsg, setProgressMsg] = useState<string>("Idle");
-  const [currentPromptId, setCurrentPromptId] = useState<string | null>(null);
-
-  useEffect(() => {
-    try {
-      const pid = localStorage.getItem('otg:lastPromptId');
-      if (pid && !currentPromptId) {
-        setCurrentPromptId(pid);
-        try { startProgressStream({ promptId: pid }); } catch {}
-      }
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-
-  // Persist UI state so refresh does not wipe the app.
-  const APP_STATE_KEY = 'otg:appState_v1';
-
-  useEffect(() => {
-    try {
-      const sp = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-      const urlTab = sp?.get("tab");
-      const urlFocus = sp?.get("focus");
-      const urlWins = !!(urlTab || urlFocus);
-      const raw = localStorage.getItem(APP_STATE_KEY);
-      if (!raw) return;
-      const st = JSON.parse(raw);
-      if (!urlWins && st?.tab) setTab(st.tab);
-      if (typeof st?.positivePrompt === 'string') setPositivePrompt(st.positivePrompt);
-      if (typeof st?.negativePrompt === 'string') setNegativePrompt(st.negativePrompt);
-      if (st?.orientation) setOrientation(st.orientation);
-      if (st?.sizePreset) setSizePreset(st.sizePreset);
-      if (typeof st?.durationSeconds === 'string') setDurationSeconds(st.durationSeconds);
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      try {
-        const st = { tab, positivePrompt, negativePrompt, orientation, sizePreset, durationSeconds };
-        localStorage.setItem(APP_STATE_KEY, JSON.stringify(st));
-      } catch {}
-    }, 250);
-    return () => clearTimeout(t);
-  }, [tab, positivePrompt, negativePrompt, orientation, sizePreset, durationSeconds]);
-
-  // URL_TAB_SYNC_V1: allow deep-links like /app?tab=gallery&focus=<name>
-  useEffect(() => {
-    try {
-      const t = searchParams?.get("tab");
-      const f = searchParams?.get("focus");
-      if (f) {
-        setGalleryFocus(f);
-        setTab("gallery");
-        return;
-      }
-      if (t && (t === "generate" || t === "gallery" || t === "favorites" || t === "angles" || t === "storyboard" || t === "gethelp" || t === "voices" || t === "support" || t === "settings")) {
-        setTab(t as any);
-      }
-    } catch {}
-  }, [searchParams]);
-
-  // When gallery loads, scroll the focused item into view.
-  useEffect(() => {
-    if (tab !== "gallery") return;
-    if (!galleryFocus) return;
-    const t = setTimeout(() => {
-      try {
-        galleryFocusRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      } catch {}
-    }, 150);
-    return () => clearTimeout(t);
-  }, [tab, galleryFocus, galleryFiles.length]);
-
-
-  const sseRef = useRef<EventSource | null>(null);
-
-  useEffect(() => {
-    if (renderConfirmStatus !== "submitted") return;
-    const done = (last?.status && last.status !== "running" && last.status !== "idle") || (progressPct >= 100 && last?.status !== "running");
-    if (done) setRenderConfirmStatus("done");
-  }, [last?.status, progressPct, renderConfirmStatus]);
-
-  useEffect(() => {
-    if (!currentPromptId) return;
-    if (!last?.status) return;
-
-    // Update the bubble queue item as state changes.
-    if (last.status === "running") {
-      try { fq.update(currentPromptId, { status: "running" }); } catch {}
-      return;
-    }
-
-    if (last.status === "idle") return;
-
-    const done = last.status === "done" || last.status === "ready";
-    const error = last.status === "error";
-    try {
-      if (done) fq.update(currentPromptId, { status: "complete", focusId: last?.file?.name || undefined, resultName: last?.file?.name || undefined });
-      else if (error) fq.update(currentPromptId, { status: "error" });
-    } catch {}
-
-    setJobs((prev) =>
-      prev.map((j) => (j.id === currentPromptId ? { ...j, status: (last.status === "done" || last.status === "ready") ? "done" : "error" } : j)),
-    );
-  }, [currentPromptId, last?.status]);
-
-
-  const getOrCreateDeviceId = useCallback(() => {
-    if (typeof window === "undefined") return "desktop_default";
-    const k = "otg_device_id";
-    let id = "";
-    try { id = localStorage.getItem(k) || ""; } catch {}
-    if (!id) {
-      try {
-        id = crypto.randomUUID();
-        localStorage.setItem(k, id);
-      } catch {
-        id = `dev_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        // ignore
       }
     }
-    return id;
-  }, []);
 
-  const stopProgressStream = useCallback(() => {
-    try { sseRef.current?.close(); } catch {}
-    sseRef.current = null;
-  }, []);
+    void loadWhoAmI();
+    void loadStatus();
+    void loadWorkflows();
 
-  const startProgressStream = useCallback((opts?: { promptId?: string | null }) => {
-    const deviceId = getOrCreateDeviceId();
-    const promptId = opts?.promptId ?? null;
+    const timer = window.setInterval(() => {
+      void loadStatus();
+    }, 10000);
 
-    // Reset UI
-    setProgressPct(0);
-    setProgressMsg("Generating...");
-
-    // Ensure only one stream
-    stopProgressStream();
-
-    const url = `/api/comfy-events?clientId=${encodeURIComponent(deviceId)}`;
-    const es = new EventSource(url);
-    sseRef.current = es;
-
-    const safeJson = (s: string) => {
-      try { return JSON.parse(s); } catch { return null; }
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
     };
-
-    es.onmessage = (ev) => {
-      const payload = safeJson(ev.data);
-      if (!payload) return;
-
-      // Internal OTG markers like ["__open", {...}]
-      if (Array.isArray(payload)) {
-        if (payload[0] === "__ws_open") setProgressMsg("Connected...");
-        return;
-      }
-
-      const type = String(payload.type || "");
-      const data = payload.data || payload;
-
-      // Filter to this run if prompt_id is present.
-      const pid = data?.prompt_id ? String(data.prompt_id) : null;
-      if (promptId && pid && pid !== promptId) return;
-
-      if (type === "execution_start") {
-        setProgressMsg("Starting...");
-      }
-
-      if (type === "progress") {
-        const v = Number(data?.value);
-        const m = Number(data?.max);
-        if (Number.isFinite(v) && Number.isFinite(m) && m > 0) {
-          const pct = Math.max(0, Math.min(100, Math.round((v / m) * 100)));
-          setProgressPct(pct);
-          setProgressMsg(`Generating... ${pct}%`);
-        }
-      }
-
-      if (type === "executing") {
-        const node = data?.node;
-        if (node === null) {
-          // ComfyUI signals completion with node=null
-          setProgressPct(100);
-          setProgressMsg("Finalizing...");
-          stopProgressStream();
-        } else {
-          setProgressMsg("Working...");
-        }
-      }
-    };
-
-    es.onerror = () => {
-      // Don't hard-fail the UI; polling still works.
-      setProgressMsg("Generating...");
-    };
-  }, [getOrCreateDeviceId, stopProgressStream]);
-
-  // Clean up on unmount
-  useEffect(() => {
-    return () => stopProgressStream();
-  }, [stopProgressStream]);
-
-  const [toast, setToast] = useState<string | null>(null);
-  const toastTimer = useRef<any>(null);
-  const showToast = useCallback((msg: string) => {
-    setToast(msg);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 2000);
-  }, []);
-  const pollRef = useRef<number | null>(null);
-  const runTokenRef = useRef<number>(0);
-
-  // Accessibility font scaling:
-  // We want the "default" (slider at the first notch) to be the old 150% size,
-  // because 100% was too small on projector/phone.
-  // Then allow users to scale up another +150% on top of that.
-    // Font scaling
-  // Slider is centered: -150 to 0 to +150 (0 is baseline).
-  // We map this to a gentle overall UI scale of ~0.7x to 1.5x.
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("otg_font_delta");
-      if (raw != null) {
-        const n = Number(raw);
-        if (!Number.isNaN(n)) setFontDelta(Math.max(-150, Math.min(150, Math.round(n))));
-      }
-    } catch {}
   }, []);
 
   useEffect(() => {
-    const unclamped = 1 + fontDelta / 300; // -150 => 0.5, +150 => 1.5
-    const scale = Math.max(0.7, Math.min(1.5, unclamped));
-    try {
-      document.documentElement.style.setProperty("--otg-font-scale", String(scale));
-      localStorage.setItem("otg_font_delta", String(fontDelta));
-    } catch {}
-  }, [fontDelta]);
-
-  const loadWorkflows = useCallback(async () => {
-    const res = await jfetch<any>("/api/workflows");
-    const rawList = (res.list || res.workflows || res.items || res.data || []);
-    const list: WorkflowItem[] = (Array.isArray(rawList) ? rawList : []).map((x: any) => ({
-      id: String(x.id),
-      label: x.label ? String(x.label) : undefined,
-      description: x.description ? String(x.description) : undefined,
-      format: x.format,
-      canRun: typeof x.canRun === "boolean" ? x.canRun : undefined,
-      needsImages: typeof x.needsImages === "number" ? x.needsImages : undefined,
-    }));
-
-    // Prefer our simplified set if present; otherwise show everything.
-    
-// Always show all workflows returned by the server (the server merges index.json + folder scan).
-const HIDDEN_BASES = new Set(["index", "index.example", "schema"]);
-const filtered = list.filter((w) => {
-  const base = String(w.id || "").toLowerCase().split("/").pop() || "";
-  return !HIDDEN_BASES.has(base);
-});
-
-setWorkflows(filtered);
-
-// Ensure selected workflow exists
-const exists = filtered.some((w) => w.id === workflowId);
-if (!exists && filtered[0]) setWorkflowId(filtered[0].id);
-}, [workflowId]);
-
-
-
-  // AUTOLOAD_WORKFLOWS_V1: when entering Generate, fetch workflow list automatically.
-  useEffect(() => {
-    if (tab !== "generate") return;
-    if (workflows.length) return;
-    loadWorkflows().catch(() => void 0);
-  }, [tab, workflows.length, loadWorkflows]);
-  const onSyncWorkflows = useCallback(async () => {
-    setErr(null);
-    setBusy(true);
-    try {
-      await jfetch("/api/workflows/reload", { method: "POST" });
-      await loadWorkflows();
-    } catch (e: any) {
-      setErr(String(e?.message || e));
-    } finally {
-      setBusy(false);
+    if (tab === "gallery") {
+      void loadGallery();
     }
-  }, [loadWorkflows]);
-
-  const onEnhancePrompt = useCallback(async () => {
-    const ptxt = (positivePrompt || "").trim();
-    if (!ptxt) return;
-    setEnhanceMsg("Please wait, enhancing prompt...");
-    setEnhanceBusy(true);
-    try {
-      const r = await fetch("/api/enhance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: ptxt, mode: "replace" }),
-      });
-      const j = await r.json().catch(() => null);
-      if (!r.ok || !j?.ok) {
-        throw new Error(j?.error || `Enhance failed (${r.status})`);
-      }
-      const out =
-        (typeof j.result === "string" && j.result.trim()
-          ? j.result.trim()
-          : (typeof j.enhanced === "string" && j.enhanced.trim()
-              ? j.enhanced.trim()
-              : ""));
-      if (out) {
-        setPositivePrompt(out);
-        setEnhanceMsg(j?.provider === "ollama" ? "Enhanced (Ollama)" : "Enhanced");
-      }
-
-    } catch (e: any) {
-      setEnhanceMsg(String(e?.message || e));
-    } finally {
-      setEnhanceBusy(false);
-      window.setTimeout(() => setEnhanceMsg(null), 2500);
+    if (tab === "favorites") {
+      void loadFavorites();
     }
-  }, [positivePrompt]);
-
-
-const openLoraPicker = useCallback(async () => {
-  setLoraErr(null);
-  setLoraOpen(true);
-  if (loraList.length) return;
-  try {
-    setLoraLoading(true);
-    const r = await fetch("/api/loras", { cache: "no-store" });
-    const j = await r.json().catch(() => null);
-    if (!r.ok || !j?.ok) throw new Error(j?.error || `Failed to load LoRAs (${r.status})`);
-    const items: LoraListItem[] = Array.isArray(j.items) ? j.items : [];
-    items.sort((a, b) => String(a.label || a.name).localeCompare(String(b.label || b.name)));
-    setLoraList(items);
-  } catch (e: any) {
-    setLoraErr(String(e?.message || e));
-  } finally {
-    setLoraLoading(false);
-  }
-}, [loraList.length]);
-
-const toggleLora = useCallback((name: string) => {
-  setLoras((prev) => {
-    const idx = prev.findIndex((x) => x.name === name);
-    if (idx >= 0) return prev.filter((x) => x.name !== name);
-    return [...prev, { name, strengthModel: 1, strengthClip: 1 }];
-  });
-}, []);
-
-const setLoraStrength = useCallback((name: string, which: "model" | "clip", value: number) => {
-  setLoras((prev) =>
-    prev.map((x) => {
-      if (x.name !== name) return x;
-      const v = Math.max(0, Math.min(2, Number.isFinite(value) ? value : 1));
-      return which === "model" ? { ...x, strengthModel: v } : { ...x, strengthClip: v };
-    })
-  );
-}, []);
-
-  
-
-const onSendToGallery = useCallback(async () => {
-  if (!effectivePreview) return;
-  setErr(null);
-  try {
-    const wfLabel = activeWorkflow?.label || activeWorkflow?.id || "(unknown)";
-    const sizeLabel = sizePreset === "default" ? "Default" : sizePreset;
-    const gpuLabel = (comfyTargets.find(t => t.id === comfyTargetId)?.label) || (comfyTargetId ? String(comfyTargetId) : "Default");
-    setRenderConfirm({ title: (generationTitle || "").trim(), workflow: wfLabel, orientation, size: sizeLabel, duration: `${durationSeconds}s`, loras: loras.slice(), gpu: gpuLabel });
-    setRenderConfirmStatus("submitted");
-
-    setBusy(true);
-    const r = await fetch("/api/content/gallery", { method: "POST" });
-    const j = await r.json().catch(() => null);
-    if (!r.ok || !j?.ok) throw new Error(j?.error || `Send to Gallery failed (${r.status})`);
-    showToast("Sent to Gallery");
-    // Refresh gallery/last state so buttons stay accurate.
-    const res = await fetchLast();
-    if (res) setLast(res);
-        if (res?.status !== "running" && res?.file?.url && res?.file?.name) {
-          const kind: "image" | "video" = isVideoName(res.file.name) ? "video" : "image";
-          setLatestPreview({ name: res.file.name, url: res.file.url, kind });
-          setProgressPct(100);
-          setProgressMsg("Creation complete");
-          stopProgressStream();
-          stopPoll();
-          return;
-        }
-  } catch (e: any) {
-    setErr(String(e?.message || e));
-  } finally {
-    setBusy(false);
-  }
-}, [effectivePreview, showToast]);
-
-  const onDeletePreview = useCallback(() => {
-    // Preview-only delete: do NOT delete gallery files.
-    setErr(null);
-    setLatestPreview(null);
-    setLast((prev) => (prev ? ({ ...(prev as any), file: null } as any) : prev));
-    setProgressPct(0);
-    setProgressMsg("Idle");
-    showToast("Cleared preview");
-  }, [showToast]);
-
-
-const onFavorite = useCallback(async () => {
-  if (!effectivePreview) return;
-  setErr(null);
-  try {
-    setBusy(true);
-    const r = await fetch(`/api/favorites/add?name=${encodeURIComponent(effectivePreview.name)}`, { method: "POST" });
-    const j = await r.json().catch(() => null);
-    if (!r.ok || !j?.ok) throw new Error(j?.error || `Send to Favorites failed (${r.status})`);
-    showToast("Sent to Favorites");
-    setLast((prev) => ({ ...(prev || ({} as any)), favorited: true } as any));
-  } catch (e: any) {
-    setErr(String(e?.message || e));
-  } finally {
-    setBusy(false);
-  }
-}, [effectivePreview, showToast]);
-
-const fetchLast = useCallback(async () => {
-    const STALE_MS = 10 * 60 * 1000;
-    let res = await jfetch<LastContent>("/api/content/last");
-
-    // Auto-heal a stuck RUNNING lock (e.g. if polling missed completion).
-    if (res?.status === "running") {
-      const updatedAt = Number((res as any).updatedAt || 0);
-      if (!updatedAt || Date.now() - updatedAt > STALE_MS) {
-        try {
-          // Clear unlocks RUNNING without deleting gallery files.
-          await jfetch("/api/content/clear", { method: "POST" });
-          res = await jfetch<LastContent>("/api/content/last");
-        } catch {
-          // ignore
-        }
-      }
-    }
-    return res;
-  }, []);
-
-
-  const fetchLatestFromGallery = useCallback(async () => {
-    try {
-      const res = await jfetch<{ ok: boolean; files: GalleryFile[] }>("/api/gallery");
-      const f = (res?.files || [])[0];
-      if (!f?.name || !f?.url) return null;
-      const kind: "image" | "video" = isVideoName(f.name) ? "video" : "image";
-      const pf: PreviewFile = { name: f.name, url: f.url, kind };
-      setLatestPreview(pf);
-      return pf;
-    } catch {
-      return null;
-    }
-  }, []);
-
-  const stopPoll = useCallback(() => {
-    if (pollRef.current) {
-      window.clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }, []);
-
-  const startPoll = useCallback((token?: string | null) => {
-    // token kept for backwards compatibility; /api/content/last reads auth cookie server-side
-    if (pollRef.current) return;
-    pollRef.current = setInterval(async () => {
-      try {
-        // While generating, promote the finished output into the device gallery as soon as it appears.
-        // This is what makes Preview update immediately without having to visit Gallery.
-        try {
-          await fetch("/api/gallery/sync", {
-            method: "POST",
-            credentials: "include",
-            cache: "no-store",
-            headers: withDeviceHeader(),
-          });
-        } catch {
-          // ignore
-        }
-
-        const res = await fetchLast();
-        if (res) {
-          setLast(res);
-          if ((res.status === "done" || res.status === "ready" || res.status === "idle") && res.file) {
-            // If SSE missed completion, finalize progress here.
-            setProgressPct(100);
-            setProgressMsg("Complete");
-            stopProgressStream();
-            stopPoll();
-          }
-        }
-      } catch {
-        // ignore transient errors
-      }
-    }, 750) as any;
-  }, [fetchLast, stopPoll, stopProgressStream]);
-
-
-
-const onShowContent = useCallback(async () => {
-  try {
-    const res = await fetchLast();
-    if (res) setLast(res);
-    setShowGeneratedPreview(true);
-        if (res?.status !== "running" && res?.file?.url && res?.file?.name) {
-          const kind: "image" | "video" = isVideoName(res.file.name) ? "video" : "image";
-          setLatestPreview({ name: res.file.name, url: res.file.url, kind });
-          setProgressPct(100);
-          setProgressMsg("Creation complete");
-          stopProgressStream();
-          stopPoll();
-          return;
-        }
-    if (res?.file?.url && res?.file?.name) {
-      const kind: "image" | "video" = isVideoName(res.file.name) ? "video" : "image";
-      setLatestPreview({ name: res.file.name, url: res.file.url, kind });
-      return;
-    }
-    // Fallback: try latest from gallery
-    await fetchLatestFromGallery();
-  } catch (e: any) {
-    // ignore
-  }
-}, [fetchLast, fetchLatestFromGallery]);
-
-const onGenerate = useCallback(async () => {
-  // Intentionally allow multiple submissions (no client-side lock).
-  setErr(null);
-
-  if (!activeWorkflow?.id) {
-    setErr("Select a workflow.");
-    return;
-  }
-
-  // Validate minimum required image slots for this workflow.
-  // We only require Image 1. If the workflow advertises 2-3 slots but the user
-  // provides fewer, we auto-fill missing slots with Image 1 (common for edit workflows).
-  if (needsImages > 0 && !imgA) {
-    setErr("This workflow needs at least 1 input image.");
-    return;
-  }
-
-  // Floating queue widget: create an entry immediately so the bubble appears as soon as we submit.
-  const queueTempId = `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const queueTitle =
-    (isAdmin && String(generationTitle || "").trim())
-      ? String(generationTitle || "").trim()
-      : (activeWorkflow?.label || activeWorkflow?.id || "Generation");
-  let queueId: string = queueTempId;
-  fq.add({ id: queueTempId, title: queueTitle, status: "queued" });
-
-
-  try {
-    setBusy(true);
-
-    // Snapshot current selections for the confirmation block
-    setRenderConfirm({ ...currentRenderConfirm });
-    setRenderConfirmStatus("submitted");
-
-    // Mark running but keep existing preview visible.
-    setLast((prev) => ({ ...(prev || ({} as any)), status: "running" } as any));
-
-    // Start polling /api/content/last for completion.
-    startPoll(null);
-
-    const fd = new FormData();
-    fd.append("workflowId", activeWorkflow.id);
-    fd.append("prompt", (positivePrompt || "").toString());
-    fd.append("negativePrompt", (negativePrompt || "").toString());
-    if (isAdmin && String(generationTitle || "").trim()) {
-      fd.append("title", String(generationTitle).trim());
-    }
-    fd.append("orientation", orientation);
-    fd.append("durationSeconds", durationSeconds);
-    // Size/orientation controls.
-    // If sizePreset is "default", do not override the workflow dimensions.
-    if (sizePreset !== "default") {
-      const short = sizePreset === "480p" ? 480 : sizePreset === "512p" ? 512 : 720;
-      const long = Math.round((short * 16) / 9 / 8) * 8;
-      const baseW = short;
-      const baseH = long;
-      const w = orientation === "portrait" ? baseW : baseH;
-      const h = orientation === "portrait" ? baseH : baseW;
-      fd.append("width", String(w));
-      fd.append("height", String(h));
-    }
-
-    if (loras.length > 0) {
-      fd.append("loras", JSON.stringify(loras.map((l) => ({ name: l.name, strengthModel: l.strengthModel, strengthClip: l.strengthClip }))));
-    }
-
-    // Images: if the workflow expects multiple slots but the user selected only 1-2,
-    // duplicate Image 1 into missing slots so the server has deterministic inputs.
-    const imgBEffective = imgB || imgA;
-    const imgCEffective = imgC || imgA;
-
-    if (imgA) fd.append("imageA", imgA, imgA.name);
-    if (needsImages > 1 && imgBEffective) fd.append("imageB", imgBEffective, imgBEffective.name);
-    if (needsImages > 2 && imgCEffective) fd.append("imageC", imgCEffective, imgCEffective.name);
-
-    const r = await fetch("/api/comfy", { method: "POST", credentials: "include", headers: withDeviceHeader(), body: fd });
-    if (!r.ok) {
-      let t = "";
-      try { t = await r.text(); } catch {}
-      if (r.status === 401) {
-        throw new Error(`Create failed (401): Unauthorized. Your session may have expired - please log in again.`);
-      }
-      throw new Error(`Create failed (${r.status}): ${t || r.statusText}`);
-    }
-
-    // Start realtime progress via /api/comfy-events (SSE proxy to ComfyUI websocket)
-    let promptId: string | null = null;
-    try {
-      const j = await r.clone().json();
-      promptId = j?.prompt_id ? String(j.prompt_id) : null;
-    } catch {
-      // ignore
-    }
-    setCurrentPromptId(promptId);
-      try { localStorage.setItem('otg:lastPromptId', String(promptId)); } catch {}
-
-    // Floating queue widget: if we received a ComfyUI prompt_id, replace the temp entry.
-    if (promptId) {
-      try {
-        fq.remove(queueTempId);
-      } catch {}
-      fq.add({ id: promptId, title: queueTitle, status: "queued" });
-      queueId = promptId;
-    }
-
-    // Track in floating queue
-    setJobs((prev) => {
-      const id = promptId || `local-${Date.now()}`;
-      const title =
-        (isAdmin ? (currentRenderConfirm?.title || "") : "") ||
-        (activeWorkflow?.label || activeWorkflow?.id || "Generation");
-      return [...prev, { id, title, status: "submitted", createdAt: Date.now() }];
-    });
-
-    startProgressStream({ promptId });
-
-    // Let polling update the UI; also attempt to show content immediately after a short delay.
-    setTimeout(() => { onShowContent(); }, 750);
-  } catch (e: any) {
-    const msg = e?.message || String(e);
-    setErr(msg);
-
-    // Floating queue widget: reflect failure.
-    try {
-      if (queueId && queueId.startsWith("local-")) fq.remove(queueId);
-      else if (queueId) fq.update(queueId, { status: "error", errorMessage: msg });
-    } catch {}
-    // If the server believes a job is still running (409), the pipeline can get
-    // stuck until the server-side content state is cleared.
-    if (/\(409\)/.test(msg) || /already running/i.test(msg)) {
-      setPipelineStuck(true);
-    }
-    stopPoll();
-  } finally {
-    setBusy(false);
-  }
-}, [
-  isAdmin,
-  generationTitle,
-  currentRenderConfirm,
-  activeWorkflow,
-  busy,
-  durationSeconds,
-  imgA,
-  imgB,
-  imgC,
-  needsImages,
-  negativePrompt,
-  onShowContent,
-  orientation,
-  positivePrompt,
-  sizePreset,
-  startPoll,
-  startProgressStream,
-  stopPoll
-]);
-
-const onClearPreview = useCallback(async () => {
-    setErr(null);
-    // Local reset (like a refresh button): clear fields + local preview immediately.
-    setPositivePrompt("");
-    setNegativePrompt("");
-    setImgA(null);
-    setImgB(null);
-    setImgC(null);
-    // keep last preview while generating
-      // setLast(null);
-
-    setBusy(true);
-    try {
-      // Server-side: clear current preview state if present.
-      await jfetch("/api/content/clear", { method: "POST" });
-      const _last = await fetchLast();
-      setLast(_last);
-      setPipelineStuck(false);
-    } catch (e: any) {
-      setErr(String(e?.message || e));
-    } finally {
-      setBusy(false);
-    }
-  }, [fetchLast]);
-
-  // Pipeline-only clear: used when the server reports "already running" (409)
-  // and we need to unlock the server-side generation state without wiping the UI fields.
-  const onClearPipeline = useCallback(async () => {
-    setErr(null);
-    setBusy(true);
-    try {
-      await jfetch("/api/content/clear", { method: "POST" });
-      setPipelineStuck(false);
-      const _last = await fetchLast();
-      setLast(_last);
-    } catch (e: any) {
-      setErr(String(e?.message || e));
-    } finally {
-      setBusy(false);
-    }
-  }, [fetchLast]);
-
-  // Gallery/Favorites
-  const [galleryFiles, setGalleryFiles] = useState<any[]>([]);
-  const [galleryFocus, setGalleryFocus] = useState<string | null>(null);
-  const galleryFocusRef = React.useRef<HTMLDivElement | null>(null);
-
-  const [favoriteFiles, setFavoriteFiles] = useState<any[]>([]);
-
-  // Gallery -> Animate (LTX2 I2V)
-  const [animateModal, setAnimateModal] = useState<null | { name: string; url: string }>(null);
-  const [animatePrompt, setAnimatePrompt] = useState<string>("");
-  const [animateSeconds, setAnimateSeconds] = useState<5 | 10>(5);
-  const [animateBusy, setAnimateBusy] = useState<boolean>(false);
-  const [animateErr, setAnimateErr] = useState<string>("");
-
-  const loadGallery = useCallback(async () => {
-    const res = await jfetch<{ ok: boolean; files: any[] }>("/api/gallery");
-    setGalleryFiles(res.files || []);
-  }, []);
-  const loadFavorites = useCallback(async () => {
-    const res = await jfetch<{ ok: boolean; files: any[] }>("/api/favorites");
-    setFavoriteFiles(res.files || []);
-  }, []);
-
-  useEffect(() => {
-    if (tab === "gallery") loadGallery().catch(() => void 0);
-    if (tab === "favorites") loadFavorites().catch(() => void 0);
   }, [tab, loadGallery, loadFavorites]);
 
-  const deleteFromGallery = useCallback(async (name: string) => {
-    setErr(null);
-    setBusy(true);
+  const refreshLatestContent = useCallback(async () => {
     try {
-      await jfetch(`/api/gallery/delete?name=${encodeURIComponent(name)}`, { method: "POST" });
-      await loadGallery();
-    } catch (e: any) {
-      setErr(String(e?.message || e));
-    } finally {
-      setBusy(false);
-    }
-  }, [loadGallery]);
+      const res = await fetch("/api/content/last", {
+        cache: "no-store",
+        credentials: "include",
+      });
 
-  const deleteFromFavorites = useCallback(async (name: string) => {
-    setErr(null);
-    setBusy(true);
-    try {
-      await jfetch(`/api/favorites/delete?name=${encodeURIComponent(name)}`, { method: "POST" });
-      await loadFavorites();
-    } catch (e: any) {
-      setErr(String(e?.message || e));
-    } finally {
-      setBusy(false);
-    }
-  }, [loadFavorites]);
+      const data = (await res.json().catch(() => ({}))) as LatestContentResponse;
+      const file = data?.file;
 
-  const addToFavoritesFromGallery = useCallback(async (name: string) => {
-    setErr(null);
-    setBusy(true);
-    try {
-      await jfetch(`/api/favorites/add?name=${encodeURIComponent(name)}`, { method: "POST" });
-      await loadFavorites();
-    } catch (e: any) {
-      setErr(String(e?.message || e));
-    } finally {
-      setBusy(false);
-    }
-  }, [loadFavorites]);
-
-  const showPromptFromGallery = useCallback(async (name: string) => {
-    setErr(null);
-    try {
-      const r = await jfetch<{ ok: boolean; meta?: GalleryMeta }>(`/api/gallery/meta?name=${encodeURIComponent(name)}`);
-      if (!r?.ok || !r?.meta) throw new Error("No prompt metadata found for this item.");
-      setPromptModal({ name, meta: r.meta });
-    } catch (e: any) {
-      setErr(String(e?.message || e));
+      if (file?.url) {
+        const bust = `${file.url}${file.url.includes("?") ? "&" : "?"}ts=${Date.now()}`;
+        setLatestPreviewUrl(bust);
+        setLatestPreviewName(file.sourceName || file.name || "");
+        setLatestPreviewKind(file.kind || "image");
+      }
+    } catch {
+      // ignore
     }
   }, []);
 
-  const retryFromGallery = useCallback(async (name: string) => {
-    // Per Shawn request: redo should resubmit in-place and NOT jump the UI back to Generate.
-    setErr(null);
+  const refreshProgress = useCallback(async () => {
     try {
-      const r = await jfetch<{ ok: boolean; meta?: GalleryMeta }>(`/api/gallery/meta?name=${encodeURIComponent(name)}`);
-      if (!r?.ok || !r?.meta?.submitPayload) throw new Error("No retry payload found for this item.");
-
-      const deviceId = getOrCreateDeviceId();
-      const payload: any = { ...(r.meta.submitPayload as any) };
-      payload.client_id = deviceId;
-      if (isAdmin && comfyTargetId) payload.comfyTargetId = comfyTargetId;
-
-      const res = await jfetch<{ ok: boolean; prompt_id?: string; error?: string }>("/api/comfy", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
+      const res = await fetch("/api/progress", {
+        cache: "no-store",
+        credentials: "include",
       });
-      if (!res?.ok) throw new Error(String(res?.error || "Submit failed"));
 
-      // Bubble queue widget
-      try {
-        const pid = String(res?.prompt_id || "").trim();
-        if (pid) fq.add({ id: pid, title: `Re-run: ${name}`, status: "queued" });
-      } catch {}
+      const data = (await res.json().catch(() => ({}))) as ProgressResponse;
+      const nextStatus = String(data?.status || "idle").toLowerCase();
+      const queueCount = Number(data?.queue_remaining ?? data?.queue ?? 0) || 0;
+      const running = Boolean(data?.running) || nextStatus === "running";
+      const promptId = String(data?.prompt_id || "").trim();
 
-      setGallerySent((m) => ({ ...m, [name]: true }));
-      showToast("Sent");
-    } catch (e: any) {
-      setErr(String(e?.message || e));
+      setProgressQueue(queueCount);
+      if (promptId) setActivePromptId(promptId);
+
+      if (nextStatus === "error") {
+        refreshedCompletePromptRef.current = "";
+        setProgressStatus("error");
+        setProgressPercent(100);
+        return;
+      }
+
+      if (running) {
+        refreshedCompletePromptRef.current = "";
+        setProgressStatus("running");
+        setProgressPercent((prev) => {
+          const base = prev > 5 ? prev : 12;
+          const next = queueCount > 0 ? Math.min(base + 8, 92) : Math.min(base + 5, 88);
+          return next;
+        });
+        return;
+      }
+
+      if (nextStatus === "complete") {
+        const completionKey = promptId || "__complete__";
+        setProgressStatus("complete");
+        setProgressPercent(100);
+
+        if (refreshedCompletePromptRef.current !== completionKey) {
+          refreshedCompletePromptRef.current = completionKey;
+          await refreshLatestContent();
+        }
+        return;
+      }
+
+      refreshedCompletePromptRef.current = "";
+      setProgressStatus("idle");
+      setProgressPercent(0);
+    } catch {
+      // ignore
     }
-  }, [getOrCreateDeviceId, isAdmin, comfyTargetId, showToast]);
+  }, [refreshLatestContent]);
 
-  const enhanceAnimatePrompt = useCallback(async () => {
-    const t = String(animatePrompt || "").trim();
-    if (!t) return;
-    setAnimateBusy(true);
-    setAnimateErr("");
-    try {
-      const res = await fetch("/api/enhance-prompt", {
+  useEffect(() => {
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+
+      await refreshProgress().catch(() => null);
+
+      if (cancelled) return;
+
+      if (tab === "generate") {
+        await refreshLatestContent().catch(() => null);
+      }
+
+      if (tab === "gallery") {
+        await loadGallery().catch(() => null);
+      }
+
+      if (tab === "favorites") {
+        await loadFavorites().catch(() => null);
+      }
+    };
+
+    void tick();
+
+    const timer = window.setInterval(() => {
+      void tick();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [tab, refreshProgress, refreshLatestContent, loadGallery, loadFavorites]);
+
+  useEffect(() => {
+    if (tab !== "gallery" && tab !== "favorites") return;
+
+    let cancelled = false;
+
+    const runBackfill = async () => {
+      await fetch("/api/gallery/sync", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...withDeviceHeader() },
-        body: JSON.stringify({ text: t, mode: "scene", size: "medium" }),
-      });
-      const j = await safeJson(res);
-      if (!j.ok) throw new Error((j.data as any)?.error || j.raw || `Enhance failed (${j.status})`);
-      const out = String((j.data as any)?.enhanced || "").trim();
-      if (out) setAnimatePrompt(out);
-    } catch (e: any) {
-      setAnimateErr(String(e?.message || e));
-    } finally {
-      setAnimateBusy(false);
-    }
-  }, [animatePrompt]);
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ limit: 8 }),
+      }).catch(() => null);
 
-  const submitAnimate = useCallback(async () => {
-    if (!animateModal) return;
-    const prompt = String(animatePrompt || "").trim();
-    if (!prompt) {
-      setAnimateErr("Positive prompt is required.");
+      if (cancelled) return;
+
+      if (tab === "gallery") {
+        await loadGallery().catch(() => null);
+      }
+
+      if (tab === "favorites") {
+        await loadFavorites().catch(() => null);
+      }
+    };
+
+    void runBackfill();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, loadGallery, loadFavorites]);
+
+  const enhancePromptText = useCallback(async (inputText: string, workflowHint?: string) => {
+    const cleaned = String(inputText || "").trim();
+    if (!cleaned) {
+      throw new Error("Nothing to enhance.");
+    }
+
+    const res = await fetch("/api/enhance-prompt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        prompt: cleaned,
+        workflowId: workflowHint || selectedWorkflow.id,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(typeof data?.error === "string" ? data.error : "Enhance Prompt failed");
+    }
+
+    const nextPrompt = typeof data?.enhancedPrompt === "string" ? data.enhancedPrompt.trim() : "";
+    if (!nextPrompt) {
+      throw new Error("Empty enhancement response");
+    }
+
+    return nextPrompt;
+  }, [selectedWorkflow.id]);
+
+  const submitToComfy = useCallback(
+    async (formData: FormData) => {
+      const workflowHint = String(formData.get("workflowId") || "").trim().toLowerCase();
+      const isWan2Gp = workflowHint === "wan2gp-i2v";
+      const endpoint = isWan2Gp ? "/api/wan2gp" : "/api/comfy";
+
+      const res = await fetch(endpoint, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Generation submission failed");
+      }
+
+      const promptId = String(data?.prompt_id || data?.promptId || "").trim();
+      const jobId = String(data?.jobId || "").trim();
+      const backendLabel = String(data?.backendLabel || (isWan2Gp ? "Wan2GP" : "ComfyUI")).trim() || "Generator";
+
+      if (promptId) {
+        setActivePromptId(promptId);
+        setStatusMessage(`Submitted to ${backendLabel}. Prompt ID: ${promptId}`);
+      } else if (jobId) {
+        setStatusMessage(`Submitted to ${backendLabel}. Job ID: ${jobId}`);
+      } else {
+        setStatusMessage(`Submitted to ${backendLabel}.`);
+      }
+
+      setProgressStatus("running");
+      setProgressPercent(8);
+      refreshedCompletePromptRef.current = "";
+      await Promise.all([refreshProgress(), loadGallery(), loadFavorites()]);
+    },
+    [loadFavorites, loadGallery, refreshProgress]
+  );
+
+  const fetchGalleryItemAsFile = useCallback(async (item: GalleryItem, fallbackBaseName: string) => {
+    const fileUrl = String(item.url || "").trim();
+    if (!fileUrl) {
+      throw new Error("This gallery item has no usable URL.");
+    }
+
+    const res = await fetch(fileUrl, {
+      cache: "no-store",
+      credentials: "include",
+    });
+
+    if (!res.ok) {
+      throw new Error("Failed to load gallery media.");
+    }
+
+    const blob = await res.blob();
+        const rawName = getGalleryItemKey(item) || fallbackBaseName;
+    const safeBaseName = String(rawName)
+      .split(/[\\/]+/)
+      .pop() || fallbackBaseName;
+    const extension =
+      blob.type === "image/png"
+        ? "png"
+        : blob.type === "image/webp"
+          ? "webp"
+          : blob.type === "image/jpeg"
+            ? "jpg"
+            : blob.type === "video/mp4"
+              ? "mp4"
+              : "";
+        const fileName = safeBaseName.includes(".")
+      ? safeBaseName
+      : extension
+        ? `${safeBaseName}.${extension}`
+        : safeBaseName;
+
+    return new File([blob], fileName, { type: blob.type || "application/octet-stream" });
+  }, []);
+
+  const enhancePromptWithVision = useCallback(
+    async (
+      item: GalleryItem,
+      currentPrompt: string,
+      negativePrompt: string,
+      mode: "edit" | "animate",
+      durationSeconds?: number
+    ) => {
+      const fileUrl = String(item.url || "").trim();
+      if (!fileUrl) {
+        throw new Error("This gallery item has no usable URL.");
+      }
+
+      const imageRes = await fetch(fileUrl, {
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      if (!imageRes.ok) {
+        throw new Error("Failed to load the source image for vision enhancement.");
+      }
+
+      const blob = await imageRes.blob();
+      const fileBase = getGalleryItemKey(item) || (mode === "edit" ? "edit-source" : "animate-source");
+      const extension =
+        blob.type === "image/png"
+          ? "png"
+          : blob.type === "image/webp"
+            ? "webp"
+            : "jpg";
+
+      const imageFile = new File([blob], fileBase.includes(".") ? fileBase : `${fileBase}.${extension}`, {
+        type: blob.type || "image/jpeg",
+      });
+
+      const instruction =
+        mode === "edit"
+          ? [
+              "You are refining an image edit prompt.",
+              "Analyze the attached source image and the user's requested edit.",
+              "Preserve the original subject identity, composition, and visual continuity unless the user explicitly requests a change.",
+              "Return one improved positive prompt only, optimized for image editing.",
+              `User request: ${currentPrompt.trim() || "No request provided."}`,
+              `Negative context: ${negativePrompt.trim() || "None."}`,
+            ].join("\n")
+          : [
+              "You are refining an image-to-video prompt.",
+              "Analyze the attached source image and the user's requested animation.",
+              "Preserve the original subject identity, scene continuity, and visual consistency.",
+              "Add useful motion, camera, atmosphere, and temporal detail without changing the core subject unless requested.",
+              "Return one improved positive prompt only, optimized for image-to-video generation.",
+              `User request: ${currentPrompt.trim() || "No request provided."}`,
+              `Negative context: ${negativePrompt.trim() || "None."}`,
+              `Duration seconds: ${Number.isFinite(Number(durationSeconds)) ? Math.floor(Number(durationSeconds)) : 8}`,
+            ].join("\n");
+
+      const body = new FormData();
+      body.set(
+        "messages",
+        JSON.stringify([
+          {
+            role: "user",
+            content: instruction,
+          },
+        ])
+      );
+      body.set("image", imageFile);
+
+      const res = await fetch("/api/ollama-ai/chat", {
+        method: "POST",
+        body,
+        credentials: "include",
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Vision enhance failed");
+      }
+
+      const nextPrompt = typeof data?.message === "string" ? data.message.trim() : "";
+      if (!nextPrompt) {
+        throw new Error("Vision enhancement returned an empty prompt.");
+      }
+
+      return nextPrompt;
+    },
+    []
+  );
+  const openViewer = useCallback((item: GalleryItem) => {
+    const url = String(item.url || "").trim();
+    if (!url) return;
+
+    setViewerState({
+      item,
+      title: String(item.name || item.sourceName || "Viewer"),
+      url,
+      isVideo: Boolean(item.video || item.kind === "video"),
+    });
+  }, []);
+
+  const handleGenerate = useCallback(async () => {
+    if (generateBusy) return;
+    if (!prompt.trim()) {
+      setStatusMessage("Enter a prompt first.");
       return;
     }
 
-    setAnimateBusy(true);
-    setAnimateErr("");
-    setErr(null);
+    setGenerateBusy(true);
+    setStatusMessage("");
+    refreshedCompletePromptRef.current = "";
+    setProgressStatus("running");
+    setProgressPercent(8);
+    setLatestPreviewUrl("");
+    setLatestPreviewName("");
+    setLatestPreviewKind("");
+
     try {
-      // Fetch the image from Gallery and re-upload as FormData.
-      const imgRes = await fetch(animateModal.url, { credentials: "include", cache: "no-store" });
-      if (!imgRes.ok) throw new Error(`Failed to load image (${imgRes.status})`);
-      const blob = await imgRes.blob();
-      const file = new File([blob], animateModal.name, { type: blob.type || "image/png" });
+      const body = new FormData();
+      body.set("workflowId", workflowId);
+      body.set("prompt", prompt);
+      body.set("negativePrompt", negativePrompt);
+      body.set("orientation", orientation);
+      body.set("durationSeconds", String(durationSeconds));
+      body.set("gpuTarget", gpuTarget);
+      body.set("seed", String(randomSeed()));
 
-      // Clone the LTX2 I2V prompt graph and apply deterministic controls:
-      // - Node 98: __OTG_INPUT_IMAGE__ placeholder (server replaces from imageA upload)
-      // - Node 118: positive prompt placeholder
-      // - Node 129: frames (seconds x 25fps)
-      const frames = (animateSeconds === 10 ? 10 : 5) * 25;
-      const graph: any = JSON.parse(JSON.stringify(Ltx2I2vGraph as any));
-      if (graph?.["118"]?.inputs) graph["118"].inputs.text = "__OTG_POSITIVE_PROMPT__";
-      if (graph?.["129"]?.inputs) graph["129"].inputs.value = frames;
+      if (shouldSendSizeOverride(selectedWorkflow)) {
+        body.set("width", orientation === "portrait" ? "720" : "1280");
+        body.set("height", orientation === "portrait" ? "1280" : "720");
+      }
 
-      const fd = new FormData();
-      fd.append("imageA", file, file.name);
-      fd.append("positivePrompt", prompt);
-      fd.append("frameCount", String(frames));
-      fd.append("promptJson", JSON.stringify(graph));
+      if (uploadedFileRef.current) {
+        body.set("imageA", uploadedFileRef.current);
+      }
 
-      // Ensure jobs route to the correct SSE stream.
-      fd.append("client_id", getOrCreateDeviceId());
-      if (isAdmin && comfyTargetId) fd.append("comfyTargetId", String(comfyTargetId));
+      await submitToComfy(body);
+    } catch (error) {
+      setProgressStatus("error");
+      setProgressPercent(100);
+      setStatusMessage(error instanceof Error ? error.message : "Generate failed.");
+    } finally {
+      setGenerateBusy(false);
+    }
+  }, [
+    durationSeconds,
+    generateBusy,
+    gpuTarget,
+    negativePrompt,
+    orientation,
+    prompt,
+    selectedWorkflow,
+    submitToComfy,
+    workflowId,
+  ]);
 
-      const res = await fetch("/api/comfy", { method: "POST", headers: withDeviceHeader(), body: fd });
-      const j = await safeJson(res);
-      if (!j.ok) throw new Error((j.data as any)?.error || j.raw || `Submit failed (${j.status})`);
+  async function handleGalleryDownload(item: GalleryItem) {
+    const name = getGalleryItemKey(item);
+    if (!name) return;
 
-      const promptId = String((j.data as any)?.prompt_id || "");
-      const tempId = `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      const title = `Video from ${animateModal.name}`;
-      // Bubble queue widget
-      fq.add({ id: promptId || tempId, title, status: "queued" });
+    const a = document.createElement("a");
+    a.href = `/api/gallery/file?name=${encodeURIComponent(name)}&download=1`;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
 
-      startProgressStream({ promptId });
-      showToast("Submitted I2V");
+  async function handleGalleryFavorite(item: GalleryItem) {
+    const name = getGalleryItemKey(item);
+    if (!name) {
+      setStatusMessage("Missing name");
+      return;
+    }
+
+    setGalleryActionBusyName(name);
+
+    try {
+      const res = await fetch("/api/gallery/favorite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          name,
+          scope: item.source,
+          favorite: !item.meta?.favorite,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Favorite toggle failed");
+      }
+
+      setStatusMessage(data?.favorite ? "Saved to favorites." : "Removed from favorites.");
+      await Promise.all([loadGallery(), loadFavorites()]);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Favorite toggle failed.");
+    } finally {
+      setGalleryActionBusyName("");
+    }
+  }
+
+  async function handleGalleryRename(item: GalleryItem) {
+    const fileName = getGalleryItemKey(item);
+    const displayName = String(item.name || fileName).trim();
+
+    if (!fileName) {
+      setStatusMessage("Missing name");
+      return;
+    }
+
+    const nextName = window.prompt("Rename item", displayName);
+    if (!nextName || !nextName.trim() || nextName.trim() === displayName) return;
+
+    setGalleryActionBusyName(fileName);
+
+    try {
+      const res = await fetch("/api/gallery/rename", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          name: fileName,
+          newName: nextName.trim(),
+          scope: item.source,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Rename failed");
+      }
+
+      setStatusMessage("Gallery item renamed.");
+      await Promise.all([loadGallery(), loadFavorites()]);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Rename failed.");
+    } finally {
+      setGalleryActionBusyName("");
+    }
+  }
+
+  async function handleGalleryDelete(item: GalleryItem) {
+    const name = getGalleryItemKey(item);
+    if (!name) {
+      setStatusMessage("Missing name");
+      return;
+    }
+
+    if (!window.confirm(`Delete "${item.name || name}"? This removes the gallery file and metadata.`)) {
+      return;
+    }
+
+    setGalleryActionBusyName(name);
+
+    try {
+      const res = await fetch("/api/gallery/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          name,
+          scope: item.source,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Delete failed");
+      }
+
+      setStatusMessage("Gallery item deleted.");
+      if (viewerState && getGalleryItemKey(viewerState.item) === name) {
+        setViewerState(null);
+      }
+
+      await Promise.all([loadGallery(), loadFavorites()]);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Delete failed.");
+    } finally {
+      setGalleryActionBusyName("");
+    }
+  }
+
+    async function handleGalleryRedo(item: GalleryItem) {
+    const itemName = getGalleryItemKey(item);
+    const storedPayload =
+      item.meta?.submitPayload && typeof item.meta.submitPayload === "object"
+        ? item.meta.submitPayload
+        : {};
+
+    setGalleryActionBusyName(itemName);
+
+    try {
+      const nextWorkflowId = String(
+        (storedPayload as any).workflowId ||
+        (storedPayload as any).preset ||
+        item.meta?.workflowId ||
+        ""
+      ).trim();
+
+      const nextPrompt = String(
+        (storedPayload as any).positivePrompt ||
+        (storedPayload as any).prompt ||
+        item.meta?.positivePrompt ||
+        ""
+      ).trim();
+
+      const nextNegative = String(
+        (storedPayload as any).negativePrompt ||
+        (storedPayload as any).neg ||
+        item.meta?.negativePrompt ||
+        ""
+      ).trim();
+
+      const nextOrientation =
+        (storedPayload as any).orientation === "portrait" || (storedPayload as any).orientation === "landscape"
+          ? (storedPayload as any).orientation
+          : orientation;
+
+      const nextDuration = clampDuration(
+        Number(
+          (storedPayload as any).durationSeconds ||
+          (storedPayload as any).durationSec ||
+          durationSeconds
+        )
+      );
+
+      const nextGpuTarget =
+        String((storedPayload as any).gpuTarget || gpuTarget || "").trim() || gpuTarget;
+
+      if (!nextWorkflowId || !nextPrompt) {
+        throw new Error("This item has no complete redo metadata.");
+      }
+
+      const body = new FormData();
+      body.set("workflowId", nextWorkflowId);
+      body.set("prompt", nextPrompt);
+      body.set("negativePrompt", nextNegative);
+      body.set("orientation", nextOrientation);
+      body.set("durationSeconds", String(nextDuration));
+      body.set("gpuTarget", nextGpuTarget);
+      body.set("seed", String(randomSeed()));
+
+      const workflowForSize =
+        workflows.find((w) => w.id === nextWorkflowId) ||
+        WORKFLOW_FALLBACKS.find((w) => w.id === nextWorkflowId) ||
+        selectedWorkflow;
+
+      if (shouldSendSizeOverride(workflowForSize)) {
+        body.set("width", nextOrientation === "portrait" ? "720" : "1280");
+        body.set("height", nextOrientation === "portrait" ? "1280" : "720");
+      }
+
+      const workflowHay = `${nextWorkflowId} ${item.meta?.workflowTitle || ""}`.toLowerCase();
+
+      const needsVideoSource =
+        workflowHay.includes("extend a video") ||
+        workflowHay.includes("video_to_video") ||
+        workflowHay.includes("video-to-video");
+
+      const needsImageSource =
+        !needsVideoSource &&
+        (
+          workflowHay.includes("edit") ||
+          workflowHay.includes("ltx") ||
+          workflowHay.includes("animate") ||
+          workflowHay.includes("image_to_video") ||
+          workflowHay.includes("image-to-video") ||
+          workflowHay.includes("image-edit")
+        );
+
+      if (needsVideoSource) {
+        const isVideo = Boolean(item.video || item.kind === "video");
+        if (!isVideo) {
+          throw new Error("Redo for this workflow requires a source video.");
+        }
+
+        const sourceFile = await fetchGalleryItemAsFile(item, "gallery-video-source");
+        body.set("videoA", sourceFile);
+      } else if (needsImageSource) {
+        const isImage = !item.video && item.kind !== "video";
+        if (!isImage) {
+          throw new Error("Redo for this workflow requires a source image.");
+        }
+
+        const sourceFile = await fetchGalleryItemAsFile(item, "gallery-image-source");
+        body.set("imageA", sourceFile);
+      }
+
+      await submitToComfy(body);
+    } catch (error) {
+      setStatusMessage(
+        error instanceof Error
+          ? error.message
+          : "Redo failed."
+      );
+    } finally {
+      setGalleryActionBusyName("");
+    }
+  }
+
+  function handleGalleryEdit(item: GalleryItem) {
+    const isImage = !item.video && item.kind !== "video";
+    if (!isImage) {
+      setStatusMessage("Only pictures can be edited.");
+      return;
+    }
+
+    setEditModal({
+      item,
+      positivePrompt: String(item.meta?.positivePrompt || "").trim(),
+      negativePrompt: String(item.meta?.negativePrompt || "").trim(),
+      enhancing: false,
+    });
+  }
+
+    async function handleEnhanceEditModal() {
+    if (!editModal) return;
+    if (!editModal.positivePrompt.trim()) {
+      setStatusMessage("Enter a positive prompt to enhance.");
+      return;
+    }
+
+    setEditModal((prev) => (prev ? { ...prev, enhancing: true } : prev));
+    setStatusMessage("");
+
+    try {
+      const nextPrompt = await enhancePromptWithVision(
+        editModal.item,
+        editModal.positivePrompt,
+        editModal.negativePrompt,
+        "edit"
+      );
+
+      setEditModal((prev) => (prev ? { ...prev, positivePrompt: nextPrompt, enhancing: false } : prev));
+      setStatusMessage("Edit prompt enhanced from the image.");
+    } catch (error) {
+      setEditModal((prev) => (prev ? { ...prev, enhancing: false } : prev));
+      setStatusMessage(error instanceof Error ? error.message : "Edit prompt enhancement failed.");
+    }
+  }
+
+    async function submitGalleryEdit() {
+    if (!editModal) return;
+
+    const fileName = getGalleryItemKey(editModal.item);
+    if (!fileName) {
+      setStatusMessage("Missing gallery item name.");
+      return;
+    }
+
+    if (!editModal.positivePrompt.trim()) {
+      setStatusMessage("Enter a positive prompt for the edit.");
+      return;
+    }
+
+    setGalleryActionBusyName(fileName);
+
+    try {
+      const sourceFile = await fetchGalleryItemAsFile(editModal.item, "gallery-edit-source");
+      if (!sourceFile) {
+        throw new Error("Could not build the source image file.");
+      }
+
+      const body = new FormData();
+      body.set("workflowId", GALLERY_EDIT_WORKFLOW_ID);
+      body.set("prompt", editModal.positivePrompt.trim());
+      body.set("negativePrompt", editModal.negativePrompt.trim());
+      body.set("orientation", orientation);
+      body.set("durationSeconds", String(durationSeconds));
+      body.set("gpuTarget", gpuTarget);
+      body.set("seed", String(randomSeed()));
+      body.set("imageA", sourceFile, sourceFile.name);
+
+      if (!body.has("imageA")) {
+        throw new Error("Edit submission is missing imageA.");
+      }
+
+      body.set("width", orientation === "portrait" ? "720" : "1280");
+      body.set("height", orientation === "portrait" ? "1280" : "720");
+
+      await submitToComfy(body);
+      setEditModal(null);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Edit submission failed.");
+    } finally {
+      setGalleryActionBusyName("");
+    }
+  }
+
+  function handleGalleryAnimate(item: GalleryItem) {
+    const isImage = !item.video && item.kind !== "video";
+    if (!isImage) {
+      setStatusMessage("Only pictures can be animated.");
+      return;
+    }
+
+    setAnimateModal({
+      item,
+      positivePrompt: String(item.meta?.positivePrompt || "").trim(),
+      negativePrompt: String(item.meta?.negativePrompt || "").trim(),
+      durationSeconds: 8,
+      enhancing: false,
+    });
+  }
+
+    async function handleEnhanceAnimateModal() {
+    if (!animateModal) return;
+    if (!animateModal.positivePrompt.trim()) {
+      setStatusMessage("Enter a positive prompt to enhance.");
+      return;
+    }
+
+    setAnimateModal((prev) => (prev ? { ...prev, enhancing: true } : prev));
+    setStatusMessage("");
+
+    try {
+      const nextPrompt = await enhancePromptWithVision(
+        animateModal.item,
+        animateModal.positivePrompt,
+        animateModal.negativePrompt,
+        "animate",
+        animateModal.durationSeconds
+      );
+
+      setAnimateModal((prev) => (prev ? { ...prev, positivePrompt: nextPrompt, enhancing: false } : prev));
+      setStatusMessage("Animate prompt enhanced from the image.");
+    } catch (error) {
+      setAnimateModal((prev) => (prev ? { ...prev, enhancing: false } : prev));
+      setStatusMessage(error instanceof Error ? error.message : "Animate prompt enhancement failed.");
+    }
+  }
+
+    async function submitGalleryAnimate() {
+    if (!animateModal) return;
+
+    const fileName = getGalleryItemKey(animateModal.item);
+    if (!fileName) {
+      setStatusMessage("Missing gallery item name.");
+      return;
+    }
+
+    if (!animateModal.positivePrompt.trim()) {
+      setStatusMessage("Enter a positive prompt for animation.");
+      return;
+    }
+
+    setGalleryActionBusyName(fileName);
+
+    try {
+      const sourceFile = await fetchGalleryItemAsFile(animateModal.item, "gallery-animate-source");
+      if (!sourceFile) {
+        throw new Error("Could not build the source image file.");
+      }
+
+      const body = new FormData();
+      body.set("workflowId", GALLERY_ANIMATE_WORKFLOW_ID);
+      body.set("prompt", animateModal.positivePrompt.trim());
+      body.set("negativePrompt", animateModal.negativePrompt.trim());
+      body.set("orientation", orientation);
+      body.set("durationSeconds", String(clampDuration(animateModal.durationSeconds)));
+      body.set("gpuTarget", gpuTarget);
+      body.set("seed", String(randomSeed()));
+      body.set("imageA", sourceFile, sourceFile.name);
+
+      if (!body.has("imageA")) {
+        throw new Error("Animate submission is missing imageA.");
+      }
+
+      await submitToComfy(body);
       setAnimateModal(null);
-      setAnimatePrompt("");
-      setAnimateSeconds(5);
-    } catch (e: any) {
-      setAnimateErr(String(e?.message || e));
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Animate submission failed.");
     } finally {
-      setAnimateBusy(false);
+      setGalleryActionBusyName("");
     }
-  }, [animateModal, animatePrompt, animateSeconds, getOrCreateDeviceId, isAdmin, comfyTargetId, fq, startProgressStream, showToast]);
+  }
 
-  const onLogout = useCallback(async () => {
+  async function handleEnhancePrompt() {
+    if (!prompt.trim() || enhancing) return;
+
+    setEnhancing(true);
+    setStatusMessage("");
     try {
-      await fetch("/api/logout", { method: "POST" });
-    } catch {}
-    window.location.href = "/login";
-  }, []);
+      const nextPrompt = await enhancePromptText(prompt, selectedWorkflow.id);
+      setPrompt(nextPrompt);
+      setStatusMessage("Prompt enhanced.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Enhance Prompt failed");
+    } finally {
+      setEnhancing(false);
+    }
+  }
 
-  const onRequestDeleteAccount = useCallback(() => {
-    setDeleteAccountErr(null);
-    setShowDeleteAccount(true);
-  }, []);
+  function handleMicClick() {
+    if (recording) {
+      setRecording(false);
+      setStatusMessage("Recording stopped.");
+      return;
+    }
 
-  const onConfirmDeleteAccount = useCallback(async () => {
-    setDeleteAccountErr(null);
-    setDeleteAccountBusy(true);
+    setRecording(true);
+    setStatusMessage("Mic capture is not wired on this page yet.");
+  }
+
+  async function handleLogout() {
+    if (logoutBusy) return;
+
+    setLogoutBusy(true);
     try {
-      const r = await fetch("/api/auth/delete-account", { method: "POST" });
-      const j = await r.json().catch(() => null);
-      if (!r.ok || !j?.ok) throw new Error(j?.error || `Delete failed (${r.status})`);
-      // Account deleted; force logout/redirect.
+      await fetch("/api/logout", {
+        method: "POST",
+        credentials: "include",
+      }).catch(() => null);
+
       window.location.href = "/login";
-    } catch (e: any) {
-      setDeleteAccountErr(String(e?.message || e));
     } finally {
-      setDeleteAccountBusy(false);
+      setLogoutBusy(false);
     }
-  }, []);
+  }
+
+  function copyText(text: string) {
+    void navigator.clipboard?.writeText(text || "");
+    setStatusMessage("Copied.");
+  }
+
+  function sendTextToGenerate(text: string) {
+    const cleaned = text.trim();
+    if (!cleaned) return;
+
+    setPrompt((prev) => (prev.trim() ? `${prev.trim()}\n\n${cleaned}` : cleaned));
+    setTab("generate");
+    setStatusMessage("Sent to Generate.");
+  }
+
+  async function handleDescribe() {
+    if (!describeFileRef.current) {
+      setStatusMessage("Choose an image first.");
+      return;
+    }
+
+    setDescribeBusy(true);
+    setStatusMessage("");
+
+    try {
+      const instruction =
+        describeMode === "background"
+          ? "Describe only the background scene in direct visual detail for prompt writing."
+          : "Describe the person's identity, face, hair, clothing, and distinguishing features in direct visual detail for prompt writing.";
+
+      const body = new FormData();
+      body.set(
+        "messages",
+        JSON.stringify([
+          {
+            role: "user",
+            content: instruction,
+          },
+        ])
+      );
+      body.set("image", describeFileRef.current);
+
+      const res = await fetch("/api/ollama-ai/chat", {
+        method: "POST",
+        body,
+        credentials: "include",
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Describe failed");
+      }
+
+      const output = typeof data?.message === "string" ? data.message.trim() : "";
+      setDescribeOutput(output || "No description returned.");
+      setStatusMessage("Description created.");
+    } catch (error) {
+      setDescribeOutput("");
+      setStatusMessage(error instanceof Error ? error.message : "Describe failed.");
+    } finally {
+      setDescribeBusy(false);
+    }
+  }
+
+  async function handleAskAi() {
+    if (!askInput.trim() || askBusy) return;
+
+    setAskBusy(true);
+    setStatusMessage("");
+
+    try {
+      const res = await fetch("/api/ollama-ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          messages: [
+            {
+              role: "user",
+              content: askInput,
+            },
+          ],
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : "Ask AI failed");
+      }
+
+      const answer =
+        typeof data?.message === "string"
+          ? data.message
+          : typeof data?.answer === "string"
+            ? data.answer
+            : typeof data?.text === "string"
+              ? data.text
+              : "";
+
+      setAskAnswer(answer || "No answer returned.");
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Ask AI failed";
+      setAskAnswer(msg);
+      setStatusMessage(msg);
+    } finally {
+      setAskBusy(false);
+    }
+  }
 
   return (
-    <>
-    <main className="otg-appPage">
-      <ComfyStatusIndicator />
-      {/* Reuse the auth background for the main app too (matches login look) */}
-      <div className="otg-authBg" aria-hidden="true">
-        <div className="otg-authStrobes">
-          <div className="otg-authStrobe otg-authStrobeL" />
-          <div className="otg-authStrobe otg-authStrobeR" />
+    <main className="min-h-screen bg-[#05060b] text-white">
+      <div className="pointer-events-none fixed inset-0 z-0">
+        <div className="absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_center,rgba(80,120,255,0.18),rgba(120,60,255,0.10),transparent_62%)]" />
+      </div>
+
+      <div className="pointer-events-none fixed left-3 top-4 z-30 md:left-5 md:top-5">
+        <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-2 text-sm font-semibold text-white shadow-[0_0_20px_rgba(0,0,0,0.35)]">
+          <span className="inline-block h-2.5 w-2.5 rounded-full bg-cyan-400" />
+          <span className="max-w-[180px] truncate">{username}</span>
         </div>
       </div>
 
-      <div className="otg-appShell">
-        <header className="otg-appHeader" style={{ position: "relative" }}>
-          <div className="otg-appBanner">
-            <Image
-              src="/slr-banner.png"
-              alt="SLR Studios OTG"
-              width={1200}
-              height={320}
-              priority
-              style={{ width: "100%", height: "auto" }}
-            />
-          </div>
+      <div className="pointer-events-none fixed right-3 top-4 z-30 md:right-5 md:top-5">
+        <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-2 text-sm font-semibold text-white shadow-[0_0_20px_rgba(0,0,0,0.35)]">
+          <span className={cn("inline-block h-2.5 w-2.5 rounded-full", connected ? "bg-green-400" : "bg-red-400")} />
+          <span>{connected ? "Connected" : "Disconnected"}</span>
+        </div>
+      </div>
 
-          {isAdmin ? (
-            <div style={{ position: "absolute", top: 14, left: 14, zIndex: 5 }}>
-              <button
-                type="button"
-                className="otg-btnGhost"
-                onClick={() => setGpuMenuOpen((v) => !v)}
-                style={{ display: "flex", alignItems: "center", gap: 10, paddingInline: 14, borderRadius: 999 }}
-                title="Select active ComfyUI GPU target (admin only)"
-              >
-                <span
-                  style={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: 999,
-                    background:
-                      comfyTargetId && comfyStatuses[comfyTargetId] === true
-                        ? "#2ecc71"
-                        : comfyTargetId && comfyStatuses[comfyTargetId] === false
-                          ? "#ff4d4d"
-                          : "rgba(255,255,255,.35)",
-                    boxShadow: "0 0 0 2px rgba(0,0,0,.35)",
-                  }}
-                />
-                <span style={{ fontWeight: 700 }}>
-                  {(() => {
-                    const t = comfyTargets.find((x) => x.id === comfyTargetId);
-                    return (t?.label || t?.id || "GPU").toString();
-                  })()}
-                </span>
-               <span style={{ opacity: 0.75 }}>{"›"}</span>
-              </button>
-
-              {gpuMenuOpen ? (
-                <div
-                  role="menu"
-                  style={{
-                    marginTop: 8,
-                    padding: 10,
-                    borderRadius: 16,
-                    background: "rgba(10,10,14,.85)",
-                    border: "1px solid rgba(255,255,255,.12)",
-                    backdropFilter: "blur(10px)",
-                    minWidth: 240,
-                  }}
-                >
-                  {comfyTargets.length ? (
-                    comfyTargets.map((t) => {
-                      const online = comfyStatuses[t.id];
-                      return (
-                        <button
-                          key={t.id}
-                          type="button"
-                          className={t.id === comfyTargetId ? "otg-btnPrimary" : "otg-btnGhost"}
-                          onClick={() => {
-                            setGpuMenuOpen(false);
-                            setAdminComfyTarget(t.id);
-                          }}
-                          style={{
-                            width: "100%",
-                            justifyContent: "space-between",
-                            display: "flex",
-                            alignItems: "center",
-                            paddingInline: 14,
-                            borderRadius: 14,
-                            marginBottom: 8,
-                          }}
-                        >
-                          <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <span
-                              style={{
-                                width: 10,
-                                height: 10,
-                                borderRadius: 999,
-                                background:
-                                  online === true
-                                    ? "#2ecc71"
-                                    : online === false
-                                      ? "#ff4d4d"
-                                      : "rgba(255,255,255,.35)",
-                              }}
-                            />
-                            <span>{t.label || t.id}</span>
-                          </span>
-                          <span style={{ opacity: 0.7, fontSize: 12 }}>{t.id}</span>
-                        </button>
-                      );
-                    })
-                  ) : (
-                    <div className="otg-help" style={{ margin: 0 }}>
-                      No GPU targets configured.
-                      <div style={{ marginTop: 6, opacity: 0.9 }}>
-                        Fix: ensure your admin comfy-target env/config provides targets, then rebuild/restart.
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </header>
-
-        {err ? <div className="otg-error">{err}</div> : null}
-
-        {(last?.status === "running" || busy) ? (
-          <div className="otg-progress">
-            <div className="otg-progressTop">
-              <div className="otg-progressMsg">{progressMsg || "Generating..."}</div>
-              <div className="otg-progressPct">{Math.max(0, Math.min(100, Math.round(progressPct)))}%</div>
-            </div>
-            <div className="otg-progressBar" aria-label="Generation progress">
-              <div className="otg-progressFill" style={{ width: `${Math.max(0, Math.min(100, Math.round(progressPct)))}%` }} />
-            </div>
+      <div className="relative z-10 mx-auto max-w-[1400px] px-3 pb-28 pt-24 md:px-5 md:pt-28">
+        {statusMessage ? (
+          <div className="mb-3 rounded-[20px] border border-red-600/40 bg-red-950/60 px-4 py-3 text-sm font-semibold text-red-100">
+            {statusMessage}
           </div>
         ) : null}
 
         {tab === "generate" ? (
-          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div className="space-y-4">
+            <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm">
+              <h1 className="text-4xl font-black tracking-tight text-white">Generate</h1>
+            </div>
+
             <Card title="Workflow">
-              <div className="otg-row" style={{ alignItems: "center" }}>
-                <select
-                  value={workflowId}
-                  onChange={(e) => setWorkflowId(e.target.value)}
-                  className="otg-select"
-                  style={{ flex: 1 }}
-                >
-                  {workflows.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.label || w.id}
-                    </option>
-                  ))}
-                </select>
-                <GhostButton onClick={onSyncWorkflows} disabled={uiLocked} title="Refresh workflows list">
-                  Refresh
-                </GhostButton>
-              </div>
-              {isAdmin ? (
-                <div style={{ marginTop: 10 }}>
-                  <div className="otg-cardTitle" style={{ marginBottom: 6, opacity: 0.9 }}>Generation Title (admin)</div>
-                  <input
-                    value={generationTitle}
-                    onChange={(e) => setGenerationTitle(e.target.value)}
-                    className="otg-input"
-                    placeholder="e.g., WAN low-noise LoRA test A"
-                    disabled={uiLocked}
-                  />
-                  <div className="otg-help" style={{ marginTop: 6 }}>
-                    Saved output files will use this title as the filename prefix.
-                  </div>
-                </div>
-              ) : null}
-              {activeWorkflow?.description ? <div className="otg-help">{activeWorkflow.description}</div> : null}
-              {activeWorkflow?.format !== "prompt_graph" ? (
-                <div className="otg-warn">This workflow is UI-format JSON and cannot run until exported as API/prompt JSON.</div>
-              ) : null}
+              <select
+                value={workflowId}
+                onChange={(e) => setWorkflowId(e.target.value)}
+                className="w-full rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
+              >
+                {workflows.map((workflow) => (
+                  <option key={workflow.id} value={workflow.id} className="bg-[#0b1020]">
+                    {workflow.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-sm text-white/72">{selectedWorkflow.runtime}</p>
+              <p className="text-sm text-white/50">Select a runnable workflow from comfy_workflows.</p>
             </Card>
 
             <Card title="Prompt">
               <textarea
-                value={positivePrompt}
-                onChange={(e) => setPositivePrompt(e.target.value)}
-                rows={5}
-                placeholder="Describe what you want..."
-                className="otg-textarea"
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                rows={6}
+                placeholder="Describe the image or video you want to generate."
+                className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
               />
-              <textarea
-                value={negativePrompt}
-                onChange={(e) => setNegativePrompt(e.target.value)}
-                rows={2}
-                placeholder="Negative prompt (optional)"
-                className="otg-textarea"
-              />
-
-              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
-                <div className="otg-row" style={{ alignItems: "center", justifyContent: "space-between" }}>
-                  <div>
-                    <div className="otg-cardTitle" style={{ marginBottom: 6, opacity: 0.9 }}>Orientation</div>
-                    <div className="otg-row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                      <button
-                        type="button"
-                        className={orientation === "portrait" ? "otg-btnPrimary" : "otg-btnGhost"}
-                        onClick={() => setOrientation("portrait")}
-                        disabled={uiLocked}
-                      >
-                        Portrait
-                      </button>
-                      <button
-                        type="button"
-                        className={orientation === "landscape" ? "otg-btnPrimary" : "otg-btnGhost"}
-                        onClick={() => setOrientation("landscape")}
-                        disabled={uiLocked}
-                      >
-                        Landscape
-                      </button>
-                      <button
-                        type="button"
-                        className="otg-btnGhost"
-                        onClick={onEnhancePrompt}
-                        disabled={uiLocked || enhanceBusy || !(positivePrompt || "").trim()}
-                        title="Enhance the positive prompt"
-                      >
-                        {enhanceBusy ? "Enhancing..." : "Enhance Prompt"}
-                      </button>
-                      <button
-                        type="button"
-                        className="otg-btnGhost"
-                        onClick={openLoraPicker}
-                        disabled={uiLocked}
-                        title="Select LoRAs to apply"
-                      >
-                        LoRAs{loras.length ? ` (${loras.length})` : ""}
-                      </button>
-                      {enhanceMsg ? (
-                        <span className="otg-help" style={{ margin: 0 }}>
-                          {enhanceMsg}
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="otg-row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                      <div>
-                        <div className="otg-cardTitle" style={{ marginBottom: 6, opacity: 0.9 }}>Size</div>
-                        <div className="otg-row" style={{ gap: 8, flexWrap: "wrap" }}>
-                          <button type="button" className={sizePreset === "default" ? "otg-btnPrimary" : "otg-btnGhost"} onClick={() => setSizePreset("default")} disabled={uiLocked}>Default</button>
-                          <button type="button" className={sizePreset === "480p" ? "otg-btnPrimary" : "otg-btnGhost"} onClick={() => setSizePreset("480p")} disabled={uiLocked}>480p</button>
-                          <button type="button" className={sizePreset === "512p" ? "otg-btnPrimary" : "otg-btnGhost"} onClick={() => setSizePreset("512p")} disabled={uiLocked}>512p</button>
-                          <button type="button" className={sizePreset === "720p" ? "otg-btnPrimary" : "otg-btnGhost"} onClick={() => setSizePreset("720p")} disabled={uiLocked}>720p</button>
-                        </div>
-                        <div className="otg-help" style={{ marginTop: 6 }}>
-                          Default leaves the workflow's native size unchanged.
-                        </div>
-                        {isAdmin ? (
-                          <div style={{ marginTop: 10 }}>
-                            <div className="otg-cardTitle" style={{ marginBottom: 6, opacity: 0.9 }}>GPU</div>
-                            <div className="otg-row" style={{ gap: 8, flexWrap: "wrap" }}>
-                              {(() => {
-                                const id3090 = pickTargetId("3090");
-                                const id5060 = pickTargetId("5060");
-                                const id3060 = pickTargetId("3060");
-                                const Btn = ({ id, label }: { id: string | null; label: string }) => (
-                                  <button
-                                    type="button"
-                                    className={(id && comfyTargetId === id) ? "otg-btnPrimary" : "otg-btnGhost"}
-                                    onClick={() => id && setAdminComfyTarget(id)}
-                                    disabled={uiLocked || !id}
-                                    title={id ? `Switch to ${label}` : `Target not configured`}
-                                  >
-                                    {label}
-                                  </button>
-                                );
-                                return (
-                                  <>
-                                    <Btn id={id3090} label="3090" />
-                                    <Btn id={id5060} label="5060 Ti" />
-                                    <Btn id={id3060} label="3060 Ti" />
-                                  </>
-                                );
-                              })()}
-                            </div>
-                            {!comfyTargets.length ? (
-                              <div className="otg-help" style={{ marginTop: 6 }}>
-                                No GPU targets found. Open <code>/api/admin/comfy-target</code> while logged in to confirm.
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ minWidth: 220 }}>
-                    <div className="otg-cardTitle" style={{ marginBottom: 6, opacity: 0.9 }}>
-                      Duration
-                    </div>
-                    <input
-                      type="range"
-                      min={5}
-                      max={isWanWorkflow ? 9 : 10}
-                      step={1}
-                      value={Number(durationSeconds) || 5}
-                      onChange={(e) => setDurationSeconds(String(e.target.value))}
-                      disabled={uiLocked}
-                      className="otg-range"
-                    />
-                    <div className="otg-help" style={{ marginTop: 6 }}>
-                      {durationSeconds}s (converted to frames using the workflow FPS){isWanWorkflow ? " - WAN capped at 9s" : ""}
-                    </div>
-                  </div>
-                </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <ActionButton onClick={handleEnhancePrompt} disabled={enhancing || !prompt.trim()}>
+                  {enhancing ? "Enhancing..." : "Enhance Prompt"}
+                </ActionButton>
+                <button
+                  type="button"
+                  onClick={handleMicClick}
+                  className={cn(
+                    "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
+                    recording
+                      ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
+                      : "border-white/10 bg-white/5 hover:bg-white/10"
+                  )}
+                >
+                  <IconMic />
+                </button>
               </div>
             </Card>
 
-            {needsImages > 0 ? (
-              <Card title="Inputs">
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <div>
-                    <div className="otg-cardTitle" style={{ marginBottom: 8, opacity: 0.9 }}>Image 1</div>
-                    <label className="otg-btnGhost" style={{ display: "inline-flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-                      Choose image
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => setImgA(e.target.files?.[0] || null)}
-                      />
-                    </label>
-                    <div className="otg-help" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      {imgAPreviewUrl ? (
-                        <img
-                          src={imgAPreviewUrl}
-                          alt="Image 1 preview"
-                          style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)" }}
-                        />
-                      ) : null}
-                      <span>{imgA ? imgA.name : "No file selected"}</span>
+            <Card title="Negative prompt">
+              <textarea
+                value={negativePrompt}
+                onChange={(e) => setNegativePrompt(e.target.value)}
+                rows={4}
+                placeholder="Describe what to avoid."
+                className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
+              />
+            </Card>
+
+            <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+              <Card title="Orientation">
+                <div className="flex flex-wrap gap-3">
+                  <PillButton active={orientation === "portrait"} onClick={() => setOrientation("portrait")}>
+                    Portrait
+                  </PillButton>
+                  <PillButton active={orientation === "landscape"} onClick={() => setOrientation("landscape")}>
+                    Landscape
+                  </PillButton>
+                </div>
+              </Card>
+
+              <Card title={`Duration: ${durationSeconds} seconds`}>
+                <input
+                  type="range"
+                  min={5}
+                  max={15}
+                  step={1}
+                  value={durationSeconds}
+                  onChange={(e) => setDurationSeconds(Number(e.target.value))}
+                  className="w-full accent-violet-400"
+                />
+                <p className="text-sm text-white/50">5 to 15 seconds.</p>
+              </Card>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+              <Card title="Input image">
+                <div className="flex flex-wrap items-center gap-3">
+                  <ActionButton onClick={() => imageInputRef.current?.click()}>Upload image</ActionButton>
+                  <span className="text-sm text-white/60">{uploadedFileName || "No file selected"}</span>
+                </div>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    uploadedFileRef.current = file;
+                    setUploadedFileName(file?.name || "");
+                  }}
+                />
+              </Card>
+
+              <Card title="GPU target">
+                <select
+                  value={gpuTarget}
+                  onChange={(e) => setGpuTarget(e.target.value)}
+                  disabled={!isAdmin}
+                  className="w-full rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45 disabled:opacity-70"
+                >
+                  {GPU_OPTIONS.map((gpu) => (
+                    <option key={gpu.value} value={gpu.value} className="bg-[#0b1020]">
+                      {gpu.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-sm text-white/50">
+                  {isAdmin ? "Admin GPU selector is enabled." : "Visible only. Admin login is required to switch targets."}
+                </p>
+              </Card>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+              <Card title="Preview">
+                <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/45">
+                  <div className="aspect-[16/9] bg-black/60">
+                    {latestPreviewUrl ? (
+                      latestPreviewKind === "video" ? (
+                        <video src={latestPreviewUrl} className="h-full w-full object-contain" controls playsInline muted />
+                      ) : (
+                        <img src={latestPreviewUrl} alt={latestPreviewName || "Latest generated content"} className="h-full w-full object-contain" />
+                      )
+                    ) : (
+                      <div className="flex h-full items-center justify-center px-6 text-center text-white/45">
+                        Preview will appear here after ComfyUI finishes creating content.
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-3 text-sm text-white/60">
+                  <span className="truncate">{latestPreviewName || "No completed output yet"}</span>
+                  <GhostButton onClick={() => void refreshLatestContent()} disabled={progressStatus === "running"}>
+                    Refresh preview
+                  </GhostButton>
+                </div>
+              </Card>
+
+              <Card title="Progress">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3 text-sm font-semibold text-white/80">
+                    <span className="capitalize">{progressStatus}</span>
+                    <span>{progressPercent}%</span>
+                  </div>
+                  <div className="h-3 overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-[linear-gradient(90deg,rgba(145,92,255,0.95),rgba(40,200,255,0.95))] transition-all duration-500"
+                      style={{ width: `${Math.max(0, Math.min(progressPercent, 100))}%` }}
+                    />
+                  </div>
+                  <div className="space-y-1 text-sm text-white/60">
+                    <div>Queue remaining: {progressQueue}</div>
+                    <div className="break-all">Prompt ID: {activePromptId || "Not submitted yet"}</div>
+                    <div>
+                      {progressStatus === "running"
+                        ? "ComfyUI is still generating."
+                        : progressStatus === "complete"
+                          ? "Generation complete."
+                          : progressStatus === "error"
+                            ? "Generation failed."
+                            : "Ready."}
                     </div>
                   </div>
-                  {needsImages > 1 ? (
-                    <div>
-                      <div className="otg-cardTitle" style={{ marginBottom: 8, opacity: 0.9 }}>Image 2</div>
-                      <label className="otg-btnGhost" style={{ display: "inline-flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-                        Choose image
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={(e) => setImgB(e.target.files?.[0] || null)}
-                        />
-                      </label>
-                      <div className="otg-help" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        {imgBPreviewUrl ? (
-                          <img
-                            src={imgBPreviewUrl}
-                            alt="Image 2 preview"
-                            style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)" }}
-                          />
-                        ) : null}
-                        <span>{imgB ? imgB.name : "No file selected"}</span>
-                        {!imgB && imgA ? <span style={{ opacity: 0.75 }}>(will use Image 1)</span> : null}
-                      </div>
+                </div>
+              </Card>
+            </div>
+
+            <Card title="Generate action">
+              <p className="text-sm text-white/60">The Generate button stays here as the last step.</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <ActionButton onClick={handleGenerate} disabled={generateBusy || !prompt.trim()}>
+                  {generateBusy ? "Submitting..." : "Generate"}
+                </ActionButton>
+                <span className="text-sm text-white/55">Sends the current prompt and controls to ComfyUI.</span>
+              </div>
+            </Card>
+          </div>
+        ) : null}
+
+        {tab === "gethelp" ? (
+          <div className="space-y-4">
+            <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm">
+              <h1 className="text-4xl font-black tracking-tight text-white">AI Assistance</h1>
+              <div className="mt-4 overflow-x-auto">
+                <div className="flex min-w-max gap-2 pb-1">
+                  <PillButton active={assistanceTab === "describe"} onClick={() => setAssistanceTab("describe")}>
+                    Describe Picture
+                  </PillButton>
+                  <PillButton active={assistanceTab === "enhance"} onClick={() => setAssistanceTab("enhance")}>
+                    Enhance Prompt
+                  </PillButton>
+                  <PillButton active={assistanceTab === "scene"} onClick={() => setAssistanceTab("scene")}>
+                    Scene Creator
+                  </PillButton>
+                  <PillButton active={assistanceTab === "ask"} onClick={() => setAssistanceTab("ask")}>
+                    Ask AI
+                  </PillButton>
+                </div>
+              </div>
+            </div>
+
+            {assistanceTab === "describe" ? (
+              <Card title="Describe Picture">
+                <p className="text-white/70">Choose an image, select the mode, generate a description, then copy or send it to Generate.</p>
+                <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+                  <div className="space-y-4">
+                    <ActionButton onClick={() => describeInputRef.current?.click()}>Choose image</ActionButton>
+                    <input
+                      ref={describeInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        describeFileRef.current = file;
+                        setDescribeImageName(file?.name || "");
+                      }}
+                    />
+                    <div className="rounded-[22px] border border-white/10 bg-black/35 p-4 text-white/70">
+                      {describeImageName || "No image selected"}
                     </div>
-                  ) : null}
-                  {needsImages > 2 ? (
-                    <div>
-                      <div className="otg-cardTitle" style={{ marginBottom: 8, opacity: 0.9 }}>Image 3</div>
-                      <label className="otg-btnGhost" style={{ display: "inline-flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-                        Choose image
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={(e) => setImgC(e.target.files?.[0] || null)}
-                        />
-                      </label>
-                      <div className="otg-help" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        {imgCPreviewUrl ? (
-                          <img
-                            src={imgCPreviewUrl}
-                            alt="Image 3 preview"
-                            style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)" }}
-                          />
-                        ) : null}
-                        <span>{imgC ? imgC.name : "No file selected"}</span>
-                        {!imgC && imgA ? <span style={{ opacity: 0.75 }}>(will use Image 1)</span> : null}
-                      </div>
+                    <select
+                      value={describeMode}
+                      onChange={(e) => setDescribeMode(e.target.value as "background" | "identity")}
+                      className="w-full rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
+                    >
+                      <option value="background">Background Scene</option>
+                      <option value="identity">Person Identity</option>
+                    </select>
+                    <ActionButton onClick={handleDescribe} disabled={describeBusy || !describeImageName}>
+                      {describeBusy ? "Describing..." : "Describe"}
+                    </ActionButton>
+                  </div>
+
+                  <div className="space-y-4">
+                    <textarea
+                      value={describeOutput}
+                      onChange={(e) => setDescribeOutput(e.target.value)}
+                      rows={10}
+                      placeholder="Description result will appear here."
+                      className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
+                    />
+                    <div className="flex flex-wrap gap-3">
+                      <GhostButton onClick={() => copyText(describeOutput)} disabled={!describeOutput.trim()}>
+                        Copy
+                      </GhostButton>
+                      <ActionButton onClick={() => sendTextToGenerate(describeOutput)} disabled={!describeOutput.trim()}>
+                        Send to Prompt
+                      </ActionButton>
                     </div>
-                  ) : null}
+                  </div>
                 </div>
               </Card>
             ) : null}
 
-            <div className="otg-row">
-              <PrimaryButton
-                onClick={onGenerate}
-                disabled={uiLocked || !activeWorkflow || (needsImages > 0 && !imgA)}
-              >
-                {busy ? "Generating..." : "Generate"}
-              </PrimaryButton>
-  <GhostButton onClick={onShowContent} disabled={uiLocked}>
-    Show Content
-  </GhostButton>
-
-
-{confirmView ? (
-  <div className="otg-card" style={{ marginTop: 10, opacity: renderConfirmStatus === "done" ? 0.65 : 1 }}>
-    <div className="otg-cardTitle" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-      <span>Confirm settings</span>
-      <span className="otg-help" style={{ margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
-        {renderConfirmStatus === "submitted" ? <span style={{ opacity: 0.9 }}>...</span> : null}
-        {renderConfirmStatus === "done" ? <span style={{ color: "#7CFF9E" }}>OK</span> : null}
-        {renderConfirmStatus === "done" ? (
-          <button
-            type="button"
-            className="otg-btnGhost"
-            style={{ padding: "6px 10px" }}
-            onClick={() => { setRenderConfirm(null); setRenderConfirmStatus("idle"); }}
-          >
-            Clear
-          </button>
-        ) : null}
-      </span>
-    </div>
-    <div className="otg-cardBody">
-      <div className="otg-help" style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 6, margin: 0 }}>
-        {confirmView.title ? (
-          <>
-            <div style={{ opacity: 0.8 }}>Title</div><div>{confirmView.title}</div>
-          </>
-        ) : null}
-        <div style={{ opacity: 0.8 }}>Workflow</div><div>{confirmView.workflow}</div>
-        <div style={{ opacity: 0.8 }}>Orientation</div><div>{confirmView.orientation}</div>
-        <div style={{ opacity: 0.8 }}>Size</div><div>{confirmView.size}</div>
-        <div style={{ opacity: 0.8 }}>Duration</div><div>{confirmView.duration}</div>
-        <div style={{ opacity: 0.8 }}>GPU</div><div>{confirmView.gpu}</div>
-        <div style={{ opacity: 0.8 }}>LoRAs</div>
-        <div>{confirmView.loras.length ? confirmView.loras.map(l => `${l.name} (${l.strengthModel.toFixed(2)})`).join(", ") : "None"}</div>
-      </div>
-    </div>
-  </div>
-) : null}
-</div>
-
-{(busy || last?.status === "running" || progressPct > 0) ? (
-  <div className="otg-progress" style={{ marginTop: 10 }}>
-    <div className="otg-progressTop">
-      <div className="otg-progressMsg">
-        {progressPct >= 100 && last?.status !== "running"
-          ? "Creation complete"
-          : (progressMsg || (last?.status === "running" || busy ? "Generating..." : "Idle"))}
-      </div>
-      <div className="otg-progressPct">{Math.max(0, Math.min(100, Math.round(progressPct)))}%</div>
-    </div>
-    <div className="otg-progressBar" aria-label="Generation progress">
-      <div className="otg-progressFill" style={{ width: `${Math.max(0, Math.min(100, Math.round(progressPct)))}%` }} />
-    </div>
-  </div>
-) : null}
-
-{showGeneratedPreview && effectivePreview?.url ? (
-  <div className="otg-card" style={{ marginTop: 10 }}>
-    <div className="otg-cardHeader">
-      <div className="otg-cardTitle">Latest content</div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button
-          type="button"
-          className="otg-btnGhost"
-          style={{ padding: "6px 10px" }}
-          onClick={() => setShowGeneratedPreview(false)}
-        >
-          Hide
-        </button>
-        {effectivePreview?.name && effectivePreview?.url ? (
-          <button
-            type="button"
-            className="otg-btnGhost"
-            style={{ padding: "6px 10px" }}
-            onClick={() => setMediaModal({ name: effectivePreview.name, url: effectivePreview.url, kind: effectivePreview.kind })}
-          >
-            Expand
-          </button>
-        ) : null}
-      </div>
-    </div>
-    <div className="otg-cardBody">
-      {effectivePreview.kind === "video" ? (
-        <video style={{ width: "100%", borderRadius: 16 }} controls playsInline src={effectivePreview.url} />
-      ) : (
-        <img src={effectivePreview.url} alt={effectivePreview.name || "preview"} style={{ width: "100%", borderRadius: 16 }} />
-      )}
-    </div>
-  </div>
-) : null}
-
-          </div>
-        ) : null}
-
-        
-        {tab === "gethelp" ? (
-          <GetHelpPanel
-            onSendToPrompt={(t) => {
-              const s = String(t || "").trim();
-              if (!s) return;
-              setPositivePrompt((prev) => {
-                const p = String(prev || "").trim();
-                return p ? `${p}
-
-${s}` : s;
-              });
-              setTab("generate");
-            }}
-            onGotoGenerate={() => setTab("generate")}
-          />
-        ) : null}
-
-        {tab === "angles" ? (
-          <AnglesPanel />
-        ) : null}
-
-        {tab === "storyboard" ? (
-          <StoryboardPanel />
-        ) : null}
-
-{tab === "gallery" ? (
-          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
-            <Card title={`Gallery (${galleryFiles.length})`}>
-              <div className="otg-grid2">
-                {galleryFiles.map((f) => (
-                  <div
-                    key={f.name}
-                    ref={(el) => {
-                      if (galleryFocus && String(f.name) === String(galleryFocus)) galleryFocusRef.current = el;
-                    }}
-                    className="otg-card"
-                    style={{
-                      padding: 10,
-                      overflow: "hidden",
-                      outline: galleryFocus && String(f.name) === String(galleryFocus) ? "2px solid rgba(124,58,237,.85)" : "none",
-                      boxShadow: galleryFocus && String(f.name) === String(galleryFocus) ? "0 0 0 3px rgba(59,130,246,.25)" : undefined,
-                    }}
-                  >
-                    {isVideoName(f.name) ? (
-                      <div style={{ position: "relative" }}>
-                        <video style={{ width: "100%", borderRadius: 16 }} controls muted playsInline src={f.url} />
-                        <button
-                          type="button"
-                          className="otg-btnGhost"
-                          style={{ position: "absolute", right: 10, top: 10, padding: "6px 10px" }}
-                          onClick={() => setMediaModal({ name: f.name, url: f.url, kind: "video" })}
-                        >
-                          Expand
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setMediaModal({ name: f.name, url: f.url, kind: "image" })}
-                        style={{ padding: 0, border: 0, background: "transparent", cursor: "pointer" }}
-                        aria-label={`Open ${f.name}`}
-                      >
-                        <img style={{ width: "100%", borderRadius: 16, display: "block" }} src={f.url} alt={f.name} />
-                      </button>
-                    )}
-                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
-                      <div className="otg-help" style={{ marginTop: 0 }}>{f.name}</div>
-                      <div className="otg-row">
-                        <GhostButton onClick={() => showPromptFromGallery(f.name)} disabled={uiLocked}>
-                          Show Prompt
-                        </GhostButton>
-
-                        {!isVideoName(f.name) ? (
-                          <PrimaryButton
-                            type="button"
-                            disabled={uiLocked}
-                            onClick={() => {
-                              setAnimateErr("");
-                              setAnimateModal({ name: f.name, url: f.url });
-                              setAnimateSeconds(5);
-                              setAnimatePrompt("");
-                            }}
-                            style={{ height: 40, paddingInline: 14, borderRadius: 999 }}
-                          >
-                            Animate
-                          </PrimaryButton>
-                        ) : null}
-
-                        <button
-                          type="button"
-                          className="otg-btnGhost"
-                          title="Retry / Regenerate"
-                          onClick={() => retryFromGallery(f.name)}
-                          disabled={uiLocked}
-                          style={{ width: 40, height: 40, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
-                        >
-                          <span>{"→"}</span>
-                        </button>
-                        {gallerySent?.[f.name] ? (
-                          <span className="otg-help" style={{ marginTop: 0, alignSelf: "center" }}>
-                            Sent
-                          </span>
-                        ) : null}
-                        <button onClick={() => deleteFromGallery(f.name)} disabled={uiLocked} className="otg-btnDanger">
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          </div>
-        ) : null}
-
-        {tab === "favorites" ? (
-          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
-            <Card title={`Favorites (${favoriteFiles.length})`}>
-              <div className="otg-grid2">
-                {favoriteFiles.map((f) => (
-                  <div key={f.name} className="otg-card" style={{ padding: 10, overflow: "hidden" }}>
-                    {isVideoName(f.name) ? (
-                      <video style={{ width: "100%", borderRadius: 16 }} controls autoPlay muted loop playsInline src={f.url} />
-                    ) : (
-                      <img style={{ width: "100%", borderRadius: 16 }} src={f.url} alt={f.name} />
-                    )}
-                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
-                      <div className="otg-help" style={{ marginTop: 0 }}>{f.name}</div>
-                      <div className="otg-row">
-                        <a
-                          href={f.url}
-                          download={f.name}
-                          className="otg-btnGhost"
-                        >
-                          Download
-                        </a>
-                        <button onClick={() => deleteFromFavorites(f.name)} disabled={uiLocked} className="otg-btnDanger">
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          </div>
-        ) : null}
-
-        {tab === "voices" ? (
-          <VoicesPanel isAdmin={isAdmin} />
-        ) : null}
-
-        {tab === "support" ? (
-          <div style={{ marginTop: 14 }}>
-            <SupportPanel />
-          </div>
-        ) : null}
-
-        {tab === "settings" ? (
-          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14 }}>
-            <Card title="Settings">
-              <div className="otg-help" style={{ marginTop: 0, fontSize: 14, color: "rgba(244,244,247,.86)" }}>Display</div>
-
-              <div style={{ marginTop: 10 }}>
-                <div className="otg-cardTitle" style={{ marginBottom: 8, opacity: 0.9 }}>Font size</div>
-                <input
-                  type="range"
-                  min={-150}
-                  max={150}
-                  step={1}
-                  value={fontDelta}
-                  onChange={(e) => setFontDelta(Number(e.target.value))}
-                  className="otg-range"
+            {assistanceTab === "enhance" ? (
+              <Card title="Enhance Prompt">
+                <p className="text-white/70">Write a draft, refine it here, then send the result into Generate.</p>
+                <textarea
+                  value={enhanceDraft}
+                  onChange={(e) => setEnhanceDraft(e.target.value)}
+                  rows={8}
+                  placeholder="Write the draft prompt you want to improve."
+                  className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
                 />
-                <div className="otg-help" style={{ marginTop: 8 }}>
-                  {"Scale: "}{Math.round((1 + fontDelta / 300) * 100)}%
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={handleMicClick}
+                    className={cn(
+                      "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
+                      recording
+                        ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
+                        : "border-white/10 bg-white/5 hover:bg-white/10"
+                    )}
+                  >
+                    <IconMic />
+                  </button>
+                  <div className="flex flex-wrap gap-3">
+                    <ActionButton
+                      onClick={() =>
+                        setEnhanceDraft((prev) =>
+                          prev.trim() ? `${prev.trim()}\n\nRefined for stronger visual clarity and production detail.` : prev
+                        )
+                      }
+                      disabled={!enhanceDraft.trim()}
+                    >
+                      Enhance
+                    </ActionButton>
+                    <GhostButton onClick={() => copyText(enhanceDraft)} disabled={!enhanceDraft.trim()}>
+                      Copy
+                    </GhostButton>
+                    <ActionButton onClick={() => sendTextToGenerate(enhanceDraft)} disabled={!enhanceDraft.trim()}>
+                      Send to Prompt
+                    </ActionButton>
+                  </div>
                 </div>
-              </div>
-
-              <div className="otg-help" style={{ marginTop: 10 }}>
-                Tip: adjust this if text is too small on your projector/phone.
-              </div>
-
-              <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "14px 0" }} />
-
-              <div className="otg-help" style={{ marginTop: 0, fontSize: 14, color: "rgba(244,244,247,.86)" }}>
-                Pipeline
-              </div>
-              {pipelineStuck ? (
-                <div className="otg-warn" style={{ marginTop: 10 }}>
-                  The server says a generation is already running. If it looks stuck, clear the pipeline to unlock it.
-                </div>
-              ) : (
-                <div className="otg-help" style={{ marginTop: 10 }}>
-                  If you ever get the "already running error, use this to reset the server-side generation state.
-                </div>
-              )}
-              <div className="otg-row" style={{ marginTop: 10, justifyContent: "space-between" }}>
-                <button
-                  type="button"
-                  className="otg-btnDanger"
-                  onClick={onClearPipeline}
-                  disabled={uiLocked}
-                  style={{ minWidth: 180 }}
-                >
-                  Clear pipeline
-                </button>
-                {pipelineStuck ? (
-                  <GhostButton type="button" onClick={() => setTab("generate")} disabled={uiLocked}>
-                    Back to Studio
-                  </GhostButton>
-                ) : null}
-              </div>
-            </Card>
-
-            <Card title="Account">
-              <div className="otg-row" style={{ justifyContent: "space-between" }}>
-                <GhostButton onClick={onLogout}>Logout</GhostButton>
-                <button
-                  onClick={onRequestDeleteAccount}
-                  className="otg-btnDanger"
-                  style={{ minWidth: 160 }}
-                >
-                  Delete account
-                </button>
-              </div>
-
-              {isAdmin ? (
-                <div className="otg-row" style={{ justifyContent: "flex-end", marginTop: 10 }}>
-                  <a className="otg-btnGhost" href="/app/admin/users">
-                    Admin Panel
-                  </a>
-                </div>
-              ) : null}
-
-              <div className="otg-help" style={{ marginTop: 10 }}>
-                Deleting your account removes your profile and deletes your gallery and favorites.
-              </div>
-            </Card>
-          </div>
-        ) : null}
-      </div>
-
-      {showDeleteAccount ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 200,
-            background: "rgba(0,0,0,.65)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 18,
-          }}
-          onClick={() => {
-            if (!deleteAccountBusy) setShowDeleteAccount(false);
-          }}
-        >
-          <div
-            className="otg-card"
-            style={{
-              width: "100%",
-              maxWidth: 520,
-              padding: 16,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="otg-cardTitle" style={{ fontSize: 18 }}>Delete account?</div>
-            <div className="otg-help" style={{ marginTop: 10, lineHeight: 1.4 }}>
-              This is permanent. It will delete:
-              <ul style={{ margin: "8px 0 0 18px" }}>
-                <li>Your profile / login</li>
-                <li>All images/videos in your Gallery</li>
-                <li>All images/videos in your Favorites</li>
-              </ul>
-              You will be signed out.
-            </div>
-
-            {deleteAccountErr ? (
-              <div className="otg-error" style={{ marginTop: 12 }}>{deleteAccountErr}</div>
+              </Card>
             ) : null}
 
-            <div className="otg-row" style={{ marginTop: 14, justifyContent: "space-between" }}>
-              <button
-                className="otg-btnGhost"
-                disabled={deleteAccountBusy}
-                onClick={() => setShowDeleteAccount(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="otg-btnDanger"
-                disabled={deleteAccountBusy}
-                onClick={onConfirmDeleteAccount}
-                style={{ minWidth: 200 }}
-              >
-                {deleteAccountBusy ? "Deleting..." : "Yes, delete everything"}
-              </button>
+            {assistanceTab === "scene" ? (
+              <Card title="Scene Creator">
+                <p className="text-white/70">Build a scene card, then send it directly to Generate.</p>
+                <textarea
+                  value={sceneDraft}
+                  onChange={(e) => setSceneDraft(e.target.value)}
+                  rows={10}
+                  placeholder="Describe the scene, action, location, and camera direction."
+                  className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
+                />
+                <div className="flex flex-wrap gap-3">
+                  <GhostButton onClick={() => copyText(sceneDraft)} disabled={!sceneDraft.trim()}>
+                    Copy
+                  </GhostButton>
+                  <ActionButton onClick={() => sendTextToGenerate(sceneDraft)} disabled={!sceneDraft.trim()}>
+                    Send to Generate
+                  </ActionButton>
+                </div>
+              </Card>
+            ) : null}
+
+            {assistanceTab === "ask" ? (
+              <Card title="Ask AI">
+                <p className="text-white/70">Ask a direct question and review the answer below.</p>
+                <textarea
+                  value={askInput}
+                  onChange={(e) => setAskInput(e.target.value)}
+                  rows={7}
+                  placeholder="Ask for prompt help, workflow guidance, or a scene rewrite."
+                  className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
+                />
+                <div className="flex flex-wrap gap-3">
+                  <ActionButton onClick={handleAskAi} disabled={askBusy || !askInput.trim()}>
+                    {askBusy ? "Asking..." : "Ask AI"}
+                  </ActionButton>
+                  <GhostButton onClick={() => copyText(askAnswer)} disabled={!askAnswer.trim()}>
+                    Copy Answer
+                  </GhostButton>
+                  <ActionButton onClick={() => sendTextToGenerate(askAnswer)} disabled={!askAnswer.trim()}>
+                    Send to Prompt
+                  </ActionButton>
+                </div>
+                <textarea
+                  value={askAnswer}
+                  onChange={(e) => setAskAnswer(e.target.value)}
+                  rows={8}
+                  placeholder="AI answer will appear here."
+                  className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
+                />
+              </Card>
+            ) : null}
+          </div>
+        ) : null}
+
+        {tab === "angles" ? <AnglesPanel /> : null}
+        {tab === "storyboard" ? <StoryboardPanel /> : null}
+
+        {tab === "gallery" ? (
+          <div className="space-y-4">
+            <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <h1 className="text-4xl font-black tracking-tight text-white">Gallery</h1>
+                <GhostButton onClick={() => void loadGallery()} disabled={galleryBusy}>
+                  {galleryBusy ? "Refreshing..." : "Refresh"}
+                </GhostButton>
+              </div>
+
+              <div className="mb-4 grid gap-3 md:grid-cols-[1fr_auto_auto]">
+                <input
+                  value={gallerySearch}
+                  onChange={(e) => setGallerySearch(e.target.value)}
+                  placeholder="Search by name"
+                  className="w-full rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
+                />
+                <select
+                  value={galleryFilter}
+                  onChange={(e) => setGalleryFilter(e.target.value as "all" | "images" | "videos")}
+                  className="rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
+                >
+                  <option value="all">All</option>
+                  <option value="images">Images</option>
+                  <option value="videos">Videos</option>
+                </select>
+                <select
+                  value={gallerySort}
+                  onChange={(e) => setGallerySort(e.target.value as "newest" | "oldest" | "name")}
+                  className="rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
+                >
+                  <option value="newest">Newest first</option>
+                  <option value="oldest">Oldest first</option>
+                  <option value="name">Name</option>
+                </select>
+              </div>
+
+              <MediaGrid
+                items={galleryItems}
+                busyName={galleryActionBusyName}
+                onDownload={handleGalleryDownload}
+                onFavorite={handleGalleryFavorite}
+                onRename={handleGalleryRename}
+                onRedo={handleGalleryRedo}
+                onEdit={handleGalleryEdit}
+                onAnimate={handleGalleryAnimate}
+                onDelete={handleGalleryDelete}
+                onOpenViewer={openViewer}
+              />
             </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      {animateModal ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          onClick={() => {
-            if (!animateBusy) setAnimateModal(null);
-          }}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.72)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-            zIndex: 9999,
-          }}
-        >
-          <div
-            className="otg-card"
-            onClick={(e) => e.stopPropagation()}
-            style={{ width: "min(900px, 96vw)", maxHeight: "92vh", overflow: "auto", padding: 14 }}
-          >
-            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <div className="otg-cardTitle" style={{ margin: 0 }}>Animate (LTX2 - Image to Video)</div>
-                <div className="otg-help" style={{ marginTop: 6 }}>{animateModal.name}</div>
+        {tab === "voices" ? <VoicesPanel isAdmin={isAdmin} /> : null}
+
+        {tab === "favorites" ? (
+          <div className="space-y-4">
+            <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h1 className="text-4xl font-black tracking-tight text-white">Favorites</h1>
+                <GhostButton onClick={() => void loadFavorites()} disabled={favoritesBusy}>
+                  {favoritesBusy ? "Refreshing..." : "Refresh"}
+                </GhostButton>
               </div>
-              <button type="button" className="otg-btnGhost" disabled={animateBusy} onClick={() => setAnimateModal(null)}>
+
+              <MediaGrid
+                items={favoriteItems}
+                busyName={galleryActionBusyName}
+                onDownload={handleGalleryDownload}
+                onFavorite={handleGalleryFavorite}
+                onRename={handleGalleryRename}
+                onRedo={handleGalleryRedo}
+                onEdit={handleGalleryEdit}
+                onAnimate={handleGalleryAnimate}
+                onDelete={handleGalleryDelete}
+                onOpenViewer={openViewer}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {tab === "support" ? <SupportPanel /> : null}
+
+        {tab === "settings" ? (
+          <div className="space-y-4">
+            <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm">
+              <h1 className="text-4xl font-black tracking-tight text-white">Settings</h1>
+            </div>
+
+            <Card title="Account">
+              <div className="flex justify-start">
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  disabled={logoutBusy}
+                  className="inline-flex min-h-12 items-center justify-center rounded-full border border-red-400/30 bg-red-500/10 px-5 py-3 text-base font-semibold text-red-100 transition disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {logoutBusy ? "Logging out..." : "Logout"}
+                </button>
+              </div>
+            </Card>
+          </div>
+        ) : null}
+      </div>
+
+      {viewerState ? (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/90 p-4" onClick={() => setViewerState(null)}>
+          <div
+            className="flex max-h-[92vh] w-full max-w-6xl flex-col gap-3 rounded-[28px] border border-white/10 bg-[#060912] p-4 shadow-[0_0_50px_rgba(0,0,0,0.55)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="truncate text-sm font-semibold text-white/80">{viewerState.title}</div>
+              <button
+                type="button"
+                onClick={() => setViewerState(null)}
+                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10"
+              >
                 Close
               </button>
             </div>
-
-            <div style={{ marginTop: 12 }}>
-              <img
-                src={animateModal.url}
-                alt={animateModal.name}
-                style={{ width: "100%", borderRadius: 16, display: "block" }}
-              />
-            </div>
-
-            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-              <div>
-                <div className="otg-help" style={{ marginTop: 0, opacity: 0.9 }}>Positive prompt</div>
-                <textarea
-                  className="otg-textarea"
-                  value={animatePrompt}
-                  onChange={(e) => setAnimatePrompt(e.target.value)}
-                  placeholder="Describe how the image should animate…"
-                  rows={5}
-                  disabled={animateBusy}
-                />
-              </div>
-
-              <div className="otg-row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-                <GhostButton type="button" onClick={enhanceAnimatePrompt} disabled={animateBusy || !String(animatePrompt || "").trim()}>
-                  Enhance
-                </GhostButton>
-
-                <div className="otg-row" style={{ gap: 10 }}>
-                  <button
-                    type="button"
-                    className={animateSeconds === 5 ? "otg-btnPrimary" : "otg-btnGhost"}
-                    onClick={() => setAnimateSeconds(5)}
-                    disabled={animateBusy}
-                    style={{ borderRadius: 999, height: 40, paddingInline: 14, fontWeight: 800 }}
-                  >
-                    5s
-                  </button>
-                  <button
-                    type="button"
-                    className={animateSeconds === 10 ? "otg-btnPrimary" : "otg-btnGhost"}
-                    onClick={() => setAnimateSeconds(10)}
-                    disabled={animateBusy}
-                    style={{ borderRadius: 999, height: 40, paddingInline: 14, fontWeight: 800 }}
-                  >
-                    10s
-                  </button>
-                </div>
-              </div>
-
-              {animateErr ? <div className="otg-error">{animateErr}</div> : null}
-
-              <div className="otg-row" style={{ justifyContent: "flex-end" }}>
-                <PrimaryButton
-                  type="button"
-                  onClick={submitAnimate}
-                  disabled={animateBusy || !String(animatePrompt || "").trim()}
-                  style={{ minWidth: 180, borderRadius: 999, height: 44 }}
-                >
-                  {animateBusy ? "Submitting..." : "Submit"}
-                </PrimaryButton>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {mediaModal ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setMediaModal(null)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.72)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-            zIndex: 9999,
-          }}
-        >
-          <div
-            className="otg-card"
-            onClick={(e) => e.stopPropagation()}
-            style={{ width: "min(1100px, 96vw)", maxHeight: "92vh", overflow: "auto", padding: 14 }}
-          >
-            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-              <div className="otg-cardTitle" style={{ margin: 0 }}>{mediaModal.name}</div>
-              <div className="otg-row">
-                <a className="otg-btnGhost" href={mediaModal.url} download={mediaModal.name}>Download</a>
-                <button type="button" className="otg-btnGhost" onClick={() => setMediaModal(null)}>Close</button>
-              </div>
-            </div>
-            <div style={{ marginTop: 12 }}>
-              {mediaModal.kind === "video" ? (
-                <video style={{ width: "100%", borderRadius: 16 }} controls playsInline src={mediaModal.url} />
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[22px] border border-white/10 bg-black/60">
+              {viewerState.isVideo ? (
+                <video src={viewerState.url} className="max-h-[78vh] w-full object-contain" controls autoPlay playsInline />
               ) : (
-                <img style={{ width: "100%", borderRadius: 16, display: "block" }} src={mediaModal.url} alt={mediaModal.name} />
+                <img src={viewerState.url} alt={viewerState.title} className="max-h-[78vh] w-full object-contain" />
               )}
             </div>
           </div>
         </div>
       ) : null}
 
-      {promptModal ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setPromptModal(null)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.72)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-            zIndex: 9999,
-          }}
-        >
-          <div
-            className="otg-card"
-            onClick={(e) => e.stopPropagation()}
-            style={{ width: "min(980px, 96vw)", maxHeight: "92vh", overflow: "auto", padding: 14 }}
-          >
-            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <div className="otg-cardTitle" style={{ margin: 0 }}>Prompt</div>
-                <div className="otg-help" style={{ marginTop: 6 }}>{promptModal.name}</div>
+      {editModal ? (
+        <ModalShell title="Edit Image" onClose={() => setEditModal(null)}>
+          <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+            <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/50">
+              <div className="aspect-[4/3] bg-black/60">
+                <img src={editModal.item.url} alt={editModal.item.name || "Edit source"} className="h-full w-full object-contain" />
               </div>
-              <button type="button" className="otg-btnGhost" onClick={() => setPromptModal(null)}>Close</button>
             </div>
-
-            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-              <div>
-                <div className="otg-help" style={{ marginTop: 0, opacity: 0.85 }}>Positive</div>
-                <textarea className="otg-textarea" readOnly value={String(promptModal.meta.positivePrompt || "") || "(none)"} />
-              </div>
-              <div>
-                <div className="otg-help" style={{ marginTop: 0, opacity: 0.85 }}>Negative</div>
-                <textarea className="otg-textarea" readOnly value={String(promptModal.meta.negativePrompt || "") || "(none)"} />
-              </div>
-              <div className="otg-help" style={{ marginTop: 0 }}>
-                {promptModal.meta.seed !== undefined && promptModal.meta.seed !== null ? <>Seed: <b>{String(promptModal.meta.seed)}</b></> : null}
-                {promptModal.meta.prompt_id ? <span style={{ marginLeft: 10, opacity: 0.85 }}>prompt_id: {String(promptModal.meta.prompt_id)}</span> : null}
-              </div>
-
-              <div className="otg-row">
-                <button
-                  type="button"
-                  className="otg-btnGhost"
-                  onClick={() => {
-                    const txt = String(promptModal.meta.positivePrompt || "");
-                    if (!txt) return;
-                    navigator.clipboard?.writeText(txt).catch(() => void 0);
-                    showToast("Copied positive prompt");
-                  }}
-                >
-                  Copy Positive
-                </button>
-                <button
-                  type="button"
-                  className="otg-btnGhost"
-                  onClick={() => {
-                    const txt = String(promptModal.meta.negativePrompt || "");
-                    if (!txt) return;
-                    navigator.clipboard?.writeText(txt).catch(() => void 0);
-                    showToast("Copied negative prompt");
-                  }}
-                >
-                  Copy Negative
-                </button>
+            <div className="space-y-4">
+              <textarea
+                value={editModal.positivePrompt}
+                onChange={(e) => setEditModal((prev) => (prev ? { ...prev, positivePrompt: e.target.value } : prev))}
+                rows={6}
+                placeholder="Positive Prompt"
+                className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
+              />
+              <textarea
+                value={editModal.negativePrompt}
+                onChange={(e) => setEditModal((prev) => (prev ? { ...prev, negativePrompt: e.target.value } : prev))}
+                rows={5}
+                placeholder="Negative Prompt"
+                className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
+              />
+              <div className="flex flex-wrap gap-3">
+                <GhostButton onClick={() => void handleEnhanceEditModal()} disabled={editModal.enhancing || !editModal.positivePrompt.trim()}>
+                  {editModal.enhancing ? "Enhancing..." : "Enhance"}
+                </GhostButton>
+                <ActionButton onClick={() => void submitGalleryEdit()} disabled={galleryActionBusyName === getGalleryItemKey(editModal.item) || editModal.enhancing}>
+                  {galleryActionBusyName === getGalleryItemKey(editModal.item) ? "Submitting..." : "Submit"}
+                </ActionButton>
+                <GhostButton onClick={() => setEditModal(null)} disabled={editModal.enhancing}>
+                  Cancel
+                </GhostButton>
               </div>
             </div>
           </div>
-        </div>
+        </ModalShell>
       ) : null}
 
-      <SpinDialNav
-        tab={tab}
-        isAdmin={isAdmin}
-        onTab={(t) => setTab(t)}
-      />
+      {animateModal ? (
+        <ModalShell title="Animate Image" onClose={() => setAnimateModal(null)}>
+          <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+            <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/50">
+              <div className="aspect-[4/3] bg-black/60">
+                <img src={animateModal.item.url} alt={animateModal.item.name || "Animate source"} className="h-full w-full object-contain" />
+              </div>
+            </div>
+            <div className="space-y-4">
+              <textarea
+                value={animateModal.positivePrompt}
+                onChange={(e) => setAnimateModal((prev) => (prev ? { ...prev, positivePrompt: e.target.value } : prev))}
+                rows={6}
+                placeholder="Positive Prompt"
+                className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
+              />
+              <textarea
+                value={animateModal.negativePrompt}
+                onChange={(e) => setAnimateModal((prev) => (prev ? { ...prev, negativePrompt: e.target.value } : prev))}
+                rows={5}
+                placeholder="Negative Prompt"
+                className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
+              />
+              <div className="space-y-2">
+                <div className="text-sm font-semibold text-white/80">Duration: {animateModal.durationSeconds} seconds</div>
+                <input
+                  type="range"
+                  min={5}
+                  max={15}
+                  step={1}
+                  value={animateModal.durationSeconds}
+                  onChange={(e) =>
+                    setAnimateModal((prev) =>
+                      prev ? { ...prev, durationSeconds: clampDuration(Number(e.target.value)) } : prev
+                    )
+                  }
+                  className="w-full accent-violet-400"
+                />
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <GhostButton onClick={() => void handleEnhanceAnimateModal()} disabled={animateModal.enhancing || !animateModal.positivePrompt.trim()}>
+                  {animateModal.enhancing ? "Enhancing..." : "Enhance"}
+                </GhostButton>
+                <ActionButton onClick={() => void submitGalleryAnimate()} disabled={galleryActionBusyName === getGalleryItemKey(animateModal.item) || animateModal.enhancing}>
+                  {galleryActionBusyName === getGalleryItemKey(animateModal.item) ? "Submitting..." : "Submit"}
+                </ActionButton>
+                <GhostButton onClick={() => setAnimateModal(null)} disabled={animateModal.enhancing}>
+                  Cancel
+                </GhostButton>
+              </div>
+            </div>
+          </div>
+        </ModalShell>
+      ) : null}
+
+      <SpinDialNav tab={tab} onTab={setTab} isAdmin={isAdmin} />
     </main>
-
-      {loraOpen ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.6)",
-            zIndex: 50,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-          }}
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setLoraOpen(false);
-          }}
-        >
-          <div
-            className="otg-card"
-            style={{
-              width: "min(920px, 100%)",
-              maxHeight: "min(80vh, 720px)",
-              overflow: "auto",
-              borderRadius: 24,
-              border: "1px solid rgba(255,255,255,0.12)",
-              background: "rgba(0,0,0,0.85)",
-              padding: 16,
-            }}
-          >
-            <div className="otg-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <div className="otg-cardTitle" style={{ fontSize: 22 }}>LoRA Library</div>
-                <div className="otg-help" style={{ marginTop: 4 }}>Applied only if the workflow already contains LoRA loader nodes.</div>
-              </div>
-              <button type="button" className="otg-btnGhost" onClick={() => setLoraOpen(false)}>Close</button>
-            </div>
-
-            {loraErr ? <div className="otg-help" style={{ marginTop: 10, color: "#fca5a5" }}>{loraErr}</div> : null}
-            {loraLoading ? <div className="otg-help" style={{ marginTop: 10 }}>Loading...</div> : null}
-
-            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-              {loraList.map((it) => {
-                const selected = loras.find((x) => x.name === it.name);
-                return (
-                  <div key={it.name} className="otg-row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                    <label className="otg-row" style={{ gap: 10, alignItems: "center", cursor: "pointer" }}>
-                      <input type="checkbox" checked={!!selected} onChange={() => toggleLora(it.name)} />
-                      <span style={{ fontFamily: "monospace", fontSize: 12, opacity: 0.95 }}>{it.name}</span>
-                      {it.label ? <span className="otg-help">- {it.label}</span> : null}
-                    </label>
-
-                    {selected ? (
-                      <div className="otg-row" style={{ gap: 10, alignItems: "center" }}>
-                        <label className="otg-help" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                          Model
-                          <input
-                            className="otg-input"
-                            style={{ width: 84 }}
-                            inputMode="decimal"
-                            value={String(selected.strengthModel)}
-                            onChange={(e) => setLoraStrength(it.name, "model", Number(e.target.value))}
-                          />
-                        </label>
-                        <label className="otg-help" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                          Clip
-                          <input
-                            className="otg-input"
-                            style={{ width: 84 }}
-                            inputMode="decimal"
-                            value={String(selected.strengthClip)}
-                            onChange={(e) => setLoraStrength(it.name, "clip", Number(e.target.value))}
-                          />
-                        </label>
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-
-              {!loraLoading && loraList.length === 0 ? <div className="otg-help">No LoRAs found.</div> : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-    </>
   );
 }
-
-
-
 
 
 

@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import fs from "node:fs";
+import path from "node:path";
 import { getWorkflowList } from "@/lib/workflows";
 
 export const runtime = "nodejs";
@@ -35,6 +37,34 @@ function isHiddenByDefault(id: string) {
   return false;
 }
 
+
+const WAN2GP_ROOT = (process.env.WAN2GP_ROOT || "C:\\AI\\Wan2GP").trim();
+
+function hasWan2Gp() {
+  if (!WAN2GP_ROOT) return false;
+  try {
+    return fs.existsSync(path.join(WAN2GP_ROOT, "wgp.py"));
+  } catch {
+    return false;
+  }
+}
+
+function getWan2GpWorkflow() {
+  return {
+    id: "wan2gp-i2v",
+    label: "Wan 2.2 Image to Video",
+    description: "Headless Wan2GP queue processing using an uploaded source image.",
+    img2img: true,
+    format: "prompt_graph" as const,
+    canRun: true,
+    needsImages: 1,
+    parseOk: true,
+    exists: true,
+    file: "[wan2gp]",
+    error: "",
+  };
+}
+
 export async function GET() {
   const lst = getWorkflowList();
   if (!lst.ok) {
@@ -66,6 +96,13 @@ export async function GET() {
       file: w.file,
       error: w.error ?? "",
     }));
+
+  if (hasWan2Gp() && (!allow || allow.has("wan2gp-i2v"))) {
+    const wanWorkflow = getWan2GpWorkflow();
+    if (!workflows.some((w) => String(w.id || "").toLowerCase() === wanWorkflow.id)) {
+      workflows.unshift(wanWorkflow);
+    }
+  }
 
   return NextResponse.json({ ok: true, workflows }, { headers: { "cache-control": "no-store" } });
 }

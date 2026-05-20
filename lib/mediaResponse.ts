@@ -56,11 +56,51 @@ function parseRange(rangeHeader: string | null, size: number): ByteRange | null 
   return { start, end: Math.min(end, size - 1) };
 }
 
+// OTG_MEDIA_STREAM_ABORT_SAFE_V1
 function streamFile(filePath: string, start?: number, end?: number) {
   const stream = typeof start === "number" && typeof end === "number"
     ? fs.createReadStream(filePath, { start, end })
     : fs.createReadStream(filePath);
-  return Readable.toWeb(stream as any) as any;
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      let closed = false;
+
+      const closeSafely = () => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          // Client already closed the media request.
+        }
+      };
+
+      stream.on("data", (chunk) => {
+        if (closed) return;
+        try {
+          controller.enqueue(chunk instanceof Uint8Array ? chunk : Buffer.from(chunk));
+        } catch {
+          closed = true;
+          stream.destroy();
+        }
+      });
+
+      stream.on("end", closeSafely);
+      stream.on("error", (error) => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.error(error);
+        } catch {
+          // Client already closed the media request.
+        }
+      });
+    },
+    cancel() {
+      stream.destroy();
+    },
+  }) as any;
 }
 
 function isFresh(req: NextRequest, etag: string, stat: fs.Stats) {

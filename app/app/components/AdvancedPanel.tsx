@@ -29,6 +29,13 @@ type VaultItem = {
   createdAt: string;
 };
 
+function formatAdvancedProgressDuration(ms: number) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 const TAB_META: Record<AnglesTab, { label: string; help: string }> = {
   camera: {
     label: "Camera",
@@ -170,6 +177,7 @@ export default function AnglesPanel() {
   const mvRef = React.useRef<any>(null);
   const syncingFromSlidersRef = React.useRef(false);
   const sseRef = React.useRef<EventSource | null>(null);
+  const progressStartedAtRef = React.useRef(0);
 
   const [activeTab, setActiveTab] = React.useState<AnglesTab>("camera");
   const [file, setFile] = React.useState<File | null>(null);
@@ -229,6 +237,7 @@ export default function AnglesPanel() {
 
       setProgressPct(0);
       setProgressMsg("Generating...");
+      progressStartedAtRef.current = Date.now();
       stopProgressStream();
 
       const url = `/api/comfy-events?clientId=${encodeURIComponent(deviceId)}`;
@@ -269,8 +278,24 @@ export default function AnglesPanel() {
           const m = Number(data?.max);
           if (Number.isFinite(v) && Number.isFinite(m) && m > 0) {
             const pct = Math.max(0, Math.min(100, Math.round((v / m) * 100)));
+            const elapsed = progressStartedAtRef.current ? Date.now() - progressStartedAtRef.current : 0;
+            const eta = pct > 0 && pct < 100 ? Math.round((elapsed * (100 - pct)) / pct) : 0;
             setProgressPct(pct);
-            setProgressMsg(`Generating... ${pct}%`);
+            setProgressMsg(`Generating... ${pct}% | elapsed ${formatAdvancedProgressDuration(elapsed)} | ETA ${eta ? formatAdvancedProgressDuration(eta) : "--"}`);
+          }
+        }
+
+        if (type === "progress_state") {
+          const nodes = data?.nodes && typeof data.nodes === "object" ? data.nodes : {};
+          const runningNode = Object.values(nodes).find((node: any) => String(node?.state || "").toLowerCase() === "running") as any;
+          const v = Number(runningNode?.value);
+          const m = Number(runningNode?.max);
+          if (Number.isFinite(v) && Number.isFinite(m) && m > 0) {
+            const pct = Math.max(0, Math.min(100, Math.round((v / m) * 100)));
+            const elapsed = progressStartedAtRef.current ? Date.now() - progressStartedAtRef.current : 0;
+            const eta = pct > 0 && pct < 100 ? Math.round((elapsed * (100 - pct)) / pct) : 0;
+            setProgressPct(pct);
+            setProgressMsg(`Generating... ${pct}% | elapsed ${formatAdvancedProgressDuration(elapsed)} | ETA ${eta ? formatAdvancedProgressDuration(eta) : "--"}`);
           }
         }
 

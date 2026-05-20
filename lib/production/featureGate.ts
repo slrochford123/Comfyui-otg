@@ -6,7 +6,7 @@ function envFlagEnabled(value: string | undefined) {
 }
 
 export function isProductionFeatureEnabled() {
-  return envFlagEnabled(process.env.OTG_ENABLE_PRODUCTION);
+  return envFlagEnabled(process.env.OTG_ENABLE_PRODUCTION) || envFlagEnabled(process.env.NEXT_PUBLIC_OTG_ENABLE_PRODUCTION);
 }
 
 export function productionDisabledResponse() {

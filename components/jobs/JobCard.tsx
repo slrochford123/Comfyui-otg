@@ -17,6 +17,14 @@ function statusStyle(status: Job["status"]) {
   return "bg-red-100 text-red-700";
 }
 
+function formatEta(seconds: number | undefined) {
+  const total = Number(seconds);
+  if (!Number.isFinite(total) || total <= 0) return "";
+  const mins = Math.floor(total / 60);
+  const secs = Math.floor(total % 60);
+  return `${mins}:${String(secs).padStart(2, "0")}`;
+}
+
 export function JobCard({
   job,
   onRerun,
@@ -34,6 +42,7 @@ export function JobCard({
 }) {
   const pct = Math.max(0, Math.min(1, job.progress?.pct ?? 0));
   const pctText = Math.round(pct * 100);
+  const etaText = formatEta(job.progress?.eta_seconds);
 
   return (
     <div className="rounded-2xl border bg-white shadow-sm p-4 flex gap-4">
@@ -75,6 +84,8 @@ export function JobCard({
           </div>
           <div className="mt-1 text-xs text-gray-500">
             {job.progress?.message ?? ""}
+            {etaText ? ` ETA ${etaText}` : ""}
+            {job.progress?.step && job.progress?.total_steps ? ` Step ${job.progress.step}/${job.progress.total_steps}` : ""}
           </div>
         </div>
 

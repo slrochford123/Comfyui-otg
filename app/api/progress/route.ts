@@ -2,10 +2,17 @@
 import { resolveComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { markError, readState, resetState } from "@/lib/contentState";
+import { readComfyPromptProgress } from "@/lib/comfyProgress";
 import { newestPromptIdForOwner, syncPromptOutputsForOwner } from "@/lib/comfyGallerySync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function clampPercent(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(100, Math.round(numeric)));
+}
 
 export async function GET(req: NextRequest) {
   let owner;
@@ -19,8 +26,17 @@ export async function GET(req: NextRequest) {
   }
 
   const { baseUrl } = await resolveComfyBaseUrl();
-  const comfyBaseUrl = baseUrl.replace(/\/+$/, "");
   const state = readState(owner.ownerKey);
+  const requestedPromptId = String(req.nextUrl.searchParams.get("promptId") || req.nextUrl.searchParams.get("prompt_id") || "").trim();
+  const prompt_id =
+    requestedPromptId ||
+    String(state?.promptId || "").trim() ||
+    newestPromptIdForOwner(owner.ownerKey, owner.deviceId) ||
+    null;
+  const comfyProgress = readComfyPromptProgress(prompt_id);
+  const comfyBaseUrl = String(comfyProgress?.comfyBaseUrl || state?.comfyBaseUrl || baseUrl)
+    .trim()
+    .replace(/\/+$/, "");
 
   try {
     const queueResp = await fetch(`${comfyBaseUrl}/queue`, { cache: "no-store" });
@@ -37,15 +53,18 @@ export async function GET(req: NextRequest) {
       0;
 
     const queue_remaining = runningCount + pendingCount;
-    const prompt_id =
-      String(state?.promptId || "").trim() ||
-      newestPromptIdForOwner(owner.ownerKey, owner.deviceId) ||
-      null;
-
     let prompt_error: string | null = null;
     let prompt_complete = false;
 
-    if (prompt_id) {
+    const shouldCheckHistory =
+      !!prompt_id &&
+      (comfyProgress?.status === "complete" ||
+        comfyProgress?.status === "error" ||
+        queue_remaining === 0 ||
+        state?.status === "done" ||
+        requestedPromptId);
+
+    if (prompt_id && shouldCheckHistory) {
       const syncRes = await syncPromptOutputsForOwner({
         promptId: prompt_id,
         ownerKey: owner.ownerKey,
@@ -61,6 +80,10 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    if (comfyProgress?.status === "error" && comfyProgress.error) {
+      prompt_error = comfyProgress.error;
+    }
+
     if (prompt_error) {
       markError(owner.ownerKey, prompt_error);
     }
@@ -70,15 +93,28 @@ export async function GET(req: NextRequest) {
     let status: "idle" | "running" | "complete" | "error" = "idle";
     if (prompt_error || nextState?.status === "error") {
       status = "error";
-    } else if (nextState?.status === "done" || prompt_complete) {
+    } else if (nextState?.status === "done" || prompt_complete || comfyProgress?.status === "complete") {
       status = "complete";
-    } else if (nextState?.status === "running" || queue_remaining > 0 || !!prompt_id) {
+    } else if (
+      nextState?.status === "running" ||
+      comfyProgress?.status === "running" ||
+      comfyProgress?.status === "queued" ||
+      queue_remaining > 0 ||
+      !!prompt_id
+    ) {
       status = "running";
     }
 
     if (status === "idle" && nextState?.status === "running" && !prompt_id) {
       resetState(owner.ownerKey);
     }
+
+    const progressPercent =
+      status === "complete"
+        ? 100
+        : status === "error"
+          ? clampPercent(comfyProgress?.percent ?? nextState?.progressPercent ?? 100)
+          : clampPercent(comfyProgress?.percent ?? nextState?.progressPercent ?? 0);
 
     return Response.json({
       ok: true,
@@ -91,10 +127,22 @@ export async function GET(req: NextRequest) {
       prompt_id: prompt_id || null,
       prompt_complete: status === "complete",
       prompt_error,
-      pct: status === "complete" ? 100 : 0,
-      nodeName: null,
-      doneNodes: 0,
-      totalNodes: 0,
+      pct: progressPercent,
+      percent: progressPercent,
+      progressPercent,
+      nodeName: comfyProgress?.currentNodeId || null,
+      currentNodeId: comfyProgress?.currentNodeId || null,
+      currentNodeProgress: comfyProgress?.currentNodeProgress || null,
+      doneNodes: comfyProgress?.doneNodes || 0,
+      cachedNodes: comfyProgress?.cachedNodes || 0,
+      totalNodes: comfyProgress?.totalNodes ?? nextState?.totalNodes ?? 0,
+      startedAt: comfyProgress?.startedAt ?? nextState?.startedAt ?? null,
+      lastUpdateAt: comfyProgress?.lastUpdateAt ?? nextState?.progressUpdatedAt ?? nextState?.updatedAt ?? null,
+      completedAt: comfyProgress?.completedAt ?? nextState?.readyAt ?? null,
+      elapsedMs: comfyProgress?.elapsedMs ?? null,
+      estimatedRemainingMs: comfyProgress?.estimatedRemainingMs ?? null,
+      comfyBaseUrl,
+      comfyClientId: comfyProgress?.clientId || nextState?.comfyClientId || null,
       fileName: nextState?.fileName || null,
       ownerKey: owner.ownerKey,
       scope: owner.scope,
@@ -109,9 +157,24 @@ export async function GET(req: NextRequest) {
       queue: 0,
       queue_remaining: 0,
       pct: 0,
+      percent: 0,
+      progressPercent: 0,
       prompt_id: state?.promptId || null,
       prompt_complete: false,
       prompt_error: null,
+      nodeName: null,
+      currentNodeId: null,
+      currentNodeProgress: null,
+      doneNodes: 0,
+      cachedNodes: 0,
+      totalNodes: state?.totalNodes || 0,
+      startedAt: state?.startedAt || null,
+      lastUpdateAt: state?.progressUpdatedAt || state?.updatedAt || null,
+      completedAt: state?.readyAt || null,
+      elapsedMs: null,
+      estimatedRemainingMs: null,
+      comfyBaseUrl,
+      comfyClientId: state?.comfyClientId || null,
       fileName: state?.fileName || null,
       ownerKey: owner.ownerKey,
       scope: owner.scope,

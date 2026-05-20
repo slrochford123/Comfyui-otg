@@ -16,6 +16,11 @@ export type ContentState = {
   submitPayload?: any | null;
   favorited?: boolean;
   lastSyncedPromptId?: string | null;
+  comfyClientId?: string | null;
+  comfyBaseUrl?: string | null;
+  totalNodes?: number | null;
+  progressPercent?: number | null;
+  progressUpdatedAt?: number | null;
   updatedAt?: number | null;
   startedAt?: number | null;
   readyAt?: number | null;
@@ -42,6 +47,11 @@ export function readState(ownerKey: string): ContentState {
     submitPayload: null,
     favorited: false,
     lastSyncedPromptId: null,
+    comfyClientId: null,
+    comfyBaseUrl: null,
+    totalNodes: null,
+    progressPercent: null,
+    progressUpdatedAt: null,
     startedAt: null,
     readyAt: null,
     updatedAt: null,
@@ -72,6 +82,11 @@ export function resetState(ownerKey: string) {
     submitPayload: null,
     favorited: false,
     lastSyncedPromptId: null,
+    comfyClientId: null,
+    comfyBaseUrl: null,
+    totalNodes: null,
+    progressPercent: null,
+    progressUpdatedAt: null,
     startedAt: null,
     readyAt: null,
     error: null,
@@ -88,6 +103,9 @@ export function markRunning(
     positivePrompt?: string | null;
     negativePrompt?: string | null;
     submitPayload?: any | null;
+    comfyClientId?: string | null;
+    comfyBaseUrl?: string | null;
+    totalNodes?: number | null;
   },
 ) {
   const now = Date.now();
@@ -102,6 +120,11 @@ export function markRunning(
     positivePrompt: meta?.positivePrompt ?? null,
     negativePrompt: meta?.negativePrompt ?? null,
     submitPayload: meta?.submitPayload ?? null,
+    comfyClientId: meta?.comfyClientId ?? null,
+    comfyBaseUrl: meta?.comfyBaseUrl ?? null,
+    totalNodes: meta?.totalNodes ?? null,
+    progressPercent: 0,
+    progressUpdatedAt: now,
     fileName: null,
     kind: null,
     error: null,
