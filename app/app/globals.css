@@ -1350,4 +1350,47 @@ nav [data-otg-build-badge]{
 /* Voices upload helper */
 .otg-fileInputHidden { display: none !important; }
 
+/* OTG_BUTTON_TEXT_CONTRAST_PATCH_START */
+/*
+  Fix: button text must remain readable on dark/purple OTG buttons.
 
+  Scope:
+  - Native buttons
+  - role=button elements
+  - common button-like links/classes
+  - disabled buttons, which were rendering dark/black text
+
+  This intentionally does not affect inputs, textareas, selects, or form field text.
+*/
+button,
+button *,
+[role="button"],
+[role="button"] *,
+a[class*="button"],
+a[class*="button"] *,
+[class*="Button"],
+[class*="Button"] *,
+.btn,
+.btn * {
+  color: #f8fafc !important;
+}
+
+button:disabled,
+button[disabled],
+button[aria-disabled="true"],
+[role="button"][aria-disabled="true"],
+[class*="Button"][aria-disabled="true"],
+.btn:disabled,
+.btn[disabled] {
+  color: #f8fafc !important;
+  -webkit-text-fill-color: #f8fafc !important;
+}
+
+button svg,
+[role="button"] svg,
+[class*="Button"] svg,
+.btn svg {
+  color: currentColor !important;
+  stroke: currentColor !important;
+}
+/* OTG_BUTTON_TEXT_CONTRAST_PATCH_END */

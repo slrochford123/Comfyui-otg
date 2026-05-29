@@ -734,6 +734,211 @@ function dedupeResolvedVideos(items: ResolvedVideo[]) {
   return out;
 }
 
+
+// OTG_PRODUCTION_ASSEMBLE_BACKGROUND_AUDIO_STITCH_V1_START
+function productionAudioExt(value: string) {
+  const match = String(value || "").match(/\.(mp3|wav|m4a|aac|ogg|flac|webm)(?:$|[?#])/i);
+  return match ? `.${match[1].toLowerCase()}` : ".mp3";
+}
+
+function productionBackgroundAudioConfig(body: any) {
+  const raw = body?.backgroundAudio || body?.assembleBackgroundAudio || {};
+  const mode = String(raw?.mode || "keep").trim().toLowerCase();
+
+  return {
+    mode: ["keep", "remove", "replace", "mix"].includes(mode) ? mode : "keep",
+    audioPath: String(raw?.audioPath || raw?.path || raw?.filePath || "").trim(),
+    audioUrl: String(raw?.audioUrl || raw?.url || raw?.fileUrl || "").trim(),
+    fileName: String(raw?.fileName || raw?.filename || raw?.name || "").trim(),
+    volume: Math.max(0, Math.min(1.5, Number(raw?.volume ?? 0.28) || 0)),
+    originalVolume: Math.max(0, Math.min(1.5, Number(raw?.originalVolume ?? 1) || 0)),
+    loop: raw?.loop !== false,
+  };
+}
+
+function productionPathFromFileUrl(value: string) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  try {
+    const parsed = raw.startsWith("http://") || raw.startsWith("https://")
+      ? new URL(raw)
+      : new URL(raw, "http://otg.local");
+
+    if (parsed.pathname !== "/api/file") return "";
+    return String(parsed.searchParams.get("path") || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+async function fetchProductionBackgroundAudioToFile(req: NextRequest, urlValue: string, outputDir: string) {
+  const raw = String(urlValue || "").trim();
+  if (!raw) return "";
+
+  const absoluteUrl = raw.startsWith("http://") || raw.startsWith("https://")
+    ? raw
+    : new URL(raw, req.nextUrl.origin).toString();
+
+  const response = await fetch(absoluteUrl, {
+    method: "GET",
+    cache: "no-store",
+    headers: {
+      cookie: req.headers.get("cookie") || "",
+    },
+  });
+
+  if (!response.ok) return "";
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length) return "";
+
+  const ext = productionAudioExt(raw);
+  const audioPath = path.join(outputDir, `background_audio_input_${Date.now()}${ext}`);
+  await fs.writeFile(audioPath, bytes);
+  return audioPath;
+}
+
+async function resolveProductionBackgroundAudio(req: NextRequest, config: ReturnType<typeof productionBackgroundAudioConfig>, outputDir: string) {
+  const candidates = [config.audioPath, productionPathFromFileUrl(config.audioUrl)]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (path.isAbsolute(candidate) && fssync.existsSync(candidate)) return path.normalize(candidate);
+  }
+
+  if (config.audioUrl) {
+    const downloaded = await fetchProductionBackgroundAudioToFile(req, config.audioUrl, outputDir);
+    if (downloaded) return downloaded;
+  }
+
+  if (config.fileName) {
+    const downloaded = await fetchProductionBackgroundAudioToFile(req, `/api/gallery/file?name=${encodeURIComponent(config.fileName)}`, outputDir);
+    if (downloaded) return downloaded;
+  }
+
+  return "";
+}
+
+async function applyProductionAssembleBackgroundAudio(req: NextRequest, body: any, inputVideoPath: string, outputDir: string) {
+  const config = productionBackgroundAudioConfig(body);
+
+  if (config.mode === "keep") {
+    return {
+      videoPath: inputVideoPath,
+      videoUrl: fileUrlFor(inputVideoPath),
+      backgroundAudio: { mode: "keep", applied: false },
+    };
+  }
+
+  const finalPath = path.join(outputDir, `stitched_audio_${Date.now()}.mp4`);
+
+  if (config.mode === "remove") {
+    await runFfmpeg(["-y", "-i", inputVideoPath, "-map", "0:v:0", "-c:v", "copy", "-an", finalPath]);
+    return {
+      videoPath: finalPath,
+      videoUrl: fileUrlFor(finalPath),
+      backgroundAudio: { mode: "remove", applied: true },
+    };
+  }
+
+  const audioPath = await resolveProductionBackgroundAudio(req, config, outputDir);
+  if (!audioPath) throw new Error("Background audio mode requires an uploaded, generated, sampled, or gallery audio source.");
+
+  const loopArgs = config.loop ? ["-stream_loop", "-1"] : [];
+
+  if (config.mode === "replace") {
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inputVideoPath,
+      ...loopArgs,
+      "-i",
+      audioPath,
+      "-map",
+      "0:v:0",
+      "-map",
+      "1:a:0",
+      "-shortest",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      finalPath,
+    ]);
+
+    return {
+      videoPath: finalPath,
+      videoUrl: fileUrlFor(finalPath),
+      backgroundAudio: { mode: "replace", applied: true, audioPath },
+    };
+  }
+
+  try {
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inputVideoPath,
+      ...loopArgs,
+      "-i",
+      audioPath,
+      "-filter_complex",
+      `[0:a]volume=${config.originalVolume}[a0];[1:a]volume=${config.volume}[a1];[a0][a1]amix=inputs=2:duration=first:dropout_transition=2[a]`,
+      "-map",
+      "0:v:0",
+      "-map",
+      "[a]",
+      "-shortest",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      finalPath,
+    ]);
+  } catch {
+    await runFfmpeg([
+      "-y",
+      "-i",
+      inputVideoPath,
+      ...loopArgs,
+      "-i",
+      audioPath,
+      "-filter_complex",
+      `[1:a]volume=${config.volume}[a]`,
+      "-map",
+      "0:v:0",
+      "-map",
+      "[a]",
+      "-shortest",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      finalPath,
+    ]);
+  }
+
+  return {
+    videoPath: finalPath,
+    videoUrl: fileUrlFor(finalPath),
+    backgroundAudio: {
+      mode: "mix",
+      applied: true,
+      audioPath,
+      volume: config.volume,
+      originalVolume: config.originalVolume,
+    },
+  };
+}
+// OTG_PRODUCTION_ASSEMBLE_BACKGROUND_AUDIO_STITCH_V1_END
+
 export async function POST(req: NextRequest) {
   if (!isProductionFeatureEnabled()) return productionDisabledResponse();
 
@@ -871,13 +1076,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Stitch failed: output file was not created." }, { status: 500 });
     }
 
+    const finalOutput = await applyProductionAssembleBackgroundAudio(req, body, outputPath, outputDir);
+
     return NextResponse.json({
       ok: true,
-      videoPath: outputPath,
-      videoUrl: fileUrlFor(outputPath),
+      videoPath: finalOutput.videoPath,
+      videoUrl: finalOutput.videoUrl,
       sceneCount: orderedVideos.length,
       receivedScenes: scenes.length,
       resolvedScenes: orderedVideos.length,
+      backgroundAudio: finalOutput.backgroundAudio,
       transitionsApplied: renderedTransitionCount,
       transitionTypes: activeTransitions.map((transition) => transition.type),
       exportPreset,

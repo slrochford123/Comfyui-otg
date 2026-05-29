@@ -5,6 +5,18 @@ import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
 import type { GalleryActionKind } from "./components/GalleryWorkspace";
+import {
+  APP_COLOR_MODE_KEY,
+  APP_CUSTOM_COLOR_KEY,
+  APP_THEME_KEY,
+  APP_THEME_OPTIONS,
+  DEFAULT_CUSTOM_COLOR,
+  generateThemeFromColor,
+  resolveThemeBaseColor,
+  themeTokensToCssVars,
+  type AppColorMode,
+  type AppThemeId,
+} from "@/lib/appTheme";
 import "./components/ProductionAnimateModeSwitch";
 import "./components/ProductionDirectorModeUI";
 
@@ -81,7 +93,6 @@ type GalleryItem = {
 };
 
 type GalleryViewMode = "default" | "grid" | "list";
-type AppThemeId = "midnight" | "violet" | "ocean" | "ember" | "forest";
 type AppFontScale = "small" | "normal" | "large" | "xl";
 type AppUiMode = "clean" | "classic";
 
@@ -103,8 +114,15 @@ type SceneReferenceSlotKey = "char1" | "char2" | "char3" | "bg";
 type SceneCharacterPickerItem = {
   id: string;
   name: string;
+
+  // Display image shown in the chooser tile.
   imagePath: string;
   imageUrl: string;
+
+  // Image actually applied to Production scene slots.
+  // This must be the saved multi-angle character card/reference sheet.
+  referenceImagePath: string;
+  referenceImageUrl: string;
 };
 
 type SceneReferenceSlotStatus = "idle" | "running" | "done";
@@ -199,13 +217,6 @@ type PromptAssessment = {
   summary: string;
 };
 
-type ImportedCharacterDraft = {
-  token: string;
-  imagePath: string;
-  imageUrl: string;
-  imageName: string;
-};
-
 type ViewerCollection = "gallery" | "favorites";
 
 type ViewerState = {
@@ -242,70 +253,11 @@ type ExtendModalState = {
 
 const APP_STATE_KEY = "otg:test:page-state:v1";
 const PRODUCTION_FEATURE_ENABLED = process.env.NEXT_PUBLIC_OTG_ENABLE_PRODUCTION === "1";
-const APP_THEME_KEY = "otg:test:theme:v1";
 const APP_FONT_SCALE_KEY = "otg:test:font-scale:v1";
 const APP_UI_MODE_KEY = "otg:test:ui-mode:v1";
 const APP_USER_CACHE_KEY = "otg:test:last-user:v1";
 const APP_NOTIFICATION_HISTORY_KEY = "otg:test:android-notified-completions:v1";
 const APP_NOTIFICATION_CHANNEL_ID = "otg-generation-complete";
-
-type AppThemeOption = {
-  id: AppThemeId;
-  label: string;
-  description: string;
-  background: string;
-  accent: string;
-  accentSoft: string;
-  panel: string;
-};
-
-const APP_THEME_OPTIONS: AppThemeOption[] = [
-  {
-    id: "midnight",
-    label: "Midnight",
-    description: "Default dark blue/purple OTG shell.",
-    background: "radial-gradient(circle at top left, rgba(87, 72, 255, 0.18), transparent 34%), radial-gradient(circle at top right, rgba(0, 225, 255, 0.10), transparent 30%), #05060b",
-    accent: "#8b5cf6",
-    accentSoft: "rgba(139, 92, 246, 0.18)",
-    panel: "rgba(0, 0, 0, 0.45)",
-  },
-  {
-    id: "violet",
-    label: "Violet Neon",
-    description: "Brighter purple/blue control accents.",
-    background: "radial-gradient(circle at top left, rgba(168, 85, 247, 0.24), transparent 34%), radial-gradient(circle at bottom right, rgba(56, 189, 248, 0.16), transparent 32%), #070313",
-    accent: "#c084fc",
-    accentSoft: "rgba(192, 132, 252, 0.20)",
-    panel: "rgba(18, 7, 35, 0.60)",
-  },
-  {
-    id: "ocean",
-    label: "Ocean Blue",
-    description: "Cool cyan/blue app shell.",
-    background: "radial-gradient(circle at top left, rgba(14, 165, 233, 0.22), transparent 34%), radial-gradient(circle at bottom right, rgba(45, 212, 191, 0.13), transparent 34%), #031018",
-    accent: "#38bdf8",
-    accentSoft: "rgba(56, 189, 248, 0.18)",
-    panel: "rgba(2, 20, 31, 0.62)",
-  },
-  {
-    id: "ember",
-    label: "Ember",
-    description: "Warm orange/red accents for higher contrast.",
-    background: "radial-gradient(circle at top left, rgba(249, 115, 22, 0.22), transparent 34%), radial-gradient(circle at bottom right, rgba(244, 63, 94, 0.13), transparent 34%), #120704",
-    accent: "#fb923c",
-    accentSoft: "rgba(251, 146, 60, 0.18)",
-    panel: "rgba(31, 10, 4, 0.62)",
-  },
-  {
-    id: "forest",
-    label: "Forest",
-    description: "Green/teal app shell.",
-    background: "radial-gradient(circle at top left, rgba(34, 197, 94, 0.18), transparent 34%), radial-gradient(circle at bottom right, rgba(20, 184, 166, 0.12), transparent 34%), #04110a",
-    accent: "#34d399",
-    accentSoft: "rgba(52, 211, 153, 0.16)",
-    panel: "rgba(3, 24, 13, 0.62)",
-  },
-];
 
 const APP_FONT_SCALE_OPTIONS: { id: AppFontScale; label: string; rootSize: string; description: string }[] = [
   { id: "small", label: "Small", rootSize: "14px", description: "More content on screen." },
@@ -1277,8 +1229,6 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [generateGalleryLoading, setGenerateGalleryLoading] = useState(false);
   const [generateGalleryError, setGenerateGalleryError] = useState("");
   const [generateGallerySelecting, setGenerateGallerySelecting] = useState("");
-  const [createCharacterBusy, setCreateCharacterBusy] = useState(false);
-  const [characterImportDraft, setCharacterImportDraft] = useState<ImportedCharacterDraft | null>(null);
   const [gpuTarget, setGpuTarget] = useState(GPU_OPTIONS[0].value);
   const [enhancing, setEnhancing] = useState(false);
   const [formattingPrompt, setFormattingPrompt] = useState(false);
@@ -1293,7 +1243,9 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [settingsPipelineBusy, setSettingsPipelineBusy] = useState(false);
   const [settingsPipelineMessage, setSettingsPipelineMessage] = useState("");
   const [settingsLocalMessage, setSettingsLocalMessage] = useState("");
-  const [appThemeId, setAppThemeId] = useState<AppThemeId>("midnight");
+  const [appThemeId, setAppThemeId] = useState<AppThemeId>("purple");
+  const [appColorMode, setAppColorMode] = useState<AppColorMode>("dark");
+  const [appCustomColor, setAppCustomColor] = useState(DEFAULT_CUSTOM_COLOR);
   const [appFontScale, setAppFontScale] = useState<AppFontScale>("normal");
   const [appUiMode, setAppUiMode] = useState<AppUiMode>("clean");
   const [settingsAppearanceMessage, setSettingsAppearanceMessage] = useState("");
@@ -1332,7 +1284,12 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [latestPreviewKind, setLatestPreviewKind] = useState<"image" | "video" | "">("");
   const [latestPreviewMeta, setLatestPreviewMeta] = useState<{ width: number; height: number } | null>(null);
   const latestPreviewIdentityRef = useRef("");
-  const selectedAppTheme = APP_THEME_OPTIONS.find((theme) => theme.id === appThemeId) || APP_THEME_OPTIONS[0];
+  const selectedThemeBaseColor = resolveThemeBaseColor(appThemeId, appCustomColor);
+  const selectedThemeTokens = useMemo(
+    () => generateThemeFromColor(selectedThemeBaseColor, appColorMode),
+    [appColorMode, selectedThemeBaseColor]
+  );
+  const selectedThemeCssVars = useMemo(() => themeTokensToCssVars(selectedThemeTokens), [selectedThemeTokens]);
   const selectedFontScale = APP_FONT_SCALE_OPTIONS.find((option) => option.id === appFontScale) || APP_FONT_SCALE_OPTIONS[1];
 
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
@@ -1667,7 +1624,7 @@ const activeGenerateStylePreset = useMemo(
     setGenerateGalleryError("");
 
     try {
-      const res = await fetch("/api/gallery?media=image&sort=newest&per=500", { cache: "no-store" });
+      const res = await fetch("/api/gallery?media=image&sort=newest&per=80", { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || data?.ok === false) {
@@ -1779,60 +1736,6 @@ const activeGenerateStylePreset = useMemo(
     },
     [generateGalleryPickerTarget, getGenerateGalleryItemName, updateGenerateInputPreview, updateLastFrameInputPreview]
   );
-
-const handleCreateCharacterFromGenerate = useCallback(async () => {
-    if (!latestPreviewUrl || latestPreviewKind !== "image") {
-      setStatusMessage("Generate a portrait image first.");
-      return;
-    }
-    if (!latestPreviewMeta || latestPreviewMeta.height <= latestPreviewMeta.width) {
-      setStatusMessage("Create Character only works with generated portrait images.");
-      return;
-    }
-
-    setCreateCharacterBusy(true);
-    setStatusMessage("Sending generated portrait to Characters...");
-    try {
-      const response = await fetch(latestPreviewUrl, {
-        cache: "no-store",
-        credentials: "include",
-      });
-      if (!response.ok) {
-        throw new Error(`Could not read the generated image (${response.status}).`);
-      }
-      const blob = await response.blob();
-      const filename = latestPreviewName || "generated-portrait.png";
-      const imageFile = new File([blob], filename, { type: blob.type || "image/png" });
-
-      const form = new FormData();
-      form.append("image", imageFile, imageFile.name);
-
-      const res = await fetch("/api/characters/upload", {
-        method: "POST",
-        credentials: "include",
-        headers: { "x-otg-device-id": "web_generate_character_import" },
-        body: form,
-      });
-      const data = await res.json().catch(() =>
-      null);
-      if (!res.ok || !data?.ok || !data?.serverPath) {
-        throw new Error(data?.error || `Character image upload failed (${res.status})`);
-      }
-      setCharacterImportDraft({
-        token: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        imagePath: String(data.serverPath),
-        imageUrl: String(data.fileUrl || ""),
-        imageName: String(data.filename || imageFile.name || "portrait image"),
-      });
-      setTab("characters");
-      setStatusMessage("Generated portrait sent to Characters. Finish the character record there.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Failed to send generated portrait to Characters.");
-    } finally {
-      setCreateCharacterBusy(false);
-    }
-  }, [latestPreviewKind, latestPreviewMeta, latestPreviewName, latestPreviewUrl]);
-
 
   const clearSceneReferenceAnalysis = useCallback((slot: SceneReferenceSlotKey) => {
     setSceneReferenceAnalyses((prev) => ({ ...prev, [slot]: "" }));
@@ -2122,9 +2025,27 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     }
 
     try {
-      const savedTheme = window.localStorage.getItem(APP_THEME_KEY) as AppThemeId | null;
-      if (savedTheme && APP_THEME_OPTIONS.some((theme) => theme.id === savedTheme)) {
-        setAppThemeId(savedTheme);
+      const legacyThemeMap: Record<string, AppThemeId> = {
+        midnight: "purple",
+        violet: "purple",
+        ocean: "blue",
+        ember: "red",
+        forest: "green",
+      };
+      const savedThemeRaw = window.localStorage.getItem(APP_THEME_KEY) || window.localStorage.getItem("otg:test:theme:v1");
+      const savedTheme = savedThemeRaw ? legacyThemeMap[savedThemeRaw] || savedThemeRaw : "";
+      if (APP_THEME_OPTIONS.some((theme) => theme.id === savedTheme)) {
+        setAppThemeId(savedTheme as AppThemeId);
+      }
+
+      const savedColorMode = window.localStorage.getItem(APP_COLOR_MODE_KEY) as AppColorMode | null;
+      if (savedColorMode === "light" || savedColorMode === "dark") {
+        setAppColorMode(savedColorMode);
+      }
+
+      const savedCustomColor = window.localStorage.getItem(APP_CUSTOM_COLOR_KEY);
+      if (savedCustomColor && /^#[0-9a-f]{6}$/i.test(savedCustomColor)) {
+        setAppCustomColor(savedCustomColor);
       }
 
       const savedFontScale = window.localStorage.getItem(APP_FONT_SCALE_KEY) as AppFontScale | null;
@@ -2206,20 +2127,25 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     if (typeof document === "undefined") return;
 
     const root = document.documentElement;
-    root.style.setProperty("--otg-accent", selectedAppTheme.accent);
-    root.style.setProperty("--otg-accent-soft", selectedAppTheme.accentSoft);
-    root.style.setProperty("--otg-panel", selectedAppTheme.panel);
+    Object.entries(selectedThemeCssVars).forEach(([name, value]) => {
+      root.style.setProperty(name, value);
+    });
     root.style.fontSize = selectedFontScale.rootSize;
+    root.style.colorScheme = appColorMode;
+    root.dataset.otgTheme = appThemeId;
+    root.dataset.otgColorMode = appColorMode;
     root.dataset.otgUiMode = appUiMode;
 
     try {
       window.localStorage.setItem(APP_THEME_KEY, appThemeId);
+      window.localStorage.setItem(APP_COLOR_MODE_KEY, appColorMode);
+      window.localStorage.setItem(APP_CUSTOM_COLOR_KEY, appCustomColor);
       window.localStorage.setItem(APP_FONT_SCALE_KEY, appFontScale);
       window.localStorage.setItem(APP_UI_MODE_KEY, appUiMode);
     } catch {
       // ignore
     }
-  }, [appThemeId, appFontScale, appUiMode, selectedAppTheme.accent, selectedAppTheme.accentSoft, selectedAppTheme.panel, selectedFontScale.rootSize]);
+  }, [appColorMode, appCustomColor, appThemeId, appFontScale, appUiMode, selectedFontScale.rootSize, selectedThemeCssVars]);
 
   useEffect(() => {
     return () => {
@@ -2252,7 +2178,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       const params = new URLSearchParams();
       params.set("sort", gallerySort);
       params.set("filter", galleryFilter);
-      params.set("per", "5000");
+      params.set("per", "80");
       if (gallerySearchQuery) params.set("search", gallerySearchQuery);
 
       const res = await fetch(`/api/gallery?${params.toString()}`, {
@@ -2339,7 +2265,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ forcePull: true, limit: 5000 }),
+        body: JSON.stringify({ forcePull: true, limit: 500 }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -2546,7 +2472,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     };
   }, [latestPreviewKind, latestPreviewUrl]);
 
-  const refreshProgress = useCallback(async () => {
+  const refreshProgress = useCallback(async (): Promise<"idle" | "running" | "complete" | "error" | null> => {
     try {
       const res = await fetch("/api/progress", {
         cache: "no-store",
@@ -2584,14 +2510,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         refreshedCompletePromptRef.current = "";
         setProgressStatus("error");
         setProgressPercent(nextPercent || 100);
-        return;
+        return "error";
       }
 
       if (running) {
         refreshedCompletePromptRef.current = "";
         setProgressStatus("running");
         setProgressPercent(nextPercent);
-        return;
+        return "running";
       }
 
       if (nextStatus === "complete") {
@@ -2608,7 +2534,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
             kind: latestPreviewKind,
           });
         }
-        return;
+        return "complete";
       }
 
       refreshedCompletePromptRef.current = "";
@@ -2622,8 +2548,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         currentNodeId: "",
         currentNodeProgress: "",
       });
+      return "idle";
     } catch {
       // ignore
+      return null;
     }
   }, [refreshLatestContent]);
 
@@ -2634,25 +2562,19 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       if (cancelled) return;
 
       await refreshProgress().catch(() => null);
-
-      if (cancelled) return;
-
-      if (tab === "generate") {
-        await refreshLatestContent().catch(() => null);
-      }
     };
 
     void tick();
 
     const timer = window.setInterval(() => {
       void tick();
-    }, 3000);
+    }, progressStatus === "running" ? 3000 : 15000);
 
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [tab, refreshProgress, refreshLatestContent]);
+  }, [progressStatus, refreshProgress]);
 
   useEffect(() => {
     if (tab !== "gallery" && tab !== "favorites") return;
@@ -2682,37 +2604,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       window.clearInterval(timer);
     };
   }, [tab, viewerState, loadGallery, loadFavorites]);
-
-  useEffect(() => {
-    if (tab !== "gallery" && tab !== "favorites") return;
-
-    let cancelled = false;
-
-    const runBackfill = async () => {
-      await fetch("/api/gallery/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ limit: 8 }),
-      }).catch(() => null);
-
-      if (cancelled) return;
-
-      if (tab === "gallery") {
-        await loadGallery().catch(() => null);
-      }
-
-      if (tab === "favorites") {
-        await loadFavorites().catch(() => null);
-      }
-    };
-
-    void runBackfill();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [tab, loadGallery, loadFavorites]);
+  // Auto gallery sync disabled for mobile startup performance.
+  // Manual gallery/content refresh still works from explicit user actions.
 
   const enhancePromptText = useCallback(async (
     inputText: string,
@@ -2822,9 +2715,17 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         currentNodeProgress: "",
       });
       refreshedCompletePromptRef.current = "";
-      await Promise.all([refreshProgress(), loadGallery(), loadFavorites()]);
+      await refreshProgress();
+
+      if (tab === "gallery") {
+        await loadGallery();
+      }
+
+      if (tab === "favorites") {
+        await loadFavorites();
+      }
     },
-    [loadFavorites, loadGallery, refreshProgress]
+    [loadFavorites, loadGallery, refreshProgress, tab]
   );
 
   const fetchGalleryItemAsFile = useCallback(async (item: GalleryItem, fallbackBaseName: string) => {
@@ -3363,71 +3264,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
 
   async function handleGalleryCreateCharacter(item: GalleryItem) {
-    const name = getGalleryItemKey(item);
-    if (!name) {
-      setStatusMessage("Missing gallery image name.");
-      return;
-    }
-    if (!isSupportedCharacterGalleryImage(name, item)) {
-      setStatusMessage("Characters can only use Gallery images, not videos.");
-      return;
-    }
-    if (!canStartGalleryAction()) return;
-
-    beginGalleryAction(name, "character-import");
-    setStatusMessage("Checking Gallery image for portrait character import...");
-    try {
-      const fileUrl = galleryOriginalFileUrl(item) || String(item.url || "");
-      if (!fileUrl) {
-        throw new Error("Could not resolve the Gallery image file.");
-      }
-
-      const response = await fetch(fileUrl, {
-        cache: "no-store",
-        credentials: "include",
-      });
-      if (!response.ok) {
-        throw new Error(`Could not read the Gallery image (${response.status}).`);
-      }
-
-      const blob = await response.blob();
-      if (!String(blob.type || "").startsWith("image/")) {
-        throw new Error("Characters can only use image files, not videos.");
-      }
-
-      const dimensions = await readGalleryImageDimensionsFromBlob(blob);
-      if (dimensions.height <= dimensions.width) {
-        throw new Error("Characters requires a portrait image. Choose an image where height is greater than width.");
-      }
-
-      const imageFile = new File([blob], name || "gallery-portrait.png", { type: blob.type || "image/png" });
-      const form = new FormData();
-      form.append("image", imageFile, imageFile.name);
-
-      const res = await fetch("/api/characters/upload", {
-        method: "POST",
-        credentials: "include",
-        headers: { "x-otg-device-id": "web_gallery_character_import" },
-        body: form,
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.ok || !data?.serverPath) {
-        throw new Error(data?.error || `Character image upload failed (${res.status})`);
-      }
-
-      setCharacterImportDraft({
-        token: `gallery_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        imagePath: String(data.serverPath),
-        imageUrl: String(data.fileUrl || ""),
-        imageName: String(data.filename || imageFile.name || "gallery portrait image"),
-      });
-      setTab("characters");
-      setStatusMessage("Gallery portrait sent to Characters. Finish the character record there.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Failed to send Gallery portrait to Characters.");
-    } finally {
-      finishGalleryAction();
-    }
+    void item;
+    setStatusMessage("Characters are created from the Characters tab.");
+    setTab("characters");
   }
 
   async function handleGalleryDownload(item: GalleryItem) {
@@ -4446,6 +4285,21 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     setSettingsAppearanceMessage(`Theme changed to ${label}.`);
   }
 
+  function handleColorModeChange(nextColorMode: AppColorMode) {
+    setAppColorMode(nextColorMode);
+    setSettingsAppearanceMessage(`${nextColorMode === "dark" ? "Dark" : "Light"} mode enabled.`);
+  }
+
+  function toggleColorMode() {
+    handleColorModeChange(appColorMode === "dark" ? "light" : "dark");
+  }
+
+  function handleCustomColorChange(nextColor: string) {
+    setAppCustomColor(nextColor);
+    setAppThemeId("custom");
+    setSettingsAppearanceMessage("Custom theme color applied.");
+  }
+
   function handleFontScaleChange(nextFontScale: AppFontScale) {
     setAppFontScale(nextFontScale);
     const label = APP_FONT_SCALE_OPTIONS.find((option) => option.id === nextFontScale)?.label || "selected";
@@ -4819,7 +4673,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }
 
   function sceneCharacterFileName(item: SceneCharacterPickerItem, mime: string) {
-    const source = item.imagePath || item.name || "character";
+    const source = item.referenceImagePath || item.imagePath || item.name || "character";
     const base =
       String(item.name || source.split(/[\\/]/).pop() || "character")
         .replace(/\.[^.]+$/, "")
@@ -4843,50 +4697,106 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     setSceneCharacterPickerError("");
 
     try {
-      const res = await fetch("/api/characters", {
-        cache: "no-store",
-        credentials: "include",
-      });
+      const fetchAttempts: Array<RequestInit & { label: string }> = [
+        {
+          label: "characters-device",
+          cache: "no-store",
+          credentials: "omit",
+          headers: { "x-otg-device-id": "web_characters_builder" },
+        },
+        {
+          label: "omit-no-device",
+          cache: "no-store",
+          credentials: "omit",
+        },
+        {
+          label: "include-session",
+          cache: "no-store",
+          credentials: "include",
+        },
+      ];
 
-      const data = await res.json().catch(() => ({}));
+      let raw: any[] = [];
+      let lastError = "";
 
-      if (!res.ok) {
-        throw new Error(typeof data?.error === "string" ? data.error : `Character load failed (${res.status})`);
+      for (const attempt of fetchAttempts) {
+        try {
+          const { label, ...fetchOptions } = attempt;
+          const res = await fetch("/api/characters", fetchOptions);
+          const data = await res.json().catch(() => ({}));
+
+          if (!res.ok) {
+            lastError = typeof data?.error === "string" ? data.error : `Character load failed (${res.status})`;
+            continue;
+          }
+
+          const nextRaw: any[] = Array.isArray(data)
+            ? data
+            : Array.isArray(data?.characters)
+              ? data.characters
+              : Array.isArray(data?.items)
+                ? data.items
+                : [];
+
+          if (nextRaw.length) {
+            raw = nextRaw;
+            break;
+          }
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : "Character load failed.";
+        }
       }
-
-      const raw: any[] = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.characters)
-          ? data.characters
-          : Array.isArray(data?.items)
-            ? data.items
-            : [];
 
       const seen = new Set<string>();
 
       const items: SceneCharacterPickerItem[] = raw
         .map((entry: any, index: number) => {
-          const imagePath = String(entry?.imagePath || "").trim();
           const name = String(entry?.name || entry?.title || entry?.label || `Character ${index + 1}`).trim();
 
+          const displayImagePath = String(
+            entry?.previewImagePath ||
+              entry?.fullBodyImagePath ||
+              entry?.imagePath ||
+              entry?.characterCardPath ||
+              entry?.cardImagePath ||
+              entry?.characterCardImagePath ||
+              ""
+          ).trim();
+
+          const referenceImagePath = String(
+            entry?.characterCardPath ||
+              entry?.cardImagePath ||
+              entry?.characterCardImagePath ||
+              entry?.referenceCardPath ||
+              ""
+          ).trim();
+
           return {
-            id: String(entry?.id || imagePath || name || index),
+            id: String(entry?.id || referenceImagePath || displayImagePath || name || index),
             name,
-            imagePath,
-            imageUrl: imagePath ? sceneCharacterImageUrl(imagePath) : "",
+            imagePath: displayImagePath,
+            imageUrl: displayImagePath ? sceneCharacterImageUrl(displayImagePath) : "",
+            referenceImagePath,
+            referenceImageUrl: referenceImagePath ? sceneCharacterImageUrl(referenceImagePath) : "",
           };
         })
         .filter((item) => {
           if (!item.imagePath || !item.imageUrl) return false;
-          if (seen.has(item.imagePath)) return false;
-          seen.add(item.imagePath);
+
+          const key = item.id || item.name || item.imagePath;
+          if (seen.has(key)) return false;
+          seen.add(key);
           return true;
         });
 
+      items.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
       setSceneCharacterPickerItems(items);
 
       if (!items.length) {
-        setSceneCharacterPickerError("No saved characters with images were found.");
+        setSceneCharacterPickerError(
+          lastError ||
+            "No saved characters with display images were found. Go to Characters, click Refresh, then save the character card again if needed."
+        );
       }
     } catch (error) {
       setSceneCharacterPickerItems([]);
@@ -4895,7 +4805,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setSceneCharacterPickerLoading(false);
     }
   }
-
   function openSceneCharacterPicker(slot: SceneReferenceSlotKey) {
     setSceneCharacterPickerSlot(slot);
     setSceneCharacterPickerError("");
@@ -4904,24 +4813,28 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }
 
   async function applySceneCharacterToReference(slot: SceneReferenceSlotKey, item: SceneCharacterPickerItem) {
-    if (!item.imageUrl) return;
+    if (!item.referenceImageUrl) {
+      setSceneCharacterPickerError(`${item.name} is missing a saved character card. Open Characters, regenerate/save the character card, then return to Production.`);
+      return;
+    }
 
     setSceneCharacterPickerSelectingId(item.id);
     setSceneCharacterPickerError("");
 
     try {
-      const res = await fetch(item.imageUrl, {
+      const res = await fetch(item.referenceImageUrl, {
         cache: "no-store",
-        credentials: "include",
+        credentials: "omit",
+        headers: { "x-otg-device-id": "web_characters_builder" },
       });
 
       if (!res.ok) {
-        throw new Error(`Could not load character image (${res.status}).`);
+        throw new Error(`Could not load character card reference image (${res.status}).`);
       }
 
       const blob = await res.blob();
       if (!String(blob.type || "").startsWith("image/")) {
-        throw new Error("Selected character file is not an image.");
+        throw new Error("Selected character card file is not an image.");
       }
 
       const file = new File([blob], sceneCharacterFileName(item, blob.type || "image/png"), {
@@ -4931,9 +4844,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setSceneReference(slot, file);
       setSceneCharacterPickerSlot(null);
       setSceneCharacterPickerSelectingId("");
-      setStatusMessage(`${item.name} selected for ${sceneReferenceSlotLabel(slot)}.`);
+      setStatusMessage(`${item.name} character card selected for ${sceneReferenceSlotLabel(slot)}.`);
     } catch (error) {
-      setSceneCharacterPickerError(error instanceof Error ? error.message : "Could not select character.");
+      setSceneCharacterPickerError(error instanceof Error ? error.message : "Could not select character card.");
     } finally {
       setSceneCharacterPickerSelectingId("");
     }
@@ -5125,6 +5038,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                 "Continuity Notes:",
                 "",
                 "Reference handling rules:",
+                "- Treat saved Production characters as character-card reference sheets when available: one image may contain multiple angles, close-ups, and full-body views of the same character.",
+                "- Use all views in the character card as one identity reference, not as multiple different people.",
                 "- Treat uploaded character images as identity anchors first: face, skin tone, age range, hair cues, build, and recognizable presence.",
                 "- Separate identity continuity from wardrobe continuity. Preserve identity first. Only preserve clothing and accessories when they are continuity-critical and not contradicted by the current scene request.",
                 "- If the scene request explicitly changes wardrobe, time period, church attire, age state, or styling, obey the scene request over the source image clothing.",
@@ -5372,10 +5287,17 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }
 
   const activeTabLabel = APP_TAB_LABELS[tab] || "OTG";
-  const appShellBackground = appUiMode === "clean" ? "#08090d" : selectedAppTheme.background;
+  const appShellBackground = selectedThemeTokens.background;
 
   return (
-    <main className="min-h-screen text-white transition-[background] duration-300" style={{ background: appShellBackground }} data-otg-theme={appThemeId} data-otg-font-scale={appFontScale} data-otg-ui-mode={appUiMode}>
+    <main
+      className="min-h-screen text-white transition-[background] duration-300"
+      style={{ background: appShellBackground, ...selectedThemeCssVars } as React.CSSProperties}
+      data-otg-theme={appThemeId}
+      data-otg-color-mode={appColorMode}
+      data-otg-font-scale={appFontScale}
+      data-otg-ui-mode={appUiMode}
+    >
       <div className={cn("pointer-events-none fixed inset-0 z-0", appUiMode === "clean" ? "hidden" : "")}>
         <div className="absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_center,rgba(80,120,255,0.18),rgba(120,60,255,0.10),transparent_62%)]" />
       </div>
@@ -5393,6 +5315,16 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={toggleColorMode}
+                className="otg-themeSwitch"
+                aria-pressed={appColorMode === "dark"}
+                title="Toggle light and dark mode"
+              >
+                <span className="otg-themeSwitchKnob" />
+                <span>{appColorMode === "dark" ? "Dark" : "Light"}</span>
+              </button>
               <button
                 type="button"
                 onClick={() => handleUiModeChange(appUiMode === "clean" ? "classic" : "clean")}
@@ -5426,9 +5358,21 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       {appUiMode === "classic" ? (
       <div className="pointer-events-none fixed right-3 top-4 z-30 md:right-5 md:top-5">
-        <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-2 text-sm font-semibold text-white shadow-[0_0_20px_rgba(0,0,0,0.35)]">
-          <span className={cn("inline-block h-2.5 w-2.5 rounded-full", connected ? "bg-green-400" : "bg-red-400")} />
-          <span>{connected ? "Connected" : "Disconnected"}</span>
+        <div className="pointer-events-auto inline-flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleColorMode}
+            className="otg-themeSwitch"
+            aria-pressed={appColorMode === "dark"}
+            title="Toggle light and dark mode"
+          >
+            <span className="otg-themeSwitchKnob" />
+            <span>{appColorMode === "dark" ? "Dark" : "Light"}</span>
+          </button>
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-2 text-sm font-semibold text-white shadow-[0_0_20px_rgba(0,0,0,0.35)]">
+            <span className={cn("inline-block h-2.5 w-2.5 rounded-full", connected ? "bg-green-400" : "bg-red-400")} />
+            <span>{connected ? "Connected" : "Disconnected"}</span>
+          </div>
         </div>
       </div>
       ) : null}
@@ -6146,24 +6090,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                       {latestPreviewKind === "image" && latestPreviewMeta
                         ? `Generated image: ${latestPreviewMeta.width} x ${latestPreviewMeta.height}${latestPreviewMeta.height > latestPreviewMeta.width ? " - portrait" : " - landscape"}`
                         : latestPreviewKind === "video"
-                          ? "Create Character works only with generated portrait images."
-                          : "Create Character works only with generated portrait images."}
+                          ? "Characters are created from the Characters tab."
+                          : "Characters are created from the Characters tab."}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <ActionButton
-                      onClick={() => void handleCreateCharacterFromGenerate()}
-                      disabled={
-                        createCharacterBusy ||
-                        progressStatus === "running" ||
-                        latestPreviewKind !== "image" ||
-                        !latestPreviewUrl ||
-                        !latestPreviewMeta ||
-                        latestPreviewMeta.height <= latestPreviewMeta.width
-                      }
-                    >
-                      {createCharacterBusy ? "Sending..." : "Create Character"}
-                    </ActionButton>
+                    <GhostButton onClick={() => setTab("characters")}>
+                      Open Characters tab
+                    </GhostButton>
                     <GhostButton onClick={() => void refreshLatestContent(true)} disabled={progressStatus === "running"}>
                       Refresh preview
                     </GhostButton>
@@ -6857,7 +6791,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                         Choose Character for {sceneReferenceSlotLabel(sceneCharacterPickerSlot)}
                       </h3>
                       <p className="text-sm text-white/55">
-                        Uses saved Characters tab images and applies the selected image to this Scene Creator reference slot.
+                        Shows saved Characters tab thumbnails. Selecting a character applies its saved multi-angle character card to this Scene Creator reference slot.
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -6893,7 +6827,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                           key={item.id}
                           type="button"
                           onClick={() => void applySceneCharacterToReference(sceneCharacterPickerSlot, item)}
-                          disabled={Boolean(sceneCharacterPickerSelectingId)}
+                          disabled={Boolean(sceneCharacterPickerSelectingId) || !item.referenceImageUrl}
                           className="group overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] text-left transition hover:border-cyan-300/40 hover:bg-white/[0.07] disabled:cursor-wait disabled:opacity-60"
                         >
                           <div className="aspect-square bg-black/45">
@@ -6906,6 +6840,11 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                           </div>
                           <div className="border-t border-white/10 px-3 py-2">
                             <div className="truncate text-xs font-semibold text-white">{item.name}</div>
+                            {!item.referenceImageUrl ? (
+                              <div className="mt-1 text-[10px] font-semibold text-amber-300">Missing character card</div>
+                            ) : (
+                              <div className="mt-1 text-[10px] font-semibold text-cyan-200">Uses character card</div>
+                            )}
                             {sceneCharacterPickerSelectingId === item.id ? (
                               <div className="mt-1 text-[11px] text-cyan-200">Selecting...</div>
                             ) : null}
@@ -7219,7 +7158,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
         {tab === "angles" ? <AnglesPanel /> : null}
         {PRODUCTION_FEATURE_ENABLED && tab === "storyboard" ? <StoryboardPanel /> : null}
-        {tab === "characters" ? <CharactersPanel importedDraft={characterImportDraft} onImportedDraftConsumed={() => setCharacterImportDraft(null)} /> : null}
+        {tab === "characters" ? <CharactersPanel /> : null}
         {tab === "editvideo" ? <EditVideoPanel onRefreshGallery={() => void loadGallery()} /> : null}
 
         {tab === "support" ? <SupportPanel /> : null}
@@ -7233,8 +7172,42 @@ ${sceneReferenceCard || ""}`.toLowerCase();
             </div>
 
             <div className="grid gap-4 lg:grid-cols-2">
-              <Card title="Appearance">
+              <Card title="Themes">
                 <div className="space-y-5">
+                  <div className="rounded-[22px] border border-white/10 bg-black/35 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-white">Light and dark mode</p>
+                        <p className="mt-1 text-sm leading-6 text-white/60">Switches the entire app shell while keeping your selected theme color.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={toggleColorMode}
+                        className="otg-themeSwitch"
+                        aria-pressed={appColorMode === "dark"}
+                      >
+                        <span className="otg-themeSwitchKnob" />
+                        <span>{appColorMode === "dark" ? "Dark" : "Light"}</span>
+                      </button>
+                    </div>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      {(["dark", "light"] as AppColorMode[]).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => handleColorModeChange(mode)}
+                          className={cn(
+                            "rounded-[18px] border px-4 py-3 text-left transition",
+                            appColorMode === mode ? "border-cyan-300/45 bg-cyan-500/12 text-white" : "border-white/10 bg-black/30 text-white/72 hover:bg-white/[0.06]"
+                          )}
+                        >
+                          <span className="block font-semibold">{mode === "dark" ? "Dark mode" : "Light mode"}</span>
+                          <span className="mt-1 block text-xs text-white/50">{mode === "dark" ? "Low-glare studio surfaces." : "Bright readable workspace surfaces."}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="rounded-[22px] border border-white/10 bg-black/35 p-4">
                     <p className="text-sm font-semibold text-white">Interface mode</p>
                     <p className="mt-1 text-sm leading-6 text-white/60">Use Clean for a simplified app shell, or switch back to Classic if you prefer the original layout.</p>
@@ -7259,29 +7232,68 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                   <div>
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-white">Theme color</p>
-                        <p className="mt-1 text-sm leading-6 text-white/60">Changes the app shell theme on this device. This is a local preference and does not affect other users.</p>
+                        <p className="text-sm font-semibold text-white">Theme palette</p>
+                        <p className="mt-1 text-sm leading-6 text-white/60">Choose a preset or generate a complementary palette from a custom color. This is saved on this device.</p>
                       </div>
-                      <div className="h-12 w-12 rounded-full border border-white/15" style={{ background: selectedAppTheme.accent }} aria-hidden="true" />
+                      <div className="h-12 w-12 rounded-full border border-white/15" style={{ background: selectedThemeTokens.primary }} aria-hidden="true" />
                     </div>
                     <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                      {APP_THEME_OPTIONS.map((theme) => (
-                        <button
-                          key={theme.id}
-                          type="button"
-                          onClick={() => handleThemeChange(theme.id)}
-                          className={cn(
-                            "rounded-[22px] border p-4 text-left transition",
-                            appThemeId === theme.id ? "border-white/35 bg-white/[0.10]" : "border-white/10 bg-black/35 hover:bg-white/[0.06]"
-                          )}
-                        >
-                          <span className="flex items-center gap-3">
-                            <span className="h-8 w-8 rounded-full border border-white/15" style={{ background: theme.accent }} aria-hidden="true" />
-                            <span className="font-semibold text-white">{theme.label}</span>
-                          </span>
-                          <span className="mt-2 block text-sm leading-5 text-white/58">{theme.description}</span>
-                        </button>
-                      ))}
+                      {APP_THEME_OPTIONS.map((theme) => {
+                        const themePreviewColor = theme.id === "custom" ? appCustomColor : theme.baseColor;
+                        const isSelectedTheme = appThemeId === theme.id;
+                        if (theme.id === "custom") {
+                          return (
+                            <div
+                              key={theme.id}
+                              className={cn(
+                                "rounded-[22px] border p-4 text-left transition",
+                                isSelectedTheme ? "border-white/35 bg-white/[0.10]" : "border-white/10 bg-black/35"
+                              )}
+                            >
+                              <div className="flex items-center gap-3">
+                                <span className="h-8 w-8 rounded-full border border-white/15" style={{ background: themePreviewColor }} aria-hidden="true" />
+                                <span className="font-semibold text-white">{theme.label}</span>
+                              </div>
+                              <p className="mt-2 text-sm leading-5 text-white/58">{theme.description}</p>
+                              <div className="mt-3 flex flex-wrap items-center gap-3">
+                                <input
+                                  type="color"
+                                  value={appCustomColor}
+                                  onChange={(event) => handleCustomColorChange(event.target.value)}
+                                  className="h-9 w-14 cursor-pointer rounded-lg border border-white/15 bg-transparent p-1"
+                                  aria-label="Choose custom theme color"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleThemeChange("custom")}
+                                  className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-2 text-xs font-black text-white/72 transition hover:bg-white/[0.10]"
+                                >
+                                  Apply custom
+                                </button>
+                                <span className="text-xs font-semibold text-white/55">{appCustomColor.toUpperCase()}</span>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <button
+                            key={theme.id}
+                            type="button"
+                            onClick={() => handleThemeChange(theme.id)}
+                            className={cn(
+                              "rounded-[22px] border p-4 text-left transition",
+                              isSelectedTheme ? "border-white/35 bg-white/[0.10]" : "border-white/10 bg-black/35 hover:bg-white/[0.06]"
+                            )}
+                          >
+                            <span className="flex items-center gap-3">
+                              <span className="h-8 w-8 rounded-full border border-white/15" style={{ background: themePreviewColor }} aria-hidden="true" />
+                              <span className="font-semibold text-white">{theme.label}</span>
+                            </span>
+                            <span className="mt-2 block text-sm leading-5 text-white/58">{theme.description}</span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -7508,7 +7520,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         onEdit={handleGalleryEdit}
         onAnimate={handleGalleryAnimate}
         onExtend={handleGalleryExtend}
-        onCreateCharacter={handleGalleryCreateCharacter}
         onDelete={handleGalleryDelete}
         onOpenViewer={openViewer}
         viewerState={viewerState}

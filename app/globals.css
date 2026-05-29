@@ -1,10 +1,31 @@
-﻿@import "tailwindcss";
+@import "tailwindcss";
 
 /* app/globals.css */
 /* Mobile-first dark UI with purple accent for ComfyUI OTG */
 
 :root{
   color-scheme: dark;
+
+  --color-primary:#8b5cf6;
+  --color-primary-hover:#a78bfa;
+  --color-primary-muted:rgba(139,92,246,.18);
+  --color-primary-border:rgba(139,92,246,.36);
+  --color-primary-foreground:#ffffff;
+  --color-background:#070912;
+  --color-surface:rgba(11,15,27,.76);
+  --color-surface-elevated:rgba(15,23,42,.92);
+  --color-card:rgba(8,13,24,.82);
+  --color-border:rgba(226,232,240,.13);
+  --color-text:#f8fafc;
+  --color-text-muted:rgba(226,232,240,.68);
+  --color-success:#34d399;
+  --color-warning:#fbbf24;
+  --color-error:#fb7185;
+  --color-info:#38bdf8;
+  --color-progress:#8b5cf6;
+  --color-status:#22d3ee;
+  --color-focus-ring:rgba(139,92,246,.48);
+  --color-shadow:0 18px 70px rgba(0,0,0,.42);
 
   --bg0:#07070b;
   --bg1:#0b0b12;
@@ -13,23 +34,23 @@
   --muted:rgba(244,244,247,.72);
   --muted2:rgba(244,244,247,.55);
 
-  --card:#0b0b12;
-  --card2:#101622;
+  --card:var(--color-card);
+  --card2:var(--color-surface-elevated);
 
-  --border:rgba(255,255,255,.10);
-  --border2:rgba(196,148,255,.20);
+  --border:var(--color-border);
+  --border2:var(--color-primary-border);
 
-  --shadow: 0 10px 40px rgba(0,0,0,.45);
+  --shadow: var(--color-shadow);
 
-  --purple:#a855f7;        /* accent */
-  --purple2:#7c3aed;       /* deep */
-  --purpleGlow: rgba(168,85,247,.25);
-  --cyan:#22d3ee;
-  --cyan2:#06b6d4;
+  --purple:var(--color-primary);        /* accent */
+  --purple2:var(--color-primary-hover);       /* deep */
+  --purpleGlow: var(--color-primary-muted);
+  --cyan:var(--color-info);
+  --cyan2:var(--color-status);
   --cyanGlow: rgba(34,211,238,.22);
-  --green:#22c55e;
-  --yellow:#fbbf24;
-  --red:#ef4444;
+  --green:var(--color-success);
+  --yellow:var(--color-warning);
+  --red:var(--color-error);
 
   --radius:18px;
 
@@ -43,10 +64,8 @@ body{
   /* Keep a stable base font size; we scale the app container below.
      Scaling body font-size alone doesn't affect many px-based UI sizes. */
   font-size: 16px;
-  background: radial-gradient(1200px 800px at 20% -10%, rgba(168,85,247,.18), transparent 60%),
-              radial-gradient(900px 700px at 90% 10%, rgba(124,58,237,.14), transparent 55%),
-              linear-gradient(180deg, var(--bg0), var(--bg1));
-  color:var(--ink);
+  background: var(--color-background);
+  color:var(--color-text);
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
 }
 
@@ -1390,7 +1409,7 @@ body{
 
 .otg-range{
   width: 100%;
-  accent-color: rgba(168,85,247,.95);
+  accent-color: var(--color-primary);
 }
 
 .otg-progressTrack{
@@ -1406,7 +1425,7 @@ body{
   height: 100%;
   width: 0%;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(168,85,247,.95), rgba(124,58,237,.95));
+  background: linear-gradient(90deg, var(--color-progress), var(--color-status));
   transition: width .2s ease;
 }
 
@@ -1433,8 +1452,8 @@ body{
 }
 
 .otg-toggle.on{
-  border-color: rgba(168,85,247,.35);
-  background: rgba(168,85,247,.15);
+  border-color: var(--color-primary-border);
+  background: var(--color-primary-muted);
 }
 .otg-toggle.on::after{
   transform: translateX(20px);
@@ -1451,7 +1470,7 @@ html, body { height: 100%; }
 
 body.otg-app{
   /* keep existing colors but force our centered logo */
-  background-color: #05060c !important;
+  background-color: var(--color-background) !important;
   background-image: url("/bg-comfyui-otg.svg") !important;
   background-repeat: no-repeat !important;
   background-position: center center !important;
@@ -1482,21 +1501,22 @@ body.otg-app::before{
 
 /* Glass cards (optional look) */
 .otg-card{
-  background: rgba(10, 10, 18, .68) !important;
+  background: var(--color-card) !important;
   backdrop-filter: blur(14px) !important;
   -webkit-backdrop-filter: blur(14px) !important;
-  border: 1px solid rgba(168,85,247,.12) !important;
+  border: 1px solid var(--color-primary-border) !important;
 }
 
 /* Gradient primary button */
 .otg-btnPrimary, .otg-btn.otg-btnPrimary{
-  background: linear-gradient(135deg, rgba(168,85,247,1), rgba(34,211,238,1)) !important;
+  background: linear-gradient(135deg, var(--color-primary), var(--color-status)) !important;
   border: 0 !important;
+  color: var(--color-primary-foreground) !important;
 }
 
 /* Gradient accent for titles (if you use .otg-title) */
 .otg-titleGradient{
-  background: linear-gradient(90deg, rgba(168,85,247,1), rgba(34,211,238,1));
+  background: linear-gradient(90deg, var(--color-primary), var(--color-status));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -1570,7 +1590,7 @@ nav [data-otg-build-badge]{
   height: 100%;
   width: 0%;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(168,85,247,.95), rgba(34,211,238,.95));
+  background: linear-gradient(90deg, var(--color-progress), var(--color-status));
   transition: width 120ms linear;
 }
 /* --- Login card hero header (OTG) --- */
@@ -1580,14 +1600,112 @@ nav [data-otg-build-badge]{
 
 /* Clean UI mode: reversible minimalist shell for the main OTG app. */
 html[data-otg-ui-mode="clean"] body{
-  background:#08090d;
+  background:var(--color-background);
 }
 
 main[data-otg-ui-mode="clean"]{
-  --otg-clean-surface: rgba(255,255,255,.045);
-  --otg-clean-surface-strong: rgba(255,255,255,.07);
-  --otg-clean-border: rgba(255,255,255,.09);
-  --otg-clean-muted: rgba(255,255,255,.58);
+  --otg-clean-surface: var(--color-card);
+  --otg-clean-surface-strong: var(--color-surface-elevated);
+  --otg-clean-border: var(--color-border);
+  --otg-clean-muted: var(--color-text-muted);
+}
+
+main[data-otg-theme]{
+  color:var(--color-text);
+}
+
+main[data-otg-theme] .text-white{
+  color:var(--color-text) !important;
+}
+
+main[data-otg-theme] [class*="text-white/"]{
+  color:var(--color-text-muted) !important;
+}
+
+main[data-otg-theme] [class*="bg-[#08090d]"],
+main[data-otg-theme] [class*="bg-black/45"],
+main[data-otg-theme] [class*="bg-black/55"],
+main[data-otg-theme] [class*="bg-black/60"],
+main[data-otg-theme] [class*="bg-black/35"],
+main[data-otg-theme] [class*="bg-black/30"]{
+  background-color:var(--color-card) !important;
+}
+
+main[data-otg-theme] [class*="bg-white/[0.04]"],
+main[data-otg-theme] [class*="bg-white/[0.05]"],
+main[data-otg-theme] [class*="bg-white/[0.06]"],
+main[data-otg-theme] [class*="bg-white/[0.08]"],
+main[data-otg-theme] [class*="bg-white/[0.10]"]{
+  background-color:var(--color-surface) !important;
+}
+
+main[data-otg-theme] [class*="border-white/"]{
+  border-color:var(--color-border) !important;
+}
+
+main[data-otg-theme] [class*="text-cyan"],
+main[data-otg-theme] [class*="text-violet"],
+main[data-otg-theme] [class*="text-purple"],
+main[data-otg-theme] [class*="text-amber"]{
+  color:var(--color-primary) !important;
+}
+
+main[data-otg-theme] [class*="border-cyan"],
+main[data-otg-theme] [class*="border-violet"],
+main[data-otg-theme] [class*="border-purple"],
+main[data-otg-theme] [class*="border-amber"]{
+  border-color:var(--color-primary-border) !important;
+}
+
+main[data-otg-theme] [class*="bg-cyan"],
+main[data-otg-theme] [class*="bg-violet"],
+main[data-otg-theme] [class*="bg-purple"],
+main[data-otg-theme] [class*="bg-amber"]{
+  background-color:var(--color-primary-muted) !important;
+}
+
+main[data-otg-theme] input,
+main[data-otg-theme] textarea,
+main[data-otg-theme] select{
+  color:var(--color-text);
+  accent-color:var(--color-primary);
+}
+
+main[data-otg-theme] button:focus-visible,
+main[data-otg-theme] input:focus-visible,
+main[data-otg-theme] textarea:focus-visible,
+main[data-otg-theme] select:focus-visible,
+main[data-otg-theme] a:focus-visible{
+  outline:2px solid var(--color-focus-ring);
+  outline-offset:2px;
+}
+
+.otg-themeSwitch{
+  display:inline-flex;
+  min-height:36px;
+  align-items:center;
+  gap:8px;
+  border:1px solid var(--color-border);
+  border-radius:999px;
+  background:var(--color-surface);
+  color:var(--color-text);
+  padding:6px 10px;
+  font-size:12px;
+  font-weight:900;
+  transition:background .16s ease, border-color .16s ease, color .16s ease;
+}
+
+.otg-themeSwitch:hover{
+  border-color:var(--color-primary-border);
+  background:var(--color-primary-muted);
+}
+
+.otg-themeSwitchKnob{
+  width:18px;
+  height:18px;
+  border-radius:999px;
+  background:var(--color-primary);
+  box-shadow:0 0 0 3px var(--color-primary-muted);
 }
 
 main[data-otg-ui-mode="clean"] [class*="shadow-"]{
@@ -1703,5 +1821,3 @@ main[data-otg-ui-mode="clean"] .otg-clean-hide{
 
 /* Voices upload helper */
 .otg-fileInputHidden { display: none !important; }
-
-

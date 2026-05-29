@@ -253,6 +253,44 @@
         ],
         "notes": "Requires ComfyUI-PromptRelay custom node installed and ComfyUI restarted."
       }
+    },
+    {
+      "id": "presets/1_click_multiple_character_angles",
+      "label": "1-Click Multiple Character Angles",
+      "type": "preset",
+      "path": "presets/1_click_multiple_character_angles.json",
+      "file": "presets/1_click_multiple_character_angles.json",
+      "tags": [
+        "characters",
+        "image",
+        "image-to-image",
+        "qwen",
+        "multi-angle",
+        "character-card"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "requiresInputImage": true,
+      "description": "Characters-tab multi-angle reference-card workflow using Qwen Image Edit branches for face close-up, front, left, right, and back views, stitched into one final card."
+    },
+    {
+      "id": "presets/character_card_8_angles_low_angle",
+      "label": "Character Card 8 Angles Low Angle",
+      "type": "preset",
+      "path": "presets/character_card_8_angles_low_angle.json",
+      "file": "presets/character_card_8_angles_low_angle.json",
+      "tags": [
+        "characters",
+        "image",
+        "image-to-image",
+        "qwen",
+        "8-angle",
+        "character-card"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "requiresInputImage": true,
+      "description": "8-angle character card workflow with default profile, left, right, back, front, 3/4 left, 3/4 right, extreme close-up, and final stitched Character Card output."
     }
   ]
 }

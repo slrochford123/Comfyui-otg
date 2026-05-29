@@ -1,6 +1,6 @@
 {
   "name": "otg",
-  "version": "1.0.15",
+  "version": "1.0.17",
   "private": true,
   "scripts": {
     "predev": "node scripts/ensure-native-deps.cjs",
@@ -11,6 +11,7 @@
     "lint": "eslint",
     "test": "vitest --config tests/vitest.config.ts run",
     "test:watch": "vitest --config tests/vitest.config.ts",
+    "voice-worker:once": "node -r ./scripts/register-ts-worker.cjs ./scripts/run-voice-pipeline-worker-once.ts",
     "e2e": "playwright test",
     "postinstall": "node scripts/ensure-native-deps.cjs",
     "check:native": "node scripts/ensure-native-deps.cjs"

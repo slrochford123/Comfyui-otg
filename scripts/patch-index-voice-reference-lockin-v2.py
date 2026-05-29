@@ -1,0 +1,211 @@
+from pathlib import Path
+from datetime import datetime
+import shutil
+
+root = Path(r"C:\AI\OTG-Test2")
+panel = root / "app" / "app" / "components" / "CharactersPanel.tsx"
+backup_dir = root / ".manual-backups" / ("index-voice-reference-lockin-v2-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+
+if not panel.exists():
+    raise FileNotFoundError(panel)
+
+backup_dir.mkdir(parents=True, exist_ok=True)
+shutil.copy2(panel, backup_dir / "CharactersPanel.tsx")
+
+text = panel.read_text(encoding="utf-8")
+original = text
+
+# 1. Add selected Index reference state.
+state_anchor = "  const [voiceFxAdvancedOpen, setVoiceFxAdvancedOpen] = useState(false);"
+
+if "selectedIndexVoiceReference" not in text:
+    if state_anchor not in text:
+        raise RuntimeError("Missing voiceFxAdvancedOpen state anchor.")
+    text = text.replace(
+        state_anchor,
+        state_anchor + "\n  const [selectedIndexVoiceReference, setSelectedIndexVoiceReference] = useState<any | null>(null);",
+        1,
+    )
+
+# 2. Clear selected reference in resetBuilder without relying on exact reset block.
+if "setSelectedIndexVoiceReference(null);" not in text:
+    reset_start = text.find("function resetBuilder()")
+    if reset_start == -1:
+        raise RuntimeError("Missing resetBuilder function.")
+
+    reset_end = text.find("\n  }\n", reset_start)
+    if reset_end == -1:
+        raise RuntimeError("Could not find resetBuilder end.")
+
+    reset_block = text[reset_start:reset_end]
+    insert_line = "    setSelectedIndexVoiceReference(null);\n"
+
+    # Insert near the end of resetBuilder.
+    text = text[:reset_end] + insert_line + text[reset_end:]
+
+# 3. Add helper functions before saveCharacter.
+save_anchor = "  async function saveCharacter() {"
+
+helpers = '''  function buildIndexVoiceReference(source: "raw_qwen_preview" | "tuned_voice_fx", preview: any) {
+    const audioPath = String(preview?.audioPath || preview?.outputPath || "").trim();
+    const audioUrl = String(preview?.audioUrl || "").trim() || voiceFileUrlFor(audioPath);
+
+    if (!audioPath) {
+      return null;
+    }
+
+    return {
+      source,
+      engine: source === "tuned_voice_fx" ? "OTG Voice FX" : "Qwen3-TTS Voice Design",
+      characterId: safeId(details.name || "character"),
+      candidateId: selectedQwenVoiceCandidate?.candidateId || "",
+      selectedAt: new Date().toISOString(),
+      audioPath,
+      audioUrl,
+      qwenVoiceDesign,
+      qwenVoiceDesignRecord,
+      voiceFx: source === "tuned_voice_fx" ? voiceFx : null,
+      voiceFxPreview: source === "tuned_voice_fx" ? preview : null,
+      rawVoicePreview: voicePreview || null,
+    };
+  }
+
+  function useRawPreviewAsIndexReference() {
+    const record = buildIndexVoiceReference("raw_qwen_preview", voicePreview);
+    if (!record) {
+      setError("Generate a raw Qwen audio preview before selecting it as the Index reference.");
+      return;
+    }
+
+    setSelectedIndexVoiceReference(record);
+    setMessage("Raw Qwen preview selected as the Index voice reference.");
+  }
+
+  function useTunedPreviewAsIndexReference() {
+    const record = buildIndexVoiceReference("tuned_voice_fx", voiceFxPreview);
+    if (!record) {
+      setError("Apply Voice FX before selecting the tuned preview as the Index reference.");
+      return;
+    }
+
+    setSelectedIndexVoiceReference(record);
+    setMessage("Tuned Voice FX preview selected as the Index voice reference.");
+  }
+
+'''
+
+if "function useTunedPreviewAsIndexReference" not in text:
+    if save_anchor not in text:
+        raise RuntimeError("Missing saveCharacter anchor.")
+    text = text.replace(save_anchor, helpers + save_anchor, 1)
+
+# 4. Auto-select raw preview after generation if no selected reference exists.
+if 'buildIndexVoiceReference("raw_qwen_preview", json)' not in text:
+    raw_anchor = "      setVoicePreview(json);"
+    if raw_anchor not in text:
+        raise RuntimeError("Missing setVoicePreview(json) anchor.")
+    text = text.replace(
+        raw_anchor,
+        raw_anchor + '\n      setSelectedIndexVoiceReference((current: any) => current || buildIndexVoiceReference("raw_qwen_preview", json));',
+        1,
+    )
+
+# 5. Auto-select tuned preview after Voice FX succeeds.
+if 'buildIndexVoiceReference("tuned_voice_fx", json)' not in text:
+    fx_anchor = "      setVoiceFxPreview(json);"
+    if fx_anchor not in text:
+        raise RuntimeError("Missing setVoiceFxPreview(json) anchor.")
+    text = text.replace(
+        fx_anchor,
+        fx_anchor + '\n      setSelectedIndexVoiceReference(buildIndexVoiceReference("tuned_voice_fx", json));',
+        1,
+    )
+
+# 6. Include selected reference in final save payload.
+if "indexVoiceReferencePath" not in text:
+    payload_anchor = '''          voicePackRecord,
+          identityBlock,'''
+    payload_replacement = '''          voicePackRecord,
+          indexVoiceReference: selectedIndexVoiceReference,
+          indexVoiceReferencePath: selectedIndexVoiceReference?.audioPath || "",
+          indexVoiceReferenceSource: selectedIndexVoiceReference?.source || "",
+          identityBlock,'''
+
+    if payload_anchor not in text:
+        raise RuntimeError("Missing save payload voicePackRecord/identityBlock anchor.")
+    text = text.replace(payload_anchor, payload_replacement, 1)
+
+# 7. Add a separate lock-in panel inside Voice Tuning / FX.
+lock_panel = '''                <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-emerald-100">Selected Index Voice Reference</p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        Choose which generated voice Index should use as this character's locked reference voice.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={useRawPreviewAsIndexReference}
+                        disabled={!rawVoicePreviewPath}
+                        className="rounded-xl border border-emerald-400 px-3 py-1.5 text-xs font-semibold text-emerald-100 disabled:opacity-40 hover:bg-emerald-400/10"
+                      >
+                        Use Raw
+                      </button>
+                      <button
+                        type="button"
+                        onClick={useTunedPreviewAsIndexReference}
+                        disabled={!tunedVoicePreviewPath}
+                        className="rounded-xl border border-emerald-400 px-3 py-1.5 text-xs font-semibold text-emerald-100 disabled:opacity-40 hover:bg-emerald-400/10"
+                      >
+                        Use Tuned
+                      </button>
+                    </div>
+                  </div>
+
+                  {selectedIndexVoiceReference ? (
+                    <div className="mt-3 space-y-1 text-xs text-zinc-300">
+                      <p>Source: {selectedIndexVoiceReference.source === "tuned_voice_fx" ? "Tuned Voice FX Preview" : "Raw Qwen Preview"}</p>
+                      <p>Engine: {String(selectedIndexVoiceReference.engine || "")}</p>
+                      <p className="break-all text-zinc-500">Path: {String(selectedIndexVoiceReference.audioPath || "")}</p>
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-xs text-zinc-500">
+                      No Index voice reference selected yet. Generate a raw preview or apply Voice FX, then choose Raw or Tuned.
+                    </p>
+                  )}
+                </div>
+
+'''
+
+if "Selected Index Voice Reference" not in text:
+    marker = '''                {tunedVoicePreviewUrl ? ('''
+    if marker not in text:
+        raise RuntimeError("Missing tunedVoicePreviewUrl marker for lock-in panel insertion.")
+    text = text.replace(marker, lock_panel + marker, 1)
+
+required = [
+    "selectedIndexVoiceReference",
+    "buildIndexVoiceReference",
+    "useRawPreviewAsIndexReference",
+    "useTunedPreviewAsIndexReference",
+    "Selected Index Voice Reference",
+    "Use Raw",
+    "Use Tuned",
+    "indexVoiceReferencePath",
+    "indexVoiceReferenceSource",
+]
+
+for item in required:
+    if item not in text:
+        raise RuntimeError("Verification failed. Missing: " + item)
+
+if text == original:
+    raise RuntimeError("No changes made.")
+
+panel.write_text(text, encoding="utf-8")
+
+print("OK: Index voice reference lock-in v2 patched.")
+print("Changed:", panel)
+print("Backup:", backup_dir)

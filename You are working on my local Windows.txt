@@ -1,0 +1,317 @@
+You are working on my local Windows PC.
+
+Project goal:
+Build the first version of a local “Voice Lab” system for my movie production pipeline.
+
+Primary folder:
+C:\AI\voices
+
+Important rules:
+- Do NOT delete, move, overwrite, or rename any existing model folders.
+- Do NOT install anything globally unless absolutely necessary.
+- Prefer local scripts, local config files, and local virtual environments.
+- Before implementing anything, inspect and report what already exists.
+- This is a TEST/local tooling task only.
+- Keep changes deterministic and reversible.
+- Use PowerShell scripts as the primary implementation format.
+- Do not create a full repo ZIP.
+- Create clear logs and reports.
+
+Context:
+I am building a local voice production pipeline for character voices. The goal is to design or manage character voices, create emotional voice packs, and later use speech-to-speech voice conversion/dubbing so LTX-generated scene audio can be converted into the correct character voice while preserving the LTX performance/emotion.
+
+The first task is NOT to solve the full voice system. The first task is to:
+1. Verify and inventory all voice-related models/tools already inside C:\AI\voices and subfolders.
+2. Create the initial Voice Lab folder structure.
+3. Add scripts that help us start testing voice design and speech-to-speech conversion pipelines.
+
+Part 1 — Inventory existing models/tools
+
+Inspect C:\AI\voices recursively.
+
+Create a report that identifies likely installed voice tools/models, including but not limited to:
+- RVC
+- Applio
+- Seed-VC
+- OpenVoice
+- F5-TTS
+- E2-TTS
+- CosyVoice
+- IndexTTS / IndexTTS2
+- XTTS
+- Coqui TTS
+- FreeVC
+- Diff-HierVC
+- UVR
+- Demucs
+- MDX-Net
+- any other TTS, voice cloning, voice conversion, vocal separation, or audio processing repos
+
+For each detected folder/tool, report:
+- folder path
+- likely tool/model name
+- detected type:
+  - voice_design_tts
+  - voice_conversion
+  - vocal_separation
+  - audio_processing
+  - unknown
+- evidence for detection:
+  - README file
+  - requirements.txt
+  - pyproject.toml
+  - environment.yml
+  - package.json
+  - inference scripts
+  - train scripts
+  - model files
+  - checkpoint files
+- whether it appears runnable
+- whether it appears to have a Python environment already
+- detected Python files that look like entrypoints
+- detected model/checkpoint files:
+  - .pth
+  - .pt
+  - .ckpt
+  - .safetensors
+  - .onnx
+  - .index
+  - .bin
+- detected audio sample files:
+  - .wav
+  - .mp3
+  - .flac
+- notes / risks / missing dependencies
+
+Write the report to:
+
+C:\AI\voices\VoiceLab\reports\voice-model-inventory.md
+C:\AI\voices\VoiceLab\reports\voice-model-inventory.json
+
+Also print a short summary to the terminal.
+
+Part 2 — Create Voice Lab scaffold
+
+Create this folder structure if it does not already exist:
+
+C:\AI\voices\VoiceLab\
+  characters\
+  ltx_scene_sources\
+  converted_outputs\
+  final_mix\
+  scripts\
+  reports\
+  temp\
+  config\
+  logs\
+
+Inside characters, create a starter character folder:
+
+C:\AI\voices\VoiceLab\characters\jorog\
+  selected_voice\
+  emotion_pack\
+  rvc_training_data\
+  rvc_model\
+  seedvc_tests\
+  applio_rvc_tests\
+  source_ltx\
+  final_video_tests\
+  notes\
+
+Create a starter character card:
+
+C:\AI\voices\VoiceLab\characters\jorog\voice_card.json
+
+Use this structure:
+
+{
+  "character_id": "jorog",
+  "display_name": "Jorog",
+  "voice_status": "testing",
+  "voice_design_model": null,
+  "selected_voice_sample": null,
+  "emotion_pack": {
+    "calm": null,
+    "soft": null,
+    "determined": null,
+    "scared": null,
+    "urgent": null,
+    "yelling": null,
+    "sad": null,
+    "crying": null,
+    "happy": null,
+    "laughing": null,
+    "angry": null,
+    "exhausted": null,
+    "whisper": null
+  },
+  "conversion": {
+    "primary": null,
+    "fallback": null,
+    "rvc_model": null,
+    "index_file": null,
+    "seedvc_reference": null,
+    "f0_method": "rmvpe",
+    "transpose": 0,
+    "index_rate": 0.65,
+    "protect": 0.33,
+    "rms_mix_rate": 0.25
+  },
+  "notes": {
+    "age": "young child",
+    "accent": "Aetherian",
+    "tone": "soft, innocent, bright, emotional",
+    "avoid": "adult tone, robotic pitch, cartoon squeak"
+  }
+}
+
+Part 3 — Add starter PowerShell scripts
+
+Create these scripts in:
+
+C:\AI\voices\VoiceLab\scripts\
+
+1. scan-voice-models.ps1
+
+Purpose:
+- Recursively scan C:\AI\voices
+- Ignore VoiceLab output folders where appropriate to avoid scanning its own reports as models
+- Detect likely model/tool folders
+- Generate markdown and JSON inventory reports
+- Print a terminal summary
+
+2. create-character.ps1
+
+Parameters:
+- CharacterId
+- DisplayName
+
+Purpose:
+- Create a new character folder under VoiceLab\characters
+- Create the standard subfolders
+- Create a starter voice_card.json
+- Do not overwrite an existing character card unless -Force is passed
+- Print success/failure messages
+
+3. prepare-audio-for-voice-lab.ps1
+
+Parameters:
+- InputPath
+- OutputPath
+- SampleRate, default 44100
+- Mono switch
+
+Purpose:
+- Use ffmpeg if available
+- Convert input audio/video into clean WAV
+- Optional mono conversion
+- Print clear error if ffmpeg is missing
+- Verify output exists
+
+4. extract-ltx-audio.ps1
+
+Parameters:
+- VideoPath
+- OutputWav
+
+Purpose:
+- Extract audio from an LTX-generated video into WAV using ffmpeg
+- Preserve timing
+- Verify output exists
+
+5. remux-final-audio.ps1
+
+Parameters:
+- VideoPath
+- AudioPath
+- OutputVideoPath
+
+Purpose:
+- Replace the original video audio with final converted/mixed audio
+- Use ffmpeg
+- Copy video stream without re-encoding when possible
+- Verify output exists
+
+6. run-voice-lab-healthcheck.ps1
+
+Purpose:
+- Check that VoiceLab folders exist
+- Check whether ffmpeg is available
+- Check whether Python is available
+- Print detected CUDA/NVIDIA info if available using nvidia-smi
+- Print paths to detected model/tool folders from the inventory JSON if it exists
+- Do not modify anything
+
+Part 4 — Add usage README
+
+Create:
+
+C:\AI\voices\VoiceLab\README.md
+
+Include:
+- What VoiceLab is for
+- Folder structure
+- How to run the inventory scan
+- How to create a new character
+- How to extract LTX audio
+- How to prepare audio
+- How to remux final audio
+- Current limitation: this does not yet run Seed-VC, RVC, Applio, F5-TTS, CosyVoice, or IndexTTS directly. It only inventories them and prepares the Voice Lab foundation.
+- Next implementation step: add model-specific runners after inventory confirms what is installed.
+
+Part 5 — Add checklist
+
+Create:
+
+C:\AI\voices\VoiceLab\reports\rework-checklist.md
+
+Checklist items:
+
+# Voice Lab Rework Checklist
+
+## Phase 1 — Foundation
+- [ ] Inventory all existing local voice models/tools under C:\AI\voices
+- [ ] Create VoiceLab folder structure
+- [ ] Create starter Jorog character folder
+- [ ] Create starter Jorog voice_card.json
+- [ ] Add ffmpeg audio extraction script
+- [ ] Add audio preparation script
+- [ ] Add remux script
+- [ ] Add healthcheck script
+- [ ] Add README
+
+## Phase 2 — Model Runner Integration
+- [ ] Add Seed-VC runner
+- [ ] Add Applio/RVC inference runner
+- [ ] Add RVC training dataset prep
+- [ ] Add IndexTTS2 voice design runner if installed
+- [ ] Add CosyVoice runner if installed
+- [ ] Add F5-TTS runner if installed
+- [ ] Add vocal separation runner if UVR/Demucs/MDX is installed
+
+## Phase 3 — Jorog First Test
+- [ ] Create Jorog selected voice candidate
+- [ ] Create Jorog emotion pack
+- [ ] Extract deer-scene LTX source audio
+- [ ] Convert deer-scene source into Jorog voice
+- [ ] Remux converted voice into LTX video
+- [ ] Score identity, emotion, timing, and artifacts
+
+Mark completed Phase 1 items after implementation is done.
+
+Part 6 — Delivery requirements
+
+After implementation, tell me:
+1. Exact files created or changed.
+2. Exact commands to run, including:
+
+powershell -ExecutionPolicy Bypass -File C:\AI\voices\VoiceLab\scripts\scan-voice-models.ps1
+
+powershell -ExecutionPolicy Bypass -File C:\AI\voices\VoiceLab\scripts\run-voice-lab-healthcheck.ps1
+
+3. Where the reports are saved.
+4. Any detected problems, missing dependencies, or risky assumptions.
+5. Do not claim model runners work yet unless you actually implemented and tested them.
+
+Important:
+Do not hallucinate installed models. Only report what the scan actually finds.
