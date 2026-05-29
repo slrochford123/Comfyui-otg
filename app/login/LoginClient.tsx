@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -6,11 +6,20 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 function getDeviceId(): string {
   if (typeof window === "undefined") return "desktop_default";
-  return (
-    localStorage.getItem("otg_device_id") ||
-    sessionStorage.getItem("otg_device_id") ||
-    "desktop_default"
-  );
+  try {
+    const existing =
+      localStorage.getItem("otg_device_id") || sessionStorage.getItem("otg_device_id");
+    if (existing) return existing;
+
+    const generated =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? `web_${crypto.randomUUID()}`
+        : `web_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem("otg_device_id", generated);
+    return generated;
+  } catch {
+    return "desktop_default";
+  }
 }
 
 type MeResponse = { ok: boolean; user?: { email: string; username?: string | null } };
@@ -27,6 +36,7 @@ export default function LoginClient() {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -36,9 +46,10 @@ export default function LoginClient() {
     })();
   }, [router, nextPath]);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function submitLogin() {
+    if (submitting) return;
     setError(null);
+    setStatus("Signing in...");
     setSubmitting(true);
     try {
       const r = await fetch("/api/auth/login", {
@@ -48,21 +59,30 @@ export default function LoginClient() {
           "x-otg-device-id": getDeviceId() ?? "desktop_default",
         },
         credentials: "include",
+        cache: "no-store",
         body: JSON.stringify({ identifier, password, remember }),
       });
 
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) {
         setError(j?.error || "Login failed.");
+        setStatus(null);
         return;
       }
 
-      router.replace(nextPath);
+      setStatus("Login accepted. Opening app...");
+      window.location.assign(nextPath);
     } catch (e: any) {
       setError(e?.message || "Login failed.");
+      setStatus(null);
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    void submitLogin();
   }
 
   return (
@@ -126,11 +146,24 @@ export default function LoginClient() {
           </label>
 
           {error ? <div className="otg-authErr">{error}</div> : null}
+          {status ? (
+            <div
+              className="otg-authErr"
+              style={{
+                background: "rgba(34,211,238,.12)",
+                borderColor: "rgba(34,211,238,.20)",
+                color: "rgba(214,250,255,.95)",
+              }}
+            >
+              {status}
+            </div>
+          ) : null}
 
           <button
             className="otg-authPrimaryBtn otg-authGradientBtn"
-            type="submit"
+            type="button"
             disabled={submitting}
+            onClick={() => void submitLogin()}
           >
             {submitting ? "Signing in..." : "Sign in"}
           </button>

@@ -85,11 +85,18 @@ function otgProductionClipVideoRef(value: any, index?: number) {
   return "";
 }
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import ProductionAnimateModeSwitch, { type ProductionAnimateMode } from "./ProductionAnimateModeSwitch";
 import ProductionDirectorModeUI, { type ProductionDirectorImportedFrame } from "./ProductionDirectorModeUI";
-type ProductionStage = "storyboard" | "animate" | "edit" | "assemble";
+import {
+  getAudioStudioJob,
+  isTerminalJobStatus,
+  queueAudioStudioJob,
+} from "../../../lib/client/voicePipelineClient";
+import type { PersistedAudioStudioResult, ProductionAudioStudioResultItem } from "../../../lib/jobs/productionAudioStudioResults";
+import type { ProductionAudioStudioAction, QueuedContractJob } from "../../../lib/jobs/voicePipelineJobs";
+type ProductionStage = "storyboard" | "animate" | "edit" | "audio" | "assemble";
 
 type ComfyProgressUiState = {
   running: boolean;
@@ -238,6 +245,14 @@ type ProductionClipEditManifest = {
   updatedAt: string;
 };
 
+type QueuedJobUiState = {
+  phase: "idle" | "submitting" | "queued" | "polling" | "error";
+  job?: QueuedContractJob;
+  error?: string;
+};
+
+type ProductionAudioStudioResult = PersistedAudioStudioResult;
+
 type ProductionEditClipRow = {
   key: string;
   index: number;
@@ -276,6 +291,7 @@ type CharacterReference = {
   label: string;
   fileName?: string;
   previewUrl?: string;
+  workflowImagePath?: string;
   sourceCharacterId?: string;
   sourceCharacterName?: string;
   referenceAudioPath?: string;
@@ -285,6 +301,8 @@ type CharacterLibraryPickerItem = {
   name: string;
   imagePath: string;
   imageUrl: string;
+  workflowImagePath: string;
+  workflowImageUrl: string;
   referenceAudioPath?: string;
 };
 
@@ -417,6 +435,7 @@ type ProductionFrameClip = {
   originalFileName?: string;
   originalUrl?: string;
   editManifest?: ProductionClipEditManifest;
+  audioStudioResult?: ProductionAudioStudioResult;
 };
 type ProductionScene = {
   id: string;
@@ -471,7 +490,8 @@ const MAX_SCENE_IMAGE_COUNT = 16;
 const stages: Array<{ id: ProductionStage; label: string; description: string }> = [
   { id: "storyboard", label: "Storyboard", description: "Create scenes and images" },
   { id: "animate", label: "Animate", description: "Generate scene clips" },
-  { id: "edit", label: "Edit", description: "Trim, audio, effects" },
+  { id: "edit", label: "Visual Edit", description: "Trim and visual fixes" },
+  { id: "audio", label: "Audio Studio", description: "Dub and add voices" },
   { id: "assemble", label: "Assemble", description: "Preview and export" },
 ];
 
@@ -631,9 +651,14 @@ function StageShell({ stage, active }: { stage: ProductionStage; active: Product
       actions: ["Animate Scene", "Animate All Ready", "Approve Clip"],
     },
     edit: {
-      title: "Edit generated clips",
-      body: "Trim scene clips, add effects, voice, music, and scene-level polish after animation exists.",
-      actions: ["Trim Clip", "Add Effects", "Add Audio"],
+      title: "Visual edit generated clips",
+      body: "Trim scene clips and add visual-fix ranges after animation exists. Audio work moves to Audio Studio.",
+      actions: ["Trim Clip", "Visual Fix", "Save Manifest"],
+    },
+    audio: {
+      title: "Audio Studio",
+      body: "Dub existing voices or add new off-screen voices after the visual edit is ready.",
+      actions: ["Dub Existing Voice", "Add New Voice", "Preview Mix"],
     },
     assemble: {
       title: "Assemble final timeline",
@@ -716,6 +741,9 @@ export default function StoryboardPanel() {
   const [productionUploadedVoiceOptions, setProductionUploadedVoiceOptions] = useState<ProductionVoiceModelOption[]>([]);
   const [productionVoiceModelsLoading, setProductionVoiceModelsLoading] = useState(false);
   const [productionVoiceModelsError, setProductionVoiceModelsError] = useState("");
+  const [audioStudioJobs, setAudioStudioJobs] = useState<Partial<Record<ProductionAudioStudioAction, QueuedJobUiState>>>({});
+  const [audioStudioPersistedResults, setAudioStudioPersistedResults] = useState<Record<string, ProductionAudioStudioResultItem>>({});
+  const persistedAudioStudioJobIdsRef = useRef<Set<string>>(new Set());
 
   const selectedIndex = scenes.findIndex((scene) => scene.id === selectedSceneId);
   const selectedScene = scenes[selectedIndex] || scenes[0];
@@ -725,6 +753,176 @@ export default function StoryboardPanel() {
   const selectedSceneAnimateStatusKey = selectedScene
     ? animateFrameClips(selectedScene).map((clip: any) => `${clip?.status || "empty"}:${clip?.promptId || ""}:${clip?.fileName || ""}`).join("|")
     : "";
+  const audioStudioJobsRef = useRef(audioStudioJobs);
+  const activeAudioStudioJobIds = useMemo(
+    () =>
+      Object.values(audioStudioJobs)
+        .map((state) => state?.job)
+        .filter((job): job is QueuedContractJob => !!job && !isTerminalJobStatus(job.status))
+        .map((job) => job.jobId)
+        .join("|"),
+    [audioStudioJobs]
+  );
+
+  useEffect(() => {
+    audioStudioJobsRef.current = audioStudioJobs;
+  }, [audioStudioJobs]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPersistedAudioStudioResults() {
+      try {
+        const response = await fetch("/api/production/audio-studio/results", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const json = await response.json().catch(() => null) as { items?: ProductionAudioStudioResultItem[]; error?: string } | null;
+        if (cancelled) return;
+        if (!response.ok) {
+          setNotice(json?.error || "Could not load saved Audio Studio clip results.");
+          return;
+        }
+
+        const next: Record<string, ProductionAudioStudioResultItem> = {};
+        for (const item of json?.items || []) {
+          if (item?.clipId && item.audioStudioResult?.status === "mock_ready") {
+            next[item.clipId] = item;
+          }
+        }
+        setAudioStudioPersistedResults(next);
+      } catch (error) {
+        if (!cancelled) {
+          setNotice(error instanceof Error ? error.message : "Could not load saved Audio Studio clip results.");
+        }
+      }
+    }
+
+    void loadPersistedAudioStudioResults();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const persistedItems = Object.values(audioStudioPersistedResults);
+    if (!persistedItems.length) return;
+
+    setScenes((previousScenes) => {
+      let changed = false;
+      const nextScenes = previousScenes.map((scene) => {
+        const rows = editClipRows(scene);
+        if (!rows.length) return scene;
+
+        const frameClips = editStageFrameClips(scene).slice();
+        let sceneChanged = false;
+        for (const row of rows) {
+          const item = audioStudioPersistedResults[row.key];
+          if (!item) continue;
+          const current = frameClips[row.index] || row.clip || { status: "idle" as const };
+          if (current.audioStudioResult?.sourceJobId === item.audioStudioResult.sourceJobId) continue;
+          frameClips[row.index] = {
+            ...current,
+            audioStudioResult: item.audioStudioResult,
+          };
+          sceneChanged = true;
+        }
+
+        if (!sceneChanged) return scene;
+        changed = true;
+        return {
+          ...scene,
+          frameClips,
+        };
+      });
+
+      return changed ? nextScenes : previousScenes;
+    });
+  }, [audioStudioPersistedResults]);
+
+  useEffect(() => {
+    if (!activeAudioStudioJobIds) return;
+
+    let cancelled = false;
+    const poll = async () => {
+      const activeJobs = Object.entries(audioStudioJobsRef.current)
+        .map(([action, state]) => ({ action: action as ProductionAudioStudioAction, job: state?.job }))
+        .filter((entry): entry is { action: ProductionAudioStudioAction; job: QueuedContractJob } => !!entry.job && !isTerminalJobStatus(entry.job.status));
+
+      await Promise.all(activeJobs.map(async ({ action, job }) => {
+        try {
+          const latestJob = await getAudioStudioJob(job.jobId);
+          if (cancelled) return;
+          setAudioStudioJobs((previous) => ({
+            ...previous,
+            [action]: {
+              phase: isTerminalJobStatus(latestJob.status) ? "queued" : "polling",
+              job: latestJob,
+            },
+          }));
+        } catch (error) {
+          if (cancelled) return;
+          setAudioStudioJobs((previous) => ({
+            ...previous,
+            [action]: {
+              phase: "error",
+              job,
+              error: error instanceof Error ? error.message : "Could not poll audio studio job.",
+            },
+          }));
+        }
+      }));
+    };
+
+    void poll();
+    const intervalId = window.setInterval(() => void poll(), 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activeAudioStudioJobIds]);
+
+  useEffect(() => {
+    const completedJobs = Object.values(audioStudioJobs)
+      .map((state) => state?.job)
+      .filter((job): job is QueuedContractJob => !!job && Boolean(job.jobId) && job.status === "completed");
+    if (!completedJobs.length) return;
+
+    for (const job of completedJobs) {
+      if (persistedAudioStudioJobIdsRef.current.has(job.jobId)) continue;
+      const audioStudioResult = audioStudioResultFromJob(job);
+      if (!audioStudioResult) continue;
+
+      persistedAudioStudioJobIdsRef.current.add(job.jobId);
+      let attached = false;
+      setScenes((previousScenes) =>
+        previousScenes.map((scene) => {
+          const rows = editClipRows(scene);
+          const row = rows.find((candidate) => candidate.key === job.clipId);
+          if (!row) return scene;
+
+          const frameClips = editStageFrameClips(scene).slice();
+          frameClips[row.index] = {
+            ...(frameClips[row.index] || row.clip || { status: "idle" as const }),
+            audioStudioResult,
+          };
+          attached = true;
+          return {
+            ...scene,
+            frameClips,
+          };
+        })
+      );
+
+      if (attached && job.clipId) {
+        void persistAudioStudioResultToServer(job.clipId, audioStudioResult, job.jobId);
+      }
+      setNotice(
+        attached
+          ? `Mock Audio Studio result retained on clip. Saving to clip record. Source job: ${job.jobId}.`
+          : `Mock Audio Studio result ready, but matching clip was not found in the current storyboard draft. Source job: ${job.jobId}.`
+      );
+    }
+  }, [audioStudioJobs]);
 
   useEffect(() => {
     if (!selectedScene) return;
@@ -1216,6 +1414,7 @@ export default function StoryboardPanel() {
       updateCharacterReference(sceneId, slotIndex, {
         fileName: undefined,
         previewUrl: undefined,
+        workflowImagePath: undefined,
         sourceCharacterId: undefined,
         sourceCharacterName: undefined,
         referenceAudioPath: undefined,
@@ -1368,7 +1567,8 @@ export default function StoryboardPanel() {
 
       const items: CharacterLibraryPickerItem[] = raw
         .map((entry: any, index: number) => {
-          const imagePath = String(entry?.imagePath || "").trim();
+          const imagePath = String(entry?.imagePath || entry?.previewImagePath || entry?.fullBodyImagePath || "").trim();
+          const workflowImagePath = String(entry?.characterCardPath || entry?.cardImagePath || imagePath).trim();
           const name = String(entry?.name || entry?.title || entry?.label || `Character ${index + 1}`).trim();
 
           return {
@@ -1376,13 +1576,15 @@ export default function StoryboardPanel() {
             name,
             imagePath,
             imageUrl: imagePath ? characterLibraryImageUrl(imagePath) : "",
+            workflowImagePath,
+            workflowImageUrl: workflowImagePath ? characterLibraryImageUrl(workflowImagePath) : "",
             referenceAudioPath: entry?.referenceAudioPath ? String(entry.referenceAudioPath) : undefined,
           };
         })
         .filter((item) => {
-          if (!item.imagePath || !item.imageUrl) return false;
-          if (seen.has(item.imagePath)) return false;
-          seen.add(item.imagePath);
+          if (!item.imagePath || !item.imageUrl || !item.workflowImagePath || !item.workflowImageUrl) return false;
+          if (seen.has(item.workflowImagePath)) return false;
+          seen.add(item.workflowImagePath);
           return true;
         });
 
@@ -1415,13 +1617,13 @@ export default function StoryboardPanel() {
   }
 
   async function applyCharacterPickerItem(item: CharacterLibraryPickerItem) {
-    if (!characterPickerSceneId || characterPickerSlotIndex === null || !item.imageUrl) return;
+    if (!characterPickerSceneId || characterPickerSlotIndex === null || !item.workflowImageUrl) return;
 
     setCharacterPickerSelectingId(item.id);
     setCharacterPickerError("");
 
     try {
-      const res = await fetch(item.imageUrl, {
+      const res = await fetch(item.workflowImageUrl, {
 
         cache: "no-store",
         credentials: "include",
@@ -1442,6 +1644,9 @@ export default function StoryboardPanel() {
 
       setCharacterReferenceFile(characterPickerSceneId, characterPickerSlotIndex, file);
       updateCharacterReference(characterPickerSceneId, characterPickerSlotIndex, {
+        fileName: file.name,
+        previewUrl: item.imageUrl,
+        workflowImagePath: item.workflowImagePath,
         sourceCharacterId: item.id,
         sourceCharacterName: item.name,
         referenceAudioPath: item.referenceAudioPath,
@@ -5788,10 +5993,10 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
         <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-cyan-200/80">Edit</p>
-              <h2 className="mt-2 text-2xl font-black text-white">Clip Edit Workbench</h2>
+              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-cyan-200/80">Visual Edit</p>
+              <h2 className="mt-2 text-2xl font-black text-white">Clip Visual Edit Workbench</h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-white/65">
-                Finish each generated clip before Assemble. Keep edits per clip: trim, timed dubbing, music, sound effects, audio cleanup, and visual-fix notes.
+                Finish visual timing and visual-fix notes before Audio Studio. Voice dubbing, added voices, music, and mix work are planned in the next Production section.
               </p>
             </div>
             <div className="rounded-[14px] border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/70">
@@ -6816,6 +7021,394 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
               <details className="rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
                 <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.18em] text-white/55">Edit Manifest Preview</summary>
                 <pre className="mt-3 max-h-80 overflow-auto rounded-[14px] bg-black/40 p-4 text-xs leading-5 text-cyan-50/80">{JSON.stringify(draft, null, 2)}</pre>
+              </details>
+            </div>
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  async function queueProductionAudioStudioAction(
+    action: ProductionAudioStudioAction,
+    clipId: string,
+    extraInput: Record<string, unknown> = {}
+  ) {
+    const normalizedClipId = String(clipId || "").trim();
+    if (!normalizedClipId) {
+      setAudioStudioJobs((previous) => ({
+        ...previous,
+        [action]: {
+          phase: "error",
+          error: "Select a clip before queueing an Audio Studio job.",
+        },
+      }));
+      setNotice("Select a clip before queueing an Audio Studio job.");
+      return;
+    }
+
+    setAudioStudioJobs((previous) => ({
+      ...previous,
+      [action]: { phase: "submitting" },
+    }));
+    setNotice("Submitting Audio Studio queued job...");
+
+    try {
+      const job = await queueAudioStudioJob({
+        action,
+        clipId: normalizedClipId,
+        characterId: selectedScene?.id || null,
+        sceneId: selectedScene?.id || "",
+        sceneTitle: selectedScene?.title || "",
+        ...extraInput,
+      });
+      setAudioStudioJobs((previous) => ({
+        ...previous,
+        [action]: { phase: "queued", job },
+      }));
+      setNotice(`Queued job: ${job.jobId}. Backend worker not connected yet.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not queue Audio Studio job.";
+      setAudioStudioJobs((previous) => ({
+        ...previous,
+        [action]: { phase: "error", error: message },
+      }));
+      setNotice(message);
+    }
+  }
+
+  async function persistAudioStudioResultToServer(
+    clipId: string,
+    audioStudioResult: ProductionAudioStudioResult,
+    jobId: string
+  ) {
+    try {
+      const response = await fetch("/api/production/audio-studio/results", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        cache: "no-store",
+        body: JSON.stringify({
+          clipId,
+          audioStudioResult,
+        }),
+      });
+      const json = await response.json().catch(() => null) as {
+        item?: ProductionAudioStudioResultItem;
+        items?: ProductionAudioStudioResultItem[];
+        error?: string;
+      } | null;
+
+      if (!response.ok || !json?.item) {
+        throw new Error(json?.error || "Could not save Audio Studio result to clip record.");
+      }
+
+      setAudioStudioPersistedResults((previous) => {
+        const next = { ...previous };
+        for (const item of json.items || [json.item]) {
+          if (item?.clipId && item.audioStudioResult?.status === "mock_ready") {
+            next[item.clipId] = item;
+          }
+        }
+        return next;
+      });
+      setNotice(`Mock Audio Studio result saved to clip record. Source job: ${jobId}.`);
+    } catch (error) {
+      setNotice(
+        `${error instanceof Error ? error.message : "Could not save Audio Studio result to clip record."} Retained locally only. Source job: ${jobId}.`
+      );
+    }
+  }
+
+  function audioStudioResultFromJob(job: QueuedContractJob): ProductionAudioStudioResult | null {
+    if (job.jobType !== "production_audio_studio" || job.status !== "completed") return null;
+    const mockResult =
+      job.result && typeof job.result === "object" && !Array.isArray(job.result)
+        ? job.result as Record<string, unknown>
+        : {};
+    const updatedClipUrl = typeof mockResult.updatedClipUrl === "string" ? mockResult.updatedClipUrl : undefined;
+    const dubbedClipUrl = typeof mockResult.dubbedClipUrl === "string" ? mockResult.dubbedClipUrl : undefined;
+    const finalClipUrl = typeof mockResult.finalClipUrl === "string" ? mockResult.finalClipUrl : undefined;
+
+    return {
+      status: "mock_ready",
+      action: job.action as ProductionAudioStudioAction,
+      sourceJobId: job.jobId,
+      updatedClipUrl,
+      dubbedClipUrl,
+      finalClipUrl,
+      mockResult,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  function renderAudioStudioJobStatus(action: ProductionAudioStudioAction) {
+    const state = audioStudioJobs[action];
+    if (!state || state.phase === "idle") return null;
+
+    if (state.phase === "submitting") {
+      return <p className="mt-3 text-xs font-bold text-cyan-100">Submitting...</p>;
+    }
+
+    if (state.phase === "error") {
+      return <p className="mt-3 text-xs font-bold text-rose-200">{state.error || "Audio Studio job failed."}</p>;
+    }
+
+    const job = state.job;
+    const resultEntries =
+      job?.result && typeof job.result === "object" && !Array.isArray(job.result)
+        ? Object.entries(job.result as Record<string, unknown>)
+        : [];
+    const completed = job?.status === "completed";
+
+    return (
+      <div className="mt-3 rounded-[12px] border border-white/10 bg-black/20 p-3 text-xs leading-5 text-white/65">
+        <p className="font-black text-white">Queued job: {job?.jobId || "pending"}</p>
+        <p>Status: {job?.status || state.phase}</p>
+        {typeof job?.progress === "number" ? <p>Progress: {job.progress}%</p> : null}
+        {job?.message ? <p>Message: {job.message}</p> : null}
+
+        {completed ? (
+          <div className="mt-3 rounded-[10px] border border-emerald-300/25 bg-emerald-300/10 p-3 text-emerald-100">
+            <p className="font-black">Mock Audio Studio result ready</p>
+            <p className="mt-1 text-emerald-100/75">Mock result - backend adapter not connected yet.</p>
+            {resultEntries.length ? (
+              <div className="mt-2 space-y-1">
+                {resultEntries.map(([key, value]) => (
+                  <p key={key} className="break-all">
+                    <span className="font-black">{key}:</span> {String(value)}
+                  </p>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-emerald-100/70">No mock artifact URL returned.</p>
+            )}
+          </div>
+        ) : (
+          <p>Backend worker not connected yet.</p>
+        )}
+      </div>
+    );
+  }
+
+  function renderAudioStudioStage() {
+    const scene = selectedScene;
+    const rows = editClipRows(scene);
+    const activeKey =
+      selectedEditClipKey && rows.some((row) => row.key === selectedEditClipKey)
+        ? selectedEditClipKey
+        : rows[0]?.key || "";
+    const activeRow = rows.find((row) => row.key === activeKey) || rows[0] || null;
+    const voiceModelOptions = productionVoiceOptionsForScene(scene);
+
+    if (!scene) {
+      return (
+        <section className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5 text-white">
+          <p className="text-[11px] font-black uppercase tracking-[0.28em] text-cyan-200/80">Audio Studio</p>
+          <h2 className="mt-2 text-2xl font-black">Dub and Add Voices</h2>
+          <p className="mt-2 text-sm text-white/65">Select a scene before planning audio jobs.</p>
+        </section>
+      );
+    }
+
+    return (
+      <section className="space-y-4">
+        <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-cyan-200/80">Audio Studio</p>
+              <h2 className="mt-2 text-2xl font-black text-white">Dub and Add Voices</h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/65">
+                Plan audio jobs after Visual Edit: dub an existing performance into a saved character voice, or add a new off-screen voice to the clip mix.
+              </p>
+            </div>
+            <div className="rounded-[14px] border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/70">
+              <div className="font-black text-white">{scene.title}</div>
+              <div>Clips found: {rows.length}</div>
+              <div>Voice models: {voiceModelOptions.filter((option) => option.usable).length}</div>
+              <div>Status: queued job skeleton</div>
+            </div>
+          </div>
+        </div>
+
+        {!rows.length ? (
+          <div className="rounded-[18px] border border-amber-300/25 bg-amber-300/10 p-5 text-sm text-amber-100">
+            Generate or add a clip in Animate / Visual Edit before creating Audio Studio jobs.
+          </div>
+        ) : (
+          <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+            <aside className="space-y-3 rounded-[18px] border border-white/10 bg-white/[0.04] p-4">
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Clip</p>
+              {rows.map((row) => (
+                <button
+                  key={row.key}
+                  type="button"
+                  onClick={() => setSelectedEditClipKey(row.key)}
+                  className={classNames(
+                    "w-full rounded-[14px] border p-3 text-left transition",
+                    row.key === activeKey ? "border-cyan-300/40 bg-cyan-300/10 text-cyan-50" : "border-white/10 bg-black/20 text-white/70 hover:bg-white/[0.06]",
+                  )}
+                >
+                  <span className="block text-sm font-black">Clip {row.index + 1}</span>
+                  <span className="mt-1 block truncate text-xs text-white/45">{row.sourceFileName || "No filename"}</span>
+                  {row.clip.audioStudioResult ? (
+                    <span className="mt-2 inline-flex rounded-full border border-emerald-300/30 bg-emerald-300/10 px-2 py-1 text-[11px] font-black text-emerald-100">
+                      Audio mock ready
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </aside>
+
+            <div className="space-y-5">
+              <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-4">
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Preview</p>
+                {activeRow?.sourceUrl ? (
+                  <video key={activeRow.sourceUrl} controls className="mt-3 aspect-video w-full rounded-[14px] bg-black object-contain">
+                    <source src={activeRow.sourceUrl} />
+                  </video>
+                ) : (
+                  <div className="mt-3 grid aspect-video place-items-center rounded-[14px] border border-dashed border-white/15 bg-black/25 text-sm text-white/45">
+                    No clip preview available.
+                  </div>
+                )}
+              </div>
+
+              {activeRow?.clip.audioStudioResult ? (
+                <div className="rounded-[18px] border border-emerald-300/25 bg-emerald-300/10 p-4 text-sm text-emerald-100">
+                  <p className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-100/70">Stored Audio Studio Result</p>
+                  <div className="mt-3 grid gap-1 text-xs leading-5">
+                    <div>Status: {activeRow.clip.audioStudioResult.status}</div>
+                    <div>Action: {activeRow.clip.audioStudioResult.action}</div>
+                    <div className="break-all">Source job: {activeRow.clip.audioStudioResult.sourceJobId}</div>
+                    {activeRow.clip.audioStudioResult.updatedClipUrl ? <div className="break-all">updatedClipUrl: {activeRow.clip.audioStudioResult.updatedClipUrl}</div> : null}
+                    {activeRow.clip.audioStudioResult.dubbedClipUrl ? <div className="break-all">dubbedClipUrl: {activeRow.clip.audioStudioResult.dubbedClipUrl}</div> : null}
+                    {activeRow.clip.audioStudioResult.finalClipUrl ? <div className="break-all">finalClipUrl: {activeRow.clip.audioStudioResult.finalClipUrl}</div> : null}
+                    <div>
+                      {audioStudioPersistedResults[activeRow.key]?.audioStudioResult?.sourceJobId === activeRow.clip.audioStudioResult.sourceJobId
+                        ? "Saved to clip record."
+                        : "Retained locally only until the clip record save completes."}
+                    </div>
+                    <div>Mock result - backend adapter not connected yet.</div>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="grid gap-5 xl:grid-cols-2">
+                <div className="rounded-[18px] border border-cyan-300/25 bg-cyan-300/10 p-5">
+                  <p className="text-[11px] font-black uppercase tracking-[0.22em] text-cyan-100/70">Dub Existing Voice</p>
+                  <h3 className="mt-2 text-lg font-black text-white">Convert source performance</h3>
+                  <div className="mt-4 grid gap-3">
+                    <select disabled className="rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm text-white/45">
+                      <option>{activeRow ? `Clip ${activeRow.index + 1}` : "Choose clip"}</option>
+                    </select>
+                    <select disabled className="rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm text-white/45">
+                      <option>{voiceModelOptions.length ? "Choose saved character voice" : "No trained character voices yet"}</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => void queueProductionAudioStudioAction("dub_existing_voice", activeKey, {
+                        sourceFileName: activeRow?.sourceFileName || "",
+                        sourceUrl: activeRow?.sourceUrl || "",
+                        targetVoiceCount: voiceModelOptions.filter((option) => option.usable).length,
+                      })}
+                      disabled={!activeRow || audioStudioJobs.dub_existing_voice?.phase === "submitting"}
+                      className="rounded-[12px] border border-cyan-300/30 bg-cyan-300/10 px-4 py-3 text-sm font-black text-cyan-100 disabled:opacity-45"
+                    >
+                      {audioStudioJobs.dub_existing_voice?.phase === "submitting" ? "Submitting..." : "Queue Dub Job"}
+                    </button>
+                  </div>
+                  {renderAudioStudioJobStatus("dub_existing_voice")}
+                  <p className="mt-3 text-xs leading-5 text-cyan-50/60">
+                    Backend needed: source separation if required, voice conversion, timing preservation, mixed preview output.
+                  </p>
+                </div>
+
+                <div className="rounded-[18px] border border-purple-300/25 bg-purple-300/10 p-5">
+                  <p className="text-[11px] font-black uppercase tracking-[0.22em] text-purple-100/70">Add New Voice / Off-screen Voice</p>
+                  <h3 className="mt-2 text-lg font-black text-white">Generate and mix a new line</h3>
+                  <div className="mt-4 grid gap-3">
+                    <select disabled className="rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm text-white/45">
+                      <option>Whispers around character</option>
+                      <option>Distant mother voice</option>
+                      <option>Radio transmission</option>
+                      <option>Monster voice</option>
+                      <option>AI system voice</option>
+                      <option>Ghost voice</option>
+                      <option>Crowd chant</option>
+                    </select>
+                    <textarea
+                      disabled
+                      rows={3}
+                      value="Stay close. Do not let the signal fade."
+                      readOnly
+                      className="rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm text-white/45"
+                    />
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <select disabled className="rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm text-white/45">
+                        <option>Off-screen</option>
+                      </select>
+                      <select disabled className="rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm text-white/45">
+                        <option>Ghost FX</option>
+                      </select>
+                      <select disabled className="rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm text-white/45">
+                        <option>Background depth</option>
+                      </select>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void queueProductionAudioStudioAction("add_voice_to_clip", activeKey, {
+                        spokenText: "Stay close. Do not let the signal fade.",
+                        placement: "offscreen",
+                        fxPreset: "ghost",
+                        depth: "background",
+                      })}
+                      disabled={!activeRow || audioStudioJobs.add_voice_to_clip?.phase === "submitting"}
+                      className="rounded-[12px] border border-purple-300/30 bg-purple-300/10 px-4 py-3 text-sm font-black text-purple-100 disabled:opacity-45"
+                    >
+                      {audioStudioJobs.add_voice_to_clip?.phase === "submitting" ? "Submitting..." : "Queue Add Voice Job"}
+                    </button>
+                  </div>
+                  {renderAudioStudioJobStatus("add_voice_to_clip")}
+                  <p className="mt-3 text-xs leading-5 text-purple-50/60">
+                    Backend needed: TTS generation, optional FX, timing placement, depth/ducking mix, preview output.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Mix Queue</p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  {([
+                    ["add_background_music", "Add Music"],
+                    ["add_sound_effect", "Add SFX"],
+                    ["replace_voice", "Replace Voice"],
+                    ["render_audio_mix", "Render Mix"],
+                  ] as Array<[ProductionAudioStudioAction, string]>).map(([action, label]) => (
+                    <div key={action} className="rounded-[14px] border border-white/10 bg-black/20 p-3">
+                      <button
+                        type="button"
+                        onClick={() => void queueProductionAudioStudioAction(action, activeKey, {
+                          sourceFileName: activeRow?.sourceFileName || "",
+                          mixMode: action === "render_audio_mix" ? "preview" : "queued_placeholder",
+                        })}
+                        disabled={!activeRow || audioStudioJobs[action]?.phase === "submitting"}
+                        className="w-full rounded-[12px] border border-white/15 bg-white/[0.06] px-3 py-2 text-sm font-black text-white disabled:opacity-45"
+                      >
+                        {audioStudioJobs[action]?.phase === "submitting" ? "Submitting..." : label}
+                      </button>
+                      {renderAudioStudioJobStatus(action)}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <details className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
+                <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.18em] text-white/55">Advanced Audio Job Notes</summary>
+                <div className="mt-3 grid gap-3 text-sm leading-6 text-white/60 md:grid-cols-2">
+                  <p>Dub Existing Voice maps to DubExistingVoiceJob and will call dubExistingClipVoice once the backend worker exists.</p>
+                  <p>Add New Voice maps to AddVoiceJob and will call addVoiceToClip once provider, FX, and mixer hooks are ready.</p>
+                </div>
               </details>
             </div>
           </div>
@@ -8155,11 +8748,11 @@ function renderProductionStageNavigation() {
                 <pre className="mt-3 max-h-72 overflow-auto rounded-[8px] bg-slate-950 p-4 text-xs leading-5 text-slate-100">{manifestPreview}</pre>
               </details>
             </section>
-          ) : activeStage === "animate" ? (renderAnimateStage()) : activeStage === "edit" ? (renderEditStage()) : activeStage === "assemble" ? (renderAssembleStage()) : (<StageShell stage={activeStage} active={activeStage} />)}
+          ) : activeStage === "animate" ? (renderAnimateStage()) : activeStage === "edit" ? (renderEditStage()) : activeStage === "audio" ? (renderAudioStudioStage()) : activeStage === "assemble" ? (renderAssembleStage()) : (<StageShell stage={activeStage} active={activeStage} />)}
           {renderProductionStageNavigation()}
         </main>
 
-        <aside className={["border-t border-slate-200 bg-white p-4 xl:border-l xl:border-t-0", activeStage === "edit" ? "hidden" : ""].join(" ")}>
+        <aside className={["border-t border-slate-200 bg-white p-4 xl:border-l xl:border-t-0", activeStage === "edit" || activeStage === "audio" ? "hidden" : ""].join(" ")}>
           <h2 className="text-sm font-black uppercase tracking-[0.14em] text-violet-600">Scene Properties</h2>
           {selectedScene ? (
             <div className="mt-4 space-y-4">

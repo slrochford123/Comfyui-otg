@@ -1,4 +1,4 @@
-﻿import path from "node:path";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -6,6 +6,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+
+  // Allow test-dev access over Tailscale without Next dev asset origin warnings.
+  allowedDevOrigins: ["100.76.179.83", "*.ts.net"],
 
   // Create a self-contained production artifact under .next/standalone.
   // This enables build-once / promote-the-same-artifact deployments.

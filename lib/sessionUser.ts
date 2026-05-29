@@ -6,6 +6,7 @@ import { isAdminEmail } from "@/lib/auth/admin";
 import { verifySession } from "@/lib/auth/jwt";
 import { safeDeviceId, getDeviceIdFromRequest, getOtgDeviceId } from "@/lib/otgDevice";
 import { SessionInvalidError } from "@/lib/ownerKey";
+import { resolveOwnerAlias } from "@/lib/ownerAlias";
 
 export type OwnerContextLite = {
   deviceId: string;
@@ -84,7 +85,7 @@ async function ownerContext(req: Request | NextRequest): Promise<OwnerContextLit
   // validate token and extract username
   const payload: any = await verifySession(token);
   const username = safeUsername(payload?.username || "") || null;
-  const ownerKey = username || deviceId;
+  const ownerKey = resolveOwnerAlias(username || deviceId);
   return { deviceId, username, ownerKey, scope: username ? "user" : "device" };
 }
 
@@ -124,7 +125,7 @@ export async function getSessionUser(req: Request | NextRequest): Promise<Sessio
   const tier = (payload as any).tier ?? null;
   const admin = isAdminEmail(email) || isAdminIdentifier(username);
 
-  const ownerKey = username || ctx.deviceId;
+  const ownerKey = resolveOwnerAlias(username || ctx.deviceId);
   return { ...ctx, username, ownerKey, scope: username ? "user" : "device", email, tier, admin };
 }
 

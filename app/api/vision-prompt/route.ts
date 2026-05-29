@@ -1,4 +1,4 @@
-﻿// app/api/vision-prompt/route.ts
+// app/api/vision-prompt/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createRequire } from "module";
 import path from "path";
@@ -174,6 +174,77 @@ function buildBackgroundFromJson(j: any) {
   return normalizeDescriptor(parts.join(", "));
 }
 
+
+function cleanDetailValue(value: any) {
+  return (value ?? "")
+    .toString()
+    .replace(/\s+/g, " ")
+    .replace(/^["'`\s]+|["'`\s]+$/g, "")
+    .trim()
+    .slice(0, 420);
+}
+
+function isEmptyVisionValue(value: string) {
+  const v = cleanDetailValue(value).toLowerCase();
+  return !v || ["none", "no", "n/a", "na", "null", "undefined", "unknown", "not applicable"].includes(v);
+}
+
+function pushPhrase(parts: string[], value: any) {
+  const v = cleanDetailValue(value);
+  if (!isEmptyVisionValue(v)) parts.push(v);
+}
+
+function joinPhraseParts(parts: string[]) {
+  const seen = new Set<string>();
+  const cleaned = parts
+    .map(cleanDetailValue)
+    .filter((part) => !isEmptyVisionValue(part))
+    .filter((part) => {
+      const key = part.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+  return cleaned
+    .join(", ")
+    .replace(/\bwith,\s*/gi, "with ")
+    .replace(/,\s*and,\s*/gi, ", ")
+    .replace(/,\s*,+/g, ", ")
+    .replace(/\s+,/g, ",")
+    .replace(/^,\s*|,\s*$/g, "")
+    .trim()
+    .slice(0, 520);
+}
+
+function buildCharacterDetailsFromJson(j: any) {
+  const surfaceParts: string[] = [];
+  pushPhrase(surfaceParts, j?.surface_description);
+  pushPhrase(surfaceParts, j?.skin_fur_surface);
+  pushPhrase(surfaceParts, j?.skin_tone);
+  pushPhrase(surfaceParts, j?.skin);
+  const surfaceDescription = joinPhraseParts(surfaceParts);
+
+  const clothingParts: string[] = [];
+  pushPhrase(clothingParts, j?.outfit_top);
+  pushPhrase(clothingParts, j?.outfit_bottom);
+  pushPhrase(clothingParts, j?.outfit);
+  pushPhrase(clothingParts, j?.footwear);
+  pushPhrase(clothingParts, j?.armor);
+  pushPhrase(clothingParts, j?.accessories);
+  pushPhrase(clothingParts, j?.props);
+  pushPhrase(clothingParts, j?.notable_features);
+
+  const clothingAccessories = joinPhraseParts(clothingParts);
+
+  return {
+    clothingAccessories,
+    surfaceDescription,
+    hairFurColor: cleanDetailValue(j?.hair_fur_color ?? j?.hair_color ?? j?.fur_color ?? j?.hair),
+    eyeColor: cleanDetailValue(j?.eye_color ?? j?.eyes),
+  };
+}
+
 function isPathInside(root: string, target: string) {
   const rel = path.relative(root, target);
   return !(rel.startsWith("..") || path.isAbsolute(rel));
@@ -252,11 +323,15 @@ export async function POST(req: NextRequest) {
     let model = envModel || "redule26/huihui_ai_qwen2.5-vl-7b-abliterated";
     const { b64 } = await fileToVisionBase64(resolved);
 
-    const isBackground = (purpose || "character") === "background";
+    const selectedPurpose = (purpose || "character").toString();
+    const isBackground = selectedPurpose === "background";
+    const isCharacterDetails = selectedPurpose === "character_details";
 
     const jsonSchema = isBackground
       ? `Return ONLY a single valid JSON object on ONE line with keys: {"location":"","time":"","lighting":"","objects":"","mood":""}. No markdown, no code fences, no extra text.`
-      : `Return ONLY a single valid JSON object on ONE line with keys: {"gender":"","age_range":"","ethnicity":"","skin_tone":"","hair_style":"","hair_color":"","eye_color":"","outfit_top":"","outfit_bottom":"","footwear":"","accessories":"","build":"","notable_features":""}. No markdown, no code fences, no extra text.`;
+      : isCharacterDetails
+        ? `Return ONLY a single valid JSON object on ONE line with keys: {"surface_description":"","hair_fur_color":"","eye_color":"","outfit_top":"","outfit_bottom":"","footwear":"","armor":"","accessories":"","props":"","notable_features":""}. Use short natural phrases, not single-word token lists. If a field is not visible, return an empty string for that field. No markdown, no code fences, no extra text.`
+        : `Return ONLY a single valid JSON object on ONE line with keys: {"gender":"","age_range":"","ethnicity":"","skin_tone":"","hair_style":"","hair_color":"","eye_color":"","outfit_top":"","outfit_bottom":"","footwear":"","accessories":"","build":"","notable_features":""}. No markdown, no code fences, no extra text.`;
 
     const hint = promptHint && typeof promptHint === "string" ? ` Hint: ${promptHint}` : "";
     const name =
@@ -266,7 +341,9 @@ export async function POST(req: NextRequest) {
 
     const finalPrompt = isBackground
       ? `Describe ONLY the background/environment for AI video prompting. ${jsonSchema}${hint}`
-      : `Describe the single person for identity/face-lock prompting.${name} ${jsonSchema}${hint}`;
+      : isCharacterDetails
+        ? `Describe ONLY visible character detail fields for a production character card. Focus on skin/fur/surface, hair/fur color, eye color, clothing, armor, footwear, accessories, props, colors, and materials. Write compact natural phrases such as "brown leather armor with gold accents" or "scaly green reptile skin"; do not return loose word lists. Do not infer story, personality, age, race, species, or gender.${name} ${jsonSchema}${hint}`
+        : `Describe the single person for identity/face-lock prompting.${name} ${jsonSchema}${hint}`;
 
     let gen = await ollamaGenerate(baseUrl, model, finalPrompt, b64);
     if (!gen.ok && gen.status === 404) {
@@ -288,7 +365,9 @@ export async function POST(req: NextRequest) {
     if (!parsed) {
       const repairPrompt = isBackground
         ? `Rewrite the following into ONLY valid JSON (one line), keys: location,time,lighting,objects,mood. No markdown.\nTEXT:\n${gen.output}`
-        : `Rewrite the following into ONLY valid JSON (one line), keys: gender,age_range,ethnicity,skin_tone,hair_style,hair_color,eye_color,outfit_top,outfit_bottom,footwear,accessories,build,notable_features. No markdown.\nTEXT:\n${gen.output}`;
+        : isCharacterDetails
+          ? `Rewrite the following into ONLY valid JSON (one line), keys: surface_description,hair_fur_color,eye_color,outfit_top,outfit_bottom,footwear,armor,accessories,props,notable_features. No markdown.\nTEXT:\n${gen.output}`
+          : `Rewrite the following into ONLY valid JSON (one line), keys: gender,age_range,ethnicity,skin_tone,hair_style,hair_color,eye_color,outfit_top,outfit_bottom,footwear,accessories,build,notable_features. No markdown.\nTEXT:\n${gen.output}`;
 
       let gen2 = await ollamaGenerate(baseUrl, model, repairPrompt, b64);
       if (!gen2.ok && gen2.status === 404) {
@@ -303,8 +382,22 @@ export async function POST(req: NextRequest) {
     }
 
     let descriptor = "";
+    let details: any = null;
+
     if (parsed) {
-      descriptor = isBackground ? buildBackgroundFromJson(parsed) : buildDescriptorFromJson(parsed);
+      if (isBackground) {
+        descriptor = buildBackgroundFromJson(parsed);
+      } else if (isCharacterDetails) {
+        details = buildCharacterDetailsFromJson(parsed);
+        descriptor = joinPhraseParts([
+          details.surfaceDescription,
+          details.hairFurColor ? `${details.hairFurColor} hair/fur color` : "",
+          details.eyeColor ? `${details.eyeColor} eyes` : "",
+          details.clothingAccessories,
+        ]);
+      } else {
+        descriptor = buildDescriptorFromJson(parsed);
+      }
     }
 
     if (!descriptor) descriptor = normalizeDescriptor(gen.output);
@@ -312,7 +405,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Empty vision response" }, { status: 500 });
     }
 
-    return NextResponse.json({ descriptor });
+    return NextResponse.json(details ? { descriptor, details } : { descriptor });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || String(e) }, { status: 500 });
   }

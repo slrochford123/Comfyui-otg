@@ -14,11 +14,10 @@ export function middleware(req: NextRequest) {
   const cookieNames = getCookieNames();
   const hasSession = cookieNames.some((n) => Boolean(req.cookies.get(n)?.value));
 
-  // If already logged in, keep user out of /login.
-  if (pathname.startsWith("/login") && hasSession) {
-    const url = req.nextUrl.clone();
-    url.pathname = "/app";
-    return NextResponse.redirect(url);
+  // Always allow /login. A browser can hold a stale or invalid auth cookie,
+  // especially across test/prod hosts; blocking /login would prevent recovery.
+  if (pathname.startsWith("/login")) {
+    return NextResponse.next();
   }
 
   // If not logged in, keep user out of /app.
