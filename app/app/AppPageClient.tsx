@@ -252,7 +252,8 @@ type ExtendModalState = {
 };
 
 const APP_STATE_KEY = "otg:test:page-state:v1";
-const PRODUCTION_FEATURE_ENABLED = process.env.NEXT_PUBLIC_OTG_ENABLE_PRODUCTION === "1";
+// Production is enabled by default. Set NEXT_PUBLIC_OTG_ENABLE_PRODUCTION=0 only to hide it.
+const PRODUCTION_FEATURE_ENABLED = process.env.NEXT_PUBLIC_OTG_ENABLE_PRODUCTION !== "0";
 const APP_FONT_SCALE_KEY = "otg:test:font-scale:v1";
 const APP_UI_MODE_KEY = "otg:test:ui-mode:v1";
 const APP_USER_CACHE_KEY = "otg:test:last-user:v1";
