@@ -8,18 +8,89 @@ import { recoverLatestTrainedApplioVoiceProfile } from "@/lib/jobs/applioArtifac
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function cleanOwnerKey(value: unknown): string {
+  return String(value || "").trim();
+}
+
+function hasExplicitCharacterOwner(req: NextRequest): boolean {
+  const sp = req.nextUrl.searchParams;
+  return !!(
+    sp.get("deviceId") ||
+    sp.get("device_id") ||
+    sp.get("ownerId") ||
+    sp.get("owner") ||
+    sp.get("userId") ||
+    sp.get("user_id") ||
+    req.headers.get("x-otg-device-id") ||
+    req.headers.get("x-device-id") ||
+    req.headers.get("x-deviceid")
+  );
+}
+
+function characterOwnerFallbackKeys(primaryOwnerKey: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  const add = (value: unknown) => {
+    const key = cleanOwnerKey(value);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(key);
+  };
+
+  add(primaryOwnerKey);
+
+  /*
+   * Compatibility fallback for migrated runtime data.
+   *
+   * Some existing Production character records were created under device-scoped
+   * owners while the Production picker may call /api/characters without an
+   * explicit deviceId. The route should not return empty when the active
+   * deployment has known migrated character owners.
+   *
+   * OTG_DEFAULT_CHARACTER_OWNER lets TEST/STAGE/PROD override this without
+   * code changes. The following keys preserve the current migrated data layout.
+   */
+  add(process.env.OTG_DEFAULT_CHARACTER_OWNER);
+  add("slrochford");
+  add("web_characters_builder");
+  add("slrochford12300");
+
+  return out;
+}
+
+function listCharactersWithFallback(primaryOwnerKey: string): ReturnType<typeof listCharacters> {
+  for (const ownerKey of characterOwnerFallbackKeys(primaryOwnerKey)) {
+    const items = listCharacters(ownerKey);
+    if (items.length > 0) return items;
+  }
+  return [];
+}
+
+function loadCharacterWithFallback(primaryOwnerKey: string, id: string): ReturnType<typeof loadCharacter> {
+  for (const ownerKey of characterOwnerFallbackKeys(primaryOwnerKey)) {
+    const record = loadCharacter(ownerKey, id);
+    if (record) return record;
+  }
+  return null;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { ownerKey } = await getOwnerContext(req);
     const id = String(req.nextUrl.searchParams.get("id") || "").trim();
+    const explicitOwner = hasExplicitCharacterOwner(req);
+
     if (id) {
-      const record = loadCharacter(ownerKey, id);
+      const record = explicitOwner ? loadCharacter(ownerKey, id) : loadCharacterWithFallback(ownerKey, id);
       if (!record) {
         return NextResponse.json({ ok: false, error: "Character not found" }, { status: 404 });
       }
       return NextResponse.json({ ok: true, character: record });
     }
-    return NextResponse.json({ ok: true, items: listCharacters(ownerKey) });
+
+    const items = explicitOwner ? listCharacters(ownerKey) : listCharactersWithFallback(ownerKey);
+    return NextResponse.json({ ok: true, items });
   } catch (e: any) {
     if (e instanceof SessionInvalidError) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
