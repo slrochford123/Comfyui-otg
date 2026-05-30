@@ -159,9 +159,9 @@
         0
       ]
     },
-    "class_type": "AILab_ImageStitch",
+    "class_type": "ImageStitch",
     "_meta": {
-      "title": "Image Stitch (RMBG) 🖼️"
+      "title": "Image Stitch 🖼️"
     }
   },
   "438": {
@@ -191,9 +191,9 @@
         0
       ]
     },
-    "class_type": "AILab_ImageStitch",
+    "class_type": "ImageStitch",
     "_meta": {
-      "title": "Image Stitch (RMBG) 🖼️"
+      "title": "Image Stitch 🖼️"
     }
   },
   "439": {
