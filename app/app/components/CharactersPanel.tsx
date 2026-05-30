@@ -685,6 +685,7 @@ async function waitForCharacterImage(promptId: string) {
   const started = Date.now();
   const maxMs = 8 * 60 * 1000;
   let lastStatus = "queued";
+  let completedFileName = "";
 
   while (Date.now() - started < maxMs) {
     const progress = await fetch(`/api/progress?promptId=${encodeURIComponent(promptId)}`, {
@@ -697,6 +698,12 @@ async function waitForCharacterImage(promptId: string) {
     }
 
     lastStatus = String(progressJson.status || lastStatus);
+
+    const progressFileName = String(progressJson.fileName || progressJson.filename || "").trim();
+    if (progressFileName) {
+      completedFileName = progressFileName;
+    }
+
     if (progressJson.prompt_error) {
       throw new Error(String(progressJson.prompt_error));
     }
@@ -708,6 +715,43 @@ async function waitForCharacterImage(promptId: string) {
 
   if (lastStatus !== "complete") {
     throw new Error(`Timed out waiting for character image generation. Last status: ${lastStatus}.`);
+  }
+
+  if (completedFileName) {
+    const gallery = await fetch("/api/gallery?media=image&sort=newest&per=120", {
+      cache: "no-store",
+      ...CHARACTER_FETCH_OPTIONS,
+    });
+    const galleryJson = await gallery.json().catch(() => null);
+
+    if (gallery.ok && galleryJson?.ok) {
+      const items = Array.isArray(galleryJson.items)
+        ? galleryJson.items
+        : Array.isArray(galleryJson.files)
+          ? galleryJson.files
+          : [];
+
+      const exact = items.find((item: any) => {
+        const names = [
+          item?.sourceName,
+          item?.fileName,
+          item?.filename,
+          item?.name,
+        ].map((value) => String(value || "").trim());
+
+        return names.includes(completedFileName);
+      });
+
+      const exactUrl = String(exact?.url || "").trim();
+      if (exactUrl) {
+        return { url: exactUrl, sourceName: completedFileName };
+      }
+    }
+
+    return {
+      url: `/api/preview/file?name=${encodeURIComponent(completedFileName)}`,
+      sourceName: completedFileName,
+    };
   }
 
   const latest = await fetch("/api/content/last", {
@@ -725,7 +769,6 @@ async function waitForCharacterImage(promptId: string) {
   }
   return { url, sourceName };
 }
-
 async function getImageNaturalSize(url: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -2155,11 +2198,7 @@ async function loadCharacters() {
       };
 
       pushCandidate(completedCandidate);
-      setSelectedFullBody(completedCandidate);
-      lockCurrentBuilderStep();
-      setStep("card");
-
-      setMessage("Full-body completion created and selected. Create the character card next.");
+      setMessage("Full-body completion created. Review the generated candidates below, select the one you want, then click Use This Character.");
     } catch (err: any) {
       setError(err?.message || String(err));
     } finally {
