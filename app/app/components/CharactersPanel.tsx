@@ -1286,6 +1286,9 @@ function CharacterBuilder() {
     tunedSampleUrl: builderCharacterVoiceProfile?.tunedSampleUrl || "",
     tunedFxPreset: builderCharacterVoiceProfile?.tunedFxPreset || "",
   };
+  const indexTts2TrainingDatasetAvailable = false;
+  const indexTts2TrainingDatasetBlockedMessage =
+    "Training dataset generation is disabled because IndexTTS2 model weights are not installed/configured on this server.";
   const trainingDatasetResult =
     voicePipelineJobs.generate_training_dataset?.job?.result &&
     typeof voicePipelineJobs.generate_training_dataset.job.result === "object" &&
@@ -2517,6 +2520,16 @@ async function loadCharacters() {
         }));
         return;
       }
+    }
+
+    if (action === "generate_training_dataset" && !indexTts2TrainingDatasetAvailable) {
+      const message = indexTts2TrainingDatasetBlockedMessage;
+      setError(message);
+      setVoicePipelineJobs((current) => ({
+        ...current,
+        [action]: { phase: "error", error: message },
+      }));
+      return;
     }
 
     if ((action === "generate_training_dataset" || action === "start_applio_training") && !approvedSampleUrl) {
@@ -4611,15 +4624,31 @@ async function loadCharacters() {
                     <button
                       type="button"
                       onClick={() => {
+                        if (!indexTts2TrainingDatasetAvailable) {
+                          setError(indexTts2TrainingDatasetBlockedMessage);
+                          setVoicePipelineJobs((current) => ({
+                            ...current,
+                            generate_training_dataset: {
+                              phase: "error",
+                              error: indexTts2TrainingDatasetBlockedMessage,
+                            },
+                          }));
+                          return;
+                        }
+
                         const confirmed = window.confirm(
                           "Prepare Voice Training Dataset will generate 200 same-speaker IndexTTS2 clone clips and can take 30-90 minutes. Keep the worker running until the dataset is ready. Continue?",
                         );
                         if (confirmed) void queueCharacterVoicePipelineAction("generate_training_dataset", { trainingPreset: "balanced", requestedClipCount: 200 });
                       }}
-                      disabled={voicePipelineJobs.generate_training_dataset?.phase === "submitting" || !approvedSampleUrl}
+                      disabled={voicePipelineJobs.generate_training_dataset?.phase === "submitting" || !approvedSampleUrl || !indexTts2TrainingDatasetAvailable}
                       className="w-full rounded-2xl border border-purple-300 bg-purple-300/10 px-5 py-5 text-base font-black text-purple-100 shadow-lg shadow-purple-950/20 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-purple-300/20 md:col-span-2"
                     >
-                      {voicePipelineJobs.generate_training_dataset?.phase === "submitting" ? "Preparing Dataset..." : "Prepare Voice Training Dataset"}
+                      {!indexTts2TrainingDatasetAvailable
+                        ? "IndexTTS2 Not Configured"
+                        : voicePipelineJobs.generate_training_dataset?.phase === "submitting"
+                          ? "Preparing Dataset..."
+                          : "Prepare Voice Training Dataset"}
                     </button>
                     <button
                       type="button"
@@ -4637,8 +4666,10 @@ async function loadCharacters() {
                       {voicePipelineJobs.start_applio_training?.phase === "submitting" ? "Training..." : "Train Voice Model"}
                     </button>
                   </div>
-                  <p className="mt-2 text-xs leading-5 text-amber-100/80">
-                    Preparing the dataset creates 200 same-speaker voice clips and can take 30 to 90 minutes. Keep the worker running until the status says Ready.
+                                    <p className="mt-2 text-xs leading-5 text-amber-100/80">
+                    {indexTts2TrainingDatasetAvailable
+                      ? "Preparing the dataset creates 200 same-speaker voice clips and can take 30 to 90 minutes. Keep the worker running until the status says Ready."
+                      : indexTts2TrainingDatasetBlockedMessage}
                   </p>
                   {trainingDatasetResult ? (
                     <div className={classNames(
