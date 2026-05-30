@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { withNoStore, readJsonBody, sessionErrorResponse } from "@/lib/http/routeHelpers";
 import { getOwnerContext } from "@/lib/ownerKey";
+import { findVoicePipelineJobOwnerKey } from "@/lib/jobs/voicePipelineJobs";
 import { tickVoicePipelineWorker } from "@/lib/jobs/voicePipelineWorker";
 
 export const runtime = "nodejs";
@@ -28,6 +29,10 @@ function devErrorDetail(error: unknown) {
   };
 }
 
+function isSafeOwnerKey(value: string): boolean {
+  return /^[A-Za-z0-9_-]{1,160}$/.test(value);
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await readJsonBody<Record<string, unknown>>(req.clone());
@@ -42,12 +47,27 @@ export async function POST(req: NextRequest) {
       return jsonError("Invalid jobId.", 400);
     }
 
+    const limit = Number(body.value.limit || 1);
     const result = await tickVoicePipelineWorker(owner.ownerKey, {
-      limit: Number(body.value.limit || 1),
+      limit,
       jobId: requestedJobId || undefined,
     });
 
-    return NextResponse.json(result, { headers: withNoStore() });
+    if (result.processed > 0 || !requestedJobId) {
+      return NextResponse.json(result, { headers: withNoStore() });
+    }
+
+    const storedOwnerKey = findVoicePipelineJobOwnerKey(requestedJobId);
+    if (!storedOwnerKey || storedOwnerKey === owner.ownerKey || !isSafeOwnerKey(storedOwnerKey)) {
+      return NextResponse.json(result, { headers: withNoStore() });
+    }
+
+    const fallbackResult = await tickVoicePipelineWorker(storedOwnerKey, {
+      limit,
+      jobId: requestedJobId,
+    });
+
+    return NextResponse.json(fallbackResult.processed > 0 ? fallbackResult : result, { headers: withNoStore() });
   } catch (error) {
     return sessionErrorResponse(error) || jsonError("Could not tick character voice-pipeline worker.", 500, devErrorDetail(error));
   }

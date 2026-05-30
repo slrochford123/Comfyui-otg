@@ -413,6 +413,13 @@ export function getQueuedContractJob(ownerKey: string, jobId: string): QueuedCon
   return publicJob(job);
 }
 
+
+export function findVoicePipelineJobOwnerKey(jobId: string): string | null {
+  const normalizedJobId = cleanString(jobId);
+  if (!normalizedJobId) return null;
+  const job = readStore().jobs.find((item) => item.jobId === normalizedJobId);
+  return job?.ownerKey || null;
+}
 export const createVoicePipelineJob = createCharacterVoicePipelineJob;
 export const getVoicePipelineJob = getQueuedContractJob;
 
