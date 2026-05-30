@@ -123,7 +123,7 @@ export async function tickVoicePipelineWorker(
   limit = 1,
   jobId?: string,
 ): Promise<{ processed: number; jobs: QueuedContractJob[] }> {
-  const response = await fetch("/api/dev/voice-pipeline-worker/tick", {
+  const response = await fetch("/api/characters/voice-pipeline/tick", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
