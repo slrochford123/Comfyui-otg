@@ -2616,7 +2616,32 @@ async function loadCharacters() {
         [action]: { phase: "queued", job, error: undefined },
       }));
 
-      if (action === "create_voice_sample") {
+      if (action === "apply_voice_fx") {
+        try {
+          const ticked = await tickVoicePipelineWorker(1, job.jobId);
+          const tickedCurrentJob = ticked.jobs.find((item) => item.jobId === job.jobId);
+          const latest = tickedCurrentJob || (await getCharacterVoiceJob(job.jobId));
+
+          setVoicePipelineJobs((current) => ({
+            ...current,
+            [action]: {
+              phase: latest.status === "failed" ? "error" : "queued",
+              job: latest,
+              error: latest.error || undefined,
+            },
+          }));
+
+          if (latest.status === "completed") {
+            setMessage("Voice FX processed. Tuned voice ready.");
+          } else if (latest.status === "failed") {
+            setError(latest.error || "Voice FX failed.");
+          } else {
+            setMessage(`Queued job: ${job.jobId}. Voice FX worker started.`);
+          }
+        } catch (tickError: any) {
+          setMessage(`Queued job: ${job.jobId}. Waiting for worker.`);
+        }
+      } else if (action === "create_voice_sample") {
         setMessage("Creating voice from generated prompt snapshot...");
       } else {
         setMessage(`Queued job: ${job.jobId}. Waiting for worker.`);
