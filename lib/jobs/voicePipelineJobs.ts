@@ -474,16 +474,32 @@ function mergeJobResult(current: unknown, patch: Record<string, unknown>): Recor
   return { ...base, ...patch };
 }
 
-export function claimRemoteTrainingDatasetJob(ownerKey: string, workerId: string): QueuedContractJob | null {
+export type RemoteVoicePipelineWorkerAction = "generate_training_dataset" | "start_applio_training";
+
+function remoteWorkerActionLabel(action: RemoteVoicePipelineWorkerAction): string {
+  if (action === "start_applio_training") return "Windows Applio training worker";
+  return "Windows IndexTTS2 worker";
+}
+
+function remoteWorkerDefaultId(action: RemoteVoicePipelineWorkerAction): string {
+  if (action === "start_applio_training") return "windows-applio-worker";
+  return "windows-indextts2-worker";
+}
+
+export function claimRemoteVoicePipelineWorkerJob(
+  ownerKey: string,
+  workerId: string,
+  action: RemoteVoicePipelineWorkerAction = "generate_training_dataset",
+): QueuedContractJob | null {
   const normalizedOwnerKey = cleanString(ownerKey);
-  const normalizedWorkerId = cleanString(workerId) || "windows-indextts2-worker";
+  const normalizedWorkerId = cleanString(workerId) || remoteWorkerDefaultId(action);
   if (!normalizedOwnerKey) return null;
 
   const store = readStore();
   const index = store.jobs.findIndex((job) =>
     job.ownerKey === normalizedOwnerKey &&
     job.jobType === "character_voice_pipeline" &&
-    job.action === "generate_training_dataset" &&
+    job.action === action &&
     job.status === "queued"
   );
 
@@ -491,17 +507,19 @@ export function claimRemoteTrainingDatasetJob(ownerKey: string, workerId: string
 
   const current = store.jobs[index];
   const now = new Date().toISOString();
+  const label = remoteWorkerActionLabel(action);
   const next: StoredQueuedContractJob = {
     ...current,
     status: "running",
     updatedAt: now,
     progress: Math.max(5, Number(current.progress || 0)),
-    message: `Claimed by remote Windows IndexTTS2 worker: ${normalizedWorkerId}.`,
+    message: `Claimed by remote ${label}: ${normalizedWorkerId}.`,
     error: null,
     result: mergeJobResult(current.result, {
       remoteWorker: true,
       workerId: normalizedWorkerId,
       claimedAt: now,
+      action,
       status: "claimed",
     }),
   };
@@ -509,6 +527,10 @@ export function claimRemoteTrainingDatasetJob(ownerKey: string, workerId: string
   store.jobs[index] = next;
   writeStore(store);
   return publicJob(next);
+}
+
+export function claimRemoteTrainingDatasetJob(ownerKey: string, workerId: string): QueuedContractJob | null {
+  return claimRemoteVoicePipelineWorkerJob(ownerKey, workerId, "generate_training_dataset");
 }
 
 export function completeRemoteTrainingDatasetJob(

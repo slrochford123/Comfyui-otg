@@ -212,6 +212,13 @@ async function nextWorkerUpdate(ownerKey: string, job: QueuedContractJob): Promi
     // Remote Windows IndexTTS2 worker must claim this job through /api/characters/voice-pipeline/worker/claim.
     return null;
   }
+
+  if (isApplioTrainingJob(job)) {
+    // Applio training is GPU/CPU-heavy and must be claimed by the remote Windows worker.
+    // Linux is the OTG control plane only and must not execute Applio/RVC training locally.
+    // Remote Windows Applio worker must claim this job through /api/characters/voice-pipeline/worker/claim.
+    return null;
+  }
     // Real Voice FX is a synchronous ffmpeg adapter; run it to terminal status in one worker tick.
   if ((job.status === "queued" || job.status === "running") && isVoiceFxJob(job) && isRealVoiceFxEnabled()) {
     return completeJobWithRealAdapter(ownerKey, job);
