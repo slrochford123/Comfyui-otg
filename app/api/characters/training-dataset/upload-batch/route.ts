@@ -145,19 +145,37 @@ export async function POST(req: NextRequest) {
       uploadedClipIds.add(upload.clipId);
     }
 
+    const alreadyReadyClipIds = new Set(
+      inputClips
+        .filter((clip) => cleanString(clip.status) === "ready")
+        .map((clip) => cleanString(clip.clipId))
+        .filter(isClipId),
+    );
+
+    async function clipFileExists(clipId: string): Promise<boolean> {
+      try {
+        const clipPath = resolveTrainingDatasetClipPath(workerOwnerKey(req, owner.ownerKey), characterId, jobId, clipId);
+        const stat = await fs.stat(clipPath);
+        return stat.isFile() && stat.size > 0;
+      } catch {
+        return false;
+      }
+    }
+
     const now = new Date().toISOString();
     const requestedClipCount = Math.max(
       clipUploads.length,
       Number(manifestInput.requestedClipCount || inputClips.length || clipUploads.length) || clipUploads.length,
     );
 
-    const clips = Array.from({ length: requestedClipCount }, (_, index) => {
+    const clips = [];
+    for (let index = 0; index < requestedClipCount; index += 1) {
       const clipNumber = index + 1;
       const clipId = `clip_${String(clipNumber).padStart(3, "0")}`;
       const existing = inputClips.find((clip) => cleanString(clip.clipId) === clipId) || {};
-      const ready = uploadedClipIds.has(clipId);
+      const ready = uploadedClipIds.has(clipId) || alreadyReadyClipIds.has(clipId) || await clipFileExists(clipId);
 
-      return {
+      const clip = {
         ...existing,
         clipId,
         index,
@@ -170,7 +188,8 @@ export async function POST(req: NextRequest) {
         generatorProvider: ready ? "indextts2" : existing.generatorProvider,
         updatedAt: now,
       };
-    });
+      clips.push(clip);
+    }
 
     const generatedClipCount = clips.filter((clip) => clip.status === "ready").length;
     const complete = generatedClipCount === requestedClipCount;
