@@ -1286,7 +1286,7 @@ function CharacterBuilder() {
     tunedSampleUrl: builderCharacterVoiceProfile?.tunedSampleUrl || "",
     tunedFxPreset: builderCharacterVoiceProfile?.tunedFxPreset || "",
   };
-  const indexTts2TrainingDatasetAvailable = false;
+  const indexTts2TrainingDatasetAvailable = true;
   const indexTts2TrainingDatasetBlockedMessage =
     "Training dataset generation is disabled because IndexTTS2 model weights are not installed/configured on this server.";
   const trainingDatasetResult =
