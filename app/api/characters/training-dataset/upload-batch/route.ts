@@ -18,6 +18,11 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+
+function workerOwnerKey(req: NextRequest, fallbackOwnerKey: string): string {
+  const headerOwnerKey = String(req.headers.get("x-otg-owner-key") || "").trim();
+  return headerOwnerKey || fallbackOwnerKey;
+}
 function jsonError(error: string, status = 400) {
   return NextResponse.json({ ok: false, error }, { status, headers: withNoStore() });
 }
@@ -101,7 +106,7 @@ export async function POST(req: NextRequest) {
     if (!isSafeSegment(characterId)) return jsonError("Invalid characterId.", 400);
     if (!isSafeSegment(jobId)) return jsonError("Invalid jobId.", 400);
 
-    const job = getQueuedContractJob(owner.ownerKey, jobId);
+    const job = getQueuedContractJob(workerOwnerKey(req, owner.ownerKey), jobId);
     if (!job || job.jobType !== "character_voice_pipeline" || job.action !== "generate_training_dataset") {
       return jsonError("Training dataset job not found.", 404);
     }
@@ -118,8 +123,8 @@ export async function POST(req: NextRequest) {
     }
 
     const sourceUpload = form.get("source.wav") || form.get("source");
-    let canonicalSourcePath = resolveTrainingDatasetCanonicalSourcePath(owner.ownerKey, characterId, jobId);
-    let canonicalSourceUrl = trainingDatasetCanonicalSourceUrl(owner.ownerKey, characterId, jobId);
+    let canonicalSourcePath = resolveTrainingDatasetCanonicalSourcePath(workerOwnerKey(req, owner.ownerKey), characterId, jobId);
+    let canonicalSourceUrl = trainingDatasetCanonicalSourceUrl(workerOwnerKey(req, owner.ownerKey), characterId, jobId);
 
     if (isUploadFile(sourceUpload)) {
       const sourceBytes = Buffer.from(await sourceUpload.arrayBuffer());
@@ -135,7 +140,7 @@ export async function POST(req: NextRequest) {
         return jsonError(`Uploaded clip is empty: ${upload.clipId}`, 400);
       }
 
-      const clipPath = resolveTrainingDatasetClipPath(owner.ownerKey, characterId, jobId, upload.clipId);
+      const clipPath = resolveTrainingDatasetClipPath(workerOwnerKey(req, owner.ownerKey), characterId, jobId, upload.clipId);
       await writeFileAtomic(clipPath, bytes);
       uploadedClipIds.add(upload.clipId);
     }
@@ -158,8 +163,8 @@ export async function POST(req: NextRequest) {
         index,
         text: cleanString(existing.text) || `Training voice sample ${clipNumber}.`,
         status: ready ? "ready" : "pending",
-        expectedAudioPath: resolveTrainingDatasetClipPath(owner.ownerKey, characterId, jobId, clipId),
-        expectedAudioUrl: trainingDatasetClipUrl(owner.ownerKey, characterId, jobId, clipId),
+        expectedAudioPath: resolveTrainingDatasetClipPath(workerOwnerKey(req, owner.ownerKey), characterId, jobId, clipId),
+        expectedAudioUrl: trainingDatasetClipUrl(workerOwnerKey(req, owner.ownerKey), characterId, jobId, clipId),
         sourceSamplePath: canonicalSourcePath,
         sourceSampleUrl: canonicalSourceUrl,
         generatorProvider: ready ? "indextts2" : existing.generatorProvider,
@@ -173,7 +178,7 @@ export async function POST(req: NextRequest) {
     const finalManifest = {
       ...manifestInput,
       schemaVersion: 1,
-      ownerKey: owner.ownerKey,
+      ownerKey: workerOwnerKey(req, owner.ownerKey),
       characterId,
       jobId,
       createdAt: cleanString(manifestInput.createdAt) || now,
@@ -207,7 +212,7 @@ export async function POST(req: NextRequest) {
         : "Remote Windows IndexTTS2 worker uploaded a partial training dataset.",
     };
 
-    const manifestPath = resolveTrainingDatasetManifestPath(owner.ownerKey, characterId, jobId);
+    const manifestPath = resolveTrainingDatasetManifestPath(workerOwnerKey(req, owner.ownerKey), characterId, jobId);
     await fs.mkdir(path.dirname(manifestPath), { recursive: true });
     await writeFileAtomic(manifestPath, Buffer.from(JSON.stringify(finalManifest, null, 2), "utf8"));
 
@@ -217,7 +222,7 @@ export async function POST(req: NextRequest) {
       provider: "indextts2",
       remoteWorker: true,
       manifestPath,
-      manifestUrl: trainingDatasetManifestUrl(owner.ownerKey, characterId, jobId),
+      manifestUrl: trainingDatasetManifestUrl(workerOwnerKey(req, owner.ownerKey), characterId, jobId),
       clipCount: requestedClipCount,
       generatedClipCount,
       canonicalSourcePath,

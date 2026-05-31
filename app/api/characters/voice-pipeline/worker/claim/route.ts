@@ -7,6 +7,11 @@ import { claimRemoteTrainingDatasetJob } from "@/lib/jobs/voicePipelineJobs";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+
+function workerOwnerKey(req: NextRequest, fallbackOwnerKey: string): string {
+  const headerOwnerKey = String(req.headers.get("x-otg-owner-key") || "").trim();
+  return headerOwnerKey || fallbackOwnerKey;
+}
 function jsonError(error: string, status = 400) {
   return NextResponse.json({ ok: false, error }, { status, headers: withNoStore() });
 }
@@ -23,7 +28,7 @@ export async function POST(req: NextRequest) {
     }
 
     const workerId = String(body.value.workerId || req.headers.get("x-otg-worker-id") || "windows-indextts2-worker").trim();
-    const job = claimRemoteTrainingDatasetJob(owner.ownerKey, workerId);
+    const job = claimRemoteTrainingDatasetJob(workerOwnerKey(req, owner.ownerKey), workerId);
 
     return NextResponse.json({ ok: true, job }, { headers: withNoStore() });
   } catch (error) {

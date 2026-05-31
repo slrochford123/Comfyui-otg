@@ -7,6 +7,11 @@ import { failRemoteTrainingDatasetJob } from "@/lib/jobs/voicePipelineJobs";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+
+function workerOwnerKey(req: NextRequest, fallbackOwnerKey: string): string {
+  const headerOwnerKey = String(req.headers.get("x-otg-owner-key") || "").trim();
+  return headerOwnerKey || fallbackOwnerKey;
+}
 function jsonError(error: string, status = 400) {
   return NextResponse.json({ ok: false, error }, { status, headers: withNoStore() });
 }
@@ -21,7 +26,7 @@ export async function POST(req: NextRequest) {
     if (!jobId) return jsonError("Missing jobId.", 400);
 
     const error = String(body.value.error || body.value.message || "Remote Windows IndexTTS2 worker failed.").trim();
-    const job = failRemoteTrainingDatasetJob(owner.ownerKey, jobId, error, body.value.result);
+    const job = failRemoteTrainingDatasetJob(workerOwnerKey(req, owner.ownerKey), jobId, error, body.value.result);
 
     if (!job) return jsonError("Job not found.", 404);
     return NextResponse.json({ ok: true, job }, { headers: withNoStore() });
