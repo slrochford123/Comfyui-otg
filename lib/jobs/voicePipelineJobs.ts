@@ -474,6 +474,81 @@ function mergeJobResult(current: unknown, patch: Record<string, unknown>): Recor
   return { ...base, ...patch };
 }
 
+export function claimRemoteTrainingDatasetJob(ownerKey: string, workerId: string): QueuedContractJob | null {
+  const normalizedOwnerKey = cleanString(ownerKey);
+  const normalizedWorkerId = cleanString(workerId) || "windows-indextts2-worker";
+  if (!normalizedOwnerKey) return null;
+
+  const store = readStore();
+  const index = store.jobs.findIndex((job) =>
+    job.ownerKey === normalizedOwnerKey &&
+    job.jobType === "character_voice_pipeline" &&
+    job.action === "generate_training_dataset" &&
+    job.status === "queued"
+  );
+
+  if (index < 0) return null;
+
+  const current = store.jobs[index];
+  const now = new Date().toISOString();
+  const next: StoredQueuedContractJob = {
+    ...current,
+    status: "running",
+    updatedAt: now,
+    progress: Math.max(5, Number(current.progress || 0)),
+    message: `Claimed by remote Windows IndexTTS2 worker: ${normalizedWorkerId}.`,
+    error: null,
+    result: mergeJobResult(current.result, {
+      remoteWorker: true,
+      workerId: normalizedWorkerId,
+      claimedAt: now,
+      status: "claimed",
+    }),
+  };
+
+  store.jobs[index] = next;
+  writeStore(store);
+  return publicJob(next);
+}
+
+export function completeRemoteTrainingDatasetJob(
+  ownerKey: string,
+  jobId: string,
+  result: unknown,
+  message?: string,
+): QueuedContractJob | null {
+  const normalizedMessage = cleanString(message);
+  const safeResult = sanitizeValue(result);
+
+  return updateVoicePipelineJob(ownerKey, jobId, {
+    status: "completed",
+    progress: 100,
+    message: normalizedMessage || "Remote Windows IndexTTS2 training dataset completed.",
+    result: safeResult,
+    error: null,
+  });
+}
+
+export function failRemoteTrainingDatasetJob(
+  ownerKey: string,
+  jobId: string,
+  error: string,
+  result?: unknown,
+): QueuedContractJob | null {
+  const normalizedError = cleanString(error) || "Remote Windows IndexTTS2 training dataset failed.";
+  const patch: VoicePipelineJobUpdate = {
+    status: "failed",
+    progress: 100,
+    message: normalizedError,
+    error: normalizedError,
+  };
+
+  if (result !== undefined) {
+    patch.result = sanitizeValue(result);
+  }
+
+  return updateVoicePipelineJob(ownerKey, jobId, patch);
+}
 export function stopVoicePipelineJob(ownerKey: string, jobId: string): QueuedContractJob | null {
   const current = getQueuedContractJob(ownerKey, jobId);
   if (!current) return null;

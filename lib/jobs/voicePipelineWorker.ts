@@ -206,6 +206,12 @@ function isApplioTrainingJob(job: QueuedContractJob): boolean {
 }
 
 async function nextWorkerUpdate(ownerKey: string, job: QueuedContractJob): Promise<QueuedContractJob | Parameters<typeof updateVoicePipelineJob>[2] | null> {
+  if (isTrainingDatasetJob(job)) {
+    // Dataset generation is GPU-heavy and must be claimed by the remote Windows RTX 3090 worker.
+    // Do not execute createTrainingDatasetManifest locally on the Linux control server.
+    // Remote Windows IndexTTS2 worker must claim this job through /api/characters/voice-pipeline/worker/claim.
+    return null;
+  }
     // Real Voice FX is a synchronous ffmpeg adapter; run it to terminal status in one worker tick.
   if ((job.status === "queued" || job.status === "running") && isVoiceFxJob(job) && isRealVoiceFxEnabled()) {
     return completeJobWithRealAdapter(ownerKey, job);
