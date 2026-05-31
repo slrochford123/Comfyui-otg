@@ -1,4 +1,4 @@
-﻿import { NextRequest } from "next/server";
+import { NextRequest } from "next/server";
 import { isLikelyVideoWorkflowKey } from "@/app/api/_lib/comfyTarget";
 import path from "node:path";
 import fs from "node:fs";
@@ -7,6 +7,7 @@ import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { readState, markRunning, writeState } from "@/lib/contentState";
 import { writePromptRequestMeta } from "@/lib/promptRequestMeta";
 import { ensureComfyClientProgressMonitor, recordComfyPromptSubmitted, waitForComfyClientProgressMonitor } from "@/lib/comfyProgress";
+import { assertAllowedWorkerTargetUrl } from "@/lib/runtime/workerTargetPolicy";
 
 export const runtime = "nodejs";
 
@@ -56,7 +57,7 @@ function firstComfyBaseUrl(...values: Array<unknown>): string | null {
 }
 
 function configuredImageComfyBaseUrl(): string {
-  return (
+  return assertAllowedWorkerTargetUrl(
     firstComfyBaseUrl(
       process.env.OTG_IMAGE_COMFY_BASE_URL,
       process.env.IMAGE_COMFY_BASE_URL,
@@ -67,12 +68,13 @@ function configuredImageComfyBaseUrl(): string {
       process.env.COMFYUI_BASE_URL,
       process.env.NEXT_PUBLIC_COMFY_BASE_URL,
       process.env.NEXT_PUBLIC_COMFYUI_BASE_URL
-    ) || "http://127.0.0.1:8288"
+    ) || "http://127.0.0.1:8288",
+    "ComfyUI image worker target",
   );
 }
 
 function configuredVideoComfyBaseUrl(): string {
-  return (
+  return assertAllowedWorkerTargetUrl(
     firstComfyBaseUrl(
       process.env.OTG_VIDEO_COMFY_BASE_URL,
       process.env.VIDEO_COMFY_BASE_URL,
@@ -84,7 +86,8 @@ function configuredVideoComfyBaseUrl(): string {
       process.env.NEXT_PUBLIC_COMFY_BASE_URL,
       process.env.NEXT_PUBLIC_COMFYUI_BASE_URL,
       configuredImageComfyBaseUrl()
-    ) || "http://127.0.0.1:8288"
+    ) || "http://127.0.0.1:8288",
+    "ComfyUI video worker target",
   );
 }
 

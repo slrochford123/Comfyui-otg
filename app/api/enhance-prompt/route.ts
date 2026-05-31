@@ -1,4 +1,5 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { assertAllowedWorkerTargetUrl } from "@/lib/runtime/workerTargetPolicy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -205,7 +206,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
     }
 
-    const ollamaBase = process.env.OLLAMA_BASE_URL || process.env.OLLAMA_URL || "http://127.0.0.1:11434";
+    const ollamaBase = assertAllowedWorkerTargetUrl(process.env.OLLAMA_BASE_URL || process.env.OLLAMA_URL || "http://127.0.0.1:11434", "enhance-prompt Ollama worker target");
     const model = pickModel();
     const forceCpu = truthyEnv("OLLAMA_ENHANCE_FORCE_CPU");
     const numThread = parseIntEnv("OLLAMA_ENHANCE_NUM_THREAD");

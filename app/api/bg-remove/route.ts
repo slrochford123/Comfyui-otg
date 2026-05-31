@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
+import { assertAllowedWorkerTargetUrl } from "@/lib/runtime/workerTargetPolicy";
 
 // Background removal is handled by a local Python microservice (FastAPI + rembg).
 // This avoids heavy/fragile Node native deps and keeps Next builds stable.
@@ -15,7 +16,10 @@ import crypto from "crypto";
 export const runtime = "nodejs";
 
 function getBgRemoveUrl() {
-  return process.env.BG_REMOVE_URL || "http://127.0.0.1:3333/remove-bg";
+  return assertAllowedWorkerTargetUrl(
+    process.env.BG_REMOVE_URL || "http://127.0.0.1:3333/remove-bg",
+    "background removal Python worker target",
+  );
 }
 
 function getTimeoutMs() {

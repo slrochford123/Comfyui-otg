@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { assertAllowedWorkerTargetUrl } from "@/lib/runtime/workerTargetPolicy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,7 +20,7 @@ function enhanceBasic(prompt: string): string {
 }
 
 async function enhanceWithOllama(prompt: string, timeoutMs = 7000): Promise<string> {
-  const baseUrl = (process.env.OLLAMA_BASE_URL || process.env.OTG_OLLAMA_BASE_URL || "http://127.0.0.1:11434").trim();
+  const baseUrl = assertAllowedWorkerTargetUrl((process.env.OLLAMA_BASE_URL || process.env.OTG_OLLAMA_BASE_URL || "http://127.0.0.1:11434").trim(), "enhance Ollama worker target");
   const model = (process.env.OLLAMA_MODEL || process.env.OTG_OLLAMA_MODEL || "llama3.1").trim();
 
   const system =
