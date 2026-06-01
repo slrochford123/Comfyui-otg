@@ -475,6 +475,7 @@ function mergeJobResult(current: unknown, patch: Record<string, unknown>): Recor
 }
 
 export type RemoteVoicePipelineWorkerAction = "generate_training_dataset" | "start_applio_training" | "test_trained_voice";
+export type RemoteWorkerClaimAction = CharacterVoicePipelineAction | ProductionAudioStudioAction;
 
 function remoteWorkerActionLabel(action: RemoteVoicePipelineWorkerAction): string {
   if (action === "start_applio_training") return "Windows Applio training worker";
@@ -493,14 +494,31 @@ export function claimRemoteVoicePipelineWorkerJob(
   workerId: string,
   action: RemoteVoicePipelineWorkerAction = "generate_training_dataset",
 ): QueuedContractJob | null {
+  return claimRemoteWorkerJob(ownerKey, workerId, "character_voice_pipeline", action);
+}
+
+export function claimRemoteWorkerJob(
+  ownerKey: string,
+  workerId: string,
+  jobType: QueuedContractJobType,
+  action: RemoteWorkerClaimAction,
+): QueuedContractJob | null {
   const normalizedOwnerKey = cleanString(ownerKey);
-  const normalizedWorkerId = cleanString(workerId) || remoteWorkerDefaultId(action);
+  const normalizedWorkerId = cleanString(workerId) || (
+    jobType === "character_voice_pipeline" && (
+      action === "generate_training_dataset" ||
+      action === "start_applio_training" ||
+      action === "test_trained_voice"
+    )
+      ? remoteWorkerDefaultId(action)
+      : "windows-otg-worker"
+  );
   if (!normalizedOwnerKey) return null;
 
   const store = readStore();
   const index = store.jobs.findIndex((job) =>
     job.ownerKey === normalizedOwnerKey &&
-    job.jobType === "character_voice_pipeline" &&
+    job.jobType === jobType &&
     job.action === action &&
     job.status === "queued"
   );
@@ -509,7 +527,13 @@ export function claimRemoteVoicePipelineWorkerJob(
 
   const current = store.jobs[index];
   const now = new Date().toISOString();
-  const label = remoteWorkerActionLabel(action);
+  const label = jobType === "character_voice_pipeline" && (
+    action === "generate_training_dataset" ||
+    action === "start_applio_training" ||
+    action === "test_trained_voice"
+  )
+    ? remoteWorkerActionLabel(action)
+    : "Windows OTG worker";
   const next: StoredQueuedContractJob = {
     ...current,
     status: "running",
@@ -521,6 +545,7 @@ export function claimRemoteVoicePipelineWorkerJob(
       remoteWorker: true,
       workerId: normalizedWorkerId,
       claimedAt: now,
+      jobType,
       action,
       status: "claimed",
     }),
@@ -541,13 +566,22 @@ export function completeRemoteTrainingDatasetJob(
   result: unknown,
   message?: string,
 ): QueuedContractJob | null {
+  return completeRemoteWorkerJob(ownerKey, jobId, result, message || "Remote Windows worker completed.");
+}
+
+export function completeRemoteWorkerJob(
+  ownerKey: string,
+  jobId: string,
+  result: unknown,
+  message?: string,
+): QueuedContractJob | null {
   const normalizedMessage = cleanString(message);
   const safeResult = sanitizeValue(result);
 
   return updateVoicePipelineJob(ownerKey, jobId, {
     status: "completed",
     progress: 100,
-    message: normalizedMessage || "Remote Windows IndexTTS2 training dataset completed.",
+    message: normalizedMessage || "Remote Windows worker completed.",
     result: safeResult,
     error: null,
   });
@@ -559,7 +593,16 @@ export function failRemoteTrainingDatasetJob(
   error: string,
   result?: unknown,
 ): QueuedContractJob | null {
-  const normalizedError = cleanString(error) || "Remote Windows IndexTTS2 training dataset failed.";
+  return failRemoteWorkerJob(ownerKey, jobId, error || "Remote Windows IndexTTS2 training dataset failed.", result);
+}
+
+export function failRemoteWorkerJob(
+  ownerKey: string,
+  jobId: string,
+  error: string,
+  result?: unknown,
+): QueuedContractJob | null {
+  const normalizedError = cleanString(error) || "Remote Windows worker failed.";
   const patch: VoicePipelineJobUpdate = {
     status: "failed",
     progress: 100,

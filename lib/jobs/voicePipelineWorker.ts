@@ -207,9 +207,8 @@ function isApplioTrainingJob(job: QueuedContractJob): boolean {
   return job.jobType === "character_voice_pipeline" && job.action === "start_applio_training";
 }
 
-
-function isRemoteHeavyVoicePipelineJob(job: QueuedContractJob): boolean {
-  return isTrainingDatasetJob(job) || isApplioTrainingJob(job) || isApplioTrainedVoiceTestJob(job);
+function isControlPlaneOnlyHost(): boolean {
+  return String(process.env.OTG_CONTROL_PLANE_ONLY || "").trim() === "1";
 }
 
 function isSaveVoiceToCharacterJob(job: QueuedContractJob): boolean {
@@ -312,24 +311,12 @@ async function saveLatestTrainedApplioVoiceToCharacter(ownerKey: string, job: Qu
   };
 }
 async function nextWorkerUpdate(ownerKey: string, job: QueuedContractJob): Promise<QueuedContractJob | Parameters<typeof updateVoicePipelineJob>[2] | null> {
-  if (isTrainingDatasetJob(job)) {
-    // Dataset generation is GPU-heavy and must be claimed by the remote Windows RTX 3090 worker.
-    // Do not execute createTrainingDatasetManifest locally on the Linux control server.
-    // Remote Windows IndexTTS2 worker must claim this job through /api/characters/voice-pipeline/worker/claim.
-    return null;
-  }
-
-  if (isApplioTrainingJob(job)) {
-    // Applio training is GPU/CPU-heavy and must be claimed by the remote Windows worker.
-    // Linux is the OTG control plane only and must not execute Applio/RVC training locally.
-    // Remote Windows Applio worker must claim this job through /api/characters/voice-pipeline/worker/claim.
-    return null;
-  }
-
-  if (isApplioTrainedVoiceTestJob(job)) {
-    // Applio inference is content generation and must run on the Windows worker.
-    // Linux remains the OTG control plane only.
-    return null;
+  if (isControlPlaneOnlyHost()) {
+    if (isTrainingDatasetJob(job) || isApplioTrainingJob(job) || isApplioTrainedVoiceTestJob(job)) {
+      // These jobs are CPU/GPU-heavy. A Linux control-plane host must queue and expose them
+      // for a Windows worker to claim instead of executing the local worker path.
+      return null;
+    }
   }
 
   if (isSaveVoiceToCharacterJob(job)) {
@@ -674,7 +661,6 @@ export async function tickVoicePipelineWorker(ownerKey: string, options: VoicePi
   const requestedJobId = typeof options.jobId === "string" ? options.jobId.trim() : "";
   const candidates = listVoicePipelineJobs(ownerKey).filter((job) => job.status === "queued" || job.status === "running")
     .filter((job) => !requestedJobId || job.jobId === requestedJobId)
-        .filter((job) => requestedJobId || !isRemoteHeavyVoicePipelineJob(job))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .slice(0, limit);
 

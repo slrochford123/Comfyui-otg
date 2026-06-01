@@ -16,6 +16,11 @@
 ## Character Tab / Voice Lab
 
 ### Completed
+- Added OTG worker contract foundation for the intended deployment model: Linux hosts the app/control plane and the main Windows PC claims heavy generation/training/editing jobs. Generic worker claim/complete/fail routes now exist under `/api/worker/jobs/*`, and artifact upload exists under `/api/worker/artifacts/upload`.
+- Added `lib/jobs/workerJobContract.ts` as the central worker-only action registry. Current registered Windows adapters cover Character Voice dataset generation, Voice FX, base voice design, Applio training, trained voice preview, and Production Audio Studio actions.
+- Added `OTG_CONTROL_PLANE_ONLY=1` guard for Linux hosts so local worker ticks leave heavy Voice Lab jobs queued for the Windows worker instead of executing them server-side.
+- Added `scripts/windows/otg-worker.ps1` and `scripts/windows/otg-worker.py` as a Windows worker coordinator that dispatches the existing IndexTTS2 dataset, Applio training, and Applio inference worker adapters from the main PC.
+- Created `otg-local-execution-audit.txt` to track Linux-local execution points that still need conversion to worker-dispatched jobs. Current findings include Angles Blender/Hunyuan, direct local ComfyUI calls, local ffmpeg/python paths, and other generation routes that must not remain Linux-local in production.
 - Character builder draft state now persists locally and to the TEST server draft store, including current builder page, selected style, typed fields, Voice Lab page, active job state, and profile state. Drafts clear only through Start Over/reset or save completion.
 - Character builder progression now persists locked-page state. After moving forward, completed Character Builder and Voice Lab pages are restored as locked after tab changes, app reloads, or browser/app close; earlier pages can only be changed by Start Over.
 - Voice Lab dataset preparation and voice model training jobs now expose Stop and Resume controls. Stop marks the durable job as user-stopped; Resume requeues the same job so resumable dataset/training artifact logic can continue from durable state.

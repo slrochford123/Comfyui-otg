@@ -78,6 +78,10 @@ These functions currently return queued placeholder results. They are contract a
 
 ## Current implementation status
 
+- Deployment architecture is now defined as Linux control plane plus Windows execution worker. Linux hosts the app, durable job state, gallery/favorites/results, and planning UI. CPU/GPU generation, IndexTTS2 cloning, Applio training/inference, ComfyUI rendering, Blender/Hunyuan processing, ffmpeg audio/video work, and model-backed AI helpers must run on the main Windows PC worker. Set `OTG_CONTROL_PLANE_ONLY=1` on Linux hosts so local worker ticks do not execute heavy Voice Lab jobs.
+- A generic worker contract foundation is implemented in `lib/jobs/workerJobContract.ts` with generic `/api/worker/jobs/claim`, `/api/worker/jobs/complete`, `/api/worker/jobs/fail`, and `/api/worker/artifacts/upload` endpoints. These routes reuse the existing durable job store and are the migration target for all heavy app features.
+- `scripts/windows/otg-worker.ps1` and `scripts/windows/otg-worker.py` coordinate the current Windows adapters for IndexTTS2 dataset generation, Applio training, and Applio inference. Existing character-specific worker endpoints remain for backward compatibility while the generic contract becomes the standard path.
+- `otg-local-execution-audit.txt` records the current server-local execution audit. Remaining local execution points must be converted in priority order: Characters/Voice Lab first, then Production, Edit Video/Audio Studio, Image/Video/3D/Angles/Storyboard, and model-backed AI helpers.
 - Character UI shows the Image, Voice, Voice FX, Training, Voice Test, and Preview Video skeleton.
 - Character UI has provider selection for Qwen3-TTS and Cosy/CosyVoice.
 - Character Builder Voice Lab is split into four internal pages: Voice Design, Voice FX, Training, and Test + Preview.
