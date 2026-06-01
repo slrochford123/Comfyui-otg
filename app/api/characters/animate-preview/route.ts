@@ -305,6 +305,38 @@ const NEGATIVE_PROMPT = [
   "duplicate subject",
 ].join(", ");
 
+function isTrainedApplioVoiceProfile(value: unknown): value is JsonRecord {
+  const profile = value as JsonRecord | null;
+  if (!profile || typeof profile !== "object") return false;
+
+  const status = String(profile.status || "").trim();
+  const adapter = String(profile.trainingAdapter || profile.adapter || "").trim();
+  const modelPath = String(profile.modelPath || "").trim();
+  const indexPath = String(profile.indexPath || "").trim();
+
+  return (
+    status === "trained" &&
+    adapter === "applio_real_training" &&
+    Boolean(modelPath) &&
+    Boolean(indexPath)
+  );
+}
+
+function pickCharacterVoiceReferenceWav(character: JsonRecord | null) {
+  const profile = character?.characterVoiceProfile as JsonRecord | null;
+  return pickString(
+    profile?.approvedSamplePath,
+    profile?.selectedSamplePath,
+    profile?.baseSamplePath,
+    profile?.sourceSamplePath,
+    profile?.tunedSamplePath,
+    profile?.approvedSampleUrl,
+    profile?.selectedSampleUrl,
+    profile?.baseSampleUrl,
+    profile?.sourceSampleUrl,
+    profile?.tunedSampleUrl,
+  );
+}
 function pickReferenceWav(voicePack: JsonRecord | null) {
   const raw = pickString(
     voicePack?.referenceWav,
@@ -1077,19 +1109,31 @@ export async function POST(req: NextRequest) {
     const imagePath = resolveInsideDataRoot(imageCandidate, "imagePath");
     requireFile(imagePath, "Character source image");
 
-    if (!voicePack) {
+    const trainedApplioProfileReady = isTrainedApplioVoiceProfile(character?.characterVoiceProfile || null);
+
+    if (!voicePack && !trainedApplioProfileReady) {
       throw new StageError("voice_pack", `Voice pack was not found for ${characterId}. Create or regenerate the character voice pack first.`, 400, {
         expectedPath: voicePackPath(deviceId, characterId),
       });
     }
 
-    const referenceWav = pickReferenceWav(voicePack);
+    const referenceWav = pickString(
+      pickReferenceWav(voicePack),
+      trainedApplioProfileReady ? pickCharacterVoiceReferenceWav(character) : "",
+    );
 
     if (!referenceWav) {
-      throw new StageError("voice_pack", `Voice pack for ${characterId} does not contain a selected reference WAV.`, 400);
+      throw new StageError("voice_pack", `Voice pack for ${characterId} does not contain a selected reference WAV and no trained profile reference WAV was available.`, 400, {
+        expectedPath: voicePackPath(deviceId, characterId),
+        trainedApplioProfileReady,
+      });
     }
 
-    requireFile(referenceWav, "Voice-pack reference WAV");
+    const resolvedReferenceWav = referenceWav.startsWith("/api/")
+      ? resolveInsideDataRoot(new URL(referenceWav, "http://local").searchParams.get("file") || referenceWav, "referenceWav")
+      : resolveInsideDataRoot(referenceWav, "referenceWav");
+
+    requireFile(resolvedReferenceWav, "Voice reference WAV");
 
     const introLine = pickString(body.script, body.introLine, DEFAULT_SCRIPT);
     const shot = pickString(
@@ -1135,7 +1179,7 @@ export async function POST(req: NextRequest) {
 
     const seedVcAudio = await runSeedVcForAnimatePreview({
       sourceAudioPath: extractedAudio.audioPath,
-      referenceWav,
+      referenceWav: resolvedReferenceWav,
       outputWav: seedVcAudioPath,
       logsDir,
     });
@@ -1167,7 +1211,7 @@ export async function POST(req: NextRequest) {
         remoteFile: rawVideo.remoteFile,
       },
       seedVc: {
-        referenceWav,
+        referenceWav: resolvedReferenceWav,
         sourceAudioPath: extractedAudio.audioPath,
         sourceAudioUrl: extractedAudio.audioUrl,
         sourceAudioBytes: extractedAudio.outputBytes,
