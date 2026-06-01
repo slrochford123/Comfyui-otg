@@ -9,7 +9,38 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const DATA_ROOT = path.resolve(process.env.OTG_DATA_ROOT || path.join(process.cwd(), "data"));
+function firstExistingRoot(...values: Array<string | undefined>) {
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (!text) continue;
+    const resolved = path.resolve(text);
+    if (fs.existsSync(resolved)) return resolved;
+  }
+  return path.resolve(path.join(process.cwd(), "data"));
+}
+
+const DATA_ROOT = firstExistingRoot(
+  process.env.OTG_DATA_ROOT,
+  process.env.OTG_DATA_DIR,
+  process.env.DATA_ROOT,
+  process.env.DATA_DIR,
+  "/var/lib/otg",
+  path.join(process.cwd(), "data"),
+);
+
+const DATA_ROOT_ALIASES = Array.from(new Set([
+  DATA_ROOT,
+  path.join(DATA_ROOT, "data"),
+  path.join(DATA_ROOT, "uploads"),
+  process.env.OTG_DATA_ROOT,
+  process.env.OTG_DATA_DIR,
+  process.env.DATA_ROOT,
+  process.env.DATA_DIR,
+  "/var/lib/otg",
+  "/var/lib/otg/data",
+  "/var/lib/otg/uploads",
+  path.join(process.cwd(), "data"),
+].filter(Boolean).map((value) => path.resolve(String(value)))));
 const COMFY_URL = String(process.env.OTG_VIDEO_COMFY_URL || process.env.COMFYUI_BASE_URL || "http://127.0.0.1:8188").replace(/\/+$/, "");
 const LTX_WORKFLOW_PATH = path.resolve(
   process.env.ANIMATE_ME_LTX_WORKFLOW_PATH ||
@@ -101,19 +132,25 @@ function resolveInsideDataRoot(rawPath: unknown, label: string) {
     throw new StageError("validate_input", `${label} is required.`, 400);
   }
 
-  const normalizedRaw = raw.replace(/^data[\\/]/i, "");
-  const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(DATA_ROOT, normalizedRaw);
+  const normalizedRaw = raw
+    .replace(/^data[\\/]/i, "")
+    .replace(/^uploads[\\/]/i, "uploads/");
 
-  if (!isInside(DATA_ROOT, resolved)) {
-    throw new StageError("validate_input", `${label} must stay inside the data directory.`, 400, {
+  const resolved = path.isAbsolute(raw)
+    ? path.resolve(raw)
+    : path.resolve(DATA_ROOT, normalizedRaw);
+
+  const allowedRoot = DATA_ROOT_ALIASES.find((root) => isInside(root, resolved));
+  if (!allowedRoot) {
+    throw new StageError("validate_input", `${label} must stay inside an OTG data directory.`, 400, {
       rawPath: raw,
       dataRoot: DATA_ROOT,
+      allowedRoots: DATA_ROOT_ALIASES,
     });
   }
 
   return resolved;
 }
-
 function fileExists(absPath: string) {
   try {
     return fs.existsSync(absPath) && fs.statSync(absPath).isFile();
