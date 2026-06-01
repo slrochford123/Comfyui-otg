@@ -474,15 +474,17 @@ function mergeJobResult(current: unknown, patch: Record<string, unknown>): Recor
   return { ...base, ...patch };
 }
 
-export type RemoteVoicePipelineWorkerAction = "generate_training_dataset" | "start_applio_training";
+export type RemoteVoicePipelineWorkerAction = "generate_training_dataset" | "start_applio_training" | "test_trained_voice";
 
 function remoteWorkerActionLabel(action: RemoteVoicePipelineWorkerAction): string {
   if (action === "start_applio_training") return "Windows Applio training worker";
+  if (action === "test_trained_voice") return "Windows Applio inference worker";
   return "Windows IndexTTS2 worker";
 }
 
 function remoteWorkerDefaultId(action: RemoteVoicePipelineWorkerAction): string {
   if (action === "start_applio_training") return "windows-applio-worker";
+  if (action === "test_trained_voice") return "windows-applio-inference-worker";
   return "windows-indextts2-worker";
 }
 
@@ -575,7 +577,7 @@ export function stopVoicePipelineJob(ownerKey: string, jobId: string): QueuedCon
   const current = getQueuedContractJob(ownerKey, jobId);
   if (!current) return null;
   if (current.jobType !== "character_voice_pipeline") return null;
-  if (current.action !== "generate_training_dataset" && current.action !== "start_applio_training") {
+  if (current.action !== "generate_training_dataset" && current.action !== "start_applio_training" && current.action !== "test_trained_voice") {
     return updateVoicePipelineJob(ownerKey, jobId, {
       status: "failed",
       progress: 100,
@@ -601,7 +603,7 @@ export function resumeVoicePipelineJob(ownerKey: string, jobId: string): QueuedC
   const current = getQueuedContractJob(ownerKey, jobId);
   if (!current) return null;
   if (current.jobType !== "character_voice_pipeline") return null;
-  if (current.action !== "generate_training_dataset" && current.action !== "start_applio_training") return current;
+  if (current.action !== "generate_training_dataset" && current.action !== "start_applio_training" && current.action !== "test_trained_voice") return current;
   if (current.status !== "canceled" && current.status !== "failed") return current;
 
   return updateVoicePipelineJob(ownerKey, jobId, {

@@ -209,7 +209,7 @@ function isApplioTrainingJob(job: QueuedContractJob): boolean {
 
 
 function isRemoteHeavyVoicePipelineJob(job: QueuedContractJob): boolean {
-  return isTrainingDatasetJob(job) || isApplioTrainingJob(job);
+  return isTrainingDatasetJob(job) || isApplioTrainingJob(job) || isApplioTrainedVoiceTestJob(job);
 }
 
 function isSaveVoiceToCharacterJob(job: QueuedContractJob): boolean {
@@ -323,6 +323,12 @@ async function nextWorkerUpdate(ownerKey: string, job: QueuedContractJob): Promi
     // Applio training is GPU/CPU-heavy and must be claimed by the remote Windows worker.
     // Linux is the OTG control plane only and must not execute Applio/RVC training locally.
     // Remote Windows Applio worker must claim this job through /api/characters/voice-pipeline/worker/claim.
+    return null;
+  }
+
+  if (isApplioTrainedVoiceTestJob(job)) {
+    // Applio inference is content generation and must run on the Windows worker.
+    // Linux remains the OTG control plane only.
     return null;
   }
 

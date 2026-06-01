@@ -16,6 +16,7 @@ function workerOwnerKey(req: NextRequest, fallbackOwnerKey: string): string {
 function remoteClaimAction(value: unknown): RemoteVoicePipelineWorkerAction {
   const action = String(value || "generate_training_dataset").trim();
   if (action === "start_applio_training") return "start_applio_training";
+  if (action === "test_trained_voice") return "test_trained_voice";
   return "generate_training_dataset";
 }
 function jsonError(error: string, status = 400) {
