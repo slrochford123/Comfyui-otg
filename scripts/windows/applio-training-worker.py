@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import sys
 import time
 import traceback
@@ -213,6 +214,32 @@ def append_text(path, text):
         handle.write(text)
 
 
+def stream_pipe(pipe, sink_path, label, collected):
+    try:
+        for line in iter(pipe.readline, ""):
+            if not line:
+                break
+            collected.append(line)
+            append_text(sink_path, line)
+
+            lowered = line.lower()
+            if (
+                "epoch" in lowered
+                or "training" in lowered
+                or "extract" in lowered
+                or "completed" in lowered
+                or "%" in line
+                or "error" in lowered
+                or "traceback" in lowered
+            ):
+                print(f"[{label}] {line.rstrip()}", flush=True)
+    finally:
+        try:
+            pipe.close()
+        except Exception:
+            pass
+
+
 def run_command(args, command, cwd, stdout_path, stderr_path):
     append_text(stdout_path, f"\n\n===== {' '.join(command)} =====\n")
     append_text(stderr_path, f"\n\n===== {' '.join(command)} =====\n")
@@ -233,26 +260,33 @@ def run_command(args, command, cwd, stdout_path, stderr_path):
     stdout_lines = []
     stderr_lines = []
 
-    while True:
-        out = process.stdout.readline() if process.stdout else ""
-        err = process.stderr.readline() if process.stderr else ""
+    stdout_thread = threading.Thread(
+        target=stream_pipe,
+        args=(process.stdout, stdout_path, "stdout", stdout_lines),
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=stream_pipe,
+        args=(process.stderr, stderr_path, "stderr", stderr_lines),
+        daemon=True,
+    )
 
-        if out:
-            stdout_lines.append(out)
-            append_text(stdout_path, out)
-            if "epoch" in out.lower() or "training" in out.lower():
-                print(out.rstrip(), flush=True)
+    stdout_thread.start()
+    stderr_thread.start()
 
-        if err:
-            stderr_lines.append(err)
-            append_text(stderr_path, err)
-            if "error" in err.lower() or "traceback" in err.lower():
-                print(err.rstrip(), flush=True)
-
-        if out == "" and err == "" and process.poll() is not None:
-            break
+    last_report = time.time()
+    while process.poll() is None:
+        time.sleep(5)
+        now = time.time()
+        if now - last_report >= 60:
+            print(f"[wait] still running: {' '.join(command)}", flush=True)
+            last_report = now
 
     rc = process.wait()
+
+    stdout_thread.join(timeout=30)
+    stderr_thread.join(timeout=30)
+
     if rc != 0:
         raise RuntimeError(f"Command failed with exit code {rc}: {' '.join(command)}")
 
@@ -261,7 +295,6 @@ def run_command(args, command, cwd, stdout_path, stderr_path):
         "stdout": "".join(stdout_lines),
         "stderr": "".join(stderr_lines),
     }
-
 
 def newest_file_matching(root, extension, model_name):
     root = Path(root)
@@ -331,6 +364,7 @@ def build_commands(args, model_name, dataset_dir):
             "--cpu_cores", str(args.cpu_cores),
             "--gpu", args.gpu,
             "--sample_rate", str(args.sample_rate),
+            "--embedder_model", args.embedder_model,
             "--include_mutes", str(args.include_mutes),
         ],
         [
@@ -560,6 +594,7 @@ def parse_args():
     parser.add_argument("--gpu", default="0")
     parser.add_argument("--f0-method", default="rmvpe")
     parser.add_argument("--include-mutes", type=int, default=2)
+    parser.add_argument("--embedder-model", default="contentvec")
     parser.add_argument("--cut-preprocess", default="Skip")
     parser.add_argument("--vocoder", default="HiFi-GAN")
     parser.add_argument("--index-algorithm", default="Auto")
