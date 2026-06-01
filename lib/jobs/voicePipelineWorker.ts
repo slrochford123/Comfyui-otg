@@ -29,6 +29,8 @@ import {
 import { createApplioTrainingArtifact, type ApplioTrainingProgressSnapshot } from "@/lib/jobs/applioTrainingArtifact";
 import { isApplioTrainedVoiceTestJob, resolveApplioInferencePlan, runApplioTrainedVoiceInference } from "@/lib/jobs/applioInferenceAdapter";
 import { createTrainingDatasetManifest } from "@/lib/jobs/trainingDatasetManifest";
+import { recoverLatestTrainedApplioVoiceProfile } from "@/lib/jobs/applioArtifactRecovery";
+import { loadCharacter, updateCharacterVoiceProfile } from "@/lib/characters/store";
 
 export type VoicePipelineWorkerTickOptions = {
   limit?: number;
@@ -205,6 +207,110 @@ function isApplioTrainingJob(job: QueuedContractJob): boolean {
   return job.jobType === "character_voice_pipeline" && job.action === "start_applio_training";
 }
 
+
+function isRemoteHeavyVoicePipelineJob(job: QueuedContractJob): boolean {
+  return isTrainingDatasetJob(job) || isApplioTrainingJob(job);
+}
+
+function isSaveVoiceToCharacterJob(job: QueuedContractJob): boolean {
+  return job.jobType === "character_voice_pipeline" && job.action === "save_voice_to_character";
+}
+
+function cleanOwnerKey(value: unknown): string {
+  return String(value || "").trim();
+}
+
+function characterProfileOwnerCandidates(primaryOwnerKey: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  const add = (value: unknown) => {
+    const key = cleanOwnerKey(value);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(key);
+  };
+
+  add(primaryOwnerKey);
+  add(process.env.OTG_DEFAULT_CHARACTER_OWNER);
+  add("web_characters_builder");
+  add("slrochford");
+  add("slrochford12300");
+
+  return out;
+}
+
+function findVisibleCharacterOwner(ownerKey: string, characterId: string): string {
+  for (const candidateOwnerKey of characterProfileOwnerCandidates(ownerKey)) {
+    if (loadCharacter(candidateOwnerKey, characterId)) return candidateOwnerKey;
+  }
+  return ownerKey;
+}
+
+async function saveLatestTrainedApplioVoiceToCharacter(ownerKey: string, job: QueuedContractJob) {
+  const characterId = String(job.characterId || job.input?.characterId || "").trim();
+  if (!characterId) {
+    return {
+      status: "failed" as const,
+      progress: 100,
+      message: "Save voice to character failed.",
+      error: "Missing characterId.",
+    };
+  }
+
+  const visibleOwnerKey = findVisibleCharacterOwner(ownerKey, characterId);
+  const visibleCharacter = loadCharacter(visibleOwnerKey, characterId);
+  const ownerCharacter = loadCharacter(ownerKey, characterId);
+
+  const recovered = recoverLatestTrainedApplioVoiceProfile({
+    ownerKey,
+    characterId,
+    savedProfile: ownerCharacter?.characterVoiceProfile || null,
+    builderProfile: visibleCharacter?.characterVoiceProfile || null,
+  });
+
+  if (!recovered) {
+    return {
+      status: "failed" as const,
+      progress: 100,
+      message: "Save voice to character failed.",
+      error: "No valid trained Applio voice model artifact found.",
+    };
+  }
+
+  const updated = updateCharacterVoiceProfile(visibleOwnerKey, characterId, recovered.profile);
+  if (!updated) {
+    return {
+      status: "failed" as const,
+      progress: 100,
+      message: "Save voice to character failed.",
+      error: `Character not found for owner ${visibleOwnerKey}.`,
+    };
+  }
+
+  return {
+    status: "completed" as const,
+    progress: 100,
+    message: `Saved trained Applio voice profile to character. owner: ${visibleOwnerKey}; source: ${recovered.source}`,
+    result: {
+      saved: true,
+      mock: false,
+      adapter: "applio_real_training",
+      status: "trained",
+      source: recovered.source,
+      ownerKey,
+      visibleOwnerKey,
+      characterId,
+      provider: recovered.profile.provider,
+      modelPath: recovered.profile.modelPath,
+      indexPath: recovered.profile.indexPath,
+      artifactUrl: recovered.profile.trainingArtifactUrl,
+      artifactPath: recovered.profile.trainingArtifactPath,
+      profile: recovered.profile,
+    },
+    error: null,
+  };
+}
 async function nextWorkerUpdate(ownerKey: string, job: QueuedContractJob): Promise<QueuedContractJob | Parameters<typeof updateVoicePipelineJob>[2] | null> {
   if (isTrainingDatasetJob(job)) {
     // Dataset generation is GPU-heavy and must be claimed by the remote Windows RTX 3090 worker.
@@ -218,6 +324,10 @@ async function nextWorkerUpdate(ownerKey: string, job: QueuedContractJob): Promi
     // Linux is the OTG control plane only and must not execute Applio/RVC training locally.
     // Remote Windows Applio worker must claim this job through /api/characters/voice-pipeline/worker/claim.
     return null;
+  }
+
+  if (isSaveVoiceToCharacterJob(job)) {
+    return saveLatestTrainedApplioVoiceToCharacter(ownerKey, job);
   }
     // Real Voice FX is a synchronous ffmpeg adapter; run it to terminal status in one worker tick.
   if ((job.status === "queued" || job.status === "running") && isVoiceFxJob(job) && isRealVoiceFxEnabled()) {
@@ -556,9 +666,9 @@ if (job.status === "queued") {
 export async function tickVoicePipelineWorker(ownerKey: string, options: VoicePipelineWorkerTickOptions = {}): Promise<VoicePipelineWorkerTickResult> {
   const limit = clampLimit(options.limit);
   const requestedJobId = typeof options.jobId === "string" ? options.jobId.trim() : "";
-  const candidates = listVoicePipelineJobs(ownerKey)
-    .filter((job) => job.status === "queued" || job.status === "running")
+  const candidates = listVoicePipelineJobs(ownerKey).filter((job) => job.status === "queued" || job.status === "running")
     .filter((job) => !requestedJobId || job.jobId === requestedJobId)
+        .filter((job) => requestedJobId || !isRemoteHeavyVoicePipelineJob(job))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .slice(0, limit);
 
