@@ -1,6 +1,8 @@
 import {
+  CHARACTER_ANIMATION_PREVIEW_ACTIONS,
   CHARACTER_VOICE_PIPELINE_ACTIONS,
   PRODUCTION_AUDIO_STUDIO_ACTIONS,
+  type CharacterAnimationPreviewAction,
   type CharacterVoicePipelineAction,
   type ProductionAudioStudioAction,
   type QueuedContractJobType,
@@ -9,6 +11,7 @@ import {
 export const OTG_WORKER_JOB_TYPES = [
   "character_voice_pipeline",
   "production_audio_studio",
+  "character_animation_preview",
 ] as const satisfies readonly QueuedContractJobType[];
 
 export const OTG_WORKER_ONLY_FEATURE_AREAS = [
@@ -44,7 +47,7 @@ export const OTG_WORKER_ONLY_FEATURE_AREAS = [
 ] as const;
 
 export type OtgWorkerJobType = (typeof OTG_WORKER_JOB_TYPES)[number];
-export type OtgWorkerAction = CharacterVoicePipelineAction | ProductionAudioStudioAction;
+export type OtgWorkerAction = CharacterVoicePipelineAction | ProductionAudioStudioAction | CharacterAnimationPreviewAction;
 
 export type OtgWorkerJobRoute = {
   jobType: OtgWorkerJobType;
@@ -90,6 +93,13 @@ export const OTG_WORKER_JOB_ROUTES: readonly OtgWorkerJobRoute[] = [
     adapterHint: "windows.voice_design",
     description: "Create the approved base character voice with Qwen3-TTS or CosyVoice on the Windows worker.",
   },
+  {
+    jobType: "character_animation_preview",
+    action: "animate_preview",
+    workerOnly: true,
+    adapterHint: "windows.character_animate_preview",
+    description: "Render Animate Me preview video on the Windows worker.",
+  },
   ...PRODUCTION_AUDIO_STUDIO_ACTIONS.map((action) => ({
     jobType: "production_audio_studio" as const,
     action,
@@ -119,6 +129,9 @@ export function normalizeOtgWorkerAction(jobType: OtgWorkerJobType, value: unkno
   if (jobType === "production_audio_studio" && includesString(PRODUCTION_AUDIO_STUDIO_ACTIONS, action)) {
     return action;
   }
+  if (jobType === "character_animation_preview" && includesString(CHARACTER_ANIMATION_PREVIEW_ACTIONS, action)) {
+    return action;
+  }
   return null;
 }
 
@@ -129,4 +142,3 @@ export function getOtgWorkerJobRoute(jobType: OtgWorkerJobType, action: OtgWorke
 export function isOtgWorkerOnlyJob(jobType: OtgWorkerJobType, action: OtgWorkerAction): boolean {
   return !!getOtgWorkerJobRoute(jobType, action);
 }
-

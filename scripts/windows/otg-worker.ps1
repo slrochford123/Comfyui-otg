@@ -2,6 +2,7 @@ param(
   [string]$Repo = "C:\AI\OTG-Test2",
   [string]$BaseUrl = $env:OTG_WORKER_BASE_URL,
   [string]$OwnerKey = $env:OTG_WORKER_OWNER_KEY,
+  [string]$DeviceId = $env:OTG_DEVICE_ID,
   [string]$WorkerId = $env:OTG_WORKER_ID,
   [switch]$Once
 )
@@ -10,6 +11,7 @@ $ErrorActionPreference = "Stop"
 
 if (-not $BaseUrl) { $BaseUrl = "https://otg.win" }
 if (-not $OwnerKey) { throw "Missing owner key. Set OTG_WORKER_OWNER_KEY or pass -OwnerKey." }
+if (-not $DeviceId) { $DeviceId = "slrochford" }
 if (-not $WorkerId) { $WorkerId = "windows-main-pc" }
 
 $Python = Join-Path $Repo ".venv\Scripts\python.exe"
@@ -23,6 +25,7 @@ $args = @(
   "--repo", $Repo,
   "--base-url", $BaseUrl,
   "--owner-key", $OwnerKey,
+  "--device-id", $DeviceId,
   "--worker-id", $WorkerId
 )
 
@@ -32,8 +35,8 @@ Write-Host "Starting OTG Windows worker coordinator"
 Write-Host "  Repo: $Repo"
 Write-Host "  BaseUrl: $BaseUrl"
 Write-Host "  OwnerKey: $OwnerKey"
+Write-Host "  DeviceId: $DeviceId"
 Write-Host "  WorkerId: $WorkerId"
 
 & $Python @args
 exit $LASTEXITCODE
-

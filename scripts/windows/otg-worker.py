@@ -28,6 +28,10 @@ ADAPTERS = [
         "name": "Applio inference",
         "script": Path("scripts/windows/applio-inference-worker.py"),
     },
+    {
+        "name": "Animate preview",
+        "script": Path("scripts/windows/animate-preview-worker.py"),
+    },
 ]
 
 
@@ -44,6 +48,8 @@ def run_adapter(args: argparse.Namespace, adapter: dict[str, object]) -> int:
         args.base_url,
         "--owner-key",
         args.owner_key,
+        "--device-id",
+        args.device_id,
         "--worker-id",
         f"{args.worker_id}-{str(adapter['name']).lower().replace(' ', '-')}",
     ]
@@ -68,6 +74,7 @@ def main() -> int:
     parser.add_argument("--repo", default=r"C:\AI\OTG-Test2")
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--owner-key", required=True)
+    parser.add_argument("--device-id", default="slrochford")
     parser.add_argument("--worker-id", default="windows-main-pc")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--interval-seconds", type=int, default=30)

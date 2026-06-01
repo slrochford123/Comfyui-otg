@@ -1929,6 +1929,16 @@ function CharacterBuilder() {
         throw new Error(payload?.error || `Animate Me failed with HTTP ${response.status}`);
       }
 
+      if (payload.status === "queued" && payload.jobId) {
+        setSavedCharacterAnimateMessage(payload.message || "Animation preview queued for the Windows worker.");
+        setSavedCharacterAnimateVideoUrlById((current) => {
+          const next = { ...current };
+          delete next[characterSafeId];
+          return next;
+        });
+        return;
+      }
+
       if (payload.videoUrl) {
         setSavedCharacterAnimateVideoUrlById((current) => ({
           ...current,
@@ -5164,4 +5174,3 @@ function ImageChooser({ candidates, selectedId, onSelect, onDelete }: { candidat
     </div>
   );
 }
-

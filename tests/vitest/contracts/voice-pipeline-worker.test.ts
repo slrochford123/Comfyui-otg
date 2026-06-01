@@ -82,6 +82,7 @@ describe("voice pipeline no-op worker", () => {
     APPLIO_INFER_OUTPUT_FORMAT: process.env.APPLIO_INFER_OUTPUT_FORMAT,
     APPLIO_INFER_TIMEOUT_MS: process.env.APPLIO_INFER_TIMEOUT_MS,
     OTG_APPLIO_INFERENCE_TEST_MODE: process.env.OTG_APPLIO_INFERENCE_TEST_MODE,
+    OTG_CONTROL_PLANE_ONLY: process.env.OTG_CONTROL_PLANE_ONLY,
   };
 
   beforeEach(() => {
@@ -152,6 +153,7 @@ describe("voice pipeline no-op worker", () => {
     delete process.env.APPLIO_INFER_OUTPUT_FORMAT;
     delete process.env.APPLIO_INFER_TIMEOUT_MS;
     delete process.env.OTG_APPLIO_INFERENCE_TEST_MODE;
+    delete process.env.OTG_CONTROL_PLANE_ONLY;
   });
 
   afterEach(() => {
@@ -2192,6 +2194,25 @@ describe("voice pipeline no-op worker", () => {
     expect(getQueuedContractJob("owner-a", completed.job.jobId)?.status).toBe("completed");
     expect(getQueuedContractJob("owner-a", failed.job.jobId)?.status).toBe("failed");
     expect(getQueuedContractJob("owner-a", canceled.job.jobId)?.status).toBe("canceled");
+  });
+
+  it("does not execute heavy Voice Lab jobs on a control-plane-only host", async () => {
+    process.env.OTG_CONTROL_PLANE_ONLY = "1";
+    const created = createCharacterVoicePipelineJob("owner-a", {
+      action: "generate_training_dataset",
+      characterId: "char-1",
+      trainingPreset: "balanced",
+      approvedSampleUrl: "/api/characters/voice-sample/file?owner=owner-a&characterId=char-1&jobId=cvp_base",
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error(created.error);
+
+    const tick = await tickVoicePipelineWorker("owner-a");
+    expect(tick).toEqual({ processed: 0, jobs: [] });
+    expect(getQueuedContractJob("owner-a", created.job.jobId)).toMatchObject({
+      status: "queued",
+      action: "generate_training_dataset",
+    });
   });
 
   it("respects owner scoping and processing limits", async () => {

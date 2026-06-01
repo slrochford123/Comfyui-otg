@@ -5,6 +5,9 @@ import path from "node:path";
 
 import { NextRequest, NextResponse } from "next/server";
 
+import { createCharacterAnimationPreviewJob } from "@/lib/jobs/voicePipelineJobs";
+import { getOwnerContext } from "@/lib/ownerKey";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -1099,6 +1102,7 @@ async function muxFinalVideo(args: {
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json().catch(() => ({}))) as JsonRecord;
+    const owner = await getOwnerContext(req);
 
     const deviceId = normalizeDeviceId(body.deviceId || req.headers.get("x-otg-device-id") || DEFAULT_DEVICE_ID);
     const characterId = safeId(body.characterId || body.name || body.characterName || "character");
@@ -1159,98 +1163,62 @@ export async function POST(req: NextRequest) {
       shot,
     });
 
-    const rawVideo = await generateUploadedWorkflowVideo({
-      imagePath,
-      positivePrompt,
-      negativePrompt: NEGATIVE_PROMPT,
-      outDir,
-      filenamePrefix: stem,
-    });
-
     const sourceAudioPath = path.join(outDir, `${stem}_source_audio.wav`);
     const seedVcAudioPath = path.join(outDir, `${stem}_seedvc.wav`);
     const finalVideoPath = path.join(outDir, `${stem}_final.mp4`);
 
-    const extractedAudio = await extractVideoAudioForSeedVc({
-      rawVideoPath: rawVideo.videoPath,
-      sourceAudioPath,
-      logsDir,
-    });
-
-    const seedVcAudio = await runSeedVcForAnimatePreview({
-      sourceAudioPath: extractedAudio.audioPath,
-      referenceWav: resolvedReferenceWav,
-      outputWav: seedVcAudioPath,
-      logsDir,
-    });
-
-    const finalVideo = await muxFinalVideo({
-      rawVideoPath: rawVideo.videoPath,
-      audioPath: seedVcAudio.audioPath,
-      finalVideoPath,
-      logsDir,
-    });
-    const manifest = {
-      ok: true,
-      engine: "Animate Me uploaded image-video workflow plus Seed-VC voice conversion",
+    const jobResult = createCharacterAnimationPreviewJob(owner.ownerKey, {
+      action: "animate_preview",
       characterId,
       characterName,
       deviceId,
       imagePath,
+      referenceWav: resolvedReferenceWav,
       introLine,
       shot,
-      createdAt: new Date().toISOString(),
+      likenessDescription,
+      voiceStyleDefinition,
+      positivePrompt,
+      negativePrompt: NEGATIVE_PROMPT,
+      output: {
+        outDir,
+        logsDir,
+        sourceAudioPath,
+        seedVcAudioPath,
+        finalVideoPath,
+        filenamePrefix: stem,
+      },
       workflow: {
-        workflowPath: rawVideo.workflowPath,
-        rawVideoPath: rawVideo.videoPath,
-        rawVideoUrl: rawVideo.videoUrl,
-        promptId: rawVideo.promptId,
-        seed: rawVideo.seed,
-        uploadedImageName: rawVideo.uploadedImageName,
-        patchedImageNodeIds: rawVideo.patchedImageNodeIds,
-        remoteFile: rawVideo.remoteFile,
+        workflowPath: LTX_WORKFLOW_PATH,
+        comfyUrl: COMFY_URL,
       },
       seedVc: {
-        referenceWav: resolvedReferenceWav,
-        sourceAudioPath: extractedAudio.audioPath,
-        sourceAudioUrl: extractedAudio.audioUrl,
-        sourceAudioBytes: extractedAudio.outputBytes,
-        audioPath: seedVcAudio.audioPath,
-        audioUrl: seedVcAudio.audioUrl,
-        outputBytes: seedVcAudio.outputBytes,
-        stdoutPath: seedVcAudio.stdoutPath,
-        stderrPath: seedVcAudio.stderrPath,
-        seedVcUrl: seedVcAudio.seedVcUrl,
-        scriptPath: seedVcAudio.scriptPath,
-      },      mux: {
-        videoPath: finalVideo.videoPath,
-        videoUrl: finalVideo.videoUrl,
-        outputBytes: finalVideo.outputBytes,
-        stdoutPath: finalVideo.stdoutPath,
-        stderrPath: finalVideo.stderrPath,
+        seedVcUrl: ANIMATE_ME_SEED_VC_URL,
+        scriptPath: ANIMATE_ME_SEED_VC_SCRIPT,
       },
-    };
+    });
 
-    const manifestPath = path.join(outDir, `${stem}_manifest.json`);
-    await writeJsonFile(manifestPath, manifest);
+    if (!jobResult.ok) {
+      return json(jobResult.status, {
+        ok: false,
+        stage: "queue_animate_preview",
+        error: jobResult.error,
+      });
+    }
 
-    return json(200, {
+    return json(202, {
       ok: true,
-      message: "Animation preview completed.",
+      status: "queued",
+      jobId: jobResult.job.jobId,
+      job: jobResult.job,
+      message: "Animation preview queued for the Windows worker.",
       characterId,
       characterName,
-      videoPath: finalVideo.videoPath,
-      videoUrl: finalVideo.videoUrl,
-      rawVideoPath: rawVideo.videoPath,
-      rawVideoUrl: rawVideo.videoUrl,
-      audioPath: seedVcAudio.audioPath,
-      audioUrl: seedVcAudio.audioUrl,
-      manifestPath,
       engine: "Animate Me uploaded image-video workflow plus Seed-VC voice conversion",
       pipeline: {
-        video: "direct ComfyUI /prompt using app/app/workflows/animate-me-create-video-from-images.json",
-        audio: "Seed-VC converts generated video speech using selected voice-pack reference WAV",
-        mux: "ffmpeg video plus Seed-VC converted audio before returning to app",
+        video: "queued Windows worker ComfyUI /prompt using app/app/workflows/animate-me-create-video-from-images.json",
+        audio: "queued Windows worker Seed-VC converts generated video speech using selected voice-pack reference WAV",
+        mux: "queued Windows worker ffmpeg video plus Seed-VC converted audio",
       },
     });
   } catch (error: any) {

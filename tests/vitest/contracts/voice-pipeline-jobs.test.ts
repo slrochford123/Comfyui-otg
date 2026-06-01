@@ -18,10 +18,14 @@ import { APPLIO_TRAINING_QUALITY_PRESETS, DEFAULT_APPLIO_TRAINING_QUALITY_PRESET
 
 import {
   clearQueuedContractJobsForTests,
+  createCharacterAnimationPreviewJob,
   createCharacterVoicePipelineJob,
   createProductionAudioStudioJob,
+  claimRemoteWorkerJob,
+  completeRemoteWorkerJob,
   getQueuedContractJob,
   getVoicePipelineJobStorePath,
+  failRemoteWorkerJob,
   listVoicePipelineJobs,
   setVoicePipelineJobStorePathForTests,
   supersedePendingCreateVoiceJobs,
@@ -29,6 +33,13 @@ import {
   stopVoicePipelineJob,
   updateVoicePipelineJob,
 } from "@/lib/jobs/voicePipelineJobs";
+import {
+  getOtgWorkerJobRoute,
+  isOtgWorkerOnlyJob,
+  normalizeOtgWorkerAction,
+  normalizeOtgWorkerJobType,
+  OTG_WORKER_ONLY_FEATURE_AREAS,
+} from "@/lib/jobs/workerJobContract";
 
 describe("voice pipeline job contracts", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "otg-voice-pipeline-jobs-"));
@@ -571,6 +582,112 @@ describe("voice pipeline job contracts", () => {
     expect(createProductionAudioStudioJob("owner-a", { action: "add_voice_to_clip", clipId: "clip-1", fxPreset: "bad" })).toMatchObject({
       ok: false,
       error: "Invalid voice FX preset.",
+    });
+  });
+
+  it("queues character animation preview jobs for the Windows worker", () => {
+    const result = createCharacterAnimationPreviewJob("owner-a", {
+      characterId: "char-1",
+      imagePath: "C:/AI/OTG-Test2/data/characters/owner-a/char-1/full-body.png",
+      referenceWav: "C:/AI/OTG-Test2/data/characters/owner-a/char-1/source.wav",
+      positivePrompt: "cinematic character animation preview",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.job).toMatchObject({
+      jobType: "character_animation_preview",
+      action: "animate_preview",
+      status: "queued",
+      characterId: "char-1",
+      clipId: null,
+      input: {
+        action: "animate_preview",
+        characterId: "char-1",
+        imagePath: "C:/AI/OTG-Test2/data/characters/owner-a/char-1/full-body.png",
+        referenceWav: "C:/AI/OTG-Test2/data/characters/owner-a/char-1/source.wav",
+        positivePrompt: "cinematic character animation preview",
+      },
+    });
+    expect(result.job.jobId).toMatch(/^cap_/);
+    expect(getQueuedContractJob("owner-a", result.job.jobId)).toEqual(result.job);
+
+    expect(createCharacterAnimationPreviewJob("owner-a", { imagePath: "C:/tmp/a.png" })).toMatchObject({
+      ok: false,
+      error: "Missing characterId.",
+    });
+    expect(createCharacterAnimationPreviewJob("owner-a", { characterId: "char-1" })).toMatchObject({
+      ok: false,
+      error: "Missing imagePath.",
+    });
+  });
+
+  it("defines worker-only job routes for the Windows execution machine", () => {
+    expect(normalizeOtgWorkerJobType("character_voice_pipeline")).toBe("character_voice_pipeline");
+    expect(normalizeOtgWorkerJobType("bad")).toBeNull();
+    expect(normalizeOtgWorkerAction("character_voice_pipeline", "generate_training_dataset")).toBe("generate_training_dataset");
+    expect(normalizeOtgWorkerAction("production_audio_studio", "render_audio_mix")).toBe("render_audio_mix");
+    expect(normalizeOtgWorkerAction("character_animation_preview", "animate_preview")).toBe("animate_preview");
+    expect(normalizeOtgWorkerAction("production_audio_studio", "generate_training_dataset")).toBeNull();
+    expect(normalizeOtgWorkerAction("character_animation_preview", "generate_training_dataset")).toBeNull();
+    expect(isOtgWorkerOnlyJob("character_voice_pipeline", "generate_training_dataset")).toBe(true);
+    expect(isOtgWorkerOnlyJob("character_animation_preview", "animate_preview")).toBe(true);
+    expect(getOtgWorkerJobRoute("character_voice_pipeline", "generate_training_dataset")).toMatchObject({
+      adapterHint: "windows.indextts2_dataset",
+      workerOnly: true,
+    });
+    expect(getOtgWorkerJobRoute("character_animation_preview", "animate_preview")).toMatchObject({
+      adapterHint: "windows.character_animate_preview",
+      workerOnly: true,
+    });
+    expect(OTG_WORKER_ONLY_FEATURE_AREAS).toContain("training_dataset_generation");
+    expect(OTG_WORKER_ONLY_FEATURE_AREAS).toContain("video_generation");
+  });
+
+  it("claims, completes, and fails jobs through the generic worker contract", () => {
+    const production = createProductionAudioStudioJob("owner-a", {
+      action: "render_audio_mix",
+      clipId: "clip-1",
+    });
+    expect(production.ok).toBe(true);
+    if (!production.ok) throw new Error(production.error);
+
+    const claimed = claimRemoteWorkerJob("owner-a", "windows-main-pc", "production_audio_studio", "render_audio_mix");
+    expect(claimed).toMatchObject({
+      jobId: production.job.jobId,
+      status: "running",
+      message: "Claimed by remote Windows OTG worker: windows-main-pc.",
+      result: {
+        remoteWorker: true,
+        workerId: "windows-main-pc",
+        jobType: "production_audio_studio",
+        action: "render_audio_mix",
+        status: "claimed",
+      },
+    });
+
+    const completed = completeRemoteWorkerJob("owner-a", production.job.jobId, { finalClipUrl: "/worker/final.mp4" }, "Done on Windows.");
+    expect(completed).toMatchObject({
+      status: "completed",
+      progress: 100,
+      message: "Done on Windows.",
+      result: { finalClipUrl: "/worker/final.mp4" },
+    });
+
+    const character = createCharacterVoicePipelineJob("owner-a", {
+      action: "apply_voice_fx",
+      characterId: "char-1",
+      fxPreset: "robotic",
+    });
+    expect(character.ok).toBe(true);
+    if (!character.ok) throw new Error(character.error);
+
+    const failed = failRemoteWorkerJob("owner-a", character.job.jobId, "Windows worker stopped.", { failedStage: "voice_fx" });
+    expect(failed).toMatchObject({
+      status: "failed",
+      progress: 100,
+      error: "Windows worker stopped.",
+      result: { failedStage: "voice_fx" },
     });
   });
 

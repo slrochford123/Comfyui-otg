@@ -29,6 +29,10 @@ export const PRODUCTION_AUDIO_STUDIO_ACTIONS = [
   "render_audio_mix",
 ] as const;
 
+export const CHARACTER_ANIMATION_PREVIEW_ACTIONS = [
+  "animate_preview",
+] as const;
+
 const PROVIDERS = ["qwen3", "cosy"] as const satisfies readonly VoiceGeneratorProvider[];
 const VOICE_FX_PRESETS = [
   "clean_dialogue",
@@ -50,14 +54,15 @@ const TRAINING_PRESETS = ["quick", "balanced", "high_quality"] as const;
 
 export type CharacterVoicePipelineAction = (typeof CHARACTER_VOICE_PIPELINE_ACTIONS)[number];
 export type ProductionAudioStudioAction = (typeof PRODUCTION_AUDIO_STUDIO_ACTIONS)[number];
+export type CharacterAnimationPreviewAction = (typeof CHARACTER_ANIMATION_PREVIEW_ACTIONS)[number];
 export type VoiceTrainingPreset = (typeof TRAINING_PRESETS)[number];
-export type QueuedContractJobType = "character_voice_pipeline" | "production_audio_studio";
+export type QueuedContractJobType = "character_voice_pipeline" | "production_audio_studio" | "character_animation_preview";
 export type QueuedContractJobStatus = "queued" | "running" | "completed" | "failed" | "canceled";
 
 export type QueuedContractJob = {
   jobId: string;
   jobType: QueuedContractJobType;
-  action: CharacterVoicePipelineAction | ProductionAudioStudioAction;
+  action: CharacterVoicePipelineAction | ProductionAudioStudioAction | CharacterAnimationPreviewAction;
   status: QueuedContractJobStatus;
   createdAt: string;
   updatedAt: string;
@@ -168,7 +173,7 @@ function isStoredJob(value: unknown): value is StoredQueuedContractJob {
   if (!isPlainObject(value)) return false;
   return (
     typeof value.jobId === "string" &&
-    includesString(["character_voice_pipeline", "production_audio_studio"] as const, value.jobType) &&
+    includesString(["character_voice_pipeline", "production_audio_studio", "character_animation_preview"] as const, value.jobType) &&
     typeof value.action === "string" &&
     includesString(["queued", "running", "completed", "failed", "canceled"] as const, value.status) &&
     typeof value.createdAt === "string" &&
@@ -205,7 +210,12 @@ function writeStore(store: VoicePipelineJobStoreFile): void {
 }
 
 function createJobId(jobType: QueuedContractJobType): string {
-  const prefix = jobType === "character_voice_pipeline" ? "cvp" : "pas";
+  const prefix =
+    jobType === "character_voice_pipeline"
+      ? "cvp"
+      : jobType === "production_audio_studio"
+        ? "pas"
+        : "cap";
   const randomPart = randomUUID().replace(/-/g, "").slice(0, 12);
   return `${prefix}_${Date.now()}_${randomPart}`;
 }
@@ -213,7 +223,7 @@ function createJobId(jobType: QueuedContractJobType): string {
 function createQueuedJob(input: {
   ownerKey: string;
   jobType: QueuedContractJobType;
-  action: CharacterVoicePipelineAction | ProductionAudioStudioAction;
+  action: CharacterVoicePipelineAction | ProductionAudioStudioAction | CharacterAnimationPreviewAction;
   characterId: string | null;
   clipId: string | null;
   sanitizedInput: Record<string, unknown>;
@@ -406,6 +416,33 @@ export function createProductionAudioStudioJob(ownerKey: string, rawInput: unkno
   };
 }
 
+export function createCharacterAnimationPreviewJob(ownerKey: string, rawInput: unknown): JobValidationResult {
+  if (!isPlainObject(rawInput)) return { ok: false, status: 400, error: "Missing JSON object body." };
+
+  const characterId = cleanString(rawInput.characterId);
+  if (!characterId) return { ok: false, status: 400, error: "Missing characterId." };
+
+  const imagePath = cleanString(rawInput.imagePath);
+  if (!imagePath) return { ok: false, status: 400, error: "Missing imagePath." };
+
+  return {
+    ok: true,
+    job: createQueuedJob({
+      ownerKey,
+      jobType: "character_animation_preview",
+      action: "animate_preview",
+      characterId,
+      clipId: null,
+      sanitizedInput: {
+        ...sanitizeJobInput(rawInput),
+        action: "animate_preview",
+        characterId,
+        imagePath,
+      },
+    }),
+  };
+}
+
 export function getQueuedContractJob(ownerKey: string, jobId: string): QueuedContractJob | null {
   const normalizedJobId = cleanString(jobId);
   const job = readStore().jobs.find((item) => item.jobId === normalizedJobId);
@@ -475,7 +512,7 @@ function mergeJobResult(current: unknown, patch: Record<string, unknown>): Recor
 }
 
 export type RemoteVoicePipelineWorkerAction = "generate_training_dataset" | "start_applio_training" | "test_trained_voice";
-export type RemoteWorkerClaimAction = CharacterVoicePipelineAction | ProductionAudioStudioAction;
+export type RemoteWorkerClaimAction = CharacterVoicePipelineAction | ProductionAudioStudioAction | CharacterAnimationPreviewAction;
 
 function remoteWorkerActionLabel(action: RemoteVoicePipelineWorkerAction): string {
   if (action === "start_applio_training") return "Windows Applio training worker";
