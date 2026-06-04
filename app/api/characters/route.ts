@@ -28,37 +28,9 @@ function hasExplicitCharacterOwner(req: NextRequest): boolean {
 }
 
 function characterOwnerFallbackKeys(primaryOwnerKey: string): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-
-  const add = (value: unknown) => {
-    const key = cleanOwnerKey(value);
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    out.push(key);
-  };
-
-  add(primaryOwnerKey);
-
-  /*
-   * Compatibility fallback for migrated runtime data.
-   *
-   * Some existing Production character records were created under device-scoped
-   * owners while the Production picker may call /api/characters without an
-   * explicit deviceId. The route should not return empty when the active
-   * deployment has known migrated character owners.
-   *
-   * OTG_DEFAULT_CHARACTER_OWNER lets TEST/STAGE/PROD override this without
-   * code changes. The following keys preserve the current migrated data layout.
-   */
-  add(process.env.OTG_DEFAULT_CHARACTER_OWNER);
-  add("slrochford");
-  add("web_characters_builder");
-  add("slrochford12300");
-
-  return out;
+  const key = cleanOwnerKey(primaryOwnerKey);
+  return key ? [key] : [];
 }
-
 function listCharactersWithFallback(primaryOwnerKey: string): ReturnType<typeof listCharacters> {
   for (const ownerKey of characterOwnerFallbackKeys(primaryOwnerKey)) {
     const items = listCharacters(ownerKey);

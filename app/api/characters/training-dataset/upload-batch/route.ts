@@ -5,7 +5,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getOwnerContext } from "@/lib/ownerKey";
 import { withNoStore, sessionErrorResponse } from "@/lib/http/routeHelpers";
-import { getQueuedContractJob } from "@/lib/jobs/voicePipelineJobs";
+import { checkpointRemoteWorkerJob, getQueuedContractJob } from "@/lib/jobs/voicePipelineJobs";
+import { hasValidWorkerToken } from "@/lib/jobs/workerAuth";
 import {
   resolveTrainingDatasetCanonicalSourcePath,
   resolveTrainingDatasetClipPath,
@@ -97,7 +98,9 @@ function uploadedClipEntries(form: FormData): Array<{ clipId: string; file: File
 
 export async function POST(req: NextRequest) {
   try {
-    const owner = await getOwnerContext(req);
+    const tokenWorker = hasValidWorkerToken(req);
+    const owner = tokenWorker ? { ownerKey: workerOwnerKey(req, "") } : await getOwnerContext(req);
+    if (!owner.ownerKey) return jsonError("Missing worker owner key.", 400);
     const form = await req.formData();
 
     const characterId = cleanString(form.get("characterId"));
@@ -109,6 +112,9 @@ export async function POST(req: NextRequest) {
     const job = getQueuedContractJob(workerOwnerKey(req, owner.ownerKey), jobId);
     if (!job || job.jobType !== "character_voice_pipeline" || job.action !== "generate_training_dataset") {
       return jsonError("Training dataset job not found.", 404);
+    }
+    if (job.status === "canceled" || job.status === "terminated" || job.status === "completed") {
+      return jsonError(`Training dataset job is not accepting uploads because status is ${job.status}.`, 409);
     }
     if (job.characterId !== characterId) {
       return jsonError("Job characterId does not match upload characterId.", 400);
@@ -123,8 +129,8 @@ export async function POST(req: NextRequest) {
     }
 
     const sourceUpload = form.get("source.wav") || form.get("source");
-    let canonicalSourcePath = resolveTrainingDatasetCanonicalSourcePath(workerOwnerKey(req, owner.ownerKey), characterId, jobId);
-    let canonicalSourceUrl = trainingDatasetCanonicalSourceUrl(workerOwnerKey(req, owner.ownerKey), characterId, jobId);
+    const canonicalSourcePath = resolveTrainingDatasetCanonicalSourcePath(workerOwnerKey(req, owner.ownerKey), characterId, jobId);
+    const canonicalSourceUrl = trainingDatasetCanonicalSourceUrl(workerOwnerKey(req, owner.ownerKey), characterId, jobId);
 
     if (isUploadFile(sourceUpload)) {
       const sourceBytes = Buffer.from(await sourceUpload.arrayBuffer());
@@ -194,6 +200,10 @@ export async function POST(req: NextRequest) {
     const generatedClipCount = clips.filter((clip) => clip.status === "ready").length;
     const complete = generatedClipCount === requestedClipCount;
 
+    const sourceInput = manifestInput.source && typeof manifestInput.source === "object" && !Array.isArray(manifestInput.source)
+      ? manifestInput.source as Record<string, unknown>
+      : {};
+
     const finalManifest = {
       ...manifestInput,
       schemaVersion: 1,
@@ -202,14 +212,12 @@ export async function POST(req: NextRequest) {
       jobId,
       createdAt: cleanString(manifestInput.createdAt) || now,
       source: {
-        ...(manifestInput.source && typeof manifestInput.source === "object" && !Array.isArray(manifestInput.source)
-          ? manifestInput.source as Record<string, unknown>
-          : {}),
+        ...sourceInput,
         approvedSampleUrl: cleanString(job.input.approvedSampleUrl),
         approvedSamplePath: canonicalSourcePath,
         canonicalSourcePath,
         canonicalSourceUrl,
-        sampleRate: Number((manifestInput.source as any)?.sampleRate || 24000),
+        sampleRate: Number(sourceInput.sampleRate || 24000),
         channels: 1,
       },
       logs: {
@@ -249,6 +257,20 @@ export async function POST(req: NextRequest) {
       generationMode: "real",
       status: complete ? "voice_pack_ready" : "manifest_ready",
     };
+
+    const progress = Math.max(5, Math.min(99, Math.round((generatedClipCount / requestedClipCount) * 100)));
+    checkpointRemoteWorkerJob(
+      workerOwnerKey(req, owner.ownerKey),
+      jobId,
+      {
+        ...result,
+        generatedClipCount,
+        requestedClipCount,
+        currentClipId: clips.findLast((clip) => clip.status === "ready")?.clipId ?? null,
+      },
+      complete ? 99 : progress,
+      `Generated ${generatedClipCount} / ${requestedClipCount} clips on the Windows IndexTTS2 dataset worker.`,
+    );
 
     return NextResponse.json(
       {

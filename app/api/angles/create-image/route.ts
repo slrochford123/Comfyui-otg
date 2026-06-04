@@ -9,9 +9,49 @@ import { removeBackgroundBestEffort } from "@/app/api/angles/_lib/backgroundRemo
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
-type HistoryFile = { filename: string; subfolder?: string; type?: string };
+const ANGLES_VERTICAL_MIN = -30;
+const ANGLES_VERTICAL_MAX = 60;
+const ANGLES_HORIZONTAL_MIN = -180;
+const ANGLES_HORIZONTAL_MAX = 180;
+
+function clampAnglesNumber(value: unknown, min: number, max: number, fallback = 0) {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function normalizeAnglesHorizontal(value: unknown) {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return 0;
+
+  let next = n % 360;
+  if (next > 180) next -= 360;
+  if (next < -180) next += 360;
+
+  return Math.max(ANGLES_HORIZONTAL_MIN, Math.min(ANGLES_HORIZONTAL_MAX, next));
+}
+
+function clampAnglesWorkflowInputs(workflow: any) {
+  const visit = (value: any) => {
+    if (!value || typeof value !== "object") return;
+
+    if ("horizontal_angle" in value) {
+      value.horizontal_angle = normalizeAnglesHorizontal(value.horizontal_angle);
+    }
+
+    if ("vertical_angle" in value) {
+      value.vertical_angle = clampAnglesNumber(value.vertical_angle, ANGLES_VERTICAL_MIN, ANGLES_VERTICAL_MAX, 0);
+    }
+
+    for (const child of Object.values(value)) {
+      visit(child);
+    }
+  };
+
+  visit(workflow);
+  return workflow;
+}
 
 const DEFAULT_ANGLES_IMAGE_COMFY_URL = "http://127.0.0.1:8288";
 const ANGLES_IMAGE_WORKFLOW_ID = "internal/angles_multiview_texture_turntable_v12_hotfix";
@@ -25,6 +65,8 @@ const OUTPUT_NODE_ID = "110";
 const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif)(?:$|\?)/i;
 const DEFAULT_POLL_MAX_MS = 5 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 1_500;
+
+type HistoryFile = { filename: string; subfolder?: string; type?: string };
 
 class StageError extends Error {
   stage: string;
@@ -232,8 +274,8 @@ function configureQwenMultiangleWorkflow(
       { workflowId: ANGLES_IMAGE_WORKFLOW_ID, nodeId: CAMERA_NODE_ID, found: camera?.class_type }
     );
   }
-  camera.inputs.horizontal_angle = opts.horizontal;
-  camera.inputs.vertical_angle = opts.vertical;
+  camera.inputs.horizontal_angle = normalizeAnglesHorizontal(opts.horizontal);
+  camera.inputs.vertical_angle = clampAnglesNumber(opts.vertical, ANGLES_VERTICAL_MIN, ANGLES_VERTICAL_MAX, 0);
   camera.inputs.zoom = opts.zoom;
   camera.inputs.default_prompts = opts.defaultPrompts;
   camera.inputs.camera_view = opts.cameraView;
@@ -380,7 +422,7 @@ export async function POST(req: NextRequest) {
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: graph, client_id: comfyClientId }),
+        body: JSON.stringify({ prompt: clampAnglesWorkflowInputs(graph), client_id: comfyClientId }),
       },
       "angles_image_submit_prompt",
       30_000

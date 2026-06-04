@@ -1,4 +1,4 @@
-﻿import inspect
+import inspect
 import os
 import sys
 import traceback
@@ -330,6 +330,6 @@ def synthesize(
 if __name__ == "__main__":
     import uvicorn
 
-    host = os.environ.get("QWEN3_TTS_HOST", "127.0.0.1")
+    host = os.environ.get("QWEN3_TTS_HOST", "0.0.0.0")
     port = int(os.environ.get("QWEN3_TTS_PORT", "7863"))
     uvicorn.run(app, host=host, port=port)

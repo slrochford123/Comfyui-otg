@@ -4,7 +4,7 @@ import type {
   QueuedContractJob,
 } from "@/lib/jobs/voicePipelineJobs";
 
-export type JobTerminalStatus = "completed" | "failed" | "canceled" | "cancelled" | "error";
+export type JobTerminalStatus = "ready_for_review" | "completed" | "failed" | "canceled" | "cancelled" | "terminated" | "error";
 
 export type QueueCharacterVoiceJobInput = {
   action: CharacterVoicePipelineAction;
@@ -63,7 +63,7 @@ export async function getCharacterVoiceJob(jobId: string): Promise<QueuedContrac
 
 export async function updateCharacterVoiceJob(
   jobId: string,
-  action: "stop" | "resume",
+  action: "stop" | "resume" | "terminate" | "complete_dataset",
 ): Promise<QueuedContractJob> {
   const response = await fetch(`/api/characters/voice-pipeline/${encodeURIComponent(jobId)}`, {
     method: "PATCH",
@@ -96,6 +96,20 @@ export async function listCharacterVoiceJobs(params: {
   return Array.isArray(json?.jobs) ? json.jobs : [];
 }
 
+
+export async function getActiveTrainingDatasetJob(characterId: string): Promise<QueuedContractJob | null> {
+  const search = new URLSearchParams();
+  search.set("characterId", characterId);
+  const response = await fetch(`/api/characters/voice-pipeline/active-dataset?${search.toString()}`, {
+    credentials: "include",
+    cache: "no-store",
+  });
+  const json = (await response.json().catch(() => null)) as { job?: QueuedContractJob | null; error?: string } | null;
+  if (!response.ok) {
+    throw new Error(json?.error || `Could not load active training dataset job (${response.status}).`);
+  }
+  return json?.job || null;
+}
 export async function queueAudioStudioJob(input: QueueAudioStudioJobInput): Promise<QueuedContractJob> {
   const response = await fetch("/api/production/audio-studio", {
     method: "POST",
@@ -116,7 +130,7 @@ export async function getAudioStudioJob(jobId: string): Promise<QueuedContractJo
 }
 
 export function isTerminalJobStatus(status: string | null | undefined): status is JobTerminalStatus {
-  return status === "completed" || status === "failed" || status === "canceled" || status === "cancelled" || status === "error";
+  return status === "ready_for_review" || status === "completed" || status === "failed" || status === "canceled" || status === "cancelled" || status === "terminated" || status === "error";
 }
 
 export async function tickVoicePipelineWorker(

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOwnerContext } from "@/lib/ownerKey";
 import { withNoStore, readJsonBody, sessionErrorResponse } from "@/lib/http/routeHelpers";
 import { completeRemoteTrainingDatasetJob } from "@/lib/jobs/voicePipelineJobs";
+import { hasValidWorkerToken } from "@/lib/jobs/workerAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +19,9 @@ function jsonError(error: string, status = 400) {
 
 export async function POST(req: NextRequest) {
   try {
-    const owner = await getOwnerContext(req);
+    const tokenWorker = hasValidWorkerToken(req);
+    const owner = tokenWorker ? { ownerKey: workerOwnerKey(req, "") } : await getOwnerContext(req);
+    if (!owner.ownerKey) return jsonError("Missing worker owner key.", 400);
     const body = await readJsonBody<Record<string, unknown>>(req.clone());
     if (!body.ok) return jsonError(body.error, body.status);
 

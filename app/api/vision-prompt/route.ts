@@ -8,6 +8,18 @@ const require = createRequire(import.meta.url);
 
 export const runtime = "nodejs";
 
+const DEFAULT_VISION_MAX_DIMENSION = 1024;
+const DEFAULT_VISION_JPEG_QUALITY = 85;
+const DEFAULT_VISION_NUM_CTX = 4096;
+const DEFAULT_VISION_NUM_PREDICT = 160;
+
+function readPositiveIntEnv(name: string, fallback: number, min: number, max: number) {
+  const raw = process.env[name];
+  const n = Number.parseInt((raw || "").trim(), 10);
+  if (!Number.isFinite(n) || n < min || n > max) return fallback;
+  return n;
+}
+
 function normalizeDescriptor(raw: string) {
   const s = (raw || "")
     .replace(/\r/g, " ")
@@ -80,31 +92,89 @@ function tryParseJsonLoose(text: string): any | null {
   return null;
 }
 
+function isLikelyRepeatedTokenGarbage(text: string) {
+  const compact = (text || "").replace(/\s+/g, "").trim();
+  if (compact.length < 24) return false;
+
+  if (/^@\@{23,}$/.test(compact)) return true;
+  if (/^0{24,}$/.test(compact)) return true;
+
+  const chars = compact.slice(0, 256).split("");
+  const counts = new Map<string, number>();
+  for (const ch of chars) counts.set(ch, (counts.get(ch) || 0) + 1);
+
+  const mostCommon = Math.max(...Array.from(counts.values()));
+  const repeatedRatio = mostCommon / chars.length;
+  const unique = counts.size;
+
+  if (unique <= 2 && repeatedRatio >= 0.9 && /[@0]/.test(compact)) return true;
+  return false;
+}
+
+async function resizeForOllamaVision(buf: Buffer, sourceLabel: string) {
+  const sharp = require("sharp") as any;
+
+  const maxDimension = readPositiveIntEnv(
+    "OTG_VISION_IMAGE_MAX_DIMENSION",
+    DEFAULT_VISION_MAX_DIMENSION,
+    256,
+    4096
+  );
+  const jpegQuality = readPositiveIntEnv(
+    "OTG_VISION_JPEG_QUALITY",
+    DEFAULT_VISION_JPEG_QUALITY,
+    40,
+    95
+  );
+
+  try {
+    const out = await sharp(buf, { failOn: "none", limitInputPixels: false })
+      .rotate()
+      .resize({
+        width: maxDimension,
+        height: maxDimension,
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .flatten({ background: { r: 255, g: 255, b: 255 } })
+      .jpeg({ quality: jpegQuality, mozjpeg: true })
+      .toBuffer();
+
+    return { b64: out.toString("base64"), mime: "image/jpeg" };
+  } catch (e: any) {
+    throw new Error(`Failed to prepare image for Ollama vision (${sourceLabel}): ${e?.message || String(e)}`);
+  }
+}
 async function fileToVisionBase64(filePath: string): Promise<{ b64: string; mime: string }> {
   const ext = path.extname(filePath).toLowerCase();
   const buf = fs.readFileSync(filePath);
-
-  if (ext === ".gif") {
-    try {
-      const sharp = require("sharp") as any;
-      const pngBuf = await sharp(buf, { animated: true }).extractFrame(0).png().toBuffer();
-      return { b64: pngBuf.toString("base64"), mime: "image/png" };
-    } catch {
-      throw new Error("GIF detected. Use PNG/JPG/WebP, or install 'sharp' to extract a frame.");
-    }
-  }
 
   let mime = "application/octet-stream";
   if (ext === ".png") mime = "image/png";
   else if (ext === ".jpg" || ext === ".jpeg") mime = "image/jpeg";
   else if (ext === ".webp") mime = "image/webp";
+  else if (ext === ".gif") mime = "image/gif";
 
-  const allowed = new Set(["image/png", "image/jpeg", "image/webp"]);
+  const allowed = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
   if (!allowed.has(mime)) {
-    throw new Error(`Unsupported image format. Use PNG, JPG, or WebP (got: ${ext || "unknown"}).`);
+    throw new Error(`Unsupported image format. Use PNG, JPG, WebP, or GIF (got: ${ext || "unknown"}).`);
   }
 
-  return { b64: buf.toString("base64"), mime };
+  if (ext === ".gif") {
+    try {
+      const sharp = require("sharp") as any;
+      let pipeline = sharp(buf, { animated: true, limitInputPixels: false });
+      if (typeof pipeline.extractFrame === "function") {
+        pipeline = pipeline.extractFrame(0);
+      }
+      const firstFrame = await pipeline.png().toBuffer();
+      return resizeForOllamaVision(firstFrame, "gif first frame");
+    } catch (e: any) {
+      throw new Error(`GIF detected but the first frame could not be extracted: ${e?.message || String(e)}`);
+    }
+  }
+
+  return resizeForOllamaVision(buf, ext || "image");
 }
 
 async function detectVisionModel(baseUrl: string): Promise<string | null> {
@@ -173,7 +243,6 @@ function buildBackgroundFromJson(j: any) {
   push(j?.mood);
   return normalizeDescriptor(parts.join(", "));
 }
-
 
 function cleanDetailValue(value: any) {
   return (value ?? "")
@@ -260,7 +329,8 @@ async function ollamaGenerate(baseUrl: string, model: string, prompt: string, b6
       temperature: 0.2,
       top_p: 0.9,
       repeat_penalty: 1.15,
-      num_predict: 256,
+      num_ctx: readPositiveIntEnv("OTG_VISION_NUM_CTX", DEFAULT_VISION_NUM_CTX, 4096, 32768),
+      num_predict: readPositiveIntEnv("OTG_VISION_NUM_PREDICT", DEFAULT_VISION_NUM_PREDICT, 64, 1024),
     },
   };
 
@@ -279,7 +349,17 @@ async function ollamaGenerate(baseUrl: string, model: string, prompt: string, b6
   }
 
   if (!r.ok) return { ok: false as const, status: r.status, body: json?.error || text };
-  return { ok: true as const, output: (json?.response ?? "").toString() };
+
+  const output = (json?.response ?? "").toString();
+  if (isLikelyRepeatedTokenGarbage(output)) {
+    return {
+      ok: false as const,
+      status: 502,
+      body: "OllamaVision returned repeated-token garbage output after image preprocessing. Fill the character fields manually or switch to a stable vision model.",
+    };
+  }
+
+  return { ok: true as const, output };
 }
 
 export async function POST(req: NextRequest) {
@@ -401,6 +481,17 @@ export async function POST(req: NextRequest) {
     }
 
     if (!descriptor) descriptor = normalizeDescriptor(gen.output);
+
+    if (isLikelyRepeatedTokenGarbage(descriptor)) {
+      return NextResponse.json(
+        {
+          error:
+            "OllamaVision returned unusable repeated-token output. Fill the character fields manually or switch to a stable vision model.",
+        },
+        { status: 500 }
+      );
+    }
+
     if (!descriptor) {
       return NextResponse.json({ error: "Empty vision response" }, { status: 500 });
     }

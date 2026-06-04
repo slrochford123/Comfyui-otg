@@ -1,4 +1,4 @@
-# OTG Rework Checklist
+﻿# OTG Rework Checklist
 
 ## App Theme System
 
@@ -24,7 +24,10 @@
 - Created `otg-local-execution-audit.txt` to track Linux-local execution points that still need conversion to worker-dispatched jobs. Current findings include Angles Blender/Hunyuan, direct local ComfyUI calls, local ffmpeg/python paths, and other generation routes that must not remain Linux-local in production.
 - Character builder draft state now persists locally and to the TEST server draft store, including current builder page, selected style, typed fields, Voice Lab page, active job state, and profile state. Drafts clear only through Start Over/reset or save completion.
 - Character builder progression now persists locked-page state. After moving forward, completed Character Builder and Voice Lab pages are restored as locked after tab changes, app reloads, or browser/app close; earlier pages can only be changed by Start Over.
+- Character builder hydration is now server-first. The Characters tab waits for `/api/characters/builder-draft` before rendering a default page, falls back to local cache only when no server draft exists, saves page/sub-page navigation immediately, and flushes a best-effort draft on `visibilitychange` / `pagehide` for mobile app switching.
+- Character builder draft migration now upgrades older draft payloads to schema v2, restores `activeBuilderPage` / `lastBuilderStep`, restores `voiceLabPage` / `lastVoiceLabPage`, and infers Voice Lab sub-page from active dataset/model jobs or persisted voice sample fields.
 - Voice Lab dataset preparation and voice model training jobs now expose Stop and Resume controls. Stop marks the durable job as user-stopped; Resume requeues the same job so resumable dataset/training artifact logic can continue from durable state.
+- Voice Lab / Voice Effects now has a compact Base Voice section, user-friendly Simple FX controls, collapsed Advanced FX preset categories, relevant-only advanced control groups, and a view-only effect chain. Preview is a non-rendering hook until the Windows audio worker is connected; Apply still queues the existing Voice FX worker path and includes structured simple/preset/chain settings.
 - Production Storyboard saved-character picker now displays the saved character portrait/full-body image while sending the saved character card image into the workflow slot when a card path is available.
 - Character visual/card workflow is active in TEST repo.
 - Qwen3-TTS VoiceDesign foundation exists.
@@ -391,6 +394,35 @@ Next:
 - [x] IndexTTS2 generation requires `use_random=False`.
 - [x] Worker hardening: real `generate_training_dataset` now uses IndexTTS2 batch clone mode for both Qwen3 and Cosy approved sources. The reference WAV is the canonical approved sample after Voice FX approval, so a tuned `fx.wav` is cloned into every training clip when the user chooses Use Tuned.
 - [x] Bridge hardening: `scripts/index_tts2_clone_pack_bridge.py` now accepts the worker `--params-json` contract and honors `clip_id` / `output_wav`, preventing proxy calls from losing the intended reference/clip paths.
+- [x] Added dedicated Windows voice dataset worker entrypoints: `scripts/windows/otg-voice-dataset-worker.py` and `scripts/windows/otg-voice-dataset-worker.ps1`. This worker claims only `character_voice_pipeline / generate_training_dataset`, uses the approved reference path/URL fields including tuned Voice FX references, uploads clips in batches, updates durable progress as `Generated X / 200 clips`, and completes only after the returned manifest is `generationMode:"real"`, `provider:"indextts2"`, and `voice_pack_ready`.
+- [x] Phase 2 dedicated worker now supports universal all-user claim through `OTG_WORKER_TOKEN`. The Windows supervisor no longer requires `-OwnerKey`; it polls `/api/worker/jobs/claim` with `claimScope:"all_owners"` and can claim any queued `character_voice_pipeline / generate_training_dataset` job while preserving the claimed job's original `ownerKey` for upload/complete/fail.
+- [x] Phase 3 dedicated Voice Design worker entrypoints added: `scripts/windows/otg-voice-design-worker.py` and `scripts/windows/otg-voice-design-worker.ps1`. This supervisor requires `OTG_WORKER_TOKEN`, claims only `character_voice_pipeline / create_voice_sample` across owners, starts Qwen3-TTS or CosyVoice only after a job is claimed, uploads `sample.wav` to `voice-samples/<characterId>/<jobId>/`, then completes the job with `mock:false`, provider/adapter, sample URL/path, and log paths.
+- [x] Generic worker claim/complete/fail and voice-sample upload now support token-authenticated cross-owner Voice Design completion while preserving the claimed job's `ownerKey`. The universal claim allowlist remains strict and does not expose production, animation, dataset, Applio training, or Applio inference jobs to the Voice Design worker.
+- [x] Create Voice worker progress repair: added token-authenticated `/api/worker/jobs/checkpoint`, updated the dedicated Voice Design worker to checkpoint `Voice creating started`, generation, upload, and finalization progress, and updated the launcher to load TEST `.env.local` values so Qwen3-TTS/CosyVoice bridge paths are available when the Windows worker starts.
+- [x] Create Again now submits a fresh random `seed` / `requestSeed` into the `create_voice_sample` job input so each request is a new generation attempt.
+- [ ] Browser QA: start the dedicated Voice Design worker with `OTG_WORKER_TOKEN`, create a Qwen3-TTS voice, and confirm the completed job has `mock:false`, a playable `sampleUrl`, and `qwen3_real_voice_sample`.
+- [ ] Browser QA: repeat Create Voice with CosyVoice and confirm the completed job has `mock:false`, a playable `sampleUrl`, and `cosy_real_voice_sample`.
+- [x] Dataset worker lifecycle now separates worker readiness from user finalization. Worker completion marks the job `ready_for_review`; the UI exposes Preview Samples, Complete Dataset, and Terminate. Complete Dataset revalidates the manifest and finalizes the job to `completed`, which unlocks Train Voice Model.
+- [x] Dataset termination quarantines partial dataset files under `training-datasets/<characterId>/terminated/<jobId>/`, marks the job `terminated`, and blocks further uploads/claims for that session. Resume requeues failed/canceled jobs and preserves existing ready clips through manifest/file checks.
+- [x] Training dataset file serving accepts safe `index=<n>` lookup from the manifest, enabling a compact one-audio-player sample preview instead of rendering 200 players.
+- [x] Voice Lab dataset/model jobs now use durable worker lease fields (`workerId`, `claimedAt`, `heartbeatAt`, `leaseExpiresAt`, `attempt`, `lastProgressAt`, `interruptedAt`, `resumeCount`) so browser activity does not control execution.
+- [x] Stale `running` dataset/model jobs automatically become `interrupted`/resumable after the worker lease expires; active jobs with fresh heartbeats are not reclaimed.
+- [x] Dataset worker claim priority is deterministic: queued `generate_training_dataset` jobs win first with newest queued job first for TEST interactivity; interrupted jobs remain visible but are not auto-claimed unless the user explicitly clicks Resume and the job receives `resumeRequestedAt`.
+- [x] Universal Windows dataset worker claim ignores plain old interrupted jobs from older characters, so stale resumable sessions no longer block the newest/current queued dataset job.
+- [x] New dataset requests for the same character supersede active queued/running or resume-requested dataset jobs while leaving old plain interrupted history visible for manual review/resume.
+- [x] Dataset jobs now remain `queued` until a Windows worker claim sets `workerId`, `claimedAt`, `heartbeatAt`, and `leaseExpiresAt`. Legacy/invalid `running` dataset jobs with no worker lease are normalized: 0 generated clips returns to queued, while partial generated clips become interrupted/resumable.
+- [x] Dataset progress is clip-count based. `0 / 200` now renders as `0%`, not the old no-op worker 70% floor.
+- [x] Local/dev voice pipeline worker no longer claims `generate_training_dataset` by default. Dataset jobs stay queued for the dedicated Windows dataset worker unless `OTG_ALLOW_LOCAL_DATASET_WORKER=1` is explicitly set for dev tests.
+- [x] Dataset jobs accidentally leased by `local-voice-pipeline-worker` are released during job-store reads: 0 generated clips returns to queued, partial clips become interrupted/resumable with a message to resume using the Windows dataset worker.
+- [x] IndexTTS2 dataset worker checkpoints progress/heartbeat during generation and resumes from the server-known ready clip count instead of regenerating ready clips.
+- [x] Persistent Windows dataset supervisor command no longer requires `-OwnerKey` or command-line worker token; it reads `OTG_WORKER_TOKEN` from the user environment or TEST `.env.local`.
+- [x] Added a dedicated persistent Windows Applio training supervisor: `scripts/windows/otg-voice-applio-worker.ps1` / `.py`. It claims only `character_voice_pipeline / start_applio_training` across owners with `OTG_WORKER_TOKEN`, preserves the claimed job's `ownerKey`, runs Applio on Windows, checkpoints preprocess/extract/train/package stages, and completes only after non-empty `.pth` and `.index` artifacts are copied into the character `applio-models` folder.
+- [x] Local/dev voice pipeline worker no longer claims `start_applio_training` by default. Applio model jobs stay queued for the dedicated Windows Applio worker unless `OTG_ALLOW_LOCAL_APPLIO_WORKER=1` is explicitly set for dev tests.
+- [x] Applio subprocesses now force PyTorch distributed rendezvous to localhost with `MASTER_ADDR=127.0.0.1`, per-job `MASTER_PORT`, and `TORCH_DISTRIBUTED_DEBUG=DETAIL`; these values are recorded in `applio-commands.json`.
+- [x] Applio worker lease heartbeat now runs during long `core.py` subprocess stages. The worker captures stdout/stderr on reader threads, checkpoints `Applio <stage> running` every `OTG_APPLIO_WORKER_HEARTBEAT_SECONDS` seconds, and kills the child process tree if the job is stopped, terminated, or completed elsewhere.
+- [x] Voice pipeline `[jobId]` PATCH body parsing now reads the request body directly and parses JSON reliably for `resume`, `terminate`, `stop`, and `complete_dataset`. Completed dataset idempotency still returns success before body parsing so stale retries with empty bodies do not fail.
+- [x] `start-otg-test-services-v2.bat` was rebuilt into a clean TEST launcher with one copy of each label, dataset worker startup preserved, and new `START_VOICE_APPLIO_WORKER=1` startup after Next TEST and the dataset worker. Worker duplicate detection uses `tasklist /v` window-title checks.
+- [x] Voice Lab source lock-in: created Qwen3-TTS/CosyVoice samples, uploaded samples, and completed Voice FX outputs now remain detectable across Voice Design, Voice FX, and Training. Dataset/model training queues only when the selected source is a local `approvedSamplePath` or a resolvable `/api/characters/voice-sample/file` URL.
 - [ ] Browser QA: create/approve base voice, click Prepare Voice Pack, confirm IndexTTS2 output metadata.
 - [ ] Browser QA: listen to random generated clips before Applio training.
 ## Minimal Training page UI v2
@@ -403,3 +435,12 @@ Next:
 - [x] Fast / Normal / Quality presets remain available before training.
 - [ ] Browser QA: confirm Training page only shows the minimal two-step flow.
 - [ ] Browser QA: confirm Train Voice Model unlocks only after dataset status says Ready.
+
+## Angles / TripoSplat SPZ Viewer
+
+- [x] TEST only: replaced Angles 3D Model path with TripoSplat-backed .spz output.
+- [x] TEST only: removed stale Textures tab/action path from Angles UI.
+- [x] TEST only: added Spark-based .spz viewer support for generated Gaussian splat models.
+- [x] TEST only: fixed SPZ viewer orientation, target locking, camera sync, and initial framing.
+- [x] TEST only: constrained Angles camera controls to prevent invalid ComfyUI vertical angle submissions.
+- [ ] TEST only: wire Create Angles Image to capture the Spark/SPZ viewer canvas directly.

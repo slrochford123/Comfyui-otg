@@ -25,6 +25,7 @@
     "@google/model-viewer": "^4.2.0",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
+    "@sparkjsdev/spark": "^2.1.0",
     "@supabase/supabase-js": "^2.89.0",
     "@tanstack/react-query": "^5.100.9",
     "@tanstack/react-virtual": "^3.13.24",
@@ -41,6 +42,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "7.6.4",
+    "@playcanvas/splat-transform": "^2.5.1",
     "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4.1.18",
     "@testing-library/dom": "^10.4.1",

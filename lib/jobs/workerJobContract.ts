@@ -38,6 +38,7 @@ export const OTG_WORKER_ONLY_FEATURE_AREAS = [
   "training_dataset_generation",
   "applio_training",
   "trained_voice_preview",
+  "character_preview_dub",
   "edit_video",
   "stitch_video",
   "audio_edit",
@@ -78,6 +79,13 @@ export const OTG_WORKER_JOB_ROUTES: readonly OtgWorkerJobRoute[] = [
     workerOnly: true,
     adapterHint: "windows.applio_inference",
     description: "Run trained Applio model inference for Voice Lab playback.",
+  },
+  {
+    jobType: "character_voice_pipeline",
+    action: "generate_character_preview",
+    workerOnly: true,
+    adapterHint: "windows.character_preview_dub",
+    description: "Generate a short character source-image preview video and dub it with the trained Applio voice model.",
   },
   {
     jobType: "character_voice_pipeline",

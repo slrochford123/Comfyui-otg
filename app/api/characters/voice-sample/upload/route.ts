@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
+import { hasValidWorkerToken } from "@/lib/jobs/workerAuth";
+import { isSafeVoiceSampleUploadSegment } from "@/lib/characters/voiceSampleUpload";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,6 +37,11 @@ function isAllowedMime(file: File) {
 }
 
 async function resolveOwnerKey(req: NextRequest): Promise<string> {
+  if (hasValidWorkerToken(req)) {
+    const workerOwnerKey = String(req.headers.get("x-otg-owner-key") || "").trim();
+    if (!isSafeVoiceSampleUploadSegment(workerOwnerKey)) throw new Error("Missing or invalid x-otg-owner-key for worker upload.");
+    return workerOwnerKey;
+  }
   try {
     const { ownerKey } = await getOwnerContext(req);
     return ownerKey;
@@ -44,15 +51,21 @@ async function resolveOwnerKey(req: NextRequest): Promise<string> {
     return safeSegment(headerDeviceId || "local");
   }
 }
-
 export async function POST(req: NextRequest) {
   try {
+    const workerUpload = hasValidWorkerToken(req);
     const ownerKey = await resolveOwnerKey(req);
     const form = await req.formData();
-    const characterId = safeSegment(String(form.get("characterId") || "character"));
+    const rawCharacterId = String(form.get("characterId") || "character").trim();
+    const rawJobId = String(form.get("jobId") || "").trim();
+    const provider = String(form.get("provider") || (workerUpload ? "qwen3" : "uploaded")).trim();
+    const adapter = String(form.get("adapter") || (workerUpload ? "windows_voice_design" : "uploaded_voice")).trim();
     const file = form.get("file");
 
-    if (!characterId) return jsonError("characterId is required.");
+    if (workerUpload && !isSafeVoiceSampleUploadSegment(rawCharacterId)) {
+      return jsonError("characterId is required and must be a safe path segment.");
+    }
+    if (workerUpload && !isSafeVoiceSampleUploadSegment(rawJobId)) return jsonError("jobId is required and must be a safe path segment for worker upload.");
     if (!(file instanceof File)) return jsonError("Audio file is required.");
     if (file.size <= 0) return jsonError("Audio file is empty.");
     if (file.size > MAX_UPLOAD_BYTES) return jsonError("Audio file is too large. Maximum size is 50 MB.", 413);
@@ -62,8 +75,10 @@ export async function POST(req: NextRequest) {
     if (!ext) return jsonError("Unsupported audio extension. Use wav, mp3, m4a, flac, or ogg.");
 
     const ownerSegment = safeSegment(ownerKey || "local");
-    const uploadId = `uploaded_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-    const fileName = `sample${ext}`;
+    const characterId = safeSegment(rawCharacterId);
+    if (!characterId) return jsonError("characterId is required.");
+    const uploadId = workerUpload ? safeSegment(rawJobId) : `uploaded_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const fileName = workerUpload ? "sample.wav" : `sample${ext}`;
     const voiceSamplesRoot = path.join(OTG_DATA_ROOT, "characters", ownerSegment, "voice-samples");
     const outputDir = safeJoin(voiceSamplesRoot, characterId, uploadId);
     const samplePath = safeJoin(outputDir, fileName);
@@ -76,10 +91,11 @@ export async function POST(req: NextRequest) {
       ok: true,
       samplePath,
       sampleUrl: sampleUrlFor(ownerSegment, characterId, uploadId, fileName),
-      provider: "uploaded",
-      adapter: "uploaded_voice",
+      provider,
+      adapter,
       mock: false,
       uploadId,
+      jobId: uploadId,
       fileName,
       outputBytes: bytes.length,
     });

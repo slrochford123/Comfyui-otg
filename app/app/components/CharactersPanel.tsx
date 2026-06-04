@@ -28,6 +28,15 @@ import {
   type VoiceDesignMode,
   type VoiceDesignProfile,
 } from "../../../lib/characters/voiceDesignModels";
+import {
+  DEFAULT_SIMPLE_VOICE_FX,
+  VOICE_FX_CATEGORIES,
+  findVoiceFxPresetDefinition,
+  voiceFxPresetsForCategory,
+  type SimpleVoiceFxSettings,
+  type VoiceFxParam,
+  type VoiceFxPresetDefinition,
+} from "../../../lib/characters/voiceFxPresets";
 import type {
   ApplioTrainingQualityPresetKey,
   CharacterVoiceProfile,
@@ -43,10 +52,20 @@ import {
 import {
   getCharacterVoiceJob,
   isTerminalJobStatus,
+  listCharacterVoiceJobs,
   queueCharacterVoiceJob,
   tickVoicePipelineWorker,
   updateCharacterVoiceJob,
 } from "../../../lib/client/voicePipelineClient";
+import {
+  getBaseVoicePlaybackSelection,
+  getTrainedVoicePlaybackSelection,
+  selectLatestTrainedVoicePlaybackJob,
+} from "../../../lib/characters/trainedVoicePlayback";
+import {
+  CHARACTER_PREVIEW_DUB_SCRIPT,
+  getCharacterPreviewDubSelection,
+} from "../../../lib/characters/characterPreviewDub";
 import type { CharacterVoicePipelineAction, QueuedContractJob } from "../../../lib/jobs/voicePipelineJobs";
 
 type CharacterRecord = {
@@ -135,7 +154,6 @@ const PERSONALITY_TONES = ["shy", "confident", "nervous", "mischievous", "heroic
 const SPECIES_TRAITS = ["rat-like", "angelic", "robotic", "monstrous", "cute", "bunny-like", "reptilian", "fantasy creature", "custom"];
 
 const CHARACTER_BUILDER_DRAFT_VERSION = 1;
-const CHARACTER_BUILDER_DRAFT_KEY = `web_characters_builder:character_builder_draft:v${CHARACTER_BUILDER_DRAFT_VERSION}`;
 const BUILDER_STEP_ORDER = ["source", "card", "details", "voice", "review"] as const;
 type BuilderCanonicalStep = (typeof BUILDER_STEP_ORDER)[number];
 
@@ -173,7 +191,216 @@ const PREVIEW_LINES = [
 ];
 
 const VOICE_PACK_EMOTIONS = ["neutral", "happy", "sad", "angry", "yelling", "scared", "quiet / whisper", "surprised"];
-const CHARACTER_DEVICE_ID = "web_characters_builder";
+function normalizeCharacterOwnerSegment(value: unknown, fallback = "web_characters_builder"): string {
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  const safe = raw.toLowerCase().replace(/[^a-z0-9_-]+/g, "").slice(0, 80);
+  return safe || fallback;
+}
+
+function readCharacterOwnerCandidate(value: unknown): string {
+  if (!value) return "";
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+
+    if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+      try {
+        return readCharacterOwnerCandidate(JSON.parse(trimmed));
+      } catch {
+        return trimmed;
+      }
+    }
+
+    return trimmed;
+  }
+
+  if (typeof value !== "object" || Array.isArray(value)) return "";
+
+  const record = value as Record<string, unknown>;
+
+  const directKeys = [
+    "ownerKey",
+    "ownerId",
+    "deviceId",
+    "userId",
+    "username",
+    "userName",
+    "profileId",
+    "profileName",
+    "name",
+    "id",
+  ];
+
+  for (const key of directKeys) {
+    const candidate = readCharacterOwnerCandidate(record[key]);
+    if (candidate) return candidate;
+  }
+
+  const nestedKeys = ["user", "profile", "account", "session", "currentUser", "activeUser", "activeProfile"];
+  for (const key of nestedKeys) {
+    const candidate = readCharacterOwnerCandidate(record[key]);
+    if (candidate) return candidate;
+  }
+
+  return "";
+}
+
+function readCharacterOwnerKey(): string {
+  const fallback = "profile_unresolved";
+
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+
+  const storageKeys = [
+    "otg:test-last-user:v1",
+    "otg:last-user:v1",
+    "otg:current-user:v1",
+    "otg:active-user:v1",
+    "otg:profile:v1",
+    "otg:active-profile:v1",
+    "otg:appState_v1",
+    "otg:test:page-state:v1",
+  ];
+
+  for (const key of storageKeys) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      const candidate = readCharacterOwnerCandidate(raw);
+      if (candidate) {
+        const normalized = normalizeCharacterOwnerSegment(candidate, fallback);
+        if (normalized && normalized !== "web_characters_builder") return normalized;
+      }
+    } catch {
+      // Ignore broken localStorage entries.
+    }
+  }
+
+  return fallback;
+}
+
+const CHARACTER_DEVICE_ID = readCharacterOwnerKey();
+const CHARACTER_BUILDER_DRAFT_KEY = `${CHARACTER_DEVICE_ID}:character_builder_draft:v${CHARACTER_BUILDER_DRAFT_VERSION}`;
+// OTG_PROFILE_ISOLATION_PURGE_FOREIGN_LOCAL_CHARACTER_CACHE
+// Prevent restored local caches from carrying another profile's voice/image/character data.
+if (typeof window !== "undefined") {
+  purgeForeignCharacterBuilderLocalCaches(CHARACTER_DEVICE_ID);
+  purgeCurrentCharacterBuilderLocalCacheIfForeign(CHARACTER_DEVICE_ID);
+}
+function characterBuilderCacheText(value: unknown): string {
+  try {
+    return JSON.stringify(value || "");
+  } catch {
+    return String(value || "");
+  }
+}
+
+function characterBuilderCacheHasForeignOwnerText(text: string, activeOwnerKey: string): boolean {
+  const active = normalizeCharacterOwnerSegment(activeOwnerKey, "");
+  if (!active) return false;
+
+  let decoded = text;
+  try {
+    decoded = decodeURIComponent(text);
+  } catch {
+    decoded = text;
+  }
+
+  if (active !== "web_characters_builder" && (text.includes("web_characters_builder") || decoded.includes("web_characters_builder"))) {
+    return true;
+  }
+
+  if (active !== "web_characters_builder" && (text.includes("owner=web_characters_builder") || decoded.includes("owner=web_characters_builder"))) {
+    return true;
+  }
+
+  return false;
+}
+
+function purgeForeignCharacterBuilderLocalCaches(activeOwnerKey: string): string[] {
+  if (typeof window === "undefined") return [];
+
+  const removed: string[] = [];
+  const active = normalizeCharacterOwnerSegment(activeOwnerKey, "");
+
+  if (!active || active === "web_characters_builder") {
+    return removed;
+  }
+
+  for (let i = window.localStorage.length - 1; i >= 0; i--) {
+    const key = window.localStorage.key(i) || "";
+
+    if (
+      !key.includes("character_builder_draft") &&
+      !key.startsWith("web_characters_builder:")
+    ) {
+      continue;
+    }
+
+    const value = window.localStorage.getItem(key) || "";
+    const keyIsLegacyGlobal = key.startsWith("web_characters_builder:");
+    const valueHasForeignOwner = characterBuilderCacheHasForeignOwnerText(value, active);
+
+    if (keyIsLegacyGlobal || valueHasForeignOwner) {
+      window.localStorage.removeItem(key);
+      removed.push(key);
+    }
+  }
+
+  return removed;
+}
+
+function purgeCurrentCharacterBuilderLocalCacheIfForeign(activeOwnerKey: string): boolean {
+  if (typeof window === "undefined") return false;
+
+  const active = normalizeCharacterOwnerSegment(activeOwnerKey, "");
+  if (!active || active === "web_characters_builder") return false;
+
+  const value = window.localStorage.getItem(CHARACTER_BUILDER_DRAFT_KEY) || "";
+  if (!value) return false;
+
+  if (!characterBuilderCacheHasForeignOwnerText(value, active)) {
+    return false;
+  }
+
+  window.localStorage.removeItem(CHARACTER_BUILDER_DRAFT_KEY);
+  return true;
+}
+function characterBuilderDraftHasForeignOwner(value: unknown, activeOwnerKey: string): boolean {
+  const active = normalizeCharacterOwnerSegment(activeOwnerKey, "");
+  if (!active) return false;
+
+  let text = "";
+
+  try {
+    text = JSON.stringify(value || "");
+  } catch {
+    text = String(value || "");
+  }
+
+  if (!text) return false;
+
+  // Hard block the old global builder owner from restoring into any real profile.
+  if (active !== "web_characters_builder" && text.includes("web_characters_builder")) {
+    return true;
+  }
+
+  const decoded = (() => {
+    try {
+      return decodeURIComponent(text);
+    } catch {
+      return text;
+    }
+  })();
+
+  if (active !== "web_characters_builder" && decoded.includes("owner=web_characters_builder")) {
+    return true;
+  }
+
+  return false;
+}
 const CHARACTER_JSON_HEADERS = {
   "Content-Type": "application/json",
   "x-otg-device-id": CHARACTER_DEVICE_ID,
@@ -465,6 +692,10 @@ function voiceFileUrlFor(pathValue?: string | null) {
   const markerIndex = normalized.indexOf(marker);
   const relativePath = markerIndex >= 0 ? normalized.slice(markerIndex + marker.length) : normalized.replace(/^\/+/, "");
   return `/api/characters/voice-file?path=${encodeURIComponent(relativePath)}&v=${Date.now()}`;
+}
+
+function isVoiceSampleFileUrl(value?: string | null) {
+  return String(value || "").includes("/api/characters/voice-sample/file");
 }
 
 function fileUrlFor(pathValue?: string | null) {
@@ -963,8 +1194,13 @@ function CharacterBuilder() {
   const [voicePackRecord, setVoicePackRecord] = useState<any | null>(null);
   const [voicePreview, setVoicePreview] = useState<any | null>(null);
   const [voiceFx, setVoiceFx] = useState<VoiceFxSettings>(DEFAULT_VOICE_FX);
+  const [simpleVoiceFx, setSimpleVoiceFx] = useState<SimpleVoiceFxSettings>(DEFAULT_SIMPLE_VOICE_FX);
   const [voiceFxPreview, setVoiceFxPreview] = useState<any | null>(null);
   const [voiceFxAdvancedOpen, setVoiceFxAdvancedOpen] = useState(false);
+  const [voiceFxPresetCategory, setVoiceFxPresetCategory] = useState<string>("Monsters");
+  const [voiceFxPresetId, setVoiceFxPresetId] = useState<string>("dragon");
+  const [voiceFxChainOpen, setVoiceFxChainOpen] = useState(false);
+  const [voiceFxStatus, setVoiceFxStatus] = useState<"Ready" | "Previewing..." | "Applied" | "Error">("Ready");
   const [voiceLabPage, setVoiceLabPage] = useState<VoiceLabPage>("design");
   const [lockedBuilderStepIndex, setLockedBuilderStepIndex] = useState(-1);
   const [lockedVoiceLabPageIndex, setLockedVoiceLabPageIndex] = useState(-1);
@@ -972,6 +1208,8 @@ function CharacterBuilder() {
   const [indexVoicePack, setIndexVoicePack] = useState<any | null>(null);
   const [voiceTestText, setVoiceTestText] = useState("This is a test line for the character voice.");
   const [voicePipelineJobs, setVoicePipelineJobs] = useState<Partial<Record<CharacterVoicePipelineAction, QueuedJobUiState>>>({});
+  const [trainingDatasetPreviewOpen, setTrainingDatasetPreviewOpen] = useState(false);
+  const [trainingDatasetPreviewIndex, setTrainingDatasetPreviewIndex] = useState(1);
   const [voiceUploadState, setVoiceUploadState] = useState<{ phase: "idle" | "uploading" | "ready" | "error"; fileName?: string; error?: string }>({ phase: "idle" });
   const [builderCharacterVoiceProfile, setBuilderCharacterVoiceProfile] = useState<CharacterVoiceProfile | null>(null);
   const [applioTrainingQualityPreset, setApplioTrainingQualityPreset] = useState<ApplioTrainingQualityPresetKey>(DEFAULT_APPLIO_TRAINING_QUALITY_PRESET);
@@ -982,6 +1220,8 @@ function CharacterBuilder() {
 
   const [character3dModel, setCharacter3dModel] = useState<any | null>(null);
   const characterDraftHydratedRef = useRef(false);
+  const [characterDraftHydrated, setCharacterDraftHydrated] = useState(false);
+  const [characterDraftRestoreError, setCharacterDraftRestoreError] = useState("");
   const characterDraftSaveTimeoutRef = useRef<number | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -990,12 +1230,13 @@ function CharacterBuilder() {
   }, []);
 
   const restoreCharacterBuilderDraftState = useCallback((saved: any) => {
-      if (saved.step) {
-        setStep(saved.step);
+      const restoredStep = saved.step || saved.activeBuilderPage || saved.lastBuilderStep;
+      if (restoredStep) {
+        setStep(restoredStep);
         setLockedBuilderStepIndex(
           "lockedBuilderStepIndex" in saved
             ? clampLockedBuilderStepIndex(saved.lockedBuilderStepIndex)
-            : clampLockedBuilderStepIndex(builderStepIndexFor(saved.step) - 1),
+            : clampLockedBuilderStepIndex(builderStepIndexFor(restoredStep) - 1),
         );
       }
       if (STYLE_PRESETS.includes(saved.stylePreset)) setStylePreset(saved.stylePreset);
@@ -1020,14 +1261,27 @@ function CharacterBuilder() {
       if ("voicePackRecord" in saved) setVoicePackRecord(saved.voicePackRecord || null);
       if ("voicePreview" in saved) setVoicePreview(saved.voicePreview || null);
       if (saved.voiceFx) setVoiceFx({ ...DEFAULT_VOICE_FX, ...saved.voiceFx });
+      if (saved.simpleVoiceFx) setSimpleVoiceFx({ ...DEFAULT_SIMPLE_VOICE_FX, ...saved.simpleVoiceFx });
       if ("voiceFxPreview" in saved) setVoiceFxPreview(saved.voiceFxPreview || null);
-      if (saved.voiceLabPage === "design" || saved.voiceLabPage === "fx" || saved.voiceLabPage === "training" || saved.voiceLabPage === "preview") {
-        setVoiceLabPage(saved.voiceLabPage);
+      if (typeof saved.voiceFxAdvancedOpen === "boolean") setVoiceFxAdvancedOpen(saved.voiceFxAdvancedOpen);
+      if (typeof saved.voiceFxPresetCategory === "string") setVoiceFxPresetCategory(saved.voiceFxPresetCategory);
+      if (typeof saved.voiceFxPresetId === "string") setVoiceFxPresetId(saved.voiceFxPresetId);
+      if (typeof saved.voiceFxChainOpen === "boolean") setVoiceFxChainOpen(saved.voiceFxChainOpen);
+      if (saved.voiceFxStatus === "Ready" || saved.voiceFxStatus === "Previewing..." || saved.voiceFxStatus === "Applied" || saved.voiceFxStatus === "Error") {
+        setVoiceFxStatus(saved.voiceFxStatus);
+      }
+      const restoredVoiceLabPage = saved.voiceLabPage || saved.lastVoiceLabPage;
+      if (restoredVoiceLabPage === "design" || restoredVoiceLabPage === "fx" || restoredVoiceLabPage === "training" || restoredVoiceLabPage === "preview") {
+        setVoiceLabPage(restoredVoiceLabPage);
         setLockedVoiceLabPageIndex(
           "lockedVoiceLabPageIndex" in saved
             ? clampLockedVoiceLabPageIndex(saved.lockedVoiceLabPageIndex)
-            : clampLockedVoiceLabPageIndex(voiceLabPageIndexFor(saved.voiceLabPage) - 1),
+            : clampLockedVoiceLabPageIndex(voiceLabPageIndexFor(restoredVoiceLabPage) - 1),
         );
+      }
+      if (saved.voicePipelineJobs && typeof saved.voicePipelineJobs === "object" && !Array.isArray(saved.voicePipelineJobs)) {
+        setVoicePipelineJobs(saved.voicePipelineJobs as Partial<Record<CharacterVoicePipelineAction, QueuedJobUiState>>);
+        setMessage("Restored durable voice pipeline jobs from builder draft.");
       }
       if ("selectedIndexVoiceReference" in saved) setSelectedIndexVoiceReference(saved.selectedIndexVoiceReference || null);
       if ("indexVoicePack" in saved) setIndexVoicePack(saved.indexVoicePack || null);
@@ -1060,16 +1314,6 @@ function CharacterBuilder() {
     let cancelled = false;
     const restore = async () => {
       try {
-        const raw = window.localStorage.getItem(CHARACTER_BUILDER_DRAFT_KEY);
-        if (raw) {
-          const draft = JSON.parse(raw);
-          if (draft?.version === CHARACTER_BUILDER_DRAFT_VERSION && draft.state) {
-            restoreCharacterBuilderDraftState(draft.state);
-            setMessage("Restored saved character creation progress.");
-            return;
-          }
-        }
-
         const response = await fetch(`/api/characters/builder-draft?ownerId=${encodeURIComponent(CHARACTER_DEVICE_ID)}`, {
           cache: "no-store",
           credentials: "omit",
@@ -1088,11 +1332,26 @@ function CharacterBuilder() {
             }),
           );
           setMessage("Restored saved character creation progress.");
+          return;
         }
-      } catch {
-        // Bad local/server draft should not break the builder.
+
+        const raw = window.localStorage.getItem(CHARACTER_BUILDER_DRAFT_KEY);
+        if (raw) {
+          const draft = JSON.parse(raw);
+          if (!cancelled && draft?.version === CHARACTER_BUILDER_DRAFT_VERSION && draft.state && !characterBuilderDraftHasForeignOwner(draft, CHARACTER_DEVICE_ID)) {
+            restoreCharacterBuilderDraftState(draft.state);
+            setMessage("Restored local character creation cache.");
+          }
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setCharacterDraftRestoreError(error instanceof Error ? error.message : "Could not restore draft.");
+        }
       } finally {
-        if (!cancelled) characterDraftHydratedRef.current = true;
+        if (!cancelled) {
+          characterDraftHydratedRef.current = true;
+          setCharacterDraftHydrated(true);
+        }
       }
     };
 
@@ -1102,50 +1361,158 @@ function CharacterBuilder() {
     };
   }, [restoreCharacterBuilderDraftState]);
 
+  const buildCharacterBuilderDraftState = useCallback((overrides: Record<string, unknown> = {}) => {
+    const nextStep = typeof overrides.step === "string" ? overrides.step : step;
+    const nextVoiceLabPage = typeof overrides.voiceLabPage === "string" ? overrides.voiceLabPage : voiceLabPage;
+    const nextDetails = overrides.details && typeof overrides.details === "object" && !Array.isArray(overrides.details)
+      ? { ...details, ...(overrides.details as Record<string, unknown>) }
+      : details;
+    const nextDetailsRecord = nextDetails as Record<string, unknown>;
+    const nextCharacterId = safeId(String(nextDetailsRecord.name || details.name || ""));
+    return {
+      schemaVersion: 2,
+      activeBuilderPage: nextStep,
+      activeCharacterId: nextCharacterId,
+      activeCharacterSlug: nextCharacterId,
+      lastOpenedCharacterId: nextCharacterId,
+      lastBuilderStep: nextStep,
+      lastVoiceLabPage: nextVoiceLabPage,
+      completedSteps: BUILDER_STEP_ORDER.slice(0, Math.max(0, lockedBuilderStepIndex + 1)),
+      updatedAt: new Date().toISOString(),
+      step: nextStep,
+      lockedBuilderStepIndex,
+      stylePreset,
+      generationPrompt,
+      candidates,
+      selectedCandidateId,
+      uploadedImage,
+      imageCompleteness,
+      missingGuidance,
+      selectedFullBody,
+      characterCard,
+      details: nextDetails,
+      voice,
+      voiceProvider,
+      voiceDesignProfile,
+      qwenVoiceDesign,
+      qwenVoiceCandidates,
+      selectedQwenVoiceCandidateId,
+      qwenVoiceDesignRecord,
+
+      voicePromptSnapshot,
+      voicePackCreated,
+      voicePackRecord,
+      voicePreview,
+      voiceFx,
+      simpleVoiceFx,
+      voiceFxPreview,
+      voiceFxAdvancedOpen,
+      voiceFxPresetCategory,
+      voiceFxPresetId,
+      voiceFxChainOpen,
+      voiceFxStatus,
+      voiceLabPage: nextVoiceLabPage,
+      lockedVoiceLabPageIndex,
+      selectedIndexVoiceReference,
+      indexVoicePack,
+      voiceTestText,
+      voicePipelineJobs,
+      activeDatasetJobId: voicePipelineJobs.generate_training_dataset?.job?.jobId || "",
+      activeDatasetManifestPath: String((voicePipelineJobs.generate_training_dataset?.job?.result as Record<string, unknown> | undefined)?.manifestPath || ""),
+      activeDatasetManifestUrl: String((voicePipelineJobs.generate_training_dataset?.job?.result as Record<string, unknown> | undefined)?.manifestUrl || ""),
+      datasetStatus: voicePipelineJobs.generate_training_dataset?.job?.status || "",
+      datasetGeneratedClipCount: Number((voicePipelineJobs.generate_training_dataset?.job?.result as Record<string, unknown> | undefined)?.generatedClipCount || 0),
+      datasetRequestedClipCount: Number((voicePipelineJobs.generate_training_dataset?.job?.result as Record<string, unknown> | undefined)?.requestedClipCount || 0),
+      activeModelTrainingJobId: voicePipelineJobs.start_applio_training?.job?.jobId || "",
+      modelTrainingStatus: voicePipelineJobs.start_applio_training?.job?.status || "",
+      applioTrainingQualityPreset,
+      builderCharacterVoiceProfile,
+      character3dModel,
+      ...overrides,
+    };
+  }, [
+    step,
+    lockedBuilderStepIndex,
+    stylePreset,
+    generationPrompt,
+    candidates,
+    selectedCandidateId,
+    uploadedImage,
+    imageCompleteness,
+    missingGuidance,
+    selectedFullBody,
+    characterCard,
+    details,
+    voice,
+    voiceProvider,
+    voiceDesignProfile,
+    qwenVoiceDesign,
+    qwenVoiceCandidates,
+    selectedQwenVoiceCandidateId,
+    qwenVoiceDesignRecord,
+    voicePromptSnapshot,
+    voicePackCreated,
+    voicePackRecord,
+    voicePreview,
+    voiceFx,
+    simpleVoiceFx,
+    voiceFxPreview,
+    voiceFxAdvancedOpen,
+    voiceFxPresetCategory,
+    voiceFxPresetId,
+    voiceFxChainOpen,
+    voiceFxStatus,
+    voiceLabPage,
+    lockedVoiceLabPageIndex,
+    selectedIndexVoiceReference,
+    indexVoicePack,
+    voiceTestText,
+    voicePipelineJobs,
+    applioTrainingQualityPreset,
+    builderCharacterVoiceProfile,
+    character3dModel,
+  ]);
+
+  const saveCharacterBuilderDraftNow = useCallback((overrides: Record<string, unknown> = {}) => {
+    if (typeof window === "undefined") return;
+    if (!characterDraftHydratedRef.current) return;
+    const state = buildCharacterBuilderDraftState(overrides);
+    const currentStage = String(state.step || step);
+    const characterId = String(state.activeCharacterId || safeId(details.name));
+    const draft = {
+      version: CHARACTER_BUILDER_DRAFT_VERSION,
+      savedAt: new Date().toISOString(),
+      state,
+    };
+    try {
+      window.localStorage.setItem(CHARACTER_BUILDER_DRAFT_KEY, JSON.stringify(draft));
+    } catch {
+      // Local cache is best effort; server draft is authoritative.
+    }
+    void fetch(`/api/characters/builder-draft?ownerId=${encodeURIComponent(CHARACTER_DEVICE_ID)}`, {
+      method: "PUT",
+      headers: CHARACTER_JSON_HEADERS,
+      credentials: "omit",
+      body: JSON.stringify({
+        mode: "new_character",
+        characterId,
+        currentStage,
+        state,
+      }),
+    }).catch(() => {
+      // Local cache remains available if the immediate server write fails.
+    });
+  }, [buildCharacterBuilderDraftState, details.name, step]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!characterDraftHydratedRef.current) return;
 
+    const state = buildCharacterBuilderDraftState();
     const draft = {
       version: CHARACTER_BUILDER_DRAFT_VERSION,
       savedAt: new Date().toISOString(),
-      state: {
-        step,
-        lockedBuilderStepIndex,
-        stylePreset,
-        generationPrompt,
-        candidates,
-        selectedCandidateId,
-        uploadedImage,
-        imageCompleteness,
-        missingGuidance,
-        selectedFullBody,
-        characterCard,
-        details,
-        voice,
-        voiceProvider,
-        voiceDesignProfile,
-        qwenVoiceDesign,
-        qwenVoiceCandidates,
-        selectedQwenVoiceCandidateId,
-        qwenVoiceDesignRecord,
-
-        voicePromptSnapshot,
-        voicePackCreated,
-        voicePackRecord,
-        voicePreview,
-        voiceFx,
-        voiceFxPreview,
-        voiceLabPage,
-        lockedVoiceLabPageIndex,
-        selectedIndexVoiceReference,
-        indexVoicePack,
-        voiceTestText,
-        voicePipelineJobs,
-        applioTrainingQualityPreset,
-        builderCharacterVoiceProfile,
-        character3dModel,
-      },
+      state,
     };
 
     try {
@@ -1162,7 +1529,7 @@ function CharacterBuilder() {
             mode: "new_character",
             characterId: safeId(details.name),
             currentStage: step,
-            state: draft.state,
+            state,
           }),
         }).catch(() => {
           // Local draft remains the primary fallback when the server draft write fails.
@@ -1203,7 +1570,13 @@ function CharacterBuilder() {
     voicePackRecord,
     voicePreview,
     voiceFx,
+    simpleVoiceFx,
     voiceFxPreview,
+    voiceFxAdvancedOpen,
+    voiceFxPresetCategory,
+    voiceFxPresetId,
+    voiceFxChainOpen,
+    voiceFxStatus,
     voiceLabPage,
     lockedVoiceLabPageIndex,
     selectedIndexVoiceReference,
@@ -1214,7 +1587,22 @@ function CharacterBuilder() {
     builderCharacterVoiceProfile,
     character3dModel,
     details.name,
+    buildCharacterBuilderDraftState,
   ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const flushDraft = () => saveCharacterBuilderDraftNow();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flushDraft();
+    };
+    window.addEventListener("pagehide", flushDraft);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("pagehide", flushDraft);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [saveCharacterBuilderDraftNow]);
 
   useEffect(() => {
     return () => {
@@ -1267,6 +1655,26 @@ function CharacterBuilder() {
       : approvedSampleType === "base"
         ? builderCharacterVoiceProfile?.sourceJobId || ""
         : builderCharacterVoiceProfile?.tunedSourceJobId || builderCharacterVoiceProfile?.sourceJobId || "";
+  const lockedTrainingVoiceUrl = String(
+    builderCharacterVoiceProfile?.approvedSampleUrl ||
+      builderCharacterVoiceProfile?.tunedSampleUrl ||
+      builderCharacterVoiceProfile?.baseSampleUrl ||
+      "",
+  ).trim();
+  const lockedTrainingVoicePath = String(
+    builderCharacterVoiceProfile?.approvedSamplePath ||
+      builderCharacterVoiceProfile?.tunedSamplePath ||
+      builderCharacterVoiceProfile?.baseSamplePath ||
+      "",
+  ).trim();
+  const lockedTrainingVoiceType =
+    builderCharacterVoiceProfile?.approvedSampleUrl
+      ? approvedSampleType || "approved"
+      : builderCharacterVoiceProfile?.tunedSampleUrl
+        ? "tuned"
+        : builderCharacterVoiceProfile?.baseSampleUrl
+          ? "base"
+          : "";
   const voiceDesignPayload = useMemo(() => buildVoiceRequestPayload(voiceDesignProfile), [voiceDesignProfile]);
   const voiceDesignAccent = statusForAccent(voiceDesignProfile);
   const voiceDesignAccentOptions = useMemo(() => accentOptionsForModel(voiceDesignProfile), [voiceDesignProfile]);
@@ -1274,15 +1682,17 @@ function CharacterBuilder() {
   const qwenSamplePhrase = voiceDesignProfile.sampleText?.trim() || QWEN_PREVIEW_LINES.neutral_standard;
   const qwenWarnings = voiceDesignWarnings(voiceDesignProfile);
   const approvedVoiceSourceInput = {
-    approvedSampleUrl,
-    approvedSamplePath: builderCharacterVoiceProfile?.approvedSamplePath || "",
-    approvedSampleType: approvedSampleType || "unknown",
+    approvedSampleUrl: lockedTrainingVoiceUrl,
+    approvedSamplePath: lockedTrainingVoicePath,
+    approvedSampleType: lockedTrainingVoiceType || "unknown",
     approvedSourceJobId,
     sourceProvider: builderCharacterVoiceProfile?.provider || voiceProvider,
     voiceInstruction: String(qwenVoiceDesignRecord?.voiceInstruction || voicePromptSnapshot?.instruct || voicePromptSnapshot?.prompt || qwenVoiceInstruction),
     voiceDesign: (voicePromptSnapshot?.payload || voiceDesignPayload).voiceDesign,
     modelConfig: voicePromptSnapshot?.payload || voiceDesignPayload,
+    baseSamplePath: builderCharacterVoiceProfile?.baseSamplePath || "",
     baseSampleUrl: builderCharacterVoiceProfile?.baseSampleUrl || "",
+    tunedSamplePath: builderCharacterVoiceProfile?.tunedSamplePath || "",
     tunedSampleUrl: builderCharacterVoiceProfile?.tunedSampleUrl || "",
     tunedFxPreset: builderCharacterVoiceProfile?.tunedFxPreset || "",
   };
@@ -1300,7 +1710,16 @@ function CharacterBuilder() {
   const trainingVoicePackReady =
     Boolean(trainingDatasetResult) &&
     trainingDatasetGeneratedClipCount > 0 &&
-    trainingDatasetGeneratedClipCount >= Math.max(1, trainingDatasetClipCount);
+    trainingDatasetGeneratedClipCount >= Math.max(1, trainingDatasetClipCount) &&
+    voicePipelineJobs.generate_training_dataset?.job?.status === "completed";
+  const trainingDatasetReadyForReview = voicePipelineJobs.generate_training_dataset?.job?.status === "ready_for_review";
+  const trainingDatasetTerminated = voicePipelineJobs.generate_training_dataset?.job?.status === "terminated";
+  const trainingDatasetRequestedCount = Math.max(1, trainingDatasetClipCount || 200);
+  const currentTrainingDatasetPreviewIndex = Math.max(1, Math.min(trainingDatasetRequestedCount, trainingDatasetPreviewIndex));
+  const trainingDatasetPreviewUrl =
+    voicePipelineJobs.generate_training_dataset?.job?.ownerKey && voicePipelineJobs.generate_training_dataset?.job?.characterId && voicePipelineJobs.generate_training_dataset?.job?.jobId
+      ? `/api/characters/training-dataset/file?owner=${encodeURIComponent(String(voicePipelineJobs.generate_training_dataset.job.ownerKey))}&characterId=${encodeURIComponent(String(voicePipelineJobs.generate_training_dataset.job.characterId))}&jobId=${encodeURIComponent(String(voicePipelineJobs.generate_training_dataset.job.jobId))}&index=${currentTrainingDatasetPreviewIndex}`
+      : "";
   const applioManifestInput = trainingDatasetResult
     ? {
         manifestPath: String(trainingDatasetResult.manifestPath || ""),
@@ -1310,6 +1729,95 @@ function CharacterBuilder() {
         generatedClipCount: trainingDatasetGeneratedClipCount,
       }
     : {};
+  useEffect(() => {
+    if (!characterDraftHydratedRef.current || !characterDraftHydrated) return;
+    if (step !== "voice" || voiceLabPage !== "training") return;
+
+    const characterId = safeId(details.name);
+    if (!characterId) return;
+
+    let cancelled = false;
+
+    const hydrateActiveTrainingDatasetJobFromServer = async () => {
+      let job: any | null = null;
+
+      try {
+        const response = await fetch(
+          `/api/characters/voice-pipeline/active-dataset?characterId=${encodeURIComponent(characterId)}`,
+          {
+            credentials: "include",
+            cache: "no-store",
+          },
+        );
+        const json = await response.json().catch(() => null);
+        if (response.ok && json?.job) {
+          job = json.job;
+        }
+      } catch {
+        job = null;
+      }
+
+      if (cancelled || !job || job.action !== "generate_training_dataset") return;
+
+      const result =
+        job.result && typeof job.result === "object" && !Array.isArray(job.result)
+          ? job.result as Record<string, unknown>
+          : {};
+
+      const requestedClipCount = Number(result.requestedClipCount || result.clipCount || 200);
+      const generatedClipCount = Number(result.generatedClipCount || result.readyClipCount || 0);
+      const progress =
+        requestedClipCount > 0
+          ? Math.max(0, Math.min(100, Math.round((generatedClipCount / requestedClipCount) * 100)))
+          : Math.max(0, Math.min(100, Number(job.progress || 0)));
+
+      setVoicePipelineJobs((prev) => {
+        const current = prev.generate_training_dataset?.job;
+        const currentResult =
+          current?.result && typeof current.result === "object" && !Array.isArray(current.result)
+            ? current.result as Record<string, unknown>
+            : {};
+        const currentGenerated = Number(currentResult.generatedClipCount || currentResult.readyClipCount || 0);
+
+        if (current?.jobId === job.jobId && currentGenerated >= generatedClipCount) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          generate_training_dataset: {
+            ...(prev.generate_training_dataset || {}),
+            phase: String(job.status || "queued"),
+            progress,
+            message: String(job.message || ""),
+            error: String(job.error || ""),
+            job,
+          } as QueuedJobUiState,
+        };
+      });
+
+      saveCharacterBuilderDraftNow({
+        step: "voice",
+        activeBuilderPage: "voice",
+        lastBuilderStep: "voice",
+        voiceLabPage: "training",
+        lastVoiceLabPage: "training",
+        activeDatasetJobId: job.jobId,
+      });
+    };
+
+    void hydrateActiveTrainingDatasetJobFromServer();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    characterDraftHydrated,
+    step,
+    voiceLabPage,
+    details.name,
+    saveCharacterBuilderDraftNow,
+  ]);
   const usableTrainedVoiceArtifact = findUsableTrainedVoiceArtifact(builderCharacterVoiceProfile);
   const trainedModelPath = String(usableTrainedVoiceArtifact?.modelPath || "").trim();
   const trainedIndexPath = String(usableTrainedVoiceArtifact?.indexPath || "").trim();
@@ -1326,6 +1834,98 @@ function CharacterBuilder() {
       "",
   ).trim();
   const trainedVoiceReady = Boolean(usableTrainedVoiceArtifact && trainedModelPath && trainedIndexPath);
+  const characterPreviewSourceImagePath = String(selectedFullBody?.serverPath || uploadedImage?.serverPath || "").trim();
+  const characterPreviewSourceImageUrl = String(selectedFullBody?.url || uploadedImage?.url || "").trim();
+  const characterPreviewDubSelection = getCharacterPreviewDubSelection(voicePipelineJobs.generate_character_preview?.job);
+
+  const characterPreviewModelSpinJob = voicePipelineJobs.generate_character_preview?.job;
+  const characterPreviewModelSpinResult =
+    characterPreviewModelSpinJob?.result && typeof characterPreviewModelSpinJob.result === "object" && !Array.isArray(characterPreviewModelSpinJob.result)
+      ? (characterPreviewModelSpinJob.result as Record<string, unknown>)
+      : null;
+  const characterModelSpinVideoSrc = (() => {
+    if (!characterPreviewModelSpinJob) return "";
+
+    const explicitUrl = String(
+      characterPreviewModelSpinResult?.modelSpinVideoUrl ||
+        characterPreviewModelSpinResult?.modelSpinUrl ||
+        ""
+    ).trim();
+
+    if (explicitUrl) return explicitUrl;
+
+    const owner = String(characterPreviewModelSpinJob.ownerKey || "").trim();
+    const characterId = String(characterPreviewModelSpinJob.characterId || details.name || "").trim();
+    const jobId = String(characterPreviewModelSpinJob.jobId || "").trim();
+
+    if (!owner || !characterId || !jobId) return "";
+
+    const version = String(
+      characterPreviewModelSpinResult?.modelSpinVideoBytes ||
+        characterPreviewModelSpinJob.updatedAt ||
+        jobId
+    );
+
+    return `/api/characters/character-preview/file?owner=${encodeURIComponent(owner)}&characterId=${encodeURIComponent(characterId)}&jobId=${encodeURIComponent(jobId)}&file=model-spin.mp4&v=${encodeURIComponent(version)}`;
+  })();  const characterPreviewDubReady = Boolean(characterPreviewDubSelection);
+  const characterPreviewSubmitting = voicePipelineJobs.generate_character_preview?.phase === "submitting";
+  const characterPreviewDisabled = characterPreviewSubmitting || !trainedVoiceReady || !characterPreviewSourceImagePath;
+  useEffect(() => {
+    if (!characterDraftHydratedRef.current || !characterDraftHydrated) return;
+    if (step !== "voice" || voiceLabPage !== "preview") return;
+
+    const characterId = safeId(details.name);
+    if (!characterId) return;
+
+    let cancelled = false;
+
+    const hydrateLatestTrainedPlaybackJob = async () => {
+      try {
+        const jobs = await listCharacterVoiceJobs({
+          action: "test_trained_voice",
+          characterId,
+          status: "completed",
+        });
+        if (cancelled) return;
+
+        const selected = selectLatestTrainedVoicePlaybackJob(jobs);
+        if (!selected) return;
+
+        setVoicePipelineJobs((current) => {
+          const existing = getTrainedVoicePlaybackSelection(current.test_trained_voice?.job);
+          if (existing && existing.job.jobId === selected.job.jobId && existing.outputBytes === selected.outputBytes) return current;
+
+          return {
+            ...current,
+            test_trained_voice: {
+              ...(current.test_trained_voice || {}),
+              phase: "queued",
+              job: selected.job as QueuedContractJob,
+              error: undefined,
+            },
+          };
+        });
+      } catch {
+        // Best-effort hydration. The Test Trained Voice button can still create a fresh playback job.
+      }
+    };
+
+    void hydrateLatestTrainedPlaybackJob();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [characterDraftHydrated, step, voiceLabPage, details.name]);
+  const advancedVoiceFxPresets = useMemo(() => voiceFxPresetsForCategory(voiceFxPresetCategory), [voiceFxPresetCategory]);
+  const selectedVoiceFxPreset = useMemo(() => {
+    const categoryHit = advancedVoiceFxPresets.find((preset) => preset.id === voiceFxPresetId);
+    return categoryHit || advancedVoiceFxPresets[0] || findVoiceFxPresetDefinition("dragon");
+  }, [advancedVoiceFxPresets, voiceFxPresetId]);
+  const selectedVoiceFxChain = selectedVoiceFxPreset.chain;
+  const voiceFxBusy =
+    loading ||
+    voicePipelineJobs.apply_voice_fx?.phase === "submitting" ||
+    Boolean(voicePipelineJobs.apply_voice_fx?.job?.jobId && !isTerminalJobStatus(voicePipelineJobs.apply_voice_fx.job.status));
   const createVoiceJobState = voicePipelineJobs.create_voice_sample || { phase: "idle" as const };
   const createVoiceJob = createVoiceJobState.job;
   const createVoiceBusy =
@@ -1506,10 +2106,10 @@ function CharacterBuilder() {
         try {
           let latest: QueuedContractJob;
 
-          if (action === "create_voice_sample") {
-            // Do not auto-advance Create Voice through the dev no-op worker.
-            // The no-op worker produces mock audio. Real Qwen3/Cosy voice creation
-            // must be completed by the persistent voice worker process.
+          if (action === "create_voice_sample" || action === "generate_character_preview") {
+            // Do not auto-advance jobs that require dedicated Windows workers through the dev no-op worker.
+            // create_voice_sample requires the persistent Qwen3/Cosy voice worker.
+            // generate_character_preview requires the persistent character preview dub worker so LTX/ffmpeg/Applio run on Windows.
             latest = await getCharacterVoiceJob(job.jobId);
           } else {
             const ticked = await tickVoicePipelineWorker(1, job.jobId);
@@ -1818,13 +2418,137 @@ function CharacterBuilder() {
         return false;
       }
     }
+    const nextLockedBuilderStepIndex = Math.max(lockedBuilderStepIndex, currentIndex);
     setError("");
-    setLockedBuilderStepIndex((current) => Math.max(current, currentIndex));
+    setLockedBuilderStepIndex(nextLockedBuilderStepIndex);
     setStep(targetStep as BuilderStep);
+    saveCharacterBuilderDraftNow({
+      step: targetStep,
+      activeBuilderPage: targetStep,
+      lastBuilderStep: targetStep,
+      lockedBuilderStepIndex: nextLockedBuilderStepIndex,
+      completedSteps: BUILDER_STEP_ORDER.slice(0, Math.max(0, nextLockedBuilderStepIndex + 1)),
+    });
     if (options.message) setMessage(options.message);
     return true;
   }
 
+  function resetVoiceLabForNewCharacterEntry(nextLockedBuilderStepIndex: number) {
+    const resetVoice = { ...DEFAULT_VOICE };
+    const resetVoiceDesignProfile = defaultVoiceDesignProfile();
+    const resetQwenVoiceDesign = defaultQwenVoiceDesignInput();
+    const resetVoiceFx = { ...DEFAULT_VOICE_FX };
+    const resetSimpleVoiceFx = { ...DEFAULT_SIMPLE_VOICE_FX };
+
+    setVoice(resetVoice);
+    setVoiceProvider("qwen3");
+    setVoiceDesignProfile(resetVoiceDesignProfile);
+    setQwenVoiceDesign(resetQwenVoiceDesign);
+    setQwenVoiceCandidates([]);
+    setSelectedQwenVoiceCandidateId("");
+    setQwenVoiceDesignRecord(null);
+    setVoicePromptSnapshot(null);
+    setVoicePackCreated(false);
+    setVoicePackRecord(null);
+    setVoicePreview(null);
+    setVoiceFx(resetVoiceFx);
+    setSimpleVoiceFx(resetSimpleVoiceFx);
+    setVoiceFxPreview(null);
+    setVoiceFxAdvancedOpen(false);
+    setVoiceFxPresetCategory("Monsters");
+    setVoiceFxPresetId("dragon");
+    setVoiceFxChainOpen(false);
+    setVoiceFxStatus("Ready");
+    setSelectedIndexVoiceReference(null);
+    setIndexVoicePack(null);
+    setVoiceTestText("This is a test line for the character voice.");
+    setVoicePipelineJobs({});
+    setVoiceUploadState({ phase: "idle" });
+    setBuilderCharacterVoiceProfile(null);
+    setApplioTrainingQualityPreset(DEFAULT_APPLIO_TRAINING_QUALITY_PRESET);
+    persistedMockVoiceSampleJobIdsRef.current.clear();
+    persistedVoiceFxJobIdsRef.current.clear();
+    persistedApplioArtifactJobIdsRef.current.clear();
+
+    setVoiceLabPage("design");
+    setLockedVoiceLabPageIndex(-1);
+
+    saveCharacterBuilderDraftNow({
+      step: "voice",
+      activeBuilderPage: "voice",
+      lastBuilderStep: "voice",
+      lockedBuilderStepIndex: nextLockedBuilderStepIndex,
+      completedSteps: BUILDER_STEP_ORDER.slice(0, Math.max(0, nextLockedBuilderStepIndex + 1)),
+      voice: resetVoice,
+      voiceProvider: "qwen3",
+      voiceDesignProfile: resetVoiceDesignProfile,
+      qwenVoiceDesign: resetQwenVoiceDesign,
+      qwenVoiceCandidates: [],
+      selectedQwenVoiceCandidateId: "",
+      qwenVoiceDesignRecord: null,
+      voicePromptSnapshot: null,
+      voicePackCreated: false,
+      voicePackRecord: null,
+      voicePreview: null,
+      voiceFx: resetVoiceFx,
+      simpleVoiceFx: resetSimpleVoiceFx,
+      voiceFxPreview: null,
+      voiceFxAdvancedOpen: false,
+      voiceFxPresetCategory: "Monsters",
+      voiceFxPresetId: "dragon",
+      voiceFxChainOpen: false,
+      voiceFxStatus: "Ready",
+      voiceLabPage: "design",
+      lastVoiceLabPage: "design",
+      lockedVoiceLabPageIndex: -1,
+      selectedIndexVoiceReference: null,
+      indexVoicePack: null,
+      voiceTestText: "This is a test line for the character voice.",
+      voicePipelineJobs: {},
+      activeDatasetJobId: "",
+      activeDatasetManifestPath: "",
+      activeDatasetManifestUrl: "",
+      datasetStatus: "",
+      datasetGeneratedClipCount: 0,
+      datasetRequestedClipCount: 0,
+      activeModelTrainingJobId: "",
+      modelTrainingStatus: "",
+      applioTrainingQualityPreset: DEFAULT_APPLIO_TRAINING_QUALITY_PRESET,
+      builderCharacterVoiceProfile: null,
+    });
+  }
+
+  function continueNewCharacterToVoiceLab() {
+    const currentIndex = currentBuilderStepIndex();
+    const targetIndex = builderStepIndexFor("voice");
+
+    if (targetIndex <= lockedBuilderStepIndex) {
+      setMessage("That page is locked. Use Start Over if you need to change completed character setup.");
+      return false;
+    }
+    if (targetIndex < currentIndex) {
+      setMessage("Completed pages are locked. Use Start Over if you need to change an earlier page.");
+      return false;
+    }
+    if (targetIndex > currentIndex + 1) {
+      setError("Finish the current page before moving farther ahead.");
+      return false;
+    }
+
+    const errorMessage = builderStepCompletionError(BUILDER_STEP_ORDER[currentIndex]);
+    if (errorMessage) {
+      setError(errorMessage);
+      return false;
+    }
+
+    const nextLockedBuilderStepIndex = Math.max(lockedBuilderStepIndex, currentIndex);
+    setError("");
+    setLockedBuilderStepIndex(nextLockedBuilderStepIndex);
+    setStep("voice");
+    resetVoiceLabForNewCharacterEntry(nextLockedBuilderStepIndex);
+    setMessage("Character details saved and locked. Start with Voice Design.");
+    return true;
+  }
   function showBuilderStepIfEditable(targetStep: BuilderStep) {
     const targetIndex = builderStepIndexFor(targetStep);
     if (targetIndex <= lockedBuilderStepIndex) {
@@ -1832,6 +2556,11 @@ function CharacterBuilder() {
       return false;
     }
     setStep(targetStep);
+    saveCharacterBuilderDraftNow({
+      step: targetStep,
+      activeBuilderPage: targetStep,
+      lastBuilderStep: targetStep,
+    });
     return true;
   }
 
@@ -1843,19 +2572,32 @@ function CharacterBuilder() {
         setMessage("Completed pages are locked. Use Start Over if you need to change an earlier page.");
         return;
       }
-      setStep(BUILDER_STEP_ORDER[Math.max(0, nextIndex)] as BuilderStep);
+      const targetStep = BUILDER_STEP_ORDER[Math.max(0, nextIndex)] as BuilderStep;
+      setStep(targetStep);
+      saveCharacterBuilderDraftNow({
+        step: targetStep,
+        activeBuilderPage: targetStep,
+        lastBuilderStep: targetStep,
+      });
       return;
     }
     const nextIndex = Math.max(0, Math.min(BUILDER_STEP_ORDER.length - 1, currentIndex + offset));
-    if (nextIndex !== currentIndex) advanceToBuilderStep(BUILDER_STEP_ORDER[nextIndex]);
+    if (nextIndex !== currentIndex) {
+      const targetStep = BUILDER_STEP_ORDER[nextIndex];
+      if (targetStep === "voice" && step === "details") {
+        continueNewCharacterToVoiceLab();
+      } else {
+        advanceToBuilderStep(targetStep);
+      }
+    }
   }
 
   function voiceLabCompletionError(page: VoiceLabPage) {
     if (page === "design" && !baseVoiceCanAdvance) {
       return "Create or upload a real base voice before moving to Voice Effects.";
     }
-    if (page === "fx" && !approvedSampleUrl) {
-      return "Select Use Raw or Use Tuned before moving to Training.";
+    if (page === "fx" && !lockedTrainingVoiceUrl) {
+      return "Create or upload a voice before moving to Training.";
     }
     if (page === "training" && !trainedVoiceReady && voicePipelineJobs.start_applio_training?.job?.status !== "completed") {
       return "Train the voice model before moving to Test + Preview.";
@@ -1885,9 +2627,18 @@ function CharacterBuilder() {
         return false;
       }
     }
+    const nextLockedVoiceLabPageIndex = Math.max(lockedVoiceLabPageIndex, currentIndex);
     setError("");
-    setLockedVoiceLabPageIndex((current) => Math.max(current, currentIndex));
+    setLockedVoiceLabPageIndex(nextLockedVoiceLabPageIndex);
     setVoiceLabPage(targetPage);
+    saveCharacterBuilderDraftNow({
+      step: "voice",
+      activeBuilderPage: "voice",
+      lastBuilderStep: "voice",
+      voiceLabPage: targetPage,
+      lastVoiceLabPage: targetPage,
+      lockedVoiceLabPageIndex: nextLockedVoiceLabPageIndex,
+    });
     if (options.message) setMessage(options.message);
     return true;
   }
@@ -2505,6 +3256,12 @@ async function loadCharacters() {
       compression: voiceFx.compression || "off",
       layerMode: voiceFx.layerMode || "off",
       layerMix: voiceFx.layerMix || 0,
+      simpleControls: simpleVoiceFx,
+      advancedPresetId: selectedVoiceFxPreset.id,
+      advancedPresetName: selectedVoiceFxPreset.name,
+      advancedPresetCategory: selectedVoiceFxPreset.category,
+      advancedPresetDescription: selectedVoiceFxPreset.description,
+      effectChain: selectedVoiceFxPreset.chain,
     };
   }
   async function queueCharacterVoicePipelineAction(action: CharacterVoicePipelineAction, extraInput: Record<string, unknown> = {}) {
@@ -2542,8 +3299,22 @@ async function loadCharacters() {
       return;
     }
 
-    if ((action === "generate_training_dataset" || action === "start_applio_training") && !approvedSampleUrl) {
-      const message = "Select a voice in Voice Effects before starting training.";
+    if ((action === "generate_training_dataset" || action === "start_applio_training") && !lockedTrainingVoiceUrl) {
+      const message = "Create, upload, or approve a voice before starting training.";
+      setError(message);
+      setVoicePipelineJobs((current) => ({
+        ...current,
+        [action]: { phase: "error", error: message },
+      }));
+      return;
+    }
+
+    if (
+      (action === "generate_training_dataset" || action === "start_applio_training") &&
+      !lockedTrainingVoicePath &&
+      !isVoiceSampleFileUrl(lockedTrainingVoiceUrl)
+    ) {
+      const message = "The selected voice is not locked to a local character voice sample yet. Recreate or re-upload the voice before training.";
       setError(message);
       setVoicePipelineJobs((current) => ({
         ...current,
@@ -2569,6 +3340,23 @@ async function loadCharacters() {
       }
     }
 
+    if (action === "generate_character_preview") {
+      const message = !trainedVoiceReady
+        ? "Train the voice model before generating the character preview."
+        : !characterPreviewSourceImagePath
+          ? "Character source image is missing. Cannot generate preview."
+          : "";
+
+      if (message) {
+        setError(message);
+        setVoicePipelineJobs((current) => ({
+          ...current,
+          [action]: { phase: "error", error: message },
+        }));
+        return;
+      }
+    }
+
     const activeGeneratedVoicePayload: Record<string, any> | null =
       action === "create_voice_sample" && voicePromptSnapshot?.payload && typeof voicePromptSnapshot.payload === "object"
         ? voicePromptSnapshot.payload as Record<string, any>
@@ -2581,9 +3369,13 @@ async function loadCharacters() {
     const selectedGeneratedSampleText =
       selectedQwenVoiceCandidate?.previewText ||
       String(qwenVoiceDesignRecord?.sampleText || voicePromptSnapshot?.sampleText || activeGeneratedVoicePayload?.text || qwenSamplePhrase);
+    const createVoiceRequestSeed =
+      action === "create_voice_sample"
+        ? Math.floor(Math.random() * 2147483647) + 1
+        : undefined;
 
     setError("");
-    setMessage(action === "create_voice_sample" ? "Creating voice..." : `Submitting ${action.replace(/_/g, " ")} job...`);
+    setMessage(action === "create_voice_sample" ? "Voice creating started." : `Submitting ${action.replace(/_/g, " ")} job...`);
     setVoicePipelineJobs((current) => ({
       ...current,
       [action]: { phase: "submitting", error: undefined },
@@ -2606,6 +3398,8 @@ async function loadCharacters() {
         previewText: action === "create_voice_sample" ? selectedGeneratedSampleText : undefined,
         voiceDesign: action === "create_voice_sample" ? activeGeneratedVoicePayload?.voiceDesign : undefined,
         modelConfig: action === "create_voice_sample" ? activeGeneratedVoicePayload : undefined,
+        seed: action === "create_voice_sample" ? createVoiceRequestSeed : undefined,
+        requestSeed: action === "create_voice_sample" ? createVoiceRequestSeed : undefined,
         qwenVoiceDesignRecord:
           action === "create_voice_sample"
             ? (qwenVoiceDesignRecord || (selectedQwenVoiceCandidate ? {
@@ -2631,7 +3425,20 @@ async function loadCharacters() {
           inputAudioUrl: trainedVoiceInputAudioUrl,
           text: voiceTestText,
         } : {}),
-        ...(action === "apply_voice_fx" ? { ...extraInput, ...buildVoiceFxPipelinePayload() } : extraInput),
+        ...(action === "generate_character_preview" ? {
+          trainedArtifactId: usableTrainedVoiceArtifact?.id || "",
+          voiceModelArtifactId: usableTrainedVoiceArtifact?.id || "",
+          trainedArtifactMock: usableTrainedVoiceArtifact?.mock,
+          trainedAdapter: usableTrainedVoiceArtifact?.adapter || "",
+          trainedModelPath,
+          trainedIndexPath,
+          sourceImagePath: characterPreviewSourceImagePath,
+          sourceImageUrl: characterPreviewSourceImageUrl,
+          originalSourceImagePath: uploadedImage?.serverPath || "",
+          fullBodyImagePath: selectedFullBody?.serverPath || "",
+          previewScript: CHARACTER_PREVIEW_DUB_SCRIPT,
+        } : {}),
+        ...(action === "apply_voice_fx" ? { ...buildVoiceFxPipelinePayload(), ...extraInput } : extraInput),
       });
 
       setVoicePipelineJobs((current) => ({
@@ -2655,8 +3462,10 @@ async function loadCharacters() {
           }));
 
           if (latest.status === "completed") {
+            setVoiceFxStatus("Applied");
             setMessage("Voice FX processed. Tuned voice ready.");
           } else if (latest.status === "failed") {
+            setVoiceFxStatus("Error");
             setError(latest.error || "Voice FX failed.");
           } else {
             setMessage(`Queued job: ${job.jobId}. Voice FX worker started.`);
@@ -2665,7 +3474,7 @@ async function loadCharacters() {
           setMessage(`Queued job: ${job.jobId}. Waiting for worker.`);
         }
       } else if (action === "create_voice_sample") {
-        setMessage("Creating voice from generated prompt snapshot...");
+        setMessage("Voice creating started.");
       } else {
         setMessage(`Queued job: ${job.jobId}. Waiting for worker.`);
       }
@@ -2675,18 +3484,40 @@ async function loadCharacters() {
         ...current,
         [action]: { phase: "error", error: message },
       }));
+      if (action === "apply_voice_fx") setVoiceFxStatus("Error");
       setError(message);
     }
   }
 
-  async function updateLongRunningVoiceJob(action: CharacterVoicePipelineAction, jobAction: "stop" | "resume") {
+  async function updateLongRunningVoiceJob(action: CharacterVoicePipelineAction, jobAction: "stop" | "resume" | "terminate" | "complete_dataset") {
     const job = voicePipelineJobs[action]?.job;
     if (!job?.jobId) return;
 
     setError("");
-    setMessage(jobAction === "stop" ? "Stopping voice job..." : "Resuming voice job...");
+    setMessage(
+      jobAction === "stop"
+        ? "Stopping voice job..."
+        : jobAction === "terminate"
+          ? "Terminating voice job..."
+          : jobAction === "complete_dataset"
+            ? "Completing dataset..."
+            : "Resuming voice job...",
+    );
     try {
       const updated = await updateCharacterVoiceJob(job.jobId, jobAction);
+      if (jobAction === "complete_dataset" && action === "generate_training_dataset") {
+        const result = updated.result && typeof updated.result === "object" && !Array.isArray(updated.result)
+          ? updated.result as Record<string, unknown>
+          : {};
+        setBuilderCharacterVoiceProfile((current) => ({
+          ...(current || {}),
+          datasetManifestPath: String(result.datasetManifestPath || result.manifestPath || ""),
+          datasetManifestUrl: String(result.datasetManifestUrl || result.manifestUrl || ""),
+          sourceDatasetJobId: updated.jobId,
+          datasetStatus: "completed",
+          datasetCompletedAt: new Date().toISOString(),
+        } as CharacterVoiceProfile));
+      }
       setVoicePipelineJobs((current) => ({
         ...current,
         [action]: {
@@ -2695,7 +3526,15 @@ async function loadCharacters() {
           error: undefined,
         },
       }));
-      setMessage(jobAction === "stop" ? "Voice job stopped. Resume is available." : "Voice job resumed. Keep the worker running until complete.");
+      setMessage(
+        jobAction === "stop"
+          ? "Voice job stopped. Resume is available."
+          : jobAction === "terminate"
+            ? "Voice job terminated. Start a new dataset when ready."
+            : jobAction === "complete_dataset"
+              ? "Dataset completed and locked. Train Voice Model is now available."
+              : "Voice job resumed. Keep the worker running until complete.",
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : `Could not ${jobAction} voice job.`;
       setVoicePipelineJobs((current) => ({
@@ -2710,13 +3549,39 @@ async function loadCharacters() {
     }
   }
 
-  function renderLongRunningVoiceJobControls(action: "generate_training_dataset" | "start_applio_training") {
+  function voiceJobEffectiveStatus(job: any | null | undefined): string {
+    if (!job?.status) return "idle";
+    if (job.status !== "running") return job.status;
+    const isDatasetJob = job.action === "generate_training_dataset";
+    const result = job.result && typeof job.result === "object" && !Array.isArray(job.result)
+      ? job.result as Record<string, unknown>
+      : {};
+    if (isDatasetJob && job.workerId === "local-voice-pipeline-worker") {
+      const generated = Number(result.generatedClipCount || result.readyClipCount || 0);
+      return generated > 0 ? "interrupted" : "queued";
+    }
+    if (!job.workerId || !job.claimedAt || !job.heartbeatAt) {
+      const generated = Number(result.generatedClipCount || result.readyClipCount || 0);
+      return generated > 0 ? "interrupted" : "queued";
+    }
+    const leaseTime = job.leaseExpiresAt ? Date.parse(job.leaseExpiresAt) : NaN;
+    if (Number.isFinite(leaseTime) && leaseTime <= Date.now()) return "interrupted";
+    const heartbeatTime = Date.parse(String(job.heartbeatAt || job.updatedAt || ""));
+    if (Number.isFinite(heartbeatTime) && heartbeatTime + 5 * 60 * 1000 <= Date.now()) return "interrupted";
+    return job.status;
+  }
+
+  function renderLongRunningVoiceJobControls(action: "generate_training_dataset" | "start_applio_training" | "generate_character_preview") {
     const job = voicePipelineJobs[action]?.job;
     if (!job?.jobId) return null;
 
-    const canStop = job.status === "queued" || job.status === "running";
-    const canResume = job.status === "canceled" || job.status === "failed";
-    if (!canStop && !canResume) return null;
+    const isDataset = action === "generate_training_dataset";
+    const effectiveStatus = voiceJobEffectiveStatus(job);
+    const canStop = !isDataset && (effectiveStatus === "queued" || effectiveStatus === "running");
+    const canTerminate = effectiveStatus === "queued" || effectiveStatus === "running" || effectiveStatus === "interrupted" || effectiveStatus === "ready_for_review" || effectiveStatus === "failed" || effectiveStatus === "canceled";
+    const canResume = effectiveStatus === "canceled" || effectiveStatus === "failed" || effectiveStatus === "interrupted";
+    const canCompleteDataset = isDataset && effectiveStatus === "ready_for_review";
+    if (!canStop && !canTerminate && !canResume && !canCompleteDataset) return null;
 
     return (
       <div className="mt-3 flex flex-wrap gap-2">
@@ -2729,6 +3594,15 @@ async function loadCharacters() {
             Stop
           </button>
         ) : null}
+        {canTerminate ? (
+          <button
+            type="button"
+            onClick={() => void updateLongRunningVoiceJob(action, "terminate")}
+            className="rounded-lg border border-red-400/50 bg-red-400/10 px-3 py-2 text-xs font-bold text-red-100 hover:bg-red-400/20"
+          >
+            Terminate
+          </button>
+        ) : null}
         {canResume ? (
           <button
             type="button"
@@ -2736,6 +3610,15 @@ async function loadCharacters() {
             className="rounded-lg border border-emerald-400/50 bg-emerald-400/10 px-3 py-2 text-xs font-bold text-emerald-100 hover:bg-emerald-400/20"
           >
             Resume
+          </button>
+        ) : null}
+        {canCompleteDataset ? (
+          <button
+            type="button"
+            onClick={() => void updateLongRunningVoiceJob(action, "complete_dataset")}
+            className="rounded-lg border border-emerald-400/50 bg-emerald-400/10 px-3 py-2 text-xs font-bold text-emerald-100 hover:bg-emerald-400/20"
+          >
+            Complete Dataset
           </button>
         ) : null}
       </div>
@@ -2749,21 +3632,64 @@ async function loadCharacters() {
     const result = job?.result && typeof job.result === "object" && !Array.isArray(job.result)
       ? job.result as Record<string, unknown>
       : null;
-    const audioUrl = result
-      ? String(result.outputAudioUrl || result.processedSampleUrl || result.fxSampleUrl || result.previewAudioUrl || result.sampleUrl || "").trim()
+    const trainedPlayback = action === "test_trained_voice" ? getTrainedVoicePlaybackSelection(job) : null;
+    const basePlayback = action === "test_character_voice" ? getBaseVoicePlaybackSelection(job) : null;
+    const characterPreview = action === "generate_character_preview" ? getCharacterPreviewDubSelection(job) : null;
+    const audioUrl =
+      action === "test_trained_voice"
+        ? trainedPlayback?.audioSrc || ""
+        : action === "test_character_voice"
+          ? basePlayback?.audioSrc || ""
+        : result
+          ? String(result.outputAudioUrl || result.processedSampleUrl || result.fxSampleUrl || result.previewAudioUrl || result.sampleUrl || "").trim()
+          : "";
+    const videoUrl = action === "generate_character_preview"
+      ? (() => {
+          if (!job) return "";
+
+          const explicitUrl = String(
+            result?.rawPreviewVideoUrl ||
+              result?.rawPreviewUrl ||
+              result?.originalPreviewVideoUrl ||
+              ""
+          ).trim();
+
+          if (explicitUrl) return explicitUrl;
+
+          const owner = String(job.ownerKey || "").trim();
+          const characterId = String(job.characterId || details.name || "").trim();
+          const jobId = String(job.jobId || "").trim();
+
+          if (!owner || !characterId || !jobId) return "";
+
+          const version = String(
+            result?.rawPreviewBytes ||
+              result?.rawPreviewVideoBytes ||
+              job.updatedAt ||
+              jobId
+          );
+
+          return `/api/characters/character-preview/file?owner=${encodeURIComponent(owner)}&characterId=${encodeURIComponent(characterId)}&jobId=${encodeURIComponent(jobId)}&file=raw-preview.mp4&v=${encodeURIComponent(version)}`;
+        })()
       : "";
     const resultEntries =
       result
         ? Object.entries(result)
         : [];
     const completed = job?.status === "completed";
+    const effectiveStatus = voiceJobEffectiveStatus(job);
+    const datasetGeneratedCount = action === "generate_training_dataset" ? Number(result?.generatedClipCount || 0) : 0;
+    const datasetRequestedCount = action === "generate_training_dataset" ? Math.max(1, Number(result?.requestedClipCount || result?.clipCount || job?.input?.requestedClipCount || job?.input?.clipCount || 200)) : 0;
+    const displayProgress = action === "generate_training_dataset" && job
+      ? Math.max(0, Math.min(100, Math.round((datasetGeneratedCount / datasetRequestedCount) * 100)))
+      : progress;
     const isMockResult = Boolean(result && result.mock !== false);
     const labels: Record<CharacterVoicePipelineAction, Partial<Record<string, string>> & { idle: string; title: string }> = {
       create_voice_sample: {
         title: "Base voice",
         idle: "No voice creation job yet.",
-        queued: "Waiting to start...",
-        running: "Creating voice...",
+        queued: "Waiting for Windows voice worker...",
+        running: "Voice creating...",
         completed: isMockResult ? "Voice creation failed - real worker required" : "Voice ready",
         failed: "Voice creation failed",
         canceled: "Voice creation canceled",
@@ -2780,20 +3706,26 @@ async function loadCharacters() {
       generate_training_dataset: {
         title: "Training dataset",
         idle: "No dataset job yet.",
-        queued: "Dataset queued",
+        queued: "Queued / waiting for Windows worker",
         running: "Dataset running",
+        interrupted: "Dataset interrupted - resume available",
+        ready_for_review: "Dataset ready for review",
         completed: "Dataset completed",
         failed: "Dataset failed",
         canceled: "Dataset canceled",
+        terminated: "Dataset terminated",
       },
       start_applio_training: {
         title: "Voice model training",
         idle: "No training job yet.",
         queued: "Voice model training queued",
         running: "Voice model training running",
+        interrupted: "Voice model training interrupted - resume available",
+        ready_for_review: "Voice model training ready for review",
         completed: "Voice model training completed",
         failed: "Voice model training failed",
         canceled: "Voice model training canceled",
+        terminated: "Voice model training terminated",
       },
       test_character_voice: {
         title: "Test playback",
@@ -2831,6 +3763,17 @@ async function loadCharacters() {
         failed: "Dub failed",
         canceled: "Dub canceled",
       },
+      generate_character_preview: {
+        title: "Character preview dub",
+        idle: "No character preview job yet.",
+        queued: "Waiting for Windows character preview worker",
+        running: "Generating character preview dub...",
+        interrupted: "Character preview interrupted - resume available",
+        completed: characterPreview ? "Character preview ready" : "Character preview output missing",
+        failed: "Character preview failed",
+        canceled: "Character preview canceled",
+        terminated: "Character preview terminated",
+      },
       save_voice_to_character: {
         title: "Save voice",
         idle: "No save job yet.",
@@ -2843,9 +3786,9 @@ async function loadCharacters() {
     };
     const labelSet = labels[action];
     const statusText = (() => {
-      if (state.phase === "submitting") return action === "create_voice_sample" ? "Creating voice..." : "Submitting job...";
+      if (state.phase === "submitting") return action === "create_voice_sample" ? "Voice creating started." : "Submitting job...";
       if (!job) return labelSet.idle;
-      return labelSet[job.status] || job.status;
+      return labelSet[effectiveStatus] || effectiveStatus;
     })();
     const trainingDetailSource = action === "start_applio_training" ? { ...(job?.input || {}), ...(result || {}) } : null;
     const trainingDetails = trainingDetailSource ? {
@@ -2868,18 +3811,22 @@ async function loadCharacters() {
       <div className="mt-3 rounded-xl border border-zinc-800 bg-black/20 p-3 text-xs leading-5 text-zinc-400">
         <div className="flex items-center justify-between gap-3">
           <div className="font-semibold text-zinc-200">{labelSet.title}</div>
-          {job ? <div className="uppercase tracking-[0.16em] text-zinc-500">{job.status}</div> : null}
+          {job ? <div className="uppercase tracking-[0.16em] text-zinc-500">{effectiveStatus}</div> : null}
         </div>
-        <div className={classNames("mt-1 font-semibold", job?.status === "failed" ? "text-red-300" : job?.status === "completed" ? "text-emerald-200" : "text-zinc-200")}>{statusText}</div>
+        <div className={classNames("mt-1 font-semibold", effectiveStatus === "failed" ? "text-red-300" : effectiveStatus === "completed" ? "text-emerald-200" : effectiveStatus === "interrupted" ? "text-amber-200" : "text-zinc-200")}>{statusText}</div>
         {job ? (
           <>
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-800">
               <div
-                className={classNames("h-full rounded-full transition-all", job.status === "failed" ? "bg-red-400" : job.status === "completed" ? "bg-emerald-300" : "bg-amber-300")}
-                style={{ width: `${job.status === "queued" ? Math.max(4, progress) : progress}%` }}
+                className={classNames("h-full rounded-full transition-all", effectiveStatus === "failed" ? "bg-red-400" : effectiveStatus === "completed" ? "bg-emerald-300" : effectiveStatus === "interrupted" ? "bg-orange-300" : "bg-amber-300")}
+                style={{ width: `${effectiveStatus === "queued" ? Math.max(4, displayProgress) : displayProgress}%` }}
               />
             </div>
-            {typeof job.progress === "number" ? <div className="mt-1">Progress: {progress}%</div> : null}
+            {action === "generate_training_dataset" ? (
+              <div className="mt-1">Progress: {displayProgress}% ({datasetGeneratedCount} / {datasetRequestedCount} clips)</div>
+            ) : typeof job.progress === "number" ? (
+              <div className="mt-1">Progress: {progress}%</div>
+            ) : null}
             {trainingDetails ? (
               <div className="mt-3 grid gap-2 rounded-lg border border-zinc-800 bg-zinc-950/70 p-3 text-zinc-300 sm:grid-cols-2">
                 {trainingDetails.preset ? <div>Preset: {trainingDetails.preset}</div> : null}
@@ -2894,7 +3841,7 @@ async function loadCharacters() {
                 {trainingDetails.estimatedCompletionAt ? <div className="break-all">ETA: {trainingDetails.estimatedCompletionAt}</div> : null}
                 {trainingDetails.completedAt ? <div className="break-all">Completed: {trainingDetails.completedAt}</div> : null}
                 {trainingDetails.failedStage ? <div>Failed stage: {trainingDetails.failedStage}</div> : null}
-                {job.status === "running" && !trainingDetails.currentEpoch ? (
+                {effectiveStatus === "running" && !trainingDetails.currentEpoch ? (
                   <div className="sm:col-span-2 text-zinc-500">Completion estimate updates when epoch progress is available.</div>
                 ) : null}
               </div>
@@ -2906,7 +3853,34 @@ async function loadCharacters() {
                 {action === "create_voice_sample" && isMockResult ? (
                   <div className="mt-1 text-emerald-100/80">Rejected mock result - real Qwen3/Cosy worker was not used for this job.</div>
                 ) : null}
-                {audioUrl ? <audio controls preload="metadata" src={audioUrl} className="mt-3 w-full" /> : null}
+                {audioUrl ? (
+                  <audio
+                    key={trainedPlayback ? trainedPlayback.audioKey : basePlayback ? basePlayback.audioKey : audioUrl}
+                    controls
+                    preload="metadata"
+                    src={audioUrl}
+                    className="mt-3 w-full"
+                  />
+                ) : videoUrl ? (
+                  <>
+                    {action === "generate_character_preview" ? (
+                      <div className="mt-3 text-xs font-semibold text-emerald-100">Original preview before dub</div>
+                    ) : null}
+                    <video
+                      key={action === "generate_character_preview" ? `original-${videoUrl}` : characterPreview ? characterPreview.videoKey : videoUrl}
+                      controls
+                      preload="metadata"
+                      src={videoUrl}
+                      className={action === "generate_character_preview" ? "mt-2 w-full rounded-lg bg-black" : "mt-3 w-full rounded-lg bg-black"}
+                    />
+                                  </>
+                ) : action === "test_trained_voice" ? (
+                  <div className="mt-2 text-emerald-100/70">No trained playback audio generated yet.</div>
+                ) : action === "test_character_voice" ? (
+                  <div className="mt-2 text-emerald-100/70">Base test playback is not available yet.</div>
+                ) : action === "generate_character_preview" ? (
+                  <div className="mt-2 text-emerald-100/70">No valid dubbed preview video generated yet.</div>
+                ) : null}
                 {resultEntries.length ? (
                   <details className="mt-2">
                     <summary className="cursor-pointer text-emerald-100/80">Technical details</summary>
@@ -2930,7 +3904,7 @@ async function loadCharacters() {
                 {job.error ? <div className="break-all text-red-300">Error: {job.error}</div> : null}
               </details>
             )}
-            {(action === "generate_training_dataset" || action === "start_applio_training") ? renderLongRunningVoiceJobControls(action) : null}
+            {(action === "generate_training_dataset" || action === "start_applio_training" || action === "generate_character_preview") ? renderLongRunningVoiceJobControls(action) : null}
           </>
         ) : state.phase === "idle" ? (
           <div>{labelSet.idle}</div>
@@ -3052,14 +4026,145 @@ async function loadCharacters() {
 
   function setVoiceFxField<K extends keyof VoiceFxSettings>(key: K, value: VoiceFxSettings[K]) {
     setVoiceFx((current) => ({ ...current, [key]: value, preset: key === "preset" ? value as VoiceFxSettings["preset"] : "custom" }));
+    setVoiceFxStatus("Ready");
     setVoiceFxPreview(null);
     setSelectedIndexVoiceReference((current: any) => current?.source === "tuned_voice_fx" ? null : current);
   }
 
-  function applyVoiceFxPreset(preset: VoiceFxSettings["preset"]) {
-    setVoiceFx(VOICE_FX_PRESETS[preset] || VOICE_FX_PRESETS.custom);
+  function setSimpleVoiceFxField<K extends keyof SimpleVoiceFxSettings>(key: K, value: SimpleVoiceFxSettings[K]) {
+    setSimpleVoiceFx((current) => ({ ...current, [key]: value }));
+    setVoiceFxStatus("Ready");
     setVoiceFxPreview(null);
     setSelectedIndexVoiceReference((current: any) => current?.source === "tuned_voice_fx" ? null : current);
+  }
+
+  function mapSimpleFxToVoiceFx(settings: SimpleVoiceFxSettings): VoiceFxSettings {
+    const sizeOffset = Math.round((settings.voiceSize - 50) / 10);
+    const intensity = Math.max(0, Math.min(100, settings.intensity));
+    const roughness = Math.max(0, Math.min(100, settings.roughness));
+    const typePitch =
+      settings.voiceType === "Monster" || settings.voiceType === "Creature"
+        ? -3
+        : settings.voiceType === "Ghost"
+          ? -1
+          : settings.voiceType === "Alien"
+            ? 1
+            : 0;
+
+    return {
+      ...voiceFx,
+      preset: "custom",
+      pitchSemitones: Math.max(-12, Math.min(12, typePitch - sizeOffset)),
+      speed: Number((1 + (settings.voiceSize < 35 ? 0.04 : settings.voiceSize > 70 ? -0.05 : 0)).toFixed(2)),
+      gainDb: 0,
+      highpassHz: settings.transmission === "Radio" ? 300 : settings.voiceType === "Ghost" ? 140 : 60,
+      lowpassHz: settings.transmission === "Radio" ? 3400 : settings.transmission === "Broken" ? 6500 : 12000,
+      echo: settings.space === "Cave" || settings.space === "Void" ? "cave" : settings.space === "Room" ? "room" : "off",
+      normalize: true,
+      tonePreset: settings.transmission === "Radio" ? "radio" : settings.voiceType === "Robot" ? "telephone" : settings.voiceType === "Monster" ? "dark" : "neutral",
+      bodyMode: settings.voiceSize >= 80 ? "huge" : settings.voiceSize >= 62 ? "deeper" : settings.voiceSize <= 30 ? "lighter" : "normal",
+      gritAmount: Math.round((roughness * 0.7) + (intensity * 0.2)),
+      compression: intensity >= 70 ? "strong" : intensity >= 40 ? "medium" : "light",
+      layerMode: settings.voiceType === "Robot" ? "robot_double" : settings.voiceType === "Ghost" ? "ghost_double" : settings.voiceType === "Monster" || settings.voiceType === "Creature" ? "monster_double" : "off",
+      layerMix: Math.round(settings.voiceType === "Human" ? 0 : intensity * 0.45),
+    };
+  }
+
+  function applySimpleFxToPayload() {
+    setVoiceFx(mapSimpleFxToVoiceFx(simpleVoiceFx));
+  }
+
+  function applyVoiceFxPreset(preset: VoiceFxSettings["preset"]) {
+    setVoiceFx(VOICE_FX_PRESETS[preset] || VOICE_FX_PRESETS.custom);
+    setVoiceFxStatus("Ready");
+    setVoiceFxPreview(null);
+    setSelectedIndexVoiceReference((current: any) => current?.source === "tuned_voice_fx" ? null : current);
+  }
+
+  function applyAdvancedVoiceFxPreset(preset: VoiceFxPresetDefinition) {
+    setVoiceFxPresetId(preset.id);
+    setSimpleVoiceFx((current) => ({ ...current, ...preset.simpleControls }));
+    const nextSimple = { ...simpleVoiceFx, ...preset.simpleControls } as SimpleVoiceFxSettings;
+    setVoiceFx({
+      ...mapSimpleFxToVoiceFx(nextSimple),
+      preset:
+        preset.id === "ghost"
+          ? "ghost"
+          : preset.id === "robot"
+            ? "robotic"
+            : preset.id === "radio_comms" || preset.id === "telephone"
+              ? "radio"
+              : preset.id === "zombie"
+                ? "zombie"
+                : preset.category === "Monsters" || preset.id === "dragon" || preset.id === "beast"
+                  ? "monstrous"
+                  : preset.id === "whisper"
+                    ? "whisper"
+                    : "custom",
+    });
+    setVoiceFxStatus("Ready");
+    setVoiceFxPreview(null);
+    setSelectedIndexVoiceReference((current: any) => current?.source === "tuned_voice_fx" ? null : current);
+  }
+
+  function previewVoiceFx(settings: Record<string, unknown>) {
+    setVoiceFxStatus("Previewing...");
+    setError("");
+    window.setTimeout(() => {
+      setVoiceFxStatus("Ready");
+      setMessage(`FX preview hook is ready for the Windows worker. No audio was rendered yet. Settings: ${String(settings.mode || "voice_fx")}.`);
+    }, 250);
+  }
+
+  function resetVoiceFx() {
+    setSimpleVoiceFx(DEFAULT_SIMPLE_VOICE_FX);
+    setVoiceFx(DEFAULT_VOICE_FX);
+    setVoiceFxPresetCategory("Monsters");
+    setVoiceFxPresetId("dragon");
+    setVoiceFxChainOpen(false);
+    setVoiceFxStatus("Ready");
+    setVoiceFxPreview(null);
+    setSelectedIndexVoiceReference((current: any) => current?.source === "tuned_voice_fx" ? null : current);
+    setMessage("Voice FX reset.");
+  }
+
+  function renderVoiceFxParam(param: VoiceFxParam) {
+    if (param.type === "toggle") {
+      return (
+        <label key={param.id} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/80 px-3 py-2 text-xs text-zinc-300">
+          <span>{param.label}</span>
+          <input type="checkbox" checked={Boolean(param.value)} readOnly className="accent-cyan-300" />
+        </label>
+      );
+    }
+
+    if (param.type === "select") {
+      return (
+        <label key={param.id} className="block text-xs text-zinc-300">
+          <span className="mb-1 block text-zinc-500">{param.label}</span>
+          <select value={String(param.value)} disabled className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-2 text-xs text-zinc-300">
+            {(param.options || [String(param.value)]).map((option) => <option key={option}>{option}</option>)}
+          </select>
+        </label>
+      );
+    }
+
+    return (
+      <label key={param.id} className="block text-xs text-zinc-300">
+        <span className="mb-1 flex items-center justify-between gap-2 text-zinc-500">
+          <span>{param.label}</span>
+          <span>{String(param.value)}{param.unit || ""}</span>
+        </span>
+        <input
+          type="range"
+          min={param.min ?? 0}
+          max={param.max ?? 100}
+          value={Number(param.value)}
+          readOnly
+          className="w-full accent-cyan-300"
+        />
+      </label>
+    );
   }
 
   async function applyVoiceFx() {
@@ -3146,41 +4251,70 @@ async function loadCharacters() {
   }
 
   function approveRawPreviewAsIndexReference() {
-    const record = buildIndexVoiceReference("raw_qwen_preview", voicePreview);
     const characterId = safeId(details.name);
-    const baseSampleUrl = builderCharacterVoiceProfile?.baseSampleUrl || rawVoicePreviewUrl;
-    const baseSamplePath = builderCharacterVoiceProfile?.baseSamplePath || rawVoicePreviewPath;
+    const baseSampleUrl = String(builderCharacterVoiceProfile?.baseSampleUrl || rawVoicePreviewUrl || "").trim();
+    const baseSamplePath = String(builderCharacterVoiceProfile?.baseSamplePath || rawVoicePreviewPath || "").trim();
+
     if (builderCharacterVoiceProfile?.mockResult && builderCharacterVoiceProfile.mockResult.mock !== false && !allowMockVoiceTraining) {
       setError("Mock output rejected. Start the real Qwen3/Cosy worker and click Create Voice again.");
       return;
     }
-    if (!record && !baseSampleUrl) {
-      setError("Create a base voice before using the raw voice for training.");
+
+    if (!baseSampleUrl && !baseSamplePath) {
+      setError("Create or upload a base voice before using the raw voice for training.");
       return;
     }
 
-    if (record) setSelectedIndexVoiceReference(record);
+    const record = buildIndexVoiceReference("raw_qwen_preview", voicePreview) || {
+      source: "raw_qwen_preview",
+      engine: builderCharacterVoiceProfile?.provider === "uploaded" ? "Uploaded Voice" : "Base Voice",
+      characterId,
+      candidateId: selectedQwenVoiceCandidate?.candidateId || "",
+      selectedAt: new Date().toISOString(),
+      audioPath: baseSamplePath,
+      audioUrl: baseSampleUrl || voiceFileUrlFor(baseSamplePath),
+      qwenVoiceDesign,
+      qwenVoiceDesignRecord,
+      voiceFx: null,
+      voiceFxPreview: null,
+      rawVoicePreview: voicePreview || null,
+    };
+
+    if (!String(record.audioPath || "").trim() && !String(record.audioUrl || "").trim()) {
+      setError("Raw voice selection failed because no usable audio path or URL was found.");
+      return;
+    }
+
+    setSelectedIndexVoiceReference(record);
     setIndexVoicePack(null);
-
     setCharacter3dModel(null);
-    if (builderCharacterVoiceProfile?.characterId === characterId && baseSampleUrl) {
-      void persistCharacterVoiceProfile(
-        characterId,
-        {
-          ...builderCharacterVoiceProfile,
-          approvedSampleUrl: baseSampleUrl,
-          approvedSamplePath: baseSamplePath || undefined,
-          updatedAt: new Date().toISOString(),
-        },
-        "Raw base sample approved on character profile.",
-        "Raw base sample approved and will be saved with the character.",
-        "Could not approve raw base sample on character profile.",
-      );
-      return;
-    }
-    setMessage("Raw base voice selected for training.");
-  }
 
+    const now = new Date().toISOString();
+    const nextProfile: CharacterVoiceProfile = {
+      ...(builderCharacterVoiceProfile || {
+        characterId,
+        provider: voiceProvider,
+        status: "sample_ready",
+        updatedAt: now,
+      }),
+      characterId,
+      provider: builderCharacterVoiceProfile?.provider || voiceProvider,
+      status: builderCharacterVoiceProfile?.status || "sample_ready",
+      baseSampleUrl: baseSampleUrl || builderCharacterVoiceProfile?.baseSampleUrl,
+      baseSamplePath: baseSamplePath || builderCharacterVoiceProfile?.baseSamplePath || undefined,
+      approvedSampleUrl: baseSampleUrl || record.audioUrl,
+      approvedSamplePath: baseSamplePath || record.audioPath || undefined,
+      updatedAt: now,
+    };
+
+    void persistCharacterVoiceProfile(
+      characterId,
+      nextProfile,
+      "Raw base sample approved on character profile.",
+      "Raw base sample selected for training and will be saved with the character.",
+      "Could not approve raw base sample on character profile.",
+    );
+  }
   function approveTunedPreviewAsIndexReference() {
     const record = buildIndexVoiceReference("tuned_voice_fx", voiceFxPreview);
     const characterId = safeId(details.name);
@@ -3462,7 +4596,7 @@ async function loadCharacters() {
 
     setLoading(true);
     setError("");
-    setMessage("Generating HY3D model. This takes about two minutes...");
+    setMessage("Generating TripoSplat 3D Model. This can take several minutes...");
     try {
       const characterId = safeId(details.name || "character");
       const response = await fetch("/api/characters/3d-model", {
@@ -3631,6 +4765,12 @@ async function loadCharacters() {
       setError("Create Voice is required before final save.");
       return;
     }
+    const completedPreview = getCharacterPreviewDubSelection(voicePipelineJobs.generate_character_preview?.job);
+    if (!completedPreview) {
+      setError("Complete Character requires a valid dubbed preview video. Click Test & Preview Character first.");
+      advanceToVoiceLabPage("preview");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -3664,6 +4804,16 @@ async function loadCharacters() {
           metadata: details,
           voiceSettings: voice,
           characterVoiceProfile,
+          characterPreviewDub: {
+            jobId: completedPreview.job.jobId || "",
+            dubbedPreviewVideoPath: completedPreview.dubbedPreviewVideoPath,
+            dubbedPreviewVideoUrl: completedPreview.dubbedPreviewVideoUrl,
+            outputBytes: completedPreview.outputBytes,
+            previewScript: CHARACTER_PREVIEW_DUB_SCRIPT,
+          },
+          dubbedPreviewVideoPath: completedPreview.dubbedPreviewVideoPath,
+          dubbedPreviewVideoUrl: completedPreview.dubbedPreviewVideoUrl,
+          dubbedPreviewVideoBytes: completedPreview.outputBytes,
           voicePackPaths,
           indexVoiceReference: selectedIndexVoiceReference,
           indexVoiceReferencePath: selectedIndexVoiceReference?.audioPath || "",
@@ -3709,6 +4859,20 @@ async function loadCharacters() {
     }
   }
 
+  if (!characterDraftHydrated) {
+    return (
+      <section className="space-y-5">
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-5">
+          <p className="text-xs uppercase tracking-[0.22em] text-amber-300">Characters</p>
+          <h2 className="mt-2 text-2xl font-semibold text-zinc-50">Restoring character creation progress...</h2>
+          <p className="mt-2 max-w-3xl text-sm text-zinc-400">
+            Loading the latest saved builder draft before showing the Character tab.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-5">
       <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-5">
@@ -3719,6 +4883,11 @@ async function loadCharacters() {
             <p className="mt-2 max-w-3xl text-sm text-zinc-400">
               Characters are created here through Image, Character Card, Details, Voice Lab, then Review & Save. Generated media from the Generate tab is no longer sent directly to Characters.
             </p>
+            {characterDraftRestoreError ? (
+              <p className="mt-2 max-w-3xl rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-100">
+                Could not restore the server draft: {characterDraftRestoreError}
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-3">
             <button
@@ -3936,7 +5105,7 @@ async function loadCharacters() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => advanceToBuilderStep("voice", { message: "Character details saved and locked. Continue in Voice Lab." })}
+                  onClick={continueNewCharacterToVoiceLab}
                   className="rounded-xl bg-amber-300 px-4 py-2 text-sm font-semibold text-zinc-950"
                 >
                   Continue to Voice Lab
@@ -3965,7 +5134,7 @@ async function loadCharacters() {
                         : item.id === "training"
                           ? Boolean(indexVoicePack?.outputs || voicePipelineJobs.start_applio_training?.job?.status === "completed")
                           : item.id === "preview"
-                            ? Boolean(voicePipelineJobs.test_character_voice?.job?.status === "completed" || voicePipelineJobs.dub_preview_video?.job?.status === "completed")
+                            ? Boolean(getCharacterPreviewDubSelection(voicePipelineJobs.generate_character_preview?.job))
                           : false;
                   return (
                     <button
@@ -4277,234 +5446,203 @@ async function loadCharacters() {
               ) : null}
 
               {voiceLabPage === "fx" ? (
-              <div className="mt-5 rounded-xl border border-cyan-400/30 bg-cyan-400/5 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-cyan-100">Voice Effects</p>
-                    <p className="mt-1 max-w-2xl text-xs text-zinc-400">
-                      The base voice from Voice Design is locked in here. Use it raw, or apply effects and use the tuned version for training.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void queueCharacterVoicePipelineAction("apply_voice_fx", buildVoiceFxPipelinePayload())}
-                    disabled={voicePipelineJobs.apply_voice_fx?.phase === "submitting" || (!baseVoiceCanAdvance && !rawVoicePreviewPath)}
-                    className="rounded-xl border border-cyan-400 px-4 py-2 text-sm font-semibold text-cyan-100 disabled:opacity-40"
-                  >
-                    {voicePipelineJobs.apply_voice_fx?.phase === "submitting" ? "Applying..." : "Apply Effects"}
-                  </button>
-                </div>
-                {renderVoicePipelineJobStatus("apply_voice_fx")}
-
-                <div className="mt-4 grid gap-4 md:grid-cols-3">
-                  <label className="block text-sm text-zinc-300">
-                    <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">FX Preset</span>
-                    <select
-                      value={voiceFx.preset}
-                      onChange={(event) => applyVoiceFxPreset(event.target.value as VoiceFxSettings["preset"])}
-                      className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
-                    >
-                      {Object.entries(VOICE_FX_PRESET_LABELS).map(([value, label]) => (
-                        <option key={value} value={value}>{label}</option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="block text-sm text-zinc-300">
-                    <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Pitch Semitones</span>
-                    <input
-                      type="number"
-                      min={-12}
-                      max={12}
-                      step={1}
-                      value={voiceFx.pitchSemitones}
-                      onChange={(event) => setVoiceFxField("pitchSemitones", Number(event.target.value))}
-                      className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
-                    />
-                  </label>
-
-                  <label className="block text-sm text-zinc-300">
-                    <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Speed</span>
-                    <input
-                      type="number"
-                      min={0.8}
-                      max={1.2}
-                      step={0.01}
-                      value={voiceFx.speed}
-                      onChange={(event) => setVoiceFxField("speed", Number(event.target.value))}
-                      className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
-                    />
-                  </label>
-
-                  <label className="block text-sm text-zinc-300">
-                    <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">High-pass Hz</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={2000}
-                      step={5}
-                      value={voiceFx.highpassHz}
-                      onChange={(event) => setVoiceFxField("highpassHz", Number(event.target.value))}
-                      className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
-                    />
-                  </label>
-
-                  <label className="block text-sm text-zinc-300">
-                    <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Low-pass Hz</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={22050}
-                      step={100}
-                      value={voiceFx.lowpassHz}
-                      onChange={(event) => setVoiceFxField("lowpassHz", Number(event.target.value))}
-                      className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
-                    />
-                  </label>
-
-                  <label className="block text-sm text-zinc-300">
-                    <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Echo / Space</span>
-                    <select
-                      value={voiceFx.echo}
-                      onChange={(event) => setVoiceFxField("echo", event.target.value as VoiceFxSettings["echo"])}
-                      className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
-                    >
-                      <option value="off">Off</option>
-                      <option value="subtle">Subtle</option>
-                      <option value="room">Room</option>
-                      <option value="cave">Cave</option>
-                    </select>
-                  </label>
-
-                  <label className="flex items-center gap-2 text-sm text-zinc-300 md:mt-6">
-                    <input
-                      type="checkbox"
-                      checked={voiceFx.normalize}
-                      onChange={(event) => setVoiceFxField("normalize", event.target.checked)}
-                    />
-                    Normalize loudness
-                  </label>
-                </div>
-
-                <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/70 p-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setVoiceFxAdvancedOpen(false)}
-                      className={classNames(
-                        "rounded-xl border px-3 py-2 text-sm font-semibold",
-                        !voiceFxAdvancedOpen ? "border-cyan-300 bg-cyan-300/10 text-cyan-100" : "border-zinc-800 text-zinc-400",
-                      )}
-                    >
-                      Basic Controls
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setVoiceFxAdvancedOpen(true)}
-                      className={classNames(
-                        "rounded-xl border px-3 py-2 text-sm font-semibold",
-                        voiceFxAdvancedOpen ? "border-cyan-300 bg-cyan-300/10 text-cyan-100" : "border-zinc-800 text-zinc-400",
-                      )}
-                    >
-                      Advanced Controls
-                    </button>
-                  </div>
-
-                  {voiceFxAdvancedOpen ? (
-                    <div className="mt-4 grid gap-4 md:grid-cols-3">
-                      <label className="block text-sm text-zinc-300">
-                        <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Body / Resonance</span>
-                        <select
-                          value={voiceFx.bodyMode || "normal"}
-                          onChange={(event) => setVoiceFxField("bodyMode", event.target.value as VoiceFxSettings["bodyMode"])}
-                          className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
-                        >
-                          <option value="lighter">Lighter</option>
-                          <option value="normal">Normal</option>
-                          <option value="deeper">Deeper</option>
-                          <option value="huge">Huge</option>
-                        </select>
-                      </label>
-
-                      <label className="block text-sm text-zinc-300">
-                        <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Tone Preset</span>
-                        <select
-                          value={voiceFx.tonePreset || "neutral"}
-                          onChange={(event) => setVoiceFxField("tonePreset", event.target.value as VoiceFxSettings["tonePreset"])}
-                          className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
-                        >
-                          <option value="neutral">Neutral</option>
-                          <option value="dark">Dark</option>
-                          <option value="bright">Bright</option>
-                          <option value="radio">Radio</option>
-                          <option value="telephone">Telephone</option>
-                        </select>
-                      </label>
-
-                      <label className="block text-sm text-zinc-300">
-                        <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Grit / Saturation</span>
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={5}
-                          value={voiceFx.gritAmount || 0}
-                          onChange={(event) => setVoiceFxField("gritAmount", Number(event.target.value))}
-                          className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
-                        />
-                      </label>
-
-                      <label className="block text-sm text-zinc-300">
-                        <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Compression</span>
-                        <select
-                          value={voiceFx.compression || "off"}
-                          onChange={(event) => setVoiceFxField("compression", event.target.value as VoiceFxSettings["compression"])}
-                          className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
-                        >
-                          <option value="off">Off</option>
-                          <option value="light">Light</option>
-                          <option value="medium">Medium</option>
-                          <option value="strong">Strong</option>
-                        </select>
-                      </label>
-
-                      <label className="block text-sm text-zinc-300">
-                        <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Layer Mode</span>
-                        <select
-                          value={voiceFx.layerMode || "off"}
-                          onChange={(event) => setVoiceFxField("layerMode", event.target.value as VoiceFxSettings["layerMode"])}
-                          className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
-                        >
-                          <option value="off">Off</option>
-                          <option value="octave_down">Octave Down</option>
-                          <option value="octave_up">Octave Up</option>
-                          <option value="monster_double">Monster Double</option>
-                          <option value="ghost_double">Ghost Double</option>
-                          <option value="robot_double">Robot Double</option>
-                        </select>
-                      </label>
-
-                      <label className="block text-sm text-zinc-300">
-                        <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Layer Mix %</span>
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={5}
-                          value={voiceFx.layerMix || 0}
-                          onChange={(event) => setVoiceFxField("layerMix", Number(event.target.value))}
-                          className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
-                        />
-                      </label>
-
-                      <p className="md:col-span-3 text-xs text-zinc-500">
-                        Use advanced effects moderately for Index references. Heavy grit, cave echo, and high layer mix can make the voice dramatic, but may reduce clean dubbing consistency.
+              <div className="mt-5 space-y-4">
+                <div className="rounded-xl border border-cyan-400/30 bg-cyan-400/5 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-cyan-100">Voice Effects</p>
+                      <p className="mt-1 max-w-2xl text-xs text-zinc-400">
+                        Shape the locked base voice with simple controls, or open Advanced FX for model-ready preset chains. Rendering remains queued through the Windows worker.
                       </p>
                     </div>
+                    <div className={classNames(
+                      "rounded-full border px-3 py-1 text-xs font-semibold",
+                      voiceFxStatus === "Applied" ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-100" :
+                      voiceFxStatus === "Error" ? "border-red-400/40 bg-red-400/10 text-red-100" :
+                      "border-cyan-400/40 bg-cyan-400/10 text-cyan-100",
+                    )}>
+                      {voiceFxStatus}
+                    </div>
+                  </div>
+                  {renderVoicePipelineJobStatus("apply_voice_fx")}
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-zinc-100">Base Voice</p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {details.name.trim() || builderCharacterVoiceProfile?.characterId || "Current character"} / {builderCharacterVoiceProfile?.provider || voiceProvider}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={() => setMessage(rawVoicePreviewUrl ? "Original voice is available below." : "No original voice audio is available yet.")} className="rounded-xl border border-zinc-700 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:border-zinc-500">
+                        Play Original
+                      </button>
+                      <button type="button" onClick={() => previewVoiceFx({ mode: "simple_fx_preview", simpleControls: simpleVoiceFx })} disabled={voiceFxBusy} className="rounded-xl border border-cyan-400 px-3 py-1.5 text-xs font-semibold text-cyan-100 disabled:opacity-40">
+                        Preview FX
+                      </button>
+                      <button type="button" onClick={() => { setVoiceFxStatus("Ready"); setMessage("Voice FX preview stopped."); }} className="rounded-xl border border-zinc-700 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:border-zinc-500">
+                        Stop
+                      </button>
+                    </div>
+                  </div>
+                  {rawVoicePreviewUrl || builderCharacterVoiceProfile?.baseSampleUrl ? (
+                    <audio controls preload="metadata" src={rawVoicePreviewUrl || builderCharacterVoiceProfile?.baseSampleUrl} className="mt-3 w-full" />
+                  ) : null}
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-zinc-100">Simple FX</p>
+                      <p className="mt-1 text-xs text-zinc-500">Friendly controls for fast character voice shaping.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={() => { applySimpleFxToPayload(); previewVoiceFx({ mode: "simple_fx_preview", simpleControls: simpleVoiceFx }); }} disabled={voiceFxBusy} className="rounded-xl border border-cyan-400 px-3 py-1.5 text-xs font-semibold text-cyan-100 disabled:opacity-40">
+                        Preview FX
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = mapSimpleFxToVoiceFx(simpleVoiceFx);
+                          setVoiceFx(next);
+                          void queueCharacterVoicePipelineAction("apply_voice_fx", { ...buildVoiceFxPipelinePayload(), ...next, simpleControls: simpleVoiceFx });
+                        }}
+                        disabled={voiceFxBusy || (!baseVoiceCanAdvance && !rawVoicePreviewPath)}
+                        className="rounded-xl border border-emerald-400 px-3 py-1.5 text-xs font-semibold text-emerald-100 disabled:opacity-40"
+                      >
+                        Apply to Voice
+                      </button>
+                      <button type="button" onClick={resetVoiceFx} className="rounded-xl border border-zinc-700 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:border-zinc-500">
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 md:grid-cols-3">
+                    <label className="block text-sm text-zinc-300">
+                      <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Voice Type</span>
+                      <select value={simpleVoiceFx.voiceType} onChange={(event) => setSimpleVoiceFxField("voiceType", event.target.value as SimpleVoiceFxSettings["voiceType"])} className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+                        {["Human", "Monster", "Robot", "Ghost", "Alien", "Creature"].map((item) => <option key={item}>{item}</option>)}
+                      </select>
+                    </label>
+                    <label className="block text-sm text-zinc-300">
+                      <span className="mb-1 flex justify-between text-xs uppercase tracking-[0.16em] text-zinc-500"><span>Voice Size</span><span>{simpleVoiceFx.voiceSize < 35 ? "Tiny" : simpleVoiceFx.voiceSize > 70 ? "Giant" : "Normal"}</span></span>
+                      <input type="range" min={0} max={100} value={simpleVoiceFx.voiceSize} onChange={(event) => setSimpleVoiceFxField("voiceSize", Number(event.target.value))} className="w-full accent-cyan-300" />
+                    </label>
+                    <label className="block text-sm text-zinc-300">
+                      <span className="mb-1 flex justify-between text-xs uppercase tracking-[0.16em] text-zinc-500"><span>Roughness</span><span>{simpleVoiceFx.roughness < 25 ? "Clean" : simpleVoiceFx.roughness > 70 ? "Distorted" : "Raspy"}</span></span>
+                      <input type="range" min={0} max={100} value={simpleVoiceFx.roughness} onChange={(event) => setSimpleVoiceFxField("roughness", Number(event.target.value))} className="w-full accent-cyan-300" />
+                    </label>
+                    <label className="block text-sm text-zinc-300">
+                      <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Space</span>
+                      <select value={simpleVoiceFx.space} onChange={(event) => setSimpleVoiceFxField("space", event.target.value as SimpleVoiceFxSettings["space"])} className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+                        {["Dry", "Room", "Cave", "Void"].map((item) => <option key={item}>{item}</option>)}
+                      </select>
+                    </label>
+                    <label className="block text-sm text-zinc-300">
+                      <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Transmission</span>
+                      <select value={simpleVoiceFx.transmission} onChange={(event) => setSimpleVoiceFxField("transmission", event.target.value as SimpleVoiceFxSettings["transmission"])} className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100">
+                        {["Clean", "Radio", "Broken", "Glitch"].map((item) => <option key={item}>{item}</option>)}
+                      </select>
+                    </label>
+                    <label className="block text-sm text-zinc-300">
+                      <span className="mb-1 flex justify-between text-xs uppercase tracking-[0.16em] text-zinc-500"><span>Intensity</span><span>{simpleVoiceFx.intensity}%</span></span>
+                      <input type="range" min={0} max={100} value={simpleVoiceFx.intensity} onChange={(event) => setSimpleVoiceFxField("intensity", Number(event.target.value))} className="w-full accent-cyan-300" />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                  <button type="button" onClick={() => setVoiceFxAdvancedOpen((current) => !current)} className="flex w-full items-center justify-between gap-3 text-left">
+                    <span>
+                      <span className="block text-sm font-semibold text-zinc-100">Advanced FX</span>
+                      <span className="mt-1 block text-xs text-zinc-500">Preset categories, relevant controls, and view-only effect chain.</span>
+                    </span>
+                    <span className="rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-300">{voiceFxAdvancedOpen ? "Hide" : "Show"}</span>
+                  </button>
+
+                  {voiceFxAdvancedOpen ? (
+                    <div className="mt-4 space-y-4">
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <label className="block text-sm text-zinc-300">
+                          <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Preset Category</span>
+                          <select
+                            value={voiceFxPresetCategory}
+                            onChange={(event) => {
+                              const nextCategory = event.target.value;
+                              const firstPreset = voiceFxPresetsForCategory(nextCategory)[0];
+                              setVoiceFxPresetCategory(nextCategory);
+                              if (firstPreset) applyAdvancedVoiceFxPreset(firstPreset);
+                            }}
+                            className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                          >
+                            {VOICE_FX_CATEGORIES.map((category) => <option key={category}>{category}</option>)}
+                          </select>
+                        </label>
+                        <label className="block text-sm text-zinc-300">
+                          <span className="mb-1 block text-xs uppercase tracking-[0.16em] text-zinc-500">Preset</span>
+                          <select
+                            value={selectedVoiceFxPreset.id}
+                            onChange={(event) => applyAdvancedVoiceFxPreset(findVoiceFxPresetDefinition(event.target.value))}
+                            className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                          >
+                            {advancedVoiceFxPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+                          </select>
+                        </label>
+                      </div>
+
+                      <div className="rounded-xl border border-cyan-400/20 bg-cyan-400/5 p-3">
+                        <p className="text-sm font-semibold text-cyan-100">{selectedVoiceFxPreset.name}</p>
+                        <p className="mt-1 text-xs leading-5 text-zinc-400">{selectedVoiceFxPreset.description}</p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={() => previewVoiceFx({ mode: "advanced_preset_preview", presetId: selectedVoiceFxPreset.id })} disabled={voiceFxBusy} className="rounded-xl border border-cyan-400 px-3 py-1.5 text-xs font-semibold text-cyan-100 disabled:opacity-40">
+                          Preview Preset
+                        </button>
+                        <button type="button" onClick={() => { applyAdvancedVoiceFxPreset(selectedVoiceFxPreset); void queueCharacterVoicePipelineAction("apply_voice_fx", { ...buildVoiceFxPipelinePayload(), advancedPresetId: selectedVoiceFxPreset.id, effectChain: selectedVoiceFxPreset.chain }); }} disabled={voiceFxBusy || (!baseVoiceCanAdvance && !rawVoicePreviewPath)} className="rounded-xl border border-emerald-400 px-3 py-1.5 text-xs font-semibold text-emerald-100 disabled:opacity-40">
+                          Apply Preset
+                        </button>
+                        <button type="button" onClick={() => setMessage("Custom FX settings saved in the character draft. Backend custom preset storage is not connected yet.")} className="rounded-xl border border-zinc-700 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:border-zinc-500">
+                          Save Custom
+                        </button>
+                        <button type="button" onClick={() => applyAdvancedVoiceFxPreset(selectedVoiceFxPreset)} className="rounded-xl border border-zinc-700 px-3 py-1.5 text-xs font-semibold text-zinc-100 hover:border-zinc-500">
+                          Reset Preset
+                        </button>
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        {selectedVoiceFxPreset.controls.filter((group) => group.params.length > 0).map((group) => (
+                          <div key={group.group} className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">{group.group}</p>
+                            <div className="mt-3 space-y-3">{group.params.map(renderVoiceFxParam)}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                        <button type="button" onClick={() => setVoiceFxChainOpen((current) => !current)} className="flex w-full items-center justify-between gap-3 text-left text-sm font-semibold text-zinc-100">
+                          <span>Show Effect Chain</span>
+                          <span className="text-xs text-zinc-500">{voiceFxChainOpen ? "Hide" : "Show"}</span>
+                        </button>
+                        {voiceFxChainOpen ? (
+                          <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs text-zinc-300">
+                            {selectedVoiceFxChain.map((stepItem, index) => (
+                              <li key={`${stepItem.effect}-${index}`}>
+                                <span className="font-semibold text-zinc-100">{stepItem.effect}</span>
+                                {Object.keys(stepItem).filter((key) => key !== "effect").length ? (
+                                  <span className="text-zinc-500"> / {Object.entries(stepItem).filter(([key]) => key !== "effect").map(([key, value]) => `${key}: ${String(value)}`).join(", ")}</span>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ol>
+                        ) : null}
+                      </div>
+                    </div>
                   ) : (
-                    <p className="mt-3 text-xs text-zinc-500">
-                      Advanced effects are hidden. Open this tab for body resonance, grit, compression, tone shaping, and layered doubles.
-                    </p>
+                    <p className="mt-3 text-xs text-zinc-500">Advanced FX is collapsed by default so the page stays focused on the simple controls.</p>
                   )}
                 </div>
 
@@ -4520,7 +5658,7 @@ async function loadCharacters() {
                       <button
                         type="button"
                         onClick={approveRawPreviewAsIndexReference}
-                        disabled={(!rawVoicePreviewPath && !builderCharacterVoiceProfile?.baseSampleUrl) || (baseVoiceIsDevMock && !allowMockVoiceTraining)}
+                        disabled={(!rawVoicePreviewPath && !rawVoicePreviewUrl && !builderCharacterVoiceProfile?.baseSampleUrl && !builderCharacterVoiceProfile?.baseSamplePath) || (baseVoiceIsDevMock && !allowMockVoiceTraining)}
                         className="rounded-xl border border-emerald-400 px-3 py-1.5 text-xs font-semibold text-emerald-100 disabled:opacity-40 hover:bg-emerald-400/10"
                       >
                         Use Raw
@@ -4552,14 +5690,14 @@ async function loadCharacters() {
                     <button
                       type="button"
                       onClick={() => {
-                        if (!builderCharacterVoiceProfile?.baseSampleUrl) {
-                          setError("Create a base voice before moving to Training.");
+                        if (!builderCharacterVoiceProfile?.baseSampleUrl && !builderCharacterVoiceProfile?.baseSamplePath && !rawVoicePreviewUrl && !rawVoicePreviewPath) {
+                          setError("Create or upload a base voice before moving to Training.");
                           return;
                         }
-                        if (!approvedSampleUrl) {
+                        if (!selectedIndexVoiceReference && !builderCharacterVoiceProfile?.approvedSampleUrl) {
                           approveRawPreviewAsIndexReference();
                         }
-                        advanceToVoiceLabPage("training", { skipValidation: true, message: "Voice Effects choice saved and locked. Prepare training data next." });
+                        advanceToVoiceLabPage("training", { skipValidation: true, message: "Raw voice selected. Prepare training data next." });
                       }}
                       disabled={!baseVoiceCanAdvance}
                       className="rounded-xl border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-100 disabled:opacity-40 hover:border-zinc-500"
@@ -4582,22 +5720,23 @@ async function loadCharacters() {
                   </p>
                   <div className={classNames(
                     "mt-4 rounded-xl border p-3 text-xs leading-5",
-                    approvedSampleUrl
+                    lockedTrainingVoiceUrl
                       ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-100"
                       : "border-amber-400/30 bg-amber-400/10 text-amber-100",
                   )}>
                     <div className="font-semibold">Selected Voice</div>
-                    {approvedSampleUrl ? (
+                    {lockedTrainingVoiceUrl ? (
                       <>
-                        <div>Voice type: {approvedSampleType === "tuned" ? "Tuned voice" : approvedSampleType === "base" ? "Raw base voice" : "Selected voice"}</div>
+                        <div>Voice type: {lockedTrainingVoiceType === "tuned" ? "Tuned voice" : lockedTrainingVoiceType === "base" ? "Raw base voice" : "Selected voice"}</div>
                         {approvedSourceJobId ? <div className="break-all">Source job: {approvedSourceJobId}</div> : null}
-                        {builderCharacterVoiceProfile?.tunedFxPreset && approvedSampleType === "tuned" ? (
+                        {builderCharacterVoiceProfile?.tunedFxPreset && lockedTrainingVoiceType === "tuned" ? (
                           <div>FX preset: {builderCharacterVoiceProfile.tunedFxPreset}</div>
                         ) : null}
+                        <div className="break-all">Voice source: {lockedTrainingVoiceUrl}</div>
 
                       </>
                     ) : (
-                      <div>No voice selected yet. Go back to Voice Effects and choose Raw or Tuned before training.</div>
+                      <div>No voice detected yet. Create or upload a voice before training.</div>
                     )}
                   </div>
                   <div className="mt-4 rounded-xl border border-zinc-800 bg-black/20 p-3">
@@ -4651,7 +5790,7 @@ async function loadCharacters() {
                         );
                         if (confirmed) void queueCharacterVoicePipelineAction("generate_training_dataset", { trainingPreset: "balanced", requestedClipCount: 200 });
                       }}
-                      disabled={voicePipelineJobs.generate_training_dataset?.phase === "submitting" || !approvedSampleUrl || !indexTts2TrainingDatasetAvailable}
+                      disabled={voicePipelineJobs.generate_training_dataset?.phase === "submitting" || !lockedTrainingVoiceUrl || !indexTts2TrainingDatasetAvailable}
                       className="w-full rounded-2xl border border-purple-300 bg-purple-300/10 px-5 py-5 text-base font-black text-purple-100 shadow-lg shadow-purple-950/20 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-purple-300/20 md:col-span-2"
                     >
                       {!indexTts2TrainingDatasetAvailable
@@ -4670,7 +5809,7 @@ async function loadCharacters() {
                         estimatedDurationLabel: selectedApplioTrainingQuality.estimatedDurationLabel,
                         ...applioManifestInput,
                       })}
-                      disabled={voicePipelineJobs.start_applio_training?.phase === "submitting" || !approvedSampleUrl || !trainingVoicePackReady}
+                      disabled={voicePipelineJobs.start_applio_training?.phase === "submitting" || !lockedTrainingVoiceUrl || !trainingVoicePackReady}
                       className="w-full rounded-2xl border border-amber-300 bg-amber-300/10 px-5 py-5 text-base font-black text-amber-100 shadow-lg shadow-amber-950/20 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-amber-300/20 md:col-span-2"
                     >
                       {voicePipelineJobs.start_applio_training?.phase === "submitting" ? "Training..." : "Train Voice Model"}
@@ -4689,7 +5828,13 @@ async function loadCharacters() {
                         : "border-amber-400/30 bg-amber-400/10 text-amber-100",
                     )}>
                       <div className="font-semibold">
-                        {trainingVoicePackReady ? "Voice pack ready" : "Voice pack not ready"}
+                        {trainingVoicePackReady
+                          ? "Voice pack completed"
+                          : trainingDatasetReadyForReview
+                            ? "Voice pack ready for review"
+                            : trainingDatasetTerminated
+                              ? "Voice pack terminated"
+                              : "Voice pack not ready"}
                       </div>
                       <div>
                         Clips ready: {trainingDatasetGeneratedClipCount || 0}
@@ -4700,6 +5845,68 @@ async function loadCharacters() {
                           <summary className="cursor-pointer">Technical manifest path</summary>
                           <div className="mt-1 break-all opacity-80">{String(trainingDatasetResult.manifestPath)}</div>
                         </details>
+                      ) : null}
+                      {trainingDatasetGeneratedClipCount > 0 ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTrainingDatasetPreviewIndex(1);
+                              setTrainingDatasetPreviewOpen((open) => !open);
+                            }}
+                            className="rounded-lg border border-sky-300/50 bg-sky-300/10 px-3 py-2 text-xs font-bold text-sky-100 hover:bg-sky-300/20"
+                          >
+                            Preview Samples
+                          </button>
+                          {trainingDatasetReadyForReview ? (
+                            <button
+                              type="button"
+                              onClick={() => void updateLongRunningVoiceJob("generate_training_dataset", "complete_dataset")}
+                              className="rounded-lg border border-emerald-300/50 bg-emerald-300/10 px-3 py-2 text-xs font-bold text-emerald-100 hover:bg-emerald-300/20"
+                            >
+                              Complete Dataset
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {trainingDatasetPreviewOpen && trainingDatasetPreviewUrl ? (
+                        <div className="mt-3 rounded-lg border border-zinc-700 bg-black/20 p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="text-xs font-semibold">
+                              Clip {currentTrainingDatasetPreviewIndex} / {trainingDatasetRequestedCount}
+                            </div>
+                            <div className="text-xs opacity-75">
+                              {currentTrainingDatasetPreviewIndex <= trainingDatasetGeneratedClipCount ? "ready" : "pending"}
+                            </div>
+                          </div>
+                          <audio key={trainingDatasetPreviewUrl} controls className="mt-2 w-full" src={trainingDatasetPreviewUrl} />
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setTrainingDatasetPreviewIndex((value) => Math.max(1, value - 1))}
+                              className="rounded-lg border border-zinc-700 px-3 py-1 text-xs font-semibold hover:border-zinc-500"
+                            >
+                              Previous
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setTrainingDatasetPreviewIndex((value) => Math.min(trainingDatasetRequestedCount, value + 1))}
+                              className="rounded-lg border border-zinc-700 px-3 py-1 text-xs font-semibold hover:border-zinc-500"
+                            >
+                              Next
+                            </button>
+                            <input
+                              type="number"
+                              min={1}
+                              max={trainingDatasetRequestedCount}
+                              value={currentTrainingDatasetPreviewIndex}
+                              onChange={(event) => setTrainingDatasetPreviewIndex(Math.max(1, Math.min(trainingDatasetRequestedCount, Number(event.target.value) || 1)))}
+                              className="w-24 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100"
+                              aria-label="Jump to training dataset clip number"
+                            />
+                            <div className="text-xs opacity-75">clip_{String(currentTrainingDatasetPreviewIndex).padStart(3, "0")}.wav</div>
+                          </div>
+                        </div>
                       ) : null}
                     </div>
                   ) : null}
@@ -4718,8 +5925,12 @@ async function loadCharacters() {
                         <div className="text-xs font-semibold uppercase tracking-[0.14em] opacity-70">Dataset Status</div>
                         <div className="mt-1 text-lg font-black">
                           {trainingVoicePackReady
-                            ? "Ready"
-                            : voicePipelineJobs.generate_training_dataset?.phase === "submitting"
+                            ? "Completed"
+                            : trainingDatasetReadyForReview
+                              ? "Ready for Review"
+                              : trainingDatasetTerminated
+                                ? "Terminated"
+                                : voicePipelineJobs.generate_training_dataset?.phase === "submitting"
                               ? "Preparing"
                               : "Not Prepared"}
                         </div>
@@ -4732,6 +5943,10 @@ async function loadCharacters() {
 
                     {trainingVoicePackReady ? (
                       <p className="mt-2 text-xs opacity-80">Ready. Choose a training quality and click Train Voice Model.</p>
+                    ) : trainingDatasetReadyForReview ? (
+                      <p className="mt-2 text-xs opacity-80">Review sample clips, then click Complete Dataset to unlock Train Voice Model.</p>
+                    ) : trainingDatasetTerminated ? (
+                      <p className="mt-2 text-xs opacity-80">This dataset session was terminated. Start a new dataset when ready.</p>
                     ) : (
                       <p className="mt-2 text-xs opacity-80">Prepare the dataset before training can start.</p>
                     )}
@@ -4756,7 +5971,7 @@ async function loadCharacters() {
                                     <div className="mb-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3">
                     <p className="text-sm font-semibold text-emerald-100">Voice Model Status</p>
                     <div className="mt-3 space-y-1 text-xs leading-5 text-emerald-100/85">
-                      <div>Selected voice: {approvedSampleUrl ? (approvedSampleType === "tuned" ? "Tuned voice" : approvedSampleType === "base" ? "Raw base voice" : "Ready") : "Not selected"}</div>
+                      <div>Selected voice: {lockedTrainingVoiceUrl ? (lockedTrainingVoiceType === "tuned" ? "Tuned voice" : lockedTrainingVoiceType === "base" ? "Raw base voice" : "Ready") : "Not selected"}</div>
                       <div>Training data: {trainingVoicePackReady ? `Voice pack ready (${trainingDatasetGeneratedClipCount}/${trainingDatasetClipCount || 200} clips)` : "Not prepared"}</div>
                       <div>Voice model: {builderCharacterVoiceProfile?.status === "trained" && builderCharacterVoiceProfile?.modelPath && builderCharacterVoiceProfile?.indexPath ? "Trained model ready" : builderCharacterVoiceProfile?.voiceModelArtifactId ? "Training artifact saved" : "Not trained yet"}</div>
                       {builderCharacterVoiceProfile?.voiceModelArtifactId ? <div className="break-all">Artifact: {builderCharacterVoiceProfile.voiceModelArtifactId}</div> : null}
@@ -4772,77 +5987,64 @@ async function loadCharacters() {
                       If the voice is not right, go back to Voice Design and create a new voice.
                     </p>
                   </div>
-                  <p className="text-sm font-semibold text-zinc-100">Test Voice</p>
-                  <textarea
-                    rows={3}
-                    value={voiceTestText}
-                    onChange={(event) => setVoiceTestText(event.target.value)}
-                    className="mt-3 w-full rounded-xl border border-zinc-800 bg-black/30 p-3 text-sm text-zinc-300"
-                  />
+                  <p className="text-sm font-semibold text-zinc-100">Character Preview Dub</p>
+                  <p className="mt-2 text-xs leading-5 text-zinc-500">
+                    Generate a short preview video and dub it with the trained character voice.
+                  </p>
+                  <div className="mt-3 rounded-xl border border-zinc-800 bg-black/20 p-3 text-xs leading-5 text-zinc-400">
+                    <div>Source image: {characterPreviewSourceImagePath ? "Original portrait/full-body image ready" : "Missing original portrait/full-body image"}</div>
+                    <div>Voice model: {trainedVoiceReady ? "Verified trained model and index ready" : "Missing verified trained model/index"}</div>
+                    <div>Guide speech: fixed hidden preview line</div>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => void queueCharacterVoicePipelineAction("test_character_voice", { text: voiceTestText })}
-                    disabled={voicePipelineJobs.test_character_voice?.phase === "submitting" || !voiceTestText.trim()}
-                    className="mt-3 rounded-xl border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 disabled:opacity-40"
+                    onClick={() => void queueCharacterVoicePipelineAction("generate_character_preview")}
+                    disabled={characterPreviewDisabled}
+                    className="mt-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-100 disabled:opacity-40"
                   >
-                    {voicePipelineJobs.test_character_voice?.phase === "submitting" ? "Generating..." : "Generate Test Playback"}
+                    {characterPreviewSubmitting ? "Submitting..." : "Test & Preview Character"}
                   </button>
-                  {renderVoicePipelineJobStatus("test_character_voice")}
-                  <div className="mt-4 rounded-xl border border-zinc-800 bg-black/20 p-3 text-xs leading-5 text-zinc-400">
-                    <div className="font-semibold text-zinc-100">Test Trained Voice</div>
-                    <p className="mt-1">
-                      Runs Applio inference with the persisted trained .pth and .index. This does not fall back to the raw or tuned sample output.
-                    </p>
-                    <div className="mt-2 space-y-1">
-                      <div>Model status: {trainedVoiceReady ? "Ready" : "Missing verified trained model/index"}</div>
-                      <div>Input audio: {trainedVoiceInputAudioPath ? "Approved source sample" : "Missing local approved source sample"}</div>
+                  {!trainedVoiceReady ? (
+                    <p className="mt-2 text-sm text-amber-200">Train the voice model before generating the character preview.</p>
+                  ) : !characterPreviewSourceImagePath ? (
+                    <p className="mt-2 text-sm text-amber-200">Character source image is missing. Cannot generate preview.</p>
+                  ) : null}
+                  {characterPreviewDubSelection ? (
+                    <div className="mt-3 rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-3">
+                      <p className="text-sm font-semibold text-emerald-100">Dubbed preview with character voice</p>
+                      <video
+                        key={characterPreviewDubSelection.videoKey}
+                        controls
+                        preload="metadata"
+                        src={characterPreviewDubSelection.videoSrc}
+                        className="mt-3 w-full rounded-lg bg-black"
+                      />
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void queueCharacterVoicePipelineAction("test_trained_voice", { text: voiceTestText })}
-                      disabled={
-                        voicePipelineJobs.test_trained_voice?.phase === "submitting" ||
-                        !voiceTestText.trim() ||
-                        !trainedVoiceReady ||
-                        !trainedVoiceInputAudioPath
-                      }
-                      className="mt-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-100 disabled:opacity-40"
-                    >
-                      {voicePipelineJobs.test_trained_voice?.phase === "submitting" ? "Testing trained voice..." : "Test Trained Voice"}
-                    </button>
-                    {!trainedVoiceReady ? (
-                      <p className="mt-2 text-amber-200">A real trained Applio artifact with model and index paths is required.</p>
-                    ) : null}
-                  </div>
-                  {renderVoicePipelineJobStatus("test_trained_voice")}
-                </div>
-                ) : null}
-                {voiceLabPage === "preview" ? (
-                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
-                  <p className="text-sm font-semibold text-zinc-100">Preview</p>
-                  <p className="mt-2 text-xs leading-5 text-zinc-500">
-                    Generate a short character preview and optionally dub it with the selected voice.
-                  </p>
-                  <div className="mt-6 grid gap-3 md:grid-cols-2">
-                    <button
-                      type="button"
-                      onClick={() => void queueCharacterVoicePipelineAction("generate_preview_video", { sourceImagePath: selectedFullBody?.serverPath || "" })}
-                      disabled={voicePipelineJobs.generate_preview_video?.phase === "submitting"}
-                      className="rounded-xl border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 disabled:opacity-40"
-                    >
-                      {voicePipelineJobs.generate_preview_video?.phase === "submitting" ? "Generating..." : "Generate Preview"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void queueCharacterVoicePipelineAction("dub_preview_video", { voiceReferencePath: selectedIndexVoiceReference?.audioPath || "" })}
-                      disabled={voicePipelineJobs.dub_preview_video?.phase === "submitting"}
-                      className="rounded-xl border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 disabled:opacity-40"
-                    >
-                      {voicePipelineJobs.dub_preview_video?.phase === "submitting" ? "Generating..." : "Generate Dub"}
-                    </button>
-                  </div>
-                  {renderVoicePipelineJobStatus("generate_preview_video")}
-                  {renderVoicePipelineJobStatus("dub_preview_video")}
+                  ) : null}
+                  {renderVoicePipelineJobStatus("generate_character_preview")}
+                  {characterPreviewDubReady ? (
+                    <div className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-4">
+                      <p className="text-sm font-semibold text-sky-100">Model spin preview</p>
+                      <p className="mt-2 text-xs leading-5 text-zinc-500">
+                        TripoSplat model-only orbit render. This is intentionally muted and looped for visual comparison.
+                      </p>
+                      {characterModelSpinVideoSrc ? (
+                        <video
+                          key={`model-spin-${characterModelSpinVideoSrc}`}
+                          controls
+                          muted
+                          loop
+                          preload="metadata"
+                          src={characterModelSpinVideoSrc}
+                          className="mt-3 aspect-square w-full rounded-lg bg-black object-contain"
+                        />
+                      ) : (
+                        <div className="mt-3 rounded-lg border border-zinc-800 bg-black/20 p-3 text-xs text-zinc-500">
+                          Model-spin video is not generated yet. Generate a fresh Test & Preview Character job after the model-spin worker patch is active.
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
                 ) : null}
               </div>
@@ -4944,7 +6146,7 @@ async function loadCharacters() {
                   <div>
                     <p className="text-sm font-semibold text-sky-100">3D Model</p>
                     <p className="mt-1 max-w-2xl text-xs text-zinc-400">
-                      Generate a HY3D GLB from the selected full-body image. This is saved with the character for later LTX / production handoff.
+                      Generate a TripoSplat 3D Model from the selected full-body image. This is saved with the character for later production handoff.
                     </p>
                   </div>
                   <button
@@ -4964,7 +6166,7 @@ async function loadCharacters() {
                 {character3dModel ? (
                   <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-zinc-200">HY3D GLB ready</p>
+                      <p className="text-sm font-medium text-zinc-200">3D Model ready</p>
                       <p className="text-xs text-zinc-500">{Number(character3dModel.bytes || 0).toLocaleString()} bytes</p>
                     </div>
                     <p className="mt-2 break-all text-xs text-zinc-500">{character3dModelPath}</p>
@@ -4975,7 +6177,7 @@ async function loadCharacters() {
                         rel="noreferrer"
                         className="mt-3 inline-flex rounded-lg border border-sky-400 px-3 py-1.5 text-xs font-semibold text-sky-100 hover:bg-sky-400/10"
                       >
-                        Open / Download GLB
+                        Open / Download 3D Model
                       </a>
                     ) : null}
                   </div>
@@ -4986,8 +6188,8 @@ async function loadCharacters() {
                 )}
               </div>
               <div className="mt-5 flex flex-wrap gap-3">
-                <button type="button" onClick={saveCharacter} disabled={saving} className="rounded-xl bg-emerald-300 px-4 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-50">
-                  Save Locked Character
+                <button type="button" onClick={saveCharacter} disabled={saving || !characterPreviewDubReady} className="rounded-xl bg-emerald-300 px-4 py-2 text-sm font-semibold text-emerald-950 disabled:opacity-50">
+                  {saving ? "Saving..." : "Complete Character"}
                 </button>
                 <button
                   type="button"

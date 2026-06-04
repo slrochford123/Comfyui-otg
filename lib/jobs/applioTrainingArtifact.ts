@@ -342,6 +342,9 @@ type RealApplioPlan = {
   includeMutes: number;
   preprocessCpuCores: number;
   extractCpuCores: number;
+  masterAddr: string;
+  masterPort: string;
+  torchDistributedDebug: string;
 };
 
 function resolveApplioCoreScript(applioRoot: string): string {
@@ -423,6 +426,21 @@ function optionalExistingPath(envName: string, enabled: boolean): string {
   return resolved;
 }
 
+function applioDistributedPort(jobId: string): string {
+  const explicit = cleanString(process.env.APPLIO_MASTER_PORT);
+  if (explicit) {
+    if (!/^\d+$/.test(explicit)) throw new Error(`APPLIO_MASTER_PORT must be a TCP port number. Received: ${explicit}`);
+    const port = Number(explicit);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+      throw new Error(`APPLIO_MASTER_PORT must be between 1024 and 65535. Received: ${explicit}`);
+    }
+    return String(port);
+  }
+  let hash = 0;
+  for (const char of jobId) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return String(45000 + (hash % 15000));
+}
+
 function resolveApplioTrainingQuality(input: Record<string, unknown>): {
   trainingQualityPreset: ApplioTrainingQualityPresetKey | string;
   epochs: number;
@@ -499,6 +517,9 @@ function realApplioPlan(ownerKey: string, characterId: string, jobId: string, mo
     includeMutes: applioIncludeMutes(),
     preprocessCpuCores,
     extractCpuCores: integerEnvInRange("APPLIO_EXTRACT_CPU_CORES", preprocessCpuCores, 1, 64),
+    masterAddr: "127.0.0.1",
+    masterPort: applioDistributedPort(jobId),
+    torchDistributedDebug: cleanString(process.env.TORCH_DISTRIBUTED_DEBUG) || "DETAIL",
   };
 }
 
@@ -544,10 +565,25 @@ function commandLogPayload(plan: RealApplioPlan, commands: ApplioCommand[], vali
       pretrained: plan.pretrained,
       customPretrained: plan.customPretrained,
       vocoder: plan.vocoder,
+      distributedEnv: {
+        MASTER_ADDR: plan.masterAddr,
+        MASTER_PORT: plan.masterPort,
+        TORCH_DISTRIBUTED_DEBUG: plan.torchDistributedDebug,
+      },
       postExtractConfigPath: applioTrainingConfigPath(plan),
       ...(validation || {}),
     },
-    commands: commands.map((command) => ({ step: command.step, command: plan.python, cwd: plan.applioRoot, args: command.args })),
+    commands: commands.map((command) => ({
+      step: command.step,
+      command: plan.python,
+      cwd: plan.applioRoot,
+      env: {
+        MASTER_ADDR: plan.masterAddr,
+        MASTER_PORT: plan.masterPort,
+        TORCH_DISTRIBUTED_DEBUG: plan.torchDistributedDebug,
+      },
+      args: command.args,
+    })),
   };
 }
 
@@ -693,10 +729,16 @@ function runApplioCommand(
 ): Promise<ApplioCommandResult> {
   const timeout = positiveIntegerEnv("APPLIO_TIMEOUT_MS", 7_200_000, 60_000, 24 * 60 * 60 * 1000);
   appendLog(plan.stdoutPath, `\n[${new Date().toISOString()}] START ${command.step}: ${plan.python} ${command.args.join(" ")}\n`);
+  appendLog(plan.stdoutPath, `[env] MASTER_ADDR=${plan.masterAddr} MASTER_PORT=${plan.masterPort} TORCH_DISTRIBUTED_DEBUG=${plan.torchDistributedDebug}\n`);
   return new Promise((resolve, reject) => {
     const child = spawn(plan.python, command.args, {
       cwd: plan.applioRoot,
-      env: { ...process.env },
+      env: {
+        ...process.env,
+        MASTER_ADDR: plan.masterAddr,
+        MASTER_PORT: plan.masterPort,
+        TORCH_DISTRIBUTED_DEBUG: plan.torchDistributedDebug,
+      },
       windowsHide: true,
     });
     let settled = false;

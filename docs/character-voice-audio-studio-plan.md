@@ -81,6 +81,24 @@ These functions currently return queued placeholder results. They are contract a
 - Deployment architecture is now defined as Linux control plane plus Windows execution worker. Linux hosts the app, durable job state, gallery/favorites/results, and planning UI. CPU/GPU generation, IndexTTS2 cloning, Applio training/inference, ComfyUI rendering, Blender/Hunyuan processing, ffmpeg audio/video work, and model-backed AI helpers must run on the main Windows PC worker. Set `OTG_CONTROL_PLANE_ONLY=1` on Linux hosts so local worker ticks do not execute heavy Voice Lab jobs.
 - A generic worker contract foundation is implemented in `lib/jobs/workerJobContract.ts` with generic `/api/worker/jobs/claim`, `/api/worker/jobs/complete`, `/api/worker/jobs/fail`, and `/api/worker/artifacts/upload` endpoints. These routes reuse the existing durable job store and are the migration target for all heavy app features.
 - `scripts/windows/otg-worker.ps1` and `scripts/windows/otg-worker.py` coordinate the current Windows adapters for IndexTTS2 dataset generation, Applio training, and Applio inference. The coordinator also passes `--device-id` through to child adapters and registers the optional Animate preview adapter slot. Existing character-specific worker endpoints remain for backward compatibility while the generic contract becomes the standard path.
+- `scripts/windows/otg-voice-design-worker.ps1` and `scripts/windows/otg-voice-design-worker.py` are the dedicated all-user Voice Design supervisor. It requires `OTG_WORKER_TOKEN`, claims only `character_voice_pipeline / create_voice_sample`, preserves the claimed job's `ownerKey`, runs Qwen3-TTS or CosyVoice on Windows, uploads `sample.wav` through `/api/characters/voice-sample/upload`, and completes `/api/worker/jobs/complete` with `mock:false` plus provider, adapter, sample URL/path, and log paths. Example:
+
+```powershell
+$env:OTG_WORKER_TOKEN = "<same token as TEST app>"
+$env:OTG_ENABLE_REAL_QWEN3_VOICE_SAMPLE = "1"
+$env:QWEN_TTS_ROOT = "C:\AI\voices\qwen 3"
+$env:QWEN_TTS_PYTHON = "C:\Users\SLRoc\miniconda3\envs\qwen3tts-repair\python.exe"
+$env:QWEN_TTS_SITE_PACKAGES = "C:\AI\voices\qwen 3\qwen3tts-env\Lib\site-packages"
+$env:QWEN_TTS_BRIDGE = "C:\AI\OTG-Test2\scripts\qwen3_voice_design_preview.py"
+
+powershell -ExecutionPolicy Bypass -File C:\AI\OTG-Test2\scripts\windows\otg-voice-design-worker.ps1 `
+  -BaseUrl http://127.0.0.1:3001 `
+  -WorkerId windows-voice-design-worker `
+  -WorkerToken $env:OTG_WORKER_TOKEN `
+  -Once
+```
+- The Voice Design supervisor launcher loads the repo `.env.local` / `.env` before starting Python, so TEST Qwen3-TTS and CosyVoice bridge paths can live in the app env file. The worker checkpoints through `/api/worker/jobs/checkpoint` as `Voice creating started`, generation, upload, and finalization so the Voice Lab progress bar moves while the model is running.
+- Every Create Voice / Create Again request stores a fresh random `seed` / `requestSeed` in the durable job input. Bridges receive that seed in their params JSON for randomization/debugging; completed results still require `mock:false` and a playable sample URL before Voice Effects unlocks.
 - Animate Me preview requests now create `character_animation_preview` / `animate_preview` jobs with prefix `cap`. The HTTP route performs only image, character, voice reference, and prompt validation, then returns HTTP 202 for the Windows worker to run ComfyUI, Seed-VC, and final muxing.
 - `otg-local-execution-audit.txt` records the current server-local execution audit. Remaining local execution points must be converted in priority order: Characters/Voice Lab first, then Production, Edit Video/Audio Studio, Image/Video/3D/Angles/Storyboard, and model-backed AI helpers.
 - Character UI shows the Image, Voice, Voice FX, Training, Voice Test, and Preview Video skeleton.
@@ -129,6 +147,16 @@ These functions currently return queued placeholder results. They are contract a
 - Voice Lab reloads now also recover validated real training artifacts from durable `training-artifact.json` files under `data/characters/<ownerKey>/applio-models/<characterId>/<jobId>/` when saved/builder profile state and the job store do not already expose the artifact. Recovery hydrates `voiceModelArtifactId`, `voiceModelArtifacts[]`, `trainingArtifactPath`, dataset paths, model/index paths, training timing fields, and real training flags only after checking non-empty `.pth` and `.index` files.
 - Manual TEST proof persists the real trained `voice-training-8` artifact into saved character JSON at `data/characters/slrochford12300/voice-training-8.json`, then queues `test_trained_voice` from that saved profile. The proof output is served through `/api/characters/applio-inference/file` as `audio/wav` and has a different SHA256 hash from the input sample.
 - TEST owner aliasing is enabled through `OTG_OWNER_ALIASES`; local `.env.local` maps `slrochford:slrochford12300` so browser login as `slrochford` reads the existing trained Voice Lab data under `data/characters/slrochford12300`.
+- The permanent Character Voice Lab dataset worker now has dedicated Windows entrypoints at `scripts/windows/otg-voice-dataset-worker.py` and `scripts/windows/otg-voice-dataset-worker.ps1`. It polls only `character_voice_pipeline / generate_training_dataset`, runs IndexTTS2 on the Windows execution PC, clones the approved raw/tuned/uploaded reference voice into all dataset clips, uploads batches through `/api/characters/training-dataset/upload-batch`, and relies on the Linux control plane only for queue state, manifest persistence, progress, and serving outputs.
+- Phase 2 makes the dedicated dataset worker universal across users. Configure `OTG_WORKER_TOKEN` on the Linux/control-plane app and the Windows worker, then start the idle supervisor without an owner key:
+  `powershell -ExecutionPolicy Bypass -File C:\AI\OTG-Test2\scripts\windows\otg-voice-dataset-worker.ps1 -BaseUrl http://127.0.0.1:3001 -WorkerId windows-voice-dataset-worker -WorkerToken $env:OTG_WORKER_TOKEN`.
+  The worker claims only queued `character_voice_pipeline / generate_training_dataset` jobs across owners and uses the claimed job's `ownerKey` for all uploads, progress checkpoints, ready-for-review completion, and failure reporting.
+- Applio training now follows the same durable Windows-worker architecture. Start the idle supervisor with:
+  `powershell -ExecutionPolicy Bypass -File C:\AI\OTG-Test2\scripts\windows\otg-voice-applio-worker.ps1 -BaseUrl http://127.0.0.1:3001 -WorkerId windows-voice-applio-worker`.
+  It reads `OTG_WORKER_TOKEN` from the user environment or TEST `.env.local`, claims only `character_voice_pipeline / start_applio_training` across owners, runs preprocess/extract/train on the Windows execution PC, checkpoints stage progress through `/api/worker/jobs/checkpoint`, and reports validated real `.pth` / `.index` artifacts through `/api/worker/jobs/complete`.
+- The local/dev voice pipeline worker does not run `start_applio_training` by default anymore. Use `OTG_ALLOW_LOCAL_APPLIO_WORKER=1` only for focused dev tests; Linux/control-plane hosts must keep heavy Applio execution on the Windows worker.
+- Applio training subprocesses force PyTorch distributed rendezvous to localhost with `MASTER_ADDR=127.0.0.1`, a per-job `MASTER_PORT`, and `TORCH_DISTRIBUTED_DEBUG=DETAIL`. The dedicated worker and the TypeScript adapter write these values into `applio-commands.json`.
+- Dataset lifecycle is now `queued -> running -> ready_for_review -> completed` for normal completion. `ready_for_review` shows a single-player Preview Samples control plus Complete Dataset and Terminate. Complete Dataset revalidates all requested ready WAV clips before locking the dataset and enabling Applio training. Terminate quarantines partial files under `terminated/<jobId>` and marks the session `terminated`; Resume requeues failed/canceled dataset jobs so the worker can continue from the first missing/not-ready clip.
 - Trained Applio playback is now a distinct `test_trained_voice` Voice Lab action. It requires a real persisted Applio artifact (`mock:false`, `adapter:"applio_real_training"`) and verified non-empty `.pth` / `.index` files, then runs Applio `core.py infer` from `cwd=APPLIO_ROOT` using the approved local source sample as conversion input. For this local Applio install, use `APPLIO_INFER_SCRIPT=C:/AI/Voices/Applio/core.py`; the older `infer.py` path is not present, though the adapter still falls back to `core.py` when possible.
 - Inference output is written to `OTG_DATA_DIR/characters/<ownerKey>/applio-inference/<characterId>/<jobId>/output.wav`, served through `/api/characters/applio-inference/file`, and rejected if missing, empty, traceback-bearing, or byte-identical to the input sample.
 - Real Applio subprocesses run from `cwd=APPLIO_ROOT`. Preprocess includes `--cut_preprocess` with `APPLIO_CUT_PREPROCESS=Skip` by default; allowed values are `Skip`, `Simple`, and `Automatic`. Extract includes `--include_mutes` with `APPLIO_INCLUDE_MUTES=2` by default; allowed values are integers from `0` through `10`.
@@ -440,3 +468,46 @@ The 200 training clips must be the same speaker identity with varied phrases/emo
 ## Minimal Training page flow v2
 
 The Training page should show a simple two-step flow: Prepare Voice Training Dataset, then Train Voice Model. The dataset button creates the 200 same-speaker clips and may take 30-90 minutes. The Train Voice Model button remains disabled until the dataset status is Ready. Training quality remains limited to Fast, Normal, and Quality.
+## Browser-independent Voice Lab jobs
+
+Voice Lab dataset generation and Applio model training are durable server jobs, not browser-held tasks. The browser only queues, monitors, resumes, terminates, previews, and finalizes. The Windows worker owns execution and must keep running as a persistent supervisor. Worker claims write `workerId`, `claimedAt`, `heartbeatAt`, `leaseExpiresAt`, and `attempt`; worker checkpoints refresh heartbeat/lease and write durable progress.
+
+If a `generate_training_dataset` or `start_applio_training` job is left `running` after its lease expires, the server marks it `interrupted` with resume available. A fresh Windows worker claim can then pick it up without stealing active jobs. For dataset generation, the IndexTTS2 worker reads the claimed job's existing `generatedClipCount` and continues from the next missing clip so ready WAVs are not regenerated.
+
+Dataset worker claim order is deterministic. The TEST policy is newest queued dataset job first, then explicitly resume-requested interrupted jobs by newest `resumeRequestedAt`. Plain interrupted jobs stay visible in the UI as resumable history, but the persistent Windows worker will not auto-run them forever. Clicking Resume sets `resumeRequestedAt` / `resumeRequestedBy` and requeues the job. Creating a new dataset for the same character supersedes any active queued/running or resume-requested dataset session for that character, while leaving old plain interrupted sessions untouched.
+
+Prepare Dataset must create a durable job in `queued` state. The UI should show "Queued / waiting for Windows worker" until the Windows worker claim path sets `status:"running"` plus `workerId`, `claimedAt`, `heartbeatAt`, `leaseExpiresAt`, and `attempt`. A `running` dataset job without those lease fields is invalid and is repaired during job-store reads: if no clips exist it returns to queued; if clips exist it becomes interrupted/resumable. Dataset progress is calculated from `generatedClipCount / requestedClipCount`, so `0 / 200` displays as `0%`.
+
+The generic local/dev voice pipeline worker must not claim `generate_training_dataset` in normal TEST/STAGE/PROD operation. Dataset generation belongs to the dedicated Windows dataset supervisor. Local dataset execution is available only for explicit dev tests with `OTG_ALLOW_LOCAL_DATASET_WORKER=1`, and it is still disabled on `OTG_CONTROL_PLANE_ONLY=1` hosts. Any existing dataset job leased by `local-voice-pipeline-worker` is released on job-store read so the dedicated worker can take over after the user resumes or the job returns to queued.
+
+Persistent TEST supervisor command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\AI\OTG-Test2\scripts\windows\otg-voice-dataset-worker.ps1 `
+  -BaseUrl http://127.0.0.1:3001 `
+  -WorkerId windows-voice-dataset-worker
+```
+
+The supervisor reads `OTG_WORKER_TOKEN` from the user environment or TEST `.env.local`; `-Once` remains for debugging only.
+
+## Voice source lock-in before training
+
+Voice Design and uploaded voices must create a persistent character voice sample before the user can move into dataset training. Voice FX can create a tuned sample, but training source resolution always falls back in a stable order: explicitly approved sample, tuned sample, then base/uploaded sample. Dataset/model training job input must include a local approved sample path or a `/api/characters/voice-sample/file` URL that the server can resolve to disk. Generic `/api/characters/voice-file` preview URLs are not valid training sources.
+
+## Character builder draft persistence
+
+The Characters creation flow now treats the TEST server builder draft as the source of truth. On page load, the Characters tab fetches `/api/characters/builder-draft` first and does not render the default first page until hydration finishes. Local storage remains only a fallback cache when no server draft exists.
+
+Builder and Voice Lab navigation changes save immediately to the server draft, while text/form/media changes continue through debounced autosave. The draft schema stores `activeBuilderPage`, `lastBuilderStep`, `voiceLabPage`, `lastVoiceLabPage`, locked page indexes, completed steps, selected/generated voice artifacts, active dataset/model job ids, manifest paths, and voice model state. `visibilitychange` and `pagehide` also flush a best-effort draft so mobile browser backgrounding has a current checkpoint.
+
+Older draft payloads are migrated to schema v2. Migration restores active builder pages from `activeBuilderPage` / `lastBuilderStep`, restores Voice Lab sub-pages from `voiceLabPage` / `lastVoiceLabPage`, and infers Voice Lab state from active dataset/model jobs or persisted voice sample/model fields when explicit navigation fields are missing. Start Over remains the intentional reset path; saving a completed character still clears the builder draft.
+
+Manual TEST restore checks:
+
+1. Open the TEST app on phone Chrome and reach Characters -> Voice Lab -> Voice Design, then close/reopen the browser. Expected: same character and Voice Design are restored.
+2. Reach Voice FX with a selected sample, close/reopen the browser. Expected: Voice FX and selected sample are restored.
+3. Start a dataset job, switch apps or lock the phone, then reopen. Expected: dataset progress reloads from the server job/manifest state.
+4. When a dataset reaches ready-for-review, close/reopen. Expected: Preview Samples and Complete Dataset remain available.
+5. Click Start Over. Expected: server/local draft clears and the builder intentionally returns to the first page.
+
+Production audit note: the Production storyboard UI currently has a rich browser-local draft snapshot and a separate `/api/production` store with a different state shape. Do not force-migrate it in the Character patch; convert it in a dedicated Production persistence pass so active project/story/scene/clip state maps cleanly into the server production store.

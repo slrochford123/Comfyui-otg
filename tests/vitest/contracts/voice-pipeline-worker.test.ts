@@ -9,6 +9,8 @@ import {
   createCharacterVoicePipelineJob,
   createProductionAudioStudioJob,
   getQueuedContractJob,
+  claimRemoteTrainingDatasetJob,
+  claimRemoteWorkerJob,
   setVoicePipelineJobStorePathForTests,
   updateVoicePipelineJob,
 } from "@/lib/jobs/voicePipelineJobs";
@@ -44,6 +46,8 @@ describe("voice pipeline no-op worker", () => {
     APPLIO_SAMPLE_RATE: process.env.APPLIO_SAMPLE_RATE,
     OTG_TRAINING_DATASET_FFMPEG_TEST_MODE: process.env.OTG_TRAINING_DATASET_FFMPEG_TEST_MODE,
     OTG_ALLOW_MOCK_VOICE_PACK: process.env.OTG_ALLOW_MOCK_VOICE_PACK,
+    OTG_ALLOW_LOCAL_DATASET_WORKER: process.env.OTG_ALLOW_LOCAL_DATASET_WORKER,
+    OTG_ALLOW_LOCAL_APPLIO_WORKER: process.env.OTG_ALLOW_LOCAL_APPLIO_WORKER,
     VOICE_PACK_CHUNK_SIZE: process.env.VOICE_PACK_CHUNK_SIZE,
     VOICE_PACK_CLIP_RETRIES: process.env.VOICE_PACK_CLIP_RETRIES,
     OTG_ENABLE_REAL_APPLIO_TRAINING: process.env.OTG_ENABLE_REAL_APPLIO_TRAINING,
@@ -115,6 +119,10 @@ describe("voice pipeline no-op worker", () => {
     delete process.env.APPLIO_SAMPLE_RATE;
     delete process.env.OTG_TRAINING_DATASET_FFMPEG_TEST_MODE;
     delete process.env.OTG_ALLOW_MOCK_VOICE_PACK;
+    delete process.env.OTG_ALLOW_LOCAL_DATASET_WORKER;
+    process.env.OTG_ALLOW_LOCAL_DATASET_WORKER = "1";
+    delete process.env.OTG_ALLOW_LOCAL_APPLIO_WORKER;
+    process.env.OTG_ALLOW_LOCAL_APPLIO_WORKER = "1";
     delete process.env.VOICE_PACK_CHUNK_SIZE;
     delete process.env.VOICE_PACK_CLIP_RETRIES;
     delete process.env.OTG_ENABLE_REAL_APPLIO_TRAINING;
@@ -195,6 +203,34 @@ describe("voice pipeline no-op worker", () => {
     });
   });
 
+  it("fails Character Preview Dub jobs instead of returning a mock video", async () => {
+    const created = createCharacterVoicePipelineJob("owner-a", {
+      action: "generate_character_preview",
+      characterId: "char-1",
+      sourceImagePath: "C:/AI/OTG-Test2/data/characters/owner-a/source.png",
+      trainedModelPath: "C:/tmp/model.pth",
+      trainedIndexPath: "C:/tmp/model.index",
+      trainedArtifactMock: false,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error(created.error);
+
+    await tickVoicePipelineWorker("owner-a");
+    await tickVoicePipelineWorker("owner-a");
+    await tickVoicePipelineWorker("owner-a");
+    const failed = (await tickVoicePipelineWorker("owner-a")).jobs[0];
+
+    expect(failed).toMatchObject({
+      status: "failed",
+      progress: 100,
+      error: "Real Character Preview Dub worker required. Start the dedicated Windows character preview worker.",
+      result: {
+        mock: true,
+        previewAvailable: false,
+      },
+    });
+  });
+
   it("returns action-specific fake results for production audio studio jobs", async () => {
     const created = createProductionAudioStudioJob("owner-a", {
       action: "render_audio_mix",
@@ -213,6 +249,71 @@ describe("voice pipeline no-op worker", () => {
       result: {
         finalClipUrl: `/mock-assets/clips/${created.job.jobId}/final-audio-mix.mp4`,
       },
+    });
+  });
+
+  it("does not let the local dev worker claim training dataset jobs by default", async () => {
+    delete process.env.OTG_ALLOW_LOCAL_DATASET_WORKER;
+    process.env.OTG_TRAINING_DATASET_FFMPEG_TEST_MODE = "copy";
+    const approvedSamplePath = writeApprovedTrainingSample("owner-a", "char-dedicated-worker", "cvp_base", "sample.wav");
+    const created = createCharacterVoicePipelineJob("owner-a", {
+      action: "generate_training_dataset",
+      characterId: "char-dedicated-worker",
+      trainingPreset: "balanced",
+      requestedClipCount: 3,
+      approvedSampleUrl: "/api/characters/voice-sample/file?owner=owner-a&characterId=char-dedicated-worker&jobId=cvp_base",
+      approvedSamplePath,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error(created.error);
+
+    await expect(tickVoicePipelineWorker("owner-a")).resolves.toEqual({ processed: 0, jobs: [] });
+    expect(getQueuedContractJob("owner-a", created.job.jobId)).toMatchObject({
+      status: "queued",
+      workerId: null,
+      claimedAt: null,
+      heartbeatAt: null,
+      leaseExpiresAt: null,
+    });
+
+    const claimed = claimRemoteTrainingDatasetJob("owner-a", "windows-voice-dataset-worker");
+    expect(claimed).toMatchObject({
+      status: "running",
+      action: "generate_training_dataset",
+      workerId: "windows-voice-dataset-worker",
+    });
+
+    fs.rmSync(path.join(process.cwd(), "data", "characters", "owner-a"), { recursive: true, force: true });
+  });
+
+  it("does not let the local dev worker claim Applio training jobs by default", async () => {
+    delete process.env.OTG_ALLOW_LOCAL_APPLIO_WORKER;
+    const approvedSamplePath = writeApprovedTrainingSample("owner-a", "char-applio-dedicated-worker", "cvp_base", "sample.wav");
+    const created = createCharacterVoicePipelineJob("owner-a", {
+      action: "start_applio_training",
+      characterId: "char-applio-dedicated-worker",
+      trainingPreset: "balanced",
+      approvedSampleUrl: "/api/characters/voice-sample/file?owner=owner-a&characterId=char-applio-dedicated-worker&jobId=cvp_base",
+      approvedSamplePath,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error(created.error);
+
+    await expect(tickVoicePipelineWorker("owner-a")).resolves.toEqual({ processed: 0, jobs: [] });
+    expect(getQueuedContractJob("owner-a", created.job.jobId)).toMatchObject({
+      status: "queued",
+      workerId: null,
+      claimedAt: null,
+      heartbeatAt: null,
+      leaseExpiresAt: null,
+    });
+
+    expect(claimRemoteTrainingDatasetJob("owner-a", "windows-voice-dataset-worker")).toBeNull();
+    const claimed = claimRemoteWorkerJob("owner-a", "windows-voice-applio-worker", "character_voice_pipeline", "start_applio_training");
+    expect(claimed).toMatchObject({
+      status: "running",
+      action: "start_applio_training",
+      workerId: "windows-voice-applio-worker",
     });
   });
 
@@ -929,8 +1030,18 @@ describe("voice pipeline no-op worker", () => {
     expect(commandLog.validation).toMatchObject({
       extractCpuCores: 8,
       includeMutes: 2,
+      distributedEnv: {
+        MASTER_ADDR: "127.0.0.1",
+        TORCH_DISTRIBUTED_DEBUG: "DETAIL",
+      },
     });
+    expect(String(commandLog.validation.distributedEnv.MASTER_PORT)).toMatch(/^\d+$/);
     expect(trainCommand.cwd).toBe(commandLog.cwd);
+    expect(trainCommand.env).toMatchObject({
+      MASTER_ADDR: "127.0.0.1",
+      MASTER_PORT: commandLog.validation.distributedEnv.MASTER_PORT,
+      TORCH_DISTRIBUTED_DEBUG: "DETAIL",
+    });
     expect(trainCommand.args).toContain("--save_every_epoch");
     expect(trainCommand.args[trainCommand.args.indexOf("--save_every_epoch") + 1]).toBe("5");
     expect(trainCommand.args).toContain("--total_epoch");

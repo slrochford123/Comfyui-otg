@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+﻿import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 
@@ -53,6 +53,63 @@ export function dataRoot(): string {
   return path.join(repoRoot, "data");
 }
 
+function pickDraftString(source: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+
+  return "";
+}
+
+function hasVoiceProfileSample(state: Record<string, unknown>, keys: string[]): boolean {
+  const profile = state.builderCharacterVoiceProfile;
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) return false;
+  const record = profile as Record<string, unknown>;
+  return keys.some((key) => typeof record[key] === "string" && String(record[key]).trim().length > 0);
+}
+
+function inferVoiceLabPage(state: Record<string, unknown>): string {
+  const explicit = pickDraftString(state, ["voiceLabPage", "lastVoiceLabPage"]);
+  if (["design", "fx", "training", "preview"].includes(explicit)) return explicit;
+
+  const jobs = state.voicePipelineJobs;
+  if (jobs && typeof jobs === "object" && !Array.isArray(jobs)) {
+    const record = jobs as Record<string, unknown>;
+    if (record.start_applio_training || record.generate_training_dataset) return "training";
+    if (record.apply_voice_fx) return "fx";
+  }
+
+  if (pickDraftString(state, ["activeDatasetJobId", "activeDatasetManifestPath", "activeDatasetManifestUrl"])) {
+    return "training";
+  }
+
+  if (hasVoiceProfileSample(state, ["voiceModelArtifactId", "modelPath", "indexPath"])) return "preview";
+  if (hasVoiceProfileSample(state, ["datasetManifestPath", "datasetManifestUrl"])) return "training";
+  if (hasVoiceProfileSample(state, ["tunedSamplePath", "tunedSampleUrl", "approvedSamplePath", "approvedSampleUrl"])) return "training";
+  if (hasVoiceProfileSample(state, ["baseSamplePath", "baseSampleUrl"])) return "fx";
+
+  return "design";
+}
+
+export function normalizeCharacterBuilderDraftState(input: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const state = input && typeof input === "object" && !Array.isArray(input) ? { ...input } : {};
+  const step = pickDraftString(state, ["step", "activeBuilderPage", "lastBuilderStep"]) || "source";
+  const voiceLabPage = inferVoiceLabPage(state);
+  const now = new Date().toISOString();
+
+  return {
+    schemaVersion: 2,
+    ...state,
+    step,
+    activeBuilderPage: pickDraftString(state, ["activeBuilderPage"]) || step,
+    lastBuilderStep: pickDraftString(state, ["lastBuilderStep"]) || step,
+    voiceLabPage,
+    lastVoiceLabPage: pickDraftString(state, ["lastVoiceLabPage"]) || voiceLabPage,
+    updatedAt: pickDraftString(state, ["updatedAt"]) || now,
+  };
+}
+
 export function draftPath(ownerId: string): string {
   return path.join(dataRoot(), "character-builder-drafts", `${sanitizeOwnerId(ownerId)}.json`);
 }
@@ -69,19 +126,52 @@ export async function readJsonFile<T>(filePath: string): Promise<T | null> {
   try {
     const raw = await fs.readFile(filePath, "utf8");
     return JSON.parse(raw) as T;
-  } catch (error: any) {
-    if (error?.code === "ENOENT") return null;
+  } catch (error: unknown) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return null;
+
+    const message = error instanceof Error ? error.message : String(error);
+    const isJsonParseError = error instanceof SyntaxError || /JSON|Unexpected non-whitespace|Unexpected token/i.test(message);
+
+    if (isJsonParseError) {
+      try {
+        const raw = await fs.readFile(filePath, "utf8");
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const corruptPath = `${filePath}.corrupt-${stamp}`;
+        await fs.writeFile(corruptPath, raw, "utf8");
+
+        const positionMatch = message.match(/position\s+(\d+)/i);
+        if (positionMatch) {
+          const prefix = raw.slice(0, Number(positionMatch[1])).trimEnd();
+          const repaired = JSON.parse(prefix) as T;
+          await writeJsonFile(filePath, repaired);
+          return repaired;
+        }
+      } catch {
+        // Corrupt drafts should not permanently break save/update routes.
+      }
+
+      return null;
+    }
+
     throw error;
   }
 }
 
 export async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  const body = `${JSON.stringify(value, null, 2)}\n`;
+  await fs.writeFile(tmpPath, body, "utf8");
+  await fs.rename(tmpPath, filePath);
 }
 
 export async function readDraft(ownerId: string): Promise<CharacterBuilderDraft | null> {
-  return readJsonFile<CharacterBuilderDraft>(draftPath(ownerId));
+  const draft = await readJsonFile<CharacterBuilderDraft>(draftPath(ownerId));
+  if (!draft) return null;
+  return {
+    ...draft,
+    state: normalizeCharacterBuilderDraftState(draft.state),
+  };
 }
 
 export async function writeDraft(ownerId: string, input: Partial<CharacterBuilderDraft>): Promise<CharacterBuilderDraft> {
@@ -95,10 +185,10 @@ export async function writeDraft(ownerId: string, input: Partial<CharacterBuilde
     mode: input.mode || existing?.mode || "new_character",
     characterId: input.characterId ?? existing?.characterId ?? null,
     currentStage: input.currentStage || existing?.currentStage || "start",
-    state: {
+    state: normalizeCharacterBuilderDraftState({
       ...(existing?.state || {}),
       ...(input.state || {}),
-    },
+    }),
     createdAt: existing?.createdAt || now,
     updatedAt: now,
   };
@@ -110,8 +200,8 @@ export async function writeDraft(ownerId: string, input: Partial<CharacterBuilde
 export async function clearDraft(ownerId: string): Promise<void> {
   try {
     await fs.unlink(draftPath(ownerId));
-  } catch (error: any) {
-    if (error?.code !== "ENOENT") throw error;
+  } catch (error: unknown) {
+    if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) throw error;
   }
 }
 

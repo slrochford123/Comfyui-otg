@@ -51,10 +51,11 @@ const CHARACTER_RESULTS: Record<CharacterVoicePipelineAction, (jobId: string) =>
     modelPath: `/mock-artifacts/models/${jobId}.pth`,
     indexPath: `/mock-artifacts/models/${jobId}.index`,
   }),
-  test_character_voice: (jobId) => ({ previewAudioUrl: `/mock-assets/voices/${jobId}/test.wav` }),
+  test_character_voice: (jobId) => ({ mock: true, previewAudioUrl: `/mock-assets/voices/${jobId}/test.wav`, previewBytes: 0 }),
   test_trained_voice: () => ({ completed: false }),
   generate_preview_video: (jobId) => ({ previewVideoUrl: `/mock-assets/videos/${jobId}/preview.mp4` }),
   dub_preview_video: (jobId) => ({ dubbedPreviewVideoUrl: `/mock-assets/videos/${jobId}/dubbed-preview.mp4` }),
+  generate_character_preview: () => ({ mock: true, previewAvailable: false }),
   save_voice_to_character: () => ({ saved: true }),
 };
 
@@ -73,7 +74,39 @@ function clampLimit(value: unknown): number {
   return Math.max(1, Math.min(25, Math.floor(numberValue)));
 }
 
+function getLocalWorkerLeaseMs(): number {
+  const value = Number(process.env.OTG_WORKER_LEASE_MS);
+  if (Number.isFinite(value) && value >= 30_000) return Math.floor(value);
+  return 5 * 60 * 1000;
+}
+
+function addMsIso(base: Date, ms: number): string {
+  return new Date(base.getTime() + ms).toISOString();
+}
+
+function withLocalWorkerLease(job: QueuedContractJob, update: Record<string, unknown>): Record<string, unknown> {
+  if (update.status !== "running") return update;
+  const now = new Date();
+  const nowIso = now.toISOString();
+  return {
+    ...update,
+    workerId: typeof update.workerId === "string" ? update.workerId : job.workerId || "local-voice-pipeline-worker",
+    claimedAt: typeof update.claimedAt === "string" ? update.claimedAt : job.claimedAt || nowIso,
+    heartbeatAt: nowIso,
+    leaseExpiresAt: addMsIso(now, getLocalWorkerLeaseMs()),
+  };
+}
+
 function fakeResultForJob(job: QueuedContractJob): Record<string, unknown> {
+  if (job.jobType === "character_voice_pipeline" && job.action === "generate_character_preview") {
+    return {
+      mock: true,
+      status: "failed",
+      previewAvailable: false,
+      error: "Real Character Preview Dub worker required. Mock preview output is disabled.",
+    };
+  }
+
   if (job.jobType === "character_voice_pipeline") {
     const buildResult = CHARACTER_RESULTS[job.action as CharacterVoicePipelineAction];
     return buildResult ? buildResult(job.jobId) : { completed: true };
@@ -211,6 +244,14 @@ function isControlPlaneOnlyHost(): boolean {
   return String(process.env.OTG_CONTROL_PLANE_ONLY || "").trim() === "1";
 }
 
+function isLocalDatasetWorkerAllowed(): boolean {
+  return String(process.env.OTG_ALLOW_LOCAL_DATASET_WORKER || "").trim() === "1" && !isControlPlaneOnlyHost();
+}
+
+function isLocalApplioWorkerAllowed(): boolean {
+  return String(process.env.OTG_ALLOW_LOCAL_APPLIO_WORKER || "").trim() === "1" && !isControlPlaneOnlyHost();
+}
+
 function isSaveVoiceToCharacterJob(job: QueuedContractJob): boolean {
   return job.jobType === "character_voice_pipeline" && job.action === "save_voice_to_character";
 }
@@ -311,6 +352,13 @@ async function saveLatestTrainedApplioVoiceToCharacter(ownerKey: string, job: Qu
   };
 }
 async function nextWorkerUpdate(ownerKey: string, job: QueuedContractJob): Promise<QueuedContractJob | Parameters<typeof updateVoicePipelineJob>[2] | null> {
+  if (isTrainingDatasetJob(job) && !isLocalDatasetWorkerAllowed()) {
+    return null;
+  }
+  if (isApplioTrainingJob(job) && !isLocalApplioWorkerAllowed()) {
+    return null;
+  }
+
   if (isControlPlaneOnlyHost()) {
     if (isTrainingDatasetJob(job) || isApplioTrainingJob(job) || isApplioTrainedVoiceTestJob(job)) {
       // These jobs are CPU/GPU-heavy. A Linux control-plane host must queue and expose them
@@ -380,6 +428,83 @@ if (job.status === "queued") {
   }
 
   if (job.status !== "running") return null;
+
+  if (isTrainingDatasetJob(job)) {
+    const currentResult =
+      job.result && typeof job.result === "object" && !Array.isArray(job.result)
+        ? job.result as Record<string, unknown>
+        : {};
+    const datasetStage = typeof currentResult.datasetWorkerStage === "string"
+      ? currentResult.datasetWorkerStage
+      : typeof currentResult.manifestPath === "string"
+        ? "ready_to_generate"
+        : "";
+    if (datasetStage !== "ready_to_generate") {
+      const requestedClipCount = Math.max(1, Number(currentResult.requestedClipCount || job.input?.requestedClipCount || 200));
+      const generatedClipCount = Math.max(0, Number(currentResult.generatedClipCount || 0));
+      const percent = Math.max(0, Math.min(99, Math.round((generatedClipCount / requestedClipCount) * 100)));
+      const nextStage = datasetStage === "prepare_manifest" ? "ready_to_generate" : "prepare_manifest";
+      return {
+        status: "running" as const,
+        progress: percent,
+        message: nextStage === "ready_to_generate"
+          ? "Training dataset worker prepared source audio and is ready to generate clips."
+          : "Training dataset worker claimed the job and is preparing source audio.",
+        result: {
+          ...currentResult,
+          datasetWorkerStage: nextStage,
+          generatedClipCount,
+          requestedClipCount,
+          status: "running",
+        },
+        error: null,
+      };
+    }
+
+    try {
+      const result = await createTrainingDatasetManifest(ownerKey, job, {
+        onProgress: (event) => {
+          const percent = Math.max(
+            0,
+            Math.min(99, Math.round((event.generatedClipCount / Math.max(1, event.requestedClipCount)) * 100)),
+          );
+          updateVoicePipelineJob(ownerKey, job.jobId, {
+            status: "running",
+            progress: percent,
+            message: `${event.message} ${event.generatedClipCount}/${event.requestedClipCount}`,
+            error: null,
+          });
+        },
+      });
+      if (result.status !== "voice_pack_ready") {
+        const percent = Math.max(0, Math.min(99, Math.round((result.generatedClipCount / Math.max(1, result.clipCount)) * 100)));
+        return {
+          status: "running" as const,
+          progress: percent,
+          message: `Generated ${result.generatedClipCount} / ${result.clipCount} clips. Provider: ${result.provider}. Run the worker again to continue.`,
+          result: {
+            ...result,
+            datasetWorkerStage: "ready_to_generate",
+          },
+          error: null,
+        };
+      }
+      return {
+        status: "completed" as const,
+        progress: 100,
+        message: `Training voice pack ready. manifestPath: ${result.manifestPath}; generated: ${result.generatedClipCount}/${result.clipCount}`,
+        result,
+        error: null,
+      };
+    } catch (error) {
+      return {
+        status: "failed" as const,
+        progress: 100,
+        message: "Training dataset manifest generation failed.",
+        error: error instanceof Error ? error.message : "Training dataset manifest generation failed.",
+      };
+    }
+  }
 
   const progress = Number(job.progress || 0);
   if (progress < 35) {
@@ -500,49 +625,6 @@ if (job.status === "queued") {
   const realAdapterResult = await completeJobWithRealAdapter(ownerKey, job);
   if (realAdapterResult) return realAdapterResult;
 
-  if (isTrainingDatasetJob(job)) {
-    try {
-      const result = await createTrainingDatasetManifest(ownerKey, job, {
-        onProgress: (event) => {
-          const percent = Math.max(
-            70,
-            Math.min(99, Math.round((event.generatedClipCount / Math.max(1, event.requestedClipCount)) * 100)),
-          );
-          updateVoicePipelineJob(ownerKey, job.jobId, {
-            status: "running",
-            progress: percent,
-            message: `${event.message} ${event.generatedClipCount}/${event.requestedClipCount}`,
-            error: null,
-          });
-        },
-      });
-      if (result.status !== "voice_pack_ready") {
-        const percent = Math.max(70, Math.min(99, Math.round((result.generatedClipCount / Math.max(1, result.clipCount)) * 100)));
-        return {
-          status: "running" as const,
-          progress: percent,
-          message: `Generated ${result.generatedClipCount} / ${result.clipCount} clips. Provider: ${result.provider}. Run the worker again to continue.`,
-          result,
-          error: null,
-        };
-      }
-      return {
-        status: "completed" as const,
-        progress: 100,
-        message: `Training voice pack ready. manifestPath: ${result.manifestPath}; generated: ${result.generatedClipCount}/${result.clipCount}`,
-        result,
-        error: null,
-      };
-    } catch (error) {
-      return {
-        status: "failed" as const,
-        progress: 100,
-        message: "Training dataset manifest generation failed.",
-        error: error instanceof Error ? error.message : "Training dataset manifest generation failed.",
-      };
-    }
-  }
-
   if (isApplioTrainingJob(job)) {
     try {
       const result = await createApplioTrainingArtifact(ownerKey, job, {
@@ -647,6 +729,16 @@ if (job.status === "queued") {
     };
   }
 
+  if (job.jobType === "character_voice_pipeline" && job.action === "generate_character_preview") {
+    return {
+      status: "failed" as const,
+      progress: 100,
+      message: "Real Character Preview Dub worker required. Mock preview output is disabled.",
+      result: fakeResultForJob(job),
+      error: "Real Character Preview Dub worker required. Start the dedicated Windows character preview worker.",
+    };
+  }
+
   return {
     status: "completed" as const,
     progress: 100,
@@ -669,7 +761,7 @@ export async function tickVoicePipelineWorker(ownerKey: string, options: VoicePi
     const update = await nextWorkerUpdate(ownerKey, job);
     if (!update) continue;
 
-    const updated = "jobId" in update ? update : updateVoicePipelineJob(ownerKey, job.jobId, update);
+    const updated = "jobId" in update ? update : updateVoicePipelineJob(ownerKey, job.jobId, withLocalWorkerLease(job, update));
     if (updated) jobs.push(updated);
   }
 

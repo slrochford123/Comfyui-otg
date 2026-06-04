@@ -18,6 +18,28 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 
+SOURCE_URL_KEYS = [
+    "approvedSampleUrl",
+    "approvedSampleURL",
+    "tunedVoicePreviewUrl",
+    "tunedSampleUrl",
+    "baseSampleUrl",
+    "sourceSampleUrl",
+    "referenceAudioUrl",
+]
+
+SOURCE_PATH_KEYS = [
+    "approvedSamplePath",
+    "tunedVoicePreviewPath",
+    "tunedSamplePath",
+    "baseSamplePath",
+    "sourceSamplePath",
+    "referenceWav",
+    "referenceWavPath",
+    "referenceAudioPath",
+]
+
+
 EMOTION_UTTERANCES = [
     ("neutral", "This is a clear neutral line for the character voice."),
     ("calm", "I am calm now, and I can explain what happened."),
@@ -93,6 +115,70 @@ def request_json(method: str, url: str, headers: Dict[str, str], payload: Dict[s
         raise RuntimeError(f"HTTP {error.code} {url}: {raw}") from error
 
 
+class TerminatedJob(RuntimeError):
+    pass
+
+
+def auth_headers(args: argparse.Namespace, owner_key: str | None = None) -> Dict[str, str]:
+    headers = {
+        "x-otg-device-id": args.device_id,
+        "x-otg-worker-id": args.worker_id,
+    }
+    if owner_key:
+        headers["x-otg-owner-key"] = owner_key
+    token = clean(getattr(args, "worker_token", ""))
+    if token:
+        headers["authorization"] = f"Bearer {token}"
+    return headers
+
+
+def assert_job_active(args: argparse.Namespace, headers: Dict[str, str], job_id: str) -> None:
+    if not job_id:
+        return
+    data = request_json(
+        "GET",
+        build_url(args.base_url, f"/api/characters/voice-pipeline/{urllib.parse.quote(job_id)}"),
+        headers,
+        timeout=60,
+    )
+    job = data.get("job") if isinstance(data.get("job"), dict) else {}
+    status = clean(job.get("status"))
+    if status in {"canceled", "cancelled", "terminated", "completed"}:
+        raise TerminatedJob(f"Dataset job {job_id} is no longer active; status={status}.")
+
+
+def checkpoint_job(args: argparse.Namespace, headers: Dict[str, str], job_id: str, generated_count: int, requested_count: int, message: str) -> None:
+    if not job_id:
+        return
+    progress = 5
+    if requested_count > 0:
+        progress = max(5, min(99, int((generated_count / requested_count) * 100)))
+    try:
+        request_json(
+            "POST",
+            build_url(args.base_url, "/api/worker/jobs/checkpoint"),
+            headers,
+            {
+                "jobId": job_id,
+                "progress": progress,
+                "message": message,
+                "result": {
+                    "remoteWorker": True,
+                    "workerId": args.worker_id,
+                    "provider": "indextts2",
+                    "requestedClipCount": requested_count,
+                    "generatedClipCount": generated_count,
+                    "currentClipId": f"clip_{generated_count:03d}" if generated_count else "",
+                },
+            },
+            timeout=60,
+        )
+    except TerminatedJob:
+        raise
+    except Exception as error:
+        log(f"[warn] Could not checkpoint job {job_id}: {error}")
+
+
 def download_file(url: str, target: Path, headers: Dict[str, str], timeout: int = 300) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     req = urllib.request.Request(url, headers=headers, method="GET")
@@ -101,6 +187,46 @@ def download_file(url: str, target: Path, headers: Dict[str, str], timeout: int 
             shutil.copyfileobj(response, handle)
     if not target.exists() or target.stat().st_size <= 0:
         raise RuntimeError(f"Downloaded file is empty: {target}")
+
+
+def copy_local_source(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+    if not target.exists() or target.stat().st_size <= 0:
+        raise RuntimeError(f"Copied source voice is empty: {target}")
+
+
+def resolve_source_sample(args: argparse.Namespace, headers: Dict[str, str], job_input: Dict[str, Any], work_dir: Path) -> Tuple[Path, str]:
+    source_path = work_dir / "source.wav"
+
+    for key in SOURCE_PATH_KEYS:
+        value = clean(job_input.get(key))
+        if not value:
+            continue
+        candidate = Path(value).expanduser()
+        if candidate.exists() and candidate.is_file() and candidate.stat().st_size > 0:
+            log(f"[source] using local {key}: {candidate}")
+            copy_local_source(candidate, source_path)
+            return source_path, str(candidate)
+        log(f"[source] local candidate from {key} is not readable on this Windows worker: {value}")
+
+    for key in SOURCE_URL_KEYS:
+        value = clean(job_input.get(key))
+        if not value:
+            continue
+        url = build_url(args.base_url, value)
+        log(f"[download] using {key}: {url}")
+        download_file(url, source_path, headers)
+        return source_path, value
+
+    raise RuntimeError(
+        "Claimed dataset job has no readable approved reference sample. "
+        "Expected one of path fields "
+        + ", ".join(SOURCE_PATH_KEYS)
+        + " or URL fields "
+        + ", ".join(SOURCE_URL_KEYS)
+        + "."
+    )
 
 
 def multipart_post(url: str, headers: Dict[str, str], fields: Dict[str, str], files: List[Tuple[str, Path, str]], timeout: int = 1800) -> Dict[str, Any]:
@@ -238,6 +364,31 @@ def upload_batch(args: argparse.Namespace, headers: Dict[str, str], character_id
     return response
 
 
+def assert_manifest_complete(upload_response: Dict[str, Any], requested_count: int) -> Dict[str, Any]:
+    manifest = upload_response.get("manifest")
+    if not isinstance(manifest, dict):
+        raise RuntimeError("Remote upload did not return a training dataset manifest.")
+
+    clips = manifest.get("clips")
+    if not isinstance(clips, list):
+        raise RuntimeError("Remote training dataset manifest has no clips array.")
+
+    ready_count = 0
+    for clip in clips:
+        if isinstance(clip, dict) and clip.get("status") == "ready":
+            ready_count += 1
+
+    generated_count = int(manifest.get("generatedClipCount") or ready_count or 0)
+    if manifest.get("generationMode") != "real" or manifest.get("provider") != "indextts2":
+        raise RuntimeError("Remote manifest is not a real IndexTTS2 dataset manifest.")
+    if generated_count < requested_count or ready_count < requested_count:
+        raise RuntimeError(f"Remote manifest is incomplete: ready={ready_count}, generated={generated_count}, requested={requested_count}.")
+    if manifest.get("status") != "voice_pack_ready":
+        raise RuntimeError(f"Remote manifest status is not voice_pack_ready: {manifest.get('status')}")
+
+    return manifest
+
+
 def mark_failed(args: argparse.Namespace, headers: Dict[str, str], job_id: str, error: str) -> None:
     if not job_id:
         return
@@ -261,19 +412,20 @@ def mark_failed(args: argparse.Namespace, headers: Dict[str, str], job_id: str, 
 
 
 def process_one(args: argparse.Namespace) -> int:
-    headers = {
-        "x-otg-owner-key": args.owner_key,
-        "x-otg-device-id": args.device_id,
-        "x-otg-worker-id": args.worker_id,
-    }
+    headers = auth_headers(args, None if args.universal_claim else args.owner_key)
 
     job_id = ""
     try:
         claim = request_json(
             "POST",
-            build_url(args.base_url, "/api/characters/voice-pipeline/worker/claim"),
+            build_url(args.base_url, "/api/worker/jobs/claim"),
             headers,
-            {"action": "generate_training_dataset", "workerId": args.worker_id},
+            {
+                "jobType": "character_voice_pipeline",
+                "action": "generate_training_dataset",
+                "claimScope": "all_owners" if args.universal_claim else "owner",
+                "workerId": args.worker_id,
+            },
         )
 
         job = claim.get("job")
@@ -282,22 +434,18 @@ def process_one(args: argparse.Namespace) -> int:
             return 0
 
         job_id = clean(job.get("jobId"))
+        owner_key = clean(job.get("ownerKey")) or clean(job.get("owner_key")) or args.owner_key
         character_id = clean(job.get("characterId"))
         job_input = job.get("input") if isinstance(job.get("input"), dict) else {}
 
         if not job_id or not character_id:
             raise RuntimeError(f"Invalid claimed job: {job}")
+        if not owner_key:
+            raise RuntimeError(f"Claimed job did not include ownerKey: {job}")
 
-        source_url = (
-            clean(job_input.get("approvedSampleUrl")) or
-            clean(job_input.get("sourceSampleUrl")) or
-            clean(job_input.get("tunedSampleUrl")) or
-            clean(job_input.get("baseSampleUrl"))
-        )
-        if not source_url:
-            raise RuntimeError("Claimed dataset job has no source sample URL.")
+        headers = auth_headers(args, owner_key)
 
-        requested_count = clamp_clip_count(job_input.get("requestedClipCount"), 200)
+        requested_count = clamp_clip_count(job_input.get("requestedClipCount") or job_input.get("clipCount"), 200)
         if args.max_clips > 0:
             requested_count = min(requested_count, args.max_clips)
 
@@ -311,16 +459,37 @@ def process_one(args: argparse.Namespace) -> int:
         clips_dir.mkdir(parents=True, exist_ok=True)
 
         log(f"[job] {job_id} character={character_id} clips={requested_count}")
-        log(f"[download] {source_url}")
-        download_file(build_url(args.base_url, source_url), source_path, headers)
+        source_path, source_ref = resolve_source_sample(args, headers, job_input, work_dir)
 
         generated: List[Path] = []
+        pending_upload: List[Path] = []
+        job_result = job.get("result") if isinstance(job.get("result"), dict) else {}
+        try:
+            ready_count = max(0, min(requested_count, int(job_result.get("generatedClipCount") or 0)))
+        except Exception:
+            ready_count = 0
+        if ready_count:
+            log(f"[resume] server already has {ready_count}/{requested_count} ready clips; continuing at clip {ready_count + 1}.")
+            checkpoint_job(
+                args,
+                headers,
+                job_id,
+                ready_count,
+                requested_count,
+                f"Resuming dataset from {ready_count} / {requested_count} ready clips.",
+            )
         index_root = Path(args.index_root).resolve()
         index_python = Path(args.index_python).resolve()
+        last_upload: Dict[str, Any] | None = None
 
         for i, row in enumerate(utterances, start=1):
             clip_id = f"clip_{i:03d}"
             output_path = clips_dir / f"{clip_id}.wav"
+            assert_job_active(args, headers, job_id)
+
+            if i <= ready_count and not args.regenerate:
+                log(f"[remote-skip] {clip_id}")
+                continue
 
             if output_path.exists() and output_path.stat().st_size > 0 and not args.regenerate:
                 log(f"[skip] {clip_id}")
@@ -328,20 +497,35 @@ def process_one(args: argparse.Namespace) -> int:
                 run_indextts2(index_root, index_python, source_path, row["text"], output_path, args.clip_timeout_seconds)
 
             generated.append(output_path)
+            pending_upload.append(output_path)
+            ready_count = max(ready_count, i)
+            checkpoint_job(
+                args,
+                headers,
+                job_id,
+                ready_count,
+                requested_count,
+                f"Generated {ready_count} / {requested_count} clips. Provider: indextts2.",
+            )
 
-            if len(generated) % args.upload_chunk_size == 0:
-                manifest = make_manifest(args.owner_key, character_id, job_id, source_url, utterances, len(generated))
+            if len(pending_upload) >= args.upload_chunk_size:
+                assert_job_active(args, headers, job_id)
+                manifest = make_manifest(owner_key, character_id, job_id, source_ref, utterances, ready_count)
                 manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-                upload_batch(args, headers, character_id, job_id, manifest, source_path, generated[-args.upload_chunk_size:])
+                last_upload = upload_batch(args, headers, character_id, job_id, manifest, source_path, pending_upload)
+                pending_upload = []
 
-        remainder = len(generated) % args.upload_chunk_size
-        if remainder:
-            manifest = make_manifest(args.owner_key, character_id, job_id, source_url, utterances, len(generated))
+        if pending_upload:
+            assert_job_active(args, headers, job_id)
+            manifest = make_manifest(owner_key, character_id, job_id, source_ref, utterances, ready_count)
             manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-            upload_batch(args, headers, character_id, job_id, manifest, source_path, generated[-remainder:])
+            last_upload = upload_batch(args, headers, character_id, job_id, manifest, source_path, pending_upload)
 
-        final_manifest = make_manifest(args.owner_key, character_id, job_id, source_url, utterances, len(generated))
+        final_manifest = make_manifest(owner_key, character_id, job_id, source_ref, utterances, ready_count)
         manifest_path.write_text(json.dumps(final_manifest, indent=2), encoding="utf-8")
+        if last_upload is None:
+            raise RuntimeError("No clip batch was uploaded for this dataset job.")
+        remote_manifest = assert_manifest_complete(last_upload, requested_count)
 
         complete_result = {
             "mock": False,
@@ -350,10 +534,12 @@ def process_one(args: argparse.Namespace) -> int:
             "remoteWorker": True,
             "workerId": args.worker_id,
             "clipCount": requested_count,
-            "generatedClipCount": len(generated),
+            "requestedClipCount": requested_count,
+            "generatedClipCount": ready_count,
             "generationMode": "real",
             "status": "voice_pack_ready",
             "localWorkDir": str(work_dir),
+            "manifestStatus": remote_manifest.get("status"),
         }
 
         complete = request_json(
@@ -363,12 +549,15 @@ def process_one(args: argparse.Namespace) -> int:
             {
                 "jobId": job_id,
                 "result": complete_result,
-                "message": f"Remote Windows IndexTTS2 dataset completed: {len(generated)}/{requested_count} clips.",
+                "message": f"Remote Windows IndexTTS2 dataset completed: {ready_count}/{requested_count} clips.",
             },
         )
         log(f"[complete] {json.dumps(complete, indent=2)}")
         return 0
 
+    except TerminatedJob as error:
+        log(f"[terminated] {error}")
+        return 0
     except Exception as error:
         text = f"{error}\n{traceback.format_exc()}"
         log(f"[error] {text}")
@@ -379,9 +568,10 @@ def process_one(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="OTG Windows RTX 3090 IndexTTS2 dataset worker")
     parser.add_argument("--base-url", default=os.environ.get("OTG_BASE_URL", "https://comf-otg.comfyui-otg.win"))
-    parser.add_argument("--owner-key", default=os.environ.get("OTG_OWNER_KEY", "slrochford"))
+    parser.add_argument("--owner-key", default=os.environ.get("OTG_OWNER_KEY", ""))
     parser.add_argument("--device-id", default=os.environ.get("OTG_DEVICE_ID", "slrochford"))
     parser.add_argument("--worker-id", default=os.environ.get("OTG_WORKER_ID", "windows-rtx3090-indextts2"))
+    parser.add_argument("--worker-token", default=os.environ.get("OTG_WORKER_TOKEN", ""))
     parser.add_argument("--index-root", default=os.environ.get("INDEXTTS2_ROOT", r"C:\AI\Voices\IndexTTS2"))
     parser.add_argument("--index-python", default=os.environ.get("INDEXTTS2_PYTHON", r"C:\AI\Voices\IndexTTS2\.venv\Scripts\python.exe"))
     parser.add_argument("--work-root", default=os.environ.get("OTG_INDEXTTS2_WORK_ROOT", r"C:\AI\OTG-Worker\indextts2-datasets"))
@@ -392,6 +582,7 @@ def main() -> int:
     parser.add_argument("--poll-seconds", type=int, default=int(os.environ.get("OTG_INDEXTTS2_POLL_SECONDS", "30")))
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--regenerate", action="store_true")
+    parser.add_argument("--universal-claim", action="store_true")
 
     args = parser.parse_args()
 
