@@ -26,3 +26,5 @@
 - Added /api/production/assembly-add-to-gallery to copy the current stitched/final Assembly video into the normal Gallery using existing Gallery helpers.
 - Gallery metadata records requestKind=production-assembly-add-to-gallery, workflowId=production/assembly, scene id/title, source video path/url, export preset, and background music metadata under submitPayload to match the existing GalleryMeta type.
 - UI stores the returned gallery URL/file name on the current Assembly result and exposes an Open Saved Gallery Video link.
+
+[promote-test2-shell-ui-to-stage2-v36bpw19d] Narrow Stage2 shell UI parity retry: copied AppPageClient, HeaderBar, and global CSS only; added @sparkjsdev/spark dependency from TEST2 because SplatViewer is pulled in by the shell UI. Uses cmd-based npm execution to avoid PowerShell treating npm warnings as fatal.

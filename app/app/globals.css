@@ -1394,3 +1394,99 @@ button svg,
   stroke: currentColor !important;
 }
 /* OTG_BUTTON_TEXT_CONTRAST_PATCH_END */
+
+/* OTG_PRODUCTION_FORCE_DARK_THEME_V1
+   Scoped fix: Production had stale light-mode Tailwind classes while the app shell was dark.
+   This only activates while AppPageClient adds .otg-force-dark-production on the Production tab. */
+html.otg-force-dark-production,
+body.otg-force-dark-production {
+  background: #050816 !important;
+  color: #f8fafc !important;
+  color-scheme: dark;
+}
+
+body.otg-force-dark-production .bg-white,
+body.otg-force-dark-production [class~="bg-white"],
+body.otg-force-dark-production [class*="bg-white/"],
+body.otg-force-dark-production [class*="bg-slate-50"],
+body.otg-force-dark-production [class*="bg-slate-100"],
+body.otg-force-dark-production [class*="bg-zinc-50"],
+body.otg-force-dark-production [class*="bg-zinc-100"],
+body.otg-force-dark-production [class*="bg-gray-50"],
+body.otg-force-dark-production [class*="bg-gray-100"] {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+}
+
+body.otg-force-dark-production [class*="bg-black/"],
+body.otg-force-dark-production [class*="bg-slate-900"],
+body.otg-force-dark-production [class*="bg-zinc-900"],
+body.otg-force-dark-production [class*="bg-gray-900"] {
+  color: #f8fafc !important;
+}
+
+body.otg-force-dark-production [class*="text-black"],
+body.otg-force-dark-production [class*="text-slate-950"],
+body.otg-force-dark-production [class*="text-slate-900"],
+body.otg-force-dark-production [class*="text-zinc-950"],
+body.otg-force-dark-production [class*="text-zinc-900"],
+body.otg-force-dark-production [class*="text-gray-950"],
+body.otg-force-dark-production [class*="text-gray-900"] {
+  color: #f8fafc !important;
+}
+
+body.otg-force-dark-production [class*="text-slate-700"],
+body.otg-force-dark-production [class*="text-slate-600"],
+body.otg-force-dark-production [class*="text-zinc-700"],
+body.otg-force-dark-production [class*="text-zinc-600"],
+body.otg-force-dark-production [class*="text-gray-700"],
+body.otg-force-dark-production [class*="text-gray-600"] {
+  color: rgba(226, 232, 240, 0.86) !important;
+}
+
+body.otg-force-dark-production [class*="border-slate-200"],
+body.otg-force-dark-production [class*="border-slate-100"],
+body.otg-force-dark-production [class*="border-zinc-200"],
+body.otg-force-dark-production [class*="border-zinc-100"],
+body.otg-force-dark-production [class*="border-gray-200"],
+body.otg-force-dark-production [class*="border-gray-100"] {
+  border-color: rgba(148, 163, 184, 0.28) !important;
+}
+
+body.otg-force-dark-production input,
+body.otg-force-dark-production textarea,
+body.otg-force-dark-production select {
+  background-color: #070b16 !important;
+  color: #f8fafc !important;
+  border-color: rgba(148, 163, 184, 0.32) !important;
+}
+
+body.otg-force-dark-production input::placeholder,
+body.otg-force-dark-production textarea::placeholder {
+  color: rgba(203, 213, 225, 0.52) !important;
+}
+
+body.otg-force-dark-production [disabled],
+body.otg-force-dark-production button:disabled {
+  opacity: 0.48;
+}
+
+body.otg-force-dark-production .shadow,
+body.otg-force-dark-production [class*="shadow"] {
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.34) !important;
+}
+
+
+/* OTG_STORYBOARD_REFERENCE_READABILITY_V31B */
+[data-otg="OTG_STORYBOARD_REFERENCE_POOL_BACKGROUND_V30"],
+[data-otg="OTG_STORYBOARD_REFERENCE_POOL_BACKGROUND_V30"] * {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+[data-otg="OTG_STORYBOARD_REFERENCE_POOL_BACKGROUND_V30"] .text-purple-100,
+[data-otg="OTG_STORYBOARD_REFERENCE_POOL_BACKGROUND_V30"] .text-purple-200,
+[data-otg="OTG_STORYBOARD_REFERENCE_POOL_BACKGROUND_V30"] .text-purple-300,
+[data-otg="OTG_STORYBOARD_REFERENCE_POOL_BACKGROUND_V30"] .text-cyan-100,
+[data-otg="OTG_STORYBOARD_REFERENCE_POOL_BACKGROUND_V30"] .text-cyan-200 {
+  color: rgba(255, 255, 255, 0.94) !important;
+}

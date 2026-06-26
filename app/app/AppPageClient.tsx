@@ -123,6 +123,15 @@ type SceneCharacterPickerItem = {
   // This must be the saved multi-angle character card/reference sheet.
   referenceImagePath: string;
   referenceImageUrl: string;
+  characterIdentity?: SceneSelectedCharacterIdentity | null;
+};
+
+type SceneSelectedCharacterIdentity = {
+  slot: "char1" | "char2" | "char3";
+  id: string;
+  name: string;
+  promptReadyDescription: string;
+  lockedAt: string;
 };
 
 type SceneReferenceSlotStatus = "idle" | "running" | "done";
@@ -348,6 +357,47 @@ function composeGeneratePromptWithStyle(bodyPrompt: string, stylePreset?: Genera
   }
 
   return uniqueSections.join("\n\n");
+}
+
+const MISSING_LOCKED_CHARACTER_DESCRIPTION_MESSAGE =
+  "Complete and lock the character description for each selected character before generating a multi-character scene.";
+const MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP =
+  "Missing locked character description. Open Character Builder and click Complete Description, then Lock Description.";
+
+function stripAppCharacterContinuityBlock(input: string) {
+  const text = String(input || "").trim();
+  if (!text) return "";
+  const upper = text.toUpperCase();
+  if (!upper.startsWith("CHARACTER CONTINUITY:")) return text;
+
+  const sceneMarker = "\nSCENE:";
+  const sceneIndex = upper.indexOf(sceneMarker);
+  if (sceneIndex >= 0) {
+    return text.slice(sceneIndex + sceneMarker.length).trim();
+  }
+
+  return text.replace(/^CHARACTER CONTINUITY:[\s\S]*?(?:\n{2,}|$)/i, "").trim();
+}
+
+function buildCharacterContinuityPrompt(identities: SceneSelectedCharacterIdentity[]) {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const identity of identities) {
+    const prompt = String(identity.promptReadyDescription || "").replace(/\s+/g, " ").trim();
+    if (!prompt || !identity.lockedAt) continue;
+    const key = `${identity.id || identity.name || ""}:${prompt}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push(`* ${prompt}`);
+  }
+  return lines.length ? `CHARACTER CONTINUITY:\n\n${lines.join("\n")}` : "";
+}
+
+function injectCharacterContinuityPrompt(scenePrompt: string, characterContinuityPrompt: string) {
+  const cleanedScene = stripAppCharacterContinuityBlock(scenePrompt);
+  const continuity = String(characterContinuityPrompt || "").trim();
+  if (!continuity) return cleanedScene;
+  return `${continuity}\n\nSCENE:\n${cleanedScene}`.trim();
 }
 
 const PROMPT_GUIDES: Record<PromptGuideMode, PromptGuideContent> = {
@@ -1190,7 +1240,27 @@ async function fetchWorkflowsForApp() {
 
 export default function AppPageClient({ initialUser = null }: { initialUser?: InitialAppUser }) {
   const queryClient = useQueryClient();
+
+  // OTG_DEFAULT_DARK_THEME_V1: dark is the app default theme.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.documentElement.classList.add("dark");
+    document.body.classList.add("dark");
+  }, []);
   const [tab, setTab] = useState<SpinTabId>("generate");
+
+  // OTG_PRODUCTION_FORCE_DARK_THEME_V1: force Production tab surfaces to dark even if stale light classes persist.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const enabled = true;
+    document.documentElement.classList.toggle("otg-force-dark-production", enabled);
+    document.body.classList.toggle("otg-force-dark-production", enabled);
+    return () => {
+      document.documentElement.classList.remove("otg-force-dark-production");
+      document.body.classList.remove("otg-force-dark-production");
+    };
+  }, [tab]);
+  const [enhancePromptLevel, setEnhancePromptLevel] = useState<"short" | "medium" | "cinematic">("medium");
   const [assistanceTab, setAssistanceTab] = useState<AssistanceTab>("describe");
   const [username, setUsername] = useState(() => initialUser?.username || initialUser?.email || readCachedUsername());
   const [connected, setConnected] = useState(false);
@@ -1384,6 +1454,9 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [sceneChar1Name, setSceneChar1Name] = useState("");
   const [sceneChar2Name, setSceneChar2Name] = useState("");
   const [sceneChar3Name, setSceneChar3Name] = useState("");
+  const [sceneChar1Identity, setSceneChar1Identity] = useState<SceneSelectedCharacterIdentity | null>(null);
+  const [sceneChar2Identity, setSceneChar2Identity] = useState<SceneSelectedCharacterIdentity | null>(null);
+  const [sceneChar3Identity, setSceneChar3Identity] = useState<SceneSelectedCharacterIdentity | null>(null);
   const [sceneBgName, setSceneBgName] = useState("");
   const [sceneChar1PreviewUrl, setSceneChar1PreviewUrl] = useState("");
   const [sceneChar2PreviewUrl, setSceneChar2PreviewUrl] = useState("");
@@ -1416,6 +1489,21 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
     char3: "idle",
     bg: "idle",
   });
+  const selectedSceneCharacterIdentities = useMemo(
+    () => [sceneChar1Identity, sceneChar2Identity, sceneChar3Identity].filter(Boolean) as SceneSelectedCharacterIdentity[],
+    [sceneChar1Identity, sceneChar2Identity, sceneChar3Identity]
+  );
+  const missingLockedSceneCharacterDescriptions = useMemo(
+    () =>
+      selectedSceneCharacterIdentities.filter(
+        (identity) => !String(identity.promptReadyDescription || "").trim() || !String(identity.lockedAt || "").trim()
+      ),
+    [selectedSceneCharacterIdentities]
+  );
+  const characterContinuityPrompt = useMemo(
+    () => buildCharacterContinuityPrompt(selectedSceneCharacterIdentities),
+    [selectedSceneCharacterIdentities]
+  );
   const [sceneTransitionMode, setSceneTransitionMode] = useState<SceneTransitionMode>("auto");
   const [sceneTransitionPickerOpen, setSceneTransitionPickerOpen] = useState(false);
   const [askInput, setAskInput] = useState("");
@@ -2622,6 +2710,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       headers: { "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify({
+        enhanceLevel: enhancePromptLevel,
+        level: enhancePromptLevel,
+        size: enhancePromptLevel,
         prompt: cleaned,
         workflowId: workflowHint || selectedWorkflow.id,
         styleLabel: options?.styleLabel || "",
@@ -2632,6 +2723,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+
       throw new Error(typeof data?.error === "string" ? data.error : "Enhance Prompt failed");
     }
 
@@ -2641,7 +2733,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     }
 
     return nextPrompt;
-  }, [selectedWorkflow.id]);
+  }, [selectedWorkflow.id, enhancePromptLevel]);
 
   const submitToComfy = useCallback(
     async (
@@ -3108,7 +3200,15 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }, [promptRelayBeat1, promptRelayBeat2, promptRelayBeat3, promptRelayBeat4]);
   const handleGenerate = useCallback(async () => {
     if (generateBusy) return;
-    const finalPrompt = composeGeneratePrompt(prompt, activeGenerateStylePreset);
+    const styledPrompt = composeGeneratePrompt(prompt, activeGenerateStylePreset);
+    const hasSelectedSceneCharacters = selectedSceneCharacterIdentities.length > 0;
+    if (hasSelectedSceneCharacters && missingLockedSceneCharacterDescriptions.length) {
+      setStatusMessage(MISSING_LOCKED_CHARACTER_DESCRIPTION_MESSAGE);
+      return;
+    }
+    const finalPrompt = hasSelectedSceneCharacters
+      ? injectCharacterContinuityPrompt(styledPrompt, characterContinuityPrompt)
+      : styledPrompt;
     const relayLocalPromptsForSubmit = promptRelayLocalPrompts.trim();
     if (!isVideoUpscalerWorkflowSelected && !finalPrompt.trim()) {
       setStatusMessage("Enter a prompt first.");
@@ -3158,6 +3258,21 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("workflowId", workflowId);
       body.set("prompt", finalPrompt);
       body.set("negativePrompt", negativePrompt);
+      if (hasSelectedSceneCharacters && characterContinuityPrompt.trim()) {
+        body.set("characterContinuityPrompt", characterContinuityPrompt.trim());
+        body.set(
+          "selectedCharacterIdentities",
+          JSON.stringify(
+            selectedSceneCharacterIdentities.map((identity) => ({
+              slot: identity.slot,
+              id: identity.id,
+              name: identity.name,
+              lockedAt: identity.lockedAt,
+              promptReadyDescription: identity.promptReadyDescription,
+            }))
+          )
+        );
+      }
       if (isPromptRelayWorkflowSelected) {
         body.set("promptRelayGlobalPrompt", finalPrompt);
         body.set("promptRelayLocalPrompts", relayLocalPromptsForSubmit);
@@ -3217,6 +3332,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     }
   }, [
     activeGenerateStylePreset,
+    characterContinuityPrompt,
     composeGeneratePrompt,
     durationSeconds,
     generateBusy,
@@ -3225,6 +3341,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     orientation,
     prompt,
     selectedWorkflow,
+    selectedSceneCharacterIdentities,
+    missingLockedSceneCharacterDescriptions,
     submitToComfy,
     workflowId,
     isAnimeImagesWorkflowSelected,
@@ -4605,6 +4723,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     clearSceneReferenceAnalysis(slot);
     if (slot === "char1") {
       revokeScenePreview(sceneChar1PreviewUrl);
+      setSceneChar1Identity(null);
       if (!file) {
         setSceneChar1File(null);
         setSceneChar1Name("");
@@ -4620,6 +4739,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
     if (slot === "char2") {
       revokeScenePreview(sceneChar2PreviewUrl);
+      setSceneChar2Identity(null);
       if (!file) {
         setSceneChar2File(null);
         setSceneChar2Name("");
@@ -4635,6 +4755,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
     if (slot === "char3") {
       revokeScenePreview(sceneChar3PreviewUrl);
+      setSceneChar3Identity(null);
       if (!file) {
         setSceneChar3File(null);
         setSceneChar3Name("");
@@ -4690,6 +4811,37 @@ ${sceneReferenceCard || ""}`.toLowerCase();
           : "png";
 
     return `${base}.${ext}`;
+  }
+
+  function buildSceneSelectedCharacterIdentity(slot: SceneReferenceSlotKey, entry: any, name: string, id: string): SceneSelectedCharacterIdentity | null {
+    if (slot === "bg") return null;
+    const metadata = entry?.metadata && typeof entry.metadata === "object" && !Array.isArray(entry.metadata) ? entry.metadata : {};
+    const identity =
+      entry?.characterIdentity && typeof entry.characterIdentity === "object" && !Array.isArray(entry.characterIdentity)
+        ? entry.characterIdentity
+        : metadata?.characterIdentity && typeof metadata.characterIdentity === "object" && !Array.isArray(metadata.characterIdentity)
+          ? metadata.characterIdentity
+          : {};
+    const promptReadyDescription = String(
+      identity?.promptReadyDescription || entry?.promptReadyDescription || metadata?.promptReadyDescription || ""
+    )
+      .replace(/\s+/g, " ")
+      .trim();
+    const lockedAt = String(identity?.lockedAt || entry?.lockedAt || metadata?.lockedAt || "").trim();
+
+    return {
+      slot,
+      id: String(id || entry?.id || name || "").trim(),
+      name,
+      promptReadyDescription,
+      lockedAt,
+    };
+  }
+
+  function setSelectedSceneCharacterIdentity(slot: SceneReferenceSlotKey, identity: SceneSelectedCharacterIdentity | null) {
+    if (slot === "char1") setSceneChar1Identity(identity);
+    if (slot === "char2") setSceneChar2Identity(identity);
+    if (slot === "char3") setSceneChar3Identity(identity);
   }
 
   async function loadSceneCharacterPickerItems() {
@@ -4770,14 +4922,16 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               entry?.referenceCardPath ||
               ""
           ).trim();
+          const id = String(entry?.id || referenceImagePath || displayImagePath || name || index);
 
           return {
-            id: String(entry?.id || referenceImagePath || displayImagePath || name || index),
+            id,
             name,
             imagePath: displayImagePath,
             imageUrl: displayImagePath ? sceneCharacterImageUrl(displayImagePath) : "",
             referenceImagePath,
             referenceImageUrl: referenceImagePath ? sceneCharacterImageUrl(referenceImagePath) : "",
+            characterIdentity: buildSceneSelectedCharacterIdentity("char1", entry, name, id),
           };
         })
         .filter((item) => {
@@ -4842,9 +4996,24 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       });
 
       setSceneReference(slot, file);
+      if (slot !== "bg") {
+        const identity = item.characterIdentity
+          ? {
+              ...item.characterIdentity,
+              slot,
+              id: item.id,
+              name: item.name,
+            }
+          : null;
+        setSelectedSceneCharacterIdentity(slot, identity);
+      }
       setSceneCharacterPickerSlot(null);
       setSceneCharacterPickerSelectingId("");
-      setStatusMessage(`${item.name} character card selected for ${sceneReferenceSlotLabel(slot)}.`);
+      if (slot !== "bg" && (!item.characterIdentity?.promptReadyDescription || !item.characterIdentity?.lockedAt)) {
+        setStatusMessage(`${item.name} selected. ${MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP}`);
+      } else {
+        setStatusMessage(`${item.name} character card selected for ${sceneReferenceSlotLabel(slot)}.`);
+      }
     } catch (error) {
       setSceneCharacterPickerError(error instanceof Error ? error.message : "Could not select character card.");
     } finally {
@@ -5007,6 +5176,11 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       return;
     }
 
+    if (missingLockedSceneCharacterDescriptions.length) {
+      setStatusMessage(MISSING_LOCKED_CHARACTER_DESCRIPTION_MESSAGE);
+      return;
+    }
+
     if (scenePlanBusy) return;
 
     setScenePlanBusy(true);
@@ -5072,6 +5246,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                 "",
                 "Reference Image Card:",
                 sceneVisionContext || "No reference image analysis available.",
+                "",
+                "Locked Character Continuity:",
+                characterContinuityPrompt || "None.",
               ].join("\n"),
             },
           ],
@@ -5114,6 +5291,11 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     const promptCheck = evaluateScenePromptStrength(sceneDraft);
     if (!promptCheck.canGenerate) {
       setStatusMessage(`Prompt too weak. Add: ${promptCheck.missing.join(", ")}.`);
+      return;
+    }
+
+    if (missingLockedSceneCharacterDescriptions.length) {
+      setStatusMessage(MISSING_LOCKED_CHARACTER_DESCRIPTION_MESSAGE);
       return;
     }
 
@@ -5185,6 +5367,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                 "",
                 "Reference Card:",
                 sceneReferenceCard.trim(),
+                "",
+                "Locked Character Continuity:",
+                characterContinuityPrompt || "None.",
                 "",
                 "Current Scene Request:",
                 cleanedSceneDraft,
@@ -5615,6 +5800,23 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                 <ActionButton onClick={handleEnhancePrompt} disabled={enhancing || !prompt.trim()}>
                   {enhancing ? "Enhancing..." : "Enhance Prompt"}
                 </ActionButton>
+                <div className="flex flex-wrap items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-950/60 p-1" data-otg="OTG_ENHANCE_LEVEL_UI_V4">
+                  {(["short", "medium", "cinematic"] as const).map((level) => (
+                    <button
+                      key={level}
+                      type="button"
+                      onClick={() => setEnhancePromptLevel(level)}
+                      className={
+                        enhancePromptLevel === level
+                          ? "rounded-lg border border-purple-300 bg-purple-500 px-3 py-2 text-xs font-black capitalize text-white"
+                          : "rounded-lg border border-zinc-700 bg-zinc-900/70 px-3 py-2 text-xs font-black capitalize text-zinc-300 hover:border-purple-300 hover:text-white"
+                      }
+                      aria-pressed={enhancePromptLevel === level}
+                    >
+                      {level === "cinematic" ? "Long" : level}
+                    </button>
+                  ))}
+                </div>
                 {showPromptBuilderAssistant ? (
                   <ActionButton onClick={handlePromptBuilderAssistant} disabled={formattingPrompt || !prompt.trim()}>
                     {formattingPrompt ? "Checking Prompt..." : "Prompt Builder Assistant"}
@@ -6408,6 +6610,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                           )}
                         </div>
                         <div className="truncate text-[11px] text-white/50">{sceneChar1Name || "Required"}</div>
+                        {sceneChar1Identity && (!sceneChar1Identity.promptReadyDescription || !sceneChar1Identity.lockedAt) ? (
+                          <div className="text-[11px] leading-4 text-amber-200">{MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP}</div>
+                        ) : null}
                       </div>
 
                       <div className="space-y-2">
@@ -6436,6 +6641,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                           )}
                         </div>
                         <div className="truncate text-[11px] text-white/50">{sceneChar2Name || "Optional"}</div>
+                        {sceneChar2Identity && (!sceneChar2Identity.promptReadyDescription || !sceneChar2Identity.lockedAt) ? (
+                          <div className="text-[11px] leading-4 text-amber-200">{MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP}</div>
+                        ) : null}
                       </div>
 
                       <div className="space-y-2">
@@ -6464,6 +6672,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                           )}
                         </div>
                         <div className="truncate text-[11px] text-white/50">{sceneChar3Name || "Optional"}</div>
+                        {sceneChar3Identity && (!sceneChar3Identity.promptReadyDescription || !sceneChar3Identity.lockedAt) ? (
+                          <div className="text-[11px] leading-4 text-amber-200">{MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP}</div>
+                        ) : null}
                       </div>
 
                       <div className="space-y-2">
@@ -6693,10 +6904,19 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                         {sceneWriteBusy ? "Creating..." : "Create Scene"}
                       </ActionButton>
 
-                      <ActionButton onClick={() => sendTextToGenerate(sceneOutput)} disabled={!sceneOutput.trim()}>
+                      <ActionButton onClick={() => sendTextToGenerate(sceneOutput)} disabled={!sceneOutput.trim() || missingLockedSceneCharacterDescriptions.length > 0}>
                         Send to Generate
                       </ActionButton>
                     </div>
+                    {missingLockedSceneCharacterDescriptions.length ? (
+                      <div className="rounded-[16px] border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+                        {MISSING_LOCKED_CHARACTER_DESCRIPTION_MESSAGE}
+                      </div>
+                    ) : characterContinuityPrompt ? (
+                      <div className="rounded-[16px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100">
+                        Locked character continuity will be injected above the Generate prompt.
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="space-y-4">
@@ -6842,6 +7062,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                             <div className="truncate text-xs font-semibold text-white">{item.name}</div>
                             {!item.referenceImageUrl ? (
                               <div className="mt-1 text-[10px] font-semibold text-amber-300">Missing character card</div>
+                            ) : item.characterIdentity && (!item.characterIdentity.promptReadyDescription || !item.characterIdentity.lockedAt) ? (
+                              <div className="mt-1 text-[10px] font-semibold text-amber-300">Missing locked description</div>
                             ) : (
                               <div className="mt-1 text-[10px] font-semibold text-cyan-200">Uses character card</div>
                             )}
@@ -7567,3 +7789,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     </main>
   );
 }
+
+
+
