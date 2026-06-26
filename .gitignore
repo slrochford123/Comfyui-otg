@@ -202,3 +202,9 @@ dev-*.log
 repo folder test app.zip
 comfy-history-latest.json
 baseline-i2v-5s-audio-*.json
+
+# OTG local patch/deploy artifacts
+.patch-backups/
+diagnostics-promote-test2-*.txt
+promote-test2-*.ps1
+release_outputs/
