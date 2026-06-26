@@ -32,7 +32,8 @@ function readOwnerKey(req: NextRequest): string {
 }
 
 function isBlockedOwner(ownerKey: string): boolean {
-  return cleanOwnerKey(ownerKey) === BLOCKED_GLOBAL_OWNER;
+  const cleaned = cleanOwnerKey(ownerKey);
+  return cleaned === BLOCKED_GLOBAL_OWNER || cleaned === "profile_unresolved";
 }
 
 function ensureDraftsRoot() {
@@ -42,7 +43,7 @@ function ensureDraftsRoot() {
 function draftPathFor(ownerKey: string): string {
   const safeOwner = cleanOwnerKey(ownerKey);
   if (!safeOwner) throw new Error("Missing character draft owner.");
-  if (isBlockedOwner(safeOwner)) throw new Error("Global character builder draft owner is disabled.");
+  if (isBlockedOwner(safeOwner)) throw new Error("Global/unresolved character builder draft owner is disabled.");
   return path.join(DRAFTS_ROOT, `${safeOwner}.json`);
 }
 
@@ -110,7 +111,7 @@ export async function PUT(req: NextRequest) {
           ok: false,
           blocked: true,
           ownerKey: ownerKey || "",
-          error: "Global character builder draft owner is disabled. Switch to a real profile owner.",
+          error: "Global/unresolved character builder draft owner is disabled. Switch to a real profile owner.",
         },
         { status: 409, headers: { "Cache-Control": "no-store" } },
       );

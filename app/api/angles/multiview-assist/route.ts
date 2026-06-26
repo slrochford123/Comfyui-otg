@@ -23,7 +23,7 @@ type MultiViewManifest = {
   updatedAt: string;
 };
 
-const DEFAULT_MULTIVIEW_COMFY_URL = "http://127.0.0.1:8288";
+const DEFAULT_MULTIVIEW_COMFY_URL = "http://127.0.0.1:8188";
 const MULTIVIEW_WORKFLOW_ID = "internal/angles_multiview_texture_turntable_v11";
 const EXPECTED_VIEWS = [
   "front_view",

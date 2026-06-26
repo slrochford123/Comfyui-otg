@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { NextRequest, NextResponse } from "next/server";
 
+import { configuredVideoComfyBaseUrl, logComfyRouting } from "@/app/api/_lib/comfyTarget";
 import { createCharacterAnimationPreviewJob } from "@/lib/jobs/voicePipelineJobs";
 import { getOwnerContext } from "@/lib/ownerKey";
 
@@ -44,7 +45,7 @@ const DATA_ROOT_ALIASES = Array.from(new Set([
   "/var/lib/otg/uploads",
   path.join(process.cwd(), "data"),
 ].filter(Boolean).map((value) => path.resolve(String(value)))));
-const COMFY_URL = String(process.env.OTG_VIDEO_COMFY_URL || process.env.COMFYUI_BASE_URL || "http://127.0.0.1:8188").replace(/\/+$/, "");
+const COMFY_URL = configuredVideoComfyBaseUrl().replace(/\/+$/, "");
 const LTX_WORKFLOW_PATH = path.resolve(
   process.env.ANIMATE_ME_LTX_WORKFLOW_PATH ||
     path.join(process.cwd(), "app", "app", "workflows", "animate-me-create-video-from-images.json"),
@@ -606,6 +607,11 @@ async function uploadImageToComfy(imagePath: string, filenameStem: string) {
 }
 
 async function submitComfyPrompt(prompt: JsonRecord, clientId: string) {
+  logComfyRouting(
+    "/api/characters/animate-preview POST",
+    { requestKind: "character-animate-preview", workflowLabel: "Character Animate Preview", mediaType: "video" },
+    { kind: "video", baseUrl: COMFY_URL }
+  );
   const text = await fetchText(
     `${COMFY_URL}/prompt`,
     {

@@ -265,7 +265,10 @@ describe("voice pipeline job contracts", () => {
     });
     expect(createCharacterVoicePipelineJob("owner-a", { action: "create_voice_sample", characterId: "char-1", provider: "bad" })).toMatchObject({
       ok: false,
-      error: "Invalid provider. Expected qwen3 or cosy.",
+      error: "Invalid provider. Expected qwen3, cosy, ltx, or unnatural_ltx.",
+    });
+    expect(createCharacterVoicePipelineJob("owner-a", { action: "create_voice_sample", characterId: "char-1", provider: "unnatural_ltx", source: "unnatural_voice_preset" })).toMatchObject({
+      ok: true,
     });
     expect(createCharacterVoicePipelineJob("owner-a", { action: "apply_voice_fx", characterId: "char-1", fxPreset: "bad" })).toMatchObject({
       ok: false,

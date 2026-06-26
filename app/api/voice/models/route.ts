@@ -80,6 +80,85 @@ function newest(files: string[], re: RegExp) {
     .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs)[0];
 }
 
+function cleanString(value: unknown) {
+  return String(value || "").trim();
+}
+
+function resolveDataRelativePath(value: string) {
+  const clean = cleanString(value);
+  if (!clean) return "";
+  if (path.isAbsolute(clean) || /^\\\\/.test(clean)) return path.resolve(clean);
+  return path.resolve(OTG_DATA_ROOT, clean.replace(/^[/\\]+/, ""));
+}
+
+function resolveVoiceFileUrlPath(value: string) {
+  const clean = cleanString(value);
+  if (!clean || !clean.includes("/api/characters/")) return "";
+
+  try {
+    const url = new URL(clean, "http://otg.local");
+    if (url.pathname.endsWith("/api/characters/voice-file")) {
+      const relativePath = cleanString(url.searchParams.get("path"));
+      return relativePath ? resolveDataRelativePath(relativePath) : "";
+    }
+
+    if (url.pathname.endsWith("/api/characters/voice-sample/file")) {
+      const owner = cleanString(url.searchParams.get("owner"));
+      const characterId = cleanString(url.searchParams.get("characterId"));
+      const jobId = cleanString(url.searchParams.get("jobId"));
+      const fileName = cleanString(url.searchParams.get("file")) || "sample.wav";
+      if (!owner || !characterId || !jobId || /[\\/]/.test(owner + characterId + jobId + fileName) || [owner, characterId, jobId, fileName].some((part) => part.includes(".."))) {
+        return "";
+      }
+      return path.resolve(OTG_DATA_ROOT, "characters", owner, "voice-samples", characterId, jobId, fileName);
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
+}
+
+function existingAudioCandidate(...values: unknown[]) {
+  for (const value of values) {
+    const raw = cleanString(value);
+    if (!raw) continue;
+    const candidates = [
+      resolveVoiceFileUrlPath(raw),
+      resolveDataRelativePath(raw),
+    ].filter(Boolean);
+
+    for (const candidate of candidates) {
+      try {
+        if (AUDIO_RE.test(candidate) && fs.existsSync(candidate) && fs.statSync(candidate).isFile() && !shouldIgnore(candidate)) {
+          return candidate;
+        }
+      } catch {
+        // Continue to the next candidate.
+      }
+    }
+  }
+
+  return "";
+}
+
+function existingFileCandidate(re: RegExp, ...values: unknown[]) {
+  for (const value of values) {
+    const raw = cleanString(value);
+    if (!raw) continue;
+    const candidate = resolveDataRelativePath(raw);
+    try {
+      if (re.test(candidate) && fs.existsSync(candidate) && fs.statSync(candidate).isFile() && !shouldIgnore(candidate)) {
+        return candidate;
+      }
+    } catch {
+      // Continue to the next candidate.
+    }
+  }
+
+  return "";
+}
+
 function displayPath(value: string) {
   const resolved = path.resolve(value);
   const voicesRoot = path.resolve(VOICES_ROOT);
@@ -159,24 +238,47 @@ async function scanCharacterVoices(req: NextRequest): Promise<VoiceItem[]> {
   try {
     const { ownerKey } = await getOwnerContext(req);
     return listCharacters(ownerKey)
-      .filter((character) => {
-        const audioPath = String(character.referenceAudioPath || "").trim();
-        return Boolean(audioPath && AUDIO_RE.test(audioPath) && fs.existsSync(audioPath) && !shouldIgnore(audioPath));
-      })
       .map((character) => {
-        const audioPath = path.resolve(String(character.referenceAudioPath || ""));
-        const stat = fs.statSync(audioPath);
+        const profile = character.characterVoiceProfile as any;
+        const artifacts = Array.isArray(profile?.voiceModelArtifacts) ? profile.voiceModelArtifacts : [];
+        const newestArtifact = artifacts
+          .filter((artifact: any) => artifact && typeof artifact === "object")
+          .sort((a: any, b: any) => cleanString(b.updatedAt || b.createdAt).localeCompare(cleanString(a.updatedAt || a.createdAt)))[0] || null;
+        const audioPath = existingAudioCandidate(
+          character.referenceAudioPath,
+          profile?.approvedSamplePath,
+          profile?.tunedSamplePath,
+          profile?.fxSamplePath,
+          profile?.baseSamplePath,
+          newestArtifact?.approvedSamplePath,
+          profile?.approvedSampleUrl,
+          profile?.tunedSampleUrl,
+          profile?.baseSampleUrl,
+          newestArtifact?.approvedSampleUrl,
+        );
+        const modelPath = existingFileCandidate(MODEL_RE, profile?.modelPath, newestArtifact?.modelPath);
+        const indexPath = existingFileCandidate(/\.index$/i, profile?.indexPath, newestArtifact?.indexPath);
+
+        if (!audioPath && !modelPath) return null;
+
+        const statPath = audioPath || modelPath;
+        const stat = fs.statSync(statPath);
         return makeItem({
           name: `${character.name} [Character Voice]`,
           engine: "character",
-          path: audioPath,
-          samplePath: audioPath,
+          path: audioPath || path.dirname(modelPath),
+          modelPath: modelPath || undefined,
+          indexPath: indexPath || undefined,
+          samplePath: audioPath || undefined,
           characterId: character.id,
-          usable: true,
-          notes: "Saved Characters tab reference voice. Seed-VC can use this as the target voice for your recorded performance.",
+          usable: Boolean(audioPath || (modelPath && indexPath)),
+          notes: audioPath
+            ? "Saved Characters tab reference voice. Seed-VC can use this as the target voice for your recorded performance."
+            : "Saved Characters tab trained voice model. Add or keep an approved sample for Seed-VC dubbing.",
           mtimeMs: stat.mtimeMs || Date.parse(character.updatedAt || character.createdAt || "") || 0,
         });
-      });
+      })
+      .filter((item): item is VoiceItem => Boolean(item));
   } catch {
     return [];
   }

@@ -92,6 +92,7 @@ describe("voice pipeline no-op worker", () => {
   beforeEach(() => {
     setVoicePipelineJobStorePathForTests(path.join(tempDir, `jobs-${Date.now()}-${Math.random().toString(16).slice(2)}.json`));
     clearQueuedContractJobsForTests();
+    fs.rmSync(path.join(process.cwd(), "data", "characters", "owner-a"), { recursive: true, force: true });
     delete process.env.OTG_ENABLE_REAL_QWEN3_VOICE_SAMPLE;
     delete process.env.QWEN_TTS_ROOT;
     delete process.env.QWEN_TTS_PYTHON;

@@ -1,0 +1,633 @@
+{
+    "333":  {
+                "inputs":  {
+                               "noise_seed":  42
+                           },
+                "class_type":  "RandomNoise",
+                "_meta":  {
+                              "title":  "RandomNoise"
+                          }
+            },
+    "334":  {
+                "inputs":  {
+                               "noise_seed":  756858717261523
+                           },
+                "class_type":  "RandomNoise",
+                "_meta":  {
+                              "title":  "RandomNoise"
+                          }
+            },
+    "335":  {
+                "inputs":  {
+                               "video_latent":  [
+                                                    "345",
+                                                    0
+                                                ],
+                               "audio_latent":  [
+                                                    "364",
+                                                    1
+                                                ]
+                           },
+                "class_type":  "LTXVConcatAVLatent",
+                "_meta":  {
+                              "title":  "LTXVConcatAVLatent"
+                          }
+            },
+    "336":  {
+                "inputs":  {
+                               "ckpt_name":  "ltx-2.3-22b-distilled-1.1.safetensors"
+                           },
+                "class_type":  "LTXVAudioVAELoader",
+                "_meta":  {
+                              "title":  "LTXV Audio VAE Loader"
+                          }
+            },
+    "337":  {
+                "inputs":  {
+                               "sampler_name":  "euler"
+                           },
+                "class_type":  "KSamplerSelect",
+                "_meta":  {
+                              "title":  "KSamplerSelect"
+                          }
+            },
+    "338":  {
+                "inputs":  {
+                               "sigmas":  "0.85, 0.7250, 0.4219, 0.0"
+                           },
+                "class_type":  "ManualSigmas",
+                "_meta":  {
+                              "title":  "ManualSigmas"
+                          }
+            },
+    "339":  {
+                "inputs":  {
+                               "cfg":  1,
+                               "model":  [
+                                             "342",
+                                             0
+                                         ],
+                               "positive":  [
+                                                "341",
+                                                0
+                                            ],
+                               "negative":  [
+                                                "341",
+                                                1
+                                            ]
+                           },
+                "class_type":  "CFGGuider",
+                "_meta":  {
+                              "title":  "CFGGuider"
+                          }
+            },
+    "340":  {
+                "inputs":  {
+                               "noise":  [
+                                             "334",
+                                             0
+                                         ],
+                               "guider":  [
+                                              "371",
+                                              0
+                                          ],
+                               "sampler":  [
+                                               "348",
+                                               0
+                                           ],
+                               "sigmas":  [
+                                              "363",
+                                              0
+                                          ],
+                               "latent_image":  [
+                                                    "376",
+                                                    0
+                                                ]
+                           },
+                "class_type":  "SamplerCustomAdvanced",
+                "_meta":  {
+                              "title":  "SamplerCustomAdvanced"
+                          }
+            },
+    "341":  {
+                "inputs":  {
+                               "positive":  [
+                                                "361",
+                                                0
+                                            ],
+                               "negative":  [
+                                                "361",
+                                                1
+                                            ],
+                               "latent":  [
+                                              "364",
+                                              0
+                                          ]
+                           },
+                "class_type":  "LTXVCropGuides",
+                "_meta":  {
+                              "title":  "LTXVCropGuides"
+                          }
+            },
+    "342":  {
+                "inputs":  {
+                               "lora_name":  "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+                               "strength_model":  0.5,
+                               "model":  [
+                                             "373",
+                                             0
+                                         ]
+                           },
+                "class_type":  "LoraLoaderModelOnly",
+                "_meta":  {
+                              "title":  "Load LoRA"
+                          }
+            },
+    "343":  {
+                "inputs":  {
+                               "longer_edge":  1536,
+                               "images":  [
+                                              "347",
+                                              0
+                                          ]
+                           },
+                "class_type":  "ResizeImagesByLongerEdge",
+                "_meta":  {
+                              "title":  "Resize Images by Longer Edge"
+                          }
+            },
+    "344":  {
+                "inputs":  {
+                               "samples":  [
+                                               "364",
+                                               0
+                                           ],
+                               "upscale_model":  [
+                                                     "368",
+                                                     0
+                                                 ],
+                               "vae":  [
+                                           "373",
+                                           2
+                                       ]
+                           },
+                "class_type":  "LTXVLatentUpsampler",
+                "_meta":  {
+                              "title":  "LTXVLatentUpsampler"
+                          }
+            },
+    "345":  {
+                "inputs":  {
+                               "strength":  1,
+                               "bypass":  [
+                                              "359",
+                                              0
+                                          ],
+                               "vae":  [
+                                           "373",
+                                           2
+                                       ],
+                               "image":  [
+                                             "346",
+                                             0
+                                         ],
+                               "latent":  [
+                                              "344",
+                                              0
+                                          ]
+                           },
+                "class_type":  "LTXVImgToVideoInplace",
+                "_meta":  {
+                              "title":  "LTXVImgToVideoInplace"
+                          }
+            },
+    "346":  {
+                "inputs":  {
+                               "img_compression":  18,
+                               "image":  [
+                                             "343",
+                                             0
+                                         ]
+                           },
+                "class_type":  "LTXVPreprocess",
+                "_meta":  {
+                              "title":  "LTXVPreprocess"
+                          }
+            },
+    "347":  {
+                "inputs":  {
+                               "resize_type":  "scale dimensions",
+                               "resize_type.width":  [
+                                                         "369",
+                                                         0
+                                                     ],
+                               "resize_type.height":  [
+                                                          "356",
+                                                          0
+                                                      ],
+                               "resize_type.crop":  "center",
+                               "scale_method":  "lanczos",
+                               "input":  [
+                                             "378",
+                                             0
+                                         ]
+                           },
+                "class_type":  "ResizeImageMaskNode",
+                "_meta":  {
+                              "title":  "Resize Image/Mask"
+                          }
+            },
+    "348":  {
+                "inputs":  {
+                               "sampler_name":  "euler"
+                           },
+                "class_type":  "KSamplerSelect",
+                "_meta":  {
+                              "title":  "KSamplerSelect"
+                          }
+            },
+    "349":  {
+                "inputs":  {
+                               "expression":  "a/2",
+                               "values.a":  [
+                                                "369",
+                                                0
+                                            ]
+                           },
+                "class_type":  "ComfyMathExpression",
+                "_meta":  {
+                              "title":  "Math Expression"
+                          }
+            },
+    "351":  {
+                "inputs":  {
+                               "expression":  "a/2",
+                               "values.a":  [
+                                                "356",
+                                                0
+                                            ]
+                           },
+                "class_type":  "ComfyMathExpression",
+                "_meta":  {
+                              "title":  "Math Expression"
+                          }
+            },
+    "352":  {
+                "inputs":  {
+                               "width":  [
+                                             "349",
+                                             1
+                                         ],
+                               "height":  [
+                                              "351",
+                                              1
+                                          ],
+                               "length":  [
+                                              "377",
+                                              1
+                                          ],
+                               "batch_size":  1
+                           },
+                "class_type":  "EmptyLTXVLatentVideo",
+                "_meta":  {
+                              "title":  "EmptyLTXVLatentVideo"
+                          }
+            },
+    "353":  {
+                "inputs":  {
+                               "strength":  0.7,
+                               "bypass":  [
+                                              "359",
+                                              0
+                                          ],
+                               "vae":  [
+                                           "373",
+                                           2
+                                       ],
+                               "image":  [
+                                             "346",
+                                             0
+                                         ],
+                               "latent":  [
+                                              "352",
+                                              0
+                                          ]
+                           },
+                "class_type":  "LTXVImgToVideoInplace",
+                "_meta":  {
+                              "title":  "LTXVImgToVideoInplace"
+                          }
+            },
+    "354":  {
+                "inputs":  {
+                               "samples":  [
+                                               "366",
+                                               1
+                                           ],
+                               "audio_vae":  [
+                                                 "336",
+                                                 0
+                                             ]
+                           },
+                "class_type":  "LTXVAudioVAEDecode",
+                "_meta":  {
+                              "title":  "LTXV Audio VAE Decode"
+                          }
+            },
+    "355":  {
+                "inputs":  {
+                               "expression":  "a",
+                               "values.a":  [
+                                                "357",
+                                                0
+                                            ]
+                           },
+                "class_type":  "ComfyMathExpression",
+                "_meta":  {
+                              "title":  "Math Expression (fps)"
+                          }
+            },
+    "356":  {
+                "inputs":  {
+                               "value":  1080
+                           },
+                "class_type":  "PrimitiveInt",
+                "_meta":  {
+                              "title":  "Height"
+                          }
+            },
+    "357":  {
+                "inputs":  {
+                               "value":  1
+                           },
+                "class_type":  "PrimitiveInt",
+                "_meta":  {
+                              "title":  "Frame Rate"
+                          }
+            },
+    "358":  {
+                "inputs":  {
+                               "value":  10
+                           },
+                "class_type":  "PrimitiveInt",
+                "_meta":  {
+                              "title":  "Duration"
+                          }
+            },
+    "359":  {
+                "inputs":  {
+                               "value":  true
+                           },
+                "class_type":  "PrimitiveBoolean",
+                "_meta":  {
+                              "title":  "Switch to Text to Video?"
+                          }
+            },
+    "360":  {
+                "inputs":  {
+                               "text":  "A very low-resolution short voice audition. The visual quality is unimportant. Audio is the priority.\n\nA 40-year-old male detective is auditioning a character voice.\nThe speaker has a Jamaican Patwa / Jamaican Creole voice.\nVoice traits: calm, medium pitch, medium pace, medium energy, clear timbre, dialogue delivery.\n\nThe speaker clearly says exactly:\n\"Wah gwaan, dis a mi character voice. Listen to mi tone, accent, age, anÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ emotion as mi speak dis line clear-clear.\"\n\nClean spoken dialogue only. No music. No background sound effects. No crowd noise. No environmental ambience. No singing. No overlapping voices. Prioritize clear speech audio.",
+                               "clip":  [
+                                            "374",
+                                            0
+                                        ]
+                           },
+                "class_type":  "CLIPTextEncode",
+                "_meta":  {
+                              "title":  "CLIP Text Encode (Prompt)"
+                          }
+            },
+    "361":  {
+                "inputs":  {
+                               "frame_rate":  [
+                                                  "355",
+                                                  0
+                                              ],
+                               "positive":  [
+                                                "360",
+                                                0
+                                            ],
+                               "negative":  [
+                                                "370",
+                                                0
+                                            ]
+                           },
+                "class_type":  "LTXVConditioning",
+                "_meta":  {
+                              "title":  "LTXVConditioning"
+                          }
+            },
+    "362":  {
+                "inputs":  {
+                               "frames_number":  [
+                                                     "377",
+                                                     1
+                                                 ],
+                               "frame_rate":  [
+                                                  "355",
+                                                  1
+                                              ],
+                               "batch_size":  1,
+                               "audio_vae":  [
+                                                 "336",
+                                                 0
+                                             ]
+                           },
+                "class_type":  "LTXVEmptyLatentAudio",
+                "_meta":  {
+                              "title":  "LTXV Empty Latent Audio"
+                          }
+            },
+    "363":  {
+                "inputs":  {
+                               "sigmas":  "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+                           },
+                "class_type":  "ManualSigmas",
+                "_meta":  {
+                              "title":  "ManualSigmas"
+                          }
+            },
+    "364":  {
+                "inputs":  {
+                               "av_latent":  [
+                                                 "340",
+                                                 0
+                                             ]
+                           },
+                "class_type":  "LTXVSeparateAVLatent",
+                "_meta":  {
+                              "title":  "LTXVSeparateAVLatent"
+                          }
+            },
+    "365":  {
+                "inputs":  {
+                               "noise":  [
+                                             "333",
+                                             0
+                                         ],
+                               "guider":  [
+                                              "339",
+                                              0
+                                          ],
+                               "sampler":  [
+                                               "337",
+                                               0
+                                           ],
+                               "sigmas":  [
+                                              "338",
+                                              0
+                                          ],
+                               "latent_image":  [
+                                                    "335",
+                                                    0
+                                                ]
+                           },
+                "class_type":  "SamplerCustomAdvanced",
+                "_meta":  {
+                              "title":  "SamplerCustomAdvanced"
+                          }
+            },
+    "366":  {
+                "inputs":  {
+                               "av_latent":  [
+                                                 "365",
+                                                 0
+                                             ]
+                           },
+                "class_type":  "LTXVSeparateAVLatent",
+                "_meta":  {
+                              "title":  "LTXVSeparateAVLatent"
+                          }
+            },
+    "368":  {
+                "inputs":  {
+                               "model_name":  "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+                           },
+                "class_type":  "LatentUpscaleModelLoader",
+                "_meta":  {
+                              "title":  "Load Latent Upscale Model"
+                          }
+            },
+    "369":  {
+                "inputs":  {
+                               "value":  1920
+                           },
+                "class_type":  "PrimitiveInt",
+                "_meta":  {
+                              "title":  "Width"
+                          }
+            },
+    "370":  {
+                "inputs":  {
+                               "text":  "singing, music, background noise, background noises, sound effects, sound effect, ambience, crowd noise, overlapping voices, multiple speakers, choir, instrumental, soundtrack, reverb, echo, muffled speech, distorted speech, whispering, mumbling",
+                               "clip":  [
+                                            "374",
+                                            0
+                                        ]
+                           },
+                "class_type":  "CLIPTextEncode",
+                "_meta":  {
+                              "title":  "CLIP Text Encode (Prompt)"
+                          }
+            },
+    "371":  {
+                "inputs":  {
+                               "cfg":  1,
+                               "model":  [
+                                             "342",
+                                             0
+                                         ],
+                               "positive":  [
+                                                "361",
+                                                0
+                                            ],
+                               "negative":  [
+                                                "361",
+                                                1
+                                            ]
+                           },
+                "class_type":  "CFGGuider",
+                "_meta":  {
+                              "title":  "CFGGuider"
+                          }
+            },
+    "373":  {
+                "inputs":  {
+                               "ckpt_name":  "ltx-2.3-22b-distilled-1.1.safetensors"
+                           },
+                "class_type":  "CheckpointLoaderSimple",
+                "_meta":  {
+                              "title":  "Load Checkpoint"
+                          }
+            },
+    "374":  {
+                "inputs":  {
+                               "text_encoder":  "gemma_3_12B_it_fp4_mixed.safetensors",
+                               "ckpt_name":  "ltx-2.3-22b-distilled-1.1.safetensors",
+                               "device":  "default"
+                           },
+                "class_type":  "LTXAVTextEncoderLoader",
+                "_meta":  {
+                              "title":  "LTXV Audio Text Encoder Loader"
+                          }
+            },
+    "376":  {
+                "inputs":  {
+                               "video_latent":  [
+                                                    "353",
+                                                    0
+                                                ],
+                               "audio_latent":  [
+                                                    "362",
+                                                    0
+                                                ]
+                           },
+                "class_type":  "LTXVConcatAVLatent",
+                "_meta":  {
+                              "title":  "LTXVConcatAVLatent"
+                          }
+            },
+    "377":  {
+                "inputs":  {
+                               "expression":  "a * b + 1",
+                               "values.a":  [
+                                                "358",
+                                                0
+                                            ],
+                               "values.b":  [
+                                                "357",
+                                                0
+                                            ]
+                           },
+                "class_type":  "ComfyMathExpression",
+                "_meta":  {
+                              "title":  "Math Expression (length)"
+                          }
+            },
+    "378":  {
+                "inputs":  {
+                               "width":  512,
+                               "height":  512,
+                               "batch_size":  1,
+                               "color":  0
+                           },
+                "class_type":  "EmptyImage",
+                "_meta":  {
+                              "title":  "Empty Image"
+                          }
+            },
+    "384":  {
+                "inputs":  {
+                               "filename_prefix":  "audio/ComfyUI",
+                               "quality":  "320k",
+                               "audioUI":  "",
+                               "audio":  [
+                                             "354",
+                                             0
+                                         ]
+                           },
+                "class_type":  "SaveAudioMP3",
+                "_meta":  {
+                              "title":  "Save Audio (MP3)"
+                          }
+            }
+}

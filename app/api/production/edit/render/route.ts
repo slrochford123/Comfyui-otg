@@ -421,8 +421,14 @@ export async function POST(req: NextRequest) {
     const clipIndex = Math.max(0, Math.floor(numberOr(body.clipIndex, 0)));
     const sourceUrl = String(body.sourceUrl || "").trim();
     const manifest = (body.manifest && typeof body.manifest === "object" ? body.manifest : {}) as EditRenderManifestInput;
-    const playbackRate = numberOr(manifest.playbackRate, 1);
+    let playbackRate = numberOr(manifest.playbackRate, 1);
     const expandMode = normalizeExpandMode(manifest.expandMode);
+
+    // OTG_PRODUCTION_VISUAL_EDIT_CLEANUP_ROUTE_V36BK2
+    // Visual Edit playback rate is display-only. Slow down uses a fixed preview-safe rate when needed.
+    if (expandMode === "slow_down" && playbackRate >= 1) {
+      playbackRate = 0.5;
+    }
     const audioPolicy = normalizeAudioPolicy(manifest);
 
     if (!sceneId) return routeError("sceneId is required.");
@@ -430,12 +436,10 @@ export async function POST(req: NextRequest) {
     if (!Number.isFinite(playbackRate) || playbackRate <= 0) {
       return routeError("playbackRate must be greater than 0.");
     }
-    if (expandMode === "freeze_start" || expandMode === "freeze_end") {
-      return routeError("Freeze start/end expand modes are not supported by this render path yet. Use expandMode none or slow_down.");
-    }
-    if (expandMode === "slow_down" && playbackRate >= 1) {
-      return routeError("Slow down expand mode requires playbackRate below 1.");
-    }
+    // OTG_PRODUCTION_VISUAL_EDIT_CLEANUP_FREEZE_ROUTE_V36BK2
+    // Freeze start/end are accepted by the route for now; first pass keeps the trimmed duration behavior.
+    // OTG_PRODUCTION_VISUAL_EDIT_CLEANUP_SLOWDOWN_ROUTE_V36BK2
+    // Slow down rate is normalized above.
     if (expandMode === "none" && Math.abs(playbackRate - 1) > 0.001) {
       return routeError("Playback rate changes require expandMode slow_down.");
     }

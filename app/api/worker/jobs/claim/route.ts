@@ -22,6 +22,12 @@ function workerOwnerKey(req: NextRequest, fallbackOwnerKey: string): string {
   return headerOwnerKey || fallbackOwnerKey;
 }
 
+function claimProviders(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean);
+  const single = String(value || "").trim().toLowerCase();
+  return single ? [single] : [];
+}
+
 function isUniversalCharacterVoiceClaim(jobType: string, action: string): boolean {
   return (
     jobType === "character_voice_pipeline" &&
@@ -49,18 +55,20 @@ export async function POST(req: NextRequest) {
     if (!route) return jsonError("This job/action is not registered as a Windows worker route.", 400);
 
     const workerId = String(body.value.workerId || req.headers.get("x-otg-worker-id") || "windows-otg-worker").trim();
+    const providers = claimProviders(body.value.provider || body.value.providers || body.value.claimProvider || body.value.claimProviders);
+    const claimOptions = providers.length ? { providers } : undefined;
     if (body.value.claimScope === "all_owners") {
       const token = requireWorkerToken(req);
       if (!token.ok) return jsonError(token.error, token.status);
       if (!isUniversalCharacterVoiceClaim(jobType, action)) {
         return jsonError("Universal claim is restricted to registered character_voice_pipeline Windows voice jobs.", 400);
       }
-      const job = claimRemoteWorkerJobAcrossOwners(workerId, jobType, action);
+      const job = claimRemoteWorkerJobAcrossOwners(workerId, jobType, action, claimOptions);
       return NextResponse.json({ ok: true, route, job }, { headers: withNoStore() });
     }
 
     const owner = await getOwnerContext(req);
-    const job = claimRemoteWorkerJob(workerOwnerKey(req, owner.ownerKey), workerId, jobType, action);
+    const job = claimRemoteWorkerJob(workerOwnerKey(req, owner.ownerKey), workerId, jobType, action, claimOptions);
 
     return NextResponse.json({ ok: true, route, job }, { headers: withNoStore() });
   } catch (error) {

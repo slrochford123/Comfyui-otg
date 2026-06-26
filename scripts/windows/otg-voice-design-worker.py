@@ -22,6 +22,7 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any, Dict
 
@@ -40,6 +41,18 @@ def log(message: str) -> None:
 
 def build_url(base_url: str, route: str) -> str:
     return urllib.parse.urljoin(base_url.rstrip("/") + "/", route.lstrip("/"))
+
+
+def normalize_qwen_synthesize_url(url: str) -> str:
+    value = clean(url)
+    if not value:
+        return "http://127.0.0.1:7863/synthesize"
+
+    parsed = urlparse(value)
+    if parsed.scheme in {"http", "https"} and parsed.netloc and parsed.path.strip("/") == "":
+        return value.rstrip("/") + "/synthesize"
+
+    return value
 
 
 def auth_headers(args: argparse.Namespace, owner_key: str | None = None) -> Dict[str, str]:
@@ -140,6 +153,25 @@ def write_json(path: Path, value: Dict[str, Any]) -> None:
     path.write_text(json.dumps(value, indent=2), encoding="utf-8")
 
 
+def has_bytes(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def post_form(url: str, fields: Dict[str, str], timeout_seconds: int) -> Dict[str, Any]:
+    body = urllib.parse.urlencode(fields).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers={"content-type": "application/x-www-form-urlencoded"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as error:
+        raw = error.read().decode("utf-8", errors="replace")
+        raise WorkerError(f"HTTP {error.code} {url}: {raw}") from error
+
+
 def run_bridge(command: list[str], cwd: Path, env: Dict[str, str], output_wav: Path, timeout: int) -> None:
     log(f"[bridge] {' '.join(command)}")
     result = subprocess.run(command, cwd=str(cwd), env=env, timeout=timeout)
@@ -150,12 +182,6 @@ def run_bridge(command: list[str], cwd: Path, env: Dict[str, str], output_wav: P
 
 
 def generate_qwen(args: argparse.Namespace, job: Dict[str, Any], job_input: Dict[str, Any], work_dir: Path) -> Dict[str, Any]:
-    if clean(os.environ.get("OTG_ENABLE_REAL_QWEN3_VOICE_SAMPLE")) != "1":
-        raise WorkerError("OTG_ENABLE_REAL_QWEN3_VOICE_SAMPLE=1 is required for Qwen3-TTS voice design worker generation.")
-
-    qwen_root = require_file(args.qwen_root, "QWEN_TTS_ROOT")
-    qwen_python = require_file(args.qwen_python, "QWEN_TTS_PYTHON")
-    qwen_bridge = require_file(args.qwen_bridge, "QWEN_TTS_BRIDGE")
     output_wav = work_dir / "sample.wav"
     stdout_log = work_dir / "logs" / "qwen3-stdout.log"
     stderr_log = work_dir / "logs" / "qwen3-stderr.log"
@@ -163,18 +189,19 @@ def generate_qwen(args: argparse.Namespace, job: Dict[str, Any], job_input: Dict
     stdout_log.parent.mkdir(parents=True, exist_ok=True)
 
     text = first_text(job_input, "sampleText", "previewText", "text")
+    instruction = clean(job_input.get("voiceInstruction") or job_input.get("instruct") or job_input.get("prompt"))
     params = {
         "engine": "qwen3",
         "model_id": clean(job_input.get("modelId")) or clean(os.environ.get("QWEN_TTS_MODEL_ID")),
-        "qwen_tts_root": str(qwen_root),
+        "qwen_tts_api_url": normalize_qwen_synthesize_url(args.qwen_api_url),
         "output_wav": str(output_wav),
         "text": text,
         "sample_text": text,
         "preview_text": first_text(job_input, "previewText", "sampleText", "text", default=text),
         "language": normalize_language(job_input.get("language")),
         "dtype": clean(os.environ.get("QWEN_TTS_DTYPE")) or "auto",
-        "qwen_instruction": clean(job_input.get("voiceInstruction") or job_input.get("instruct") or job_input.get("prompt")),
-        "voice_instruction": clean(job_input.get("voiceInstruction") or job_input.get("instruct") or job_input.get("prompt")),
+        "qwen_instruction": instruction,
+        "voice_instruction": instruction,
         "voice_design": job_input.get("voiceDesign") if isinstance(job_input.get("voiceDesign"), dict) else None,
         "qwen_design_record": job_input.get("qwenVoiceDesignRecord") if isinstance(job_input.get("qwenVoiceDesignRecord"), dict) else None,
         "source_job_id": clean(job.get("jobId")),
@@ -183,6 +210,61 @@ def generate_qwen(args: argparse.Namespace, job: Dict[str, Any], job_input: Dict
         "request_seed": clean(job_input.get("requestSeed") or job_input.get("seed")),
         "input": job_input,
     }
+    write_json(params_path, params)
+
+    qwen_api_url = normalize_qwen_synthesize_url(args.qwen_api_url)
+    if qwen_api_url:
+        log(f"[synthesize] Qwen3 API job={clean(job.get('jobId'))} url={qwen_api_url} output={output_wav}")
+        response = post_form(
+            qwen_api_url,
+            {
+                "text": text,
+                "output_path": str(output_wav),
+                "language": normalize_language(job_input.get("language")),
+                "speaker": clean(job_input.get("speaker")) or clean(os.environ.get("QWEN3_TTS_PREVIEW_SPEAKER")) or "Ryan",
+                "instruct": instruction,
+            },
+            args.sample_timeout_seconds,
+        )
+        if response.get("ok") is not True:
+            raise WorkerError(f"Qwen3 TTS API returned ok=false: {json.dumps(response, indent=2)}")
+        if not has_bytes(output_wav):
+            raise WorkerError(f"Qwen3 TTS API did not write a non-empty WAV: {output_wav}")
+        write_json(work_dir / "qwen3_api_response.json", response)
+        stdout_log.write_text(
+            json.dumps(
+                {
+                    "stage": "qwen3_api_synthesize",
+                    "apiUrl": qwen_api_url,
+                    "outputWav": str(output_wav),
+                    "outputBytes": output_wav.stat().st_size,
+                    "response": response,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        stderr_log.write_text("", encoding="utf-8")
+        return {
+            "provider": "qwen3",
+            "adapter": "qwen3_real_voice_sample",
+            "synthesizerAdapter": "qwen3_real_synthesize",
+            "sample": output_wav,
+            "paramsPath": str(params_path),
+            "stdoutPath": str(stdout_log),
+            "stderrPath": str(stderr_log),
+            "logsPath": str(stdout_log.parent),
+            "outputDir": str(work_dir),
+            "apiUrl": qwen_api_url,
+        }
+
+    if clean(os.environ.get("OTG_ENABLE_REAL_QWEN3_VOICE_SAMPLE")) != "1":
+        raise WorkerError("Set QWEN3_TTS_API_URL/QWEN3_TTS_URL or OTG_ENABLE_REAL_QWEN3_VOICE_SAMPLE=1 for bridge-based Qwen3 generation.")
+
+    qwen_root = require_file(args.qwen_root, "QWEN_TTS_ROOT")
+    qwen_python = require_file(args.qwen_python, "QWEN_TTS_PYTHON")
+    qwen_bridge = require_file(args.qwen_bridge, "QWEN_TTS_BRIDGE")
+    params["qwen_tts_root"] = str(qwen_root)
     write_json(params_path, params)
 
     env = os.environ.copy()
@@ -303,6 +385,7 @@ def process_one(args: argparse.Namespace) -> int:
                 "action": "create_voice_sample",
                 "claimScope": "all_owners",
                 "workerId": args.worker_id,
+                "providers": ["qwen3", "cosy"],
             },
         )
         job = claim.get("job")
@@ -324,6 +407,7 @@ def process_one(args: argparse.Namespace) -> int:
         work_dir = Path(args.work_root).expanduser().resolve() / owner_key / character_id / job_id
         work_dir.mkdir(parents=True, exist_ok=True)
         log(f"[claim] {job_id} owner={owner_key} character={character_id} provider={provider}")
+        log(f"[start] create_voice_sample job={job_id} provider={provider} workDir={work_dir}")
         seed = clean(job_input.get("seed") or job_input.get("requestSeed"))
 
         checkpoint(
@@ -356,6 +440,7 @@ def process_one(args: argparse.Namespace) -> int:
         )
 
         generated = generate_qwen(args, job, job_input, work_dir) if provider == "qwen3" else generate_cosy(args, job, job_input, work_dir)
+        log(f"[output] job={job_id} sample={generated['sample']} bytes={generated['sample'].stat().st_size}")
         checkpoint(
             args,
             headers,
@@ -449,6 +534,7 @@ def main() -> int:
     parser.add_argument("--qwen-python", default=os.environ.get("QWEN_TTS_PYTHON", r"C:\Users\SLRoc\miniconda3\envs\qwen3tts-repair\python.exe"))
     parser.add_argument("--qwen-site-packages", default=os.environ.get("QWEN_TTS_SITE_PACKAGES", ""))
     parser.add_argument("--qwen-bridge", default=os.environ.get("QWEN_TTS_BRIDGE", r"C:\AI\OTG-Test2\scripts\qwen3_voice_design_preview.py"))
+    parser.add_argument("--qwen-api-url", default=os.environ.get("QWEN3_TTS_API_URL") or os.environ.get("QWEN3_TTS_URL") or "http://127.0.0.1:7863/synthesize")
     parser.add_argument("--cosy-root", default=os.environ.get("COSYVOICE_ROOT", r"C:\AI\Voices\CosyVoice"))
     parser.add_argument("--cosy-python", default=os.environ.get("COSYVOICE_PYTHON", r"C:\AI\Voices\CosyVoice\.venv\Scripts\python.exe"))
     parser.add_argument("--cosy-site-packages", default=os.environ.get("COSYVOICE_SITE_PACKAGES", ""))
@@ -471,3 +557,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

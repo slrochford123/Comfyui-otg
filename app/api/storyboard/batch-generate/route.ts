@@ -5,7 +5,7 @@ import path from "path";
 import fssync from "fs";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { markRunning } from "@/lib/contentState";
-import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
+import { configuredImageComfyBaseUrl, logComfyRouting } from "@/app/api/_lib/comfyTarget";
 
 type SceneInput = {
   id?: string;
@@ -61,6 +61,11 @@ function resolveWorkflowRoot() {
 
 async function comfySubmit(workflow: any, clientId: string) {
   const baseUrl = configuredImageComfyBaseUrl();
+  logComfyRouting(
+    "/api/storyboard/batch-generate POST",
+    { requestKind: "storyboard-batch-generate", workflowLabel: "Storyboard Batch", mediaType: "image" },
+    { kind: "image", baseUrl }
+  );
   const res = await fetch(`${baseUrl.replace(/\/$/, "")}/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

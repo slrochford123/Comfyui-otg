@@ -165,6 +165,10 @@ function mockVoicePackAllowed(): boolean {
   return process.env.OTG_ALLOW_MOCK_VOICE_PACK === "1" || (process.env.NODE_ENV === "test" && process.env.OTG_ALLOW_MOCK_VOICE_PACK === "1");
 }
 
+function shouldWriteMockCopyIntermediateManifest(generationMode: "real" | "mock_copy"): boolean {
+  return generationMode !== "mock_copy" || process.env.NODE_ENV !== "test";
+}
+
 function resolveVoicePackProvider(job: QueuedContractJob): "qwen3" | "cosy" {
   const provider = cleanString(job.input.provider || job.input.sourceProvider || job.input.voiceProvider).toLowerCase();
   if (provider === "qwen3" || provider === "cosy") return provider;
@@ -753,6 +757,7 @@ export async function createTrainingDatasetManifest(
       onProgress: options.onProgress,
     });
   } else {
+    const writeIntermediateManifest = shouldWriteMockCopyIntermediateManifest(generationMode);
     for (let index = 0; index < clipCount; index += 1) {
       if (processedThisRun >= chunkSize) break;
       const clip = clips[index];
@@ -766,7 +771,9 @@ export async function createTrainingDatasetManifest(
 
       clip.status = "generating";
       clip.updatedAt = new Date().toISOString();
-      writeManifestAtomic(manifestPath, buildManifest("manifest_ready", null));
+      if (writeIntermediateManifest) {
+        writeManifestAtomic(manifestPath, buildManifest("manifest_ready", null));
+      }
       options.onProgress?.({
         generatedClipCount: readyClipCount(clips),
         requestedClipCount: clipCount,
@@ -792,14 +799,18 @@ export async function createTrainingDatasetManifest(
         clip.generatorProvider = provider === "indextts2" ? "indextts2" : undefined;
         clip.updatedAt = new Date().toISOString();
         processedThisRun += 1;
-        writeManifestAtomic(manifestPath, buildManifest("manifest_ready", null));
+        if (writeIntermediateManifest) {
+          writeManifestAtomic(manifestPath, buildManifest("manifest_ready", null));
+        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Clip generation failed.";
         clip.status = "failed";
         clip.retryCount = (clip.retryCount || 0) + 1;
         clip.lastError = errorMessage;
         clip.updatedAt = new Date().toISOString();
-        writeManifestAtomic(manifestPath, buildManifest("manifest_ready", null));
+        if (writeIntermediateManifest) {
+          writeManifestAtomic(manifestPath, buildManifest("manifest_ready", null));
+        }
         if (clip.retryCount > maxRetries) {
           throw new Error(`Training dataset clip ${clipId} failed after ${clip.retryCount} attempts with provider ${provider}. ${errorMessage}`);
         }

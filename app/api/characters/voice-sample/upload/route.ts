@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
     const characterId = safeSegment(rawCharacterId);
     if (!characterId) return jsonError("characterId is required.");
     const uploadId = workerUpload ? safeSegment(rawJobId) : `uploaded_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-    const fileName = workerUpload ? "sample.wav" : `sample${ext}`;
+    const fileName = workerUpload ? (provider === "ltx" || provider === "unnatural_ltx" ? "sample.mp3" : "sample.wav") : `sample${ext}`;
     const voiceSamplesRoot = path.join(OTG_DATA_ROOT, "characters", ownerSegment, "voice-samples");
     const outputDir = safeJoin(voiceSamplesRoot, characterId, uploadId);
     const samplePath = safeJoin(outputDir, fileName);

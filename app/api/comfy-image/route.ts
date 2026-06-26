@@ -1,130 +1,393 @@
-import { NextRequest } from "next/server";
-import sharp from "sharp";
-import { createHash } from "crypto";
-import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
+import { NextRequest, NextResponse } from "next/server";
+import { createReadStream } from "fs";
+import { stat } from "fs/promises";
+import path from "path";
+import { Readable } from "stream";
 
-export const runtime = "nodejs"; // sharp requires node runtime
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-function num(v: string | null, d: number, min: number, max: number) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return d;
-  return Math.min(max, Math.max(min, n));
-}
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".bmp"]);
 
-function isVideoFile(name: string) {
-  return /\.(mp4|webm)$/i.test(name || "");
-}
-
-function makeEtag(parts: Record<string, any>) {
-  const s = JSON.stringify(parts);
-  const h = createHash("sha1").update(s).digest("hex");
-  return `"${h}"`;
-}
-
-function conditional(req: NextRequest, etag: string) {
-  const inm = req.headers.get("if-none-match");
-  if (inm && inm === etag) {
-    return new Response(null, { status: 304, headers: { ETag: etag } });
-
+function decodeSafe(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
   }
-  return null;
 }
 
-export async function GET(req: NextRequest) {
-  const u = new URL(req.url);
+function normalizeSlash(value: string) {
+  return String(value || "").replace(/\\/g, "/");
+}
 
-  const mode = (u.searchParams.get("mode") || "thumb") as "thumb" | "view" | "raw";
-  const filename = u.searchParams.get("filename") || "";
-  const subfolder = u.searchParams.get("subfolder") || "";
-  const type = u.searchParams.get("type") || "output";
+function cleanComfyFilename(value: string) {
+  let text = decodeSafe(String(value || "").trim());
 
-  if (!filename) return new Response("Missing filename", { status: 400 });
+  try {
+    const parsed = new URL(text);
+    text = parsed.searchParams.get("filename") || parsed.searchParams.get("path") || text;
+  } catch {
+    // Not a URL.
+  }
 
-  // Base Comfy UI URL from env (must match your /api/comfy proxy).
-  // If you already use COMFY_HOST/COMFY_BASE_URL elsewhere, keep it consistent.
-  const base = configuredImageComfyBaseUrl();
+  text = decodeSafe(text)
+    .replace(/\?.*$/, "")
+    .replace(/\s\[(output|input|temp)\]$/i, "")
+    .trim();
 
-  const isThumb = mode === "thumb";
-  const isRaw = mode === "raw";
-  const isVideo = isVideoFile(filename);
+  text = normalizeSlash(text);
 
-  // NOTE: For videos, we never try to transcode thumbnails here (no ffmpeg).
-  // We only proxy the raw file for fast streaming/download.
-  if (isVideo || isRaw) {
-    // Raw proxy (streaming)
-    const view = new URL("/view", base);
-    view.searchParams.set("filename", filename);
-    if (subfolder) view.searchParams.set("subfolder", subfolder);
-    if (type) view.searchParams.set("type", type);
+  const filename = text.split("/").filter(Boolean).pop() || "";
+  const extension = path.extname(filename).toLowerCase();
 
-    const etag = makeEtag({ mode: "raw", filename, subfolder, type });
-    const maybe304 = conditional(req, etag);
-    if (maybe304) return maybe304;
+  if (!filename || !IMAGE_EXTENSIONS.has(extension)) return "";
 
-    // Forward Range for video seeking + faster downloads
-    const headers: Record<string, string> = {};
-    const range = req.headers.get("range");
-    if (range) headers["range"] = range;
+  return filename;
+}
 
-    const r = await fetch(view.toString(), { headers });
-    if (!r.ok) return new Response(`ComfyUI /view failed: ${r.status}`, { status: 502 });
+function cleanAbsolutePath(value: string) {
+  let text = decodeSafe(String(value || "").trim());
 
-    const outHeaders = new Headers();
-    outHeaders.set("Cache-Control", "public, max-age=604800, immutable");
-    outHeaders.set("ETag", etag);
+  try {
+    const parsed = new URL(text);
+    text = parsed.searchParams.get("path") || parsed.searchParams.get("filename") || text;
+  } catch {
+    // Not a URL.
+  }
 
-    // Pass through important headers for streaming
-    const pass = ["content-type", "content-length", "accept-ranges", "content-range"];
-    for (const k of pass) {
-      const v = r.headers.get(k);
-      if (v) outHeaders.set(k, v);
+  text = decodeSafe(text)
+    .replace(/\?.*$/, "")
+    .replace(/\s\[(output|input|temp)\]$/i, "")
+    .trim();
+
+  return path.normalize(text);
+}
+
+function cleanSubfolder(value: string) {
+  const text = normalizeSlash(decodeSafe(String(value || "").trim()))
+    .replace(/\?.*$/, "")
+    .replace(/^\/+|\/+$/g, "");
+
+  if (!text || text === "." || text === "..") return "";
+
+  return text
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => part !== "." && part !== "..")
+    .join(path.sep);
+}
+
+function contentTypeFor(filename: string) {
+  const extension = path.extname(filename).toLowerCase();
+
+  if (extension === ".png") return "image/png";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".webp") return "image/webp";
+  if (extension === ".bmp") return "image/bmp";
+
+  return "application/octet-stream";
+}
+
+function uniqueList(values: Array<string | undefined | null>) {
+  const seen = new Set<string>();
+  const output: string[] = [];
+
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (!text) continue;
+
+    const normalized = path.normalize(text);
+    const key = normalized.toLowerCase();
+
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    output.push(normalized);
+  }
+
+  return output;
+}
+
+function comfyBaseUrl() {
+  return String(
+    process.env.COMFYUI_BASE_URL ||
+      process.env.COMFY_BASE_URL ||
+      process.env.COMFYUI_URL ||
+      process.env.NEXT_PUBLIC_COMFYUI_URL ||
+      "http://127.0.0.1:8188",
+  ).replace(/\/+$/, "");
+}
+
+function candidateOutputRoots() {
+  const comfyRoot =
+    process.env.COMFYUI_ROOT_DIR ||
+    process.env.COMFY_ROOT_DIR ||
+    process.env.OTG_COMFY_ROOT_DIR ||
+    "";
+
+  return uniqueList([
+    process.env.COMFYUI_OUTPUT_DIR,
+    process.env.COMFY_OUTPUT_DIR,
+    process.env.OTG_COMFY_OUTPUT_DIR,
+
+    "E:\\Renders\\ComfyUI",
+    "E:\\Renders\\ComfyUI\\output",
+
+    comfyRoot ? path.join(comfyRoot, "output") : "",
+
+    "C:\\AI\\ComfyUI\\output",
+    "C:\\AI\\ComfyUI_windows_portable\\ComfyUI\\output",
+    "C:\\AI\\ComfyUI_windows_portable\\output",
+    "C:\\ComfyUI\\output",
+    "D:\\ComfyUI\\output",
+    path.join(process.cwd(), "output"),
+  ]);
+}
+
+function candidateInputRoots() {
+  const comfyRoot =
+    process.env.COMFYUI_ROOT_DIR ||
+    process.env.COMFY_ROOT_DIR ||
+    process.env.OTG_COMFY_ROOT_DIR ||
+    "";
+
+  return uniqueList([
+    process.env.COMFYUI_INPUT_DIR,
+    process.env.COMFY_INPUT_DIR,
+    process.env.OTG_COMFY_INPUT_DIR,
+
+    comfyRoot ? path.join(comfyRoot, "input") : "",
+
+    "E:\\Renders\\ComfyUI\\input",
+    "C:\\AI\\ComfyUI\\input",
+    "C:\\AI\\ComfyUI_windows_portable\\ComfyUI\\input",
+    "C:\\AI\\ComfyUI_windows_portable\\input",
+    "C:\\ComfyUI\\input",
+    "D:\\ComfyUI\\input",
+    path.join(process.cwd(), "input"),
+  ]);
+}
+
+function candidateTempRoots() {
+  const comfyRoot =
+    process.env.COMFYUI_ROOT_DIR ||
+    process.env.COMFY_ROOT_DIR ||
+    process.env.OTG_COMFY_ROOT_DIR ||
+    "";
+
+  return uniqueList([
+    process.env.COMFYUI_TEMP_DIR,
+    process.env.COMFY_TEMP_DIR,
+    process.env.OTG_COMFY_TEMP_DIR,
+
+    comfyRoot ? path.join(comfyRoot, "temp") : "",
+
+    "E:\\Renders\\ComfyUI\\temp",
+    "C:\\AI\\ComfyUI\\temp",
+    "C:\\AI\\ComfyUI_windows_portable\\ComfyUI\\temp",
+    "C:\\AI\\ComfyUI_windows_portable\\temp",
+    "C:\\ComfyUI\\temp",
+    "D:\\ComfyUI\\temp",
+    path.join(process.cwd(), "temp"),
+  ]);
+}
+
+function rootsForType(type: string) {
+  const cleanType = String(type || "output").toLowerCase();
+
+  if (cleanType === "input") return candidateInputRoots();
+  if (cleanType === "temp" || cleanType === "temporary") return candidateTempRoots();
+
+  return candidateOutputRoots();
+}
+
+async function existsFile(filePath: string) {
+  try {
+    const stats = await stat(filePath);
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isInsideRoot(root: string, filePath: string) {
+  const normalizedRoot = path.resolve(root);
+  const normalizedFile = path.resolve(filePath);
+  const relative = path.relative(normalizedRoot, normalizedFile);
+
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function findLocalComfyImage(args: {
+  filename: string;
+  type: string;
+  subfolder: string;
+  rawPath: string;
+  rawFilename: string;
+}) {
+  const roots = rootsForType(args.type);
+
+  for (const root of roots) {
+    const direct = args.subfolder
+      ? path.join(root, args.subfolder, args.filename)
+      : path.join(root, args.filename);
+
+    if (isInsideRoot(root, direct) && await existsFile(direct)) {
+      return direct;
     }
-    // Avoid any intermediary compression issues
-    outHeaders.set("X-Content-Type-Options", "nosniff");
+  }
 
-    return new Response(r.body, {
-      status: r.status, // preserves 206 for ranged responses
-      headers: outHeaders,
+  const absoluteCandidates = uniqueList([
+    cleanAbsolutePath(args.rawPath),
+    cleanAbsolutePath(args.rawFilename),
+  ]);
+
+  for (const absoluteCandidate of absoluteCandidates) {
+    if (!absoluteCandidate || !path.isAbsolute(absoluteCandidate)) continue;
+
+    for (const root of roots) {
+      if (isInsideRoot(root, absoluteCandidate) && await existsFile(absoluteCandidate)) {
+        return absoluteCandidate;
+      }
+    }
+  }
+
+  return "";
+}
+
+async function streamLocalImage(filePath: string, filename: string) {
+  const stats = await stat(filePath);
+  const nodeStream = createReadStream(filePath);
+  const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>;
+
+  return new Response(webStream, {
+    status: 200,
+    headers: {
+      "Content-Type": contentTypeFor(filename),
+      "Content-Length": String(stats.size),
+      "Content-Disposition": `inline; filename="${filename.replace(/"/g, "")}"`,
+      "Cache-Control": "no-store, max-age=0",
+      "X-OTG-Comfy-Image-Source": "local-fullres-file-v36aa",
+      "X-OTG-Comfy-Image-Path": filePath,
+      "X-OTG-Comfy-Image-Size": String(stats.size),
+    },
+  });
+}
+
+async function proxyComfyView(args: {
+  filename: string;
+  type: string;
+  subfolder: string;
+}) {
+  const base = comfyBaseUrl();
+  const url = new URL("/view", base);
+
+  url.searchParams.set("filename", args.filename);
+  url.searchParams.set("type", args.type || "output");
+  url.searchParams.set("subfolder", args.subfolder || "");
+
+  const response = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+    headers: {
+      Accept: "image/*,*/*",
+    },
+  });
+
+  if (!response.ok) return null;
+
+  const body = await response.arrayBuffer();
+
+  if (!body.byteLength) return null;
+
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": response.headers.get("content-type") || contentTypeFor(args.filename),
+      "Content-Length": String(body.byteLength),
+      "Content-Disposition": `inline; filename="${args.filename.replace(/"/g, "")}"`,
+      "Cache-Control": "no-store, max-age=0",
+      "X-OTG-Comfy-Image-Source": "comfy-view-fullres-proxy-v36aa",
+      "X-OTG-Comfy-View-Url": url.toString(),
+    },
+  });
+}
+
+// OTG_COMFY_IMAGE_LIVE_ROUTE_V36AA
+export async function GET(request: NextRequest) {
+  const params = request.nextUrl.searchParams;
+
+  const type = String(params.get("type") || "output").trim() || "output";
+  const subfolder = cleanSubfolder(params.get("subfolder") || "");
+  const rawPath = params.get("path") || "";
+  const rawFilename =
+    params.get("filename") ||
+    params.get("name") ||
+    params.get("file") ||
+    rawPath;
+
+  const filename = cleanComfyFilename(rawFilename);
+
+  if (!filename) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Missing or invalid image filename.",
+        expected: "Call /api/comfy-image?filename=<image.png>&type=output",
+        marker: "OTG_COMFY_IMAGE_LIVE_ROUTE_V36AA",
+      },
+      { status: 400 },
+    );
+  }
+
+  const localFile = await findLocalComfyImage({
+    filename,
+    type,
+    subfolder,
+    rawPath,
+    rawFilename,
+  });
+
+  if (params.get("debug") === "1") {
+    return NextResponse.json({
+      ok: Boolean(localFile),
+      marker: "OTG_COMFY_IMAGE_LIVE_ROUTE_V36AA",
+      filename,
+      type,
+      subfolder,
+      resolvedPath: localFile || null,
+      exists: Boolean(localFile),
+      roots: rootsForType(type),
+      comfyBaseUrl: comfyBaseUrl(),
     });
   }
 
-  // Thumb/View image pipeline (sharp -> webp)
-  const w = num(u.searchParams.get("w"), isThumb ? 420 : 1280, 200, 2400);
-  const q = num(u.searchParams.get("q"), isThumb ? 62 : 78, 35, 92);
-
-  const etag = makeEtag({ mode, w, q, filename, subfolder, type });
-  const maybe304 = conditional(req, etag);
-  if (maybe304) return maybe304;
-
-  const view = new URL("/view", base);
-  view.searchParams.set("filename", filename);
-  if (subfolder) view.searchParams.set("subfolder", subfolder);
-  if (type) view.searchParams.set("type", type);
-
-  const r = await fetch(view.toString());
-  if (!r.ok) return new Response(`ComfyUI /view failed: ${r.status}`, { status: 502 });
-
-  const input = Buffer.from(await r.arrayBuffer());
-
-  let out: Buffer;
-  try {
-    out = await sharp(input)
-      .rotate()
-      .resize({ width: w, withoutEnlargement: true })
-      .webp({ quality: q })
-      .toBuffer();
-  } catch (e: any) {
-    return new Response(`sharp error: ${String(e?.message ?? e)}`, { status: 500 });
+  if (localFile) {
+    return streamLocalImage(localFile, filename);
   }
 
-  const cache = isThumb ? "public, max-age=31536000, immutable" : "public, max-age=604800";
-
-  return new Response(new Uint8Array(out), {
-    status: 200,
-    headers: { "Content-Type": "image/webp",
-      "Cache-Control": cache,
-      ETag: etag,
-      "X-Content-Type-Options": "nosniff",
- },
+  const proxied = await proxyComfyView({
+    filename,
+    type,
+    subfolder,
   });
+
+  if (proxied) return proxied;
+
+  return NextResponse.json(
+    {
+      ok: false,
+      marker: "OTG_COMFY_IMAGE_LIVE_ROUTE_V36AA",
+      error: "Could not find full-resolution ComfyUI image.",
+      filename,
+      type,
+      subfolder,
+      searchedRoots: rootsForType(type),
+      comfyBaseUrl: comfyBaseUrl(),
+      envHint: "Set COMFYUI_OUTPUT_DIR=E:\\Renders\\ComfyUI if your output path changes.",
+    },
+    { status: 404 },
+  );
 }

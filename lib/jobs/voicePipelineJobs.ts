@@ -35,7 +35,7 @@ export const CHARACTER_ANIMATION_PREVIEW_ACTIONS = [
   "animate_preview",
 ] as const;
 
-const PROVIDERS = ["qwen3", "cosy"] as const satisfies readonly VoiceGeneratorProvider[];
+const PROVIDERS = ["qwen3", "cosy", "ltx", "unnatural_ltx"] as const satisfies readonly VoiceGeneratorProvider[];
 const VOICE_FX_PRESETS = [
   "clean_dialogue",
   "monstrous",
@@ -555,7 +555,7 @@ export function supersedeActiveTrainingDatasetJobs(ownerKey: string, characterId
 
 function validateProvider(raw: Record<string, unknown>): string | null {
   if (raw.provider === undefined || raw.provider === null || raw.provider === "") return null;
-  return includesString(PROVIDERS, raw.provider) ? null : "Invalid provider. Expected qwen3 or cosy.";
+  return includesString(PROVIDERS, raw.provider) ? null : "Invalid provider. Expected qwen3, cosy, ltx, or unnatural_ltx.";
 }
 
 function validateVoiceFxPreset(raw: Record<string, unknown>): string | null {
@@ -858,6 +858,9 @@ function mergeJobResult(current: unknown, patch: Record<string, unknown>): Recor
 
 export type RemoteVoicePipelineWorkerAction = "generate_training_dataset" | "start_applio_training" | "test_trained_voice" | "generate_character_preview";
 export type RemoteWorkerClaimAction = CharacterVoicePipelineAction | ProductionAudioStudioAction | CharacterAnimationPreviewAction;
+export type RemoteWorkerClaimOptions = {
+  providers?: readonly string[];
+};
 
 function remoteWorkerActionLabel(action: RemoteVoicePipelineWorkerAction): string {
   if (action === "start_applio_training") return "Windows Applio training worker";
@@ -884,6 +887,12 @@ function isClaimableForRemoteWorker(job: StoredQueuedContractJob, jobType: Queue
   if (job.jobType !== jobType || job.action !== action) return false;
   if (job.status === "queued") return true;
   return job.status === "interrupted" && isDurableLeasedJob(job) && hasExplicitResumeRequest(job);
+}
+
+function matchesClaimOptions(job: StoredQueuedContractJob, options?: RemoteWorkerClaimOptions): boolean {
+  const providers = (options?.providers || []).map((item) => cleanString(item).toLowerCase()).filter(Boolean);
+  if (!providers.length) return true;
+  return providers.includes(cleanString(job.input?.provider).toLowerCase());
 }
 
 function claimPriority(job: StoredQueuedContractJob): number {
@@ -961,6 +970,7 @@ export function claimRemoteWorkerJob(
   workerId: string,
   jobType: QueuedContractJobType,
   action: RemoteWorkerClaimAction,
+  options?: RemoteWorkerClaimOptions,
 ): QueuedContractJob | null {
   const normalizedOwnerKey = cleanString(ownerKey);
   const normalizedWorkerId = cleanString(workerId) || (
@@ -978,7 +988,8 @@ export function claimRemoteWorkerJob(
   const store = readStoreWithFreshLeases();
   const index = findClaimCandidateIndex(store.jobs, (job) =>
     job.ownerKey === normalizedOwnerKey &&
-    isClaimableForRemoteWorker(job, jobType, action)
+    isClaimableForRemoteWorker(job, jobType, action) &&
+    matchesClaimOptions(job, options)
   );
 
   if (index < 0) return null;
@@ -1003,11 +1014,13 @@ export function claimRemoteWorkerJobAcrossOwners(
   workerId: string,
   jobType: QueuedContractJobType,
   action: RemoteWorkerClaimAction,
+  options?: RemoteWorkerClaimOptions,
 ): QueuedContractJob | null {
   const normalizedWorkerId = cleanString(workerId) || "windows-otg-worker";
   const store = readStoreWithFreshLeases();
   const index = findClaimCandidateIndex(store.jobs, (job) =>
-    isClaimableForRemoteWorker(job, jobType, action)
+    isClaimableForRemoteWorker(job, jobType, action) &&
+    matchesClaimOptions(job, options)
   );
 
   if (index < 0) return null;

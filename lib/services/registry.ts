@@ -23,14 +23,14 @@ function trimUrl(value: string | undefined, fallback: string) {
 }
 
 export function getServiceRegistry(env: NodeJS.ProcessEnv = process.env): Record<ServiceId, ServiceConfig> {
-  const comfy = trimUrl(env.COMFY_BASE_URL || env.COMFY_URL, 'http://127.0.0.1:8188');
+  const comfy = trimUrl(env.COMFYUI_URL || env.COMFY_BASE_URL || env.COMFY_URL, 'http://127.0.0.1:8188');
   return {
     'comfy-image': {
       id: 'comfy-image',
       label: 'Comfy image',
       kind: 'http',
-      env: ['COMFY_IMAGE_BASE_URL', 'COMFY_BASE_URL', 'COMFY_URL'],
-      baseUrl: trimUrl(env.COMFY_IMAGE_BASE_URL, comfy),
+      env: ['COMFYUI_IMAGE_URL', 'COMFY_IMAGE_BASE_URL', 'COMFY_BASE_URL', 'COMFY_URL'],
+      baseUrl: trimUrl(env.COMFYUI_IMAGE_URL || env.COMFY_IMAGE_BASE_URL || comfy, comfy),
       healthPath: '/system_stats',
       required: true,
     },
@@ -38,8 +38,8 @@ export function getServiceRegistry(env: NodeJS.ProcessEnv = process.env): Record
       id: 'comfy-video',
       label: 'Comfy video',
       kind: 'http',
-      env: ['COMFY_VIDEO_BASE_URL', 'COMFY_BASE_URL', 'COMFY_URL'],
-      baseUrl: trimUrl(env.COMFY_VIDEO_BASE_URL, comfy),
+      env: ['COMFYUI_VIDEO_URL', 'COMFY_VIDEO_BASE_URL', 'COMFYUI_URL', 'COMFY_BASE_URL', 'COMFY_URL'],
+      baseUrl: trimUrl(env.COMFYUI_VIDEO_URL || env.COMFY_VIDEO_BASE_URL, comfy),
       healthPath: '/system_stats',
       required: true,
     },

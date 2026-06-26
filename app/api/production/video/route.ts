@@ -3,7 +3,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import fssync from "node:fs";
 
-import { configuredVideoComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
+import { configuredVideoComfyBaseUrl, logComfyRouting } from "@/app/api/_lib/comfyTarget";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { OTG_DATA_ROOT, ensureDir, safeSegment } from "@/lib/paths";
 import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
@@ -776,6 +776,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "imagePath is required" }, { status: 400 });
     }
     const comfyBaseUrl = normalizeBaseUrl(configuredVideoComfyBaseUrl() || "http://127.0.0.1:8188");
+    logComfyRouting(
+      "/api/production/video POST",
+      { requestKind: "production-video", workflowLabel: "Production Video", mediaType: "video" },
+      { kind: "video", baseUrl: comfyBaseUrl }
+    );
     const resolvedWorkflowFile = resolveWorkflowPath(workflowFileRaw);
 
     const rawWorkflow = await fs.readFile(resolvedWorkflowFile, "utf8");

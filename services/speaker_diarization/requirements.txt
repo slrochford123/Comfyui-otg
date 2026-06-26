@@ -1,0 +1,9 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.6
+python-multipart>=0.0.9
+huggingface_hub>=0.24,<1.0
+protobuf>=5,<7
+speechbrain==1.0.3
+torch==2.5.1
+torchaudio==2.5.1
+pyannote.audio==3.3.2

@@ -1,4 +1,4 @@
-﻿# OTG Rework Checklist
+# OTG Rework Checklist
 
 ## App Theme System
 
@@ -399,7 +399,22 @@ Next:
 - [x] Phase 3 dedicated Voice Design worker entrypoints added: `scripts/windows/otg-voice-design-worker.py` and `scripts/windows/otg-voice-design-worker.ps1`. This supervisor requires `OTG_WORKER_TOKEN`, claims only `character_voice_pipeline / create_voice_sample` across owners, starts Qwen3-TTS or CosyVoice only after a job is claimed, uploads `sample.wav` to `voice-samples/<characterId>/<jobId>/`, then completes the job with `mock:false`, provider/adapter, sample URL/path, and log paths.
 - [x] Generic worker claim/complete/fail and voice-sample upload now support token-authenticated cross-owner Voice Design completion while preserving the claimed job's `ownerKey`. The universal claim allowlist remains strict and does not expose production, animation, dataset, Applio training, or Applio inference jobs to the Voice Design worker.
 - [x] Create Voice worker progress repair: added token-authenticated `/api/worker/jobs/checkpoint`, updated the dedicated Voice Design worker to checkpoint `Voice creating started`, generation, upload, and finalization progress, and updated the launcher to load TEST `.env.local` values so Qwen3-TTS/CosyVoice bridge paths are available when the Windows worker starts.
+- [x] Qwen3 create_voice_sample worker repair: `otg-voice-design-worker.py` now uses `QWEN3_TTS_API_URL` / `QWEN3_TTS_URL` first for real `/synthesize` output, and `scripts/windows/otg-voice-qwen3-worker.ps1` starts the create-voice worker with Qwen3 API defaults.
+- [x] LTX Voice Design Patch 1 TEST only: added the `LTX Voice Sample.json` workflow preset, 52 LTX dialect/stylized spoken lines, LTX Voice prompt builder/UI option, and fixed Qwen3TTS/CosyVoice Character Builder controls to English with no accent picker.
+- [x] LTX Voice Design picker UX: dialect options are alphabetized and the visible Sample phrase now syncs to the selected dialect line until manually edited.
+- [x] LTX Voice accepted dialect finalization: dropdown now exposes only the 28 accepted dialects, sample phrases use accepted audition lines, positive prompts avoid unwanted-audio wording, and node 370 receives the dedicated negative prompt.
+- [x] LTX Voice Design Patch 2 TEST only: `provider: ltx` create-voice jobs now queue with dialect/prompt metadata, the dedicated Windows LTX worker patches `LTX Voice Sample.json`, submits to ComfyUI, copies node 384 MP3 audio only, and completes with `mock:false` / `ltx_audio_voice_sample`.
+- [x] TEST launcher now starts the Voice Design Worker for Qwen3/Cosy `create_voice_sample` jobs and the Voice LTX Worker for `provider: ltx` jobs after Next TEST starts.
+- [x] LTX Voice workflow node 384 audio input repaired from missing node 385 to audio decode node 354.
+- [x] LTX Voice workflow audio decode chain repaired: node 354 now receives samples from node 366 and audio VAE from node 336.
+- [x] LTX Voice Sample workflow replaced with corrected uploaded `ComfyUI_00021_.json`; audio chain now decodes node 366 through node 354 and saves MP3 through node 384.
+- [x] LTX Voice Design Patch 3 TEST only: LTX audio samples now expose Remove Background Sound / Effects and Enhance Voice post-processing actions, save isolated/enhanced audio beside the original sample, keep the original playable, and preserve audio-only UI behavior.
+- [x] LTX Voice Patch 3 JSON-body fix: post-processing buttons now send explicit JSON request payloads with local sample paths, and the process route clones/parses safely before owner resolution.
 - [x] Create Again now submits a fresh random `seed` / `requestSeed` into the `create_voice_sample` job input so each request is a new generation attempt.
+- [x] Unnatural Voices Patch 1 TEST only: added the 31-preset Unnatural Voices registry, separate Character Builder selection UI with category/preset selectors, fixed sample line and prompt preview, and blocked generation with the Patch 2 placeholder so no normal LTX dialect job is queued.
+- [x] Unnatural Voices Patch 1 registry source repaired: placeholder prompt text was replaced with exact final uploaded LTX 2.3.1 prompts from `ltx_31_final_unnatural_voice_prompts.json`.
+- [x] Unnatural Voices Patch 2: selected fixed presets now queue `provider: unnatural_ltx` create-voice jobs, the LTX worker patches the preset prompt into node 360, patches node 370 negative prompt, randomizes node 333/334 seeds, returns audio-only `ltx_unnatural_voice_sample` results, and reuses LTX audio cleanup/enhancement.
+- [ ] ElevenLabs Experimental: pending separate provider work; not part of Unnatural Voices Patch 1.
 - [ ] Browser QA: start the dedicated Voice Design worker with `OTG_WORKER_TOKEN`, create a Qwen3-TTS voice, and confirm the completed job has `mock:false`, a playable `sampleUrl`, and `qwen3_real_voice_sample`.
 - [ ] Browser QA: repeat Create Voice with CosyVoice and confirm the completed job has `mock:false`, a playable `sampleUrl`, and `cosy_real_voice_sample`.
 - [x] Dataset worker lifecycle now separates worker readiness from user finalization. Worker completion marks the job `ready_for_review`; the UI exposes Preview Samples, Complete Dataset, and Terminate. Complete Dataset revalidates the manifest and finalizes the job to `completed`, which unlocks Train Voice Model.
@@ -444,3 +459,58 @@ Next:
 - [x] TEST only: fixed SPZ viewer orientation, target locking, camera sync, and initial framing.
 - [x] TEST only: constrained Angles camera controls to prevent invalid ComfyUI vertical angle submissions.
 - [ ] TEST only: wire Create Angles Image to capture the Spark/SPZ viewer canvas directly.
+
+## Character Builder Standard / Freeform separation
+
+- [x] Patch 1 TEST only: Character Builder entry page now separates Create Standard Character, Upload Standard Character Image, Create Freeform Character, and Upload Freeform Character Image.
+- [x] Patch 1 TEST only: builder draft state now stores `characterAnatomyMode`, `characterInputMode`, `sourceFraming`, and `fullBodyStatus`.
+- [x] Patch 1 TEST only: Freeform Create adds full-body/full-form, natural-anatomy prompt constraints without changing Standard Create behavior.
+- [x] Patch 1 TEST only: Upload source framing now uses the canonical `face`, `half_body`, and `full_body` field while preserving the older `imageCompleteness` draft field for compatibility.
+- [x] Patch 2 TEST only: add upload source framing prompts and downstream gating so Character Card, Angles, Voice Preview finalization, and Complete Character require approved full-body/full-form status when needed.
+- [x] Patch 3 TEST only: branch edit-image full-body expansion prompts for Standard versus Freeform uploads and save the approved full-body/full-form result.
+- [x] Patch 4 TEST only: auto-run background removal after Freeform final full-body/full-form approval and require explicit Freeform full-body/full-form confirmation before downstream steps.
+
+## Character Builder Auto Describe responsiveness
+
+- [x] TEST only: Auto Describe now prefers the approved selected character source, uses a compact OllamaVision JSON prompt, runs with a hard timeout, and keeps manual fields intact on failure.
+- [x] TEST only: Auto Describe now uses an aggressive 512px JPEG fast path, Auto Describe-specific Ollama env overrides, and concise server timing logs.
+- [x] TEST only: Complete Description Patch 1 renames the Character Builder action, creates a lockable character identity data model, and saves prompt-ready continuity metadata without changing provider routing.
+- [x] TEST only: Complete Description Patch 2 adds an OpenAI-first provider ladder with local Ollama fallback, compact JSON validation, provider timing logs, and manual-detail-aware prompts.
+- [x] TEST only: Complete Description Patch 3 injects locked prompt-ready character continuity blocks into production scene/global prompts and blocks selected-character generation when any selected card lacks a locked identity.
+- [x] TEST only: Complete Description path resolution now accepts safe project data paths and `/api/file?path=...` image URLs so final Character Builder images can reach the provider ladder without weakening path security.
+- [x] TEST only: Complete Description clothing extraction now separates descriptor-like manual text from real outfit/accessory items and builds cleaner prompt-ready identity anchors.
+
+
+
+
+
+
+
+- [x] ElevenLabs Experimental preview-only backend Patch 1: added server-side status/design-preview/file routes. Preview audio is saved locally only; no permanent ElevenLabs voice creation endpoint is called.
+
+- [x] Voice Effects backend Patch 1: added FFmpeg-backed Space/Distance, Machine/Digital, and Creature/Alien effect presets plus backend processing route. UI integration remains pending.
+
+
+- [x] Voice Effects UI Patch 2: added category/preset/intensity controls for FFmpeg-backed voice effects under completed voice samples. Original audio remains preserved.
+
+
+- [x] Voice Effects Rework Patch 3A: reworked Voice Effects into Base Voice, Simple Effects, Advanced FFmpeg/Pedalboard/SoX boxes, current working voice, reset, and effect chain UI. Pedalboard/SoX backend wiring remains Patch 3B.
+
+
+- [x] Voice Effects Rework Patch 3A-FXPage: reworked the actual Voice Lab Step 2 FX page with Simple Pitch/Echo controls, FFmpeg/Pedalboard/SoX advanced boxes, current working voice, effect chain, reset, and Use This Version. Pedalboard/SoX backend remains Patch 3B.
+
+
+- [x] Voice Effects Backend Patch 3B: wired Pedalboard and SoX backend preset execution into the voice-sample effect route and enabled the real Voice FX page buttons. Manual unlocked controls remain Patch 3C.
+
+
+- [x] Voice Effects Cleanup Duplicate Job Panel: removed the temporary duplicate Voice Effects UI from completed job cards; the real Step 2 Voice Effects page remains the only active effects interface.
+
+
+- [x] Voice Effects Patch 3C-1: added unlocked editable FFmpeg manual controls, custom FFmpeg filter payload support, and chain stacking warning. Pedalboard/SoX manual controls remain pending.
+
+
+- [x] Voice Effects Patch 3C-2: added unlocked editable Pedalboard and SoX manual controls with backend custom-control payload support.
+
+
+- [x] Voice Effects Final Polish Patch 3D: removed stale backend-pending wording, added Pedalboard/SoX manual reset buttons, and marked Voice Effects functional implementation complete pending runtime spot-checks.
+

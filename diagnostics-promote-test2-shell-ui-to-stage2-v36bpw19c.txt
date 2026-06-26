@@ -1,0 +1,26 @@
+﻿Patch: promote-test2-shell-ui-to-stage2-v36bpw19c
+AppliedAt: 2026-06-25T23:28:45.1073738-04:00
+SourceRoot: C:\AI\OTG-Test2
+TargetRoot: C:\AI\OTG-Stage2
+TargetHeadBefore: 163ef27
+BackupRoot: C:\AI\OTG-Stage2\.patch-backups\promote-test2-shell-ui-to-stage2-v36bpw19c-20260625-232844
+SparkVersion: ^2.1.0
+
+Copied files:
+- app\app\AppPageClient.tsx
+- app\components\HeaderBar.tsx
+- app\app\globals.css
+- app\globals.css
+
+Package changes:
+- package.json: added dependencies['@sparkjsdev/spark'] = ^2.1.0
+- package-lock.json: updated by npm install
+
+Intentionally not copied from failed v36bpw19:
+- app\app\components\CharactersPanel.tsx
+- app\api\production\animate\route.ts
+- app\api\production\background\route.ts
+- app\api\production\picture\route.ts
+- app\api\production\video\route.ts
+- app\api\production\edit\render\route.ts
+- app\api\gallery\sync\route.ts

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
-import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
+import { configuredImageComfyBaseUrl, logComfyRouting } from "@/app/api/_lib/comfyTarget";
 
 import { optionalUserId } from "@/lib/authServer";
 import { userInboxDir, deviceInboxDir } from "@/lib/paths";
@@ -71,6 +71,11 @@ export async function POST(req: NextRequest) {
     }
 
     // 1) Submit to ComfyUI
+    logComfyRouting(
+      "/api/otg/generate POST",
+      { requestKind: "otg-generate", workflowLabel: "OTG Generate", mediaType: "image" },
+      { kind: "image", baseUrl: COMFY_BASE_URL }
+    );
     const submit = await fetch(`${COMFY_BASE_URL}/prompt`, {
       method: "POST",
       headers: { "content-type": "application/json" },

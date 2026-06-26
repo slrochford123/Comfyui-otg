@@ -1,7 +1,7 @@
-export type VoiceDesignModelId = "qwen3tts" | "cosyvoice";
+export type VoiceDesignModelId = "qwen3tts" | "cosyvoice" | "ltxvoice" | "unnaturalvoices";
 export type VoiceDesignMode = "voice_design" | "custom_voice" | "voice_clone" | "instruct" | "zero_shot_reference";
 export type SpeakerIdentity = "man" | "woman" | "child" | "adult" | "elderly_person";
-export type VoiceAgeRange = "child" | "teen" | "young_adult" | "adult" | "middle_aged" | "elderly";
+export type VoiceAgeRange = "child" | "teen" | "teenager" | "young_adult" | "adult" | "middle_aged" | "elderly";
 export type VoiceGenderPresentation = "male" | "female" | "neutral_androgynous";
 export type VoicePace = "very_slow" | "slow" | "medium" | "fast" | "very_fast";
 export type VoicePitch = "very_low" | "low" | "medium" | "high" | "very_high";
@@ -11,7 +11,8 @@ export type VoiceDesignOptionKind =
   | "official"
   | "prompt_based"
   | "preset_speaker"
-  | "chinese_dialect";
+  | "chinese_dialect"
+  | "ltx_dialect";
 
 export type VoiceDesignOption = {
   id: string;
@@ -21,6 +22,9 @@ export type VoiceDesignOption = {
   speaker?: string;
   kind: VoiceDesignOptionKind;
   instruction?: string;
+  promptLabel?: string;
+  auditionLine?: string;
+  enabled?: boolean;
   referenceRecommended?: boolean;
 };
 
@@ -57,7 +61,7 @@ export type VoiceDesignProfile = {
 };
 
 export type VoiceRequestPayload = {
-  model: "qwen3-tts" | "cosyvoice" | "cosyvoice3";
+  model: "qwen3-tts" | "cosyvoice" | "cosyvoice3" | "ltx-voice";
   mode: VoiceDesignMode;
   language: string;
   speaker?: string | null;
@@ -67,13 +71,62 @@ export type VoiceRequestPayload = {
   referenceAudio?: string | null;
   voiceDesign: VoiceDesignProfile;
   accentDialect: VoiceDesignOption | null;
+  ltxAuditionPrompt?: string;
 };
 
-export const DEFAULT_SAMPLE_TEXT =
-  "Hello, this is my character voice. I am speaking clearly at a natural pace so you can hear the tone, age, pitch, and emotion of the voice.";
+export const DEFAULT_VOICE_SAMPLE_TEXT =
+  "Hello, this is my character voice. Listen to my tone, accent, age, and emotion as I speak this line clearly.";
+
+export const DEFAULT_SAMPLE_TEXT = DEFAULT_VOICE_SAMPLE_TEXT;
+
+export const LTX_VOICE_NEGATIVE_PROMPT =
+  "singing, music, background noise, background noises, sound effects, sound effect, ambience, crowd noise, overlapping voices, multiple speakers, choir, instrumental, soundtrack, reverb, echo, muffled speech, distorted speech, whispering, mumbling";
+
+export const DEFAULT_LTX_VOICE_DIALECT_ID = "general_american";
+
+export const LTX_VOICE_DIALECTS = [
+  { id: "african_american_vernacular", label: "African American Vernacular", promptLabel: "African American Vernacular", kind: "ltx_dialect", auditionLine: "Ayo, this voice right here got rhythm and heart. I am speaking clear, strong, and alive, with real feeling in every word.", enabled: true },
+  { id: "arabic", label: "Arabic", promptLabel: "Arabic", kind: "ltx_dialect", auditionLine: "Marhaba, my friend. This voice speaks with warmth, strength, and clear emotion, carrying rich rhythm in every word today.", enabled: true },
+  { id: "australian", label: "Australian", promptLabel: "Australian", kind: "ltx_dialect", auditionLine: "G'day, mate. This is my voice, easy and bright, speaking clear with Aussie rhythm, warm feeling, and cheeky charm.", enabled: true },
+  { id: "belizean_kriol", label: "Belizean Kriol", promptLabel: "Belizean Kriol", kind: "ltx_dialect", auditionLine: "Eh bwai, dis da mi voice. I di talk clear and strong, wid Belize rhythm, warm heart, and plenty feeling.", enabled: true },
+  { id: "british", label: "British", promptLabel: "British", kind: "ltx_dialect", auditionLine: "Hello, this is my voice. I am speaking with a composed British tone, clear rhythm, careful feeling, and confident expression.", enabled: true },
+  { id: "chicago", label: "Chicago", promptLabel: "Chicago", kind: "ltx_dialect", auditionLine: "Hey, this is my voice. I am speaking direct and clear, with Chicago energy, city rhythm, and strong honest feeling.", enabled: true },
+  { id: "essex", label: "Essex", promptLabel: "Essex", kind: "ltx_dialect", auditionLine: "Oi, listen up. This is my voice, bright and confident, speaking clear with Essex attitude, rhythm, and proper feeling.", enabled: true },
+  { id: "french", label: "French", promptLabel: "French", kind: "ltx_dialect", auditionLine: "Bonjour, my friend. This voice speaks with French elegance, soft rhythm, warm emotion, and clear feeling in every word.", enabled: true },
+  { id: "general_american", label: "General American", promptLabel: "General American", kind: "ltx_dialect", auditionLine: "Hello, this is my voice. I am speaking clearly with a natural American sound, steady tone, and controlled emotion.", enabled: true },
+  { id: "german", label: "German", promptLabel: "German", kind: "ltx_dialect", auditionLine: "Hallo, my friend. This voice is clear, steady, and precise, with strong tone, careful rhythm, and controlled emotion.", enabled: true },
+  { id: "ghanaian", label: "Ghanaian", promptLabel: "Ghanaian", kind: "ltx_dialect", auditionLine: "Ei, chale, this is my voice. I am speaking clearly with Ghanaian warmth, bright rhythm, strong energy, and real feeling.", enabled: true },
+  { id: "guyanese", label: "Guyanese", promptLabel: "Guyanese", kind: "ltx_dialect", auditionLine: "Ay bai, dis is meh voice. I talking clear and strong, wid Guyanese rhythm, warm feeling, and real character inside.", enabled: true },
+  { id: "indian", label: "Indian", promptLabel: "Indian", kind: "ltx_dialect", auditionLine: "Hello, my friend. This is my voice. Please listen carefully to the tone, emotion, rhythm, and clear expression in every word.", enabled: true },
+  { id: "italian", label: "Italian", promptLabel: "Italian", kind: "ltx_dialect", auditionLine: "Ciao, my friend. This-a voice speaks with heart, warm rhythm, open emotion, and clear feeling in every single word.", enabled: true },
+  { id: "jamaican", label: "Jamaican", promptLabel: "Jamaican", kind: "ltx_dialect", auditionLine: "Wah gwaan, mi friend. Dis ya voice bright like Kingston morning; mi talk wid heart, rhythm, and clear Jamaican feeling.", enabled: true },
+  { id: "london_cockney", label: "London Cockney", promptLabel: "London Cockney", kind: "ltx_dialect", auditionLine: "Oi, listen here. This is me voice, clear as day, with London bite, warm feeling, and proper character in every word.", enabled: true },
+  { id: "manchester_mancunian", label: "Manchester Mancunian", promptLabel: "Manchester Mancunian", kind: "ltx_dialect", auditionLine: "Alright, mate. This is my voice, plain spoken and clear, with Manchester rhythm, grounded tone, and real feeling.", enabled: true },
+  { id: "nigerian_naija", label: "Nigerian Naija", promptLabel: "Nigerian Naija", kind: "ltx_dialect", auditionLine: "Hello o, this is my voice. I am speaking clearly with Naija energy, strong rhythm, confidence, and plenty feeling.", enabled: true },
+  { id: "northern_irish", label: "Northern Irish", promptLabel: "Northern Irish", kind: "ltx_dialect", auditionLine: "Here now, this is my voice. I am speaking clear and firm, with Northern Irish rhythm, sharp tone, and strong feeling.", enabled: true },
+  { id: "portuguese_brazilian", label: "Portuguese Brazilian", promptLabel: "Portuguese Brazilian", kind: "ltx_dialect", auditionLine: "Ola, meu amigo. This voice is warm, musical, and clear, with Brazilian rhythm, bright emotion, and open feeling.", enabled: true },
+  { id: "russian", label: "Russian", promptLabel: "Russian", kind: "ltx_dialect", auditionLine: "Hello, my friend. This voice is strong, serious, and clear, with deep tone, steady rhythm, and powerful emotion.", enabled: true },
+  { id: "singapore_singlish", label: "Singapore Singlish", promptLabel: "Singapore Singlish", kind: "ltx_dialect", auditionLine: "Hello lah, this is my voice. I speak clear-clear, with Singapore rhythm, confident tone, and steady emotion, can.", enabled: true },
+  { id: "spanish", label: "Spanish", promptLabel: "Spanish", kind: "ltx_dialect", auditionLine: "Hola, my friend. This is my voice, warm and clear, with Spanish rhythm, bright tone, and strong emotion in every word.", enabled: true },
+  { id: "texan", label: "Texan", promptLabel: "Texan", kind: "ltx_dialect", auditionLine: "Howdy, this is my voice. I am speaking clear and steady, with Texas warmth, confidence, and a strong honest feeling.", enabled: true },
+  { id: "trinidadian", label: "Trinidadian", promptLabel: "Trinidadian", kind: "ltx_dialect", auditionLine: "Ay, dis is meh voice. Ah speaking clear and lively, wid Trini rhythm, warm feeling, and plenty character inside.", enabled: true },
+  { id: "welsh", label: "Welsh", promptLabel: "Welsh", kind: "ltx_dialect", auditionLine: "Hello, this is my voice, it is. I am speaking clear, with Welsh warmth, musical rhythm, and feeling in every word.", enabled: true },
+  { id: "west_country", label: "West Country", promptLabel: "West Country", kind: "ltx_dialect", auditionLine: "Alright, me lover, this be my voice. I be speaking clear and warm, with West Country heart and steady feeling.", enabled: true },
+  { id: "yorkshire", label: "Yorkshire", promptLabel: "Yorkshire", kind: "ltx_dialect", auditionLine: "Ey up, this is me voice. I am speaking plain, warm, and clear, with Yorkshire heart and nowt fancy hiding the feeling.", enabled: true },
+] as const satisfies readonly VoiceDesignOption[];
+
+export function getLtxDialectSampleText(accentDialectId: string): string {
+  return LTX_VOICE_DIALECTS.find((dialect) => dialect.id === accentDialectId)?.auditionLine || DEFAULT_VOICE_SAMPLE_TEXT;
+}
+
+export function isLtxDialectSampleText(sampleText: string): boolean {
+  const normalized = sampleText.trim();
+  if (!normalized) return false;
+  return normalized === DEFAULT_VOICE_SAMPLE_TEXT || LTX_VOICE_DIALECTS.some((dialect) => dialect.auditionLine === normalized);
+}
 
 export const SPEAKER_IDENTITIES: SpeakerIdentity[] = ["man", "woman", "child", "adult", "elderly_person"];
-export const VOICE_AGE_RANGES: VoiceAgeRange[] = ["child", "teen", "young_adult", "adult", "middle_aged", "elderly"];
+export const VOICE_AGE_RANGES: VoiceAgeRange[] = ["child", "teenager", "young_adult", "adult", "elderly"];
 export const VOICE_GENDER_PRESENTATIONS: VoiceGenderPresentation[] = ["male", "female", "neutral_androgynous"];
 export const VOICE_TONES = [
   "warm",
@@ -82,12 +135,16 @@ export const VOICE_TONES = [
   "serious",
   "playful",
   "confident",
+  "fearful",
   "gentle",
   "authoritative",
+  "villainous",
+  "heroic",
   "dramatic",
   "friendly",
   "professional",
   "mysterious",
+  "comedic",
   "energetic",
   "sad",
   "excited",
@@ -164,7 +221,7 @@ export const PROMPT_BASED_ACCENTS: VoiceDesignOption[] = PROMPT_BASED_ENGLISH_AC
   language: "English",
   kind: "prompt_based",
   referenceRecommended: true,
-  detail: "Prompt-based accent guidance — quality depends on model behavior and/or reference audio.",
+  detail: "Prompt-based accent guidance Ã¢â‚¬â€ quality depends on model behavior and/or reference audio.",
 }));
 
 export const COSY_LANGUAGES = ["Chinese", "English", "Japanese", "Korean", "German", "Spanish", "French", "Italian", "Russian"] as const;
@@ -201,6 +258,7 @@ export const COSY_CHINESE_DIALECTS: VoiceDesignOption[] = [
 export const voiceModels = {
   qwen3tts: {
     label: "Qwen3-TTS",
+    description: "English-only voice design for Qwen3-TTS. Accent and language controls are hidden in Character Builder.",
     strengths: ["Natural-language voice design", "Fictional/persona voices", "Preset speaker voices"],
     modes: ["voice_design", "custom_voice", "voice_clone"] as VoiceDesignMode[],
     officialPresets: QWEN_OFFICIAL_PRESETS,
@@ -209,11 +267,30 @@ export const voiceModels = {
   },
   cosyvoice: {
     label: "CosyVoice",
+    description: "English-only voice design for CosyVoice in Character Builder. Accent and language controls are hidden.",
     strengths: ["Multilingual generation", "Chinese dialect instruction", "Reference-audio workflows"],
     modes: ["instruct", "zero_shot_reference"] as VoiceDesignMode[],
     officialDialects: COSY_CHINESE_DIALECTS,
     promptBasedAccents: PROMPT_BASED_ACCENTS,
     languages: COSY_LANGUAGES,
+  },
+  ltxvoice: {
+    label: "LTX Voice",
+    description: "Experimental accent-capable voice generation using LTX video audio. Creates a hidden 1080p / 1 FPS / 10-second LTX audition clip and returns audio only.",
+    strengths: ["Accent-capable audition prompts", "Stylized dialect lines", "Audio-first hidden LTX clip"],
+    modes: ["voice_design"] as VoiceDesignMode[],
+    officialDialects: LTX_VOICE_DIALECTS,
+    promptBasedAccents: [],
+    languages: ["English"],
+  },
+  unnaturalvoices: {
+    label: "Unnatural Voices",
+    description: "Fixed LTX creature, fantasy, robot, animal, alien, and elemental voice presets. Patch 1 adds registry and selection UI only.",
+    strengths: ["Creature presets", "Robot/fantasy voices", "Audio-only LTX later"],
+    modes: ["voice_design"] as VoiceDesignMode[],
+    officialDialects: [],
+    promptBasedAccents: [],
+    languages: ["English"],
   },
 } as const;
 
@@ -222,11 +299,12 @@ function label(value: string): string {
 }
 
 function selectedAccent(profile: VoiceDesignProfile): VoiceDesignOption | null {
-  const options = [
+  const options: VoiceDesignOption[] = [
     ...QWEN_OFFICIAL_PRESETS,
     ...QWEN_OFFICIAL_DIALECTS,
     ...COSY_CHINESE_DIALECTS,
     ...PROMPT_BASED_ACCENTS,
+    ...LTX_VOICE_DIALECTS,
   ];
   return options.find((item) => item.id === profile.accentDialectId || item.speaker === profile.accentDialectId) || null;
 }
@@ -236,7 +314,7 @@ function avoidDefaults(profile: VoiceDesignProfile): string[] {
   if (profile.genderPresentation === "male") avoid.push("female timbre", "feminine pitch");
   if (profile.genderPresentation === "female") avoid.push("male timbre", "masculine bass");
   if (profile.ageRange === "adult" || profile.ageRange === "middle_aged" || profile.ageRange === "elderly") avoid.push("childlike voice");
-  if (profile.ageRange === "child" || profile.ageRange === "teen") avoid.push("adult tone", "elderly tone");
+  if (profile.ageRange === "child" || profile.ageRange === "teen" || profile.ageRange === "teenager") avoid.push("adult tone", "elderly tone");
   return avoid;
 }
 
@@ -311,7 +389,7 @@ export function buildCosyVoiceInstructionPrompt(profile: VoiceDesignProfile): st
   const base = "You are a helpful assistant.";
   const traits =
     profile.language === "Chinese" && accent?.kind === "chinese_dialect"
-      ? `${accent.instruction || ""}请使用${label(profile.ageRange)}${label(profile.genderPresentation)}声音，语速${label(profile.pace)}，语气${profile.tone}，音色${profile.timbre}，表达${profile.deliveryStyle}。`
+      ? `${accent.instruction || ""}Ã¨Â¯Â·Ã¤Â½Â¿Ã§â€Â¨${label(profile.ageRange)}${label(profile.genderPresentation)}Ã¥Â£Â°Ã©Å¸Â³Ã¯Â¼Å’Ã¨Â¯Â­Ã©â‚¬Å¸${label(profile.pace)}Ã¯Â¼Å’Ã¨Â¯Â­Ã¦Â°â€${profile.tone}Ã¯Â¼Å’Ã©Å¸Â³Ã¨â€°Â²${profile.timbre}Ã¯Â¼Å’Ã¨Â¡Â¨Ã¨Â¾Â¾${profile.deliveryStyle}Ã£â‚¬â€š`
       : `Please speak with ${accent?.label || profile.language} guidance, ${label(profile.ageRange)} ${label(profile.genderPresentation)} voice, ${profile.tone} tone, ${label(profile.pace)} pace, ${label(profile.pitch)} pitch, ${profile.timbre} timbre, ${profile.deliveryStyle} style, and clear articulation.`;
   const reference = accent?.referenceRecommended ? " Best results require matching reference audio." : "";
   const notes = profile.extraNotes ? ` ${profile.extraNotes}` : "";
@@ -320,6 +398,34 @@ export function buildCosyVoiceInstructionPrompt(profile: VoiceDesignProfile): st
 
 export function buildVoiceRequestPayload(profile: VoiceDesignProfile): VoiceRequestPayload {
   const accentDialect = selectedAccent(profile);
+  if (profile.model === "unnaturalvoices") {
+    return {
+      model: "ltx-voice",
+      mode: "voice_design",
+      language: "English",
+      speaker: null,
+      text: profile.sampleText || DEFAULT_SAMPLE_TEXT,
+      prompt: profile.advancedInstructionOverride || "",
+      referenceAudio: null,
+      voiceDesign: { ...profile, language: "English", mode: "voice_design" },
+      accentDialect: null,
+    };
+  }
+  if (profile.model === "ltxvoice") {
+    const ltxAuditionPrompt = buildLtxVoiceAuditionPrompt(profile);
+    return {
+      model: "ltx-voice",
+      mode: "voice_design",
+      language: "English",
+      speaker: null,
+      text: ltxSpokenLine(profile),
+      prompt: ltxAuditionPrompt,
+      referenceAudio: null,
+      voiceDesign: { ...profile, language: "English", mode: "voice_design" },
+      accentDialect,
+      ltxAuditionPrompt,
+    };
+  }
   if (profile.model === "qwen3tts") {
     if (profile.mode === "custom_voice") return buildQwenCustomVoiceConfig(profile);
     return {
@@ -352,17 +458,53 @@ export function voiceDesignWarnings(profile: VoiceDesignProfile): string[] {
   if (profile.genderPresentation === "male" && /\b(female|woman|girl|feminine)\b/.test(text)) warnings.push("Extra notes mention female/feminine terms while Male is selected.");
   if (profile.genderPresentation === "female" && /\b(male|man|boy|masculine)\b/.test(text)) warnings.push("Extra notes mention male/masculine terms while Female is selected.");
   if ((profile.ageRange === "adult" || profile.ageRange === "middle_aged" || profile.ageRange === "elderly") && /\b(child|kid|teen)\b/.test(text)) warnings.push("Extra notes mention child/teen terms while an adult age range is selected.");
-  if ((profile.ageRange === "child" || profile.ageRange === "teen") && /\b(adult|middle aged|senior|elderly|old)\b/.test(text)) warnings.push("Extra notes mention adult/senior terms while a child or teen age range is selected.");
+  if ((profile.ageRange === "child" || profile.ageRange === "teen" || profile.ageRange === "teenager") && /\b(adult|middle aged|senior|elderly|old)\b/.test(text)) warnings.push("Extra notes mention adult/senior terms while a child or teen age range is selected.");
   const accent = selectedAccent(profile);
   if (accent?.referenceRecommended) warnings.push("This accent is prompt-guided. For best accuracy, use a matching reference voice.");
   return warnings;
 }
 
 export function accentOptionsForModel(profile: VoiceDesignProfile): VoiceDesignOption[] {
+  if (profile.model === "unnaturalvoices") return [];
+  if (profile.model === "ltxvoice") return [...LTX_VOICE_DIALECTS];
   if (profile.model === "qwen3tts") return [...QWEN_OFFICIAL_DIALECTS, ...PROMPT_BASED_ACCENTS];
   return profile.language === "Chinese" ? [...COSY_CHINESE_DIALECTS, ...PROMPT_BASED_ACCENTS] : PROMPT_BASED_ACCENTS;
 }
 
 export function statusForAccent(profile: VoiceDesignProfile): VoiceDesignOption | null {
   return selectedAccent(profile);
+}
+
+function ltxSpokenLine(profile: VoiceDesignProfile): string {
+  const customSample = String(profile.sampleText || "").trim();
+  if (customSample && !isLtxDialectSampleText(customSample)) return customSample;
+  if (customSample) return customSample;
+  return getLtxDialectSampleText(profile.accentDialectId);
+}
+
+function articleForLabel(label: string): "A" | "An" {
+  return /^[aeiou]/i.test(label.trim()) ? "An" : "A";
+}
+
+export function buildLtxVoiceAuditionPrompt(input: Partial<VoiceDesignProfile> = {}): string {
+  const profile = defaultVoiceDesignProfile({
+    model: "ltxvoice",
+    mode: "voice_design",
+    language: "English",
+    accentDialectId: DEFAULT_LTX_VOICE_DIALECT_ID,
+    ...input,
+  });
+  const dialect = selectedAccent(profile) || LTX_VOICE_DIALECTS.find((item) => item.id === DEFAULT_LTX_VOICE_DIALECT_ID) || LTX_VOICE_DIALECTS[0];
+  const dialectLabel = dialect.promptLabel || dialect.label;
+  const spokenLine = ltxSpokenLine(profile);
+
+  return [
+    `${articleForLabel(dialectLabel)} ${dialectLabel} character voice is auditioning a dialect and accent showcase.`,
+    `The ${label(profile.genderPresentation)} ${label(profile.ageRange)} speaker has a strong, recognizable ${dialectLabel} voice.`,
+    `Voice direction: ${profile.tone} voice, ${label(profile.pace)} pace, ${label(profile.energy)} energy, ${label(profile.pitch)} pitch, ${profile.timbre} timbre, ${profile.deliveryStyle} delivery.`,
+    "The voice should sound natural, clear, expressive, and emotionally alive.",
+    "",
+    `The ${dialectLabel} speaker clearly says exactly:`,
+    `"${spokenLine}"`,
+  ].join("\n");
 }

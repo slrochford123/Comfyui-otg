@@ -1,64 +1,15 @@
 import { NextRequest } from "next/server";
-import { isLikelyVideoWorkflowKey } from "@/app/api/_lib/comfyTarget";
-import { assertAllowedWorkerTargetUrl } from "@/lib/runtime/workerTargetPolicy";
+import { configuredComfyBaseUrlForJob, logComfyRouting } from "@/app/api/_lib/comfyTarget";
 
 export const runtime = "nodejs";
-
-function normalizeComfyBaseUrl(raw: unknown): string | null {
-  const value = String(raw || "").trim();
-  if (!value) return null;
-  return value.replace(/\/+$/, "");
-}
-
-function firstComfyBaseUrl(...values: Array<unknown>): string | null {
-  for (const value of values) {
-    const normalized = normalizeComfyBaseUrl(value);
-    if (normalized) return normalized;
-  }
-  return null;
-}
-
-function configuredImageComfyBaseUrl(): string {
-  return assertAllowedWorkerTargetUrl(
-    firstComfyBaseUrl(
-      process.env.OTG_IMAGE_COMFY_BASE_URL,
-      process.env.IMAGE_COMFY_BASE_URL,
-      process.env.COMFY_IMAGE_BASE_URL,
-      process.env.NEXT_PUBLIC_IMAGE_COMFY_BASE_URL,
-      process.env.OTG_COMFY_BASE_URL,
-      process.env.COMFY_BASE_URL,
-      process.env.COMFYUI_BASE_URL,
-      process.env.NEXT_PUBLIC_COMFY_BASE_URL,
-      process.env.NEXT_PUBLIC_COMFYUI_BASE_URL
-    ) || "http://127.0.0.1:8288",
-    "ComfyUI image status worker target",
-  );
-}
-
-function configuredVideoComfyBaseUrl(): string {
-  return assertAllowedWorkerTargetUrl(
-    firstComfyBaseUrl(
-      process.env.OTG_VIDEO_COMFY_BASE_URL,
-      process.env.VIDEO_COMFY_BASE_URL,
-      process.env.COMFY_VIDEO_BASE_URL,
-      process.env.NEXT_PUBLIC_VIDEO_COMFY_BASE_URL,
-      process.env.OTG_COMFY_BASE_URL,
-      process.env.COMFY_BASE_URL,
-      process.env.COMFYUI_BASE_URL,
-      process.env.NEXT_PUBLIC_COMFY_BASE_URL,
-      process.env.NEXT_PUBLIC_COMFYUI_BASE_URL,
-      configuredImageComfyBaseUrl()
-    ) || "http://127.0.0.1:8288",
-    "ComfyUI video status worker target",
-  );
-}
 
 export async function GET(req: NextRequest) {
   const mode = String(req.nextUrl.searchParams.get("mode") || "").toLowerCase();
   const preset = String(req.nextUrl.searchParams.get("preset") || req.nextUrl.searchParams.get("workflow") || "").trim();
   const label = String(req.nextUrl.searchParams.get("label") || "").trim();
-  const workflowLooksVideo = mode === "video" || isLikelyVideoWorkflowKey(preset, label);
-  const comfyBaseUrl = workflowLooksVideo ? configuredVideoComfyBaseUrl() : configuredImageComfyBaseUrl();
+  const route = configuredComfyBaseUrlForJob({ mode, preset, label });
+  const comfyBaseUrl = route.baseUrl;
+  logComfyRouting("/api/comfy-status GET", { mode, preset, label }, route);
 
   try {
     const r = await fetch(`${comfyBaseUrl}/system_stats`, { cache: "no-store" });

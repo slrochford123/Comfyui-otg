@@ -28,7 +28,15 @@ type VoiceSamplePathResult =
   | { ok: true; samplePath: string; fileName: VoiceSampleFileName }
   | { ok: false; error: string; status: number };
 
-type VoiceSampleFileName = "sample.wav" | "fx.wav" | "sample.mp3" | "sample.m4a" | "sample.flac" | "sample.ogg";
+type VoiceSampleFileName =
+  | "sample.wav"
+  | "fx.wav"
+  | "sample.mp3"
+  | "sample.m4a"
+  | "sample.flac"
+  | "sample.ogg"
+  | "ltx-voice-isolated.wav"
+  | "ltx-voice-enhanced.wav";
 
 const ALLOWED_SAMPLE_FILES = new Set<VoiceSampleFileName>([
   "sample.wav",
@@ -37,6 +45,8 @@ const ALLOWED_SAMPLE_FILES = new Set<VoiceSampleFileName>([
   "sample.m4a",
   "sample.flac",
   "sample.ogg",
+  "ltx-voice-isolated.wav",
+  "ltx-voice-enhanced.wav",
 ]);
 
 const CONTENT_TYPES: Record<VoiceSampleFileName, string> = {
@@ -46,6 +56,8 @@ const CONTENT_TYPES: Record<VoiceSampleFileName, string> = {
   "sample.m4a": "audio/mp4",
   "sample.flac": "audio/flac",
   "sample.ogg": "audio/ogg",
+  "ltx-voice-isolated.wav": "audio/wav",
+  "ltx-voice-enhanced.wav": "audio/wav",
 };
 
 async function fileExists(filePath: string) {

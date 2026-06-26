@@ -10,6 +10,7 @@ param(
   [string]$QwenPython = $(if ($env:QWEN_TTS_PYTHON) { $env:QWEN_TTS_PYTHON } else { "C:\Users\SLRoc\miniconda3\envs\qwen3tts-repair\python.exe" }),
   [string]$QwenSitePackages = $(if ($env:QWEN_TTS_SITE_PACKAGES) { $env:QWEN_TTS_SITE_PACKAGES } else { "" }),
   [string]$QwenBridge = $(if ($env:QWEN_TTS_BRIDGE) { $env:QWEN_TTS_BRIDGE } else { "C:\AI\OTG-Test2\scripts\qwen3_voice_design_preview.py" }),
+  [string]$QwenApiUrl = $(if ($env:QWEN3_TTS_API_URL) { $env:QWEN3_TTS_API_URL } elseif ($env:QWEN3_TTS_URL) { $env:QWEN3_TTS_URL } else { "http://127.0.0.1:7863/synthesize" }),
   [string]$CosyRoot = $(if ($env:COSYVOICE_ROOT) { $env:COSYVOICE_ROOT } else { "C:\AI\Voices\CosyVoice" }),
   [string]$CosyPython = $(if ($env:COSYVOICE_PYTHON) { $env:COSYVOICE_PYTHON } else { "C:\AI\Voices\CosyVoice\.venv\Scripts\python.exe" }),
   [string]$CosySitePackages = $(if ($env:COSYVOICE_SITE_PACKAGES) { $env:COSYVOICE_SITE_PACKAGES } else { "" }),
@@ -55,6 +56,8 @@ if ($env:QWEN_TTS_ROOT) { $QwenRoot = $env:QWEN_TTS_ROOT }
 if ($env:QWEN_TTS_PYTHON) { $QwenPython = $env:QWEN_TTS_PYTHON }
 if ($env:QWEN_TTS_SITE_PACKAGES) { $QwenSitePackages = $env:QWEN_TTS_SITE_PACKAGES }
 if ($env:QWEN_TTS_BRIDGE) { $QwenBridge = $env:QWEN_TTS_BRIDGE }
+if ($env:QWEN3_TTS_API_URL) { $QwenApiUrl = $env:QWEN3_TTS_API_URL }
+elseif ($env:QWEN3_TTS_URL) { $QwenApiUrl = $env:QWEN3_TTS_URL }
 if ($env:COSYVOICE_ROOT) { $CosyRoot = $env:COSYVOICE_ROOT }
 if ($env:COSYVOICE_PYTHON) { $CosyPython = $env:COSYVOICE_PYTHON }
 if ($env:COSYVOICE_SITE_PACKAGES) { $CosySitePackages = $env:COSYVOICE_SITE_PACKAGES }
@@ -86,6 +89,7 @@ $ArgsList = @(
   "--qwen-root", $QwenRoot,
   "--qwen-python", $QwenPython,
   "--qwen-bridge", $QwenBridge,
+  "--qwen-api-url", $QwenApiUrl,
   "--cosy-root", $CosyRoot,
   "--cosy-python", $CosyPython,
   "--cosy-bridge", $CosyBridge,
@@ -111,6 +115,8 @@ Write-Host "  Claim: all owners via worker token"
 Write-Host "  DeviceId: $DeviceId"
 Write-Host "  WorkerId: $WorkerId"
 Write-Host "  WorkRoot: $WorkRoot"
+Write-Host "  Qwen3ApiUrl: $QwenApiUrl"
 
 & $WorkerPython @ArgsList
 exit $LASTEXITCODE
+

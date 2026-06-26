@@ -1,0 +1,335 @@
+﻿Patch: promote-test2-shell-ui-to-stage2-v36bpw19d
+AppliedAt: 2026-06-25T23:31:15.9163586-04:00
+SourceRoot: C:\AI\OTG-Test2
+TargetRoot: C:\AI\OTG-Stage2
+TargetHeadBefore: 163ef27
+BackupRoot: C:\AI\OTG-Stage2\.patch-backups\promote-test2-shell-ui-to-stage2-v36bpw19d-20260625-233115
+SparkVersion: ^2.1.0
+
+Copied files:
+- app\app\AppPageClient.tsx
+- app\components\HeaderBar.tsx
+- app\app\globals.css
+- app\globals.css
+
+Package changes:
+- package.json: added dependencies['@sparkjsdev/spark'] = ^2.1.0
+- package-lock.json: updated by npm install --ignore-scripts --no-audit --fund=false
+
+----- Running npm install to update package-lock and install @sparkjsdev/spark -----
+npm install --ignore-scripts --no-audit --fund=false
+
+up to date in 666ms
+
+----- Running TypeScript verification -----
+npx tsc --noEmit
+
+----- Running production build -----
+npm run build
+
+> otg@1.0.17 prebuild
+> node scripts/ensure-native-deps.cjs
+
+[native-deps] Node v20.19.0 OK. ABI 115.
+[native-deps] better-sqlite3 OK for current Node ABI.
+
+> otg@1.0.17 build
+> next build
+
+   â–² Next.js 15.5.18
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ âœ“ Compiled successfully in 5.5min
+   Skipping linting
+   Checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/71) ...
+   Generating static pages (17/71) 
+   Generating static pages (35/71) 
+   Generating static pages (53/71) 
+ âœ“ Generating static pages (71/71)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                             Size  First Load JS
+â”Œ â—‹ /                                                  264 B         103 kB
+â”œ â—‹ /_not-found                                        646 B         104 kB
+â”œ Æ’ /admin/feedback                                  1.17 kB         104 kB
+â”œ Æ’ /admin/health                                    1.32 kB         104 kB
+â”œ Æ’ /admin/performance                               1.66 kB         105 kB
+â”œ Æ’ /admin/users                                     1.58 kB         104 kB
+â”œ â—‹ /angles                                            646 B         104 kB
+â”œ â—‹ /api/3d/3d-poc                                   2.67 kB         106 kB
+â”œ Æ’ /api/3d/generate                                   646 B         104 kB
+â”œ Æ’ /api/3d/generate-character-mv                      646 B         104 kB
+â”œ Æ’ /api/3d/result                                     646 B         104 kB
+â”œ Æ’ /api/3d/status                                     646 B         104 kB
+â”œ Æ’ /api/admin/comfy-target                            646 B         104 kB
+â”œ Æ’ /api/admin/comfy-target/status                     646 B         104 kB
+â”œ Æ’ /api/admin/feedback                                646 B         104 kB
+â”œ Æ’ /api/admin/gallery                                 646 B         104 kB
+â”œ Æ’ /api/admin/gallery/file                            646 B         104 kB
+â”œ Æ’ /api/admin/health/services                         646 B         104 kB
+â”œ Æ’ /api/admin/performance                             646 B         104 kB
+â”œ Æ’ /api/admin/reset-state                             646 B         104 kB
+â”œ Æ’ /api/admin/users                                   646 B         104 kB
+â”œ Æ’ /api/angles/auto-texture                           646 B         104 kB
+â”œ Æ’ /api/angles/blender-texture                        646 B         104 kB
+â”œ Æ’ /api/angles/create-image                           646 B         104 kB
+â”œ Æ’ /api/angles/hunyuan/generate-textured              646 B         104 kB
+â”œ Æ’ /api/angles/hunyuan/model-file                     646 B         104 kB
+â”œ Æ’ /api/angles/hunyuan/status                         646 B         104 kB
+â”œ Æ’ /api/angles/model-3d                               646 B         104 kB
+â”œ Æ’ /api/angles/model-3d-texture                       646 B         104 kB
+â”œ Æ’ /api/angles/multiview-assist                       646 B         104 kB
+â”œ Æ’ /api/angles/preview-3d                             646 B         104 kB
+â”œ Æ’ /api/angles/temp-file                              646 B         104 kB
+â”œ Æ’ /api/angles/trellis-3d                             646 B         104 kB
+â”œ Æ’ /api/angles/vault                                  646 B         104 kB
+â”œ Æ’ /api/auth/change-password                          646 B         104 kB
+â”œ Æ’ /api/auth/delete-account                           646 B         104 kB
+â”œ Æ’ /api/auth/login                                    646 B         104 kB
+â”œ Æ’ /api/auth/logout                                   646 B         104 kB
+â”œ Æ’ /api/auth/me                                       646 B         104 kB
+â”œ Æ’ /api/auth/signup                                   646 B         104 kB
+â”œ Æ’ /api/background-remove                             646 B         104 kB
+â”œ Æ’ /api/bg-remove                                     646 B         104 kB
+â”œ Æ’ /api/characters                                    646 B         104 kB
+â”œ Æ’ /api/characters/3d-model                           646 B         104 kB
+â”œ Æ’ /api/characters/animate-preview                    646 B         104 kB
+â”œ Æ’ /api/characters/applio-inference/file              646 B         104 kB
+â”œ Æ’ /api/characters/applio-inference/upload-result     646 B         104 kB
+â”œ Æ’ /api/characters/applio-training/artifact           646 B         104 kB
+â”œ Æ’ /api/characters/applio-training/upload-artifact    646 B         104 kB
+â”œ Æ’ /api/characters/builder-draft                      646 B         104 kB
+â”œ Æ’ /api/characters/character-preview/file             646 B         104 kB
+â”œ Æ’ /api/characters/complete-card-only                 646 B         104 kB
+â”œ Æ’ /api/characters/extract-audio                      646 B         104 kB
+â”œ Æ’ /api/characters/intro-video                        646 B         104 kB
+â”œ Æ’ /api/characters/reference-media                    646 B         104 kB
+â”œ Æ’ /api/characters/training-dataset/file              646 B         104 kB
+â”œ Æ’ /api/characters/training-dataset/manifest          646 B         104 kB
+â”œ Æ’ /api/characters/training-dataset/upload-batch      646 B         104 kB
+â”œ Æ’ /api/characters/upload                             646 B         104 kB
+â”œ Æ’ /api/characters/voice-file                         646 B         104 kB
+â”œ Æ’ /api/characters/voice-fx                           646 B         104 kB
+â”œ Æ’ /api/characters/voice-pack                         646 B         104 kB
+â”œ Æ’ /api/characters/voice-pipeline                     646 B         104 kB
+â”œ Æ’ /api/characters/voice-pipeline/[jobId]             646 B         104 kB
+â”œ Æ’ /api/characters/voice-pipeline/active-dataset      646 B         104 kB
+â”œ Æ’ /api/characters/voice-pipeline/tick                646 B         104 kB
+â”œ Æ’ /api/characters/voice-pipeline/worker/claim        646 B         104 kB
+â”œ Æ’ /api/characters/voice-pipeline/worker/complete     646 B         104 kB
+â”œ Æ’ /api/characters/voice-pipeline/worker/fail         646 B         104 kB
+â”œ Æ’ /api/characters/voice-preview                      646 B         104 kB
+â”œ Æ’ /api/characters/voice-sample/file                  646 B         104 kB
+â”œ Æ’ /api/characters/voice-sample/upload                646 B         104 kB
+â”œ Æ’ /api/comfy                                         646 B         104 kB
+â”œ Æ’ /api/comfy-events                                  646 B         104 kB
+â”œ Æ’ /api/comfy-image                                   646 B         104 kB
+â”œ Æ’ /api/comfy-status                                  646 B         104 kB
+â”œ Æ’ /api/comfy-upload                                  646 B         104 kB
+â”œ Æ’ /api/comfy/create                                  646 B         104 kB
+â”œ Æ’ /api/content/clear                                 646 B         104 kB
+â”œ Æ’ /api/content/favorite                              646 B         104 kB
+â”œ Æ’ /api/content/last                                  646 B         104 kB
+â”œ Æ’ /api/content/reset                                 646 B         104 kB
+â”œ Æ’ /api/content/state                                 646 B         104 kB
+â”œ Æ’ /api/content/unlock                                646 B         104 kB
+â”œ Æ’ /api/debug-env                                     646 B         104 kB
+â”œ Æ’ /api/debug/paths                                   646 B         104 kB
+â”œ Æ’ /api/Delete                                        646 B         104 kB
+â”œ Æ’ /api/dev/voice-pipeline-worker/jobs                646 B         104 kB
+â”œ Æ’ /api/dev/voice-pipeline-worker/tick                646 B         104 kB
+â”œ Æ’ /api/device-jobs/log                               646 B         104 kB
+â”œ Æ’ /api/dubbing                                       646 B         104 kB
+â”œ Æ’ /api/dubbing/file                                  646 B         104 kB
+â”œ Æ’ /api/edit-video/ace-music                          646 B         104 kB
+â”œ Æ’ /api/edit-video/audio-mix                          646 B         104 kB
+â”œ Æ’ /api/edit-video/audio-save                         646 B         104 kB
+â”œ Æ’ /api/edit-video/dub-voice                          646 B         104 kB
+â”œ Æ’ /api/edit-video/enhance-audio                      646 B         104 kB
+â”œ Æ’ /api/edit-video/extract-audio                      646 B         104 kB
+â”œ Æ’ /api/edit-video/extract-audio/file                 646 B         104 kB
+â”œ Æ’ /api/edit-video/extract-audio/library              646 B         104 kB
+â”œ Æ’ /api/edit-video/file                               646 B         104 kB
+â”œ Æ’ /api/edit-video/ltx-edit                           646 B         104 kB
+â”œ Æ’ /api/edit-video/ltx-edit-save                      646 B         104 kB
+â”œ Æ’ /api/edit-video/music-generate                     646 B         104 kB
+â”œ Æ’ /api/edit-video/music-library                      646 B         104 kB
+â”œ Æ’ /api/edit-video/remove-enhance                     646 B         104 kB
+â”œ Æ’ /api/edit-video/remove-music                       646 B         104 kB
+â”œ Æ’ /api/edit-video/save                               646 B         104 kB
+â”œ Æ’ /api/edit-video/stitch                             646 B         104 kB
+â”œ Æ’ /api/edit-video/woosh-save                         646 B         104 kB
+â”œ Æ’ /api/edit-video/woosh-sfx                          646 B         104 kB
+â”œ Æ’ /api/enhance                                       646 B         104 kB
+â”œ Æ’ /api/enhance-prompt                                646 B         104 kB
+â”œ Æ’ /api/envcheck                                      646 B         104 kB
+â”œ Æ’ /api/favorites                                     646 B         104 kB
+â”œ Æ’ /api/favorites/add                                 646 B         104 kB
+â”œ Æ’ /api/favorites/delete                              646 B         104 kB
+â”œ Æ’ /api/favorites/file                                646 B         104 kB
+â”œ Æ’ /api/feedback                                      646 B         104 kB
+â”œ Æ’ /api/file                                          646 B         104 kB
+â”œ Æ’ /api/format-prompt                                 646 B         104 kB
+â”œ Æ’ /api/gallery                                       646 B         104 kB
+â”œ Æ’ /api/gallery/delete                                646 B         104 kB
+â”œ Æ’ /api/gallery/extend/prepare                        646 B         104 kB
+â”œ Æ’ /api/gallery/favorite                              646 B         104 kB
+â”œ Æ’ /api/gallery/file                                  646 B         104 kB
+â”œ Æ’ /api/gallery/meta                                  646 B         104 kB
+â”œ Æ’ /api/gallery/rename                                646 B         104 kB
+â”œ Æ’ /api/gallery/repair-meta                           646 B         104 kB
+â”œ Æ’ /api/gallery/sync                                  646 B         104 kB
+â”œ Æ’ /api/Health                                        646 B         104 kB
+â”œ Æ’ /api/healthz                                       646 B         104 kB
+â”œ Æ’ /api/Image                                         646 B         104 kB
+â”œ Æ’ /api/inbox/file                                    646 B         104 kB
+â”œ Æ’ /api/jobs                                          646 B         104 kB
+â”œ Æ’ /api/jobs/[id]                                     646 B         104 kB
+â”œ Æ’ /api/jobs/cancel                                   646 B         104 kB
+â”œ Æ’ /api/jobs/history                                  646 B         104 kB
+â”œ Æ’ /api/jobs/queue                                    646 B         104 kB
+â”œ Æ’ /api/logout                                        646 B         104 kB
+â”œ Æ’ /api/loras                                         646 B         104 kB
+â”œ Æ’ /api/ollama-ai/chat                                646 B         104 kB
+â”œ Æ’ /api/ollama-ai/plan                                646 B         104 kB
+â”œ Æ’ /api/ollama-ai/transcribe                          646 B         104 kB
+â”œ Æ’ /api/ollama-ai/write                               646 B         104 kB
+â”œ Æ’ /api/otg/generate                                  646 B         104 kB
+â”œ Æ’ /api/otg/image                                     646 B         104 kB
+â”œ Æ’ /api/preset                                        646 B         104 kB
+â”œ Æ’ /api/presets                                       646 B         104 kB
+â”œ Æ’ /api/preview                                       646 B         104 kB
+â”œ Æ’ /api/preview/file                                  646 B         104 kB
+â”œ Æ’ /api/production                                    646 B         104 kB
+â”œ Æ’ /api/production/animate                            646 B         104 kB
+â”œ Æ’ /api/production/assembly-add-to-gallery            646 B         104 kB
+â”œ Æ’ /api/production/assembly-music                     646 B         104 kB
+â”œ Æ’ /api/production/assembly-music-detect              646 B         104 kB
+â”œ Æ’ /api/production/assembly-music-mix                 646 B         104 kB
+â”œ Æ’ /api/production/audio-studio                       646 B         104 kB
+â”œ Æ’ /api/production/audio-studio/[jobId]               646 B         104 kB
+â”œ Æ’ /api/production/audio-studio/results               646 B         104 kB
+â”œ Æ’ /api/production/background                         646 B         104 kB
+â”œ Æ’ /api/production/background-audio/ace-generate      646 B         104 kB
+â”œ Æ’ /api/production/background-audio/upload            646 B         104 kB
+â”œ Æ’ /api/production/edit/ace-music                     646 B         104 kB
+â”œ Æ’ /api/production/edit/render                        646 B         104 kB
+â”œ Æ’ /api/production/edit/transcript                    646 B         104 kB
+â”œ Æ’ /api/production/edit/upload-clip                   646 B         104 kB
+â”œ Æ’ /api/production/picture                            646 B         104 kB
+â”œ Æ’ /api/production/preflight                          646 B         104 kB
+â”œ Æ’ /api/production/recent-images                      646 B         104 kB
+â”œ Æ’ /api/production/stitch                             646 B         104 kB
+â”œ Æ’ /api/production/video                              646 B         104 kB
+â”œ Æ’ /api/progress                                      646 B         104 kB
+â”œ Æ’ /api/queue/next                                    646 B         104 kB
+â”œ Æ’ /api/queue/queue/next                              646 B         104 kB
+â”œ Æ’ /api/render-status                                 646 B         104 kB
+â”œ Æ’ /api/storyboard/batch-generate                     646 B         104 kB
+â”œ Æ’ /api/storyboard/create                             646 B         104 kB
+â”œ Æ’ /api/storyboard/format                             646 B         104 kB
+â”œ Æ’ /api/storyboard/run                                646 B         104 kB
+â”œ Æ’ /api/storyboard/upload                             646 B         104 kB
+â”œ Æ’ /api/studio/pending                                646 B         104 kB
+â”œ Æ’ /api/studio/send                                   646 B         104 kB
+â”œ Æ’ /api/studio/upload-to-comfy                        646 B         104 kB
+â”œ Æ’ /api/sync                                          646 B         104 kB
+â”œ Æ’ /api/thumb                                         646 B         104 kB
+â”œ Æ’ /api/trellis/generate                              646 B         104 kB
+â”œ Æ’ /api/tts/control                                   646 B         104 kB
+â”œ Æ’ /api/tts/generate                                  646 B         104 kB
+â”œ Æ’ /api/upload-image                                  646 B         104 kB
+â”œ Æ’ /api/vision-prompt                                 646 B         104 kB
+â”œ Æ’ /api/voice/dub                                     646 B         104 kB
+â”œ Æ’ /api/voice/dub/file                                646 B         104 kB
+â”œ Æ’ /api/voice/dub/save                                646 B         104 kB
+â”œ Æ’ /api/voice/models                                  646 B         104 kB
+â”œ Æ’ /api/voice/tts                                     646 B         104 kB
+â”œ Æ’ /api/voice/tts/file                                646 B         104 kB
+â”œ Æ’ /api/voice/tts/save                                646 B         104 kB
+â”œ Æ’ /api/voices/audio/[audioId]                        646 B         104 kB
+â”œ Æ’ /api/voices/characters                             646 B         104 kB
+â”œ Æ’ /api/voices/clone                                  646 B         104 kB
+â”œ Æ’ /api/voices/create                                 646 B         104 kB
+â”œ Æ’ /api/voices/dubbing                                646 B         104 kB
+â”œ Æ’ /api/voices/dubbing/file                           646 B         104 kB
+â”œ Æ’ /api/voices/emotions                               646 B         104 kB
+â”œ Æ’ /api/voices/emotions/upload                        646 B         104 kB
+â”œ Æ’ /api/voices/extract                                646 B         104 kB
+â”œ Æ’ /api/voices/extractions                            646 B         104 kB
+â”œ Æ’ /api/voices/file                                   646 B         104 kB
+â”œ Æ’ /api/voices/library                                646 B         104 kB
+â”œ Æ’ /api/voices/list                                   646 B         104 kB
+â”œ Æ’ /api/voices/studio/design                          646 B         104 kB
+â”œ Æ’ /api/voices/studio/group                           646 B         104 kB
+â”œ Æ’ /api/voices/timing                                 646 B         104 kB
+â”œ Æ’ /api/voices/transcribe                             646 B         104 kB
+â”œ Æ’ /api/voices/tts                                    646 B         104 kB
+â”œ Æ’ /api/voices/upload                                 646 B         104 kB
+â”œ Æ’ /api/wan2gp                                        646 B         104 kB
+â”œ Æ’ /api/whoami                                        646 B         104 kB
+â”œ Æ’ /api/worker/artifacts/upload                       646 B         104 kB
+â”œ Æ’ /api/worker/jobs/checkpoint                        646 B         104 kB
+â”œ Æ’ /api/worker/jobs/claim                             646 B         104 kB
+â”œ Æ’ /api/worker/jobs/complete                          646 B         104 kB
+â”œ Æ’ /api/worker/jobs/fail                              646 B         104 kB
+â”œ Æ’ /api/workflows                                     646 B         104 kB
+â”œ Æ’ /api/workflows/[id]                                646 B         104 kB
+â”œ Æ’ /api/workflows/[id]/thumbnail                      646 B         104 kB
+â”œ Æ’ /api/workflows/debug                               646 B         104 kB
+â”œ Æ’ /api/workflows/reload                              646 B         104 kB
+â”œ Æ’ /api/workflows/run                                 646 B         104 kB
+â”œ Æ’ /api/workflows/validate                            646 B         104 kB
+â”œ Æ’ /app                                               54 kB         162 kB
+â”œ â—‹ /app/3d-character-mv                             2.54 kB         105 kB
+â”œ â—‹ /app/3d-poc                                      3.02 kB         106 kB
+â”œ Æ’ /app/admin                                         646 B         104 kB
+â”œ Æ’ /app/admin/gallery                               1.49 kB         104 kB
+â”œ Æ’ /app/admin/health                                1.32 kB         104 kB
+â”œ Æ’ /app/admin/performance                           1.66 kB         105 kB
+â”œ Æ’ /app/admin/users                                 1.58 kB         104 kB
+â”œ Æ’ /app/api/favorites/delete                          646 B         104 kB
+â”œ â—‹ /app/components                                  3.95 kB         107 kB
+â”œ â—‹ /app/history                                     2.36 kB         105 kB
+â”œ â—‹ /app/studio                                      1.47 kB         108 kB
+â”œ â—‹ /forgot                                            739 B         107 kB
+â”œ â—‹ /forgot-password                                   502 B         103 kB
+â”œ Æ’ /login                                           1.63 kB         108 kB
+â”œ â—‹ /signup                                          1.39 kB         108 kB
+â”œ â—‹ /signup/success                                    546 B         103 kB
+â”œ â—‹ /storyboard                                        646 B         104 kB
+â”” â—‹ /voices                                          14.2 kB         117 kB
++ First Load JS shared by all                         103 kB
+  â”œ chunks/1255-b28ea36bf0cdbd65.js                  46.2 kB
+  â”œ chunks/4bd1b696-f785427dddbba9fb.js              54.2 kB
+  â”” other shared chunks (total)                       2.4 kB
+
+
+Æ’ Middleware                                         34.1 kB
+
+â—‹  (Static)   prerendered as static content
+Æ’  (Dynamic)  server-rendered on demand
+
+
+----- git status --short -----
+ M app/app/AppPageClient.tsx
+ M app/app/globals.css
+ M app/components/HeaderBar.tsx
+ M app/globals.css
+ M package-lock.json
+ M package.json
+ M rework-checklist-background-storyboard-v36p.txt
+?? .patch-backups/
+?? diagnostics-promote-test2-shell-ui-to-stage2-v36bpw19b.txt
+?? diagnostics-promote-test2-shell-ui-to-stage2-v36bpw19c.txt
+?? diagnostics-promote-test2-shell-ui-to-stage2-v36bpw19d.txt
+?? diagnostics-promote-test2-ui-parity-to-stage2-v36bpw19.txt
+?? promote-test2-shell-ui-to-stage2-v36bpw19b.ps1
+?? promote-test2-shell-ui-to-stage2-v36bpw19c.ps1
+?? promote-test2-shell-ui-to-stage2-v36bpw19d.ps1
+?? promote-test2-ui-parity-to-stage2-v36bpw19.ps1
+?? release_outputs/

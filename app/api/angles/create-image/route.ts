@@ -53,7 +53,7 @@ function clampAnglesWorkflowInputs(workflow: any) {
   return workflow;
 }
 
-const DEFAULT_ANGLES_IMAGE_COMFY_URL = "http://127.0.0.1:8288";
+const DEFAULT_ANGLES_IMAGE_COMFY_URL = "http://127.0.0.1:8188";
 const ANGLES_IMAGE_WORKFLOW_ID = "internal/angles_multiview_texture_turntable_v12_hotfix";
 
 const LOAD_IMAGE_NODE_ID = "41";

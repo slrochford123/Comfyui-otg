@@ -5,7 +5,7 @@ import path from "path";
 import crypto from "crypto";
 
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
-import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
+import { configuredImageComfyBaseUrl, logComfyRouting } from "@/app/api/_lib/comfyTarget";
 import { markRunning } from "@/lib/contentState";
 
 export const runtime = "nodejs";
@@ -27,6 +27,11 @@ function resolveWorkflowRoot() {
 
 async function comfySubmit(workflow: any, clientId: string) {
   const baseUrl = configuredImageComfyBaseUrl();
+  logComfyRouting(
+    "/api/storyboard/create POST",
+    { requestKind: "storyboard-create", workflowLabel: "Storyboard", mediaType: "image" },
+    { kind: "image", baseUrl }
+  );
   const res = await fetch(`${baseUrl.replace(/\/$/, "")}/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

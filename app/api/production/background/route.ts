@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import { loadWorkflowById, extractPromptGraph, validatePromptGraph, stripPromptMeta } from "@/lib/workflows";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
+import { configuredImageComfyBaseUrl, logComfyRouting } from "@/app/api/_lib/comfyTarget";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,36 +23,6 @@ const WORKFLOW_BY_PRESET: Record<BackgroundPresetOption, string> = {
   Noir: "presets/Create a Picture",
   "Old School": "presets/Create a Picture",
 };
-
-function normalizeComfyBaseUrl(raw: unknown): string | null {
-  const value = String(raw || "").trim();
-  if (!value) return null;
-  return value.replace(/\/+$/, "");
-}
-
-function firstComfyBaseUrl(...values: Array<unknown>): string | null {
-  for (const value of values) {
-    const normalized = normalizeComfyBaseUrl(value);
-    if (normalized) return normalized;
-  }
-  return null;
-}
-
-function configuredImageComfyBaseUrl(): string {
-  return (
-    firstComfyBaseUrl(
-      process.env.OTG_IMAGE_COMFY_BASE_URL,
-      process.env.IMAGE_COMFY_BASE_URL,
-      process.env.COMFY_IMAGE_BASE_URL,
-      process.env.NEXT_PUBLIC_IMAGE_COMFY_BASE_URL,
-      process.env.OTG_COMFY_BASE_URL,
-      process.env.COMFY_BASE_URL,
-      process.env.COMFYUI_BASE_URL,
-      process.env.NEXT_PUBLIC_COMFY_BASE_URL,
-      process.env.NEXT_PUBLIC_COMFYUI_BASE_URL,
-    ) || "http://127.0.0.1:8188"
-  );
-}
 
 function inferExt(filename: string) {
   const ext = path.extname(filename || "").toLowerCase();
@@ -174,6 +145,11 @@ export async function POST(req: NextRequest) {
 
     const comfyBaseUrl = configuredImageComfyBaseUrl();
     const clientId = `production-bg-${Date.now()}`;
+    logComfyRouting(
+      "/api/production/background POST",
+      { requestKind: "production-background", workflowId: WORKFLOW_BY_PRESET[preset], workflowLabel: "Production Background", mediaType: "image" },
+      { kind: "image", baseUrl: comfyBaseUrl }
+    );
 
     const queued = await fetchJson(`${comfyBaseUrl}/prompt`, {
       method: "POST",

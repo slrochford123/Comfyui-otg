@@ -99,7 +99,7 @@ export const OTG_WORKER_JOB_ROUTES: readonly OtgWorkerJobRoute[] = [
     action: "create_voice_sample",
     workerOnly: true,
     adapterHint: "windows.voice_design",
-    description: "Create the approved base character voice with Qwen3-TTS or CosyVoice on the Windows worker.",
+    description: "Create the approved base character voice with Qwen3-TTS, CosyVoice, or LTX Voice on the Windows worker.",
   },
   {
     jobType: "character_animation_preview",

@@ -13,6 +13,13 @@ export type CharacterRecord = {
   originalSourceImagePath?: string;
   fullBodyImagePath?: string;
   characterCardPath?: string;
+  characterCardWorkflowImagePath?: string;
+  characterCardPreviewImagePath?: string;
+  defaultCharacterImagePath?: string;
+  defaultCharacterPreviewImagePath?: string;
+  defaultCharacterSourceImagePath?: string;
+  backgroundRemovedDefaultImagePath?: string;
+  defaultCharacterImageStatus?: "background_removed" | "fallback_original_card" | "missing";
   description: string;
   voiceStyleDefinition: string;
   introLine: string;
@@ -41,6 +48,13 @@ export type CreateCharacterInput = {
   originalSourceImagePath?: string;
   fullBodyImagePath?: string;
   characterCardPath?: string;
+  characterCardWorkflowImagePath?: string;
+  characterCardPreviewImagePath?: string;
+  defaultCharacterImagePath?: string;
+  defaultCharacterPreviewImagePath?: string;
+  defaultCharacterSourceImagePath?: string;
+  backgroundRemovedDefaultImagePath?: string;
+  defaultCharacterImageStatus?: "background_removed" | "fallback_original_card" | "missing";
   description: string;
   voiceStyleDefinition?: string;
   introLine?: string;
@@ -83,6 +97,13 @@ function normalizeRecord(input: CreateCharacterInput, existing?: CharacterRecord
     originalSourceImagePath: input.originalSourceImagePath ? String(input.originalSourceImagePath).trim() : undefined,
     fullBodyImagePath: input.fullBodyImagePath ? String(input.fullBodyImagePath).trim() : undefined,
     characterCardPath: input.characterCardPath ? String(input.characterCardPath).trim() : undefined,
+    characterCardWorkflowImagePath: input.characterCardWorkflowImagePath ? String(input.characterCardWorkflowImagePath).trim() : undefined,
+    characterCardPreviewImagePath: input.characterCardPreviewImagePath ? String(input.characterCardPreviewImagePath).trim() : undefined,
+    defaultCharacterImagePath: input.defaultCharacterImagePath ? String(input.defaultCharacterImagePath).trim() : undefined,
+    defaultCharacterPreviewImagePath: input.defaultCharacterPreviewImagePath ? String(input.defaultCharacterPreviewImagePath).trim() : undefined,
+    defaultCharacterSourceImagePath: input.defaultCharacterSourceImagePath ? String(input.defaultCharacterSourceImagePath).trim() : undefined,
+    backgroundRemovedDefaultImagePath: input.backgroundRemovedDefaultImagePath ? String(input.backgroundRemovedDefaultImagePath).trim() : undefined,
+    defaultCharacterImageStatus: input.defaultCharacterImageStatus,
     description: String(input.description || "").trim(),
     voiceStyleDefinition: String(input.voiceStyleDefinition || "").trim(),
     introLine: String(input.introLine || "").trim(),
@@ -221,6 +242,12 @@ export function deleteCharacter(ownerKey: string, characterId: string): { delete
     existing?.originalSourceImagePath,
     existing?.fullBodyImagePath,
     existing?.characterCardPath,
+    existing?.characterCardWorkflowImagePath,
+    existing?.characterCardPreviewImagePath,
+    existing?.defaultCharacterImagePath,
+    existing?.defaultCharacterPreviewImagePath,
+    existing?.defaultCharacterSourceImagePath,
+    existing?.backgroundRemovedDefaultImagePath,
     existing?.introVideoPath,
     existing?.referenceAudioPath,
   ]) {

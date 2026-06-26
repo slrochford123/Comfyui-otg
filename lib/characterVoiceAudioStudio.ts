@@ -1,4 +1,4 @@
-export type VoiceGeneratorProvider = "qwen3" | "cosy";
+export type VoiceGeneratorProvider = "qwen3" | "cosy" | "ltx" | "unnatural_ltx";
 export type CharacterVoiceProfileProvider = VoiceGeneratorProvider | "uploaded";
 export type VoiceModelArtifactProvider = "applio";
 export type VoiceModelArtifactMode = "noop" | "mock" | "real";
