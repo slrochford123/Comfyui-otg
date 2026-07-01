@@ -1490,3 +1490,19 @@ body.otg-force-dark-production [class*="shadow"] {
 [data-otg="OTG_STORYBOARD_REFERENCE_POOL_BACKGROUND_V30"] .text-cyan-200 {
   color: rgba(255, 255, 255, 0.94) !important;
 }
+
+
+/* OTG_PROD_SOURCE_MOBILE_RELEASE_SUPPORT_V1 */
+@media (max-width: 640px) {
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  [data-otg-qwen-component-mobile-layout],
+  [data-otg-qwen-component-mobile-layout] * {
+    box-sizing: border-box;
+    max-width: 100%;
+  }
+}

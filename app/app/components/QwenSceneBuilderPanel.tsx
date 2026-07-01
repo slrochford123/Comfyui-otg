@@ -1241,7 +1241,7 @@ export default function QwenSceneBuilderPanel(props: Record<string, unknown>) {
   const addDisabled = !selectedPass || availableSlots <= 0 || selectedPass.status === "submitting";
 
   return (
-    <div style={{ display: "grid", gap: 16, color: "#f4f4f5" }}>
+    <div data-otg-qwen-component-mobile-layout="OTG_QWEN_SOURCE_MOBILE_RELEASE_PATCH_V1" style={{ display: "grid", gap: 16, color: "#f4f4f5", width: "100%", maxWidth: "100%", minWidth: 0, overflowX: "hidden" }}>
       <section style={{ border: "1px solid #30323a", borderRadius: 14, padding: 14, background: "#111318" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
@@ -1260,7 +1260,7 @@ export default function QwenSceneBuilderPanel(props: Record<string, unknown>) {
           </button>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(8, minmax(88px, 1fr))", gap: 8, marginTop: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8, marginTop: 14 }}>
           {scenes.map((scene, index) => (
             <div key={`${scene.id}-input`} style={{ display: "grid", gap: 4, fontSize: 10, color: "#a1a1aa" }}>
               <span style={{ textTransform: "uppercase", letterSpacing: 0.8 }}>Input scene</span>
@@ -1311,7 +1311,7 @@ export default function QwenSceneBuilderPanel(props: Record<string, unknown>) {
           ))}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(8, minmax(88px, 1fr))", gap: 8, marginTop: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8, marginTop: 14 }}>
           {scenes.map((scene, index) => (
             <button
               key={scene.id}
@@ -1342,8 +1342,8 @@ export default function QwenSceneBuilderPanel(props: Record<string, unknown>) {
         </div>
       </section>
 
-      <section style={{ display: "grid", gridTemplateColumns: "280px minmax(0, 1fr)", gap: 14 }}>
-        <aside style={{ border: "1px solid #30323a", borderRadius: 14, padding: 12, background: "#111318", height: "fit-content" }}>
+      <section style={{ display: "flex", flexDirection: "column", gap: 14, width: "100%", maxWidth: "100%", minWidth: 0, overflowX: "hidden" }}>
+        <aside style={{ border: "1px solid #30323a", borderRadius: 14, padding: 12, background: "#111318", height: "fit-content", width: "100%", maxWidth: "100%", minWidth: 0, overflowX: "hidden" }}>
           <div style={{ fontSize: 12, letterSpacing: 1, color: "#a1a1aa", textTransform: "uppercase", marginBottom: 8 }}>Prompt Passes</div>
           {(selectedScene?.passes || []).map((pass, index) => (
             <button
@@ -1372,7 +1372,7 @@ export default function QwenSceneBuilderPanel(props: Record<string, unknown>) {
           ))}
         </aside>
 
-        <main style={{ display: "grid", gap: 14 }}>
+        <main style={{ display: "grid", gap: 14, width: "100%", maxWidth: "100%", minWidth: 0, overflowX: "hidden" }}>
           {selectedPass ? (
             <section style={{ border: "1px solid #30323a", borderRadius: 14, padding: 14, background: "#111318" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between", flexWrap: "wrap" }}>
@@ -1443,7 +1443,7 @@ export default function QwenSceneBuilderPanel(props: Record<string, unknown>) {
                 </details>
               ) : null}
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, marginTop: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10, marginTop: 12 }}>
                 {selectedPass.references.map((ref, index) => (
                   <div key={`${ref.id}-${index}`} style={{ border: ref.locked ? "1px solid #fbbf24" : "1px solid #30323a", borderRadius: 12, padding: 8, background: "#181a20" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
@@ -1497,7 +1497,7 @@ export default function QwenSceneBuilderPanel(props: Record<string, unknown>) {
               </details>
             ) : null}
 
-            <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr", gap: 8, marginTop: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 8, marginTop: 10 }}>
               <select value={manual.type} onChange={(event) => setManual((current) => ({ ...current, type: event.target.value as ManualReferenceForm["type"] }))} disabled={addDisabled} style={inputStyle}>
                 <option value="character">Character</option>
                 <option value="background">Background</option>
@@ -1529,7 +1529,7 @@ export default function QwenSceneBuilderPanel(props: Record<string, unknown>) {
                 </div>
                 <input value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} placeholder="Search assets" style={{ ...inputStyle, width: "100%", marginTop: 10 }} />
                 {filteredDetectedAssets.length ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10, marginTop: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 10, marginTop: 10 }}>
                     {filteredDetectedAssets.slice(0, 100).map((asset) => (
                       <div key={`${asset.id}-${asset.workflowImage}`} style={{ border: "1px solid #30323a", borderRadius: 12, padding: 8, background: "#181a20" }}>
                         {asset.previewUrl ? <img src={otgComfySafeImageSrcV36BPI2(otgAssetDisplayUrlV36BPA(otgCharacterPreviewPathV36BPA(asset)))} alt={asset.name} style={{ width: "100%", height: 190, objectFit: "contain", borderRadius: 8, background: "#050505", padding: "6px" }} /> : null}

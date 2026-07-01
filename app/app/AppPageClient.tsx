@@ -269,7 +269,7 @@ const APP_NOTIFICATION_HISTORY_KEY = "otg:test:android-notified-completions:v1";
 const APP_NOTIFICATION_CHANNEL_ID = "otg-generation-complete";
 
 const APP_FONT_SCALE_OPTIONS: { id: AppFontScale; label: string; rootSize: string; description: string }[] = [
-  { id: "small", label: "Small", rootSize: "14px", description: "More content on screen." },
+  { id: "small", label: "Small", rootSize: "12px", description: "12px compact UI size." },
   { id: "normal", label: "Normal", rootSize: "16px", description: "Default app sizing." },
   { id: "large", label: "Large", rootSize: "18px", description: "Larger text and controls." },
   { id: "xl", label: "Extra large", rootSize: "20px", description: "Maximum readable UI size." },
@@ -7792,3 +7792,5 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
 
 
+
+/* OTG_FONT_SMALL_12PX_RELEASE_PATCH_V1 */
