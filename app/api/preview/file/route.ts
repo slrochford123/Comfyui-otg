@@ -9,6 +9,8 @@ export const revalidate = 0;
 
 const DEFAULT_RANGE_BYTES = 8 * 1024 * 1024;
 const DIRECT_FULL_READ_LIMIT_BYTES = 64 * 1024 * 1024;
+const LATEST_IMAGE_ALIASES = new Set(["latest", "latest.png", "latest.jpg", "latest.jpeg", "latest.webp"]);
+const LATEST_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 
 type ByteRange = {
   start: number;
@@ -46,6 +48,7 @@ function previewRoots() {
   const cwd = process.cwd();
 
   return Array.from(new Set([
+    "/mnt/otg_fast/comfyui/output",
     process.env.OTG_PREVIEW_DIR || "",
     process.env.OTG_OUTPUT_DIR || "",
     process.env.OTG_DATA_ROOT || "",
@@ -143,6 +146,29 @@ async function newestFile(paths: string[]) {
   return scored[0]?.filePath || "";
 }
 
+async function newestImageFile(roots: string[]) {
+  const candidates: string[] = [];
+
+  for (const root of roots) {
+    try {
+      const entries = await fs.readdir(root, { withFileTypes: true });
+
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+
+        const ext = path.extname(entry.name).toLowerCase();
+        if (!LATEST_IMAGE_EXTENSIONS.has(ext)) continue;
+
+        candidates.push(path.join(root, entry.name));
+      }
+    } catch {
+      // Ignore missing or unreadable roots.
+    }
+  }
+
+  return newestFile(candidates);
+}
+
 async function resolvePreviewFile(rawName: string) {
   const decoded = safeDecode(String(rawName || "")).replace(/\0/g, "").trim();
 
@@ -164,6 +190,12 @@ async function resolvePreviewFile(rawName: string) {
   if (!baseName) return "";
 
   const roots = previewRoots();
+
+  if (LATEST_IMAGE_ALIASES.has(baseName.toLowerCase())) {
+    const latest = await newestImageFile(roots);
+    if (latest) return latest;
+  }
+
   const directCandidates: string[] = [];
 
   for (const root of roots) {

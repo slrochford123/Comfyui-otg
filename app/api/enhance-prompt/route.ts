@@ -31,7 +31,7 @@ function shouldUseOllama() {
 }
 
 function modelForLevel(level: EnhanceLevel) {
-  const fastDefault = "qwen2.5:0.5b";
+  const fastDefault = "llama3:latest";
   if (level === "short") {
     return process.env.OLLAMA_PROMPT_ENHANCE_MODEL_SHORT || process.env.OLLAMA_PROMPT_ENHANCE_MODEL || fastDefault;
   }
@@ -168,7 +168,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     const level = normalizeLevel(body.enhanceLevel || body.level || body.size || body.amount);
     const mode = normalizeMode(body.mode || body.mediaType, workflowId);
     const model = modelForLevel(level);
-    const timeoutMs = Math.max(800, Math.min(5000, Number(process.env.OLLAMA_PROMPT_ENHANCE_TIMEOUT_MS || 2500)));
+    const timeoutMs = Math.max(800, Math.min(30000, Number(process.env.OLLAMA_PROMPT_ENHANCE_TIMEOUT_MS || 15000)));
     const numPredict = numPredictForLevel(level);
 
     const enhancedPromptFromFallback = heuristicEnhancePrompt(prompt, level, mode, styleLabel, stylePrompt);
@@ -191,6 +191,8 @@ export async function POST(req: NextRequest): Promise<Response> {
               repeat_penalty: 1.08,
               num_predict: numPredict,
               num_ctx: 1024,
+              // Keep prompt enhancement off the RTX image-generation VRAM by default.
+              num_gpu: Number(process.env.OLLAMA_PROMPT_ENHANCE_NUM_GPU ?? 0),
             },
           },
           timeoutMs

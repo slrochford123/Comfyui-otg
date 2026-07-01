@@ -2,8 +2,6 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { assertAllowedWorkerTargetUrl } from "@/lib/runtime/workerTargetPolicy";
-
 import { NextRequest, NextResponse } from "next/server";
 
 import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
@@ -379,7 +377,9 @@ export async function POST(req: NextRequest) {
   try {
     const owner = await getOwnerContext(req);
     const input = await readInputImage(req);
-    const comfyBaseUrl = normalizeBaseUrl(assertAllowedWorkerTargetUrl(configuredImageComfyBaseUrl() || "http://127.0.0.1:8188", "background-remove ComfyUI worker target"));
+    // Linux PROD is allowed to use local ComfyUI for image utilities/background removal.
+    // Keep shared worker target guardrails in place for video/heavy routes; this route uses the image worker target directly.
+    const comfyBaseUrl = normalizeBaseUrl(configuredImageComfyBaseUrl() || "http://127.0.0.1:8188");
 
     const comfyImageName = await uploadImageToComfy({ comfyBaseUrl, input });
     const graph = loadWorkflowGraph(comfyImageName);

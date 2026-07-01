@@ -134,7 +134,7 @@
   },
   "428:161": {
     "inputs": {
-      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -209,7 +209,7 @@
   },
   "429:234": {
     "inputs": {
-      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -284,7 +284,7 @@
   },
   "430:259": {
     "inputs": {
-      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -359,7 +359,7 @@
   },
   "431:284": {
     "inputs": {
-      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -434,7 +434,7 @@
   },
   "432:309": {
     "inputs": {
-      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -509,7 +509,7 @@
   },
   "433:334": {
     "inputs": {
-      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -584,7 +584,7 @@
   },
   "434:359": {
     "inputs": {
-      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -659,7 +659,7 @@
   },
   "435:411": {
     "inputs": {
-      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",

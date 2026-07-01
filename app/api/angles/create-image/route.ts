@@ -12,8 +12,8 @@ export const dynamic = "force-dynamic";
 
 const ANGLES_VERTICAL_MIN = -30;
 const ANGLES_VERTICAL_MAX = 60;
-const ANGLES_HORIZONTAL_MIN = -180;
-const ANGLES_HORIZONTAL_MAX = 180;
+const ANGLES_HORIZONTAL_MIN = 0;
+const ANGLES_HORIZONTAL_MAX = 360;
 
 function clampAnglesNumber(value: unknown, min: number, max: number, fallback = 0) {
   const n = typeof value === "number" ? value : Number(value);
@@ -25,11 +25,10 @@ function normalizeAnglesHorizontal(value: unknown) {
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n)) return 0;
 
-  let next = n % 360;
-  if (next > 180) next -= 360;
-  if (next < -180) next += 360;
+  const next = ((n % 360) + 360) % 360;
+  const wrapped = next >= 360 ? 0 : next;
 
-  return Math.max(ANGLES_HORIZONTAL_MIN, Math.min(ANGLES_HORIZONTAL_MAX, next));
+  return Math.max(ANGLES_HORIZONTAL_MIN, Math.min(ANGLES_HORIZONTAL_MAX, wrapped));
 }
 
 function clampAnglesWorkflowInputs(workflow: any) {
@@ -152,9 +151,26 @@ async function readJsonOrText(res: Response) {
 }
 
 async function assertComfyReachable(baseUrl: string) {
-  const health = await fetchStage(`${baseUrl}/system_stats`, { method: "GET" }, "angles_image_healthcheck", 10_000);
+  const timeoutMs = 60_000;
+  const targetUrl = `${baseUrl}/system_stats`;
+
+  console.info("[angles/create-image] healthcheck", {
+    stage: "angles_image_healthcheck",
+    targetUrl,
+    timeoutMs,
+  });
+
+  const health = await fetchStage(targetUrl, { method: "GET" }, "angles_image_healthcheck", timeoutMs);
   const parsed = await readJsonOrText(health);
   if (!health.ok) {
+    console.error("[angles/create-image] healthcheck failed", {
+      stage: "angles_image_healthcheck",
+      targetUrl,
+      timeoutMs,
+      status: health.status,
+      body: parsed.json ?? parsed.text,
+    });
+
     throw new StageError(
       "angles_image_healthcheck",
       `Remote Comfy healthcheck failed (${health.status}).`,
@@ -247,7 +263,9 @@ function configureQwenMultiangleWorkflow(
     uploadedName: string;
     prefix: string;
     horizontal: number;
+    rawHorizontal: number;
     vertical: number;
+    rawVertical: number;
     zoom: number;
     seed: number;
     defaultPrompts: boolean;
@@ -276,6 +294,15 @@ function configureQwenMultiangleWorkflow(
   }
   camera.inputs.horizontal_angle = normalizeAnglesHorizontal(opts.horizontal);
   camera.inputs.vertical_angle = clampAnglesNumber(opts.vertical, ANGLES_VERTICAL_MIN, ANGLES_VERTICAL_MAX, 0);
+
+  console.info("[angles/create-image] qwen angle normalization", {
+    nodeClass: camera.class_type,
+    rawAngleHorizontal: opts.rawHorizontal ?? opts.horizontal,
+    horizontal_angle: camera.inputs.horizontal_angle,
+    rawAngleVertical: opts.rawVertical ?? opts.vertical,
+    vertical_angle: camera.inputs.vertical_angle,
+  });
+
   camera.inputs.zoom = opts.zoom;
   camera.inputs.default_prompts = opts.defaultPrompts;
   camera.inputs.camera_view = opts.cameraView;
@@ -326,7 +353,12 @@ export async function POST(req: NextRequest) {
   try {
     const deviceId = safeDeviceId(req.headers.get("x-otg-device-id"));
     const COMFY_BASE_URL = normalizeBase(
-      process.env.OTG_ANGLES_IMAGE_COMFY_URL ||
+      process.env.OTG_IMAGE_COMFY_URL ||
+        process.env.COMFYUI_BASE_URL ||
+        process.env.COMFY_BASE_URL ||
+        process.env.OTG_COMFY_BASE_URL ||
+        process.env.OTG_COMFY_URL ||
+        process.env.OTG_ANGLES_IMAGE_COMFY_URL ||
         process.env.OTG_ANGLES_MULTIVIEW_COMFY_URL ||
         DEFAULT_ANGLES_IMAGE_COMFY_URL
     );
@@ -410,7 +442,9 @@ export async function POST(req: NextRequest) {
       uploadedName,
       prefix,
       horizontal,
+      rawHorizontal,
       vertical,
+      rawVertical,
       zoom,
       seed,
       defaultPrompts,

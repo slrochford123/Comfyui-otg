@@ -128,6 +128,7 @@ function candidateOutputRoots() {
     "";
 
   return uniqueList([
+    "/mnt/otg_fast/comfyui/output",
     process.env.COMFYUI_OUTPUT_DIR,
     process.env.COMFY_OUTPUT_DIR,
     process.env.OTG_COMFY_OUTPUT_DIR,

@@ -271,7 +271,7 @@
   },
   "461": {
     "inputs": {
-      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -608,7 +608,7 @@
   },
   "485": {
     "inputs": {
-      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -945,7 +945,7 @@
   },
   "509": {
     "inputs": {
-      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -1282,7 +1282,7 @@
   },
   "533": {
     "inputs": {
-      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -1619,7 +1619,7 @@
   },
   "557": {
     "inputs": {
-      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",

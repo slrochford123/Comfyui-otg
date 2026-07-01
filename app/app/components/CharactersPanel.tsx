@@ -1378,7 +1378,7 @@ async function findExactBackgroundPreviewCandidateV36R(args: {
   for (const filename of exactOutputFilenamesV36BPV4) {
     try {
       const response = await fetch(
-        `/api/comfy-image?filename=${encodeURIComponent(filename)}&type=output&debug=1&t=${Date.now().toString(36)}`,
+        `/api/preview/file?name=${encodeURIComponent(filename)}&t=${Date.now().toString(36)}`,
         {
           method: "GET",
           credentials: "include",
@@ -1388,16 +1388,13 @@ async function findExactBackgroundPreviewCandidateV36R(args: {
 
       if (!response.ok) continue;
 
-      const json = await response.json().catch(() => null);
-      if (json?.ok && (json?.resolvedPath || json?.exists || json?.url)) {
-        return makeExactBackgroundPreviewCandidateV36R({
+      return makeExactBackgroundPreviewCandidateV36R({
           value: filename,
           provider: args.provider,
           prompt: args.prompt,
           index: args.index,
           name: args.name,
-        });
-      }
+      });
     } catch {
       // Keep polling fallback endpoints.
     }
@@ -1612,7 +1609,7 @@ async function waitForBackgroundRemovePeopleOutputCandidateV36AE(args: {
     for (const filename of candidateFilenames) {
       try {
         const response = await fetch(
-          `/api/comfy-image?filename=${encodeURIComponent(filename)}&type=output&debug=1&t=${Date.now().toString(36)}`,
+          `/api/preview/file?name=${encodeURIComponent(filename)}&t=${Date.now().toString(36)}`,
           {
             method: "GET",
             credentials: "include",
@@ -1671,7 +1668,7 @@ async function waitForBackgroundAnglePlateOutputCandidateV36AF(args: {
     for (const filename of candidateFilenames) {
       try {
         const response = await fetch(
-          `/api/comfy-image?filename=${encodeURIComponent(filename)}&type=output&debug=1&t=${Date.now().toString(36)}`,
+          `/api/preview/file?name=${encodeURIComponent(filename)}&t=${Date.now().toString(36)}`,
           {
             method: "GET",
             credentials: "include",
