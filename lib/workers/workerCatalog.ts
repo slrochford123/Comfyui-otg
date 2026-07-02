@@ -1,4 +1,4 @@
-﻿export const WORKER_PLATFORMS = ["windows", "linux"] as const;
+export const WORKER_PLATFORMS = ["windows", "linux"] as const;
 export const WORKER_KINDS = ["agent", "polling-worker", "service", "comfy"] as const;
 export const WORKER_ALLOWED_ACTIONS = ["status", "start", "stop", "restart"] as const;
 export const WORKER_LIFECYCLE_ACTIONS = ["status", "ensure-running", "start", "stop", "restart", "release"] as const;
@@ -323,4 +323,3 @@ export function publicWorkerCatalogEntry(entry: WorkerCatalogEntry): WorkerCatal
     allowedActions: [...entry.allowedActions],
   };
 }
-

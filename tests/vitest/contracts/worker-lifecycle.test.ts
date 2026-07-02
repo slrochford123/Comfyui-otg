@@ -1,4 +1,4 @@
-﻿import fs from "node:fs";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { NextRequest } from "next/server";
@@ -337,4 +337,3 @@ describe("worker lifecycle foundation", () => {
     expect(serialized).not.toMatch(/bearer\s+[a-z0-9._~+/-]+=*/);
   });
 });
-

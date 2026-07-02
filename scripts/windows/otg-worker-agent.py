@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Dry-run OTG worker lifecycle agent.
 
 The Linux control plane may request lifecycle actions by worker ID only. This
@@ -329,4 +329,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

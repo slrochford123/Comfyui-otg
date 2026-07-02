@@ -1,4 +1,4 @@
-﻿# Local Windows WorkerManager
+# Local Windows WorkerManager
 
 This folder documents the local Windows WorkerManager configuration used by the ComfyUI-OTG TEST/dev worker lifecycle system.
 
@@ -110,4 +110,3 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\AI\OTG-WorkerManager\work
 ## Restore Note
 
 `workers.example.json` and `worker-manager.ps1` are sanitized recovery templates. Copy them to `C:\AI\OTG-WorkerManager` only after reviewing the target machine and environment.
-
