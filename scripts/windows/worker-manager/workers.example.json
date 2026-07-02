@@ -1,0 +1,379 @@
+{
+  "workers": [
+    {
+      "id": "voice-ltx",
+      "displayName": "OTG LTX Voice Preview Worker",
+      "enabled": true,
+      "dryRunOnly": false,
+      "dangerousStop": false,
+      "workingDirectory": "C:\\AI\\OTG-Test2",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\AI\\OTG-Test2\\scripts\\windows\\otg-voice-ltx-worker.ps1",
+        "-Repo",
+        "C:\\AI\\OTG-Test2",
+        "-BaseUrl",
+        "http://192.168.1.113:3000",
+        "-DeviceId",
+        "windows-3090-prod",
+        "-WorkerId",
+        "windows-3090-prod-voice-ltx-worker",
+        "-ComfyUrl",
+        "http://127.0.0.1:8188"
+      ],
+      "env": {
+        "OTG_BASE_URL": "http://192.168.1.113:3000",
+        "OTG_DEVICE_ID": "windows-3090-prod",
+        "OTG_WORKER_ID": "windows-3090-prod-voice-ltx-worker",
+        "OTG_LTX_COMFY_URL": "http://127.0.0.1:8188"
+      },
+      "requiredEnv": [
+        "OTG_WORKER_TOKEN"
+      ],
+      "pidFile": "C:\\AI\\OTG-WorkerManager\\run\\voice-ltx.pid.json",
+      "logPath": "C:\\AI\\OTG-WorkerManager\\logs\\voice-ltx.log",
+      "stopMode": "process-tree",
+      "health": {
+        "commandLineContains": [
+          "otg-voice-ltx-worker",
+          "windows-3090-prod-voice-ltx-worker"
+        ],
+        "commandLineMustNotContain": [
+          "--worker-token"
+        ]
+      },
+      "idleTimeoutSeconds": 900,
+      "resourceHints": [
+        "gpu:windows-3090",
+        "service:ltx-video"
+      ],
+      "description": "Local Windows TEST/dev manager entry for the LTX voice preview worker. Token is inherited from OTG_WORKER_TOKEN environment only."
+    },
+    {
+      "id": "qwen3-tts",
+      "displayName": "Qwen3 TTS API",
+      "enabled": true,
+      "dryRunOnly": false,
+      "dangerousStop": false,
+      "workingDirectory": "C:\\AI\\OTG-Test2\\scripts\\voice",
+      "command": "cmd.exe",
+      "args": [
+        "/c",
+        "C:\\AI\\OTG-Test2\\scripts\\voice\\run_qwen3_tts_api.bat"
+      ],
+      "env": {
+        "QWEN3_TTS_API_URL": "http://127.0.0.1:7863/synthesize"
+      },
+      "requiredEnv": [],
+      "pidFile": "C:\\AI\\OTG-WorkerManager\\run\\qwen3-tts.pid.json",
+      "logPath": "C:\\AI\\OTG-WorkerManager\\logs\\qwen3-tts.log",
+      "stopMode": "process-tree",
+      "health": {
+        "commandLineContains": [
+          "run_qwen3_tts_api.bat"
+        ],
+        "commandLineMustNotContain": [
+          "--worker-token"
+        ],
+        "http": {
+          "url": "http://127.0.0.1:7863/health"
+        }
+      },
+      "idleTimeoutSeconds": 600,
+      "resourceHints": [
+        "service:qwen3-tts"
+      ],
+      "description": "On-demand Qwen3 TTS HTTP service at http://127.0.0.1:7863. No worker token is required or passed on the command line."
+    },
+    {
+      "id": "voice-design",
+      "displayName": "Voice Design Worker",
+      "enabled": true,
+      "dryRunOnly": false,
+      "dangerousStop": false,
+      "workingDirectory": "C:\\AI\\OTG-Test2",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\AI\\OTG-Test2\\scripts\\windows\\otg-voice-design-worker.ps1",
+        "-Repo",
+        "C:\\AI\\OTG-Test2",
+        "-BaseUrl",
+        "http://192.168.1.113:3000",
+        "-DeviceId",
+        "windows-voice-design",
+        "-WorkerId",
+        "windows-voice-design-worker"
+      ],
+      "env": {
+        "OTG_BASE_URL": "http://192.168.1.113:3000",
+        "OTG_DEVICE_ID": "windows-voice-design",
+        "OTG_WORKER_ID": "windows-voice-design-worker"
+      },
+      "requiredEnv": [
+        "OTG_WORKER_TOKEN"
+      ],
+      "pidFile": "C:\\AI\\OTG-WorkerManager\\run\\voice-design.pid.json",
+      "logPath": "C:\\AI\\OTG-WorkerManager\\logs\\voice-design.log",
+      "stopMode": "process-tree",
+      "health": {
+        "commandLineContains": [
+          "otg-voice-design-worker",
+          "windows-voice-design-worker"
+        ],
+        "commandLineMustNotContain": [
+          "--worker-token"
+        ]
+      },
+      "idleTimeoutSeconds": 600,
+      "resourceHints": [
+        "service:qwen3-tts",
+        "service:cozyvoice"
+      ],
+      "description": "On-demand polling worker for voice sample/design jobs. Token is inherited from OTG_WORKER_TOKEN environment only and is not passed on the command line."
+    },
+    {
+      "id": "xtts",
+      "displayName": "XTTS Server",
+      "enabled": true,
+      "dryRunOnly": true,
+      "dangerousStop": false,
+      "workingDirectory": "C:\\AI\\OTG-Test2\\scripts\\voice",
+      "command": "cmd.exe",
+      "args": [
+        "/c",
+        "C:\\AI\\OTG-Test2\\scripts\\voice\\run_xtts_server.bat"
+      ],
+      "env": {
+        "XTTS_HOST": "127.0.0.1",
+        "XTTS_PORT": "7862"
+      },
+      "requiredEnv": [],
+      "pidFile": "C:\\AI\\OTG-WorkerManager\\run\\xtts.pid.json",
+      "logPath": "C:\\AI\\OTG-WorkerManager\\logs\\xtts.log",
+      "stopMode": "process-tree",
+      "health": {
+        "commandLineContains": [
+          "run_xtts_server",
+          "7862"
+        ],
+        "commandLineMustNotContain": [
+          "--worker-token"
+        ],
+        "http": {
+          "url": "http://127.0.0.1:7862"
+        }
+      },
+      "idleTimeoutSeconds": 600,
+      "resourceHints": [
+        "service:xtts"
+      ],
+      "description": "On-demand Coqui XTTS service. Template entry remains dry-run/status-safe until verified locally."
+    },
+    {
+      "id": "cozyvoice",
+      "displayName": "CozyVoice Service",
+      "enabled": false,
+      "dryRunOnly": true,
+      "dangerousStop": false,
+      "workingDirectory": "C:\\AI\\Voices\\cosyvoice",
+      "command": "",
+      "args": [],
+      "env": {},
+      "requiredEnv": [],
+      "pidFile": "C:\\AI\\OTG-WorkerManager\\run\\cozyvoice.pid.json",
+      "logPath": "C:\\AI\\OTG-WorkerManager\\logs\\cozyvoice.log",
+      "stopMode": "process-tree",
+      "health": {
+        "commandLineContains": [
+          "cosyvoice"
+        ],
+        "commandLineMustNotContain": [
+          "--worker-token"
+        ]
+      },
+      "idleTimeoutSeconds": 600,
+      "resourceHints": [
+        "service:cozyvoice"
+      ],
+      "description": "Disabled placeholder. CosyVoice scripts exist, but no reliable current service launcher was found for WorkerManager ownership."
+    },
+    {
+      "id": "voice-dataset",
+      "displayName": "Voice Dataset Worker",
+      "enabled": true,
+      "dryRunOnly": true,
+      "dangerousStop": false,
+      "workingDirectory": "C:\\AI\\OTG-Test2",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\AI\\OTG-Test2\\scripts\\windows\\otg-voice-dataset-worker.ps1",
+        "-Repo",
+        "C:\\AI\\OTG-Test2",
+        "-BaseUrl",
+        "http://192.168.1.113:3000",
+        "-DeviceId",
+        "windows-voice-dataset",
+        "-WorkerId",
+        "windows-voice-dataset-worker"
+      ],
+      "env": {
+        "OTG_BASE_URL": "http://192.168.1.113:3000",
+        "OTG_DEVICE_ID": "windows-voice-dataset",
+        "OTG_WORKER_ID": "windows-voice-dataset-worker"
+      },
+      "requiredEnv": [
+        "OTG_WORKER_TOKEN"
+      ],
+      "pidFile": "C:\\AI\\OTG-WorkerManager\\run\\voice-dataset.pid.json",
+      "logPath": "C:\\AI\\OTG-WorkerManager\\logs\\voice-dataset.log",
+      "stopMode": "process-tree",
+      "health": {
+        "commandLineContains": [
+          "otg-voice-dataset-worker",
+          "windows-voice-dataset-worker"
+        ],
+        "commandLineMustNotContain": [
+          "--worker-token"
+        ]
+      },
+      "idleTimeoutSeconds": 900,
+      "resourceHints": [
+        "service:voice-dataset"
+      ],
+      "description": "On-demand polling worker for voice dataset preparation. Token is inherited from OTG_WORKER_TOKEN environment only."
+    },
+    {
+      "id": "applio",
+      "displayName": "Applio Training Worker",
+      "enabled": true,
+      "dryRunOnly": true,
+      "dangerousStop": false,
+      "workingDirectory": "C:\\AI\\OTG-Test2",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\AI\\OTG-Test2\\scripts\\windows\\otg-voice-applio-worker.ps1",
+        "-Repo",
+        "C:\\AI\\OTG-Test2",
+        "-BaseUrl",
+        "http://192.168.1.113:3000",
+        "-DeviceId",
+        "windows-applio",
+        "-WorkerId",
+        "windows-voice-applio-worker"
+      ],
+      "env": {
+        "OTG_BASE_URL": "http://192.168.1.113:3000",
+        "OTG_DEVICE_ID": "windows-applio",
+        "OTG_WORKER_ID": "windows-voice-applio-worker"
+      },
+      "requiredEnv": [
+        "OTG_WORKER_TOKEN"
+      ],
+      "pidFile": "C:\\AI\\OTG-WorkerManager\\run\\applio.pid.json",
+      "logPath": "C:\\AI\\OTG-WorkerManager\\logs\\applio.log",
+      "stopMode": "process-tree",
+      "health": {
+        "commandLineContains": [
+          "otg-voice-applio-worker",
+          "windows-voice-applio-worker"
+        ],
+        "commandLineMustNotContain": [
+          "--worker-token"
+        ]
+      },
+      "idleTimeoutSeconds": 900,
+      "resourceHints": [
+        "service:applio"
+      ],
+      "description": "On-demand polling worker for Applio model training. Token is inherited from OTG_WORKER_TOKEN environment only."
+    },
+    {
+      "id": "bg-remove",
+      "displayName": "Background Removal Helper",
+      "enabled": true,
+      "dryRunOnly": true,
+      "dangerousStop": false,
+      "workingDirectory": "C:\\AI\\OTG-Test2\\services\\bg_remove",
+      "command": "cmd.exe",
+      "args": [
+        "/c",
+        "C:\\AI\\OTG-Test2\\services\\bg_remove\\run_bg_remove.bat"
+      ],
+      "env": {},
+      "requiredEnv": [],
+      "pidFile": "C:\\AI\\OTG-WorkerManager\\run\\bg-remove.pid.json",
+      "logPath": "C:\\AI\\OTG-WorkerManager\\logs\\bg-remove.log",
+      "stopMode": "process-tree",
+      "health": {
+        "commandLineContains": [
+          "run_bg_remove",
+          "3333"
+        ],
+        "commandLineMustNotContain": [
+          "--worker-token"
+        ],
+        "http": {
+          "url": "http://127.0.0.1:3333"
+        }
+      },
+      "idleTimeoutSeconds": 600,
+      "resourceHints": [
+        "service:bg-remove"
+      ],
+      "description": "On-demand background-removal helper service. Template entry remains dry-run/status-safe until verified locally."
+    },
+    {
+      "id": "comfy-3090-sage-video",
+      "displayName": "ComfyUI RTX 3090 Sage Video Lane",
+      "enabled": true,
+      "dryRunOnly": true,
+      "dangerousStop": true,
+      "workingDirectory": "C:\\AI\\Comfyui",
+      "command": "cmd.exe",
+      "args": [
+        "/c",
+        "C:\\AI\\Comfyui\\ComfyUI - 3090 - Sage Video.bat"
+      ],
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
+      "requiredEnv": [],
+      "pidFile": "C:\\AI\\OTG-WorkerManager\\run\\comfy-3090-sage-video.pid.json",
+      "logPath": "C:\\AI\\OTG-WorkerManager\\logs\\comfy-3090-sage-video.log",
+      "stopMode": "process-tree",
+      "health": {
+        "commandLineContains": [
+          "ComfyUI\\main.py",
+          "--port 8188",
+          "user_8188_sage_video"
+        ],
+        "commandLineMustNotContain": [
+          "--worker-token"
+        ]
+      },
+      "idleTimeoutSeconds": 3600,
+      "resourceHints": [
+        "gpu:windows-3090",
+        "comfy:windows-3090",
+        "service:ltx-video"
+      ],
+      "description": "Windows RTX 3090 SageAttention ComfyUI lane for LTX/video only. Do not route Qwen image jobs here."
+    }
+  ]
+}
