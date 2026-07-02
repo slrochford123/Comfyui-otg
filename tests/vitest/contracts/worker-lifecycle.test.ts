@@ -125,17 +125,22 @@ describe("worker lifecycle foundation", () => {
     expect(body.command.shell).toBeUndefined();
   });
 
-  it("Windows agent real actions remain opt-in and limited to the Phase 2A allowlist", () => {
+  it("Windows agent real actions remain opt-in and limited to the verified allowlist", () => {
     const agentPy = fs.readFileSync(path.join(process.cwd(), "scripts/windows/otg-worker-agent.py"), "utf8");
     const agentPs1 = fs.readFileSync(path.join(process.cwd(), "scripts/windows/otg-worker-agent.ps1"), "utf8");
+    const realActionLine = agentPy.split(/\r?\n/).find((line) => line.startsWith("REAL_ACTION_WORKERS = ")) || "";
 
     expect(agentPy).toContain("--allow-real-actions");
     expect(agentPs1).toContain("$AllowRealActions");
-    expect(agentPy).toContain('REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design"}');
+    expect(realActionLine).toBe('REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design", "voice-dataset", "applio"}');
     expect(agentPy).toContain("Real lifecycle actions are only supported for");
     expect(agentPy).toContain("OTG_WORKER_MANAGER_PATH");
     expect(agentPy).not.toContain('"--worker-token"');
     expect(agentPy).not.toContain("'--worker-token'");
     expect(agentPs1).not.toContain("--worker-token");
+    expect(realActionLine).not.toContain("xtts");
+    expect(realActionLine).not.toContain("cozyvoice");
+    expect(realActionLine).not.toContain("bg-remove");
+    expect(realActionLine).not.toContain("comfy-3090-sage-video");
   });
 });

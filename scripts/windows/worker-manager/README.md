@@ -18,18 +18,36 @@ Required local files and folders:
 
 Do not commit the live `logs`, `run`, or `backups` folders. They contain local runtime state.
 
+## Install From Template
+
+Copy the versioned templates into the local manager folder:
+
+```powershell
+New-Item -ItemType Directory -Force C:\AI\OTG-WorkerManager
+Copy-Item .\scripts\windows\worker-manager\worker-manager.ps1 C:\AI\OTG-WorkerManager\worker-manager.ps1
+Copy-Item .\scripts\windows\worker-manager\workers.example.json C:\AI\OTG-WorkerManager\workers.json
+```
+
+The checked-in template is for TEST/dev and defaults app worker `BaseUrl` values to:
+
+```text
+http://127.0.0.1:3001
+```
+
+Before running workers, review `workers.json` for local paths, ports, worker IDs, and dry-run flags. PROD use requires a deliberate copied config with explicitly reviewed PROD URLs; do not run the TEST template against PROD by accident.
+
 ## Verified Workers
 
 - `voice-ltx`
 - `qwen3-tts`
 - `voice-design`
+- `voice-dataset`
+- `applio`
 
 ## Dry-Run Only Workers
 
 - `xtts`
 - `cozyvoice`
-- `voice-dataset`
-- `applio`
 - `bg-remove`
 - `comfy-3090-sage-video`
 
@@ -52,4 +70,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\AI\OTG-WorkerManager\work
 
 ## Restore Note
 
-`workers.example.json` is a sanitized recovery template. Copy it to `C:\AI\OTG-WorkerManager\workers.json` only after reviewing local paths, ports, worker IDs, and dry-run flags for the target machine.
+`workers.example.json` and `worker-manager.ps1` are sanitized recovery templates. Copy them to `C:\AI\OTG-WorkerManager` only after reviewing the target machine and environment.

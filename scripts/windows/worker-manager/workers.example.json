@@ -17,7 +17,7 @@
         "-Repo",
         "C:\\AI\\OTG-Test2",
         "-BaseUrl",
-        "http://192.168.1.113:3000",
+        "http://127.0.0.1:3001",
         "-DeviceId",
         "windows-3090-prod",
         "-WorkerId",
@@ -26,7 +26,7 @@
         "http://127.0.0.1:8188"
       ],
       "env": {
-        "OTG_BASE_URL": "http://192.168.1.113:3000",
+        "OTG_BASE_URL": "http://127.0.0.1:3001",
         "OTG_DEVICE_ID": "windows-3090-prod",
         "OTG_WORKER_ID": "windows-3090-prod-voice-ltx-worker",
         "OTG_LTX_COMFY_URL": "http://127.0.0.1:8188"
@@ -106,14 +106,14 @@
         "-Repo",
         "C:\\AI\\OTG-Test2",
         "-BaseUrl",
-        "http://192.168.1.113:3000",
+        "http://127.0.0.1:3001",
         "-DeviceId",
         "windows-voice-design",
         "-WorkerId",
         "windows-voice-design-worker"
       ],
       "env": {
-        "OTG_BASE_URL": "http://192.168.1.113:3000",
+        "OTG_BASE_URL": "http://127.0.0.1:3001",
         "OTG_DEVICE_ID": "windows-voice-design",
         "OTG_WORKER_ID": "windows-voice-design-worker"
       },
@@ -209,7 +209,7 @@
       "id": "voice-dataset",
       "displayName": "Voice Dataset Worker",
       "enabled": true,
-      "dryRunOnly": true,
+      "dryRunOnly": false,
       "dangerousStop": false,
       "workingDirectory": "C:\\AI\\OTG-Test2",
       "command": "powershell.exe",
@@ -222,14 +222,14 @@
         "-Repo",
         "C:\\AI\\OTG-Test2",
         "-BaseUrl",
-        "http://192.168.1.113:3000",
+        "http://127.0.0.1:3001",
         "-DeviceId",
         "windows-voice-dataset",
         "-WorkerId",
         "windows-voice-dataset-worker"
       ],
       "env": {
-        "OTG_BASE_URL": "http://192.168.1.113:3000",
+        "OTG_BASE_URL": "http://127.0.0.1:3001",
         "OTG_DEVICE_ID": "windows-voice-dataset",
         "OTG_WORKER_ID": "windows-voice-dataset-worker"
       },
@@ -248,7 +248,7 @@
           "--worker-token"
         ]
       },
-      "idleTimeoutSeconds": 900,
+      "idleTimeoutSeconds": 600,
       "resourceHints": [
         "service:voice-dataset"
       ],
@@ -258,7 +258,7 @@
       "id": "applio",
       "displayName": "Applio Training Worker",
       "enabled": true,
-      "dryRunOnly": true,
+      "dryRunOnly": false,
       "dangerousStop": false,
       "workingDirectory": "C:\\AI\\OTG-Test2",
       "command": "powershell.exe",
@@ -271,14 +271,14 @@
         "-Repo",
         "C:\\AI\\OTG-Test2",
         "-BaseUrl",
-        "http://192.168.1.113:3000",
+        "http://127.0.0.1:3001",
         "-DeviceId",
         "windows-applio",
         "-WorkerId",
         "windows-voice-applio-worker"
       ],
       "env": {
-        "OTG_BASE_URL": "http://192.168.1.113:3000",
+        "OTG_BASE_URL": "http://127.0.0.1:3001",
         "OTG_DEVICE_ID": "windows-applio",
         "OTG_WORKER_ID": "windows-voice-applio-worker"
       },
@@ -297,7 +297,7 @@
           "--worker-token"
         ]
       },
-      "idleTimeoutSeconds": 900,
+      "idleTimeoutSeconds": 600,
       "resourceHints": [
         "service:applio"
       ],
@@ -377,3 +377,4 @@
     }
   ]
 }
+

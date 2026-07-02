@@ -33,7 +33,7 @@ LOCAL_WORKERS: dict[str, dict[str, Any]] = {
     "bg-remove": {"platform": "linux", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
 }
 
-REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design"}
+REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design", "voice-dataset", "applio"}
 
 
 def mask_token(value: str) -> str:
