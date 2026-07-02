@@ -37,7 +37,7 @@ LOCAL_WORKERS: dict[str, dict[str, Any]] = {
     "ace-step": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
 }
 
-REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design", "voice-dataset", "applio", "xtts", "whisper", "speaker-diarization", "bg-remove", "character-preview"}
+REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design", "voice-dataset", "applio", "xtts", "whisper", "speaker-diarization", "bg-remove", "character-preview", "ace-step"}
 
 
 def mask_token(value: str) -> str:

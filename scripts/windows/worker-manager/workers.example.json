@@ -511,16 +511,19 @@
                         "id":  "ace-step",
                         "displayName":  "ACE-Step Music Service",
                         "enabled":  true,
-                        "dryRunOnly":  true,
+                        "dryRunOnly":  false,
                         "dangerousStop":  false,
-                        "workingDirectory":  "C:\\AI\\ACE-Step-1.5",
-                        "command":  "cmd.exe",
+                        "workingDirectory":  "C:\\AI\\OTG-Test2",
+                        "command":  "powershell.exe",
                         "args":  [
-                                     "/c",
-                                     "C:\\AI\\ACE-Step-1.5\\start_gradio_ui.bat"
+                                     "-NoProfile",
+                                     "-ExecutionPolicy",
+                                     "Bypass",
+                                     "-File",
+                                     "C:\\AI\\OTG-Test2\\scripts\\windows\\run-ace-step-api-runtime.ps1"
                                  ],
                         "env":  {
-                                    "PORT":  "7860"
+                                    "ACESTEP_NO_INIT":  "true"
                                 },
                         "requiredEnv":  [
 
@@ -530,13 +533,14 @@
                         "stopMode":  "process-tree",
                         "health":  {
                                        "commandLineContains":  [
-                                                                   "start_gradio_ui"
+                                                                   "run-ace-step-api-runtime",
+                                                                   "acestep-api"
                                                                ],
                                        "commandLineMustNotContain":  [
                                                                          "--worker-token"
                                                                      ],
                                        "http":  {
-                                                    "url":  "http://127.0.0.1:7860"
+                                                    "url":  "http://127.0.0.1:8001/openapi.json"
                                                 }
                                    },
                         "idleTimeoutSeconds":  900,
@@ -546,7 +550,7 @@
                         "lane":  "audio",
                         "gpu":  "windows-3090",
                         "userStatusKind":  "service",
-                        "description":  "On-demand ACE-Step 1.5 music UI/service at http://127.0.0.1:7860. Dry-run/status-safe until WorkerManager ownership is verified."
+                        "description":  "On-demand ACE-Step 1.5 API runtime at http://127.0.0.1:8001. Uses the runtime wrapper with no startup install, update, or sync path. WorkerManager ownership is enabled after direct runtime API validation."
                     },
                     {
                         "id":  "comfy-3090-sage-video",
