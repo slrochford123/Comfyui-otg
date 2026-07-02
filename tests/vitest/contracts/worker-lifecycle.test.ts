@@ -124,4 +124,18 @@ describe("worker lifecycle foundation", () => {
     expect(body.command.commandLine).toBeUndefined();
     expect(body.command.shell).toBeUndefined();
   });
+
+  it("Windows agent real actions remain opt-in and voice-ltx only", () => {
+    const agentPy = fs.readFileSync(path.join(process.cwd(), "scripts/windows/otg-worker-agent.py"), "utf8");
+    const agentPs1 = fs.readFileSync(path.join(process.cwd(), "scripts/windows/otg-worker-agent.ps1"), "utf8");
+
+    expect(agentPy).toContain("--allow-real-actions");
+    expect(agentPs1).toContain("$AllowRealActions");
+    expect(agentPy).toContain('worker_id != "voice-ltx"');
+    expect(agentPy).toContain("Real lifecycle actions are only supported for voice-ltx");
+    expect(agentPy).toContain("OTG_WORKER_MANAGER_PATH");
+    expect(agentPy).not.toContain('"--worker-token"');
+    expect(agentPy).not.toContain("'--worker-token'");
+    expect(agentPs1).not.toContain("--worker-token");
+  });
 });

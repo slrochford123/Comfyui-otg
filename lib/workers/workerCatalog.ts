@@ -45,7 +45,7 @@ export const WORKER_CATALOG = [
     platform: "windows",
     kind: "polling-worker",
     enabled: true,
-    dryRunOnly: true,
+    dryRunOnly: false,
     resources: ["gpu:windows-3090", "service:ltx-video"],
     dependencies: ["comfy-3090-sage-video"],
     idleTimeoutSeconds: 900,

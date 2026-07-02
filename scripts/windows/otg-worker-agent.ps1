@@ -2,7 +2,9 @@ param(
   [string]$BaseUrl = $(if ($env:OTG_BASE_URL) { $env:OTG_BASE_URL } else { "http://127.0.0.1:3001" }),
   [string]$AgentId = $(if ($env:OTG_WORKER_CONTROL_AGENT_ID) { $env:OTG_WORKER_CONTROL_AGENT_ID } else { "windows-main-agent" }),
   [int]$PollSeconds = $(if ($env:OTG_WORKER_CONTROL_POLL_SECONDS) { [int]$env:OTG_WORKER_CONTROL_POLL_SECONDS } else { 5 }),
-  [switch]$DryRun = $true,
+  [string]$WorkerManagerPath = $(if ($env:OTG_WORKER_MANAGER_PATH) { $env:OTG_WORKER_MANAGER_PATH } else { "C:\AI\OTG-WorkerManager\worker-manager.ps1" }),
+  [switch]$DryRun,
+  [switch]$AllowRealActions,
   [switch]$Once
 )
 
@@ -33,21 +35,27 @@ $ArgsList = @(
   $Agent,
   "--base-url", $BaseUrl,
   "--agent-id", $AgentId,
-  "--poll-seconds", [string]$PollSeconds
+  "--poll-seconds", [string]$PollSeconds,
+  "--worker-manager-path", $WorkerManagerPath
 )
 
-if ($DryRun) {
+if ($DryRun -or -not $AllowRealActions) {
   $ArgsList += "--dry-run"
+}
+if ($AllowRealActions) {
+  $ArgsList += "--allow-real-actions"
 }
 if ($Once) {
   $ArgsList += "--once"
 }
 
-Write-Host "Starting OTG worker-control dry-run agent"
+Write-Host "Starting OTG worker-control agent"
 Write-Host "  BaseUrl: $BaseUrl"
 Write-Host "  AgentId: $AgentId"
 Write-Host "  PollSeconds: $PollSeconds"
-Write-Host "  DryRun: $DryRun"
+Write-Host "  WorkerManagerPath: $WorkerManagerPath"
+Write-Host "  AllowRealActions: $AllowRealActions"
+Write-Host "  DryRun: $($DryRun -or -not $AllowRealActions)"
 
 & $Python @ArgsList
 exit $LASTEXITCODE
