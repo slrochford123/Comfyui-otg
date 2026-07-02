@@ -225,6 +225,9 @@ function Get-Status {
     dryRunOnly = [bool]$Worker.dryRunOnly
     dangerousStop = [bool]$Worker.dangerousStop
     resourceHints = @($Worker.resourceHints)
+    lane = [string]$Worker.lane
+    gpu = [string]$Worker.gpu
+    userStatusKind = [string]$Worker.userStatusKind
     state = $state
     pid = $pidValue
     startedAt = $startedAt

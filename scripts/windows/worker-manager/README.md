@@ -47,9 +47,28 @@ Before running workers, review `workers.json` for local paths, ports, worker IDs
 ## Dry-Run Only Workers
 
 - `xtts`
-- `cozyvoice`
 - `bg-remove`
+- `whisper`
+- `speaker-diarization`
+- `character-preview`
+- `ace-step`
 - `comfy-3090-sage-video`
+
+## Disabled / Needs Wrapper
+
+- `cozyvoice`
+
+The current CozyVoice launcher is a one-shot runner, not a long-running service wrapper. Keep it disabled until a WorkerManager-owned service or job wrapper is defined and verified.
+
+## Planned Coverage
+
+WorkerManager should eventually own every optional helper that the app depends on:
+
+- voice services: `qwen3-tts`, `xtts`, `cozyvoice`
+- voice workers: `voice-design`, `voice-dataset`, `applio`, `voice-ltx`, `character-preview`
+- audio helpers: `whisper`, `speaker-diarization`, `ace-step`
+- image helpers: `bg-remove`
+- video lane: `comfy-3090-sage-video`
 
 ## Safety Rules
 
@@ -59,6 +78,21 @@ Before running workers, review `workers.json` for local paths, ports, worker IDs
 - WorkerManager stops only PID trees it owns through its PID metadata.
 - `comfy-3090-sage-video` is for video/LTX work only.
 - Qwen image jobs must not route to the Windows RTX 3090 lane.
+
+## Status Colors
+
+- Green = ready, idle, or complete.
+- Yellow = starting, running, or busy.
+- Red = error, failed, or required service stopped unexpectedly.
+- White = unavailable, disabled, unknown, or not configured.
+
+## Lane Indicators
+
+- Images = Linux RTX 5060 Ti image lane.
+- Video = Windows RTX 3090 video/LTX lane.
+- Audio = local Windows helper/service lane unless a service is explicitly moved.
+
+The Windows RTX 3090 is reserved for video/LTX and related heavy preview work. The Linux RTX 5060 Ti is the image lane. Qwen image jobs must not route to the Windows RTX 3090 lane.
 
 ## Basic Commands
 

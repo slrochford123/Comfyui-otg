@@ -36,6 +36,12 @@ describe("worker lifecycle foundation", () => {
 
   it("validates known worker IDs and allowed lifecycle actions", () => {
     expect(getWorkerCatalogEntry("voice-ltx")?.resources).toContain("gpu:windows-3090");
+    expect(getWorkerCatalogEntry("whisper")?.dryRunOnly).toBe(true);
+    expect(getWorkerCatalogEntry("speaker-diarization")?.resources).toContain("service:speaker-diarization");
+    expect(getWorkerCatalogEntry("character-preview")?.dryRunOnly).toBe(true);
+    expect(getWorkerCatalogEntry("ace-step")?.dryRunOnly).toBe(true);
+    expect(getWorkerCatalogEntry("bg-remove")?.platform).toBe("windows");
+    expect(getWorkerCatalogEntry("cozyvoice")?.enabled).toBe(false);
     expect(validateWorkerLifecycleRequest("missing-worker", "start").ok).toBe(false);
     expect(validateWorkerLifecycleRequest("voice-ltx", "launch-shell").ok).toBe(false);
     expect(isWorkerActionAllowed("voice-ltx", "ensure-running")).toBe(true);
@@ -141,6 +147,10 @@ describe("worker lifecycle foundation", () => {
     expect(realActionLine).not.toContain("xtts");
     expect(realActionLine).not.toContain("cozyvoice");
     expect(realActionLine).not.toContain("bg-remove");
+    expect(realActionLine).not.toContain("whisper");
+    expect(realActionLine).not.toContain("speaker-diarization");
+    expect(realActionLine).not.toContain("character-preview");
+    expect(realActionLine).not.toContain("ace-step");
     expect(realActionLine).not.toContain("comfy-3090-sage-video");
   });
 });

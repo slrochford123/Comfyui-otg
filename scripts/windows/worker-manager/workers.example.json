@@ -51,7 +51,10 @@
         "gpu:windows-3090",
         "service:ltx-video"
       ],
-      "description": "Local Windows TEST/dev manager entry for the LTX voice preview worker. Token is inherited from OTG_WORKER_TOKEN environment only."
+      "description": "Local Windows TEST/dev manager entry for the LTX voice preview worker. Token is inherited from OTG_WORKER_TOKEN environment only.",
+      "lane": "video",
+      "gpu": "windows-3090",
+      "userStatusKind": "worker"
     },
     {
       "id": "qwen3-tts",
@@ -87,7 +90,8 @@
       "resourceHints": [
         "service:qwen3-tts"
       ],
-      "description": "On-demand Qwen3 TTS HTTP service at http://127.0.0.1:7863. No worker token is required or passed on the command line."
+      "description": "On-demand Qwen3 TTS HTTP service at http://127.0.0.1:7863. No worker token is required or passed on the command line.",
+      "userStatusKind": "service"
     },
     {
       "id": "voice-design",
@@ -137,7 +141,8 @@
         "service:qwen3-tts",
         "service:cozyvoice"
       ],
-      "description": "On-demand polling worker for voice sample/design jobs. Token is inherited from OTG_WORKER_TOKEN environment only and is not passed on the command line."
+      "description": "On-demand polling worker for voice sample/design jobs. Token is inherited from OTG_WORKER_TOKEN environment only and is not passed on the command line.",
+      "userStatusKind": "worker"
     },
     {
       "id": "xtts",
@@ -175,7 +180,8 @@
       "resourceHints": [
         "service:xtts"
       ],
-      "description": "On-demand Coqui XTTS service. Template entry remains dry-run/status-safe until verified locally."
+      "description": "On-demand Coqui XTTS service at http://127.0.0.1:7862. Dry-run/status-safe until WorkerManager ownership is verified.",
+      "userStatusKind": "service"
     },
     {
       "id": "cozyvoice",
@@ -183,9 +189,15 @@
       "enabled": false,
       "dryRunOnly": true,
       "dangerousStop": false,
-      "workingDirectory": "C:\\AI\\Voices\\cosyvoice",
-      "command": "",
-      "args": [],
+      "workingDirectory": "C:\\AI\\Voices\\VoiceLab\\runners",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\AI\\Voices\\VoiceLab\\runners\\run-cosyvoice.ps1"
+      ],
       "env": {},
       "requiredEnv": [],
       "pidFile": "C:\\AI\\OTG-WorkerManager\\run\\cozyvoice.pid.json",
@@ -193,7 +205,7 @@
       "stopMode": "process-tree",
       "health": {
         "commandLineContains": [
-          "cosyvoice"
+          "run-cosyvoice.ps1"
         ],
         "commandLineMustNotContain": [
           "--worker-token"
@@ -203,7 +215,8 @@
       "resourceHints": [
         "service:cozyvoice"
       ],
-      "description": "Disabled placeholder. CosyVoice scripts exist, but no reliable current service launcher was found for WorkerManager ownership."
+      "description": "Disabled placeholder for the current CozyVoice one-shot runner. Needs a service or job-wrapper contract before real WorkerManager ownership testing.",
+      "userStatusKind": "one-shot"
     },
     {
       "id": "voice-dataset",
@@ -252,7 +265,8 @@
       "resourceHints": [
         "service:voice-dataset"
       ],
-      "description": "On-demand polling worker for voice dataset preparation. Token is inherited from OTG_WORKER_TOKEN environment only."
+      "description": "On-demand polling worker for voice dataset preparation. Token is inherited from OTG_WORKER_TOKEN environment only.",
+      "userStatusKind": "worker"
     },
     {
       "id": "applio",
@@ -301,7 +315,8 @@
       "resourceHints": [
         "service:applio"
       ],
-      "description": "On-demand polling worker for Applio model training. Token is inherited from OTG_WORKER_TOKEN environment only."
+      "description": "On-demand polling worker for Applio model training. Token is inherited from OTG_WORKER_TOKEN environment only.",
+      "userStatusKind": "worker"
     },
     {
       "id": "bg-remove",
@@ -336,7 +351,182 @@
       "resourceHints": [
         "service:bg-remove"
       ],
-      "description": "On-demand background-removal helper service. Template entry remains dry-run/status-safe until verified locally."
+      "description": "On-demand Windows background-removal helper at http://127.0.0.1:3333. Dry-run/status-safe until WorkerManager ownership is verified.",
+      "lane": "image",
+      "gpu": "windows-helper",
+      "userStatusKind": "service"
+    },
+    {
+      "id": "whisper",
+      "displayName": "Whisper Transcription Service",
+      "enabled": true,
+      "dryRunOnly": true,
+      "dangerousStop": false,
+      "workingDirectory": "C:\\AI\\Services\\whisper",
+      "command": "cmd.exe",
+      "args": [
+        "/c",
+        "C:\\AI\\Services\\whisper\\run_whisper_server.bat"
+      ],
+      "env": {
+        "WHISPER_MODEL": "base"
+      },
+      "requiredEnv": [],
+      "pidFile": "C:\\AI\\OTG-WorkerManager\\run\\whisper.pid.json",
+      "logPath": "C:\\AI\\OTG-WorkerManager\\logs\\whisper.log",
+      "stopMode": "process-tree",
+      "health": {
+        "commandLineContains": [
+          "run_whisper_server",
+          "9001"
+        ],
+        "commandLineMustNotContain": [
+          "--worker-token"
+        ],
+        "http": {
+          "url": "http://127.0.0.1:9001"
+        }
+      },
+      "idleTimeoutSeconds": 600,
+      "resourceHints": [
+        "service:whisper"
+      ],
+      "lane": "audio",
+      "gpu": "",
+      "userStatusKind": "service",
+      "description": "On-demand Whisper transcription service at http://127.0.0.1:9001. Dry-run/status-safe until WorkerManager ownership is verified."
+    },
+    {
+      "id": "speaker-diarization",
+      "displayName": "Speaker Diarization Service",
+      "enabled": true,
+      "dryRunOnly": true,
+      "dangerousStop": false,
+      "workingDirectory": "C:\\AI\\OTG-Test2\\services\\speaker_diarization",
+      "command": "cmd.exe",
+      "args": [
+        "/c",
+        "C:\\AI\\OTG-Test2\\services\\speaker_diarization\\run_speaker_diarization.bat"
+      ],
+      "env": {
+        "PYANNOTE_HOST": "127.0.0.1",
+        "PYANNOTE_PORT": "9010"
+      },
+      "requiredEnv": [],
+      "pidFile": "C:\\AI\\OTG-WorkerManager\\run\\speaker-diarization.pid.json",
+      "logPath": "C:\\AI\\OTG-WorkerManager\\logs\\speaker-diarization.log",
+      "stopMode": "process-tree",
+      "health": {
+        "commandLineContains": [
+          "run_speaker_diarization",
+          "9010"
+        ],
+        "commandLineMustNotContain": [
+          "--worker-token"
+        ],
+        "http": {
+          "url": "http://127.0.0.1:9010/health"
+        }
+      },
+      "idleTimeoutSeconds": 600,
+      "resourceHints": [
+        "service:speaker-diarization"
+      ],
+      "lane": "audio",
+      "gpu": "",
+      "userStatusKind": "service",
+      "description": "On-demand pyannote speaker diarization service at http://127.0.0.1:9010. Dry-run/status-safe until WorkerManager ownership is verified."
+    },
+    {
+      "id": "character-preview",
+      "displayName": "Character Preview Worker",
+      "enabled": true,
+      "dryRunOnly": true,
+      "dangerousStop": false,
+      "workingDirectory": "C:\\AI\\OTG-Test2",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\AI\\OTG-Test2\\scripts\\windows\\otg-character-preview-worker.ps1",
+        "-Repo",
+        "C:\\AI\\OTG-Test2",
+        "-BaseUrl",
+        "http://127.0.0.1:3001",
+        "-DeviceId",
+        "windows-character-preview",
+        "-WorkerId",
+        "windows-character-preview-worker"
+      ],
+      "env": {
+        "OTG_BASE_URL": "http://127.0.0.1:3001",
+        "OTG_DEVICE_ID": "windows-character-preview",
+        "OTG_WORKER_ID": "windows-character-preview-worker"
+      },
+      "requiredEnv": [
+        "OTG_WORKER_TOKEN"
+      ],
+      "pidFile": "C:\\AI\\OTG-WorkerManager\\run\\character-preview.pid.json",
+      "logPath": "C:\\AI\\OTG-WorkerManager\\logs\\character-preview.log",
+      "stopMode": "process-tree",
+      "health": {
+        "commandLineContains": [
+          "otg-character-preview-worker",
+          "windows-character-preview-worker"
+        ],
+        "commandLineMustNotContain": [
+          "--worker-token"
+        ]
+      },
+      "idleTimeoutSeconds": 600,
+      "resourceHints": [
+        "service:character-preview"
+      ],
+      "lane": "audio",
+      "gpu": "",
+      "userStatusKind": "worker",
+      "description": "On-demand polling worker for character preview/dub jobs. Token is inherited from OTG_WORKER_TOKEN environment only. Dry-run/status-safe until ownership is verified."
+    },
+    {
+      "id": "ace-step",
+      "displayName": "ACE-Step Music Service",
+      "enabled": true,
+      "dryRunOnly": true,
+      "dangerousStop": false,
+      "workingDirectory": "C:\\AI\\ACE-Step-1.5",
+      "command": "cmd.exe",
+      "args": [
+        "/c",
+        "C:\\AI\\ACE-Step-1.5\\start_gradio_ui.bat"
+      ],
+      "env": {
+        "PORT": "7860"
+      },
+      "requiredEnv": [],
+      "pidFile": "C:\\AI\\OTG-WorkerManager\\run\\ace-step.pid.json",
+      "logPath": "C:\\AI\\OTG-WorkerManager\\logs\\ace-step.log",
+      "stopMode": "process-tree",
+      "health": {
+        "commandLineContains": [
+          "start_gradio_ui"
+        ],
+        "commandLineMustNotContain": [
+          "--worker-token"
+        ],
+        "http": {
+          "url": "http://127.0.0.1:7860"
+        }
+      },
+      "idleTimeoutSeconds": 900,
+      "resourceHints": [
+        "service:ace-step"
+      ],
+      "lane": "audio",
+      "gpu": "windows-3090",
+      "userStatusKind": "service",
+      "description": "On-demand ACE-Step 1.5 music UI/service at http://127.0.0.1:7860. Dry-run/status-safe until WorkerManager ownership is verified."
     },
     {
       "id": "comfy-3090-sage-video",
@@ -373,8 +563,10 @@
         "comfy:windows-3090",
         "service:ltx-video"
       ],
-      "description": "Windows RTX 3090 SageAttention ComfyUI lane for LTX/video only. Do not route Qwen image jobs here."
+      "description": "Windows RTX 3090 SageAttention ComfyUI lane for LTX/video only. Do not route Qwen image jobs here.",
+      "lane": "video",
+      "gpu": "windows-3090",
+      "userStatusKind": "lane"
     }
   ]
 }
-

@@ -30,7 +30,11 @@ LOCAL_WORKERS: dict[str, dict[str, Any]] = {
     "cozyvoice": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
     "applio": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
     "voice-dataset": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
-    "bg-remove": {"platform": "linux", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
+    "bg-remove": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
+    "whisper": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
+    "speaker-diarization": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
+    "character-preview": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
+    "ace-step": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
 }
 
 REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design", "voice-dataset", "applio"}
