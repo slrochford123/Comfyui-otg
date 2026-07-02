@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { jsonError, jsonOk, readJsonBody } from "@/lib/http/routeHelpers";
 import { normalizeWorkerLifecycleAction } from "@/lib/workers/workerCatalog";
+import { requireWorkerControlToken } from "@/lib/workers/workerLifecycleAuth";
 import { enqueueWorkerLifecycleCommand } from "@/lib/workers/workerLifecycleStore";
 
 export const runtime = "nodejs";
@@ -11,10 +12,15 @@ function cleanString(value: unknown): string {
   return String(value || "").trim();
 }
 
+function workerControlEnabled(): boolean {
+  return String(process.env.OTG_WORKER_CONTROL_ENABLED || "").trim() === "1";
+}
+
 export async function POST(req: NextRequest) {
-  if (String(process.env.OTG_WORKER_CONTROL_DEV_ENQUEUE || "").trim() !== "1") {
-    return jsonError("Worker-control dev enqueue is disabled.", { status: 404 });
-  }
+  if (!workerControlEnabled()) return jsonError("Worker-control is disabled.", { status: 404 });
+
+  const auth = requireWorkerControlToken(req);
+  if (!auth.ok) return jsonError(auth.error, { status: auth.status });
 
   const body = await readJsonBody<Record<string, unknown>>(req.clone(), { maxBytes: 64 * 1024 });
   if (!body.ok) return jsonError(body.error, { status: body.status });
