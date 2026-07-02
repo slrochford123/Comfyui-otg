@@ -69,6 +69,67 @@ body{
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
 }
 
+img,
+.otg-safeImage{
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+img{
+  touch-action: manipulation;
+}
+
+.otg-imageLightbox{
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: rgba(0,0,0,.92);
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  overscroll-behavior: contain;
+}
+
+.otg-imageLightboxBar{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.otg-imageLightboxBtn{
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 999px;
+  background: rgba(255,255,255,.10);
+  color: rgba(255,255,255,.92);
+  min-width: 40px;
+  min-height: 40px;
+  padding: 8px 12px;
+  font-weight: 800;
+}
+
+.otg-imageLightboxStage{
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background: rgba(255,255,255,.04);
+  touch-action: pinch-zoom;
+}
+
+.otg-imageLightboxImage{
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  transform-origin: center center;
+  transition: transform .16s ease;
+  touch-action: pinch-zoom;
+}
+
 /* Font scale slider: scale the whole app shell (Chrome/Android friendly). */
 .otg-shell{
   zoom: var(--otg-font-scale);

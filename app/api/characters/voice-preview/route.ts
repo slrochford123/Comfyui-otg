@@ -20,6 +20,8 @@ const QWEN_TTS_SITE_PACKAGES = path.resolve(process.env.QWEN_TTS_SITE_PACKAGES |
 const QWEN_TTS_BRIDGE = path.resolve(process.env.QWEN_TTS_BRIDGE || path.join(process.cwd(), "scripts", "qwen3_voice_design_preview.py"));
 const QWEN_TTS_MODEL_ID = String(process.env.QWEN_TTS_MODEL_ID || "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign");
 const QWEN_PREVIEW_TIMEOUT_MS = Math.max(60_000, Number(process.env.QWEN_TTS_PREVIEW_TIMEOUT_MS || 10 * 60 * 1000));
+const QWEN_TTS_SERVICE_URL = String(process.env.QWEN3_TTS_API_URL || process.env.QWEN3_TTS_URL || process.env.QWEN_TTS_URL || "http://127.0.0.1:7863/synthesize").trim();
+const QWEN_USE_DIRECT_BRIDGE = process.env.QWEN_TTS_USE_DIRECT_BRIDGE === "1";
 
 function safeSegment(value: unknown) {
   const cleaned = String(value || "")
@@ -163,6 +165,58 @@ function runQwenTts(args: {
   });
 }
 
+async function runQwenTtsService(args: {
+  text: string;
+  outputWav: string;
+  language: string;
+  instruction: string;
+  stdoutPath: string;
+  stderrPath: string;
+}) {
+  const serviceUrl = QWEN_TTS_SERVICE_URL || "http://127.0.0.1:7863/synthesize";
+  const body = new URLSearchParams();
+  body.set("text", args.text);
+  body.set("output_path", args.outputWav);
+  body.set("language", args.language);
+  body.set("speaker", process.env.QWEN3_TTS_PREVIEW_SPEAKER || "Ryan");
+  body.set("instruct", args.instruction);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), QWEN_PREVIEW_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(serviceUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+      signal: controller.signal,
+    });
+  } catch (error: any) {
+    throw new Error(
+      `Qwen3-TTS service is not reachable at ${serviceUrl}. Start the WorkerManager qwen3-tts service or set QWEN3_TTS_URL/QWEN3_TTS_API_URL. ${error?.message || ""}`.trim(),
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const text = await response.text().catch(() => "");
+  const data = (() => {
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { ok: response.ok, raw: text };
+    }
+  })();
+  await fs.writeFile(args.stdoutPath, JSON.stringify(data, null, 2) + "\n", "utf8").catch(() => undefined);
+  await fs.writeFile(args.stderrPath, response.ok ? "" : text, "utf8").catch(() => undefined);
+
+  if (!response.ok || data?.ok === false) {
+    throw new Error(data?.error || `Qwen3-TTS service failed with HTTP ${response.status}.`);
+  }
+}
+
 function extractQwenDesignRecord(voiceSettings: any) {
   return (
     voiceSettings?.qwenVoiceDesignRecord ||
@@ -244,10 +298,12 @@ export async function POST(req: NextRequest) {
     const useQwen = !!qwenDesignRecord;
 
     if (useQwen) {
-      await requireDir(QWEN_TTS_ROOT, "Qwen3-TTS root");
-      await requireFile(QWEN_TTS_PYTHON, "Qwen3-TTS repaired Python");
-      await requireDir(QWEN_TTS_SITE_PACKAGES, "Qwen3-TTS site-packages");
-      await requireFile(QWEN_TTS_BRIDGE, "Qwen3-TTS bridge");
+      if (QWEN_USE_DIRECT_BRIDGE) {
+        await requireDir(QWEN_TTS_ROOT, "Qwen3-TTS root");
+        await requireFile(QWEN_TTS_PYTHON, "Qwen3-TTS repaired Python");
+        await requireDir(QWEN_TTS_SITE_PACKAGES, "Qwen3-TTS site-packages");
+        await requireFile(QWEN_TTS_BRIDGE, "Qwen3-TTS bridge");
+      }
     } else {
       await requireDir(INDEX_TTS_ROOT, "IndexTTS2 root");
       await requireFile(INDEX_TTS_PYTHON, "IndexTTS2 Python");
@@ -291,14 +347,25 @@ export async function POST(req: NextRequest) {
     await fs.writeFile(paramsPath, JSON.stringify(params, null, 2) + "\n", "utf8");
 
     if (useQwen) {
-      await runQwenTts({ paramsPath, stdoutPath, stderrPath });
+      if (QWEN_USE_DIRECT_BRIDGE) {
+        await runQwenTts({ paramsPath, stdoutPath, stderrPath });
+      } else {
+        await runQwenTtsService({
+          text,
+          outputWav,
+          language: normalizeQwenLanguage(body?.language || "english"),
+          instruction: String(qwenDesignRecord?.fullQwenInstruction || qwenDesignRecord?.baseInstruction || ""),
+          stdoutPath,
+          stderrPath,
+        });
+      }
     } else {
       await runIndexTts({ paramsPath, stdoutPath, stderrPath });
     }
 
     const stat = await fs.stat(outputWav).catch(() => null);
     if (!stat?.isFile() || stat.size <= 0) {
-      throw new Error("IndexTTS2 completed but preview WAV was not created.");
+      throw new Error(`${useQwen ? "Qwen3-TTS" : "IndexTTS2"} completed but preview WAV was not created.`);
     }
 
     const voicePackPath = path.join(outDir, "voice-pack.json");

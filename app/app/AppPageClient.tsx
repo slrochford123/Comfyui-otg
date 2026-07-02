@@ -4,6 +4,7 @@ import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useSt
 import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
+import SafeImageLightbox from "./components/SafeImageLightbox";
 import type { GalleryActionKind } from "./components/GalleryWorkspace";
 import {
   APP_COLOR_MODE_KEY,
@@ -1288,6 +1289,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [customAudioFileName, setCustomAudioFileName] = useState("");
   const [customAudioPreviewUrl, setCustomAudioPreviewUrl] = useState("");
   const [uploadedImagePreviewUrl, setUploadedImagePreviewUrl] = useState("");
+  const [generatePreviewLightboxOpen, setGeneratePreviewLightboxOpen] = useState(false);
   const [lastFrameFileName, setLastFrameFileName] = useState("");
   const [lastFramePreviewUrl, setLastFramePreviewUrl] = useState("");
   const [lastFrameImageMeta, setLastFrameImageMeta] = useState<{ width: number; height: number } | null>(null);
@@ -6272,7 +6274,22 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                       latestPreviewKind === "video" ? (
                         <video src={latestPreviewUrl} className="h-full w-full object-contain" controls playsInline muted />
                       ) : (
-                        <img src={latestPreviewUrl} alt={latestPreviewName || "Latest generated content"} className="h-full w-full object-contain" />
+                        <button
+                          type="button"
+                          className="group h-full w-full cursor-zoom-in bg-transparent p-0"
+                          onClick={() => setGeneratePreviewLightboxOpen(true)}
+                          onContextMenu={(event) => event.preventDefault()}
+                          aria-label="Open generated image preview"
+                        >
+                          <img
+                            src={latestPreviewUrl}
+                            alt={latestPreviewName || "Latest generated content"}
+                            draggable={false}
+                            className="otg-safeImage h-full w-full object-contain"
+                            onContextMenu={(event) => event.preventDefault()}
+                            onDragStart={(event) => event.preventDefault()}
+                          />
+                        </button>
                       )
                     ) : (
                       <div className="flex h-full items-center justify-center px-6 text-center text-white/45">
@@ -6302,6 +6319,13 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                   </div>
                 </div>
               </Card>
+              <SafeImageLightbox
+                open={generatePreviewLightboxOpen && latestPreviewKind === "image" && Boolean(latestPreviewUrl)}
+                src={latestPreviewUrl}
+                alt={latestPreviewName || "Latest generated content"}
+                title={latestPreviewName || "Generated image preview"}
+                onClose={() => setGeneratePreviewLightboxOpen(false)}
+              />
 
               <Card title="Progress">
                 <div className="space-y-3">

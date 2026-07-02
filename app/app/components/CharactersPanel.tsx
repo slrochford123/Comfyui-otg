@@ -4106,6 +4106,10 @@ function CharacterBuilder() {
 
   const selectedCandidate = useMemo(() => candidates.find((item) => item.id === selectedCandidateId) || null, [candidates, selectedCandidateId]);
   const identityBlock = useMemo(() => buildIdentityBlock(details, voice), [details, voice]);
+  const completedCharacterDescription = useMemo(() => {
+    const completed = characterIdentity.promptReadyDescription.trim();
+    return completed || identityBlock;
+  }, [characterIdentity.promptReadyDescription, identityBlock]);
   const selectedQwenVoiceCandidate = useMemo(
     () => qwenVoiceCandidates.find((candidate) => candidate.candidateId === selectedQwenVoiceCandidateId) || null,
     [qwenVoiceCandidates, selectedQwenVoiceCandidateId],
@@ -9505,12 +9509,12 @@ async function completeCharacterCardOnly() {
               characterCard,
             })),
             originalSourceImagePath: uploadedImage?.serverPath || selectedFullBody.serverPath,
-          description: identityBlock,
-          metadata: { ...details, characterAnatomyMode, characterInputMode, sourceFraming, fullBodyStatus, fullBodyPrompt, freeformFullBodyConfirmed, backgroundRemovalStatus, backgroundRemovalWarning, characterIdentity, promptReadyDescription: characterIdentity.promptReadyDescription },
+          description: completedCharacterDescription,
+          metadata: { ...details, characterAnatomyMode, characterInputMode, sourceFraming, fullBodyStatus, fullBodyPrompt, freeformFullBodyConfirmed, backgroundRemovalStatus, backgroundRemovalWarning, characterIdentity, promptReadyDescription: completedCharacterDescription },
           voiceSettings: voice,
           characterVoiceProfile: null,
           voicePackPaths: {},
-          globalPromptIdentityBlock: identityBlock,
+          globalPromptIdentityBlock: completedCharacterDescription,
           voiceStyleDefinition: "",
           introLine: PREVIEW_LINES[0].text,
           source: "characters_tab_card_only",
@@ -9569,12 +9573,12 @@ async function completeCharacterCardOnly() {
               characterCard,
             })),
             originalSourceImagePath: uploadedImage?.serverPath || selectedFullBody.serverPath,
-          description: identityBlock,
-          metadata: { ...details, characterAnatomyMode, characterInputMode, sourceFraming, fullBodyStatus, fullBodyPrompt, freeformFullBodyConfirmed, backgroundRemovalStatus, backgroundRemovalWarning, characterIdentity, promptReadyDescription: characterIdentity.promptReadyDescription },
+          description: completedCharacterDescription,
+          metadata: { ...details, characterAnatomyMode, characterInputMode, sourceFraming, fullBodyStatus, fullBodyPrompt, freeformFullBodyConfirmed, backgroundRemovalStatus, backgroundRemovalWarning, characterIdentity, promptReadyDescription: completedCharacterDescription },
           voiceSettings: voice,
           characterVoiceProfile: null,
           voicePackPaths: {},
-          globalPromptIdentityBlock: identityBlock,
+          globalPromptIdentityBlock: completedCharacterDescription,
           voiceStyleDefinition: "",
           introLine: PREVIEW_LINES[0].text,
           source: "characters_tab_card_only",
@@ -9885,8 +9889,8 @@ async function saveCharacter() {
             characterCard: cardForSave,
           })),
           originalSourceImagePath: uploadedImage?.serverPath || fullBodyForSave.serverPath,
-          description: identityBlock,
-          metadata: { ...details, characterAnatomyMode, characterInputMode, sourceFraming, fullBodyStatus, fullBodyPrompt, freeformFullBodyConfirmed, backgroundRemovalStatus, backgroundRemovalWarning, characterIdentity, promptReadyDescription: characterIdentity.promptReadyDescription },
+          description: completedCharacterDescription,
+          metadata: { ...details, characterAnatomyMode, characterInputMode, sourceFraming, fullBodyStatus, fullBodyPrompt, freeformFullBodyConfirmed, backgroundRemovalStatus, backgroundRemovalWarning, characterIdentity, promptReadyDescription: completedCharacterDescription },
           voiceSettings: voice,
           characterVoiceProfile,
           ...(completedPreview ? {
@@ -9922,7 +9926,7 @@ async function saveCharacter() {
             prompt: "strained lower-register yell, angry but controlled, boyish voice, rough breath, clear pronunciation",
             avoid: ["high-pitched scream", "shrill scream", "girl-like scream", "cartoon yell", "robotic distortion"],
           },
-          globalPromptIdentityBlock: identityBlock,
+          globalPromptIdentityBlock: completedCharacterDescription,
           voiceStyleDefinition: `${voice.voiceAge} ${voice.genderExpression}, ${voice.pitch} pitch, ${voice.resonance} resonance, ${voice.energy} energy, ${voice.texture}, ${voice.personalityTone.join(" / ")}`,
           introLine: PREVIEW_LINES[0].text,
           source: "characters_tab_builder",
@@ -11729,7 +11733,7 @@ async function saveCharacter() {
               </div>
               <div className="mt-5 rounded-xl border border-zinc-800 bg-zinc-950 p-4">
                 <p className="text-sm font-medium text-zinc-200">LTX Global Prompt Identity Block</p>
-                <p className="mt-2 text-sm text-zinc-400">{identityBlock}</p>
+                <p className="mt-2 text-sm text-zinc-400">{completedCharacterDescription}</p>
               </div>
 
               <div className="mt-5 flex flex-wrap gap-3">
