@@ -2083,7 +2083,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   useEffect(() => {
     const persisted = readPersistedState();
     if (persisted) {
-      if (persisted.tab) setTab(!PRODUCTION_FEATURE_ENABLED && persisted.tab === "storyboard" ? "generate" : persisted.tab);
+      if (persisted.tab) setTab(persisted.tab);
       if (persisted.assistanceTab) setAssistanceTab(persisted.assistanceTab);
       if (typeof persisted.prompt === "string") setPrompt(persisted.prompt);
       if (typeof persisted.negativePrompt === "string") setNegativePrompt(persisted.negativePrompt);
@@ -2165,7 +2165,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         tabParam === "settings" ||
         tabParam === "support"
       ) {
-        setTab(!PRODUCTION_FEATURE_ENABLED && tabParam === "storyboard" ? "generate" : tabParam);
+        setTab(tabParam);
       }
     } catch {
       // ignore
@@ -2410,10 +2410,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }, [stopMicCapture]);
 
   useEffect(() => {
-    if (!PRODUCTION_FEATURE_ENABLED && tab === "storyboard") {
-      setTab("generate");
-      return;
-    }
     if (!isAdmin && tab === "voices") {
       setTab("generate");
     }
@@ -7379,7 +7375,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         ) : null}
 
         {tab === "angles" ? <AnglesPanel /> : null}
-        {PRODUCTION_FEATURE_ENABLED && tab === "storyboard" ? <StoryboardPanel /> : null}
+        {tab === "storyboard" ? <StoryboardPanel /> : null}
         {tab === "characters" ? <CharactersPanel /> : null}
         {tab === "editvideo" ? <EditVideoPanel onRefreshGallery={() => void loadGallery()} /> : null}
 
@@ -7785,7 +7781,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       />
 
             <ProductionCharacterReferencePickerBridge />
-<SpinDialNav tab={tab} onTab={setTab} isAdmin={isAdmin} showProduction={PRODUCTION_FEATURE_ENABLED} uiMode={appUiMode} />
+<SpinDialNav tab={tab} onTab={setTab} isAdmin={isAdmin} showProduction={true} uiMode={appUiMode} />
     </main>
   );
 }
