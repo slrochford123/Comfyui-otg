@@ -1,4 +1,4 @@
-export const WORKER_PLATFORMS = ["windows", "linux"] as const;
+﻿export const WORKER_PLATFORMS = ["windows", "linux"] as const;
 export const WORKER_KINDS = ["agent", "polling-worker", "service", "comfy"] as const;
 export const WORKER_ALLOWED_ACTIONS = ["status", "start", "stop", "restart"] as const;
 export const WORKER_LIFECYCLE_ACTIONS = ["status", "ensure-running", "start", "stop", "restart", "release"] as const;
@@ -187,14 +187,14 @@ export const WORKER_CATALOG = [
     platform: "windows",
     kind: "service",
     enabled: true,
-    dryRunOnly: true,
+    dryRunOnly: false,
     resources: ["service:bg-remove"],
     dependencies: [],
     idleTimeoutSeconds: 600,
     dangerousStop: false,
     userVisible: false,
     allowedActions: ["status", "start", "stop", "restart"],
-    description: "Windows TEST background-removal helper at port 3333. It remains dry-run only until WorkerManager ownership is verified.",
+    description: "Windows TEST background-removal helper at port 3333. WorkerManager ownership is enabled after runtime launcher validation.",
     lane: "image",
     gpu: "windows-helper",
     userStatusKind: "service",
@@ -239,14 +239,14 @@ export const WORKER_CATALOG = [
     platform: "windows",
     kind: "polling-worker",
     enabled: true,
-    dryRunOnly: true,
+    dryRunOnly: false,
     resources: ["service:character-preview"],
     dependencies: [],
     idleTimeoutSeconds: 600,
     dangerousStop: false,
     userVisible: false,
     allowedActions: ["status", "start", "stop", "restart"],
-    description: "Windows polling worker for character preview/dub jobs. It remains dry-run only until WorkerManager ownership is verified.",
+    description: "Windows polling worker for character preview/dub jobs. WorkerManager ownership is enabled after launcher validation.",
     lane: "audio",
     userStatusKind: "worker",
   },
@@ -323,3 +323,4 @@ export function publicWorkerCatalogEntry(entry: WorkerCatalogEntry): WorkerCatal
     allowedActions: [...entry.allowedActions],
   };
 }
+

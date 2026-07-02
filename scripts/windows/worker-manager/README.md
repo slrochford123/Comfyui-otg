@@ -1,4 +1,4 @@
-# Local Windows WorkerManager
+﻿# Local Windows WorkerManager
 
 This folder documents the local Windows WorkerManager configuration used by the ComfyUI-OTG TEST/dev worker lifecycle system.
 
@@ -46,11 +46,11 @@ Before running workers, review `workers.json` for local paths, ports, worker IDs
 - `xtts`
 - `whisper`
 - `speaker-diarization`
+- `bg-remove`
+- `character-preview`
 
 ## Dry-Run Only Workers
 
-- `bg-remove`
-- `character-preview`
 - `ace-step`
 - `comfy-3090-sage-video`
 
@@ -60,7 +60,7 @@ Before running workers, review `workers.json` for local paths, ports, worker IDs
 
 The current CozyVoice launcher is a one-shot runner, not a long-running service wrapper. Keep it disabled until a WorkerManager-owned service or job wrapper is defined and verified.
 
-The XTTS, Whisper, and speaker-diarization launchers are now treated as real WorkerManager-owned services when the agent is launched with `-AllowRealActions`/`--allow-real-actions` and the manager config is present locally.
+The XTTS, Whisper, speaker-diarization, BG Remove, and Character Preview launchers are now treated as real WorkerManager-owned services/workers when the agent is launched with `-AllowRealActions`/`--allow-real-actions` and the manager config is present locally. BG Remove uses `services\bg_remove\run_bg_remove_runtime.ps1`, which skips install/setup work and only starts the existing runtime.
 
 ## Planned Coverage
 
@@ -107,3 +107,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\AI\OTG-WorkerManager\work
 ## Restore Note
 
 `workers.example.json` and `worker-manager.ps1` are sanitized recovery templates. Copy them to `C:\AI\OTG-WorkerManager` only after reviewing the target machine and environment.
+

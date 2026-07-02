@@ -1,4 +1,4 @@
-import fs from "node:fs";
+﻿import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { NextRequest } from "next/server";
@@ -40,9 +40,10 @@ describe("worker lifecycle foundation", () => {
     expect(getWorkerCatalogEntry("whisper")?.dryRunOnly).toBe(false);
     expect(getWorkerCatalogEntry("speaker-diarization")?.dryRunOnly).toBe(false);
     expect(getWorkerCatalogEntry("speaker-diarization")?.resources).toContain("service:speaker-diarization");
-    expect(getWorkerCatalogEntry("character-preview")?.dryRunOnly).toBe(true);
+    expect(getWorkerCatalogEntry("character-preview")?.dryRunOnly).toBe(false);
     expect(getWorkerCatalogEntry("ace-step")?.dryRunOnly).toBe(true);
     expect(getWorkerCatalogEntry("bg-remove")?.platform).toBe("windows");
+    expect(getWorkerCatalogEntry("bg-remove")?.dryRunOnly).toBe(false);
     expect(getWorkerCatalogEntry("cozyvoice")?.enabled).toBe(false);
     expect(validateWorkerLifecycleRequest("missing-worker", "start").ok).toBe(false);
     expect(validateWorkerLifecycleRequest("voice-ltx", "launch-shell").ok).toBe(false);
@@ -140,16 +141,17 @@ describe("worker lifecycle foundation", () => {
 
     expect(agentPy).toContain("--allow-real-actions");
     expect(agentPs1).toContain("$AllowRealActions");
-    expect(realActionLine).toBe('REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design", "voice-dataset", "applio", "xtts", "whisper", "speaker-diarization"}');
+    expect(realActionLine).toBe('REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design", "voice-dataset", "applio", "xtts", "whisper", "speaker-diarization", "bg-remove", "character-preview"}');
     expect(agentPy).toContain("Real lifecycle actions are only supported for");
     expect(agentPy).toContain("OTG_WORKER_MANAGER_PATH");
     expect(agentPy).not.toContain('"--worker-token"');
     expect(agentPy).not.toContain("'--worker-token'");
     expect(agentPs1).not.toContain("--worker-token");
     expect(realActionLine).not.toContain("cozyvoice");
-    expect(realActionLine).not.toContain("bg-remove");
-    expect(realActionLine).not.toContain("character-preview");
+    expect(realActionLine).toContain("bg-remove");
+    expect(realActionLine).toContain("character-preview");
     expect(realActionLine).not.toContain("ace-step");
     expect(realActionLine).not.toContain("comfy-3090-sage-video");
   });
 });
+

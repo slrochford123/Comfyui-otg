@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Dry-run OTG worker lifecycle agent.
 
 The Linux control plane may request lifecycle actions by worker ID only. This
@@ -37,7 +37,7 @@ LOCAL_WORKERS: dict[str, dict[str, Any]] = {
     "ace-step": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
 }
 
-REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design", "voice-dataset", "applio", "xtts", "whisper", "speaker-diarization"}
+REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design", "voice-dataset", "applio", "xtts", "whisper", "speaker-diarization", "bg-remove", "character-preview"}
 
 
 def mask_token(value: str) -> str:
@@ -329,3 +329,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
