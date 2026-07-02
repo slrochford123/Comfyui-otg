@@ -136,14 +136,21 @@ function Test-ExpectedProcess {
   if ([string]$Metadata.workerId -ne [string]$Worker.id) { return $false }
   if ([string]$Metadata.commandHash -ne (Get-CommandHash $Worker)) { return $false }
 
-  $cmd = [string]$Process.CommandLine
-  foreach ($item in @($Worker.health.commandLineContains)) {
-    if ($cmd -notmatch [regex]::Escape([string]$item)) { return $false }
+  $candidates = @($Process) + @(Get-ChildProcesses -ParentProcessId ([int]$Process.ProcessId))
+  foreach ($candidate in $candidates) {
+    $cmd = [string]$candidate.CommandLine
+    $containsOk = $true
+    foreach ($item in @($Worker.health.commandLineContains)) {
+      if ($cmd -notmatch [regex]::Escape([string]$item)) { $containsOk = $false; break }
+    }
+    if (-not $containsOk) { continue }
+    $mustNotOk = $true
+    foreach ($item in @($Worker.health.commandLineMustNotContain)) {
+      if ($cmd -match [regex]::Escape([string]$item)) { $mustNotOk = $false; break }
+    }
+    if ($mustNotOk) { return $true }
   }
-  foreach ($item in @($Worker.health.commandLineMustNotContain)) {
-    if ($cmd -match [regex]::Escape([string]$item)) { return $false }
-  }
-  return $true
+  return $false
 }
 
 function Get-ChildProcesses {
@@ -166,16 +173,25 @@ function Get-Health {
     }
   }
 
-  $cmd = [string]$Process.CommandLine
-  $contains = @($Worker.health.commandLineContains)
-  $mustNot = @($Worker.health.commandLineMustNotContain)
-  $containsOk = $true
-  foreach ($item in $contains) {
-    if ($cmd -notmatch [regex]::Escape([string]$item)) { $containsOk = $false }
-  }
+  $candidates = @($Process) + @(Get-ChildProcesses -ParentProcessId ([int]$Process.ProcessId))
+  $containsOk = $false
   $mustNotOk = $true
-  foreach ($item in $mustNot) {
-    if ($cmd -match [regex]::Escape([string]$item)) { $mustNotOk = $false }
+  foreach ($candidate in $candidates) {
+    $cmd = [string]$candidate.CommandLine
+    $candidateContainsOk = $true
+    foreach ($item in @($Worker.health.commandLineContains)) {
+      if ($cmd -notmatch [regex]::Escape([string]$item)) { $candidateContainsOk = $false }
+    }
+    if (-not $candidateContainsOk) { continue }
+    $candidateMustNotOk = $true
+    foreach ($item in @($Worker.health.commandLineMustNotContain)) {
+      if ($cmd -match [regex]::Escape([string]$item)) { $candidateMustNotOk = $false }
+    }
+    if ($candidateContainsOk -and $candidateMustNotOk) {
+      $containsOk = $true
+      $mustNotOk = $true
+      break
+    }
   }
 
   return [ordered]@{

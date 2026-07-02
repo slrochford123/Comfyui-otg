@@ -148,7 +148,7 @@
       "id": "xtts",
       "displayName": "XTTS Server",
       "enabled": true,
-      "dryRunOnly": true,
+      "dryRunOnly": false,
       "dangerousStop": false,
       "workingDirectory": "C:\\AI\\OTG-Test2\\scripts\\voice",
       "command": "cmd.exe",
@@ -166,8 +166,8 @@
       "stopMode": "process-tree",
       "health": {
         "commandLineContains": [
-          "run_xtts_server",
-          "7862"
+          "xtts_server:app",
+          "--port 7862"
         ],
         "commandLineMustNotContain": [
           "--worker-token"
@@ -180,7 +180,7 @@
       "resourceHints": [
         "service:xtts"
       ],
-      "description": "On-demand Coqui XTTS service at http://127.0.0.1:7862. Dry-run/status-safe until WorkerManager ownership is verified.",
+      "description": "On-demand Coqui XTTS service at http://127.0.0.1:7862. WorkerManager ownership is enabled after launcher validation.",
       "userStatusKind": "service"
     },
     {
@@ -360,7 +360,7 @@
       "id": "whisper",
       "displayName": "Whisper Transcription Service",
       "enabled": true,
-      "dryRunOnly": true,
+      "dryRunOnly": false,
       "dangerousStop": false,
       "workingDirectory": "C:\\AI\\Services\\whisper",
       "command": "cmd.exe",
@@ -377,8 +377,8 @@
       "stopMode": "process-tree",
       "health": {
         "commandLineContains": [
-          "run_whisper_server",
-          "9001"
+          "whisper_server:app",
+          "--port 9001"
         ],
         "commandLineMustNotContain": [
           "--worker-token"
@@ -394,13 +394,13 @@
       "lane": "audio",
       "gpu": "",
       "userStatusKind": "service",
-      "description": "On-demand Whisper transcription service at http://127.0.0.1:9001. Dry-run/status-safe until WorkerManager ownership is verified."
+      "description": "On-demand Whisper transcription service at http://127.0.0.1:9001. WorkerManager ownership is enabled after launcher validation."
     },
     {
       "id": "speaker-diarization",
       "displayName": "Speaker Diarization Service",
       "enabled": true,
-      "dryRunOnly": true,
+      "dryRunOnly": false,
       "dangerousStop": false,
       "workingDirectory": "C:\\AI\\OTG-Test2\\services\\speaker_diarization",
       "command": "cmd.exe",
@@ -418,8 +418,8 @@
       "stopMode": "process-tree",
       "health": {
         "commandLineContains": [
-          "run_speaker_diarization",
-          "9010"
+          "app:app",
+          "--port 9010"
         ],
         "commandLineMustNotContain": [
           "--worker-token"
@@ -435,7 +435,7 @@
       "lane": "audio",
       "gpu": "",
       "userStatusKind": "service",
-      "description": "On-demand pyannote speaker diarization service at http://127.0.0.1:9010. Dry-run/status-safe until WorkerManager ownership is verified."
+      "description": "On-demand pyannote speaker diarization service at http://127.0.0.1:9010. WorkerManager ownership is enabled after launcher validation."
     },
     {
       "id": "character-preview",

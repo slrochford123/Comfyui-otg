@@ -43,13 +43,13 @@ Before running workers, review `workers.json` for local paths, ports, worker IDs
 - `voice-design`
 - `voice-dataset`
 - `applio`
+- `xtts`
+- `whisper`
+- `speaker-diarization`
 
 ## Dry-Run Only Workers
 
-- `xtts`
 - `bg-remove`
-- `whisper`
-- `speaker-diarization`
 - `character-preview`
 - `ace-step`
 - `comfy-3090-sage-video`
@@ -59,6 +59,8 @@ Before running workers, review `workers.json` for local paths, ports, worker IDs
 - `cozyvoice`
 
 The current CozyVoice launcher is a one-shot runner, not a long-running service wrapper. Keep it disabled until a WorkerManager-owned service or job wrapper is defined and verified.
+
+The XTTS, Whisper, and speaker-diarization launchers are now treated as real WorkerManager-owned services when the agent is launched with `-AllowRealActions`/`--allow-real-actions` and the manager config is present locally.
 
 ## Planned Coverage
 

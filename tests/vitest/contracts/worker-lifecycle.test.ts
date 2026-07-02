@@ -36,7 +36,9 @@ describe("worker lifecycle foundation", () => {
 
   it("validates known worker IDs and allowed lifecycle actions", () => {
     expect(getWorkerCatalogEntry("voice-ltx")?.resources).toContain("gpu:windows-3090");
-    expect(getWorkerCatalogEntry("whisper")?.dryRunOnly).toBe(true);
+    expect(getWorkerCatalogEntry("xtts")?.dryRunOnly).toBe(false);
+    expect(getWorkerCatalogEntry("whisper")?.dryRunOnly).toBe(false);
+    expect(getWorkerCatalogEntry("speaker-diarization")?.dryRunOnly).toBe(false);
     expect(getWorkerCatalogEntry("speaker-diarization")?.resources).toContain("service:speaker-diarization");
     expect(getWorkerCatalogEntry("character-preview")?.dryRunOnly).toBe(true);
     expect(getWorkerCatalogEntry("ace-step")?.dryRunOnly).toBe(true);
@@ -138,17 +140,14 @@ describe("worker lifecycle foundation", () => {
 
     expect(agentPy).toContain("--allow-real-actions");
     expect(agentPs1).toContain("$AllowRealActions");
-    expect(realActionLine).toBe('REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design", "voice-dataset", "applio"}');
+    expect(realActionLine).toBe('REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design", "voice-dataset", "applio", "xtts", "whisper", "speaker-diarization"}');
     expect(agentPy).toContain("Real lifecycle actions are only supported for");
     expect(agentPy).toContain("OTG_WORKER_MANAGER_PATH");
     expect(agentPy).not.toContain('"--worker-token"');
     expect(agentPy).not.toContain("'--worker-token'");
     expect(agentPs1).not.toContain("--worker-token");
-    expect(realActionLine).not.toContain("xtts");
     expect(realActionLine).not.toContain("cozyvoice");
     expect(realActionLine).not.toContain("bg-remove");
-    expect(realActionLine).not.toContain("whisper");
-    expect(realActionLine).not.toContain("speaker-diarization");
     expect(realActionLine).not.toContain("character-preview");
     expect(realActionLine).not.toContain("ace-step");
     expect(realActionLine).not.toContain("comfy-3090-sage-video");
