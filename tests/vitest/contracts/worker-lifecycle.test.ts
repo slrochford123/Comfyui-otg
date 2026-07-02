@@ -17,13 +17,27 @@ import {
   setResourceLockStorePathForTests,
 } from "@/lib/workers/resourceLocks";
 import {
+  claimWorkerLifecycleCommand,
   clearWorkerLifecycleCommandsForTests,
+  completeWorkerLifecycleCommand,
   enqueueWorkerLifecycleCommand,
   setWorkerLifecycleStorePathForTests,
 } from "@/lib/workers/workerLifecycleStore";
 
 describe("worker lifecycle foundation", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "otg-worker-lifecycle-"));
+  const workerControlToken = "test-worker-control-token";
+
+  function workerControlRequest(pathname: string, init: RequestInit = {}) {
+    return new NextRequest(`http://127.0.0.1${pathname}`, init);
+  }
+
+  function authHeaders(extra: Record<string, string> = {}) {
+    return {
+      authorization: `Bearer ${workerControlToken}`,
+      ...extra,
+    };
+  }
 
   beforeEach(() => {
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -31,7 +45,10 @@ describe("worker lifecycle foundation", () => {
     setWorkerLifecycleStorePathForTests(path.join(tempRoot, `commands-${suffix}.json`));
     clearResourceLocksForTests();
     clearWorkerLifecycleCommandsForTests();
-    process.env.OTG_WORKER_CONTROL_TOKEN = "test-worker-control-token";
+    delete process.env.OTG_WORKER_CONTROL_ENABLED;
+    delete process.env.OTG_WORKER_CONTROL_DEV_ENQUEUE;
+    delete process.env.OTG_WORKER_TOKEN;
+    process.env.OTG_WORKER_CONTROL_TOKEN = workerControlToken;
   });
 
   it("validates known worker IDs and allowed lifecycle actions", () => {
@@ -140,6 +157,97 @@ describe("worker lifecycle foundation", () => {
     expect(body.command.shell).toBeUndefined();
   });
 
+  it("enqueue route returns 404 when worker-control is disabled", async () => {
+    process.env.OTG_WORKER_CONTROL_DEV_ENQUEUE = "1";
+    const { POST } = await import("@/app/api/worker-control/enqueue/route");
+    const response = await POST(workerControlRequest("/api/worker-control/enqueue", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify({
+        workerId: "voice-ltx",
+        action: "ensure-running",
+      }),
+    }));
+
+    expect(response.status).toBe(404);
+  });
+
+  it("enqueue route rejects missing or invalid auth when worker-control is enabled", async () => {
+    process.env.OTG_WORKER_CONTROL_ENABLED = "1";
+    const { POST } = await import("@/app/api/worker-control/enqueue/route");
+    const payload = {
+      workerId: "voice-ltx",
+      action: "ensure-running",
+    };
+
+    const missing = await POST(workerControlRequest("/api/worker-control/enqueue", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    }));
+    expect(missing.status).toBe(401);
+
+    const invalid = await POST(workerControlRequest("/api/worker-control/enqueue", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer wrong-token",
+      },
+      body: JSON.stringify(payload),
+    }));
+    expect(invalid.status).toBe(401);
+  });
+
+  it("enqueue route accepts valid auth in production mode without dev enqueue flag", async () => {
+    process.env.OTG_WORKER_CONTROL_ENABLED = "1";
+    delete process.env.OTG_WORKER_CONTROL_DEV_ENQUEUE;
+    const { POST } = await import("@/app/api/worker-control/enqueue/route");
+
+    const response = await POST(workerControlRequest("/api/worker-control/enqueue", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify({
+        workerId: "ace-step",
+        action: "ensure-running",
+        requestedBy: "unit-test",
+        dryRun: false,
+        reason: "authenticated production enqueue test",
+      }),
+    }));
+    const body = await response.json();
+    const serialized = JSON.stringify(body).toLowerCase();
+
+    expect(response.status).toBe(200);
+    expect(body.command.workerId).toBe("ace-step");
+    expect(body.command.action).toBe("ensure-running");
+    expect(body.command.dryRun).toBe(false);
+    expect(serialized).not.toContain(workerControlToken);
+  });
+
+  it("status route rejects disabled, missing auth, and invalid auth requests", async () => {
+    const { GET } = await import("@/app/api/worker-control/status/route");
+
+    const disabled = await GET(workerControlRequest("/api/worker-control/status", {
+      headers: authHeaders(),
+    }));
+    expect(disabled.status).toBe(404);
+
+    process.env.OTG_WORKER_CONTROL_ENABLED = "1";
+    const missing = await GET(workerControlRequest("/api/worker-control/status"));
+    expect(missing.status).toBe(401);
+
+    const invalid = await GET(workerControlRequest("/api/worker-control/status", {
+      headers: { authorization: "Bearer wrong-token" },
+    }));
+    expect(invalid.status).toBe(401);
+  });
+
   it("Windows agent real actions remain opt-in and limited to the verified allowlist", () => {
     const agentPy = fs.readFileSync(path.join(process.cwd(), "scripts/windows/otg-worker-agent.py"), "utf8");
     const agentPs1 = fs.readFileSync(path.join(process.cwd(), "scripts/windows/otg-worker-agent.ps1"), "utf8");
@@ -157,6 +265,76 @@ describe("worker lifecycle foundation", () => {
     expect(realActionLine).toContain("bg-remove");
     expect(realActionLine).toContain("character-preview");
     expect(realActionLine).toContain("comfy-3090-sage-video");
+  });
+
+  it("status route sanitizes lifecycle result details before returning them", async () => {
+    process.env.OTG_WORKER_CONTROL_ENABLED = "1";
+    process.env.OTG_WORKER_TOKEN = "unit-test-worker-token";
+    const queued = enqueueWorkerLifecycleCommand({
+      workerId: "qwen3-tts",
+      action: "release",
+      requestedBy: "test",
+      dryRun: false,
+      reason: "unit test",
+    });
+    expect(queued.ok).toBe(true);
+    const claimed = claimWorkerLifecycleCommand({
+      agentId: "windows-main-agent",
+      platform: "windows",
+      capabilities: ["qwen3-tts"],
+    });
+    expect(claimed?.id).toBe(queued.ok ? queued.command.id : "");
+
+    const completed = completeWorkerLifecycleCommand(claimed!.id, "windows-main-agent", {
+      workerId: "qwen3-tts",
+      action: "release",
+      dryRun: false,
+      realAction: true,
+      managerPath: "C:\\AI\\OTG-WorkerManager\\worker-manager.ps1",
+      commandLine: "powershell.exe -File C:\\AI\\OTG-WorkerManager\\worker-manager.ps1 --worker-token unit-test-worker-token",
+      finalState: "stopped",
+      pid: 1234,
+      health: {
+        ok: false,
+        summary: "process not running from C:\\AI\\OTG-WorkerManager\\worker-manager.ps1",
+      },
+      message: "Bearer unit-test-worker-token",
+    });
+    expect(completed?.status).toBe("complete");
+
+    const { GET } = await import("@/app/api/worker-control/status/route");
+    const response = await GET(workerControlRequest("/api/worker-control/status", {
+      headers: authHeaders(),
+    }));
+    const body = await response.json();
+    const serialized = JSON.stringify(body).toLowerCase();
+
+    expect(response.status).toBe(200);
+    expect(body.enabled).toBe(true);
+    expect(body.dryRunOnly).toBe(false);
+    expect(body.executionMode).toBe("mixed");
+    expect(body.realActionsAvailable).toBe(true);
+    expect(body.catalog.find((entry: { id: string }) => entry.id === "cozyvoice")).toMatchObject({
+      enabled: false,
+      dryRunOnly: true,
+    });
+    expect(body.catalog.find((entry: { id: string }) => entry.id === "ace-step")).toMatchObject({
+      enabled: true,
+      dryRunOnly: false,
+    });
+    expect(body.catalog.find((entry: { id: string }) => entry.id === "comfy-3090-sage-video")).toMatchObject({
+      enabled: true,
+      dryRunOnly: false,
+    });
+    expect(serialized).not.toContain("managerpath");
+    expect(serialized).not.toContain("c:\\ai\\");
+    expect(serialized).not.toContain("worker-manager.ps1");
+    expect(serialized).not.toContain("cmd.exe");
+    expect(serialized).not.toContain("powershell.exe");
+    expect(serialized).not.toContain("--worker-token");
+    expect(serialized).not.toContain("otg_worker_token");
+    expect(serialized).not.toContain("unit-test-worker-token");
+    expect(serialized).not.toMatch(/bearer\s+[a-z0-9._~+/-]+=*/);
   });
 });
 
