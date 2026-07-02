@@ -556,13 +556,16 @@
                         "id":  "comfy-3090-sage-video",
                         "displayName":  "ComfyUI RTX 3090 Sage Video Lane",
                         "enabled":  true,
-                        "dryRunOnly":  true,
+                        "dryRunOnly":  false,
                         "dangerousStop":  true,
-                        "workingDirectory":  "C:\\AI\\Comfyui",
-                        "command":  "cmd.exe",
+                        "workingDirectory":  "C:\\AI\\OTG-Test2",
+                        "command":  "powershell.exe",
                         "args":  [
-                                     "/c",
-                                     "C:\\AI\\Comfyui\\ComfyUI - 3090 - Sage Video.bat"
+                                     "-NoProfile",
+                                     "-ExecutionPolicy",
+                                     "Bypass",
+                                     "-File",
+                                     "C:\\AI\\OTG-Test2\\scripts\\windows\\run-comfy-3090-sage-video-runtime.ps1"
                                  ],
                         "env":  {
                                     "CUDA_VISIBLE_DEVICES":  "0"
@@ -575,13 +578,14 @@
                         "stopMode":  "process-tree",
                         "health":  {
                                        "commandLineContains":  [
-                                                                   "ComfyUI\\main.py",
-                                                                   "--port 8188",
-                                                                   "user_8188_sage_video"
+                                                                   "run-comfy-3090-sage-video-runtime"
                                                                ],
                                        "commandLineMustNotContain":  [
                                                                          "--worker-token"
-                                                                     ]
+                                                                     ],
+                                       "http":  {
+                                                    "url":  "http://127.0.0.1:8188/system_stats"
+                                                }
                                    },
                         "idleTimeoutSeconds":  3600,
                         "resourceHints":  [
@@ -589,7 +593,7 @@
                                               "comfy:windows-3090",
                                               "service:ltx-video"
                                           ],
-                        "description":  "Windows RTX 3090 SageAttention ComfyUI lane for LTX/video only. Do not route Qwen image jobs here.",
+                        "description":  "Windows RTX 3090 SageAttention ComfyUI lane for LTX/video only. WorkerManager ownership is enabled after clean stopped-state wrapper validation. Qwen image routing is forbidden.",
                         "lane":  "video",
                         "gpu":  "windows-3090",
                         "userStatusKind":  "lane"

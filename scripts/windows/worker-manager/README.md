@@ -49,10 +49,11 @@ Before running workers, review `workers.json` for local paths, ports, worker IDs
 - `bg-remove`
 - `character-preview`
 - `ace-step`
+- `comfy-3090-sage-video`
 
 ## Dry-Run Only Workers
 
-- `comfy-3090-sage-video`
+None.
 
 ## Disabled / Needs Wrapper
 
@@ -60,9 +61,9 @@ Before running workers, review `workers.json` for local paths, ports, worker IDs
 
 The current CozyVoice launcher is a one-shot runner, not a long-running service wrapper. Keep it disabled until a WorkerManager-owned service or job wrapper is defined and verified.
 
-The XTTS, Whisper, speaker-diarization, BG Remove, Character Preview, and ACE-Step launchers are now treated as real WorkerManager-owned services/workers when the agent is launched with `-AllowRealActions`/`--allow-real-actions` and the manager config is present locally. BG Remove uses `services\bg_remove\run_bg_remove_runtime.ps1`, which skips install/setup work and only starts the existing runtime. ACE-Step uses `scripts\windows\run-ace-step-api-runtime.ps1`, which starts the API runtime on `127.0.0.1:8001` without startup install, update, or sync behavior, and reserves both `gpu:windows-3090` and `service:ace-step`.
+The XTTS, Whisper, speaker-diarization, BG Remove, Character Preview, ACE-Step, and Comfy 3090 Sage Video launchers are now treated as real WorkerManager-owned services/workers when the agent is launched with `-AllowRealActions`/`--allow-real-actions` and the manager config is present locally. BG Remove uses `services\bg_remove\run_bg_remove_runtime.ps1`, which skips install/setup work and only starts the existing runtime. ACE-Step uses `scripts\windows\run-ace-step-api-runtime.ps1`, which starts the API runtime on `127.0.0.1:8001` without startup install, update, or sync behavior, and reserves both `gpu:windows-3090` and `service:ace-step`. Comfy 3090 Sage Video uses `scripts\windows\run-comfy-3090-sage-video-runtime.ps1`, reserves the Windows 3090 GPU/video lane resources, and refuses duplicate startup if port `8188` is already listening.
 
-`comfy-3090-sage-video` remains dry-run/manual until a clean stopped-state ownership test is scheduled. `cozyvoice` remains disabled until it has a service or job wrapper instead of the current one-shot runner.
+`comfy-3090-sage-video` is a `dangerousStop` video/GPU lane for LTX/video only and must not be used for Qwen image jobs. `cozyvoice` remains disabled until it has a service or job wrapper instead of the current one-shot runner.
 
 ## Planned Coverage
 

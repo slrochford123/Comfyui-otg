@@ -44,6 +44,10 @@ describe("worker lifecycle foundation", () => {
     expect(getWorkerCatalogEntry("ace-step")?.dryRunOnly).toBe(false);
     expect(getWorkerCatalogEntry("ace-step")?.resources).toContain("gpu:windows-3090");
     expect(getWorkerCatalogEntry("ace-step")?.resources).toContain("service:ace-step");
+    expect(getWorkerCatalogEntry("comfy-3090-sage-video")?.dryRunOnly).toBe(false);
+    expect(getWorkerCatalogEntry("comfy-3090-sage-video")?.resources).toContain("gpu:windows-3090");
+    expect(getWorkerCatalogEntry("comfy-3090-sage-video")?.resources).toContain("comfy:windows-3090");
+    expect(getWorkerCatalogEntry("comfy-3090-sage-video")?.resources).toContain("service:ltx-video");
     expect(getWorkerCatalogEntry("bg-remove")?.platform).toBe("windows");
     expect(getWorkerCatalogEntry("bg-remove")?.dryRunOnly).toBe(false);
     expect(getWorkerCatalogEntry("cozyvoice")?.enabled).toBe(false);
@@ -143,7 +147,7 @@ describe("worker lifecycle foundation", () => {
 
     expect(agentPy).toContain("--allow-real-actions");
     expect(agentPs1).toContain("$AllowRealActions");
-    expect(realActionLine).toBe('REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design", "voice-dataset", "applio", "xtts", "whisper", "speaker-diarization", "bg-remove", "character-preview", "ace-step"}');
+    expect(realActionLine).toBe('REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design", "voice-dataset", "applio", "xtts", "whisper", "speaker-diarization", "bg-remove", "character-preview", "ace-step", "comfy-3090-sage-video"}');
     expect(agentPy).toContain("Real lifecycle actions are only supported for");
     expect(agentPy).toContain("OTG_WORKER_MANAGER_PATH");
     expect(agentPy).not.toContain('"--worker-token"');
@@ -152,7 +156,7 @@ describe("worker lifecycle foundation", () => {
     expect(realActionLine).not.toContain("cozyvoice");
     expect(realActionLine).toContain("bg-remove");
     expect(realActionLine).toContain("character-preview");
-    expect(realActionLine).not.toContain("comfy-3090-sage-video");
+    expect(realActionLine).toContain("comfy-3090-sage-video");
   });
 });
 
