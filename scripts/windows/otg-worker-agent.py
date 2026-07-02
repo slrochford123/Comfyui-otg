@@ -25,6 +25,7 @@ LOCAL_WORKERS: dict[str, dict[str, Any]] = {
     "voice-ltx": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
     "comfy-3090-sage-video": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
     "qwen3-tts": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
+    "voice-design": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
     "xtts": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
     "cozyvoice": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
     "applio": {"platform": "windows", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
@@ -32,11 +33,22 @@ LOCAL_WORKERS: dict[str, dict[str, Any]] = {
     "bg-remove": {"platform": "linux", "actions": {"status", "start", "stop", "restart", "ensure-running", "release"}},
 }
 
+REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design"}
+
 
 def mask_token(value: str) -> str:
     if not value:
         return ""
     text = str(value)
+    known_tokens = [
+        os.environ.get("OTG_WORKER_TOKEN") or "",
+        os.environ.get("OTG_WORKER_CONTROL_TOKEN") or "",
+    ]
+    if any(token and text == token for token in known_tokens):
+        return "[masked]"
+    for token in known_tokens:
+        if token:
+            text = text.replace(token, "***MASKED***")
     text = re.sub(r"(?i)(--worker-token\s+)\S+", r"\1***MASKED***", text)
     text = re.sub(r"(?i)(authorization:\s*bearer\s+)\S+", r"\1***MASKED***", text)
     text = re.sub(r"(?i)(bearer\s+)\S+", r"\1***MASKED***", text)
@@ -119,9 +131,11 @@ def parse_manager_json(stdout: str) -> dict[str, Any]:
     return json.loads(text)
 
 
-def run_worker_manager(manager_path: str, manager_action: str) -> dict[str, Any]:
+def run_worker_manager(manager_path: str, worker_id: str, manager_action: str) -> dict[str, Any]:
     if manager_action not in {"status", "start", "stop", "restart"}:
         raise RuntimeError(f"Unsupported WorkerManager action: {manager_action}")
+    if worker_id not in REAL_ACTION_WORKERS:
+        raise RuntimeError(f"Real lifecycle actions are not supported for {worker_id}.")
     command = [
         "powershell.exe",
         "-NoProfile",
@@ -130,7 +144,7 @@ def run_worker_manager(manager_path: str, manager_action: str) -> dict[str, Any]
         "-File",
         manager_path,
         manager_action,
-        "voice-ltx",
+        worker_id,
         "-json",
     ]
     with tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8") as stdout_file, tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8") as stderr_file:
@@ -168,8 +182,9 @@ def status_state(status: dict[str, Any]) -> str:
 def real_lifecycle_result(args: argparse.Namespace, command: dict[str, Any]) -> dict[str, Any]:
     worker_id = str(command.get("workerId") or "").strip()
     action = str(command.get("action") or "").strip()
-    if worker_id != "voice-ltx":
-        raise RuntimeError(f"Real lifecycle actions are only supported for voice-ltx in Phase 1C, not {worker_id}.")
+    if worker_id not in REAL_ACTION_WORKERS:
+        supported = ", ".join(sorted(REAL_ACTION_WORKERS))
+        raise RuntimeError(f"Real lifecycle actions are only supported for {supported} in Phase 2A, not {worker_id}.")
 
     manager_path = args.worker_manager_path
     if not os.path.isfile(manager_path):
@@ -177,32 +192,32 @@ def real_lifecycle_result(args: argparse.Namespace, command: dict[str, Any]) -> 
 
     message = ""
     if action == "status":
-        final = run_worker_manager(manager_path, "status")
+        final = run_worker_manager(manager_path, worker_id, "status")
         message = "WorkerManager status checked."
     elif action == "ensure-running":
-        current = run_worker_manager(manager_path, "status")
+        current = run_worker_manager(manager_path, worker_id, "status")
         state = status_state(current)
         if state == "running":
             final = current
-            message = "voice-ltx already running under WorkerManager."
+            message = f"{worker_id} already running under WorkerManager."
         elif state == "stopped":
-            run_worker_manager(manager_path, "start")
-            final = run_worker_manager(manager_path, "status")
-            message = "voice-ltx started by WorkerManager."
+            run_worker_manager(manager_path, worker_id, "start")
+            final = run_worker_manager(manager_path, worker_id, "status")
+            message = f"{worker_id} started by WorkerManager."
         else:
-            raise RuntimeError(f"Refusing ensure-running because voice-ltx state is {state or 'unknown'}.")
+            raise RuntimeError(f"Refusing ensure-running because {worker_id} state is {state or 'unknown'}.")
     elif action == "start":
-        run_worker_manager(manager_path, "start")
-        final = run_worker_manager(manager_path, "status")
-        message = "voice-ltx start requested through WorkerManager."
+        run_worker_manager(manager_path, worker_id, "start")
+        final = run_worker_manager(manager_path, worker_id, "status")
+        message = f"{worker_id} start requested through WorkerManager."
     elif action in {"stop", "release"}:
-        run_worker_manager(manager_path, "stop")
-        final = run_worker_manager(manager_path, "status")
-        message = "voice-ltx stopped by WorkerManager."
+        run_worker_manager(manager_path, worker_id, "stop")
+        final = run_worker_manager(manager_path, worker_id, "status")
+        message = f"{worker_id} stopped by WorkerManager."
     elif action == "restart":
-        run_worker_manager(manager_path, "restart")
-        final = run_worker_manager(manager_path, "status")
-        message = "voice-ltx restarted by WorkerManager."
+        run_worker_manager(manager_path, worker_id, "restart")
+        final = run_worker_manager(manager_path, worker_id, "status")
+        message = f"{worker_id} restarted by WorkerManager."
     else:
         raise RuntimeError(f"Unsupported lifecycle action for WorkerManager: {action}")
 
