@@ -42,6 +42,8 @@ describe("worker lifecycle foundation", () => {
     expect(getWorkerCatalogEntry("speaker-diarization")?.resources).toContain("service:speaker-diarization");
     expect(getWorkerCatalogEntry("character-preview")?.dryRunOnly).toBe(false);
     expect(getWorkerCatalogEntry("ace-step")?.dryRunOnly).toBe(false);
+    expect(getWorkerCatalogEntry("ace-step")?.resources).toContain("gpu:windows-3090");
+    expect(getWorkerCatalogEntry("ace-step")?.resources).toContain("service:ace-step");
     expect(getWorkerCatalogEntry("bg-remove")?.platform).toBe("windows");
     expect(getWorkerCatalogEntry("bg-remove")?.dryRunOnly).toBe(false);
     expect(getWorkerCatalogEntry("cozyvoice")?.enabled).toBe(false);

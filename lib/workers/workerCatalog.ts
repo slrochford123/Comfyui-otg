@@ -257,7 +257,7 @@ export const WORKER_CATALOG = [
     kind: "service",
     enabled: true,
     dryRunOnly: false,
-    resources: ["service:ace-step"],
+    resources: ["gpu:windows-3090", "service:ace-step"],
     dependencies: [],
     idleTimeoutSeconds: 900,
     dangerousStop: false,

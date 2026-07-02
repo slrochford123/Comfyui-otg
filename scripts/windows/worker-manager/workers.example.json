@@ -533,8 +533,7 @@
                         "stopMode":  "process-tree",
                         "health":  {
                                        "commandLineContains":  [
-                                                                   "run-ace-step-api-runtime",
-                                                                   "acestep-api"
+                                                                   "run-ace-step-api-runtime"
                                                                ],
                                        "commandLineMustNotContain":  [
                                                                          "--worker-token"
@@ -545,6 +544,7 @@
                                    },
                         "idleTimeoutSeconds":  900,
                         "resourceHints":  [
+                                              "gpu:windows-3090",
                                               "service:ace-step"
                                           ],
                         "lane":  "audio",

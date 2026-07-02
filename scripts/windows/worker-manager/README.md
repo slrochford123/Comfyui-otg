@@ -60,7 +60,7 @@ Before running workers, review `workers.json` for local paths, ports, worker IDs
 
 The current CozyVoice launcher is a one-shot runner, not a long-running service wrapper. Keep it disabled until a WorkerManager-owned service or job wrapper is defined and verified.
 
-The XTTS, Whisper, speaker-diarization, BG Remove, Character Preview, and ACE-Step launchers are now treated as real WorkerManager-owned services/workers when the agent is launched with `-AllowRealActions`/`--allow-real-actions` and the manager config is present locally. BG Remove uses `services\bg_remove\run_bg_remove_runtime.ps1`, which skips install/setup work and only starts the existing runtime. ACE-Step uses `scripts\windows\run-ace-step-api-runtime.ps1`, which starts the API runtime on `127.0.0.1:8001` without startup install, update, or sync behavior.
+The XTTS, Whisper, speaker-diarization, BG Remove, Character Preview, and ACE-Step launchers are now treated as real WorkerManager-owned services/workers when the agent is launched with `-AllowRealActions`/`--allow-real-actions` and the manager config is present locally. BG Remove uses `services\bg_remove\run_bg_remove_runtime.ps1`, which skips install/setup work and only starts the existing runtime. ACE-Step uses `scripts\windows\run-ace-step-api-runtime.ps1`, which starts the API runtime on `127.0.0.1:8001` without startup install, update, or sync behavior, and reserves both `gpu:windows-3090` and `service:ace-step`.
 
 `comfy-3090-sage-video` remains dry-run/manual until a clean stopped-state ownership test is scheduled. `cozyvoice` remains disabled until it has a service or job wrapper instead of the current one-shot runner.
 
