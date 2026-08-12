@@ -16,6 +16,17 @@ export type WorkflowMeta = {
     nodes?: string[]; // required custom node packs (human hints)
     notes?: string;
   };
+  videoCompatibility?: {
+    mode: "compatible" | "3090_only" | "reduced";
+    notes?: string;
+    reductions?: {
+      maxWidth?: number;
+      maxHeight?: number;
+      maxFrames?: number;
+      maxBatchSize?: number;
+      nodeOverrides?: Record<string, Record<string, unknown>>;
+    };
+  };
 };
 
 export type WorkflowsIndex = {
@@ -345,7 +356,7 @@ export function getWorkflowList(): { ok: true; list: WorkflowListItem[] } | { ok
   if (cache.list) return { ok: true, list: cache.list };
 
   const root = getWorkflowsRoot();
-  
+
 // Build meta list from index.json plus a directory scan (so workflows appear even if index.json is stale)
 const indexMetas: WorkflowMeta[] = (idx.index.workflows || []).map((w: any) => ({
   id: String(w.id ?? ""),

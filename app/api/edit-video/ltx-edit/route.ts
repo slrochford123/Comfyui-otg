@@ -10,6 +10,7 @@ import { configuredVideoComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import { getGallerySourcesForRequest, resolveGalleryItemByName } from "@/lib/gallery";
 import { ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import { SessionInvalidError } from "@/lib/ownerKey";
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -376,16 +377,16 @@ function buildGraph(params: {
 
 async function submitPrompt(comfyBaseUrl: string, graph: any) {
   const clientId = `otg-ltx-edit-${randomUUID()}`;
-  const res = await fetchStage(
-    `${comfyBaseUrl}/prompt`,
-    {
+  const res = await submitComfyPromptWith5060Lease({
+    baseUrl: comfyBaseUrl,
+    workerId: "edit-video-ltx-edit",
+    init: {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt: graph, client_id: clientId }),
     },
-    "submit_prompt",
-    120_000,
-  );
+    fetcher: (url, init) => fetchStage(url, init, "submit_prompt", 120_000),
+  });
   const parsed = await readJsonOrText(res);
   if (!res.ok) {
     throw new StageError("submit_prompt", String((parsed.json as any)?.error?.message || (parsed.json as any)?.error || parsed.text || `Comfy prompt failed (${res.status})`), res.status, parsed.json || parsed.text);

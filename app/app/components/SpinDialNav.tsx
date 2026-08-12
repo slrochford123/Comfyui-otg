@@ -61,6 +61,7 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, showProductio
       <div className={classNames("mx-auto flex overflow-x-auto pb-1", uiMode === "clean" ? "max-w-[1480px] gap-1.5" : "max-w-[1400px] gap-2")}>
         {items.map((item) => {
           const active = tab === item.id;
+          const isCharacterTab = item.id === "characters";
           return (
             <button
               key={item.id}
@@ -77,6 +78,11 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, showProductio
                     : uiMode === "clean"
                       ? "border-white/8 bg-white/[0.035] text-white/68 hover:bg-white/[0.07] hover:text-white"
                       : "border-white/10 bg-white/5 text-white/88 hover:bg-white/10",
+                isCharacterTab
+                  ? active
+                    ? "!border-sky-200/70 !bg-sky-300 !text-slate-950 shadow-[0_0_28px_rgba(125,211,252,0.25)]"
+                    : "!border-sky-300/30 !bg-sky-400/10 !text-sky-100 hover:!bg-sky-300/20"
+                  : "",
                 item.disabled ? "cursor-not-allowed opacity-45" : ""
               )}
             >

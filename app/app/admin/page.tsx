@@ -31,7 +31,7 @@ export default function AdminRootPage() {
             Users
           </a>
           <a href="/app/admin/gallery" className="otg-authShowBtn" style={{ textDecoration: "none", padding: "10px 14px" }}>
-            Gallery
+            Full Gallery
           </a>
           <a href="/app/admin/health" className="otg-authShowBtn" style={{ textDecoration: "none", padding: "10px 14px" }}>
             Health
@@ -50,9 +50,9 @@ export default function AdminRootPage() {
           </a>
 
           <a href="/app/admin/gallery" style={tileStyle}>
-            <div className="otg-cardTitle" style={{ margin: 0 }}>Admin Gallery</div>
+            <div className="otg-cardTitle" style={{ margin: 0 }}>Full Gallery</div>
             <div className="otg-help" style={{ marginTop: 8 }}>
-              Browse all images and videos from the configured Comfy output root, including nested subfolders.
+              Browse all supported images and videos from the RTX 3090 and RTX 5060 Ti ComfyUI output roots.
             </div>
           </a>
 

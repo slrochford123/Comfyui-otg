@@ -5,8 +5,9 @@ import path from "path";
 import crypto from "crypto";
 
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
-import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
+import { configuredImageComfyBaseUrl, logComfyRouting } from "@/app/api/_lib/comfyTarget";
 import { markRunning } from "@/lib/contentState";
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 
 export const runtime = "nodejs";
 
@@ -27,10 +28,19 @@ function resolveWorkflowRoot() {
 
 async function comfySubmit(workflow: any, clientId: string) {
   const baseUrl = configuredImageComfyBaseUrl();
-  const res = await fetch(`${baseUrl.replace(/\/$/, "")}/prompt`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: workflow, client_id: clientId }),
+  logComfyRouting(
+    "/api/storyboard/create POST",
+    { requestKind: "storyboard-create", workflowLabel: "Storyboard", mediaType: "image" },
+    { kind: "image", baseUrl }
+  );
+  const res = await submitComfyPromptWith5060Lease({
+    baseUrl,
+    workerId: "api-storyboard-create",
+    init: {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: workflow, client_id: clientId }),
+    },
   });
   const json = await res.json();
   if (!res.ok) throw new Error(`ComfyUI /prompt failed: ${res.status} ${JSON.stringify(json)}`);

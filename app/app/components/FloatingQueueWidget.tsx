@@ -430,4 +430,3 @@ export function FloatingQueueWidget() {
     </div>
   );
 }
-

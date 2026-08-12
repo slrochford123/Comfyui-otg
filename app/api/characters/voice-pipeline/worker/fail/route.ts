@@ -1,0 +1,39 @@
+import { NextRequest, NextResponse } from "next/server";
+
+import { getOwnerContext } from "@/lib/ownerKey";
+import { withNoStore, readJsonBody, sessionErrorResponse } from "@/lib/http/routeHelpers";
+import { failRemoteTrainingDatasetJob } from "@/lib/jobs/voicePipelineJobs";
+import { hasValidWorkerToken } from "@/lib/jobs/workerAuth";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+
+function workerOwnerKey(req: NextRequest, fallbackOwnerKey: string): string {
+  const headerOwnerKey = String(req.headers.get("x-otg-owner-key") || "").trim();
+  return headerOwnerKey || fallbackOwnerKey;
+}
+function jsonError(error: string, status = 400) {
+  return NextResponse.json({ ok: false, error }, { status, headers: withNoStore() });
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const tokenWorker = hasValidWorkerToken(req);
+    const owner = tokenWorker ? { ownerKey: workerOwnerKey(req, "") } : await getOwnerContext(req);
+    if (!owner.ownerKey) return jsonError("Missing worker owner key.", 400);
+    const body = await readJsonBody<Record<string, unknown>>(req.clone());
+    if (!body.ok) return jsonError(body.error, body.status);
+
+    const jobId = String(body.value.jobId || "").trim();
+    if (!jobId) return jsonError("Missing jobId.", 400);
+
+    const error = String(body.value.error || body.value.message || "Remote Windows IndexTTS2 worker failed.").trim();
+    const job = failRemoteTrainingDatasetJob(workerOwnerKey(req, owner.ownerKey), jobId, error, body.value.result);
+
+    if (!job) return jsonError("Job not found.", 404);
+    return NextResponse.json({ ok: true, job }, { headers: withNoStore() });
+  } catch (error) {
+    return sessionErrorResponse(error) || jsonError("Could not fail remote training dataset job.", 500);
+  }
+}

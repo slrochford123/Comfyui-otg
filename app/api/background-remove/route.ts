@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { assertAllowedWorkerTargetUrl } from "@/lib/runtime/workerTargetPolicy";
 
 import { NextRequest, NextResponse } from "next/server";
 
 import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { ensureDir, OTG_DATA_ROOT, safeSegment } from "@/lib/paths";
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -105,7 +107,10 @@ async function fetchStage(url: string, init: RequestInit, stage: string, timeout
   const { signal, cancel } = timeoutSignal(timeoutMs);
 
   try {
-    return await fetch(url, { ...init, signal, cache: "no-store" });
+    const promptBase = url.endsWith("/prompt") ? url.slice(0, -7) : "";
+    return promptBase
+      ? await submitComfyPromptWith5060Lease({ baseUrl: promptBase, workerId: "api-background-remove", init: { ...init, signal, cache: "no-store" } })
+      : await fetch(url, { ...init, signal, cache: "no-store" });
   } catch (error: any) {
     const message = error?.name === "AbortError" ? `Request timed out after ${timeoutMs}ms.` : String(error?.message || error);
     throw new StageError(stage, message);
@@ -378,7 +383,7 @@ export async function POST(req: NextRequest) {
   try {
     const owner = await getOwnerContext(req);
     const input = await readInputImage(req);
-    const comfyBaseUrl = normalizeBaseUrl(configuredImageComfyBaseUrl() || "http://127.0.0.1:8188");
+    const comfyBaseUrl = normalizeBaseUrl(assertAllowedWorkerTargetUrl(configuredImageComfyBaseUrl() || "http://127.0.0.1:8188", "background-remove ComfyUI worker target"));
 
     const comfyImageName = await uploadImageToComfy({ comfyBaseUrl, input });
     const graph = loadWorkflowGraph(comfyImageName);

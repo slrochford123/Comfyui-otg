@@ -665,7 +665,7 @@ type GalleryWorkspaceProps = {
   onEdit: (item: GalleryItem) => void;
   onAnimate: (item: GalleryItem) => void;
   onExtend: (item: GalleryItem) => void;
-  onCreateCharacter: (item: GalleryItem) => void;
+  onCreateCharacter?: (item: GalleryItem) => void;
   onDelete: (item: GalleryItem) => void;
   onOpenViewer: (item: GalleryItem) => void;
   viewerState: ViewerState | null;

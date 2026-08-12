@@ -1,0 +1,310 @@
+{
+  "schemaVersion": "1.0.0",
+  "updatedAt": "2026-07-19T23:45:00Z",
+  "entries": [
+    {
+      "id": "ltx23-omnicine-v1",
+      "displayName": "Singularity-LTX-2.3 OmniCine V1",
+      "filename": "Singularity-LTX-2.3_OmniCine_V1.safetensors",
+      "aliases": [
+        "OmniCine V1"
+      ],
+      "family": "ltx",
+      "baseModelVariant": "LTX 2.3 distilled 22B",
+      "supportedWorkflowIds": [
+        "presets/Create a Video",
+        "presets/Create a Video from Images",
+        "presets/Create First Image to Last Image Video"
+      ],
+      "supportedModes": [
+        "text_to_video",
+        "image_to_video",
+        "first_last_frame"
+      ],
+      "description": "Cinematic optimization for physical consistency, dynamic motion, shot continuity, anatomy, facial expression, lip sync, reference-image control, and fewer unwanted subtitles.",
+      "triggerWords": [
+        "无字幕"
+      ],
+      "recommendedStrength": 0.8,
+      "minimumStrength": 0.8,
+      "maximumStrength": 1.0,
+      "defaultHighNoiseStrength": 0.8,
+      "defaultLowNoiseStrength": 0.8,
+      "promptExample": "0-2s: a detective enters a rain-soaked station, slow dolly in, blue neon reflections, distant traffic and footsteps. 2-5s: she turns toward camera as the light changes, close-up, natural expression, 无字幕.",
+      "dependencies": [
+        "LTX 2.3 distilled 22B base model",
+        "Use the workflow-required internal Licon, IC-LORA, and distilled LoRAs unchanged."
+      ],
+      "limitations": [
+        "First/last-frame mode is recommended for stronger scene control.",
+        "Audio may become muffled in some multi-pass workflows; creator/community evidence is not a controlled benchmark.",
+        "Large 2.51 GB LoRA."
+      ],
+      "license": "Original Civitai commercial-use terms were not fully exposed in the saved source; verify before commercial use. A mirror labels the file Apache-2.0, which does not replace original terms.",
+      "commercialUse": "unverified",
+      "sourceUrl": "https://civitai.com/models/2610733/singularity-ltx-23omnicinev1?modelVersionId=3001143",
+      "catalogStatus": "active",
+      "sortOrder": 10
+    },
+    {
+      "id": "ltx23-cinematic-hard-cut",
+      "displayName": "LTX-2.3 Cinematic Hard Cut",
+      "filename": "LTX-2.3_Cinematic hardcut.safetensors",
+      "aliases": [
+        "Cinematic Hard Cut"
+      ],
+      "family": "ltx",
+      "baseModelVariant": "LTX 2.3",
+      "supportedWorkflowIds": [
+        "presets/Create a Video",
+        "presets/Create a Video from Images"
+      ],
+      "supportedModes": [
+        "text_to_video",
+        "image_to_video"
+      ],
+      "description": "Reinforces a deliberate hard-cut transition between two clearly described shots in one generation.",
+      "triggerWords": [
+        "cinematic hard cut to"
+      ],
+      "recommendedStrength": 0.2,
+      "minimumStrength": 0.2,
+      "maximumStrength": 1.0,
+      "defaultHighNoiseStrength": 0.2,
+      "defaultLowNoiseStrength": 0.2,
+      "promptExample": "A wide shot of a lone rider crossing a dusty plain at sunset. Cinematic hard cut to a tight close-up of the rider's eyes beneath a weathered hat, wind lifting dust past the lens.",
+      "dependencies": [
+        "LTX 2.3 base model",
+        "A prompt that clearly describes both the first and second shot."
+      ],
+      "limitations": [
+        "LTX 2.3 can already create hard cuts, so this is intended only when stronger consistency is needed.",
+        "Weak or ambiguous two-shot prompts may not produce a deliberate edit."
+      ],
+      "license": "Original Civitai commercial-use terms were not fully exposed in the saved source; verify before commercial use. The saved mirror license is OpenRAIL++.",
+      "commercialUse": "unverified",
+      "sourceUrl": "https://civitai.com/models/2508281/ltx-23-cinematic-hardcut?modelVersionId=2819456",
+      "catalogStatus": "active",
+      "sortOrder": 20
+    },
+    {
+      "id": "ltx23-camera-controls",
+      "displayName": "Camera Controls [LTX-2.3]",
+      "filename": "LTX2.3_CameraControls.safetensors",
+      "aliases": [
+        "camera-controls-ltx-2.3.safetensors"
+      ],
+      "family": "ltx",
+      "baseModelVariant": "LTX 2.3",
+      "supportedWorkflowIds": [
+        "presets/Create a Video",
+        "presets/Create a Video from Images"
+      ],
+      "supportedModes": [
+        "text_to_video",
+        "image_to_video"
+      ],
+      "description": "Prompt-driven camera tilt, pan, and zoom controls for LTX 2.3.",
+      "triggerWords": [
+        "the camera tilts up",
+        "the camera tilts down",
+        "the camera pans to the left",
+        "the camera pans to the right",
+        "the camera zooms in on <object>",
+        "the camera zooms out"
+      ],
+      "recommendedStrength": 1.0,
+      "minimumStrength": 0.0,
+      "maximumStrength": 2.0,
+      "defaultHighNoiseStrength": 1.0,
+      "defaultLowNoiseStrength": 1.0,
+      "promptExample": "A cyclist waits beside a mountain road; the camera pans to the right, revealing a deep valley filled with morning fog.",
+      "dependencies": [
+        "LTX 2.3 base model",
+        "Use one documented camera phrase exactly."
+      ],
+      "limitations": [
+        "OTG TEST starting value; creator did not publish a strength. Physically validate before PROD.",
+        "Only the listed tilt, pan, and zoom phrases are documented."
+      ],
+      "license": "LTXV2 license label; the accessible creator disclosure limits use to experimental, educational, and non-commercial purposes.",
+      "commercialUse": "not_allowed",
+      "sourceUrl": "https://civitai.com/models/2622189/camera-controls-ltx-23?modelVersionId=2944022",
+      "catalogStatus": "active",
+      "sortOrder": 30
+    },
+    {
+      "id": "ltx23-retro-90s-anime",
+      "displayName": "Retro 90's Anime Style LTX-2.3",
+      "filename": "anime90s-step00053000.comfy.safetensors",
+      "aliases": [
+        "Retro 90s Anime"
+      ],
+      "family": "ltx",
+      "baseModelVariant": "LTX 2.3",
+      "supportedWorkflowIds": [
+        "presets/Create a Video"
+      ],
+      "supportedModes": [
+        "text_to_video"
+      ],
+      "description": "A broad 1990s 2D anime aesthetic and motion style trained from multiple show sources.",
+      "triggerWords": [
+        "ANIMSTY",
+        "SHW_AKIRA",
+        "SHW_CWBY",
+        "SHW_EVA",
+        "SHW_GITS",
+        "SHW_GLBY",
+        "SHW_GNBR",
+        "SHW_KTE",
+        "SHW_OUT",
+        "SHW_PFTBL",
+        "SHW_SLYR",
+        "SHW_TNCH",
+        "SHW_TYL"
+      ],
+      "recommendedStrength": 1.0,
+      "minimumStrength": 0.0,
+      "maximumStrength": 2.0,
+      "defaultHighNoiseStrength": 1.0,
+      "defaultLowNoiseStrength": 1.0,
+      "promptExample": "ANIMSTY, a lone pilot runs across a rain-lit launch deck, hand-drawn cel shading, dynamic cloth and hair, SHW_GITS.",
+      "dependencies": [
+        "LTX 2.3 base model",
+        "Use ANIMSTY; optionally add one documented SHW_* tag."
+      ],
+      "limitations": [
+        "OTG TEST starting value; creator did not publish a strength. Physically validate before PROD.",
+        "Camera control may weaken because much of the dataset uses static cameras or pans.",
+        "The creator prefers 50 FPS; current Generate Video workflows output 24 FPS."
+      ],
+      "license": "LTXV2 license label; original commercial-use permissions were not fully exposed in the saved source. Verify before commercial use.",
+      "commercialUse": "unverified",
+      "sourceUrl": "https://civitai.com/models/2557755/retro-90s-anime-style-lora-ltx-23?modelVersionId=2898537",
+      "catalogStatus": "active",
+      "sortOrder": 40
+    },
+    {
+      "id": "ltx23-fantasy-realism",
+      "displayName": "LTX-2.3 Fantasy Realism",
+      "filename": "Fantasy_Realism.safetensors",
+      "aliases": [
+        "Fantasy Realism"
+      ],
+      "family": "ltx",
+      "baseModelVariant": "LTX 2.3",
+      "supportedWorkflowIds": [
+        "presets/Create a Video"
+      ],
+      "supportedModes": [
+        "text_to_video"
+      ],
+      "description": "Grounded live-action high-fantasy film styling with realistic characters, creatures, materials, environments, and cinematic lighting.",
+      "triggerWords": [
+        "f4nt4sy",
+        "cinematic fantasy realism",
+        "premium live-action fantasy cinema shot",
+        "fantasy realism film look"
+      ],
+      "recommendedStrength": 1.0,
+      "minimumStrength": 0.0,
+      "maximumStrength": 2.0,
+      "defaultHighNoiseStrength": 1.0,
+      "defaultLowNoiseStrength": 1.0,
+      "promptExample": "f4nt4sy, a weathered ranger crossing an ancient moss-covered bridge, realistic leather and steel, grounded creature anatomy, cinematic fantasy realism and misty dawn light.",
+      "dependencies": [
+        "LTX 2.3 base model"
+      ],
+      "limitations": [
+        "OTG TEST starting value; creator did not publish a strength. Physically validate before PROD.",
+        "Creator-stated LoRA strength is not documented.",
+        "Creator samples covered text-to-video only."
+      ],
+      "license": "LTXV2 license label; original commercial-use permissions were not fully exposed in the saved source. Verify before commercial use.",
+      "commercialUse": "unverified",
+      "sourceUrl": "https://civitai.com/models/2540961/ltx-23-fantasy-realism?modelVersionId=2855640",
+      "catalogStatus": "active",
+      "sortOrder": 50
+    },
+    {
+      "id": "ltx23-premium-cgi-toon",
+      "displayName": "LTX-2.3 Premium CGI Toon Style",
+      "filename": "Pixar_Toon.safetensors",
+      "aliases": [
+        "LTX 2.3 - Pixar CGI Toon Style"
+      ],
+      "family": "ltx",
+      "baseModelVariant": "LTX 2.3",
+      "supportedWorkflowIds": [
+        "presets/Create a Video"
+      ],
+      "supportedModes": [
+        "text_to_video"
+      ],
+      "description": "Polished family-animation-inspired CGI with stylized characters, smooth materials, clean geometry, expressive faces, and cinematic lighting.",
+      "triggerWords": [
+        "P1x4r",
+        "stylized CGI character",
+        "animated film character",
+        "family animated movie style"
+      ],
+      "recommendedStrength": 1.0,
+      "minimumStrength": 0.0,
+      "maximumStrength": 2.0,
+      "defaultHighNoiseStrength": 1.0,
+      "defaultLowNoiseStrength": 1.0,
+      "promptExample": "P1x4r, an expressive young inventor and tiny robot in a warm workshop, appealing proportions, smooth stylized materials, clean geometry, cinematic animated-film lighting.",
+      "dependencies": [
+        "LTX 2.3 base model"
+      ],
+      "limitations": [
+        "OTG TEST starting value; creator did not publish a strength. Physically validate before PROD.",
+        "Creator-stated LoRA strength is not documented.",
+        "The source style name references a well-known brand, so the UI uses a neutral label.",
+        "Creator samples covered text-to-video only."
+      ],
+      "license": "LTXV2 license label; original commercial-use permissions were not fully exposed in the saved source. Verify before commercial use.",
+      "commercialUse": "unverified",
+      "sourceUrl": "https://civitai.com/models/2536130/ltx-23-pixar-cgi-toon-style?modelVersionId=2850271",
+      "catalogStatus": "active",
+      "sortOrder": 60
+    },
+    {
+      "id": "ltx23-obscura-remova",
+      "displayName": "Obscura Remova",
+      "filename": "LTX23_Obscura_Remova_v1.safetensors",
+      "aliases": [
+        "Obscura Remova v1"
+      ],
+      "family": "ltx",
+      "baseModelVariant": "LTX 2.3 video-to-video",
+      "supportedWorkflowIds": [],
+      "supportedModes": [
+        "video_to_video"
+      ],
+      "description": "Removes foreground occlusions, haze, smoke, and clutter while reconstructing a scene from details visible across input frames.",
+      "triggerWords": [],
+      "recommendedStrength": 1.25,
+      "minimumStrength": 0.0,
+      "maximumStrength": 2.0,
+      "defaultHighNoiseStrength": 1.25,
+      "defaultLowNoiseStrength": 1.25,
+      "promptExample": "Remove the road sign from the foreground and reconstruct the brick wall visible in adjacent frames.",
+      "dependencies": [
+        "LTX 2.3 video-to-video workflow",
+        "Creator companion configuration file installed beside the checkpoint"
+      ],
+      "limitations": [
+        "No currently exposed Generate Video workflow is video-to-video.",
+        "Hidden details may be hallucinated.",
+        "Fast motion remains difficult; the creator suggests 50 FPS input/inference."
+      ],
+      "license": "LTXV2 Community License Agreement plus original source terms; verify before commercial use.",
+      "commercialUse": "conditional",
+      "sourceUrl": "https://civitai.com/models/2590144/obscura-remova?modelVersionId=2909707",
+      "catalogStatus": "metadata_pending",
+      "sortOrder": 70
+    }
+  ]
+}

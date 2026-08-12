@@ -6,6 +6,7 @@ import fssync from "node:fs";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { loadWorkflowById, extractPromptGraph, validatePromptGraph } from "@/lib/workflows";
 import { removeBackgroundBestEffort } from "@/app/api/angles/_lib/backgroundRemoval";
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -162,10 +163,14 @@ export async function POST(req: NextRequest) {
       graph["10"].inputs.filename_prefix = `otg_tmp_angles/${deviceId}/mesh_${Date.now()}`;
     }
 
-    const submit = await fetch(`${COMFY_BASE_URL}/prompt`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt: graph, client_id: comfyClientId }),
+    const submit = await submitComfyPromptWith5060Lease({
+      baseUrl: COMFY_BASE_URL,
+      workerId: "api-preview",
+      init: {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt: graph, client_id: comfyClientId }),
+      },
     });
 
     const submitText = await submit.text();

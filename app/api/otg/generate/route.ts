@@ -1,10 +1,11 @@
 import { NextRequest } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
-import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
+import { configuredImageComfyBaseUrl, logComfyRouting } from "@/app/api/_lib/comfyTarget";
 
 import { optionalUserId } from "@/lib/authServer";
 import { userInboxDir, deviceInboxDir } from "@/lib/paths";
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 export const runtime = "nodejs";
 
 // Comfy base URL
@@ -71,10 +72,19 @@ export async function POST(req: NextRequest) {
     }
 
     // 1) Submit to ComfyUI
-    const submit = await fetch(`${COMFY_BASE_URL}/prompt`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(promptPayload),
+    logComfyRouting(
+      "/api/otg/generate POST",
+      { requestKind: "otg-generate", workflowLabel: "OTG Generate", mediaType: "image" },
+      { kind: "image", baseUrl: COMFY_BASE_URL }
+    );
+    const submit = await submitComfyPromptWith5060Lease({
+      baseUrl: COMFY_BASE_URL,
+      workerId: "api-otg-generate",
+      init: {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(promptPayload),
+      },
     });
 
     const submitJson = (await submit.json().catch(() => ({}))) as ComfyPromptResponse;

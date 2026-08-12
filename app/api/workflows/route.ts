@@ -25,6 +25,12 @@ const DEFAULT_VISIBLE_WORKFLOW_IDS = new Set([
   "presets/create first image to last image video",
   "presets/create prompt relay image video",
   "presets/rtx sr upscaler video",
+  "presets/wan 2.2 t2v safetensor",
+  "presets/wan 2.2 t2v gguf",
+  "presets/wan 2.2 i2v safetensor",
+  "presets/wan 2.2 i2v gguf",
+  "presets/wan 2.2 flf safetensor",
+  "presets/wan 2.2 flf gguf",
 ]);
 
 function isHiddenByDefault(id: string) {

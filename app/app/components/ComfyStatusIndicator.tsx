@@ -108,5 +108,3 @@ export function ComfyStatusIndicator({
     </div>
   );
 }
-
-

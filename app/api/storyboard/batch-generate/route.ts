@@ -5,7 +5,8 @@ import path from "path";
 import fssync from "fs";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { markRunning } from "@/lib/contentState";
-import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
+import { configuredImageComfyBaseUrl, logComfyRouting } from "@/app/api/_lib/comfyTarget";
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 
 type SceneInput = {
   id?: string;
@@ -61,10 +62,19 @@ function resolveWorkflowRoot() {
 
 async function comfySubmit(workflow: any, clientId: string) {
   const baseUrl = configuredImageComfyBaseUrl();
-  const res = await fetch(`${baseUrl.replace(/\/$/, "")}/prompt`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: workflow, client_id: clientId }),
+  logComfyRouting(
+    "/api/storyboard/batch-generate POST",
+    { requestKind: "storyboard-batch-generate", workflowLabel: "Storyboard Batch", mediaType: "image" },
+    { kind: "image", baseUrl }
+  );
+  const res = await submitComfyPromptWith5060Lease({
+    baseUrl,
+    workerId: "api-storyboard-batch-generate",
+    init: {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: workflow, client_id: clientId }),
+    },
   });
   const json = await res.json();
   if (!res.ok) throw new Error(`ComfyUI /prompt failed: ${res.status} ${JSON.stringify(json)}`);

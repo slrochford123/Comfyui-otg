@@ -1,0 +1,26 @@
+[Unit]
+Description=ComfyUI-OTG TEST RTX 5060 Ti Lifecycle Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The agent is a fixed-function, bearer-authenticated bridge. Root is required
+# only because the target is a system unit; no caller-supplied unit is accepted.
+User=root
+Group=root
+EnvironmentFile=/etc/otg/ltx-5060-worker-agent.env
+ExecStart=/usr/bin/python3 /opt/otg-ltx-5060-worker-agent/otg-worker-agent.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+# Enabling this fixed control agent does not enable or start the managed 8191
+# service. That service remains disabled and is started only by an authenticated
+# ensure-running lifecycle command.
+
+[Install]
+WantedBy=multi-user.target

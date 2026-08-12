@@ -1,9 +1,9 @@
-﻿import { NextRequest } from "next/server";
+import { NextRequest } from "next/server";
 import { resolveComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { markError, readState, resetState } from "@/lib/contentState";
 import { readComfyPromptProgress } from "@/lib/comfyProgress";
-import { newestPromptIdForOwner, syncPromptOutputsForOwner } from "@/lib/comfyGallerySync";
+import { syncPromptOutputsForOwner } from "@/lib/comfyGallerySync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,13 +25,56 @@ export async function GET(req: NextRequest) {
     return Response.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
 
-  const { baseUrl } = await resolveComfyBaseUrl();
   const state = readState(owner.ownerKey);
   const requestedPromptId = String(req.nextUrl.searchParams.get("promptId") || req.nextUrl.searchParams.get("prompt_id") || "").trim();
+  const stateStatus = String(state?.status || "idle").toLowerCase();
+  const statePromptId = String(state?.promptId || "").trim();
+
+  if (!requestedPromptId && stateStatus !== "running") {
+    const status: "idle" | "complete" | "error" =
+      stateStatus === "done" ? "complete" : stateStatus === "error" ? "error" : "idle";
+    const progressPercent =
+      status === "complete" ? 100 : status === "error" ? clampPercent(state?.progressPercent ?? 100) : 0;
+
+    return Response.json({
+      ok: true,
+      status,
+      running: false,
+      queue: 0,
+      queue_remaining: 0,
+      running_count: 0,
+      pending_count: 0,
+      prompt_id: statePromptId || null,
+      prompt_complete: status === "complete",
+      prompt_error: status === "error" ? state?.error || "Generation failed" : null,
+      pct: progressPercent,
+      percent: progressPercent,
+      progressPercent,
+      nodeName: null,
+      currentNodeId: null,
+      currentNodeProgress: null,
+      doneNodes: status === "complete" ? Number(state?.totalNodes || 0) : 0,
+      cachedNodes: 0,
+      totalNodes: state?.totalNodes || 0,
+      startedAt: state?.startedAt || null,
+      lastUpdateAt: state?.progressUpdatedAt || state?.updatedAt || null,
+      completedAt: state?.readyAt || null,
+      elapsedMs: null,
+      estimatedRemainingMs: null,
+      comfyBaseUrl: state?.comfyBaseUrl || null,
+      comfyClientId: state?.comfyClientId || null,
+      fileName: state?.fileName || null,
+      ownerKey: owner.ownerKey,
+      scope: owner.scope,
+      username: owner.username,
+      deviceId: owner.deviceId,
+    });
+  }
+
+  const { baseUrl } = await resolveComfyBaseUrl();
   const prompt_id =
     requestedPromptId ||
-    String(state?.promptId || "").trim() ||
-    newestPromptIdForOwner(owner.ownerKey, owner.deviceId) ||
+    statePromptId ||
     null;
   const comfyProgress = readComfyPromptProgress(prompt_id);
   const comfyBaseUrl = String(comfyProgress?.comfyBaseUrl || state?.comfyBaseUrl || baseUrl)

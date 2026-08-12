@@ -73,6 +73,24 @@
                 "type": "string"
               }
             }
+          },
+          "videoCompatibility": {
+            "type": "object",
+            "required": ["mode"],
+            "properties": {
+              "mode": { "enum": ["compatible", "3090_only", "reduced"] },
+              "notes": { "type": "string" },
+              "reductions": {
+                "type": "object",
+                "properties": {
+                  "maxWidth": { "type": "number" },
+                  "maxHeight": { "type": "number" },
+                  "maxFrames": { "type": "number" },
+                  "maxBatchSize": { "type": "number" },
+                  "nodeOverrides": { "type": "object" }
+                }
+              }
+            }
           }
         }
       }

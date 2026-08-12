@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "defaultMode": "3090_only",
+  "workflows": [
+    {
+      "id": "presets/Create a Video",
+      "aliases": [
+        "Create Video"
+      ],
+      "mode": "compatible",
+      "notes": "RTX 5060 Ti fallback uses the workflow's original default settings. Runtime validation still requires every referenced model and node."
+    },
+    {
+      "id": "presets/Create a Video from Images",
+      "aliases": [
+        "Create Video with Starter Image",
+        "presets/Create a Video from Pictures"
+      ],
+      "mode": "compatible",
+      "notes": "RTX 5060 Ti fallback uses the workflow's original default settings. Runtime validation still requires every referenced model and node."
+    },
+    {
+      "id": "presets/Create Video with Custom Audio",
+      "mode": "compatible",
+      "notes": "RTX 5060 Ti fallback uses the workflow's original default settings. Runtime validation still requires every referenced model and node."
+    },
+    {
+      "id": "presets/RTX SR Upscaler Video",
+      "aliases": [
+        "Upscale Video (RTX SR)"
+      ],
+      "mode": "compatible",
+      "notes": "No automatic reduction; runtime validation is mandatory."
+    },
+    {
+      "id": "presets/Production IA2V Lip Sync",
+      "mode": "3090_only",
+      "notes": "Not verified within 16 GB VRAM."
+    },
+    {
+      "id": "internal/characters/character_intro_video_ltx23",
+      "mode": "3090_only",
+      "notes": "Not verified on the fallback installation."
+    },
+    {
+      "id": "presets/Create First Image to Last Image Video",
+      "mode": "3090_only",
+      "notes": "Not verified within 16 GB VRAM."
+    },
+    {
+      "id": "presets/Create Prompt Relay Image Video",
+      "mode": "3090_only",
+      "notes": "Prompt Relay production graph is not yet verified within 16 GB VRAM."
+    },
+    {
+      "id": "presets/WAN 2.2 T2V GGUF",
+      "mode": "3090_only",
+      "notes": "720p at 24 FPS is enabled on the RTX 3090. RTX 5060 Ti fallback remains blocked until this exact GGUF graph, its models, and 15-second VRAM use are verified."
+    },
+    {
+      "id": "presets/WAN 2.2 T2V SafeTensor",
+      "mode": "3090_only",
+      "notes": "720p at 24 FPS is enabled on the RTX 3090. RTX 5060 Ti fallback remains blocked until this exact SafeTensor graph, its models, and 15-second VRAM use are verified."
+    },
+    {
+      "id": "presets/WAN 2.2 I2V GGUF",
+      "mode": "3090_only",
+      "notes": "720p at 24 FPS is enabled on the RTX 3090. RTX 5060 Ti fallback remains blocked until this exact GGUF graph, its models, and 15-second VRAM use are verified."
+    },
+    {
+      "id": "presets/WAN 2.2 I2V SafeTensor",
+      "mode": "3090_only",
+      "notes": "720p at 24 FPS is enabled on the RTX 3090. RTX 5060 Ti fallback remains blocked until this exact SafeTensor graph, its models, and 15-second VRAM use are verified."
+    },
+    {
+      "id": "presets/WAN 2.2 FLF GGUF",
+      "mode": "3090_only",
+      "notes": "BoundBite Q8 GGUF is configured without additional speed LoRAs. RTX 5060 Ti fallback remains blocked until this exact 720p graph and 15-second VRAM use are verified."
+    },
+    {
+      "id": "presets/WAN 2.2 FLF SafeTensor",
+      "mode": "3090_only",
+      "notes": "720p at 24 FPS is enabled on the RTX 3090. RTX 5060 Ti fallback remains blocked until this exact SafeTensor graph, its models, and 15-second VRAM use are verified."
+    },
+    {
+      "id": "production-video",
+      "mode": "3090_only",
+      "notes": "Production video routes remain primary-only until each workflow file is classified."
+    },
+    {
+      "id": "production-animate",
+      "mode": "3090_only",
+      "notes": "Production Animate remains primary-only until verified on the fallback."
+    }
+  ]
+}

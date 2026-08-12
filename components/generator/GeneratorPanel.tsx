@@ -268,7 +268,7 @@ setPositivePrompt(a ? `${a} ${text}` : text);
       <div className="otg-card">
         <div className="otg-cardTitle">Prompts</div>
 
-        
+
 <div className="otg-row otg-between otg-center">
   <div className="otg-cardSubtitle">Positive</div>
   <button

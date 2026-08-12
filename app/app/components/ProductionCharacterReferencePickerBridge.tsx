@@ -1,5 +1,145 @@
 "use client";
 
+function otgPickerAssetDebugTextV36BPJ1(asset: any): string {
+  return [
+    asset?.id,
+    asset?.key,
+    asset?.type,
+    asset?.kind,
+    asset?.category,
+    asset?.name,
+    asset?.label,
+    asset?.title,
+    asset?.source,
+    asset?.sourceLabel,
+    asset?.origin,
+    asset?.originLabel,
+    asset?.debugSource,
+    asset?.library,
+    asset?.collection,
+    asset?.group,
+    asset?.description,
+    asset?.workflowImage,
+    asset?.workflowImagePath,
+    asset?.workflowImageUrl,
+    asset?.imagePath,
+    asset?.previewImagePath,
+    asset?.url,
+    asset?.previewUrl,
+    asset?.characterCardPath,
+    asset?.characterCardWorkflowImagePath,
+    asset?.defaultCharacterImagePath,
+    asset?.backgroundRemovedDefaultImagePath,
+  ]
+    .map((value) => String(value || ""))
+    .join(" ")
+    .toLowerCase();
+}
+
+function otgIsSavedCharacterPickerAssetV36BPJ1(asset: any): boolean {
+  const type = String(asset?.type || asset?.kind || asset?.category || "").toLowerCase();
+  if (type && type !== "character") return true;
+
+  const text = otgPickerAssetDebugTextV36BPJ1(asset);
+
+  if (
+    text.includes("localstorage") ||
+    text.includes("otg-qwen-scene-builder") ||
+    text.includes(".passes[") ||
+    text.includes("passes[") ||
+    text.includes("response.references") ||
+    text.includes("response.output") ||
+    text.includes("outputimage") ||
+    text.includes("scene-pass") ||
+    text.includes("locked base")
+  ) {
+    return false;
+  }
+
+  if (
+    text.includes("characters.items") ||
+    text.includes("saved characters") ||
+    text.includes("character library") ||
+    Boolean(asset?.characterCardPath) ||
+    Boolean(asset?.characterCardWorkflowImagePath) ||
+    Boolean(asset?.defaultCharacterImagePath) ||
+    Boolean(asset?.backgroundRemovedDefaultImagePath)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function otgIsAllowedPickerAssetV36BPJ1(asset: any, pickerType: unknown): boolean {
+  const picker = String(pickerType || "").toLowerCase();
+  if (picker !== "character") return true;
+  return otgIsSavedCharacterPickerAssetV36BPJ1(asset);
+}
+
+function otgFilterPickerAssetsV36BPJ1<T extends any>(assets: T[], pickerType: unknown): T[] {
+  if (String(pickerType || "").toLowerCase() !== "character") return assets;
+  return assets.filter((asset) => otgIsSavedCharacterPickerAssetV36BPJ1(asset));
+}
+
+
+
+function otgAssetDisplayUrlV36BPA(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^(data:image\/|blob:|https?:\/\/)/i.test(raw)) return raw;
+  if (raw.startsWith("/api/otg/local-image")) return raw;
+
+  if (/^\/[A-Za-z]:[\\/]/.test(raw)) {
+    return `/api/otg/local-image?path=${encodeURIComponent(raw.slice(1))}`;
+  }
+
+  if (raw.startsWith("/")) return raw;
+
+  if (/^[A-Za-z]:[\\/]/.test(raw) || raw.startsWith("\\\\") || raw.includes("\\data\\") || raw.includes("/data/")) {
+    return `/api/otg/local-image?path=${encodeURIComponent(raw)}`;
+  }
+
+  return raw.replace(/\\/g, "/");
+}
+
+function otgCharacterPreviewPathV36BPA(asset: any): string {
+  return String(
+    asset?.defaultCharacterPreviewImagePath ||
+      asset?.defaultCharacterImagePath ||
+      asset?.backgroundRemovedDefaultImagePath ||
+      asset?.previewImagePath ||
+      asset?.imagePath ||
+      asset?.previewUrl ||
+      asset?.url ||
+      asset?.imageUrl ||
+      asset?.displayImage ||
+      asset?.thumbnailUrl ||
+      asset?.characterCardPreviewImagePath ||
+      asset?.characterCardPath ||
+      asset?.characterCardWorkflowImagePath ||
+      asset?.workflowImage ||
+      asset?.workflowImagePath ||
+      asset?.workflowImageUrl ||
+      "",
+  ).trim();
+}
+
+function otgWorkflowImagePathV36BPA(asset: any) {
+  return (
+    asset?.characterCardWorkflowImagePath ||
+    asset?.characterCardPath ||
+    asset?.workflowImage ||
+    asset?.workflowImagePath ||
+    asset?.imagePath ||
+    asset?.url ||
+    asset?.imageUrl ||
+    ""
+  );
+}
+
+
+
 import { useEffect } from "react";
 
 type CharacterPickerItem = {
@@ -7,6 +147,8 @@ type CharacterPickerItem = {
   name: string;
   imagePath: string;
   imageUrl: string;
+  workflowImagePath?: string;
+  workflowImageUrl?: string;
 };
 
 function textOf(el: Element | null): string {
@@ -34,7 +176,21 @@ function normalizeCharacters(payload: unknown): CharacterPickerItem[] {
 
   return raw
     .map((entry, index) => {
-      const imagePath = String(entry?.imagePath || "").trim();
+      const imagePath = String(
+        entry?.productionReferenceImagePath ||
+          entry?.defaultCharacterPreviewImagePath ||
+          entry?.defaultCharacterImagePath ||
+          entry?.backgroundRemovedDefaultImagePath ||
+          entry?.previewImagePath ||
+          entry?.imagePath ||
+          "",
+      ).trim();
+      const workflowImagePath = String(
+        entry?.characterCardWorkflowImagePath ||
+          entry?.characterCardPath ||
+          entry?.characterCardImagePath ||
+          imagePath,
+      ).trim();
       const name = String(
         entry?.name ||
         entry?.title ||
@@ -48,12 +204,14 @@ function normalizeCharacters(payload: unknown): CharacterPickerItem[] {
         name,
         imagePath,
         imageUrl: imagePath ? fileUrlForCharacterPath(imagePath) : "",
+        workflowImagePath,
+        workflowImageUrl: workflowImagePath ? fileUrlForCharacterPath(workflowImagePath) : "",
       };
     })
     .filter((item) => {
       if (!item.imagePath || !item.imageUrl) return false;
-      if (seen.has(item.imagePath)) return false;
-      seen.add(item.imagePath);
+      if (seen.has(item.workflowImagePath || item.imagePath)) return false;
+      seen.add(item.workflowImagePath || item.imagePath);
       return true;
     });
 }
@@ -93,7 +251,7 @@ async function loadCharacters(): Promise<CharacterPickerItem[]> {
 }
 
 async function characterToFile(item: CharacterPickerItem): Promise<File> {
-  const res = await fetch(item.imageUrl, {
+  const res = await fetch(item.workflowImageUrl || item.imageUrl, {
     cache: "no-store",
     credentials: "include",
   });
@@ -234,7 +392,7 @@ export default function ProductionCharacterReferencePickerBridge() {
           border: 1px solid rgba(255,255,255,0.10);
           background: rgba(255,255,255,0.04);
           color: white;
-          text-align: left;
+          text-align: center;
           cursor: pointer;
         }
         .otg-production-character-picker-card:hover {
@@ -255,8 +413,8 @@ export default function ProductionCharacterReferencePickerBridge() {
         .otg-production-character-picker-card-label {
           border-top: 1px solid rgba(255,255,255,0.10);
           padding: 9px 10px;
-          font-size: 12px;
-          font-weight: 700;
+          font-size: 15px;
+          font-weight: 800;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -276,8 +434,7 @@ export default function ProductionCharacterReferencePickerBridge() {
           const text = textOf(el);
           return (
             /character references/i.test(text) &&
-            /motion notes/i.test(text) &&
-            /choose/i.test(text) &&
+            /input image|character gallery|choose/i.test(text) &&
             !!el.querySelector('input[type="file"], button, label')
           );
         })
@@ -290,7 +447,7 @@ export default function ProductionCharacterReferencePickerBridge() {
       const cards = Array.from(root.querySelectorAll("div"))
         .filter((el) => {
           const text = textOf(el);
-          return /^([1-5]\s*)?Character\s+[1-5]\b/i.test(text) && /choose/i.test(text);
+          return /^([1-5]\s*)?Character\s+[1-5]\b/i.test(text) && /input image|character gallery|choose/i.test(text);
         })
         .sort((a, b) => textOf(a).length - textOf(b).length);
 
@@ -310,8 +467,9 @@ export default function ProductionCharacterReferencePickerBridge() {
       const buttonsAndLabels = Array.from(card.querySelectorAll("button, label")) as HTMLElement[];
 
       return (
+        buttonsAndLabels.find((el) => /^input image$/i.test(textOf(el))) ||
         buttonsAndLabels.find((el) => /^choose$/i.test(textOf(el))) ||
-        buttonsAndLabels.find((el) => /choose/i.test(textOf(el))) ||
+        buttonsAndLabels.find((el) => /input image|choose/i.test(textOf(el))) ||
         null
       );
     }
@@ -340,7 +498,7 @@ export default function ProductionCharacterReferencePickerBridge() {
 
       const subtitle = document.createElement("div");
       subtitle.className = "otg-production-character-picker-subtitle";
-      subtitle.textContent = "Uses saved Characters tab images for this Production reference slot.";
+      subtitle.textContent = "Shows clean production portraits; sends the saved character card image into the workflow.";
 
       titleWrap.appendChild(title);
       titleWrap.appendChild(subtitle);
@@ -472,7 +630,7 @@ export default function ProductionCharacterReferencePickerBridge() {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "otg-production-character-picker-button";
-        button.textContent = "From Characters";
+        button.textContent = "Character Gallery";
         button.setAttribute(patchAttr, String(index + 1));
         button.addEventListener("click", (event) => {
           event.preventDefault();
