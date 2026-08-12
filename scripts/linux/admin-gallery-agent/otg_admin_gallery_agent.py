@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TEST-only authenticated media browser fixed to /opt/ComfyUI/output."""
+"""Authenticated media browser using one configured filesystem root."""
 
 from __future__ import annotations
 
@@ -13,7 +13,12 @@ import struct
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
-ROOT = Path("/opt/ComfyUI/output").resolve(strict=True)
+ROOT = Path(
+    os.environ.get(
+        "OTG_ADMIN_GALLERY_AGENT_ROOT",
+        "/opt/ComfyUI/output",
+    )
+).expanduser().resolve(strict=True)
 TOKEN = os.environ.get("OTG_ADMIN_GALLERY_AGENT_TOKEN", "").strip()
 BIND = os.environ.get("OTG_ADMIN_GALLERY_AGENT_BIND", "100.98.212.116").strip()
 PORT = int(os.environ.get("OTG_ADMIN_GALLERY_AGENT_PORT", "8798"))

@@ -54,25 +54,61 @@ export const ADMIN_GALLERY_SOURCES: AdminGallerySourceDefinition[] = [
   {
     id: "comfy-3090",
     label: "RTX 3090 ComfyUI",
-    description: "Filesystem output from the TEST RTX 3090 ComfyUI service on shawn.",
+    description: "Filesystem output from the RTX 3090 ComfyUI backend.",
     kind: "local",
   },
   {
     id: "comfy-5060",
     label: "RTX 5060 Ti ComfyUI",
-    description: "Filesystem output from the TEST RTX 5060 Ti ComfyUI service on slr.",
+    description: "Filesystem output from the RTX 5060 Ti ComfyUI backend.",
     kind: "remote-agent",
   },
 ];
+
+// OTG_ADMIN_GALLERY_DUAL_LINUX_V2
+function configuredLocalRoot(sourceId: AdminGallerySourceId) {
+  if (sourceId === "comfy-3090") {
+    return String(process.env.OTG_ADMIN_GALLERY_3090_ROOT || "").trim();
+  }
+  return String(process.env.OTG_ADMIN_GALLERY_5060_ROOT || "").trim();
+}
+
+function configuredRemoteUrl(sourceId: AdminGallerySourceId) {
+  if (sourceId === "comfy-3090") {
+    return String(process.env.OTG_ADMIN_GALLERY_3090_URL || "").trim();
+  }
+  return String(process.env.OTG_ADMIN_GALLERY_5060_URL || "").trim();
+}
+
+function configuredRemoteToken(sourceId: AdminGallerySourceId) {
+  if (sourceId === "comfy-3090") {
+    return String(process.env.OTG_ADMIN_GALLERY_3090_TOKEN || "").trim();
+  }
+  return String(process.env.OTG_ADMIN_GALLERY_5060_TOKEN || "").trim();
+}
+
+function effectiveAdminGallerySource(sourceId: AdminGallerySourceId) {
+  const source = ADMIN_GALLERY_SOURCES.find(
+    (candidate) => candidate.id === sourceId
+  );
+  if (!source) throw new Error("Unknown admin gallery source.");
+
+  const kind = configuredRemoteUrl(sourceId)
+    ? "remote-agent"
+    : configuredLocalRoot(sourceId)
+      ? "local"
+      : source.kind;
+
+  return { ...source, kind } as AdminGallerySourceDefinition;
+}
 
 export function isAdminGallerySourceId(value: string): value is AdminGallerySourceId {
   return ADMIN_GALLERY_SOURCES.some((source) => source.id === value);
 }
 
 export function adminGallerySourceById(value: string): AdminGallerySourceDefinition {
-  const source = ADMIN_GALLERY_SOURCES.find((candidate) => candidate.id === value);
-  if (!source) throw new Error("Unknown admin gallery source.");
-  return source;
+  if (!isAdminGallerySourceId(value)) throw new Error("Unknown admin gallery source.");
+  return effectiveAdminGallerySource(value);
 }
 
 export function contentTypeForAdminGalleryPath(filePath: string) {
@@ -117,9 +153,12 @@ export async function listAdminGallery(args: {
 }): Promise<AdminGalleryPage> {
   const offset = clampOffset(args.offset);
   const limit = clampLimit(args.limit);
+  const sources = ADMIN_GALLERY_SOURCES.map(
+    (source) => adminGallerySourceById(source.id)
+  );
   const selected = args.source && args.source !== "all"
     ? [adminGallerySourceById(args.source)]
-    : ADMIN_GALLERY_SOURCES;
+    : sources;
   const fetchLimit = Math.min(offset + limit + 1, 1000);
   const results = await Promise.all(selected.map((source) => listOneSource(source, fetchLimit)));
   const items = results
@@ -129,7 +168,7 @@ export async function listAdminGallery(args: {
   return {
     ok: results.some((result) => result.ok),
     items: pageItems,
-    sources: ADMIN_GALLERY_SOURCES,
+    sources,
     statuses: results.map(({ source, ok, error, count }) => ({
       id: source.id,
       label: source.label,
@@ -150,7 +189,7 @@ export async function resolveLocalAdminGalleryFile(sourceId: AdminGallerySourceI
   if (!rel || !MEDIA_EXTENSIONS.has(path.extname(rel).toLowerCase())) {
     throw new Error("Invalid or unsupported gallery file path.");
   }
-  const root = await local3090Root();
+  const root = await localRootForSource(sourceId);
   const candidate = path.resolve(root, rel);
   assertWithinRoot(root, candidate);
   const realCandidate = await fs.realpath(candidate);
@@ -164,11 +203,11 @@ export async function deleteAdminGalleryFile(sourceId: AdminGallerySourceId, rel
   const source = adminGallerySourceById(sourceId);
   if (source.kind === "remote-agent") {
     const rel = requireRel(relValue);
-    const url = remoteAgentUrl("/gallery/file", { rel });
+    const url = remoteAgentUrl(sourceId, "/gallery/file", { rel });
     const response = await fetch(url, {
       method: "DELETE",
       cache: "no-store",
-      headers: remoteAgentHeaders(),
+      headers: remoteAgentHeaders(sourceId),
       signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) throw new Error(await remoteError(response, "Remote delete failed"));
@@ -178,11 +217,15 @@ export async function deleteAdminGalleryFile(sourceId: AdminGallerySourceId, rel
   await fs.unlink(resolved.path);
 }
 
-export async function fetchRemoteAdminGalleryFile(relValue: string, init?: { method?: "GET" | "HEAD"; range?: string | null }) {
+export async function fetchRemoteAdminGalleryFile(
+  sourceId: AdminGallerySourceId,
+  relValue: string,
+  init?: { method?: "GET" | "HEAD"; range?: string | null }
+) {
   const rel = requireRel(relValue);
-  const headers = remoteAgentHeaders();
+  const headers = remoteAgentHeaders(sourceId);
   if (init?.range) headers.Range = init.range;
-  const response = await fetch(remoteAgentUrl("/gallery/file", { rel }), {
+  const response = await fetch(remoteAgentUrl(sourceId, "/gallery/file", { rel }), {
     method: init?.method || "GET",
     cache: "no-store",
     headers,
@@ -217,7 +260,7 @@ async function listOneSource(source: AdminGallerySourceDefinition, limit: number
 }
 
 async function listLocalSource(source: AdminGallerySourceDefinition, limit: number) {
-  const root = await local3090Root();
+  const root = await localRootForSource(source.id);
   const items: AdminGalleryItem[] = [];
   await walkLocal(root, root, source, items);
   items.sort(compareAdminGalleryItems);
@@ -245,9 +288,9 @@ async function walkLocal(root: string, current: string, source: AdminGallerySour
 }
 
 async function listRemoteSource(source: AdminGallerySourceDefinition, limit: number) {
-  const response = await fetch(remoteAgentUrl("/gallery/list", { limit: String(limit) }), {
+  const response = await fetch(remoteAgentUrl(source.id, "/gallery/list", { limit: String(limit) }), {
     cache: "no-store",
-    headers: remoteAgentHeaders(),
+    headers: remoteAgentHeaders(source.id),
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) throw new Error(await remoteError(response, "Remote gallery list failed"));
@@ -291,25 +334,53 @@ function toItem(source: AdminGallerySourceDefinition, value: Omit<AdminGalleryIt
   };
 }
 
-async function local3090Root() {
-  const configured = String(process.env.OTG_ADMIN_GALLERY_3090_ROOT || LOCAL_3090_OUTPUT_ROOT).trim();
-  const real = await fs.realpath(path.resolve(configured));
+async function localRootForSource(sourceId: AdminGallerySourceId) {
+  const configured = configuredLocalRoot(sourceId);
+  const requested =
+    configured ||
+    (sourceId === "comfy-3090" ? LOCAL_3090_OUTPUT_ROOT : "");
+
+  if (!requested) {
+    throw new Error(
+      `${adminGallerySourceById(sourceId).label} local gallery root is not configured.`
+    );
+  }
+
+  const real = await fs.realpath(path.resolve(requested));
   const stat = await fs.stat(real);
-  if (!stat.isDirectory()) throw new Error("RTX 3090 ComfyUI output root is not a directory.");
+  if (!stat.isDirectory()) {
+    throw new Error(
+      `${adminGallerySourceById(sourceId).label} gallery root is not a directory.`
+    );
+  }
   return real;
 }
 
-function remoteAgentUrl(route: string, params?: Record<string, string>) {
-  const base = String(process.env.OTG_ADMIN_GALLERY_5060_URL || "").trim().replace(/\/+$/, "");
-  if (!base) throw new Error("RTX 5060 Ti gallery agent URL is not configured.");
+function remoteAgentUrl(
+  sourceId: AdminGallerySourceId,
+  route: string,
+  params?: Record<string, string>
+) {
+  const base = configuredRemoteUrl(sourceId).replace(/\/+$/, "");
+  if (!base) {
+    throw new Error(
+      `${adminGallerySourceById(sourceId).label} gallery agent URL is not configured.`
+    );
+  }
   const url = new URL(`${base}${route}`);
-  for (const [key, value] of Object.entries(params || {})) url.searchParams.set(key, value);
+  for (const [key, value] of Object.entries(params || {})) {
+    url.searchParams.set(key, value);
+  }
   return url.toString();
 }
 
-function remoteAgentHeaders() {
-  const token = String(process.env.OTG_ADMIN_GALLERY_5060_TOKEN || "").trim();
-  if (!token) throw new Error("RTX 5060 Ti gallery agent token is not configured.");
+function remoteAgentHeaders(sourceId: AdminGallerySourceId) {
+  const token = configuredRemoteToken(sourceId);
+  if (!token) {
+    throw new Error(
+      `${adminGallerySourceById(sourceId).label} gallery agent token is not configured.`
+    );
+  }
   return { Authorization: `Bearer ${token}` } as Record<string, string>;
 }
 

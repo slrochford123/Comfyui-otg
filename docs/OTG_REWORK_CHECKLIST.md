@@ -1279,3 +1279,15 @@ Stable 3001 source audit: `otg-test.service` runs the standalone release at `/ho
 - [x] TEST Phase 11 - 3D Animation Art Styles: the existing Pixar 3D display label is generalized to 3D Animation while retaining its stable internal ID; selecting it reveals Default + 25 curated 3D-animation presets, each injected as a separate descriptive style prompt and persisted through the Phase 10 mobile durable-generation job contract.
 - [x] TEST Phase 12 - Character Card execution graph optimized: preserved the fixed eight-view master-sheet contract while sharing repeated Qwen model/CLIP/VAE/LoRA preprocessing, using 0.32 MP full-body and 0.20 MP close-up generation tiers, and using the Multiple-Angles <sks> trigger.
 - [ ] TEST Phase 12 runtime gate - verify a fresh-seed warm Character Card completes in <= 180 seconds (target 120-150 seconds) before declaring the performance SLO closed.
+
+<!-- OTG_ADMIN_GALLERY_DUAL_LINUX_V2 -->
+## 2026-08-12 Admin Full Gallery dual-Linux portability
+
+- [x] Allow RTX 3090 gallery source to be local or remote-agent.
+- [x] Allow RTX 5060 Ti gallery source to be local or remote-agent.
+- [x] Make Linux gallery-agent filesystem root configurable.
+- [x] Preserve shawn 3003 topology: local 3090, remote 5060.
+- [x] Add slr topology support: local 5060, remote 3090.
+- [ ] Install/configure authenticated 3090 gallery agent on shawn.
+- [ ] Configure candidate production environment on slr.
+- [ ] Smoke-test both Full Gallery sources before production switch.

@@ -137,7 +137,7 @@ export default function AdminGallerySourcesPanel() {
           <div>
             <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-200/70">Settings / Admin</p>
             <h1 className="mt-2 text-4xl font-black tracking-tight text-white">Full Gallery</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">Administrator-only, read-through browsing of both TEST ComfyUI output filesystems. Files are never copied into the normal Gallery.</p>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">Administrator-only, read-through browsing of both configured ComfyUI output filesystems. Files are never copied into the normal Gallery.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <a href="/app/admin" className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white no-underline hover:bg-white/10">Admin</a>

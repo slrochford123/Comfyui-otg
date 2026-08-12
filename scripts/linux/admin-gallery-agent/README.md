@@ -1,31 +1,28 @@
-# TEST RTX 5060 Ti Admin Gallery Agent
+# Linux Admin Gallery Agent
 
-This companion exposes only supported media beneath the fixed `/opt/ComfyUI/output` root. Every route, including `/health`, requires the configured bearer token. List responses never expose the absolute root or token. File serving validates canonical real paths and supports HTTP byte ranges. Delete removes files only, never directories.
+Authenticated read-through access to one configured ComfyUI output directory.
 
-On `slr`, copy this directory from the TEST worktree and run:
+Required environment variables are loaded from:
 
-```bash
-cd /path/to/OTG-Character-Rework/scripts/linux/admin-gallery-agent
-./install-test-agent.sh install
-sudoedit /etc/otg/admin-gallery-agent.env
-./install-test-agent.sh start
-```
+    /etc/otg/admin-gallery-agent.env
 
-Verify from `shawn` without printing the token:
+Configuration:
 
-```bash
-curl -fsS -H "Authorization: Bearer $OTG_ADMIN_GALLERY_5060_TOKEN" http://100.98.212.116:8798/health
-curl -fsS -H "Authorization: Bearer $OTG_ADMIN_GALLERY_5060_TOKEN" 'http://100.98.212.116:8798/gallery/list?limit=2'
-```
+    OTG_ADMIN_GALLERY_AGENT_ROOT=/absolute/comfy/output/path
+    OTG_ADMIN_GALLERY_AGENT_BIND=<private-or-tailscale-ip>
+    OTG_ADMIN_GALLERY_AGENT_PORT=8798
+    OTG_ADMIN_GALLERY_AGENT_TOKEN=<strong-random-token>
 
-Configure the 3003 server with `OTG_ADMIN_GALLERY_5060_URL=http://100.98.212.116:8798` and the same token. Do not use these values for PROD or port 3001.
+For slr / RTX 5060 Ti the intended root is:
 
-Rollback on `slr`:
+    /mnt/otg_fast/comfyui/output
 
-```bash
-sudo systemctl disable --now otg-admin-gallery-agent.service
-sudo rm /etc/systemd/system/otg-admin-gallery-agent.service
-sudo rm /etc/otg/admin-gallery-agent.env
-sudo rm -r /opt/otg-admin-gallery-agent
-sudo systemctl daemon-reload
-```
+For shawn / RTX 3090 the intended root is:
+
+    /home/shawn-rochford/AI/ComfyUI/ComfyUI/output
+
+The web application can independently configure either GPU source as
+a local filesystem source or an authenticated remote-agent source.
+
+Do not expose the agent publicly. Bind it only to the required private
+or Tailscale address. Never commit a real token.

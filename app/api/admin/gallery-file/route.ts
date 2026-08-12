@@ -54,7 +54,7 @@ async function serve(request: NextRequest, headOnly: boolean) {
   try {
     const source = adminGallerySourceById(sourceId);
     if (source.kind === "remote-agent") {
-      const upstream = await fetchRemoteAdminGalleryFile(rel, {
+      const upstream = await fetchRemoteAdminGalleryFile(sourceId, rel, {
         method: headOnly ? "HEAD" : "GET",
         range: request.headers.get("range"),
       });
