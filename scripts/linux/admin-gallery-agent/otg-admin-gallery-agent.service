@@ -1,21 +1,27 @@
 [Unit]
-Description=OTG TEST RTX 5060 Ti Admin Gallery Agent
+Description=OTG Linux Admin Gallery Agent
 After=network-online.target tailscaled.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=slrochford123
-Group=slrochford123
+User=__OTG_ADMIN_GALLERY_USER__
+Group=__OTG_ADMIN_GALLERY_GROUP__
 EnvironmentFile=/etc/otg/admin-gallery-agent.env
 ExecStart=/usr/bin/python3 /opt/otg-admin-gallery-agent/otg_admin_gallery_agent.py
 Restart=on-failure
 RestartSec=3
+
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/opt/ComfyUI/output
+ProtectHome=false
+ReadWritePaths=__OTG_ADMIN_GALLERY_ROOT__
+RestrictSUIDSGID=true
+LockPersonality=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
 
 [Install]
 WantedBy=multi-user.target

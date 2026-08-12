@@ -1291,3 +1291,6 @@ Stable 3001 source audit: `otg-test.service` runs the standalone release at `/ho
 - [ ] Install/configure authenticated 3090 gallery agent on shawn.
 - [ ] Configure candidate production environment on slr.
 - [ ] Smoke-test both Full Gallery sources before production switch.
+
+<!-- OTG_ADMIN_GALLERY_AGENT_INSTALLER_PORTABILITY_20260812 -->
+- [x] Admin Full Gallery Linux agent installer no longer hard-codes the slr username or `/opt/ComfyUI/output`; service user/group/root are rendered from the invoking Linux account and configured gallery root before service start.
