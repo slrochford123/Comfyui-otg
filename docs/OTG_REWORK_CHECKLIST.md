@@ -1294,3 +1294,6 @@ Stable 3001 source audit: `otg-test.service` runs the standalone release at `/ho
 
 <!-- OTG_ADMIN_GALLERY_AGENT_INSTALLER_PORTABILITY_20260812 -->
 - [x] Admin Full Gallery Linux agent installer no longer hard-codes the slr username or `/opt/ComfyUI/output`; service user/group/root are rendered from the invoking Linux account and configured gallery root before service start.
+
+<!-- OTG_ADMIN_GALLERY_AGENT_ENV_PARSER_FIX_20260812 -->
+- [x] Admin Gallery Agent installer runtime env parser repaired: replaced quote-sensitive awk parsing with a root-readable Python parser after the first shawn service-start attempt failed before unit rendering.

@@ -34,29 +34,44 @@ caller_user() {
 env_value() {
   local key="$1"
 
-  sudo awk -v wanted="$key" '
-    index($0, wanted "=") == 1 {
-      value = substr($0, length(wanted) + 2)
+  sudo python3 - "$ENV_FILE" "$key" <<'PYENV'
+from pathlib import Path
+import sys
 
-      sub(/^[[:space:]]+/, "", value)
-      sub(/[[:space:]]+$/, "", value)
+env_file = Path(sys.argv[1])
+wanted = sys.argv[2]
 
-      if (
-        length(value) >= 2 &&
-        (
-          (substr(value, 1, 1) == "\"" &&
-           substr(value, length(value), 1) == "\"") ||
-          (substr(value, 1, 1) == "'"'"'" &&
-           substr(value, length(value), 1) == "'"'"'")
-        )
-      ) {
-        value = substr(value, 2, length(value) - 2)
-      }
+value = None
 
-      print value
-      exit
-    }
-  ' "$ENV_FILE"
+for raw in env_file.read_text().splitlines():
+    line = raw.strip()
+
+    if not line or line.startswith("#"):
+        continue
+
+    if "=" not in line:
+        continue
+
+    key, current = line.split("=", 1)
+
+    if key.strip() != wanted:
+        continue
+
+    current = current.strip()
+
+    if (
+        len(current) >= 2
+        and current[0] == current[-1]
+        and current[0] in {"'", '"'}
+    ):
+        current = current[1:-1]
+
+    value = current
+    break
+
+if value is not None:
+    print(value)
+PYENV
 }
 
 render_service_unit() {

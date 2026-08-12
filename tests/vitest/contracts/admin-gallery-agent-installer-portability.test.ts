@@ -110,6 +110,23 @@ describe(
     );
 
     it(
+      "reads protected environment values without quote-sensitive awk",
+      () => {
+        expect(installer).toContain(
+          'sudo python3 - "$ENV_FILE" "$key"',
+        );
+
+        expect(installer).toContain(
+          'line.split("=", 1)',
+        );
+
+        expect(installer).not.toContain(
+          'sudo awk -v wanted="$key"',
+        );
+      },
+    );
+
+    it(
       "preserves the existing environment file during install",
       () => {
         expect(installer).toContain(
