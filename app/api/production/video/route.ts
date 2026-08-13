@@ -3,10 +3,12 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import fssync from "node:fs";
 
-import { configuredVideoComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
+import { logComfyRouting } from "@/app/api/_lib/comfyTarget";
+import { logVideoBackendJob, selectVideoBackend } from "@/lib/videoBackendFailover";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { OTG_DATA_ROOT, ensureDir, safeSegment } from "@/lib/paths";
 import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -775,7 +777,25 @@ export async function POST(req: NextRequest) {
     if (!imagePath) {
       return NextResponse.json({ ok: false, error: "imagePath is required" }, { status: 400 });
     }
-    const comfyBaseUrl = normalizeBaseUrl(configuredVideoComfyBaseUrl() || "http://127.0.0.1:8188");
+    const videoSelection = await selectVideoBackend({
+      requestKind: "production-video",
+      mediaType: "video",
+      workflowFile: workflowFileRaw,
+      workflowLabel: String(body.workflowLabel || "Production Video"),
+    });
+    if (!videoSelection.ok) {
+      logVideoBackendJob("production_video_routing_rejected", {
+        workflow: videoSelection.compatibility.id,
+        error: videoSelection.error,
+      });
+      throw new StageError("video_backend_route", videoSelection.error, videoSelection.status, videoSelection);
+    }
+    const comfyBaseUrl = normalizeBaseUrl(videoSelection.backend.baseUrl);
+    logComfyRouting(
+      "/api/production/video POST",
+      { requestKind: "production-video", workflowLabel: "Production Video", mediaType: "video" },
+      { kind: "video", baseUrl: comfyBaseUrl }
+    );
     const resolvedWorkflowFile = resolveWorkflowPath(workflowFileRaw);
 
     const rawWorkflow = await fs.readFile(resolvedWorkflowFile, "utf8");
@@ -814,16 +834,16 @@ export async function POST(req: NextRequest) {
       filenamePrefix,
     });
 
-    const submitRes = await fetchStage(
-      `${comfyBaseUrl}/prompt`,
-      {
+    const submitRes = await submitComfyPromptWith5060Lease({
+      baseUrl: comfyBaseUrl,
+      workerId: "production-video",
+      init: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: workflow }),
       },
-      "submit_prompt",
-      60_000
-    );
+      fetcher: (url, init) => fetchStage(url, init, "submit_prompt", 60_000),
+    });
 
     const submitParsed = await readJsonOrText(submitRes);
     if (!submitRes.ok) {
@@ -877,6 +897,13 @@ export async function POST(req: NextRequest) {
       generatedVideoUrl: videoUrl,
       remoteFile,
       debug: {
+        videoBackend: {
+          id: videoSelection.backend.id,
+          label: videoSelection.backend.label,
+          gpu: videoSelection.backend.gpu,
+          fallbackActive: videoSelection.fallbackActive,
+          fallbackReason: videoSelection.fallbackReason,
+        },
         cardIndex,
         durationSeconds: Math.max(
           1,

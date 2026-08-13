@@ -84,6 +84,71 @@ function uniqueStrings(values: Array<string | null | undefined>) {
   return out;
 }
 
+function metaString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function metaLower(value: unknown): string {
+  return metaString(value).toLowerCase();
+}
+
+function shouldSuppressGeneralGalleryImport(submitPayload: unknown): boolean {
+  if (!submitPayload || typeof submitPayload !== "object" || Array.isArray(submitPayload)) return false;
+  const payload = submitPayload as Record<string, unknown>;
+  const explicitNoGallery =
+    payload.saveToGallery === false ||
+    payload.save_to_gallery === false ||
+    payload.persistToGallery === false ||
+    payload.addToGallery === false ||
+    payload.copyToGallery === false ||
+    payload.writeToGallery === false ||
+    payload.gallery === false ||
+    payload.skipGallery === true ||
+    payload.skipGeneralGallery === true ||
+    payload.assetLibraryOnly === true ||
+    metaLower(payload.saveToGallery) === "false" ||
+    metaLower(payload.save_to_gallery) === "false" ||
+    metaLower(payload.persistToGallery) === "false" ||
+    metaLower(payload.addToGallery) === "false" ||
+    metaLower(payload.copyToGallery) === "false" ||
+    metaLower(payload.writeToGallery) === "false" ||
+    metaLower(payload.gallery) === "false" ||
+    metaLower(payload.skipGallery) === "true" ||
+    metaLower(payload.skipGeneralGallery) === "true" ||
+    metaLower(payload.assetLibraryOnly) === "true" ||
+    Boolean(payload.galleryExclusionPolicy);
+
+  const context = [
+    payload.requestKind,
+    payload.kind,
+    payload.jobKind,
+    payload.sourceType,
+    payload.source,
+    payload.origin,
+    payload.outputLibrary,
+    payload.galleryExclusionPolicy,
+  ]
+    .map((value) => (typeof value === "string" ? value : ""))
+    .join(" ")
+    .toLowerCase();
+
+  const creationCandidateContext =
+    context.includes("character-builder-image") ||
+    context.includes("characters-tab-builder") ||
+    context.includes("characters-upload-fullbody-completion") ||
+    context.includes("characters-tab-builder-upload-fullbody") ||
+    context.includes("characters-8-angle-card") ||
+    context.includes("character-card-only") ||
+    context.includes("character-candidate") ||
+    context.includes("characters-background-studio-preview") ||
+    context.includes("characters-background-studio") ||
+    context.includes("background-candidate") ||
+    context.includes("background-studio-preview") ||
+    context.includes("background-studio");
+
+  return explicitNoGallery || creationCandidateContext;
+}
+
 function configuredRenderImportRoots() {
   const envRoots = String(process.env.OTG_GALLERY_IMPORT_ROOTS || "")
     .split(/[;\n,]+/)
@@ -791,6 +856,21 @@ export async function syncPromptOutputsForOwner(args: SyncArgs): Promise<{
   }
 
   const syncContext = resolvePromptSyncContext(promptId, args.ownerKey, state, job);
+  if (shouldSuppressGeneralGalleryImport(syncContext.submitPayload)) {
+    writeState(args.ownerKey, {
+      promptId,
+      fileName: state?.fileName || null,
+      status: state?.status || "idle",
+      lastSyncedPromptId: promptId,
+    });
+
+    return {
+      ok: true,
+      promptId,
+      status: "synced",
+      saved: [],
+    };
+  }
 
   const saved: string[] = [];
   let missingCount = 0;

@@ -2,6 +2,8 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
+
 export type ComfyFileRef = { filename: string; subfolder?: string; type?: string };
 
 function env(name: string, fallback?: string): string {
@@ -88,10 +90,15 @@ export async function uploadFileToComfy(absPath: string, fieldName = "image", ba
 
 export async function submitWorkflow(workflow: any, clientId: string, baseUrlOverride?: string): Promise<string> {
   const base = pickBaseUrl(baseUrlOverride);
-  const r = await safeFetch(`${base}/prompt`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: workflow, client_id: clientId }),
+  const r = await submitComfyPromptWith5060Lease({
+    baseUrl: base,
+    workerId: "comfy-voices",
+    init: {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: workflow, client_id: clientId }),
+    },
+    fetcher: safeFetch,
   });
   const json = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`Comfy /prompt failed (${r.status}) @ ${base}: ${JSON.stringify(json)}`);

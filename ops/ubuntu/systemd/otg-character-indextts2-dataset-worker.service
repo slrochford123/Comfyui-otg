@@ -1,0 +1,25 @@
+[Unit]
+Description=ComfyUI-OTG TEST Linux IndexTTS2 Dataset Worker
+After=network-online.target otg-test.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shawn-rochford
+Group=shawn-rochford
+WorkingDirectory=/home/shawn-rochford/AI/runtime/test/IndexTTS2
+EnvironmentFile=/etc/otg/character-indextts2-dataset-worker.env
+ExecStart=/home/shawn-rochford/AI/runtime/test/IndexTTS2/.venv/bin/python /home/shawn-rochford/AI/deploy/otg-test/current/scripts/linux/otg-character-indextts2-dataset-worker.py
+Restart=always
+RestartSec=10
+TimeoutStopSec=45
+KillSignal=SIGINT
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/home/shawn-rochford/AI/runtime/test /home/shawn-rochford/AI/deploy/otg-test /home/shawn-rochford/AI/work/OTG-Test2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

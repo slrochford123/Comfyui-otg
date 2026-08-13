@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { configuredVideoComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { OTG_DATA_ROOT, ensureDir, safeSegment } from "@/lib/paths";
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -427,11 +428,16 @@ export async function POST(req: NextRequest) {
     const comfyBaseUrl = normalizeBaseUrl(configuredVideoComfyBaseUrl() || "http://127.0.0.1:8188");
     const clientId = `otg_edit_video_music_${Date.now()}`;
 
-    const submit = await fetchStage(`${comfyBaseUrl}/prompt`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: graph, client_id: clientId }),
-    }, "submit_prompt", 60_000);
+    const submit = await submitComfyPromptWith5060Lease({
+      baseUrl: comfyBaseUrl,
+      workerId: "edit-video-music-generate",
+      init: {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: graph, client_id: clientId }),
+      },
+      fetcher: (url, init) => fetchStage(url, init, "submit_prompt", 60_000),
+    });
 
     const submitParsed = await readJsonOrText(submit);
     if (!submit.ok || !submitParsed.json?.prompt_id) {

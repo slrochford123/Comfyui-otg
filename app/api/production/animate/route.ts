@@ -1,6 +1,103 @@
 import { NextRequest, NextResponse } from "next/server";
+import { configuredVideoComfyBaseUrl, logComfyRouting } from "@/app/api/_lib/comfyTarget";
+import { logVideoBackendJob, selectVideoBackend } from "@/lib/videoBackendFailover";
 import fs from "fs/promises";
 import path from "path";
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
+
+
+// OTG_PRODUCTION_ANIMATE_BACKEND_EXACT_PROMPT_V29
+function otgStripStoryboardContextFromAnimatePromptV29(value: string): string {
+  let text = String(value || "").replace(/\r\n/g, "\n");
+  if (!/Scene context:/i.test(text)) return value;
+  text = text.replace(/^\s*Scene context:[\s\S]*?(?:\n\s*\n|$)/i, "");
+  text = text.replace(/^\s*Scene context:[\s\S]*?this clip\.\s*/i, "");
+  text = text.replace(/^\s*Maintain visual continuity with the storyboard frame\.\s*/i, "");
+  text = text.replace(/^\s*No recurring character is intentionally present in this clip\.\s*/i, "");
+  return text.trim();
+}
+
+function otgSanitizeAnimatePromptObjectV29(value: unknown): unknown {
+  if (typeof value === "string") return otgStripStoryboardContextFromAnimatePromptV29(value);
+  if (Array.isArray(value)) return value.map((item) => otgSanitizeAnimatePromptObjectV29(item));
+  if (!value || typeof value !== "object") return value;
+
+  const input = value as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
+  const meta = input._meta as Record<string, unknown> | undefined;
+  const nodeTitle = String(input.title || meta?.title || input.name || "").toLowerCase();
+  const isPositivePromptNode = nodeTitle.includes("positive prompt") || nodeTitle === "positive";
+
+  for (const [key, child] of Object.entries(input)) {
+    const lowered = key.toLowerCase();
+
+    if (typeof child === "string") {
+      const stripped = otgStripStoryboardContextFromAnimatePromptV29(child);
+
+      if (lowered.includes("globalprompt") || lowered === "scenecontext" || lowered === "contextprompt") {
+        output[key] = "";
+        continue;
+      }
+
+      if (isPositivePromptNode && (lowered === "text" || lowered === "prompt" || lowered === "positive" || lowered === "string")) {
+        output[key] = stripped;
+        continue;
+      }
+
+      output[key] = stripped;
+      continue;
+    }
+
+    output[key] = otgSanitizeAnimatePromptObjectV29(child);
+  }
+
+  return output;
+}
+
+function otgSanitizeComfyPromptBodyV29(body: unknown): unknown {
+  if (typeof body !== "string" || !body.includes("Scene context:")) return body;
+  try {
+    const parsed = JSON.parse(body);
+    return JSON.stringify(otgSanitizeAnimatePromptObjectV29(parsed));
+  } catch {
+    return body.replace(/^\s*Scene context:[\s\S]*?(?:\n\s*\n|$)/i, "");
+  }
+}
+
+function otgInstallComfyPromptFetchPatchV29() {
+  const globalRef = globalThis as typeof globalThis & {
+    __otgComfyPromptFetchOriginalV29?: typeof fetch;
+    __otgComfyPromptFetchPatchedV29?: boolean;
+  };
+
+  if (globalRef.__otgComfyPromptFetchPatchedV29) return;
+
+  globalRef.__otgComfyPromptFetchOriginalV29 = globalThis.fetch.bind(globalThis) as typeof fetch;
+
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    try {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : String((input as Request).url || "");
+      const method = String(init?.method || "GET").toUpperCase();
+      const shouldSanitize =
+        method === "POST" &&
+        (url.includes("/prompt") || url.toLowerCase().includes("comfy")) &&
+        typeof init?.body === "string" &&
+        init.body.includes("Scene context:");
+
+      if (shouldSanitize) {
+        init = { ...(init || {}), body: otgSanitizeComfyPromptBodyV29(init?.body) as BodyInit };
+      }
+    } catch {
+      // Do not block Comfy requests if sanitizer fails.
+    }
+
+    return globalRef.__otgComfyPromptFetchOriginalV29!(input, init);
+  }) as typeof fetch;
+
+  globalRef.__otgComfyPromptFetchPatchedV29 = true;
+}
+
+otgInstallComfyPromptFetchPatchV29();
 
 export const runtime = "nodejs";
 
@@ -93,13 +190,7 @@ function jsonError(message: string, status = 400, details?: unknown) {
 }
 
 function comfyUrl() {
-  return (
-    process.env.COMFYUI_URL ||
-    process.env.COMFY_URL ||
-    process.env.NEXT_PUBLIC_COMFYUI_URL ||
-    process.env.NEXT_PUBLIC_COMFY_URL ||
-    "http://127.0.0.1:8188"
-  ).replace(/\/$/, "");
+  return configuredVideoComfyBaseUrl().replace(/\/$/, "");
 }
 
 function comfyRoot() {
@@ -338,16 +429,26 @@ function buildPreparedSegments(body: AnimateRequestBody, fps: number) {
 
 async function queueComfyWorkflow(workflow: WorkflowGraph) {
   const clientId = `otg-production-animate-${Date.now()}`;
+  const baseUrl = comfyUrl();
+  logComfyRouting(
+    "/api/production/animate POST",
+    { requestKind: "production-animate", workflowLabel: "Production Animate", mediaType: "video" },
+    { kind: "video", baseUrl }
+  );
 
-  const response = await fetch(`${comfyUrl()}/prompt`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+  const response = await submitComfyPromptWith5060Lease({
+    baseUrl,
+    workerId: "production-animate",
+    init: {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        client_id: clientId,
+        prompt: workflow,
+      }),
     },
-    body: JSON.stringify({
-      client_id: clientId,
-      prompt: workflow,
-    }),
   });
 
   const responseText = await response.text();
@@ -962,10 +1063,12 @@ function otgProductionAnimateConfiguredComfyBaseUrl(raw: unknown): string {
   if (direct) return direct;
 
   const candidates = [
+    process.env.COMFYUI_VIDEO_URL,
     process.env.OTG_VIDEO_COMFY_BASE_URL,
     process.env.VIDEO_COMFY_BASE_URL,
     process.env.COMFY_VIDEO_BASE_URL,
     process.env.NEXT_PUBLIC_VIDEO_COMFY_BASE_URL,
+    process.env.COMFYUI_URL,
     process.env.OTG_COMFY_BASE_URL,
     process.env.COMFY_BASE_URL,
     process.env.COMFYUI_BASE_URL,
@@ -1278,8 +1381,21 @@ export async function POST(request: NextRequest) {
   try {
     let body = (await request.json()) as AnimateRequestBody;
     body = otgNormalizeProductionAnimatePayload(body);
+    const videoSelection = await selectVideoBackend({
+      requestKind: "production-animate",
+      mediaType: "video",
+      workflowLabel: "Production Animate",
+      mode: body.mode || body.animateMode || body.workflowMode || "default",
+    });
+    if (!videoSelection.ok) {
+      logVideoBackendJob("production_animate_routing_rejected", {
+        workflow: videoSelection.compatibility.id,
+        error: videoSelection.error,
+      });
+      return jsonError(videoSelection.error, videoSelection.status, videoSelection);
+    }
     // OTG_PRODUCTION_ANIMATE_COMFY_UPLOAD_RETURN_FIX_V5
-    body = await otgPrepareProductionAnimateImagesForComfy(request, comfyUrl(), body);
+    body = await otgPrepareProductionAnimateImagesForComfy(request, videoSelection.backend.baseUrl, body);
     const mode = resolveMode(body);
 
     const result =
@@ -1301,3 +1417,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

@@ -9,6 +9,7 @@ import { getGallerySourcesForRequest, resolveGalleryItemByName } from "@/lib/gal
 import { ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import { getFfmpegVersion, resolveFfmpegPath, resolveFfprobePath, runCmd } from "@/lib/ffmpeg";
 import { SessionInvalidError } from "@/lib/ownerKey";
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -621,16 +622,16 @@ export async function POST(req: NextRequest) {
       filenamePrefix: prefixBase,
     });
 
-    const submit = await fetchStage(
-      `${comfyBaseUrl}/prompt`,
-      {
+    const submit = await submitComfyPromptWith5060Lease({
+      baseUrl: comfyBaseUrl,
+      workerId: "edit-video-woosh-sfx",
+      init: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: graph, client_id: clientId }),
       },
-      "submit_prompt",
-      60_000,
-    );
+      fetcher: (url, init) => fetchStage(url, init, "submit_prompt", 60_000),
+    });
 
     const submitParsed = await readJsonOrText(submit);
     if (!submit.ok || !submitParsed.json?.prompt_id) {

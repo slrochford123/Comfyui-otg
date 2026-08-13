@@ -1,3 +1,20 @@
+# 2026-07-19 - TEST Wan/LTX Video LoRA support
+
+- Added a curated, source-controlled LTX 2.3 Video LoRA catalog, live dual-backend inventory API with a 45-second cache, catalog-only compatibility mapping, and an installed/compatible Generate Video selector with a two-LoRA maximum and explicit trigger-word action.
+- Added immutable `LoraLoaderModelOnly` injection contracts for all three LTX SafeTensor and all six Wan GGUF/SafeTensor Generate Video workflows. Required LightX2V, distilled, Licon, IC-LORA, SageAttention, chunk-feed-forward, sampling, preview, and duration wiring remains unchanged.
+- Added selected-LoRA-aware RTX 3090/RTX 5060 Ti routing, fail-closed validation, precise 400/409 errors, and sanitized job/request metadata. No selected LoRA is dropped during fallback and ambiguous submissions remain no-retry events.
+- Creator metadata gaps remain `metadata_pending`; Camera Controls retains its non-commercial warning, and internal acceleration/quality LoRAs are not exposed.
+- Validation passed 279 Vitest tests, TypeScript, and a clean Node 20.20.2 standalone build. Three RTX 3090 LTX generations were visually inspected successfully (T2V, I2V, and a two-LoRA hard-cut stack). Wan physical testing remains blocked by the absence of an administrator-curated selectable Wan style LoRA; TEST activation remains blocked by interactive sudo authorization, so the prior TEST release stays active and PROD remains untouched.
+
+# 2026-07-18 - TEST production-readiness packaging
+
+- Added deterministic Wan/LTX/FFLF UI contracts, a synchronous Generate duplicate-click guard, standalone TEST release packaging, guarded PROD promotion/rollback scripts, promotion audits, and the PROD checklist.
+- Source validation passed 247 Vitest tests, TypeScript, and a clean Next.js 15.5.18 standalone build under Node 20.20.2. The candidate release packaged successfully, but activation remains blocked because restarting `otg-test.service` requires interactive sudo authorization; the prior TEST release remains active and PROD was not modified.
+
+# 2026-07-18 - TEST dual-GPU capability routing
+
+- Added deterministic RTX 3090/RTX 5060 Ti capability manifests, verified-only fallback routing, live compatibility checks, duplicate-submission protection, and a cold/warm workflow evidence matrix. Verified all six Wan 2.2 modes on the 3090 and six image workflows on the 5060 Ti; no deployment or service restart performed.
+
 # CHANGELOG
 
 ## [Unreleased]

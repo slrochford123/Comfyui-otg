@@ -1,4 +1,4 @@
-{
+﻿{
   "1": {
     "inputs": {
       "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
@@ -168,7 +168,7 @@
   },
   "18": {
     "inputs": {
-      "unet_name": "Qwen\\qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",

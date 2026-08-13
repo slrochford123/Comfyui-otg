@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { cookieName } from "@/lib/auth/cookies";
 import { verifySession } from "@/lib/auth/jwt";
 import { getDeviceIdFromRequest, safeDeviceId } from "@/lib/otgDevice";
+import { resolveOwnerAlias } from "@/lib/ownerAlias";
 
 export type OwnerContext = {
   deviceId: string;
@@ -44,7 +45,7 @@ export async function getOwnerContext(req: NextRequest): Promise<OwnerContext> {
     }
   }
 
-  const ownerKey = username || deviceId;
+  const ownerKey = resolveOwnerAlias(username || deviceId);
   return {
     deviceId,
     username,

@@ -1,16 +1,17 @@
 {
   "name": "otg",
-  "version": "1.0.15",
+  "version": "1.0.17",
   "private": true,
   "scripts": {
     "predev": "node scripts/ensure-native-deps.cjs",
     "dev": "next dev",
     "prebuild": "node scripts/ensure-native-deps.cjs",
     "build": "next build",
-    "start": "next start -p 3000",
+    "start": "next start -p 3001",
     "lint": "eslint",
     "test": "vitest --config tests/vitest.config.ts run",
     "test:watch": "vitest --config tests/vitest.config.ts",
+    "voice-worker:once": "node -r ./scripts/register-ts-worker.cjs ./scripts/run-voice-pipeline-worker-once.ts",
     "e2e": "playwright test",
     "postinstall": "node scripts/ensure-native-deps.cjs",
     "check:native": "node scripts/ensure-native-deps.cjs"
@@ -24,6 +25,7 @@
     "@google/model-viewer": "^4.2.0",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
+    "@sparkjsdev/spark": "^2.1.0",
     "@supabase/supabase-js": "^2.89.0",
     "@tanstack/react-query": "^5.100.9",
     "@tanstack/react-virtual": "^3.13.24",
@@ -40,6 +42,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "7.6.4",
+    "@playcanvas/splat-transform": "^2.5.1",
     "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4.1.18",
     "@testing-library/dom": "^10.4.1",

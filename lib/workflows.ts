@@ -16,6 +16,17 @@ export type WorkflowMeta = {
     nodes?: string[]; // required custom node packs (human hints)
     notes?: string;
   };
+  videoCompatibility?: {
+    mode: "compatible" | "3090_only" | "reduced";
+    notes?: string;
+    reductions?: {
+      maxWidth?: number;
+      maxHeight?: number;
+      maxFrames?: number;
+      maxBatchSize?: number;
+      nodeOverrides?: Record<string, Record<string, unknown>>;
+    };
+  };
 };
 
 export type WorkflowsIndex = {

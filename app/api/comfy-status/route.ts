@@ -1,84 +1,79 @@
 import { NextRequest } from "next/server";
-import { isLikelyVideoWorkflowKey } from "@/app/api/_lib/comfyTarget";
+import {
+  classifyComfyJob,
+  configuredComfyBaseUrlForJob,
+  configuredImageComfyBaseUrl,
+  logComfyRouting,
+} from "@/app/api/_lib/comfyTarget";
+import { probeVideoBackend, videoBackends } from "@/lib/videoBackendFailover";
 
 export const runtime = "nodejs";
 
-function normalizeComfyBaseUrl(raw: unknown): string | null {
-  const value = String(raw || "").trim();
-  if (!value) return null;
-  return value.replace(/\/+$/, "");
-}
-
-function firstComfyBaseUrl(...values: Array<unknown>): string | null {
-  for (const value of values) {
-    const normalized = normalizeComfyBaseUrl(value);
-    if (normalized) return normalized;
+async function probeImage(baseUrl: string) {
+  try {
+    const response = await fetch(`${baseUrl}/system_stats`, { cache: "no-store" });
+    const json = await response.json().catch(() => ({}));
+    const gpuName = Array.isArray(json?.devices) ? String(json.devices[0]?.name || "") || null : null;
+    return { ok: response.ok, status: response.status, gpuName, error: response.ok ? null : `HTTP ${response.status}` };
+  } catch (error: any) {
+    return { ok: false, status: null, gpuName: null, error: String(error?.message || error) };
   }
-  return null;
-}
-
-function configuredImageComfyBaseUrl(): string {
-  return (
-    firstComfyBaseUrl(
-      process.env.OTG_IMAGE_COMFY_BASE_URL,
-      process.env.IMAGE_COMFY_BASE_URL,
-      process.env.COMFY_IMAGE_BASE_URL,
-      process.env.NEXT_PUBLIC_IMAGE_COMFY_BASE_URL,
-      process.env.OTG_COMFY_BASE_URL,
-      process.env.COMFY_BASE_URL,
-      process.env.COMFYUI_BASE_URL,
-      process.env.NEXT_PUBLIC_COMFY_BASE_URL,
-      process.env.NEXT_PUBLIC_COMFYUI_BASE_URL
-    ) || "http://127.0.0.1:8288"
-  );
-}
-
-function configuredVideoComfyBaseUrl(): string {
-  return (
-    firstComfyBaseUrl(
-      process.env.OTG_VIDEO_COMFY_BASE_URL,
-      process.env.VIDEO_COMFY_BASE_URL,
-      process.env.COMFY_VIDEO_BASE_URL,
-      process.env.NEXT_PUBLIC_VIDEO_COMFY_BASE_URL,
-      process.env.OTG_COMFY_BASE_URL,
-      process.env.COMFY_BASE_URL,
-      process.env.COMFYUI_BASE_URL,
-      process.env.NEXT_PUBLIC_COMFY_BASE_URL,
-      process.env.NEXT_PUBLIC_COMFYUI_BASE_URL,
-      configuredImageComfyBaseUrl()
-    ) || "http://127.0.0.1:8288"
-  );
 }
 
 export async function GET(req: NextRequest) {
-  const mode = String(req.nextUrl.searchParams.get("mode") || "").toLowerCase();
-  const preset = String(req.nextUrl.searchParams.get("preset") || req.nextUrl.searchParams.get("workflow") || "").trim();
-  const label = String(req.nextUrl.searchParams.get("label") || "").trim();
-  const workflowLooksVideo = mode === "video" || isLikelyVideoWorkflowKey(preset, label);
-  const comfyBaseUrl = workflowLooksVideo ? configuredVideoComfyBaseUrl() : configuredImageComfyBaseUrl();
+  const descriptor = {
+    mode: String(req.nextUrl.searchParams.get("mode") || "").toLowerCase(),
+    preset: String(req.nextUrl.searchParams.get("preset") || req.nextUrl.searchParams.get("workflow") || "").trim(),
+    label: String(req.nextUrl.searchParams.get("label") || "").trim(),
+  };
+  const requestedKind = classifyComfyJob(descriptor);
+  const route = configuredComfyBaseUrlForJob(descriptor);
+  const imageBaseUrl = configuredImageComfyBaseUrl();
+  const backends = videoBackends();
+  logComfyRouting("/api/comfy-status GET", descriptor, route);
 
-  try {
-    const r = await fetch(`${comfyBaseUrl}/system_stats`, { cache: "no-store" });
-    const j = await r.json().catch(() => ({}));
-    return Response.json(
-      {
-        serverState: r.ok ? "idle" : "down",
-        serverHint: r.ok ? "Connected" : "Disconnected",
-        comfyBaseUrl,
-        upstreamStatus: r.status,
-        system_stats: j,
+  const [image, videoPrimary, videoFallback] = await Promise.all([
+    probeImage(imageBaseUrl),
+    probeVideoBackend(backends.primary.baseUrl),
+    probeVideoBackend(backends.fallback.baseUrl),
+  ]);
+
+  const activeVideoBackend = videoPrimary.ok ? backends.primary : videoFallback.ok ? backends.fallback : null;
+  const fallbackActive = !videoPrimary.ok && videoFallback.ok;
+  const selectedOk = requestedKind === "video" ? Boolean(activeVideoBackend) : image.ok;
+  const selectedBaseUrl = requestedKind === "video" ? activeVideoBackend?.baseUrl || backends.primary.baseUrl : imageBaseUrl;
+
+  return Response.json(
+    {
+      ok: selectedOk,
+      connected: selectedOk,
+      serverState: selectedOk ? "idle" : "down",
+      serverHint: selectedOk ? "Connected" : "Disconnected",
+      requestedKind,
+      comfyBaseUrl: selectedBaseUrl,
+      imageBackend: {
+        id: "rtx5060ti",
+        label: "RTX 5060 Ti image backend",
+        baseUrl: imageBaseUrl,
+        gpu: image.gpuName,
+        available: image.ok,
+        error: image.error,
       },
-      { status: r.ok ? 200 : 502 }
-    );
-  } catch (e: any) {
-    return Response.json(
-      {
-        serverState: "down",
-        serverHint: "Disconnected",
-        comfyBaseUrl,
-        error: String(e?.message || e),
+      videoBackend: {
+        activeId: activeVideoBackend?.id || null,
+        activeLabel: activeVideoBackend?.label || "No video backend available",
+        activeBaseUrl: activeVideoBackend?.baseUrl || null,
+        activeGpu: activeVideoBackend ? (activeVideoBackend.id === "rtx3090" ? videoPrimary.gpuName : videoFallback.gpuName) : null,
+        fallbackActive,
+        fallbackStatus: fallbackActive
+          ? "RTX 3090 unavailable; RTX 5060 Ti fallback is active for compatible workflows."
+          : videoPrimary.ok
+            ? "RTX 3090 primary is available; fallback is standing by."
+            : "RTX 3090 and RTX 5060 Ti video backends are unavailable.",
+        primary: { ...backends.primary, available: videoPrimary.ok, probe: videoPrimary },
+        fallback: { ...backends.fallback, available: videoFallback.ok, probe: videoFallback },
       },
-      { status: 502 }
-    );
-  }
+    },
+    { status: selectedOk ? 200 : 502 }
+  );
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 // NOTE: submit prompt graphs as-is (no sanitization).
 
 export const runtime = "nodejs";
@@ -90,10 +91,14 @@ const jobPath = path.join(JOBS_DIR, `${deviceId}.jsonl`);
   const ownerKey = String(queued.ownerKey || "");
   const graph = queued.promptGraph;
 
-  const upstream = await fetch(`${COMFY_BASE_URL}/prompt`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ prompt: graph, client_id: deviceId }),
+  const upstream = await submitComfyPromptWith5060Lease({
+    baseUrl: COMFY_BASE_URL,
+    workerId: "api-queue-queue-next",
+    init: {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: graph, client_id: deviceId }),
+    },
   });
 
   const text = await upstream.text();

@@ -18,6 +18,12 @@ export type PromptRequestMeta = {
   extendMode?: string | null;
   positivePrompt?: string | null;
   negativePrompt?: string | null;
+  videoLoras?: Array<{
+    id: string;
+    strength: number;
+    highNoiseStrength?: number;
+    lowNoiseStrength?: number;
+  }> | null;
   submitPayload?: any | null;
   createdAt?: number | null;
   updatedAt?: number | null;

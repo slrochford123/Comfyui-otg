@@ -85,11 +85,323 @@ function otgProductionClipVideoRef(value: any, index?: number) {
   return "";
 }
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import QwenSceneBuilderPanel from "./QwenSceneBuilderPanel";
 
-import ProductionAnimateModeSwitch, { type ProductionAnimateMode } from "./ProductionAnimateModeSwitch";
-import ProductionDirectorModeUI, { type ProductionDirectorImportedFrame } from "./ProductionDirectorModeUI";
-type ProductionStage = "storyboard" | "animate" | "edit" | "assemble";
+import type { ProductionAnimateMode } from "./ProductionAnimateModeSwitch";
+import type { ProductionDirectorImportedFrame } from "./ProductionDirectorModeUI";
+import {
+  getAudioStudioJob,
+  isTerminalJobStatus,
+  queueAudioStudioJob,
+} from "../../../lib/client/voicePipelineClient";
+import type { PersistedAudioStudioResult, ProductionAudioStudioResultItem } from "../../../lib/jobs/productionAudioStudioResults";
+import type { ProductionAudioStudioAction, QueuedContractJob } from "../../../lib/jobs/voicePipelineJobs";
+
+
+
+
+// OTG_STORYBOARD_REFERENCE_POOL_BACKGROUND_V30_BOOTSTRAP
+// OTG_PRODUCTION_ANIMATE_EXACT_PROMPT_V28
+// Production Animate positive prompts must be exactly the LTX Animation Prompt box text.
+// Storyboard scene context/global prompt text is valid for scene image creation, not for Animate video prompts.
+function otgAnimateManualPromptRawV36BPU24B(value: unknown): string {
+  return String(value ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+function otgExactProductionPromptTextV28(value: unknown): string {
+  return otgAnimateManualPromptRawV36BPU24B(value);
+}
+
+function otgStripStoryboardSceneContextV28(value: unknown): string {
+  let text = otgExactProductionPromptTextV28(value);
+  text = text.replace(/^\s*Manual prompt:[\s\S]*?(?:\n\s*\n|$)/i, "");
+  text = text.replace(/^\s*Maintain visual continuity with the storyboard frame\.\s*/i, "");
+  text = text.replace(/^\s*No recurring character is intentionally present in this clip\.\s*/i, "");
+  return otgExactProductionPromptTextV28(text);
+}
+
+function otgShouldSanitizeProductionAnimatePromptV28(url: unknown, method: string): boolean {
+  if (method !== "POST") return false;
+  const target = String(url || "").toLowerCase();
+  return (
+    target.includes("/api/production/animate") ||
+    target.includes("/api/comfy") ||
+    target.includes("/api/workflows/run")
+  );
+}
+
+function otgFindExactProductionPromptV28(payload: any): string {
+  const candidates: unknown[] = [];
+  const visit = (value: any, depth: number) => {
+    if (depth > 7 || value == null) return;
+    if (typeof value === "string") return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, depth + 1));
+      return;
+    }
+    if (typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      const lowered = key.toLowerCase();
+      if (
+        typeof child === "string" &&
+        (lowered === "animationprompt" ||
+          lowered === "motionprompt" ||
+          lowered === "frameprompt" ||
+          lowered === "prompttext" ||
+          lowered === "ltxanimationprompt")
+      ) {
+        candidates.push(child);
+      }
+      visit(child, depth + 1);
+    }
+  };
+  visit(payload, 0);
+  for (const candidate of candidates) {
+    const cleaned = otgStripStoryboardSceneContextV28(candidate);
+    if (cleaned) return cleaned;
+  }
+  const rawPrompt = typeof payload?.prompt === "string" ? payload.prompt : "";
+  return otgStripStoryboardSceneContextV28(rawPrompt);
+}
+
+function otgSanitizeProductionAnimatePayloadV28(payload: any): any {
+  const exactPrompt = otgFindExactProductionPromptV28(payload);
+  const clone = structuredClone(payload);
+
+  const visit = (value: any, depth: number, parentKey = "") => {
+    if (depth > 10 || value == null) return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, depth + 1, parentKey));
+      return;
+    }
+    if (typeof value !== "object") return;
+
+    const nodeTitle = String(value.title || value._meta?.title || value.name || "").toLowerCase();
+    const looksLikePositivePromptNode = nodeTitle.includes("positive prompt") || nodeTitle === "positive";
+
+    for (const [key, child] of Object.entries(value)) {
+      const lowered = key.toLowerCase();
+
+      if (typeof child === "string") {
+        const stripped = otgStripStoryboardSceneContextV28(child);
+        const isPromptField =
+          lowered === "prompt" ||
+          lowered === "positive" ||
+          lowered === "text" ||
+          lowered === "string" ||
+          lowered === "animationprompt" ||
+          lowered === "motionprompt" ||
+          lowered === "frameprompt";
+
+        if (isPromptField && (looksLikePositivePromptNode || lowered !== "text")) {
+          (value as Record<string, unknown>)[key] = stripped || exactPrompt;
+          continue;
+        }
+
+        if (lowered.includes("globalprompt") || lowered === "scenecontext" || lowered === "contextprompt") {
+          (value as Record<string, unknown>)[key] = "";
+          continue;
+        }
+      }
+
+      visit(child, depth + 1, lowered);
+    }
+  };
+
+  visit(clone, 0);
+
+  if (exactPrompt) {
+    if (typeof clone.prompt === "string") clone.prompt = exactPrompt;
+    if (typeof clone.positive === "string") clone.positive = exactPrompt;
+    clone.animationPrompt = exactPrompt;
+    clone.motionPrompt = exactPrompt;
+  }
+
+  clone.globalPrompt = "";
+  clone.globalPromptPreview = "";
+  clone.sceneContext = "";
+  clone.contextPrompt = "";
+
+  return clone;
+}
+
+// OTG_PRODUCTION_REPO_CACHED_COMFY_ASSET_V36BPU29
+// Production must not depend on ComfyUI output-folder lifetime.
+// Direct Comfy view URLs are rewritten through a repo-backed cache route.
+function repoCachedComfyImageUrlV36BPU29(value: unknown): string {
+  const text = String(value || "").trim();
+
+  if (!text) return "";
+  if (text.includes("/api/production/comfy-cache")) return text;
+
+  const lower = text.toLowerCase();
+
+  if (
+    lower.includes("/api/comfy/view") ||
+    lower.includes("view?filename=") ||
+    /^\/?view\?/i.test(text)
+  ) {
+    return `/api/production/comfy-cache?src=${encodeURIComponent(text)}`;
+  }
+
+  return text;
+}
+
+// OTG_VOICE_ACTOR_TRANSCRIBE_UI_V25
+// DOM-based bridge so the transcribe button can work without knowing the internal recorder state variable name.
+async function transcribeVoiceActorAudioBlobV25(blob: Blob): Promise<string> {
+  const formData = new FormData();
+  formData.set("audio", blob, "voice-actor-input.webm");
+
+  const endpoints = [
+    "/api/audio/transcribe",
+    "/api/voice/transcribe",
+    "/api/transcribe",
+    "/api/whisper/transcribe",
+  ];
+
+  let lastError = "";
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        lastError = endpoint + " returned " + response.status;
+        continue;
+      }
+
+      const json = await response.json().catch(() => null);
+      const rawText =
+        json?.text ||
+        json?.transcript ||
+        json?.transcription ||
+        json?.result ||
+        json?.data?.text ||
+        "";
+      const cleaned = String(rawText || "").trim();
+      if (cleaned) return cleaned;
+      lastError = endpoint + " returned no transcript text";
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  throw new Error(lastError || "No transcription endpoint returned text.");
+}
+
+function setReactTextareaValueV25(textarea: HTMLTextAreaElement, value: string) {
+  const descriptor = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value");
+  descriptor?.set?.call(textarea, value);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  textarea.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function findNearestFramePromptTextareaV25(button: HTMLButtonElement): HTMLTextAreaElement | null {
+  let current: HTMLElement | null = button;
+  for (let depth = 0; current && depth < 12; depth += 1) {
+    const textareas = Array.from(current.querySelectorAll("textarea")) as HTMLTextAreaElement[];
+    const usable = textareas.filter((textarea) => !textarea.disabled && textarea.offsetParent !== null);
+    if (usable.length) return usable[0];
+    current = current.parentElement;
+  }
+  return null;
+}
+
+async function handleVoiceActorTranscribeFromButton(button: HTMLButtonElement) {
+  const originalText = button.textContent || "Transcribe";
+  try {
+    button.disabled = true;
+    button.textContent = "Transcribing...";
+
+    let current: HTMLElement | null = button;
+    let audio: HTMLAudioElement | null = null;
+    for (let depth = 0; current && depth < 8 && !audio; depth += 1) {
+      audio = current.querySelector("audio");
+      current = current.parentElement;
+    }
+
+    if (!audio?.src) {
+      window.alert("Record and save Voice Actor Input before transcribing.");
+      return;
+    }
+
+    const audioResponse = await fetch(audio.src);
+    if (!audioResponse.ok) {
+      throw new Error("Could not read the saved voice actor recording.");
+    }
+
+    const blob = await audioResponse.blob();
+    const transcript = await transcribeVoiceActorAudioBlobV25(blob);
+    const textarea = findNearestFramePromptTextareaV25(button);
+
+    if (!textarea) {
+      window.alert("Transcript: " + transcript + "\n\nCould not find the frame prompt box automatically. Copy this text into the prompt.");
+      return;
+    }
+
+    const existing = textarea.value.trim();
+    const nextValue = existing && !existing.includes(transcript) ? existing + " " + transcript : transcript;
+    setReactTextareaValueV25(textarea, nextValue.trim());
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : "Voice actor transcription failed.");
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+// OTG_PRODUCTION_PROMPT_EXACT_V24B
+// Production image-to-video / first-frame-last-frame jobs must send only the user's frame prompt.
+// Do not append style wrappers, character descriptions, notes, transcript hints, or UI helper text here.
+function exactProductionFramePrompt(value: unknown): string {
+  return otgAnimateManualPromptRawV36BPU24B(value);
+}
+
+async function transcribeProductionVoiceActorAudio(blob: Blob): Promise<string> {
+  const formData = new FormData();
+  formData.set("audio", blob, "voice-actor-input.webm");
+
+  const endpoints = [
+    "/api/audio/transcribe",
+    "/api/voice/transcribe",
+    "/api/transcribe",
+    "/api/whisper/transcribe",
+  ];
+
+  let lastError = "";
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        body: formData,
+      });
+      if (!response.ok) {
+        lastError = `${endpoint} returned ${response.status}`;
+        continue;
+      }
+      const json = await response.json().catch(() => null);
+      const text =
+        json?.text ||
+        json?.transcript ||
+        json?.transcription ||
+        json?.result ||
+        json?.data?.text ||
+        "";
+      const cleaned = String(text || "").trim();
+      if (cleaned) return cleaned;
+      lastError = `${endpoint} returned no transcript text`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  throw new Error(lastError || "No transcription endpoint returned text.");
+}
+type ProductionStage = "storyboard" | "animate" | "edit" | "audio" | "assemble";
+type ProductionHomeMode = "home" | "pipeline" | "load" | "delete" | "completed";
 
 type ComfyProgressUiState = {
   running: boolean;
@@ -191,6 +503,8 @@ type ProductionVoiceModelOption = {
 };
 
 type ProductionClipEditManifest = {
+  visualFixPrompt?: string;
+  visualEditPromptV36BL2?: string;
   sceneId: string;
   clipIndex: number;
   sourceUrl: string;
@@ -233,9 +547,18 @@ type ProductionClipEditManifest = {
   status: ProductionEditStatus;
   editedUrl?: string;
   editedFileName?: string;
+  renderedDurationSeconds?: number;
   error?: string;
   updatedAt: string;
 };
+
+type QueuedJobUiState = {
+  phase: "idle" | "submitting" | "queued" | "polling" | "error";
+  job?: QueuedContractJob;
+  error?: string;
+};
+
+type ProductionAudioStudioResult = PersistedAudioStudioResult;
 
 type ProductionEditClipRow = {
   key: string;
@@ -275,6 +598,8 @@ type CharacterReference = {
   label: string;
   fileName?: string;
   previewUrl?: string;
+  workflowImagePath?: string;
+  workflowImageUrl?: string;
   sourceCharacterId?: string;
   sourceCharacterName?: string;
   referenceAudioPath?: string;
@@ -284,6 +609,8 @@ type CharacterLibraryPickerItem = {
   name: string;
   imagePath: string;
   imageUrl: string;
+  workflowImagePath: string;
+  workflowImageUrl: string;
   referenceAudioPath?: string;
 };
 
@@ -346,12 +673,33 @@ type ProductionSnapshot = {
 };
 type ProductionFrameClipStatus = "idle" | "queued" | "ready" | "error";
 
+type ProductionLoraSelection = {
+  name: string;
+  strength: number;
+};
+
+type ProductionLoraOption = {
+  name: string;
+};
+
+type ProductionVoiceActorInput = {
+  enabled?: boolean;
+  saved?: boolean;
+  audioName?: string;
+  audioUrl?: string;
+  durationSeconds?: number;
+  mimeType?: string;
+  recordedAt?: string;
+};
+
 type ProductionFrameAnimation = {
   prompt: string;
   durationSeconds: number;
   characterRefIds?: string[];
+  loras?: ProductionLoraSelection[];
+  voiceActorInput?: ProductionVoiceActorInput;
   queueForGeneration?: boolean;
-  animationMode?: "auto" | "image_to_video" | "first_last_frame";
+  animationMode?: "auto" | "image_to_video" | "first_last_frame" | "reference_to_video_gguf";
   firstFrameIndex?: number;
   lastFrameIndex?: number;
   promptSourceFrameIndex?: number;
@@ -416,6 +764,7 @@ type ProductionFrameClip = {
   originalFileName?: string;
   originalUrl?: string;
   editManifest?: ProductionClipEditManifest;
+  audioStudioResult?: ProductionAudioStudioResult;
 };
 type ProductionScene = {
   id: string;
@@ -453,24 +802,44 @@ type ProductionManifest = {
 };
 
 const DRAFT_STORAGE_KEY = "otg:production:storyboard-draft:v1";
+const PRODUCTION_MANUAL_SAVE_KEY = "otg:production:manual-save:v1";
+const PRODUCTION_AUTOSAVE_KEY = "otg:production:auto-save:v1";
 const THEME_STORAGE_KEY = "otg:production:theme";
+const QWEN_SCENE_BUILDER_STORAGE_KEY_V36BPU3 = "otg-qwen-scene-builder-v36bo5b";
+const QWEN_ANIMATE_HANDOFF_SOURCE_V36BPU3 = "qwen-scene-builder-paired-animate-v36bpu3";
+
+type QwenCompletedSceneForAnimateV36BPU3 = {
+  id: string;
+  name: string;
+  sourceIndex: number;
+  url: string;
+  workflowImage: string;
+};
+
 const STORYBOARD_IMAGE_WORKFLOW_ID = "internal/production/qwen_image_edit_2511_storyboard";
-const CHARACTER_REFERENCE_SLOTS = 5;
+const CHARACTER_REFERENCE_SLOTS = 3;
 
 // PRODUCTION_STORYBOARD_SETUP_PATCH
-const MAX_PRODUCTION_SCENES = 15;
+const MAX_PRODUCTION_SCENES = 8;
 const DEFAULT_SCENE_DURATION_SECONDS = 15;
 const MAX_SCENE_DURATION_SECONDS = 30;
 // OTG_PRODUCTION_ANIMATE_FIRST_LAST_FRAME_V1
 const MIN_ANIMATE_FRAME_DURATION_SECONDS = 3;
 const MAX_ANIMATE_FRAME_DURATION_SECONDS = 15;
-const DEFAULT_SCENE_IMAGE_COUNT = 4;
+const MAX_PRODUCTION_ANIMATE_LORAS = 3;
+const MIN_PRODUCTION_LORA_STRENGTH = 0.2;
+const MAX_PRODUCTION_LORA_STRENGTH = 1;
+const PRODUCTION_LIPSYNC_WORKFLOW_ID = "production/lipsync-ltx23-1-1";
+const PRODUCTION_LIPSYNC_WORKFLOW_LABEL = "Production Voice Actor Input Lip Sync";
+const PRODUCTION_LIPSYNC_WORKFLOW_FILE = "production-lipsync.json";
+const DEFAULT_SCENE_IMAGE_COUNT = 1;
 const MAX_SCENE_IMAGE_COUNT = 16;
 
 const stages: Array<{ id: ProductionStage; label: string; description: string }> = [
-  { id: "storyboard", label: "Storyboard", description: "Create scenes and images" },
+  { id: "storyboard", label: "Storyboard", description: "Build one scene image from prompt passes" },
   { id: "animate", label: "Animate", description: "Generate scene clips" },
-  { id: "edit", label: "Edit", description: "Trim, audio, effects" },
+  { id: "edit", label: "Visual Edit", description: "Trim and visual fixes" },
+  { id: "audio", label: "Audio Studio", description: "Dub and add voices" },
   { id: "assemble", label: "Assemble", description: "Preview and export" },
 ];
 
@@ -481,12 +850,12 @@ const initialScenes: ProductionScene[] = [
     durationSeconds: DEFAULT_SCENE_DURATION_SECONDS,
     imageCount: DEFAULT_SCENE_IMAGE_COUNT,
     aspectRatio: "16:9",
-    prompt: Array.from({ length: DEFAULT_SCENE_IMAGE_COUNT }, (_, index) => `Next Scene ${index + 1}: `).join("\n"),
+    prompt: "",
     motionNotes: "",
     style: "Cinematic Fantasy",
     status: "pending_images",
     images: [],
-    characterRefs: createCharacterSlots(),
+    characterRefs: createCharacterSlots([]),
     characterRefSlotCount: 1,
   },
 ];
@@ -500,7 +869,7 @@ const crystalDeerScene: ProductionScene = {
   prompt:
     "A rugged warrior man hunts a legendary crystal deer through a dense ancient forest. The warrior wears dark leather armor and carries a bow. The deer has translucent glowing blue crystal antlers and faint luminous markings. Mist moves between massive old trees, moss, ferns, wet stones, and shafts of sunlight. Cinematic fantasy realism, tense quiet atmosphere, consistent warrior, consistent crystal deer, dramatic forest lighting.",
   motionNotes:
-    "15 second scene from 8 storyboard images: slow tracking shots, quiet stalking movement, subtle fog drift, glowing crystal reflections, tense cinematic pacing.",
+    "15 second scene from 8 scene pass preview: slow tracking shots, quiet stalking movement, subtle fog drift, glowing crystal reflections, tense cinematic pacing.",
   style: "Cinematic Fantasy",
   status: "pending_images",
   images: [],
@@ -523,7 +892,7 @@ function statusMeta(status: SceneStatus) {
     case "complete":
       return { label: "Complete", dot: "bg-blue-400", text: "text-blue-300" };
     default:
-      return { label: "Not Started", dot: "bg-white/35", text: "text-white/55" };
+      return { label: "Not Started", dot: "bg-white/35", text: "text-white/35" };
   }
 }
 
@@ -555,66 +924,88 @@ function aspectToSize(aspectRatio: ProductionScene["aspectRatio"]) {
   return { width: 1280, height: 720 };
 }
 
-function createCharacterSlots(existing?: CharacterReference[]) {
-  return Array.from({ length: CHARACTER_REFERENCE_SLOTS }, (_, index) => {
-    const current = existing?.[index];
+function createCharacterSlots(refs: CharacterReference[] | null | undefined = []): CharacterReference[] {
+  // OTG_UNIQUE_CHARACTER_SLOT_IDS_V2
+  // Slot identity must be positional. Older saved manifests can contain duplicated IDs like character_5,
+  // which makes React and checkbox/update logic treat multiple checked characters as the same character.
+  const source = Array.isArray(refs) ? refs : [];
+  const totalSlots = Math.max(CHARACTER_REFERENCE_SLOTS, source.length);
+
+  return Array.from({ length: totalSlots }, (_unused, index) => {
+    const existing = (source[index] || {}) as any;
+    const slotId = `character_${index + 1}`;
+
     return {
-      id: current?.id || `character_${index + 1}`,
-      label: current?.label || `Character ${index + 1}`,
-      fileName: current?.fileName,
-      previewUrl: current?.previewUrl,
-      sourceCharacterId: current?.sourceCharacterId,
-      sourceCharacterName: current?.sourceCharacterName,
-      referenceAudioPath: current?.referenceAudioPath,
-    };
+      ...existing,
+      id: slotId,
+      slotId,
+      originalId: existing.originalId || existing.id || slotId,
+    } as CharacterReference;
   });
 }
 
+
+
+// OTG V36BO4A: clean prompt passed through to the Qwen next-scene workflow.
+function otgCleanNextScenePromptForWorkflowV36BO4(value: unknown) {
+  let text = String(value ?? "").replace(/\r\n/g, "\n").trim();
+
+  const hardStops = [
+    "Composition rules:",
+    "OTG anti-duplicate guard:",
+    "Identity/Face lock:",
+    "[OTG_TEMP_SCENE_ASSET_RULES_V36BN2]",
+    "OTG_TEMP_SCENE_ASSET_RULES_V36BN2",
+  ];
+
+  for (const marker of hardStops) {
+    const index = text.toLowerCase().indexOf(marker.toLowerCase());
+    if (index >= 0) text = text.slice(0, index).trim();
+  }
+
+  text = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .replace(/^Next Scene(?:\s+\d+)?\s*[:;]\s*/i, "")
+    .trim();
+
+  return `Next Scene: ${text || "continue the scene"}`;
+}
+
 function extractNextScenePrompts(raw: string) {
-  const lines = raw
+  const text = String(raw || "").replace(/\r\n/g, "\n").trim();
+  if (!text) return [];
+
+  const lines = text
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+
   const prompts: string[] = [];
 
   for (const line of lines) {
-    if (/^Next Scene\s+\d+\s*:/i.test(line)) {
-      prompts.push(line);
+    if (/^Next Scene(?:\s+\d+)?\s*[:;]/i.test(line)) {
+      prompts.push(line.replace(/^Next Scene(?:\s+\d+)?\s*[:;]\s*/i, "").trim());
     } else if (prompts.length) {
       prompts[prompts.length - 1] = `${prompts[prompts.length - 1]} ${line}`.replace(/\s+/g, " ").trim();
     }
   }
 
-  return prompts;
+  if (!prompts.length && text) prompts.push(text.replace(/^Next Scene(?:\s+\d+)?\s*[:;]\s*/i, "").trim());
+  return prompts.filter(Boolean);
 }
+
+
 
 function storyboardFramePrompt(scene: ProductionScene, frameIndex: number) {
   const explicitPrompts = extractNextScenePrompts(scene.prompt);
-  if (explicitPrompts[frameIndex]) return explicitPrompts[frameIndex];
-
-  const total = Math.max(1, scene.imageCount);
-  const position = total === 1 ? 0 : frameIndex / (total - 1);
-  const beat =
-    position < 0.2
-      ? "opening establishing frame"
-      : position < 0.4
-        ? "early action frame"
-        : position < 0.65
-          ? "middle tension frame"
-          : position < 0.85
-            ? "late escalation frame"
-            : "final transition frame";
-
-  return [
-    `Next Scene ${frameIndex + 1}:`,
-    `The camera creates a ${beat} for this ${scene.durationSeconds.toFixed(1)} second scene; ${scene.prompt.trim()}`,
-    scene.motionNotes.trim() ? scene.motionNotes.trim() : "",
-    "Identity/Face lock: keep the same subject, outfit, environment, lighting, and visual style consistent.",
-    `${scene.style || "realistic cinematic style"}.`,
-    "No text, watermark, subtitles, UI, or logo.",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const promptText = String(explicitPrompts[frameIndex] || explicitPrompts[0] || scene.prompt || "").trim();
+  const styleText = String(scene.style || "").trim();
+  const base = otgCleanNextScenePromptForWorkflowV36BO4(promptText);
+  return styleText ? `${base}\nStyle: ${styleText}` : base;
 }
 
 function StageShell({ stage, active }: { stage: ProductionStage; active: ProductionStage }) {
@@ -622,17 +1013,22 @@ function StageShell({ stage, active }: { stage: ProductionStage; active: Product
     storyboard: {
       title: "Storyboard first",
       body: "Build every scene and approve the image set before moving into animation.",
-      actions: ["Generate Images", "Regenerate Selected", "Lock Storyboard"],
+      actions: ["Submit Prompt", "Regenerate Selected", "Lock Storyboard"],
     },
     animate: {
       title: "Animate approved scenes",
-      body: "Use locked storyboard images as source material. Prompt editing stays back in Storyboard.",
-      actions: ["Animate Scene", "Animate All Ready", "Approve Clip"],
+      body: "Use locked scene pass preview as source material. Prompt editing stays back in Storyboard.",
+      actions: ["Animate Scene", "Animate Current Scene", "Approve Clip"],
     },
     edit: {
-      title: "Edit generated clips",
-      body: "Trim scene clips, add effects, voice, music, and scene-level polish after animation exists.",
-      actions: ["Trim Clip", "Add Effects", "Add Audio"],
+      title: "Visual Edit",
+      body: "Trim the clip or describe a visual edit. Audio work is handled in Audio Studio.",
+      actions: ["Trim Video", "Edit Video", "Save"],
+    },
+    audio: {
+      title: "Audio Studio",
+      body: "Dub existing voices or add new off-screen voices after the visual edit is ready.",
+      actions: ["Dub Existing Voice", "Add New Voice", "Preview Mix"],
     },
     assemble: {
       title: "Assemble final timeline",
@@ -661,7 +1057,1802 @@ function StageShell({ stage, active }: { stage: ProductionStage; active: Product
 }
 
 export default function StoryboardPanel() {
+  
+
+  function getStoryboardPromptKeyV33(fallback: string): string {
+    return fallback;
+  }
+
+                // OTG_STORYBOARD_PROMPT_REFERENCE_ISOLATION_V35J
+        function getStoryboardPromptCanonicalKeyV35J(promptKey: string): string {
+          const raw = String(promptKey || "").trim();
+          if (!raw) return "scene-prompt-1";
+        
+          const directScenePrompt = raw.match(/^scene-prompt-(\d+)$/i);
+          if (directScenePrompt) return `scene-prompt-${Math.max(1, Number(directScenePrompt[1]) || 1)}`;
+        
+          const promptZero = raw.match(/^prompt-v(?:30|33)-(\d+)$/i);
+          if (promptZero) return `scene-prompt-${(Number(promptZero[1]) || 0) + 1}`;
+        
+          const sceneOne = raw.match(/^scene-(\d+)$/i);
+          if (sceneOne) return `scene-prompt-${Math.max(1, Number(sceneOne[1]) || 1)}`;
+        
+          const promptOne = raw.match(/^prompt-(\d+)$/i);
+          if (promptOne) return `scene-prompt-${Math.max(1, Number(promptOne[1]) || 1)}`;
+        
+          const imageIndex = raw.match(/(?:^|[_-])img[_-]?(\d+)(?:$|[_-])/i);
+          if (imageIndex) return `scene-prompt-${Math.max(1, Number(imageIndex[1]) || 1)}`;
+        
+          return raw;
+        }
+
+function getStoryboardPromptAliasKeysV35G(promptKey: string): string[] {
+  const canonical = getStoryboardPromptCanonicalKeyV35J(promptKey);
+  const keys = new Set<string>([canonical]);
+  const sceneMatch = canonical.match(/^scene-prompt-(\d+)$/i);
+  if (sceneMatch) {
+    const oneIndex = Math.max(1, Number(sceneMatch[1]) || 1);
+    const zeroIndex = oneIndex - 1;
+    keys.add(`prompt-v30-${zeroIndex}`);
+    keys.add(`prompt-v33-${zeroIndex}`);
+    keys.add(`scene-prompt-${oneIndex}`);
+    keys.add(`scene-${oneIndex}`);
+    keys.add(`prompt-${oneIndex}`);
+  } else {
+    keys.add(String(promptKey || ""));
+  }
+  return Array.from(keys);
+}
+
+
+
+function normalizeStoryboardBackgroundReferenceV36AK(input: any): StoryboardBackgroundReferenceV30 | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+
+  const sourceDisplay = String(
+    input.sourceDisplayImageV36AF ||
+      input.displayImage ||
+      input.previewUrl ||
+      input.thumbnailUrl ||
+      input.thumbnail ||
+      input.imageUrl ||
+      input.imagePath ||
+      "",
+  ).trim();
+
+  const plateWorkflow = String(
+    input.plateWorkflowImageV36AF ||
+      input.sourceWorkflowImageV36AF ||
+      input.workflowImage ||
+      input.workflowImagePath ||
+      input.cardWorkflowImage ||
+      input.cardImagePath ||
+      input.imagePath ||
+      input.imageUrl ||
+      input.displayImage ||
+      "",
+  ).trim();
+
+  const id = String(input.id || input.name || plateWorkflow || sourceDisplay || "").trim();
+  const name = String(input.name || input.title || "Scene Background").trim() || "Scene Background";
+  const displayImage = sourceDisplay || plateWorkflow;
+  const workflowImage = plateWorkflow || displayImage;
+
+  if (!id || (!displayImage && !workflowImage)) return null;
+
+  return {
+    id,
+    name,
+    imagePath: displayImage || undefined,
+    imageUrl: displayImage || undefined,
+    displayImage: displayImage || undefined,
+    workflowImage: workflowImage || undefined,
+    plateWorkflowImageV36AF: workflowImage || undefined,
+    sourceDisplayImageV36AF: displayImage || undefined,
+    sourceWorkflowImageV36AF: workflowImage || undefined,
+    promptBlock: String(input.promptBlock || input.prompt || input.masterPrompt || "").trim() || undefined,
+  };
+}
+
+function storyboardReferenceDisplayImageV36AK(reference: any) {
+  const item: any = reference || {};
+
+  return String(
+    item.sourceDisplayImageV36AF ||
+      item.sourceWorkflowImageV36AF ||
+      item.displayImage ||
+      item.imageUrl ||
+      item.imagePath ||
+      "",
+  ).trim();
+}
+
+function storyboardReferenceWorkflowImageV36AK(reference: any) {
+  const item: any = reference || {};
+
+  return String(
+    item.plateWorkflowImageV36AF ||
+      item.workflowImage ||
+      item.workflowImagePath ||
+      item.imagePath ||
+      item.imageUrl ||
+      item.displayImage ||
+      "",
+  ).trim();
+}
+
+function readStoryboardBackgroundLibraryV36AK(): StoryboardBackgroundReferenceV30[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = JSON.parse(window.localStorage.getItem("otg:character-background-library:v36a") || "[]");
+
+    if (!Array.isArray(raw)) return [];
+
+    const seen = new Set<string>();
+
+    return raw
+      .map(normalizeStoryboardBackgroundReferenceV36AK)
+      .filter((item): item is StoryboardBackgroundReferenceV30 => {
+        if (!item) return false;
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      });
+  } catch {
+    return [];
+  }
+}
+
+function openStoryboardBackgroundGalleryOverlayV36AK(args: {
+  promptKeys: string[];
+  selectedPromptKey: string;
+}) {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+
+  const existing = document.getElementById("otg-storyboard-background-gallery-v36ak");
+  if (existing) existing.remove();
+
+  const backgrounds = readStoryboardBackgroundLibraryV36AK();
+  const promptKeys = args.promptKeys.length ? args.promptKeys : ["scene-prompt-1"];
+  let activePromptKey = args.selectedPromptKey || promptKeys[0];
+
+  const overlay = document.createElement("div");
+  overlay.id = "otg-storyboard-background-gallery-v36ak";
+  overlay.setAttribute("role", "dialog");
+  overlay.style.position = "fixed";
+  overlay.style.inset = "0";
+  overlay.style.zIndex = "999999";
+  overlay.style.background = "rgba(0,0,0,0.72)";
+  overlay.style.display = "flex";
+  overlay.style.alignItems = "center";
+  overlay.style.justifyContent = "center";
+  overlay.style.padding = "24px";
+
+  const panel = document.createElement("div");
+  panel.style.width = "min(1120px, 94vw)";
+  panel.style.maxHeight = "86vh";
+  panel.style.overflow = "auto";
+  panel.style.background = "#080b14";
+  panel.style.border = "1px solid rgba(139, 92, 246, 0.75)";
+  panel.style.borderRadius = "16px";
+  panel.style.padding = "18px";
+  panel.style.color = "white";
+  panel.style.boxShadow = "0 22px 70px rgba(0,0,0,0.55)";
+
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.gap = "12px";
+  header.style.alignItems = "center";
+  header.style.marginBottom = "14px";
+
+  const title = document.createElement("div");
+  title.innerHTML = "<div style='font-size:18px;font-weight:800;letter-spacing:.06em;'>BACKGROUND GALLERY</div><div style='font-size:13px;color:#c4b5fd;margin-top:4px;'>Choose exactly one background for one scene prompt. Same background can be reused on multiple prompts.</div>";
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.textContent = "Close";
+  close.style.border = "1px solid rgba(139, 92, 246, 0.8)";
+  close.style.background = "#120b24";
+  close.style.color = "white";
+  close.style.borderRadius = "10px";
+  close.style.padding = "10px 14px";
+  close.style.fontWeight = "700";
+  close.onclick = () => overlay.remove();
+
+  header.appendChild(title);
+  header.appendChild(close);
+
+  const promptWrap = document.createElement("div");
+  promptWrap.style.display = "flex";
+  promptWrap.style.flexWrap = "wrap";
+  promptWrap.style.gap = "8px";
+  promptWrap.style.marginBottom = "14px";
+
+  const refreshPromptButtons = () => {
+    Array.from(promptWrap.querySelectorAll("button")).forEach((button) => {
+      const btn = button as HTMLButtonElement;
+      const selected = btn.dataset.promptKey === activePromptKey;
+      btn.style.background = selected ? "#6d28d9" : "#111827";
+      btn.style.border = selected ? "1px solid #a78bfa" : "1px solid rgba(139, 92, 246, 0.55)";
+    });
+  };
+
+  promptKeys.forEach((promptKey, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.promptKey = promptKey;
+    button.textContent = `Prompt ${index + 1}`;
+    button.style.color = "white";
+    button.style.borderRadius = "10px";
+    button.style.padding = "9px 12px";
+    button.style.fontWeight = "800";
+    button.onclick = () => {
+      activePromptKey = promptKey;
+      refreshPromptButtons();
+    };
+    promptWrap.appendChild(button);
+  });
+
+  refreshPromptButtons();
+
+  const grid = document.createElement("div");
+  grid.style.display = "grid";
+  grid.style.gridTemplateColumns = "repeat(auto-fill, minmax(190px, 1fr))";
+  grid.style.gap = "12px";
+
+  if (!backgrounds.length) {
+    const empty = document.createElement("div");
+    empty.textContent = "No saved backgrounds found. Create and save backgrounds from the Characters tab first.";
+    empty.style.padding = "16px";
+    empty.style.border = "1px solid rgba(139, 92, 246, 0.45)";
+    empty.style.borderRadius = "12px";
+    empty.style.color = "#cbd5e1";
+    grid.appendChild(empty);
+  } else {
+    backgrounds.forEach((background) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.style.textAlign = "left";
+      card.style.background = "#030712";
+      card.style.border = "1px solid rgba(139, 92, 246, 0.45)";
+      card.style.borderRadius = "12px";
+      card.style.padding = "10px";
+      card.style.color = "white";
+      card.style.cursor = "pointer";
+
+      const imgValue = storyboardReferenceDisplayImageV36AK(background);
+      const img = document.createElement("img");
+      img.alt = background.name;
+      img.src = imgValue.startsWith("/api/") || imgValue.startsWith("http")
+        ? imgValue
+        : `/api/comfy-image?filename=${encodeURIComponent(imgValue.split(/[\\/]/).pop() || imgValue)}&type=output&otgFullRes=1`;
+      img.style.width = "100%";
+      img.style.aspectRatio = "16 / 9";
+      img.style.objectFit = "cover";
+      img.style.borderRadius = "9px";
+      img.style.background = "#000";
+
+      const name = document.createElement("div");
+      name.textContent = background.name;
+      name.style.fontWeight = "800";
+      name.style.fontSize = "13px";
+      name.style.marginTop = "8px";
+
+      const hint = document.createElement("div");
+      hint.textContent = "Select for active prompt";
+      hint.style.fontSize = "11px";
+      hint.style.color = "#a78bfa";
+      hint.style.marginTop = "3px";
+
+      card.appendChild(img);
+      card.appendChild(name);
+      card.appendChild(hint);
+
+      card.onclick = () => {
+        window.dispatchEvent(
+          new CustomEvent("otg-storyboard-background-selected-v36ak", {
+            detail: {
+              promptKey: activePromptKey,
+              background,
+            },
+          }),
+        );
+        overlay.remove();
+      };
+
+      grid.appendChild(card);
+    });
+  }
+
+  panel.appendChild(header);
+  panel.appendChild(promptWrap);
+  panel.appendChild(grid);
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+}
+
+// OTG_STORYBOARD_PER_PROMPT_BACKGROUND_GALLERY_V36AK
+
+
+
+function getStoryboardPromptSelectedIdsV35K(
+  promptKey: string,
+  selections: Record<string, string[]> = storyboardPromptReferenceSelectionsV30
+): string[] {
+  // OTG_STORYBOARD_REFERENCE_CHECKBOX_CLICKFIX_V35K
+  // Selectors store by canonical scene-prompt key but still honor older prompt-v30/v33 aliases.
+  const canonicalPromptKey = getStoryboardPromptCanonicalKeyV35J(promptKey);
+  const aliasKeys = getStoryboardPromptAliasKeysV35G(canonicalPromptKey);
+  const explicitKey = aliasKeys.find((key) => (selections[key] || []).length > 0);
+  if (explicitKey) return selections[explicitKey] || [];
+  return [];
+}
+
+function getStoryboardSelectedReferencesForPromptV33(promptKey: string): StoryboardPromptSelectedReferenceV33[] {
+  const canonicalPromptKey = getStoryboardPromptCanonicalKeyV35J(promptKey);
+  const pool = [
+    ...sceneReferencePoolV32,
+    ...getStoryboardBackgroundRegistryItemsV36AK(),
+  ];
+
+  const selectedIds = getStoryboardPromptSelectedIdsV35K(canonicalPromptKey);
+
+  return filterStoryboardSelectedReferenceIdsOneBackgroundV36AK(selectedIds, pool)
+    .map((id) => pool.find((item) => item.id === id))
+    .filter((item): item is StoryboardSceneReferenceRegistryItemV32 => Boolean(item && item.isSaved))
+    .slice(0, 3)
+    .map((item, index) => ({
+      id: item.id,
+      slotId: item.slotId,
+      name: item.name,
+      kind: (item.kind === "background" ? "background" : "character") as "character" | "background",
+      sourceType: item.kind === "background" ? "background" : item.sourceType,
+      displayImage: storyboardReferenceDisplayImageV36AK(item),
+      workflowImage: storyboardReferenceWorkflowImageV36AK(item),
+      referenceNumber: index + 1,
+    }));
+}
+
+    function buildStoryboardReferenceInstructionV33(references: StoryboardPromptSelectedReferenceV33[]): string {
+    if (!references.length) return "";
+  
+    return references
+      .map((reference, index) => {
+        const referenceNumber = index + 1;
+        const rawName = String(reference.name || reference.slotId || `Reference ${referenceNumber}`).trim();
+        const name = rawName || `Reference ${referenceNumber}`;
+        const kind = String(reference.kind || "").toLowerCase();
+        const sourceType = String(reference.sourceType || "").toLowerCase();
+        const isBackground = kind === "background" || sourceType === "background" || /^bg[:\s-]/i.test(name);
+  
+        if (isBackground) {
+          return `Reference Image ${referenceNumber} is the background/environment: ${name}. Keep this environment consistent: layout, floor, walls, ceiling, lighting, props, and spatial orientation.`;
+        }
+  
+        return `Reference Image ${referenceNumber} belongs to character: ${name}. Use this image only for that character's identity, body, face, outfit, and visual continuity.`;
+      })
+      .join("\n");
+  }
+
+                                function getStoryboardPromptKeysV35(): string[] {
+                  const keys = new Set<string>();
+                  Object.keys(storyboardPromptReferenceSelectionsV30 || {}).forEach((key) => {
+                    keys.add(getStoryboardPromptCanonicalKeyV35J(key));
+                  });
+                
+                  const sceneLike = selectedScene as any;
+                  const promptContainers = [
+                    sceneLike?.prompts,
+                    sceneLike?.scenePrompts,
+                    sceneLike?.storyboardPrompts,
+                    sceneLike?.frames,
+                    sceneLike?.images,
+                    sceneLike?.generatedImages,
+                  ];
+                
+                  for (const container of promptContainers) {
+                    if (!Array.isArray(container)) continue;
+                    container.forEach((_item: any, index: number) => {
+                      keys.add(`scene-prompt-${index + 1}`);
+                    })
+                  }
+                
+                  const promptCount =
+                    Number(sceneLike?.promptCount || sceneLike?.scenePromptCount || sceneLike?.imageCount || sceneLike?.storyboardImageCount || 0) || 0;
+                  for (let index = 0; index < promptCount; index += 1) {
+                    keys.add(`scene-prompt-${index + 1}`);
+                  }
+                
+                  if (!keys.size) keys.add("scene-prompt-1");
+                  return Array.from(keys);
+                }
+        function buildStoryboardReferencePayloadV33(promptKey: string): StoryboardPromptReferencePayloadV35 {
+      const selectedReferences = getStoryboardSelectedReferencesForPromptV33(promptKey);
+      return {
+        promptKey,
+        selectedReferences,
+        referenceInstruction: buildStoryboardReferenceInstructionV33(selectedReferences),
+        selectedReferenceCount: selectedReferences.length,
+        workflowImages: selectedReferences.map((reference) => storyboardReferenceWorkflowImageV36AK(reference)).filter(Boolean),
+        displayImages: selectedReferences.map((reference) => storyboardReferenceDisplayImageV36AK(reference)).filter(Boolean),
+      };
+    }
+
+                function getStoryboardPromptReferencePayloadsV35(): Record<string, StoryboardPromptReferencePayloadV35> {
+          return Object.fromEntries(
+            getStoryboardPromptKeysV35().map((promptKey) => {
+              const canonical = getStoryboardPromptCanonicalKeyV35J(promptKey);
+              return [canonical, buildStoryboardReferencePayloadV33(canonical)];
+            })
+          );
+        }
+
+    function getStoryboardReferencePayloadForPromptV35(promptKey: string): StoryboardPromptReferencePayloadV35 {
+      return buildStoryboardReferencePayloadV33(promptKey);
+    }
+
+  
+
+  
+
+// OTG_STORYBOARD_REFERENCE_POOL_BACKGROUND_V30
+type StoryboardBackgroundReferenceV30 = {
+  id: string;
+  name: string;
+  imagePath?: string;
+  imageUrl?: string;
+  displayImage?: string;
+  workflowImage?: string;
+  plateWorkflowImageV36AF?: string;
+  sourceDisplayImageV36AF?: string;
+  sourceWorkflowImageV36AF?: string;
+  promptBlock?: string;
+};
+
+function storyboardReferenceDisplayImageV36AJ(reference: any) {
+  const item: any = reference || {};
+
+  return String(
+    item.sourceDisplayImageV36AF ||
+      item.sourceWorkflowImageV36AF ||
+      item.displayImage ||
+      item.imageUrl ||
+      item.imagePath ||
+      "",
+  ).trim();
+}
+
+function storyboardReferenceWorkflowImageV36AJ(reference: any) {
+  const item: any = reference || {};
+
+  return String(
+    item.plateWorkflowImageV36AF ||
+      item.workflowImage ||
+      item.workflowImagePath ||
+      item.imagePath ||
+      item.imageUrl ||
+      item.displayImage ||
+      "",
+  ).trim();
+}
+
+function buildStoryboardBackgroundRegistryItemV36AJ(background: StoryboardBackgroundReferenceV30) {
+  const displayImage = storyboardReferenceDisplayImageV36AJ(background);
+  const workflowImage = storyboardReferenceWorkflowImageV36AJ(background);
+
+  return {
+    id: background.id,
+    slotId: background.id,
+    name: background.name,
+    kind: "background" as const,
+    sourceType: "background" as const,
+    displayImage,
+    workflowImage,
+    isSaved: true,
+    plateWorkflowImageV36AF: background.plateWorkflowImageV36AF,
+    sourceDisplayImageV36AF: background.sourceDisplayImageV36AF,
+    sourceWorkflowImageV36AF: background.sourceWorkflowImageV36AF,
+  };
+}
+
+// OTG_STORYBOARD_BACKGROUND_PLATE_ROUTING_V36AJ
+
+
+
+// OTG_STORYBOARD_REFERENCE_REGISTRY_V32
+
+// OTG_STORYBOARD_REFERENCE_REGISTRY_WIRE_V33
+
+// OTG_STORYBOARD_SELECTED_REFERENCE_PAYLOAD_V35C_SAFE
+type StoryboardPromptReferencePayloadV35 = {
+  promptKey: string;
+  selectedReferenceCount: number;
+  selectedReferences: StoryboardPromptSelectedReferenceV33[];
+  referenceInstruction: string;
+  workflowImages: string[];
+  displayImages: string[];
+};
+
+type StoryboardPromptSelectedReferenceV33 = {
+  id: string;
+  slotId: string;
+  name: string;
+  kind: "character" | "background";
+  sourceType: "input" | "gallery" | "background";
+  displayImage?: string;
+  workflowImage?: string;
+  referenceNumber: number;
+};
+
+type StoryboardSceneReferenceRegistryItemV32 = {
+  id: string;
+  slotId: string;
+  name: string;
+  kind: "character" | "background";
+  sourceType: "input" | "gallery" | "background";
+  displayImage?: string;
+  workflowImage?: string;
+  isSaved: boolean;
+};
+
+type StoryboardPromptReferenceOptionV30 = {
+  id: string;
+  label: string;
+  kind: "character" | "background";
+  imagePath?: string;
+  imageUrl?: string;
+};
+
+function getStoryboardReferenceImageSrcV30(reference: StoryboardPromptReferenceOptionV30): string {
+  return String(reference.imageUrl || reference.imagePath || "");
+}
+
+function StoryboardPromptReferenceSelectorV30({
+  promptKey,
+  options,
+  selectedIds,
+  guideOpen,
+  onToggleReference,
+  onToggleGuide,
+}: {
+  promptKey: string;
+  options: StoryboardPromptReferenceOptionV30[];
+  selectedIds: string[];
+  guideOpen: boolean;
+  onToggleReference: (promptKey: string, referenceId: string) => void;
+  onToggleGuide: (promptKey: string) => void;
+}) {
+  const selectedCount = selectedIds.length;
+  return (
+    <div className="mb-3 rounded-2xl border border-purple-300/20 bg-purple-950/20 p-3" data-otg="OTG_STORYBOARD_REFERENCE_POOL_BACKGROUND_V30">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-white">References used in this scene image</div>
+          <div className="mt-1 text-xs text-white/75">Select saved/gallery characters and the background for this exact frame. Thumbnails are for identification. The workflow receives the registry workflowImage for each selected reference.</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onToggleGuide(promptKey)}
+          className="rounded-[8px] border border-cyan-300/30 bg-slate-950 px-3 py-2 text-xs font-black text-cyan-100 shadow-sm transition hover:border-cyan-200 hover:bg-cyan-950 focus:outline-none focus:ring-2 focus:ring-cyan-300/40"
+        >
+          Prompt Guide
+        </button>
+      </div>
+
+      {options.length ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {options.map((option, optionIndex) => {
+            const active = selectedIds.includes(option.id);
+            const src = getStoryboardReferenceImageSrcV30(option);
+            return (
+              <label
+                key={`${promptKey || "prompt"}_${option.id || "option"}_${optionIndex}`}
+                data-otg-storyboard-reference-option-v35k="true"
+                data-prompt-key={promptKey}
+                data-reference-id={`${promptKey || "prompt"}_${option.id || "option"}_${optionIndex}`}
+                className={
+                  active
+                    ? "flex cursor-pointer items-center gap-2 rounded-xl border border-purple-300 bg-purple-500/35 px-3 py-2 text-left text-xs font-black text-white"
+                    : "flex cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-left text-xs font-bold text-white/70 hover:border-purple-300/60 hover:text-white"
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={active}
+                  onChange={() => onToggleReference(promptKey, option.id)}
+                  className="h-4 w-4 rounded border-white/30 bg-slate-950 text-purple-400 focus:ring-2 focus:ring-purple-300"
+                />
+                {src ? <img src={src} alt="" className="h-7 w-7 rounded-md bg-slate-950 object-contain" /> : null}
+                <span>{option.kind === "background" ? "BG: " : ""}{option.label}</span>
+              </label>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-950/20 p-3 text-xs text-amber-100/80">
+          No scene references are available yet. Add characters and, ideally, one background before generating scene pass preview.
+        </div>
+      )}
+
+      {selectedCount > 5 ? (
+        <div className="mt-3 rounded-xl border border-red-300/30 bg-red-950/30 p-3 text-xs font-bold text-red-100">
+          Too many references selected. Use no more than 5 total references. Best setup is 1-4 characters plus 1 background.
+        </div>
+      ) : null}
+
+      {guideOpen ? (
+        <div className="mt-3 rounded-xl border border-cyan-300/20 bg-cyan-950/20 p-3 text-xs text-white/85">
+          <div className="font-black uppercase tracking-[0.16em] text-cyan-200">Prompt guide</div>
+          <div className="mt-2 space-y-2">
+            <p>Start with <strong>Next Scene:</strong> and a camera direction.</p>
+            <p>Name only checked characters. Mention where each selected character is located.</p>
+            <p>If a background is checked, name it and state what must stay unchanged: layout, floor, walls, lighting, and major props.</p>
+            <p>Keep one shot per prompt. Do not describe unused characters.</p>
+            <p className="text-cyan-100">Example: Next Scene: Over-the-shoulder shot from Marcus toward Elena. Marcus stands near the library door. Elena stands by the window. Keep the same Grand Library background, same bookshelf layout, same red carpet, and same warm lamp lighting.</p>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
   const [activeStage, setActiveStage] = useState<ProductionStage>("storyboard");
+  const [activeAnimateSceneIndexV36BPU10B, setActiveAnimateSceneIndexV36BPU10B] = useState(0);
+  const [firstLastPairDebugV36BPU19, setFirstLastPairDebugV36BPU19] = useState<{
+    action: "none" | "panel-capture" | "clicked" | "applied" | "rejected";
+    frameIndex?: number;
+    sceneId?: string;
+    framesLength?: number;
+    reason?: string;
+  }>({ action: "none" });
+
+
+  const [sceneReferencePoolV32, setSceneReferencePoolV32] = useState<StoryboardSceneReferenceRegistryItemV32[]>([]);
+
+  // OTG_STORYBOARD_REFERENCE_REGISTRY_DOMSCAN_V33E_SINGLE_OWNER
+  // Single writer for sceneReferencePoolV32. This prevents older scanners from clearing valid entries.
+  
+
+
+  // OTG_STORYBOARD_REFERENCE_REGISTRY_DOMSCAN_V33D_ADDITIVE
+  // Additive registry scanner. It does not depend on older v32/v33 scanner placement.
+  // It reads visible saved Character Reference cards and updates sceneReferencePoolV32.
+  
+
+
+
+
+  
+// OTG_STORYBOARD_REFERENCE_REGISTRY_V32
+
+
+  // Reference registry source of truth for per-prompt selectors.
+
+
+  // displayImage is what the user sees. workflowImage is what will be sent to ComfyUI in the follow-up routing patch.
+
+
+  
+
+
+
+
+  const [storyboardCharacterReferenceOptionsV31b, setStoryboardCharacterReferenceOptionsV31b] = useState<StoryboardPromptReferenceOptionV30[]>([]);
+
+
+
+    // OTG_STORYBOARD_REFERENCE_SELECTOR_TIGHTEN_V31C
+
+
+
+
+  const [storyboardReferenceRefreshTickV31, setStoryboardReferenceRefreshTickV31] = useState(0);
+
+
+
+
+
+
+  const [storyboardBackgroundReferenceV30, setStoryboardBackgroundReferenceV30] = useState<StoryboardBackgroundReferenceV30 | null>(null);
+
+
+
+    const [storyboardBackgroundReferencesV36AK, setStoryboardBackgroundReferencesV36AK] = useState<StoryboardBackgroundReferenceV30[]>([]);
+const [storyboardPromptReferenceSelectionsV30, setStoryboardPromptReferenceSelectionsV30] = useState<Record<string, string[]>>({});
+
+  // OTG_STORYBOARD_ONE_JOB_PER_PROMPT_V36AQ
+  type StoryboardPerPromptJobV36AQ = {
+    promptKey: string;
+    sceneNumber: number;
+    rawText: string;
+    compiledText: string;
+  };
+
+  function storyboardWorkflowFileForReferenceCountV36AQ(count: number) {
+    const checkedCount = Math.max(1, Math.min(5, Number(count) || 1));
+
+    if (checkedCount === 1) return "storyboard/StoryBoard 1.json";
+    if (checkedCount === 2) return "storyboard/Storyboard 2.json";
+    if (checkedCount === 3) return "storyboard/Storyboard 3.json";
+    if (checkedCount === 4) return "storyboard/Storyboard 4.json";
+
+    return "storyboard/Storyboard 5.json";
+  }
+
+  // OTG_STORYBOARD_ONE_SCENE_BATCH_REQUEST_V36AT
+  function storyboardPayloadTextV36AQ(payload: any) {
+    const directText = String(
+      payload?.prompt ||
+        payload?.positivePrompt ||
+        payload?.promptText ||
+        payload?.scenePrompt ||
+        payload?.fullPrompt ||
+        payload?.text ||
+        "",
+    ).replace(/\r\n/g, "\n");
+
+    if (directText.trim()) {
+      return directText;
+    }
+
+    if (Array.isArray(payload?.scenePrompts)) {
+      const joined = payload.scenePrompts
+        .map((value: unknown, index: number) => {
+          const text = String(value || "").trim();
+          if (!text) return "";
+          return /^Next\s+Scene\s+\d+\s*:/i.test(text) ? text : `Next Scene ${index + 1}: ${text}`;
+        })
+        .filter(Boolean)
+        .join("\n");
+      if (joined.trim()) return joined;
+    }
+
+    if (Array.isArray(payload?.scenes)) {
+      return payload.scenes
+        .map((scene: any, index: number) => {
+          const sceneNumber = Number(scene?.sceneNumber || scene?.imageIndex || scene?.frameIndex || index + 1) || index + 1;
+          const raw = String(
+            scene?.prompt ||
+              scene?.positivePrompt ||
+              scene?.promptText ||
+              scene?.scenePrompt ||
+              scene?.fullPrompt ||
+              scene?.text ||
+              scene?.action ||
+              "",
+          ).trim();
+          if (!raw) return "";
+          return /^Next\s+Scene\s+\d+\s*:/i.test(raw) ? raw : `Next Scene ${sceneNumber}: ${raw}`;
+        })
+        .filter(Boolean)
+        .join("\n");
+    }
+
+    return "";
+  }
+
+  function storyboardOneSceneForPromptJobV36AT(payload: any, job: StoryboardPerPromptJobV36AQ) {
+    const scenes = Array.isArray(payload?.scenes) ? payload.scenes : [];
+    const byNumber = scenes.find((scene: any, index: number) => {
+      const sceneNumber = Number(scene?.sceneNumber || scene?.imageIndex || scene?.frameIndex || index + 1) || index + 1;
+      return sceneNumber === job.sceneNumber;
+    });
+
+    const sourceScene = byNumber || scenes[Math.max(0, job.sceneNumber - 1)] || {};
+    const cleanPrompt = job.rawText.replace(/^\s*Next\s+Scene(?:\s+\d+)?\s*:\s*/i, "").trim();
+
+    return {
+      ...sourceScene,
+      sceneNumber: job.sceneNumber,
+      imageIndex: job.sceneNumber,
+      frameIndex: job.sceneNumber,
+      prompt: cleanPrompt,
+      positivePrompt: cleanPrompt,
+      promptText: cleanPrompt,
+      scenePrompt: cleanPrompt,
+      fullPrompt: job.compiledText,
+      text: cleanPrompt,
+    };
+  }
+
+  function storyboardSplitPayloadIntoPromptJobsV36AQ(payload: any): StoryboardPerPromptJobV36AQ[] {
+    const promptText = storyboardPayloadTextV36AQ(payload);
+    const jobs: StoryboardPerPromptJobV36AQ[] = [];
+
+    const nextScenePattern = /Next\s+Scene\s+(\d+)\s*:\s*([\s\S]*?)(?=\s*Next\s+Scene\s+\d+\s*:|$)/gi;
+    let match: RegExpExecArray | null = null;
+
+    while ((match = nextScenePattern.exec(promptText)) !== null) {
+      const sceneNumber = Math.max(1, Number(match[1]) || jobs.length + 1);
+      const rawText = String(match[2] || "").trim();
+
+      if (!rawText) continue;
+
+      jobs.push({
+        promptKey: getStoryboardPromptCanonicalKeyV35J(`scene-prompt-${sceneNumber}`),
+        sceneNumber,
+        rawText,
+        compiledText: `Next Scene 1: ${rawText}`,
+      });
+    }
+
+    if (jobs.length) {
+      return jobs;
+    }
+
+    const fallbackText = promptText
+      .replace(/^\s*Next\s+Scene(?:\s+\d+)?\s*:\s*/i, "")
+      .trim();
+
+    if (!fallbackText) {
+      return [];
+    }
+
+    const explicitPromptKey = String(
+      payload?.promptKey ||
+        payload?.storyboardPromptKey ||
+        payload?.scenePromptKey ||
+        "scene-prompt-1",
+    ).trim();
+
+    return [
+      {
+        promptKey: getStoryboardPromptCanonicalKeyV35J(explicitPromptKey),
+        sceneNumber: 1,
+        rawText: fallbackText,
+        compiledText: `Next Scene 1: ${fallbackText}`,
+      },
+    ];
+  }
+
+  function storyboardBuildSinglePromptPayloadV36AQ(payload: any, job: StoryboardPerPromptJobV36AQ) {
+    const referencePayload = getStoryboardReferencePayloadForPromptV35(job.promptKey);
+
+    const workflowImages = Array.isArray(referencePayload.workflowImages)
+      ? referencePayload.workflowImages.map((value) => String(value || "").trim()).filter(Boolean).slice(0, 3)
+      : [];
+
+    const displayImages = Array.isArray(referencePayload.displayImages)
+      ? referencePayload.displayImages.map((value) => String(value || "").trim()).filter(Boolean).slice(0, 3)
+      : [];
+
+    const singleSceneV36AT = storyboardOneSceneForPromptJobV36AT(payload, job);
+
+    if (!workflowImages.length) {
+      throw new Error(`Prompt ${job.sceneNumber} has no checked reference images. Select at least one character or background for that prompt.`);
+    }
+
+    const checkedCount = Math.max(1, Math.min(5, workflowImages.length));
+    const workflowFile = storyboardWorkflowFileForReferenceCountV36AQ(checkedCount);
+
+    return {
+      ...payload,
+
+      // One prompt per ComfyUI job.
+      prompt: job.compiledText,
+      positivePrompt: job.compiledText,
+      promptText: job.compiledText,
+      scenePrompt: job.compiledText,
+      fullPrompt: job.compiledText,
+      scenePrompts: [job.compiledText],
+      text: job.compiledText,
+
+      // Critical for /api/storyboard/batch-generate:
+      // the server route loops over body.scenes, so this split request must contain one scene only.
+      scenes: [singleSceneV36AT],
+
+
+      // Workflow selection is per prompt, based only on that prompt's checked refs.
+      storyboardCount: checkedCount,
+      workflowFile,
+
+      // Existing route name is characterImages, but this is the ordered checked-reference list.
+      // It may contain character images and/or the background plate workflow image.
+      characterImages: workflowImages,
+      workflowImages,
+      displayImages,
+
+      promptKey: job.promptKey,
+      storyboardPromptKey: job.promptKey,
+      scenePromptKey: job.promptKey,
+
+      imageIndex: job.sceneNumber,
+      frameIndex: job.sceneNumber,
+      storyboardIndex: job.sceneNumber,
+      slotIndex: job.sceneNumber,
+
+      promptReferencePayload: referencePayload,
+      selectedReferences: referencePayload.selectedReferences || [],
+      selectedReferenceCount: referencePayload.selectedReferenceCount || workflowImages.length,
+      referenceInstruction: referencePayload.referenceInstruction || "",
+
+      // Bypass older frontend interceptors if they exist.
+      otgOneJobPerPromptV36AQ: true,
+      otgOneScenePerBatchRequestV36AT: true,
+      otgStoryboardBatchSinglePromptV36AS: true,
+      otgPerPromptWorkflowSplitV36AP: true,
+      otgCheckedReferenceWorkflowInjectionV36AO: "v36aq-bypass",
+
+      otgOneJobPerPromptSceneNumberV36AQ: job.sceneNumber,
+      otgOneJobPerPromptWorkflowFileV36AQ: workflowFile,
+      otgOneJobPerPromptReferenceCountV36AQ: checkedCount,
+    };
+  }
+
+  function storyboardFlattenReturnedImagesV36AQ(value: any): string[] {
+    const output: string[] = [];
+    const seen = new Set<string>();
+
+    function pushImage(candidate: unknown) {
+      const text = String(candidate || "").trim();
+
+      if (!text) return;
+      if (seen.has(text)) return;
+
+      if (
+        text.endsWith(".png") ||
+        text.endsWith(".jpg") ||
+        text.endsWith(".jpeg") ||
+        text.endsWith(".webp") ||
+        text.includes("/api/comfy-image")
+      ) {
+        seen.add(text);
+        output.push(text);
+      }
+    }
+
+    function walk(input: any) {
+      if (!input) return;
+
+      if (typeof input === "string") {
+        pushImage(input);
+        return;
+      }
+
+      if (Array.isArray(input)) {
+        input.forEach(walk);
+        return;
+      }
+
+      if (typeof input === "object") {
+        pushImage(input.filename);
+        pushImage(input.file);
+        pushImage(input.path);
+        pushImage(input.image);
+        pushImage(input.imageUrl);
+        pushImage(input.imagePath);
+        pushImage(input.output);
+
+        Object.values(input).forEach(walk);
+      }
+    }
+
+    walk(value);
+
+    return output;
+  }
+
+  useEffect(() => {
+    if (activeStage !== "animate") return;
+    void loadAnimateSavedCharacterPresetsV36BPU26B();
+  }, [activeStage]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const originalFetchV36AQ = window.fetch;
+
+    const wrappedFetchV36AQ: typeof window.fetch = async (input, init) => {
+      try {
+        const targetUrl = typeof input === "string" ? input : String((input as Request)?.url || "");
+
+        // OTG_STORYBOARD_BATCH_TARGET_V36AS
+        // The active storyboard generation route is /api/storyboard/batch-generate.
+        // Split both production-picture and batch-generate requests into one job per prompt.
+        if (
+          !targetUrl.includes("/api/production/picture") &&
+          !targetUrl.includes("/api/storyboard/batch-generate")
+        ) {
+          return originalFetchV36AQ(input, init);
+        }
+
+        if (!init || typeof init.body !== "string") {
+          return originalFetchV36AQ(input, init);
+        }
+
+        const payload = JSON.parse(init.body);
+
+        if (payload?.otgOneJobPerPromptV36AQ) {
+          return originalFetchV36AQ(input, init);
+        }
+
+        const jobs = storyboardSplitPayloadIntoPromptJobsV36AQ(payload);
+
+        if (!jobs.length) {
+          return originalFetchV36AQ(input, init);
+        }
+
+        const results: any[] = [];
+        const allImages: string[] = [];
+
+        for (const job of jobs) {
+          const singlePromptPayload = storyboardBuildSinglePromptPayloadV36AQ(payload, job);
+
+          const response = await originalFetchV36AQ(input, {
+            ...init,
+            body: JSON.stringify(singlePromptPayload),
+          });
+
+          const responseText = await response.text();
+          let responseJson: any = null;
+
+          try {
+            responseJson = JSON.parse(responseText);
+          } catch {
+            responseJson = { raw: responseText };
+          }
+
+          const returnedImages = storyboardFlattenReturnedImagesV36AQ(responseJson);
+          returnedImages.forEach((image) => allImages.push(image));
+
+          results.push({
+            ok: response.ok,
+            status: response.status,
+            promptKey: job.promptKey,
+            sceneNumber: job.sceneNumber,
+            rawText: job.rawText,
+            compiledText: job.compiledText,
+            workflowFile: singlePromptPayload.workflowFile,
+            storyboardCount: singlePromptPayload.storyboardCount,
+            characterImages: singlePromptPayload.characterImages,
+            workflowImages: singlePromptPayload.workflowImages,
+            displayImages: singlePromptPayload.displayImages,
+            returnedImages,
+            response: responseJson,
+          });
+
+          if (!response.ok) {
+            return new Response(
+              JSON.stringify({
+                ok: false,
+                marker: "OTG_STORYBOARD_ONE_JOB_PER_PROMPT_V36AQ",
+                error: `ComfyUI job failed for prompt ${job.sceneNumber}.`,
+                failedPromptKey: job.promptKey,
+                failedSceneNumber: job.sceneNumber,
+                results,
+              }),
+              {
+                status: response.status || 500,
+                headers: { "Content-Type": "application/json" },
+              },
+            );
+          }
+        }
+
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            marker: "OTG_STORYBOARD_ONE_JOB_PER_PROMPT_V36AQ",
+            jobCount: results.length,
+            splitWorkflowCount: results.length,
+            images: allImages,
+            outputImages: allImages,
+            results,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      } catch (error: any) {
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            marker: "OTG_STORYBOARD_ONE_JOB_PER_PROMPT_V36AQ",
+            error: String(error?.message || error || "Failed to split storyboard prompts into individual ComfyUI jobs."),
+          }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+    };
+
+    // OTG_STORYBOARD_DISABLE_LEGACY_FETCH_INTERCEPTORS_V36BH_V36AQ
+    // Disabled: direct generateSelectedSceneImages now submits one normalized /api/production/picture request per prompt.
+    // Legacy v36AQ fetch rewriting is no longer installed.
+
+    return () => {
+      if (window.fetch === wrappedFetchV36AQ) {
+        window.fetch = originalFetchV36AQ;
+      }
+    };
+  }, [
+    storyboardPromptReferenceSelectionsV30,
+    storyboardBackgroundReferenceV30,
+    storyboardBackgroundReferencesV36AK,
+    sceneReferencePoolV32
+  ]);
+
+
+  // OTG_STORYBOARD_ONE_WORKFLOW_PER_PROMPT_V36AP
+  type StoryboardSplitPromptV36AP = {
+    promptKey: string;
+    sceneNumber: number;
+    text: string;
+    compiledText: string;
+  };
+
+  function storyboardWorkflowFileForReferenceCountV36AP(count: number) {
+    const checkedCount = Math.max(1, Math.min(5, Number(count) || 1));
+
+    return checkedCount === 1
+      ? "storyboard/StoryBoard 1.json"
+      : `storyboard/Storyboard ${checkedCount}.json`;
+  }
+
+  function storyboardPayloadPromptTextV36AP(payload: any) {
+    return String(
+      payload?.prompt ||
+        payload?.positivePrompt ||
+        payload?.promptText ||
+        payload?.scenePrompt ||
+        payload?.text ||
+        "",
+    );
+  }
+
+  function storyboardSplitCompiledPromptV36AP(payload: any): StoryboardSplitPromptV36AP[] {
+    const promptText = storyboardPayloadPromptTextV36AP(payload).replace(/\r\n/g, "\n");
+    const output: StoryboardSplitPromptV36AP[] = [];
+
+    const nextScenePattern = /Next\s+Scene\s+(\d+)\s*:\s*([\s\S]*?)(?=\s*Next\s+Scene\s+\d+\s*:|$)/gi;
+    let match: RegExpExecArray | null = null;
+
+    while ((match = nextScenePattern.exec(promptText)) !== null) {
+      const sceneNumber = Math.max(1, Number(match[1]) || output.length + 1);
+      const text = String(match[2] || "").trim();
+
+      if (!text) continue;
+
+      output.push({
+        promptKey: getStoryboardPromptCanonicalKeyV35J(`scene-prompt-${sceneNumber}`),
+        sceneNumber,
+        text,
+        compiledText: `Next Scene 1: ${text}`,
+      });
+    }
+
+    if (output.length) {
+      return output;
+    }
+
+    const fallbackText = promptText.trim();
+
+    if (!fallbackText) {
+      return [];
+    }
+
+    const explicitPromptKey = String(
+      payload?.promptKey ||
+        payload?.storyboardPromptKey ||
+        payload?.scenePromptKey ||
+        "",
+    ).trim();
+
+    return [
+      {
+        promptKey: getStoryboardPromptCanonicalKeyV35J(explicitPromptKey || "scene-prompt-1"),
+        sceneNumber: 1,
+        text: fallbackText.replace(/^\s*Next\s+Scene(?:\s+\d+)?\s*:\s*/i, "").trim(),
+        compiledText: `Next Scene 1: ${fallbackText.replace(/^\s*Next\s+Scene(?:\s+\d+)?\s*:\s*/i, "").trim()}`,
+      },
+    ];
+  }
+
+  function storyboardPatchSinglePromptPayloadV36AP(payload: any, splitPrompt: StoryboardSplitPromptV36AP) {
+    const referencePayload = getStoryboardReferencePayloadForPromptV35(splitPrompt.promptKey);
+
+    const checkedWorkflowImages = Array.isArray(referencePayload.workflowImages)
+      ? referencePayload.workflowImages.map((value) => String(value || "").trim()).filter(Boolean).slice(0, 3)
+      : [];
+
+    const checkedDisplayImages = Array.isArray(referencePayload.displayImages)
+      ? referencePayload.displayImages.map((value) => String(value || "").trim()).filter(Boolean).slice(0, 3)
+      : [];
+
+    const checkedCount = Math.max(1, Math.min(5, checkedWorkflowImages.length || 1));
+    const workflowFile = storyboardWorkflowFileForReferenceCountV36AP(checkedCount);
+
+    return {
+      ...payload,
+
+      // Critical: one prompt per workflow. This request only contains the single scene prompt.
+      prompt: splitPrompt.compiledText,
+      positivePrompt: splitPrompt.compiledText,
+      promptText: splitPrompt.compiledText,
+      scenePrompt: splitPrompt.compiledText,
+      text: splitPrompt.compiledText,
+
+      // Critical: workflow choice is based on this prompt's checked image count.
+      storyboardCount: checkedCount,
+      workflowFile,
+
+      // The route calls this characterImages, but it is really the ordered checked references.
+      // Character refs and background refs both travel here as workflow-ready images.
+      characterImages: checkedWorkflowImages,
+      workflowImages: checkedWorkflowImages,
+      displayImages: checkedDisplayImages,
+
+      promptKey: splitPrompt.promptKey,
+      storyboardPromptKey: splitPrompt.promptKey,
+      scenePromptKey: splitPrompt.promptKey,
+      imageIndex: splitPrompt.sceneNumber,
+      frameIndex: splitPrompt.sceneNumber,
+      storyboardIndex: splitPrompt.sceneNumber,
+      slotIndex: splitPrompt.sceneNumber,
+
+      promptReferencePayload: referencePayload,
+      selectedReferences: referencePayload.selectedReferences || [],
+      selectedReferenceCount: referencePayload.selectedReferenceCount || checkedWorkflowImages.length,
+      referenceInstruction: referencePayload.referenceInstruction || "",
+
+      // Prevent recursive split.
+      otgPerPromptWorkflowSplitV36AP: true,
+      otgPerPromptWorkflowSceneNumberV36AP: splitPrompt.sceneNumber,
+      otgPerPromptWorkflowReferenceCountV36AP: checkedWorkflowImages.length,
+      otgPerPromptWorkflowFileV36AP: workflowFile,
+    };
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const originalFetchV36AP = window.fetch;
+
+    const wrappedFetchV36AP: typeof window.fetch = async (input, init) => {
+      try {
+        const targetUrl = typeof input === "string" ? input : String((input as Request)?.url || "");
+
+        if (!targetUrl.includes("/api/production/picture")) {
+          return originalFetchV36AP(input, init);
+        }
+
+        if (!init || typeof init.body !== "string") {
+          return originalFetchV36AP(input, init);
+        }
+
+        const payload = JSON.parse(init.body);
+
+        if (payload?.otgPerPromptWorkflowSplitV36AP) {
+          return originalFetchV36AP(input, init);
+        }
+
+        const splitPrompts = storyboardSplitCompiledPromptV36AP(payload);
+
+        if (!splitPrompts.length) {
+          return originalFetchV36AP(input, init);
+        }
+
+        if (splitPrompts.length === 1) {
+          const patchedPayload = storyboardPatchSinglePromptPayloadV36AP(payload, splitPrompts[0]);
+
+          return originalFetchV36AP(input, {
+            ...init,
+            body: JSON.stringify(patchedPayload),
+          });
+        }
+
+        const results: any[] = [];
+
+        for (const splitPrompt of splitPrompts) {
+          const patchedPayload = storyboardPatchSinglePromptPayloadV36AP(payload, splitPrompt);
+
+          const response = await originalFetchV36AP(input, {
+            ...init,
+            body: JSON.stringify(patchedPayload),
+          });
+
+          const text = await response.text();
+          let json: any = null;
+
+          try {
+            json = JSON.parse(text);
+          } catch {
+            json = { raw: text };
+          }
+
+          results.push({
+            ok: response.ok,
+            status: response.status,
+            promptKey: splitPrompt.promptKey,
+            sceneNumber: splitPrompt.sceneNumber,
+            workflowFile: patchedPayload.workflowFile,
+            storyboardCount: patchedPayload.storyboardCount,
+            characterImages: patchedPayload.characterImages,
+            workflowImages: patchedPayload.workflowImages,
+            response: json,
+          });
+
+          if (!response.ok) {
+            return new Response(
+              JSON.stringify({
+                ok: false,
+                marker: "OTG_STORYBOARD_ONE_WORKFLOW_PER_PROMPT_V36AP",
+                error: `Per-prompt workflow failed for scene ${splitPrompt.sceneNumber}.`,
+                failedSceneNumber: splitPrompt.sceneNumber,
+                results,
+              }),
+              {
+                status: response.status || 500,
+                headers: {
+                  "Content-Type": "application/json",
+                },
+              },
+            );
+          }
+        }
+
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            marker: "OTG_STORYBOARD_ONE_WORKFLOW_PER_PROMPT_V36AP",
+            splitWorkflowCount: results.length,
+            results,
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
+      } catch (error: any) {
+        console.warn("[OTG_STORYBOARD_ONE_WORKFLOW_PER_PROMPT_V36AP]", error);
+
+        return originalFetchV36AP(input, init);
+      }
+    };
+
+    // OTG_STORYBOARD_DISABLE_LEGACY_FETCH_INTERCEPTORS_V36BH_V36AP
+    // Disabled: direct generateSelectedSceneImages now owns per-prompt splitting and workflow selection.
+    // Legacy v36AP fetch rewriting is no longer installed.
+
+    return () => {
+      if (window.fetch === wrappedFetchV36AP) {
+        window.fetch = originalFetchV36AP;
+      }
+    };
+  }, [
+    storyboardPromptReferenceSelectionsV30,
+    storyboardBackgroundReferenceV30, storyboardBackgroundReferencesV36AK
+  ]);
+
+
+  // OTG_STORYBOARD_CHECKED_REF_WORKFLOW_INJECTION_V36AO
+  function storyboardWorkflowFileForCheckedReferenceCountV36AO(count: number) {
+    const checkedCount = Math.max(1, Math.min(5, Number(count) || 1));
+
+    return checkedCount === 1
+      ? "storyboard/StoryBoard 1.json"
+      : `storyboard/Storyboard ${checkedCount}.json`;
+  }
+
+  function inferStoryboardPromptKeyFromPicturePayloadV36AO(payload: any, sequenceIndex: number) {
+    const explicitKey = String(
+      payload?.promptKey ||
+        payload?.storyboardPromptKey ||
+        payload?.scenePromptKey ||
+        payload?.referencePromptKey ||
+        "",
+    ).trim();
+
+    if (explicitKey) {
+      return getStoryboardPromptCanonicalKeyV35J(explicitKey);
+    }
+
+    const directIndex =
+      Number(payload?.imageIndex) ||
+      Number(payload?.frameIndex) ||
+      Number(payload?.storyboardIndex) ||
+      Number(payload?.slotIndex) ||
+      Number(payload?.index);
+
+    if (Number.isFinite(directIndex) && directIndex > 0) {
+      return getStoryboardPromptCanonicalKeyV35J(`scene-prompt-${Math.max(1, directIndex)}`);
+    }
+
+    if (Number.isFinite(directIndex) && directIndex === 0) {
+      return "scene-prompt-1";
+    }
+
+    const promptText = String(
+      payload?.prompt ||
+        payload?.positivePrompt ||
+        payload?.promptText ||
+        payload?.scenePrompt ||
+        payload?.text ||
+        "",
+    );
+
+    const nextSceneMatch = promptText.match(/Next\s+Scene\s+(\d+)/i);
+    if (nextSceneMatch) {
+      return getStoryboardPromptCanonicalKeyV35J(`scene-prompt-${Math.max(1, Number(nextSceneMatch[1]) || 1)}`);
+    }
+
+    return getStoryboardPromptCanonicalKeyV35J(`scene-prompt-${Math.max(1, sequenceIndex + 1)}`);
+  }
+
+  function patchProductionPicturePayloadForCheckedReferencesV36AO(payload: any, sequenceIndex: number) {
+    const promptKey = inferStoryboardPromptKeyFromPicturePayloadV36AO(payload, sequenceIndex);
+    const referencePayload = getStoryboardReferencePayloadForPromptV35(promptKey);
+
+    const checkedWorkflowImagesV36AO = Array.isArray(referencePayload.workflowImages)
+      ? referencePayload.workflowImages.map((value) => String(value || "").trim()).filter(Boolean).slice(0, 3)
+      : [];
+
+    const checkedDisplayImagesV36AO = Array.isArray(referencePayload.displayImages)
+      ? referencePayload.displayImages.map((value) => String(value || "").trim()).filter(Boolean).slice(0, 3)
+      : [];
+
+    if (!checkedWorkflowImagesV36AO.length) {
+      return {
+        ...payload,
+        promptKey,
+        storyboardPromptKey: promptKey,
+        promptReferencePayload: referencePayload,
+        selectedReferences: referencePayload.selectedReferences || [],
+        referenceInstruction: referencePayload.referenceInstruction || "",
+        otgCheckedReferenceWorkflowInjectionV36AO: "no-checked-references",
+      };
+    }
+
+    const checkedCountV36AO = Math.max(1, Math.min(5, checkedWorkflowImagesV36AO.length));
+
+    return {
+      ...payload,
+
+      // This is the important part: the workflow choice must match the checked image count.
+      storyboardCount: checkedCountV36AO,
+      workflowFile: storyboardWorkflowFileForCheckedReferenceCountV36AO(checkedCountV36AO),
+
+      // The production picture route calls these characterImages, but they are really
+      // the ordered checked reference workflow images: characters plus optional background plate.
+      characterImages: checkedWorkflowImagesV36AO,
+      workflowImages: checkedWorkflowImagesV36AO,
+      displayImages: checkedDisplayImagesV36AO,
+
+      promptKey,
+      storyboardPromptKey: promptKey,
+      promptReferencePayload: referencePayload,
+      selectedReferences: referencePayload.selectedReferences || [],
+      selectedReferenceCount: referencePayload.selectedReferenceCount || checkedCountV36AO,
+      referenceInstruction: referencePayload.referenceInstruction || "",
+      otgCheckedReferenceWorkflowInjectionV36AO: true,
+    };
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    let storyboardPictureSequenceV36AO = 0;
+    const originalFetchV36AO = window.fetch;
+
+    const wrappedFetchV36AO: typeof window.fetch = async (input, init) => {
+      try {
+        const targetUrl = typeof input === "string" ? input : String((input as Request)?.url || "");
+
+        if (targetUrl.includes("/api/production/picture") && init && typeof init.body === "string") {
+          const payload = JSON.parse(init.body);
+          
+          // OTG_STORYBOARD_BYPASS_V36AO_REWRITER_V36BG2
+          // Direct per-prompt generation already imports/normalizes reference images.
+          // Do not let the legacy v36AO fetch interceptor rewrite clean server paths back to stale blob URLs.
+          if (
+            payload?.otgDirectOneWorkflowPerPromptV36AU ||
+            payload?.otgContinuePerPromptErrorsV36AW ||
+            payload?.otgImportedBrowserReferencesV36BB ||
+            payload?.otgFinalReferenceNormalizerV36BD ||
+            payload?.otgOneJobPerPromptV36AQ ||
+            payload?.otgPerPromptWorkflowSplitV36AP ||
+            payload?.otgOneScenePerBatchRequestV36AT
+          ) {
+            return originalFetchV36AO(input, init);
+          }
+
+          const patchedPayload = patchProductionPicturePayloadForCheckedReferencesV36AO(
+            payload,
+            storyboardPictureSequenceV36AO,
+          );
+
+          storyboardPictureSequenceV36AO += 1;
+
+          return originalFetchV36AO(input, {
+            ...init,
+            body: JSON.stringify(patchedPayload),
+          });
+        }
+      } catch (error) {
+        console.warn("[OTG_STORYBOARD_CHECKED_REF_WORKFLOW_INJECTION_V36AO]", error);
+      }
+
+      return originalFetchV36AO(input, init);
+    };
+
+    // OTG_STORYBOARD_DISABLE_LEGACY_FETCH_INTERCEPTORS_V36BH_V36AO
+    // Disabled: direct generation already injects checked references, imports browser-only blobs, and normalizes image paths.
+    // Legacy v36AO fetch rewriting is no longer installed.
+
+    return () => {
+      if (window.fetch === wrappedFetchV36AO) {
+        window.fetch = originalFetchV36AO;
+      }
+    };
+  }, [
+    storyboardPromptReferenceSelectionsV30,
+    sceneReferencePoolV32,
+    storyboardBackgroundReferenceV30, storyboardBackgroundReferencesV36AK
+  ]);
+
+
+function getStoryboardBackgroundRegistryItemsV36AK() {
+  const promptLimit = Math.max(1, getStoryboardPromptKeysV35().length);
+  const seen = new Set<string>();
+  const backgrounds: StoryboardBackgroundReferenceV30[] = [];
+
+  [...storyboardBackgroundReferencesV36AK, storyboardBackgroundReferenceV30]
+    .map(normalizeStoryboardBackgroundReferenceV36AK)
+    .forEach((background) => {
+      if (!background) return;
+      if (seen.has(background.id)) return;
+      seen.add(background.id);
+      backgrounds.push(background);
+    });
+
+  return backgrounds.slice(0, promptLimit).map((background) => ({
+    id: background.id,
+    slotId: background.id,
+    name: background.name,
+    kind: "background" as const,
+    sourceType: "background" as const,
+    displayImage: storyboardReferenceDisplayImageV36AK(background),
+    workflowImage: storyboardReferenceWorkflowImageV36AK(background),
+    isSaved: true,
+  }));
+}
+
+function filterStoryboardSelectedReferenceIdsOneBackgroundV36AK(selectedIds: string[], pool: any[]) {
+  let hasBackground = false;
+
+  return selectedIds.filter((id) => {
+    const item = pool.find((candidate) => candidate?.id === id || candidate?.slotId === id);
+    const isBackground = item?.kind === "background" || item?.sourceType === "background";
+
+    if (!isBackground) return true;
+    if (hasBackground) return false;
+
+    hasBackground = true;
+    return true;
+  });
+}
+
+function applyStoryboardBackgroundToPromptV36AK(promptKeyRaw: string, input: any) {
+  const background = normalizeStoryboardBackgroundReferenceV36AK(input);
+
+  if (!background) {
+    return;
+  }
+
+  const promptKeys = getStoryboardPromptKeysV35();
+  const promptKey = getStoryboardPromptCanonicalKeyV35J(
+    promptKeyRaw || promptKeys[0] || "scene-prompt-1",
+  );
+
+  const promptLimit = Math.max(1, promptKeys.length);
+  const knownBackgroundIds = new Set<string>();
+
+  [...storyboardBackgroundReferencesV36AK, storyboardBackgroundReferenceV30, background]
+    .map(normalizeStoryboardBackgroundReferenceV36AK)
+    .forEach((item) => {
+      if (item?.id) knownBackgroundIds.add(item.id);
+    });
+
+  setStoryboardBackgroundReferencesV36AK((current) => {
+    const merged: StoryboardBackgroundReferenceV30[] = [];
+    const seen = new Set<string>();
+
+    [background, ...current]
+      .map(normalizeStoryboardBackgroundReferenceV36AK)
+      .forEach((item) => {
+        if (!item) return;
+        if (seen.has(item.id)) return;
+        seen.add(item.id);
+        merged.push(item);
+      });
+
+    return merged.slice(0, promptLimit);
+  });
+
+  setStoryboardBackgroundReferenceV30(background);
+
+  setStoryboardPromptReferenceSelectionsV30((current) => {
+    const existing = Array.isArray(current?.[promptKey]) ? current[promptKey] : [];
+    const withoutExistingBackground = existing.filter((id) => !knownBackgroundIds.has(id));
+
+    return {
+      ...current,
+      [promptKey]: [...withoutExistingBackground, background.id],
+    };
+  });
+}
+
+function openStoryboardBackgroundGalleryV36AK(promptKeyRaw = "") {
+  const promptKeys = getStoryboardPromptKeysV35();
+  const targetPrompt =
+    promptKeyRaw ||
+    promptKeys.find((promptKey) => {
+      const selectedIds = storyboardPromptReferenceSelectionsV30[promptKey] || [];
+      const backgroundIds = new Set(getStoryboardBackgroundRegistryItemsV36AK().map((item) => item.id));
+      return !selectedIds.some((id) => backgroundIds.has(id));
+    }) ||
+    promptKeys[0] ||
+    "scene-prompt-1";
+
+  openStoryboardBackgroundGalleryOverlayV36AK({
+    promptKeys,
+    selectedPromptKey: targetPrompt,
+  });
+}
+
+// OTG_QWEN_LEGACY_BACKGROUND_INTERCEPTOR_DISABLE_V2_START
+useEffect(() => {
+  const qwenBuilderSelector = '[data-otg-qwen-scene-builder="true"]';
+
+  // Qwen owns its own Character, Background, and Object gallery state. The old
+  // document-level text matcher must not exist while Qwen is mounted because it
+  // runs in capture phase and can open the obsolete Storyboard background modal.
+  if (document.querySelector(qwenBuilderSelector)) {
+    return;
+  }
+
+  function retitleBackgroundButtons() {
+    document.querySelectorAll("button").forEach((button) => {
+      if (button.closest('[data-otg-qwen-scene-builder="true"]')) return;
+
+      const text = (button.textContent || "").replace(/\s+/g, " ").trim();
+
+      if (text === "Background Gallery" || text === "Add Background") {
+        button.textContent = "Background Gallery";
+      }
+    });
+  }
+
+  function handleClick(event: MouseEvent) {
+    // Belt-and-suspenders runtime guard in case Qwen mounts after this effect.
+    if (document.querySelector(qwenBuilderSelector)) return;
+
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest("button");
+
+    if (!button) return;
+    if (button.closest('[data-otg-qwen-scene-builder="true"]')) return;
+
+    const text = (button.textContent || "").replace(/\s+/g, " ").trim();
+
+    if (text === "Background Gallery" || text === "Add Background" || text === "Background Gallery") {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+
+      openStoryboardBackgroundGalleryV36AK();
+    }
+  }
+
+  function handleSelected(event: Event) {
+    const detail = (event as CustomEvent).detail || {};
+    applyStoryboardBackgroundToPromptV36AK(String(detail.promptKey || ""), detail.background);
+  }
+
+  retitleBackgroundButtons();
+
+  const interval = window.setInterval(retitleBackgroundButtons, 1000);
+  document.addEventListener("click", handleClick, true);
+  window.addEventListener("otg-storyboard-background-selected-v36ak", handleSelected as EventListener);
+
+  return () => {
+    window.clearInterval(interval);
+    document.removeEventListener("click", handleClick, true);
+    window.removeEventListener("otg-storyboard-background-selected-v36ak", handleSelected as EventListener);
+  };
+}, [storyboardPromptReferenceSelectionsV30, storyboardBackgroundReferenceV30, storyboardBackgroundReferencesV36AK]);
+// OTG_QWEN_LEGACY_BACKGROUND_INTERCEPTOR_DISABLE_V2_END
+
+
+
+
+  // OTG_STORYBOARD_REFERENCE_REGISTRY_WIRE_V33B_ORDERFIX
+
+
+
+  const [storyboardPromptGuideOpenV30, setStoryboardPromptGuideOpenV30] = useState<Record<string, boolean>>({});
+
+
+
+  function toggleStoryboardPromptReferenceV30(promptKey: string, referenceId: string) {
+    // OTG_STORYBOARD_REFERENCE_CHECKBOX_CLICKFIX_V35K_TOGGLE
+    const canonicalPromptKey = getStoryboardPromptCanonicalKeyV35J(promptKey);
+    const referenceOptions = getStoryboardReferenceOptionsV30();
+    const optionById = new Map(referenceOptions.map((option) => [option.id, option]));
+    const selectedOption = optionById.get(referenceId);
+    const backgroundIds = new Set(referenceOptions.filter((option) => option.kind === "background").map((option) => option.id));
+    const characterIds = new Set(referenceOptions.filter((option) => option.kind === "character").map((option) => option.id));
+
+    setStoryboardPromptReferenceSelectionsV30((prev) => {
+      const aliasKeys = getStoryboardPromptAliasKeysV35G(canonicalPromptKey);
+      const explicitKey = aliasKeys.find((key) => (prev[key] || []).length > 0);
+      const startingIds = explicitKey
+        ? prev[explicitKey] || []
+        : (storyboardBackgroundReferenceV30 ? [storyboardBackgroundReferenceV30.id] : []);
+      const current = new Set(startingIds);
+
+      if (current.has(referenceId)) {
+        current.delete(referenceId);
+      } else if (selectedOption?.kind === "background") {
+        backgroundIds.forEach((id) => current.delete(id));
+        if (current.size < 5) current.add(referenceId);
+      } else {
+        const selectedCharacterCount = Array.from(current).filter((id) => characterIds.has(id)).length;
+        if (selectedCharacterCount < 4 && current.size < 5) current.add(referenceId);
+      }
+
+      const next = { ...prev, [canonicalPromptKey]: Array.from(current) };
+      aliasKeys.forEach((key) => {
+        if (key !== canonicalPromptKey) delete next[key];
+      });
+      return next;
+    });
+  }
+
+
+
+  function toggleStoryboardPromptGuideV30(promptKey: string) {
+    const canonicalPromptKey = getStoryboardPromptCanonicalKeyV35J(promptKey);
+    setStoryboardPromptGuideOpenV30((prev) => ({ ...prev, [canonicalPromptKey]: !prev[canonicalPromptKey] }));
+  }
+
+
+
+  function getStoryboardReferenceOptionsV30(): StoryboardPromptReferenceOptionV30[] {
+    return [
+      ...sceneReferencePoolV32
+        .filter((item) => item.isSaved)
+        .map((item) => ({
+          id: item.id,
+          label: item.name,
+          kind: (item.kind === "background" ? "background" : "character") as "character" | "background",
+          imagePath: item.workflowImage,
+          imageUrl: item.displayImage,
+        })),
+      ...(storyboardBackgroundReferenceV30
+        ? [{
+            id: storyboardBackgroundReferenceV30.id,
+            label: storyboardBackgroundReferenceV30.name,
+            kind: "background" as const,
+            imagePath: storyboardBackgroundReferenceV30.imagePath,
+            imageUrl: storyboardBackgroundReferenceV30.imageUrl,
+          }]
+        : []),
+    ];
+  }
+
+
+  const [voiceActorTranscriptByFrame, setVoiceActorTranscriptByFrame] = useState<Record<string, string>>({});
+  const [voiceActorTranscribingByFrame, setVoiceActorTranscribingByFrame] = useState<Record<string, boolean>>({});
+  const [productionHomeMode, setProductionHomeMode] = useState<ProductionHomeMode>("home");
 
 
 
@@ -681,6 +2872,24 @@ export default function StoryboardPanel() {
   const [assemblingSceneId, setAssemblingSceneId] = useState("");
   const [assembleResult, setAssembleResult] = useState<ProductionAssembleStitchResult | null>(null);
   const [assembleReviewMode, setAssembleReviewMode] = useState<"source" | "review" | "library">("source");
+  // OTG_ASSEMBLY_BACKGROUND_MUSIC_STABLE_AUDIO_V36BPW15
+  const [assemblyMusicPrompt, setAssemblyMusicPrompt] = useState("cinematic fantasy background score with warm strings, soft percussion, low drones, and emotional build for a polished final scene. BPM: 90. Length: 60 seconds");
+  const [assemblyMusicVolume, setAssemblyMusicVolume] = useState(0.3);
+  // OTG_ASSEMBLY_BACKGROUND_MUSIC_BOTTOM_PLACEMENT_V36BPW16C
+  const [assemblyMusicStartSeconds, setAssemblyMusicStartSeconds] = useState(0);
+  const [assemblyMusicEndSeconds, setAssemblyMusicEndSeconds] = useState(60);
+  // OTG_ASSEMBLY_BACKGROUND_MUSIC_DETECT_FADE_ADD_UNDO_V36BPW17
+  const [assemblyMusicDetectedTimelineSeconds, setAssemblyMusicDetectedTimelineSeconds] = useState(0);
+  const [assemblyMusicFadeInSeconds, setAssemblyMusicFadeInSeconds] = useState(2);
+  const [assemblyMusicFadeOutSeconds, setAssemblyMusicFadeOutSeconds] = useState(3);
+  const [assemblyMusicMixing, setAssemblyMusicMixing] = useState(false);
+  const [assemblyMusicUndoSnapshot, setAssemblyMusicUndoSnapshot] = useState<any | null>(null);
+  // OTG_ASSEMBLY_ADD_FINAL_TO_GALLERY_V36BPW18
+  const [assemblyGallerySaving, setAssemblyGallerySaving] = useState(false);
+  const [assemblyGalleryResult, setAssemblyGalleryResult] = useState<any | null>(null);
+  const [assemblyMusicGenerating, setAssemblyMusicGenerating] = useState(false);
+  const [assemblyMusicResult, setAssemblyMusicResult] = useState<any | null>(null);
+  const [assemblyMusicError, setAssemblyMusicError] = useState("");
   const [exportPreset, setExportPreset] = useState<ProductionExportPreset>("standard");
   const [mediaPreflight, setMediaPreflight] = useState<ProductionMediaPreflightResult | null>(null);
   const [checkingPreflight, setCheckingPreflight] = useState(false);
@@ -698,16 +2907,36 @@ export default function StoryboardPanel() {
   const [draftHydrated, setDraftHydrated] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "autosaved" | "saved" | "error">("idle");
   const [lastSavedAt, setLastSavedAt] = useState("");
-  const [saveDetails, setSaveDetails] = useState("Production autosave is ready.");
+  const [manualSavedAt, setManualSavedAt] = useState("");
+  const [manualSaveSignature, setManualSaveSignature] = useState("");
+  const [saveDetails, setSaveDetails] = useState("Autosave is ready. Manual save has not been created yet.");
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [busySceneId, setBusySceneId] = useState("");
   const [scenes, setScenes] = useState<ProductionScene[]>(initialScenes);
   const [selectedSceneId, setSelectedSceneId] = useState(initialScenes[0]?.id || "");
+  const [scenePreviewSceneId, setScenePreviewSceneId] = useState("");
   const [characterFiles, setCharacterFiles] = useState<Record<string, Record<number, File>>>({});
+  const [productionLoraOptions, setProductionLoraOptions] = useState<ProductionLoraOption[]>([]);
+  const [productionLoraLoading, setProductionLoraLoading] = useState(false);
+  const [productionLoraError, setProductionLoraError] = useState("");
+  const [animateLoraPickByFrame, setAnimateLoraPickByFrame] = useState<Record<number, string>>({});
+  const [animateDurationOverrideByFrameV36BPU42, setAnimateDurationOverrideByFrameV36BPU42] = useState<Record<string, number>>({});
+  const [voiceActorAudioBlobs, setVoiceActorAudioBlobs] = useState<Record<number, Blob>>({});
+  const [voiceActorRecordingFrameIndex, setVoiceActorRecordingFrameIndex] = useState<number | null>(null);
+  const voiceActorRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceActorStreamRef = useRef<MediaStream | null>(null);
+  const voiceActorChunksRef = useRef<Blob[]>([]);
+  const voiceActorStartedAtRef = useRef<number>(0);
+  const firstLastPairPointerHandledAtRefV36BPU19 = useRef(0);
+  const [lockedSceneNameIds, setLockedSceneNameIds] = useState<Record<string, boolean>>({});
+  const [lockedCharacterNameKeys, setLockedCharacterNameKeys] = useState<Record<string, boolean>>({});
   // STORYBOARD_FROM_CHARACTERS_PATCH
   const [characterPickerSceneId, setCharacterPickerSceneId] = useState("");
   const [characterPickerSlotIndex, setCharacterPickerSlotIndex] = useState<number | null>(null);
   const [characterPickerItems, setCharacterPickerItems] = useState<CharacterLibraryPickerItem[]>([]);
+  const [animateSavedCharacterPresetsV36BPU26B, setAnimateSavedCharacterPresetsV36BPU26B] = useState<CharacterLibraryPickerItem[]>([]);
+  const [animateCharacterPresetLoadingV36BPU26B, setAnimateCharacterPresetLoadingV36BPU26B] = useState(false);
+  const [animateCharacterPresetErrorV36BPU26B, setAnimateCharacterPresetErrorV36BPU26B] = useState("");
   const [characterPickerLoading, setCharacterPickerLoading] = useState(false);
   const [characterPickerError, setCharacterPickerError] = useState("");
   const [characterPickerSelectingId, setCharacterPickerSelectingId] = useState("");
@@ -715,15 +2944,492 @@ export default function StoryboardPanel() {
   const [productionUploadedVoiceOptions, setProductionUploadedVoiceOptions] = useState<ProductionVoiceModelOption[]>([]);
   const [productionVoiceModelsLoading, setProductionVoiceModelsLoading] = useState(false);
   const [productionVoiceModelsError, setProductionVoiceModelsError] = useState("");
+  const [audioStudioJobs, setAudioStudioJobs] = useState<Partial<Record<ProductionAudioStudioAction, QueuedJobUiState>>>({});
+  const [audioStudioPersistedResults, setAudioStudioPersistedResults] = useState<Record<string, ProductionAudioStudioResultItem>>({});
+  const persistedAudioStudioJobIdsRef = useRef<Set<string>>(new Set());
+  const [recordingScenePromptIndex, setRecordingScenePromptIndex] = useState<number | null>(null);
+  const scenePromptRecorderRef = useRef<MediaRecorder | null>(null);
+  const scenePromptAudioChunksRef = useRef<Blob[]>([]);
 
   const selectedIndex = scenes.findIndex((scene) => scene.id === selectedSceneId);
   const selectedScene = scenes[selectedIndex] || scenes[0];
+
+  function animateDurationOverrideKeyV36BPU42(sceneId: string, frameIndex: number) {
+    return `${sceneId || "scene"}:${Math.max(0, Math.floor(Number(frameIndex) || 0))}`;
+  }
+
+  function animateDurationWithOverrideV36BPU42(sceneId: string, frameIndex: number, fallback: number) {
+    const override = animateDurationOverrideByFrameV36BPU42[animateDurationOverrideKeyV36BPU42(sceneId, frameIndex)];
+    return clampAnimateFrameDuration(Number.isFinite(override) ? override : fallback);
+  }
+
+  // OTG_STORYBOARD_REFERENCE_POOL_STATE_SOURCE_V35F
+  // Rebuild prompt selector character pool from selectedScene.characterRefs after v35 payload patches.
+  useEffect(() => {
+    const refs = (selectedScene?.characterRefs || []) as CharacterReference[];
+    const next = refs
+      .map((ref, index): StoryboardSceneReferenceRegistryItemV32 | null => {
+        if (!ref) return null;
+        const lockKey = selectedScene ? characterReferenceLockKey(selectedScene.id, index, ref) : "";
+        const isSaved = Boolean(ref.sourceCharacterId || (lockKey && lockedCharacterNameKeys[lockKey]));
+        if (!isSaved) return null;
+  
+        const displayImage = String(ref.previewUrl || ref.workflowImageUrl || ref.workflowImagePath || ref.fileName || "").trim();
+        const workflowImage = String(ref.workflowImagePath || ref.workflowImageUrl || ref.previewUrl || ref.fileName || "").trim();
+        if (!displayImage && !workflowImage) return null;
+  
+        const name = String(ref.sourceCharacterName || ref.label || characterReferenceSlotLabel(index)).trim() || characterReferenceSlotLabel(index);
+        return {
+          id: ref.id || `character-${index + 1}`,
+          slotId: `character-${index + 1}`,
+          name,
+          kind: "character",
+          sourceType: ref.sourceCharacterId ? "gallery" : "input",
+          displayImage: displayImage || workflowImage,
+          workflowImage: workflowImage || displayImage,
+          isSaved: true,
+        };
+      })
+      .filter((item): item is StoryboardSceneReferenceRegistryItemV32 => Boolean(item))
+      .slice(0, 4);
+  
+    setSceneReferencePoolV32((previous) => {
+      const previousKey = JSON.stringify(previous.map((item) => [item.id, item.name, item.displayImage, item.workflowImage, item.isSaved]));
+      const nextKey = JSON.stringify(next.map((item) => [item.id, item.name, item.displayImage, item.workflowImage, item.isSaved]));
+      return previousKey === nextKey ? previous : next;
+    });
+  }, [selectedScene?.id, selectedScene?.characterRefs, lockedCharacterNameKeys]);
+
+  // Direct source of truth: selectedScene.characterRefs. No DOM scanning.
+
+
+  // OTG_STORYBOARD_SELECTED_REFERENCE_PAYLOAD_V35C_DEBUG
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const existing = (window as any).__otgStoryboardReferenceRegistryV33 || {};
+    (window as any).__otgStoryboardReferenceRegistryV33 = {
+      ...existing,
+      sceneReferencePoolV32,
+      storyboardPromptReferenceSelectionsV30,
+      storyboardBackgroundReferenceV30,
+      storyboardSelectedReferencePayloadsV35: getStoryboardPromptReferencePayloadsV35(),
+    };
+  }, [sceneReferencePoolV32, storyboardPromptReferenceSelectionsV30, storyboardBackgroundReferenceV30]);
+
+  // OTG_STORYBOARD_SELECTED_REFERENCE_PAYLOAD_V35D_FINAL_DEBUG
+  // Runs after earlier registry debug exports so payload aliases are not overwritten.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const payloads = getStoryboardPromptReferencePayloadsV35();
+    const existing = (window as any).__otgStoryboardReferenceRegistryV33 || {};
+    (window as any).__otgStoryboardReferenceRegistryV33 = {
+      ...existing,
+      sceneReferencePoolV32,
+      storyboardPromptReferenceSelectionsV30,
+      storyboardBackgroundReferenceV30,
+      storyboardSelectedReferencePayloadsV35: payloads,
+      storyboardSelectedReferencePayloadV35: payloads,
+      selectedReferencePayloadsV35: payloads,
+    };
+  }, [sceneReferencePoolV32, storyboardPromptReferenceSelectionsV30, storyboardBackgroundReferenceV30]);
   const selectedSceneStoryboardStatusKey = selectedScene
     ? selectedScene.images.map((image) => `${image?.status || "empty"}:${image?.promptId || ""}`).join("|")
     : "";
   const selectedSceneAnimateStatusKey = selectedScene
     ? animateFrameClips(selectedScene).map((clip: any) => `${clip?.status || "empty"}:${clip?.promptId || ""}:${clip?.fileName || ""}`).join("|")
     : "";
+
+  useEffect(() => {
+    if (activeStage !== "animate" || !selectedScene) return;
+
+    const completedScenes = loadCompletedQwenScenesForAnimateV36BPU3();
+    if (!completedScenes.length) return;
+
+    const signature = qwenSceneHandoffSignatureV36BPU3(completedScenes);
+    const sceneAny = selectedScene as any;
+    const hasCurrentHandoff = sceneAny.qwenAnimateHandoffSignatureV36BPU3 === signature;
+    const hasReadyImages = Array.isArray(selectedScene.images)
+      ? selectedScene.images.some((image: any) => image?.approved || image?.status === "ready" || image?.url)
+      : false;
+
+    if (hasCurrentHandoff) return;
+    if (hasReadyImages && sceneAny.qwenAnimateHandoffSourceV36BPU3) return;
+
+    syncCompletedQwenScenesToAnimateV36BPU3({ silent: true });
+  }, [activeStage, selectedScene?.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+
+    let hideTimer: number | null = null;
+    let header: HTMLElement | null = null;
+
+    const findProductionHeader = () => {
+      const headers = Array.from(document.querySelectorAll("header")) as HTMLElement[];
+      const productionHeader =
+        headers.find((item) => /SLR Studios OTG/i.test(item.textContent || "") && !/Production Workflow/i.test(item.textContent || "")) ||
+        headers.find((item) => /ComfyUI Connected|Classic UI|test_profile|Settings/i.test(item.textContent || "") && !/Production Workflow/i.test(item.textContent || "")) ||
+        null;
+
+      if (productionHeader && productionHeader !== header) {
+        if (header) {
+          header.classList.remove("otg-production-header-autohide-target", "otg-production-header-hidden");
+        }
+        header = productionHeader;
+        header.classList.add("otg-production-header-autohide-target");
+      }
+
+      return header;
+    };
+
+    const ensureStyle = () => {
+      const styleId = "otg-production-header-autohide-style";
+      if (document.getElementById(styleId)) return;
+
+      const style = document.createElement("style");
+      style.id = styleId;
+      style.textContent = `
+        .otg-production-header-autohide-target {
+          transition: transform 220ms ease, opacity 220ms ease;
+          will-change: transform, opacity;
+        }
+        .otg-production-header-autohide-target.otg-production-header-hidden {
+          transform: translateY(-120%);
+          opacity: 0;
+          pointer-events: none;
+        }
+      `;
+      document.head.appendChild(style);
+    };
+
+    const showHeader = () => {
+      const activeHeader = findProductionHeader();
+      if (!activeHeader) return;
+      activeHeader.classList.remove("otg-production-header-hidden");
+
+      if (hideTimer !== null) {
+        window.clearTimeout(hideTimer);
+      }
+
+      hideTimer = window.setTimeout(() => {
+        const target = findProductionHeader();
+        if (target) target.classList.add("otg-production-header-hidden");
+      }, 2000);
+    };
+
+    ensureStyle();
+
+    // Clear the old v5 behavior if it had targeted the inner Production Workflow header.
+    document.querySelectorAll(".otg-production-header-autohide-target, .otg-production-header-hidden").forEach((item) => {
+      const text = item.textContent || "";
+      if (/Production Workflow/i.test(text) && !/SLR Studios OTG/i.test(text)) {
+        item.classList.remove("otg-production-header-autohide-target", "otg-production-header-hidden");
+      }
+    });
+
+    showHeader();
+
+    const events: Array<keyof WindowEventMap> = ["scroll", "wheel", "touchmove"];
+    events.forEach((eventName) => window.addEventListener(eventName, showHeader, { passive: true }));
+
+    const observer = new MutationObserver(() => showHeader());
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    return () => {
+      if (hideTimer !== null) window.clearTimeout(hideTimer);
+      events.forEach((eventName) => window.removeEventListener(eventName, showHeader));
+      observer.disconnect();
+      if (header) {
+        header.classList.remove("otg-production-header-autohide-target", "otg-production-header-hidden");
+      }
+    };
+  }, []);
+// OTG_PRODUCTION_ANIMATE_LORA_UI_V22_START
+  const PRODUCTION_LORA_CACHE_KEY = "otg:production:animate-loras:v1";
+
+  function normalizeProductionLoraOptions(raw: any): ProductionLoraOption[] {
+    const rows = Array.isArray(raw) ? raw : [];
+    const seen = new Set<string>();
+    const out: ProductionLoraOption[] = [];
+
+    for (const row of rows) {
+      const name = String(row?.name || row || "").trim();
+      const key = name.toLowerCase();
+      if (!name || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ name });
+    }
+
+    return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+  }
+
+  function cacheProductionLoraOptions(options: ProductionLoraOption[]) {
+    if (typeof window === "undefined" || !options.length) return;
+    try {
+      window.localStorage.setItem(
+        PRODUCTION_LORA_CACHE_KEY,
+        JSON.stringify({
+          savedAt: new Date().toISOString(),
+          loras: options,
+        })
+      );
+    } catch {
+      // localStorage can be unavailable in private/restricted contexts.
+    }
+  }
+
+  function loadCachedProductionLoraOptions() {
+    if (typeof window === "undefined") return [] as ProductionLoraOption[];
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(PRODUCTION_LORA_CACHE_KEY) || "null");
+      return normalizeProductionLoraOptions(parsed?.loras || []);
+    } catch {
+      return [];
+    }
+  }
+
+  async function refreshProductionLoraOptions(forceRefresh = false) {
+    if (productionLoraLoading) return;
+
+    if (!forceRefresh && !productionLoraOptions.length) {
+      const cached = loadCachedProductionLoraOptions();
+      if (cached.length) {
+        setProductionLoraOptions(cached);
+        setProductionLoraError("");
+      }
+    }
+
+    setProductionLoraLoading(true);
+    setProductionLoraError("");
+
+    try {
+      const response = await fetch(`/api/comfy/loras${forceRefresh ? "?refresh=1" : ""}`, {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const json = await response.json().catch(() => null);
+
+      if (!response.ok || json?.ok === false) {
+        throw new Error(json?.error || "Could not load ComfyUI LORA list.");
+      }
+
+      const options = normalizeProductionLoraOptions(json?.loras || []);
+      if (options.length) {
+        setProductionLoraOptions(options);
+        cacheProductionLoraOptions(options);
+        setProductionLoraError(json?.cached ? "Using cached LORA list." : "");
+      } else {
+        setProductionLoraOptions([]);
+        setProductionLoraError("No LORAs were returned by ComfyUI.");
+      }
+    } catch (error) {
+      const cached = loadCachedProductionLoraOptions();
+      if (cached.length) {
+        setProductionLoraOptions(cached);
+        setProductionLoraError("Using saved LORA list. Refresh failed.");
+      } else {
+        setProductionLoraOptions([]);
+        setProductionLoraError(error instanceof Error ? error.message : "Could not load ComfyUI LORA list.");
+      }
+    } finally {
+      setProductionLoraLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activeStage !== "animate" || productionLoraOptions.length || productionLoraLoading) return;
+
+    const cached = loadCachedProductionLoraOptions();
+    if (cached.length) {
+      setProductionLoraOptions(cached);
+      setProductionLoraError("");
+    }
+
+    void refreshProductionLoraOptions(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeStage]);
+  // OTG_PRODUCTION_ANIMATE_LORA_UI_V22_END
+
+  const [audioClipAnalysisBusy, setAudioClipAnalysisBusy] = useState(false);
+  const [audioClipAnalysisResult, setAudioClipAnalysisResult] = useState<any | null>(null);
+  const [audioExpectedSpeakerCount, setAudioExpectedSpeakerCount] = useState(0);
+  const [audioClipVoiceCharacterMap, setAudioClipVoiceCharacterMap] = useState<Record<string, string>>({});
+  const [audioDubPreviewBusy, setAudioDubPreviewBusy] = useState(false);
+  const [audioDubPreviewResult, setAudioDubPreviewResult] = useState<any | null>(null);
+  const [audioDubPreviewError, setAudioDubPreviewError] = useState("");
+  const [audioStudioSonyWooshBusy, setAudioStudioSonyWooshBusy] = useState(false);
+  const [audioStudioSonyWooshError, setAudioStudioSonyWooshError] = useState("");
+
+  const audioStudioJobsRef = useRef(audioStudioJobs);
+  const activeAudioStudioJobIds = useMemo(
+    () =>
+      Object.values(audioStudioJobs)
+        .map((state) => state?.job)
+        .filter((job): job is QueuedContractJob => !!job && !isTerminalJobStatus(job.status))
+        .map((job) => job.jobId)
+        .join("|"),
+    [audioStudioJobs]
+  );
+
+  useEffect(() => {
+    audioStudioJobsRef.current = audioStudioJobs;
+  }, [audioStudioJobs]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPersistedAudioStudioResults() {
+      try {
+        const response = await fetch("/api/production/audio-studio/results", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const json = await response.json().catch(() => null) as { items?: ProductionAudioStudioResultItem[]; error?: string } | null;
+        if (cancelled) return;
+        if (!response.ok) {
+          setNotice(json?.error || "Could not load saved Audio Studio clip results.");
+          return;
+        }
+
+        const next: Record<string, ProductionAudioStudioResultItem> = {};
+        for (const item of json?.items || []) {
+          if (item?.clipId && item.audioStudioResult?.status === "mock_ready") {
+            next[item.clipId] = item;
+          }
+        }
+        setAudioStudioPersistedResults(next);
+      } catch (error) {
+        if (!cancelled) {
+          setNotice(error instanceof Error ? error.message : "Could not load saved Audio Studio clip results.");
+        }
+      }
+    }
+
+    void loadPersistedAudioStudioResults();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const persistedItems = Object.values(audioStudioPersistedResults);
+    if (!persistedItems.length) return;
+
+    setScenes((previousScenes) => {
+      let changed = false;
+      const nextScenes = previousScenes.map((scene) => {
+        const rows = editClipRows(scene);
+        if (!rows.length) return scene;
+
+        const frameClips = editStageFrameClips(scene).slice();
+        let sceneChanged = false;
+        for (const row of rows) {
+          const item = audioStudioPersistedResults[row.key];
+          if (!item) continue;
+          const current = frameClips[row.index] || row.clip || { status: "idle" as const };
+          if (current.audioStudioResult?.sourceJobId === item.audioStudioResult.sourceJobId) continue;
+          frameClips[row.index] = {
+            ...current,
+            audioStudioResult: item.audioStudioResult,
+          };
+          sceneChanged = true;
+        }
+
+        if (!sceneChanged) return scene;
+        changed = true;
+        return {
+          ...scene,
+          frameClips,
+        };
+      });
+
+      return changed ? nextScenes : previousScenes;
+    });
+  }, [audioStudioPersistedResults]);
+
+  useEffect(() => {
+    if (!activeAudioStudioJobIds) return;
+
+    let cancelled = false;
+    const poll = async () => {
+      const activeJobs = Object.entries(audioStudioJobsRef.current)
+        .map(([action, state]) => ({ action: action as ProductionAudioStudioAction, job: state?.job }))
+        .filter((entry): entry is { action: ProductionAudioStudioAction; job: QueuedContractJob } => !!entry.job && !isTerminalJobStatus(entry.job.status));
+
+      await Promise.all(activeJobs.map(async ({ action, job }) => {
+        try {
+          const latestJob = await getAudioStudioJob(job.jobId);
+          if (cancelled) return;
+          setAudioStudioJobs((previous) => ({
+            ...previous,
+            [action]: {
+              phase: isTerminalJobStatus(latestJob.status) ? "queued" : "polling",
+              job: latestJob,
+            },
+          }));
+        } catch (error) {
+          if (cancelled) return;
+          setAudioStudioJobs((previous) => ({
+            ...previous,
+            [action]: {
+              phase: "error",
+              job,
+              error: error instanceof Error ? error.message : "Could not poll audio studio job.",
+            },
+          }));
+        }
+      }));
+    };
+
+    void poll();
+    const intervalId = window.setInterval(() => void poll(), 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activeAudioStudioJobIds]);
+
+  useEffect(() => {
+    const completedJobs = Object.values(audioStudioJobs)
+      .map((state) => state?.job)
+      .filter((job): job is QueuedContractJob => !!job && Boolean(job.jobId) && job.status === "completed");
+    if (!completedJobs.length) return;
+
+    for (const job of completedJobs) {
+      if (persistedAudioStudioJobIdsRef.current.has(job.jobId)) continue;
+      const audioStudioResult = audioStudioResultFromJob(job);
+      if (!audioStudioResult) continue;
+
+      persistedAudioStudioJobIdsRef.current.add(job.jobId);
+      let attached = false;
+      setScenes((previousScenes) =>
+        previousScenes.map((scene) => {
+          const rows = editClipRows(scene);
+          const row = rows.find((candidate) => candidate.key === job.clipId);
+          if (!row) return scene;
+
+          const frameClips = editStageFrameClips(scene).slice();
+          frameClips[row.index] = {
+            ...(frameClips[row.index] || row.clip || { status: "idle" as const }),
+            audioStudioResult,
+          };
+          attached = true;
+          return {
+            ...scene,
+            frameClips,
+          };
+        })
+      );
+
+      if (attached && job.clipId) {
+        void persistAudioStudioResultToServer(job.clipId, audioStudioResult, job.jobId);
+      }
+      setNotice(
+        attached
+          ? `Mock Audio Studio result retained on clip. Saving to clip record. Source job: ${job.jobId}.`
+          : `Mock Audio Studio result ready, but matching clip was not found in the current storyboard draft. Source job: ${job.jobId}.`
+      );
+    }
+  }, [audioStudioJobs]);
 
   useEffect(() => {
     if (!selectedScene) return;
@@ -794,18 +3500,23 @@ export default function StoryboardPanel() {
     if (activeStage !== "animate" || !selectedScene) return;
 
     const clips = animateFrameClips(selectedScene);
-    const promptIds = Array.from(new Set(clips.map((clip: any) => String(clip?.promptId || "").trim()).filter(Boolean)));
-    const readyCount = clips.filter((clip: any) => clip?.status === "ready").length;
+    const submittedClips = clips.filter((clip: any) => {
+      const promptId = String(clip?.promptId || "").trim();
+      return Boolean(promptId || clip?.status === "queued" || clip?.status === "ready");
+    });
+    const progressTargetClips = submittedClips.length ? submittedClips : clips;
+    const promptIds = Array.from(new Set(progressTargetClips.map((clip: any) => String(clip?.promptId || "").trim()).filter(Boolean)));
+    const readyCount = progressTargetClips.filter((clip: any) => clip?.status === "ready").length;
 
     if (!promptIds.length) {
-      if (clips.length && readyCount >= clips.length) {
+      if (submittedClips.length && readyCount >= submittedClips.length) {
         setAnimateComfyProgress({
           ...emptyComfyProgressState(),
           readyToSync: false,
           percent: 100,
-          label: "Frame clips synced.",
-          completedPrompts: clips.length,
-          totalPrompts: clips.length,
+          label: "Scene clips synced.",
+          completedPrompts: submittedClips.length,
+          totalPrompts: submittedClips.length,
         });
       }
       return;
@@ -828,7 +3539,12 @@ export default function StoryboardPanel() {
         if (cancelled) return;
 
         const validRows = rows.filter(Boolean) as Array<{ promptId: string; data: any; progress: ComfyProgressUiState }>;
-        const totalPrompts = Math.max(promptIds.length, clips.length || promptIds.length);
+        const totalPrompts = Math.max(
+          promptIds.length,
+          submittedClips.length,
+          animateComfyProgress.totalPrompts || 0,
+          1
+        );
         const completedPromptsFromComfy = validRows.filter((row) => {
           const status = String(row.data?.status || "").toLowerCase();
           return status === "complete" || row.progress.readyToSync || row.progress.percent === 100;
@@ -847,7 +3563,7 @@ export default function StoryboardPanel() {
           percent: aggregatePercent,
           label:
             completedPrompts >= totalPrompts
-              ? "Comfy frame clips are complete. Run Sync Frame Clips."
+              ? "Comfy frame clips are complete. Run Sync Scene Clips."
               : `Generating frame clips from ComfyUI (${completedPrompts}/${totalPrompts} complete).`,
           detail: runningRow?.promptId || "",
           completedPrompts,
@@ -871,10 +3587,10 @@ export default function StoryboardPanel() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeStage, selectedScene?.id, selectedSceneAnimateStatusKey, animateGenerationRunId]);
+  }, [activeStage, selectedScene?.id, selectedSceneAnimateStatusKey, animateGenerationRunId, animateComfyProgress.totalPrompts]);
 
   useEffect(() => {
-    if (activeStage !== "edit") return;
+    if (activeStage !== "edit" && activeStage !== "audio") return;
 
     let cancelled = false;
 
@@ -941,7 +3657,7 @@ export default function StoryboardPanel() {
       projectTitle: projectTitle.trim() || "Untitled Production",
       activeStage,
       selectedSceneId: selectedScene?.id || selectedSceneId || scenes[0]?.id || "",
-      productionAnimateMode,
+      productionAnimateMode: "default",
       exportPreset,
       snapshots: productionSnapshots.slice(0, 12),
       updatedAt: new Date().toISOString(),
@@ -951,20 +3667,150 @@ export default function StoryboardPanel() {
   );
 
   const manifestPreview = useMemo(() => JSON.stringify(manifest, null, 2), [manifest]);
+  const manifestComparableSignature = useMemo(() => productionComparableSnapshotFromManifest(manifest), [manifest]);
+  const hasUnsavedManualChanges = draftHydrated && manualSaveSignature !== manifestComparableSignature;
+  const manualSaveStatusLabel = manualSavedAt && !hasUnsavedManualChanges ? "Project currently saved" : "Project not saved";
 
   function formatSaveTime(value: string) {
     if (!value) return "";
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "";
-    return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+    return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+  }
+
+  function productionComparableSnapshotFromManifest(value: ProductionManifest) {
+    return JSON.stringify({ ...value, updatedAt: "" });
+  }
+
+  function productionComparableSnapshotFromRaw(snapshot: string) {
+    try {
+      const parsed = JSON.parse(snapshot) as ProductionManifest;
+      return productionComparableSnapshotFromManifest(parsed);
+    } catch {
+      return snapshot;
+    }
+  }
+
+  function productionSnapshotForStorage(stageOverride: ProductionStage = activeStage) {
+    const savedAt = new Date().toISOString();
+    const snapshotManifest: ProductionManifest = {
+      ...manifest,
+      activeStage: stageOverride,
+      selectedSceneId: selectedScene?.id || selectedSceneId || scenes[0]?.id || "",
+      updatedAt: savedAt,
+      scenes,
+    };
+
+    return {
+      savedAt,
+      snapshot: JSON.stringify(snapshotManifest, null, 2),
+    };
+  }
+
+  function autosaveProductionScenePatchV36BPU43(sceneId: string, patch: Partial<ProductionScene>, stageOverride: ProductionStage = activeStage) {
+    if (typeof window === "undefined") return;
+
+    try {
+      const savedAt = new Date().toISOString();
+      const nextScenes = scenes.map((scene) => (scene.id === sceneId ? { ...scene, ...patch } : scene));
+      const snapshotManifest: ProductionManifest = {
+        ...manifest,
+        activeStage: stageOverride,
+        selectedSceneId: selectedScene?.id || selectedSceneId || nextScenes[0]?.id || "",
+        updatedAt: savedAt,
+        scenes: nextScenes,
+      };
+      const snapshot = JSON.stringify(snapshotManifest, null, 2);
+      window.localStorage.setItem(PRODUCTION_AUTOSAVE_KEY, snapshot);
+      window.localStorage.setItem(DRAFT_STORAGE_KEY, snapshot);
+      setLastSavedAt(savedAt);
+      setSaveState((current) => (current === "saved" ? "saved" : "autosaved"));
+      const imageSlots = nextScenes.reduce((sum, scene) => sum + Number(scene?.imageCount || 0), 0);
+      setSaveDetails(
+        `Autosave: ${nextScenes.length} scene${nextScenes.length === 1 ? "" : "s"}, ${imageSlots} image slot${imageSlots === 1 ? "" : "s"}, page ${stages.findIndex((stage) => stage.id === stageOverride) + 1} of ${stages.length}.`
+      );
+    } catch {
+      setSaveState("error");
+      setSaveDetails("Autosave failed while preserving generated clip state.");
+    }
+  }
+
+  function productionStoredSaveMeta(key: string) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as Partial<ProductionManifest>;
+      if (!parsed || !Array.isArray(parsed.scenes) || parsed.scenes.length === 0) return null;
+      return {
+        raw,
+        projectTitle: String(parsed.projectTitle || "Untitled Production"),
+        savedAt: String(parsed.updatedAt || ""),
+        activeStage: parsed.activeStage && stages.some((stage) => stage.id === parsed.activeStage) ? parsed.activeStage : "storyboard",
+      };
+    } catch {
+      return null;
+    }
   }
 
   function persistProductionDraftSnapshot(snapshot: string, savedAt: string, mode: "manual" | "auto") {
-    window.localStorage.setItem(DRAFT_STORAGE_KEY, snapshot);
-    setLastSavedAt(savedAt);
-    setSaveState((current) => (mode === "manual" || current !== "saved" ? (mode === "manual" ? "saved" : "autosaved") : current));
+    const storageKey = mode === "manual" ? PRODUCTION_MANUAL_SAVE_KEY : PRODUCTION_AUTOSAVE_KEY;
+    window.localStorage.setItem(storageKey, snapshot);
+
+    // Keep the legacy draft key as an autosave compatibility mirror only.
+    if (mode === "auto") {
+      window.localStorage.setItem(DRAFT_STORAGE_KEY, snapshot);
+      setLastSavedAt(savedAt);
+      setSaveState((current) => (current === "saved" ? "saved" : "autosaved"));
+    } else {
+      setManualSavedAt(savedAt);
+      setManualSaveSignature(productionComparableSnapshotFromRaw(snapshot));
+      setSaveState("saved");
+    }
+
     setSaveDetails(
-      `${mode === "manual" ? "Saved" : "Auto-saved"} ${scenes.length} scene${scenes.length === 1 ? "" : "s"}, ${totals.images} image slot${totals.images === 1 ? "" : "s"}, page ${stages.findIndex((stage) => stage.id === activeStage) + 1} of ${stages.length}.`
+      `Autosave: ${scenes.length} scene${scenes.length === 1 ? "" : "s"}, ${totals.images} image slot${totals.images === 1 ? "" : "s"}, page ${stages.findIndex((stage) => stage.id === activeStage) + 1} of ${stages.length}.`
+    );
+  }
+
+  function restoreProductionSnapshotFromStorage(snapshot: string, source: "manual" | "auto") {
+    const parsed = JSON.parse(snapshot) as Partial<ProductionManifest>;
+    if (!parsed || !Array.isArray(parsed.scenes) || parsed.scenes.length === 0) {
+      throw new Error("Saved production data is empty or invalid.");
+    }
+
+    setProjectTitle(String(parsed.projectTitle || "Untitled Production"));
+    setActiveStage(parsed.activeStage && stages.some((stage) => stage.id === parsed.activeStage) ? parsed.activeStage : "storyboard");
+    // Director Mode is temporarily disabled; always restore Animate to Default Mode for now.
+    setProductionAnimateMode("default");
+    if (parsed.exportPreset && ["draft", "standard", "high_quality", "mobile", "youtube", "play_store_preview"].includes(parsed.exportPreset)) {
+      setExportPreset(parsed.exportPreset);
+    }
+    if (Array.isArray(parsed.snapshots)) {
+      setProductionSnapshots(parsed.snapshots.slice(0, 12) as ProductionSnapshot[]);
+    }
+    setScenes(parsed.scenes as ProductionScene[]);
+    const restoredSceneId = parsed.selectedSceneId && parsed.scenes.some((scene) => scene.id === parsed.selectedSceneId)
+      ? parsed.selectedSceneId
+      : parsed.scenes[0]?.id || "";
+    setSelectedSceneId(restoredSceneId);
+    setMediaPreflight(null);
+    setAssembleResult(null);
+    setProductionHomeMode("pipeline");
+
+    const restoredAt = String(parsed.updatedAt || "");
+    if (source === "manual") {
+      setManualSavedAt(restoredAt);
+      setManualSaveSignature(productionComparableSnapshotFromRaw(snapshot));
+      setSaveState("saved");
+      setNotice(`Loaded manual save: ${String(parsed.projectTitle || "Untitled Production")}.`);
+    } else {
+      setLastSavedAt(restoredAt);
+      setSaveState("autosaved");
+      setNotice(`Continued from autosave: ${String(parsed.projectTitle || "Untitled Production")}.`);
+    }
+
+    setSaveDetails(
+      `Autosave: ${parsed.scenes.length} scene${parsed.scenes.length === 1 ? "" : "s"}, ${parsed.scenes.reduce((sum, scene) => sum + Number(scene?.imageCount || 0), 0)} image slots, page ${stages.findIndex((stage) => stage.id === (parsed.activeStage || "storyboard")) + 1} of ${stages.length}.`
     );
   }
 
@@ -973,52 +3819,35 @@ export default function StoryboardPanel() {
       const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
       if (savedTheme === "light" || savedTheme === "dark") setTheme(savedTheme);
 
-      const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as Partial<ProductionManifest>;
-      if (!parsed || !Array.isArray(parsed.scenes) || parsed.scenes.length === 0) return;
-      setProjectTitle(String(parsed.projectTitle || "Untitled Production"));
-      setActiveStage(parsed.activeStage && stages.some((stage) => stage.id === parsed.activeStage) ? parsed.activeStage : "storyboard");
-      if (parsed.productionAnimateMode === "default" || parsed.productionAnimateMode === "director") {
-        setProductionAnimateMode(parsed.productionAnimateMode);
+      const manualMeta = productionStoredSaveMeta(PRODUCTION_MANUAL_SAVE_KEY);
+      const autoMeta = productionStoredSaveMeta(PRODUCTION_AUTOSAVE_KEY) || productionStoredSaveMeta(DRAFT_STORAGE_KEY);
+
+      if (manualMeta) {
+        setProjectTitle(manualMeta.projectTitle);
+        setManualSavedAt(manualMeta.savedAt);
+        setManualSaveSignature(productionComparableSnapshotFromRaw(manualMeta.raw));
+      } else if (autoMeta) {
+        setProjectTitle(autoMeta.projectTitle);
       }
-      if (parsed.exportPreset && ["draft", "standard", "high_quality", "mobile", "youtube", "play_store_preview"].includes(parsed.exportPreset)) {
-        setExportPreset(parsed.exportPreset);
+
+      if (autoMeta) {
+        setLastSavedAt(autoMeta.savedAt);
+        setSaveState("autosaved");
+        setSaveDetails(`Autosave available from ${formatSaveTime(autoMeta.savedAt) || "a previous session"}.`);
       }
-      if (Array.isArray(parsed.snapshots)) {
-        setProductionSnapshots(parsed.snapshots.slice(0, 12) as ProductionSnapshot[]);
-      }
-      setScenes(parsed.scenes as ProductionScene[]);
-      const restoredSceneId = parsed.selectedSceneId && parsed.scenes.some((scene) => scene.id === parsed.selectedSceneId)
-        ? parsed.selectedSceneId
-        : parsed.scenes[0]?.id || "";
-      setSelectedSceneId(restoredSceneId);
-      setLastSavedAt(String(parsed.updatedAt || ""));
-      setSaveState("autosaved");
-      setSaveDetails("Restored your saved Production workspace exactly where it was left.");
-      setNotice("Loaded saved Production workspace.");
     } catch {
       setSaveState("error");
-      setSaveDetails("Saved draft could not be loaded. Your current browser storage may be unavailable or corrupted.");
-      setNotice("Saved draft could not be loaded.");
+      setSaveDetails("Saved production metadata could not be loaded. Your current browser storage may be unavailable or corrupted.");
+      setNotice("Saved production metadata could not be loaded.");
     } finally {
       setDraftHydrated(true);
     }
   }, []);
 
   useEffect(() => {
-    if (!draftHydrated) return;
-    const timer = window.setTimeout(() => {
-      try {
-        persistProductionDraftSnapshot(manifestPreview, manifest.updatedAt, "auto");
-      } catch (error) {
-        setSaveState("error");
-        setSaveDetails(error instanceof Error ? error.message : "Autosave failed. Use Save Project and check browser storage.");
-      }
-    }, 550);
-
-    return () => window.clearTimeout(timer);
-  }, [draftHydrated, manifestPreview, manifest.updatedAt]);
+    // Autosave is intentionally triggered only by production step navigation.
+    // This keeps autosave separate from the manual Save Project state.
+  }, [draftHydrated]);
 
   function toggleTheme() {
     setTheme((current) => {
@@ -1032,34 +3861,542 @@ export default function StoryboardPanel() {
     });
   }
 
+  async function toggleScenePromptMic(lineIndex: number) {
+    if (recordingScenePromptIndex !== null) {
+      scenePromptRecorderRef.current?.stop();
+      return;
+    }
+
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setNotice("Microphone recording is not available in this browser.");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      scenePromptAudioChunksRef.current = [];
+      scenePromptRecorderRef.current = recorder;
+      setRecordingScenePromptIndex(lineIndex);
+      setNotice(`Recording scene prompt ${lineIndex + 1}. Click the mic again to stop, or wait 10 seconds.`);
+
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) scenePromptAudioChunksRef.current.push(event.data);
+      };
+
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        setRecordingScenePromptIndex(null);
+
+        const audioBlob = new Blob(scenePromptAudioChunksRef.current, { type: "audio/webm" });
+        scenePromptAudioChunksRef.current = [];
+
+        if (!audioBlob.size) {
+          setNotice("No microphone audio was captured.");
+          return;
+        }
+
+        const endpoints = ["/api/whisper/transcribe", "/api/transcribe", "/api/voice/transcribe"];
+
+        for (const endpoint of endpoints) {
+          try {
+            const body = new FormData();
+            body.set("audio", audioBlob, `scene-prompt-${lineIndex + 1}.webm`);
+
+            const response = await fetch(endpoint, {
+              method: "POST",
+              body,
+              credentials: "include",
+            });
+
+            if (!response.ok) continue;
+
+            const data = await response.json().catch(() => null);
+            const transcript = String(data?.text || data?.transcript || data?.result || data?.segments?.map?.((segment: any) => segment?.text || "").join(" ") || "").trim();
+
+            if (transcript) {
+              const currentLines = scenePromptLines(selectedScene);
+              const currentLine = String(currentLines[lineIndex] || "").trim();
+              updateSelectedScenePromptLine(lineIndex, [currentLine, transcript].filter(Boolean).join(" "));
+              setNotice(`Transcribed microphone audio into scene prompt ${lineIndex + 1}.`);
+              return;
+            }
+          } catch {
+            // Try the next known transcription route.
+          }
+        }
+
+        setNotice("Microphone audio was recorded, but no Whisper transcription route responded. Connect this button to the app's Whisper endpoint.");
+      };
+
+      recorder.start();
+      window.setTimeout(() => {
+        if (scenePromptRecorderRef.current?.state === "recording") {
+          scenePromptRecorderRef.current.stop();
+        }
+      }, 10000);
+    } catch (error) {
+      setRecordingScenePromptIndex(null);
+      setNotice(error instanceof Error ? error.message : "Could not start microphone recording.");
+    }
+  }
+
   function updateSelectedScene(patch: Partial<ProductionScene>) {
     if (!selectedScene) return;
     setScenes((prev) => prev.map((scene) => (scene.id === selectedScene.id ? { ...scene, ...patch } : scene)));
   }
 
-  // PRODUCTION_STORYBOARD_MAIN_LAYOUT_TWEAKS_V2_PATCH
-  // PRODUCTION_STORYBOARD_MAIN_LAYOUT_TWEAKS_V7_PATCH
-  function visibleCharacterReferenceSlotCount(scene: ProductionScene | null | undefined) {
-    const usedCount = (scene?.characterRefs || []).filter((ref) => {
-      const maybeRef = ref as CharacterReference & { imagePath?: string };
-      return Boolean(ref?.previewUrl || ref?.fileName || maybeRef?.imagePath);
-    }).length;
+  function qwenSceneStringV36BPU3(...values: unknown[]) {
+    for (const value of values) {
+      const text = String(value || "").trim();
+      if (text) return text;
+    }
+    return "";
+  }
 
-    return Math.max(
-      1,
-      Math.min(
-        CHARACTER_REFERENCE_SLOTS,
-        Math.max(usedCount, scene?.characterRefSlotCount || 1)
-      )
+  function qwenSceneComfyViewProxyUrlV36BPU4(rawUrl: string) {
+    const clean = String(rawUrl || "").trim();
+    if (!clean) return "";
+
+    try {
+      const parsed = new URL(clean, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+      const filename = parsed.searchParams.get("filename") || parsed.searchParams.get("name") || "";
+      if (!filename) return "";
+
+      const type = parsed.searchParams.get("type") || "output";
+      const subfolder = parsed.searchParams.get("subfolder") || "";
+
+      const params = new URLSearchParams();
+      params.set("filename", filename);
+      params.set("type", type);
+      if (subfolder) params.set("subfolder", subfolder);
+
+      return `/api/comfy/view?${params.toString()}`;
+    } catch {
+      return "";
+    }
+  }
+
+  function qwenScenePreviewUrlV36BPU3(value: unknown) {
+    const clean = String(value || "").trim();
+    if (!clean) return "";
+
+    const proxiedComfyView = clean.includes("/view?") ? qwenSceneComfyViewProxyUrlV36BPU4(clean) : "";
+    if (proxiedComfyView) return proxiedComfyView;
+
+    if (/^https?:\/\//i.test(clean)) return clean;
+    if (clean.startsWith("/view?")) {
+      const proxiedRelativeView = qwenSceneComfyViewProxyUrlV36BPU4(clean);
+      if (proxiedRelativeView) return proxiedRelativeView;
+    }
+    if (clean.startsWith("/api/comfy/view?") || clean.startsWith("/api/file?")) return clean;
+    if (clean.startsWith("/")) return clean;
+
+    if (/^[a-zA-Z]:[\\/]/.test(clean) || clean.startsWith("\\\\")) {
+      return `/api/file?path=${encodeURIComponent(clean)}`;
+    }
+
+    if (/\.(png|jpe?g|webp|gif|bmp)$/i.test(clean) && !/[\\/]/.test(clean)) {
+      const params = new URLSearchParams();
+      params.set("filename", clean);
+      params.set("type", "output");
+      return `/api/comfy/view?${params.toString()}`;
+    }
+
+    return clean;
+  }
+
+  function qwenSceneFileNameV36BPU3(value: unknown, fallback: string) {
+    const clean = String(value || "").trim();
+    if (!clean) return fallback;
+    const withoutQuery = clean.split("?")[0] || clean;
+    const normalized = withoutQuery.replace(/\\/g, "/");
+    const last = normalized.split("/").filter(Boolean).pop() || fallback;
+    return last.replace(/[^a-zA-Z0-9._-]+/g, "_") || fallback;
+  }
+
+  function loadCompletedQwenScenesForAnimateV36BPU3(): QwenCompletedSceneForAnimateV36BPU3[] {
+    if (typeof window === "undefined") return [];
+
+    try {
+      const raw = window.localStorage.getItem(QWEN_SCENE_BUILDER_STORAGE_KEY_V36BPU3);
+      if (!raw) return [];
+
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return [];
+
+      return parsed
+        .map((item: any, index: number) => {
+          if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+
+          const passes = Array.isArray(item.passes) ? item.passes : [];
+          const lastCompletedPass = [...passes]
+            .reverse()
+            .find((pass: any) => pass?.resultImageUrl || pass?.resultWorkflowImage || pass?.status === "complete");
+
+          const imageSource = qwenSceneStringV36BPU3(
+            item.completedImageUrl,
+            lastCompletedPass?.resultImageUrl,
+            item.completedWorkflowImage,
+            lastCompletedPass?.resultWorkflowImage,
+            item.inputSceneImage
+          );
+          if (!imageSource) return null;
+
+          const workflowImage = qwenSceneStringV36BPU3(
+            item.completedWorkflowImage,
+            lastCompletedPass?.resultWorkflowImage,
+            item.completedImageUrl,
+            lastCompletedPass?.resultImageUrl,
+            item.inputSceneImage
+          );
+
+          return {
+            id: qwenSceneStringV36BPU3(item.id, `qwen-scene-${index + 1}`),
+            name: qwenSceneStringV36BPU3(item.name, `Scene ${index + 1}`),
+            sourceIndex: index,
+            url: repoCachedComfyImageUrlV36BPU29(qwenScenePreviewUrlV36BPU3(imageSource)),
+            workflowImage,
+          } satisfies QwenCompletedSceneForAnimateV36BPU3;
+        })
+        .filter((item): item is QwenCompletedSceneForAnimateV36BPU3 => Boolean(item?.url))
+        .slice(0, MAX_SCENE_IMAGE_COUNT);
+    } catch {
+      return [];
+    }
+  }
+
+  function qwenSceneHandoffSignatureV36BPU3(scenesForAnimate: QwenCompletedSceneForAnimateV36BPU3[]) {
+    return scenesForAnimate
+      .map((scene) => `${scene.id}:${scene.name}:${scene.url}:${scene.workflowImage}`)
+      .join("|") + "|scene-by-scene-v36bpu7";
+  }
+
+  function qwenSceneImagesForAnimateV36BPU3(scenesForAnimate: QwenCompletedSceneForAnimateV36BPU3[]): StoryboardImage[] {
+    return scenesForAnimate.map((scene, index) => ({
+      id: `qwen-animate-frame-${index + 1}`,
+      promptId: `qwen-scene-${index + 1}`,
+      prompt: scene.name,
+      status: "ready",
+      approved: true,
+      url: scene.url,
+      fileName: qwenSceneFileNameV36BPU3(scene.workflowImage || scene.url, `qwen_scene_${index + 1}.png`),
+      imageUrl: scene.url,
+      imagePath: scene.workflowImage || scene.url,
+      workflowImage: repoCachedComfyImageUrlV36BPU29(scene.workflowImage || scene.url),
+      source: QWEN_ANIMATE_HANDOFF_SOURCE_V36BPU3,
+      qwenSceneId: scene.id,
+      qwenSceneName: scene.name,
+      qwenSceneIndex: scene.sourceIndex,
+    } as unknown as StoryboardImage));
+  }
+
+  function qwenSceneAnimationDraftsForAnimateV36BPU3(
+    scenesForAnimate: QwenCompletedSceneForAnimateV36BPU3[],
+    existingDrafts: ProductionFrameAnimation[]
+  ): ProductionFrameAnimation[] {
+    return scenesForAnimate.map((scene, index) => {
+      const existing = existingDrafts[index] || {};
+
+      // V36BPU13: Qwen handoff refresh must not erase manual first-frame/last-frame pairing.
+      const existingTimelineRole = existing.timelineRole || "normal";
+      const existingIsConsumedLastFrame = existingTimelineRole === "last_frame_for" && existing.consumedByFrameIndex !== undefined;
+      const existingIsFirstLastFrame = existing.animationMode === "first_last_frame" && existing.lastFrameIndex !== undefined;
+      const existingIsReferenceVideo = existing.animationMode === "reference_to_video_gguf";
+
+      return {
+        ...existing,
+        prompt: preserveAnimateManualPromptSpacingV36BPU22(existing.prompt ?? ""),
+        durationSeconds: clampAnimateFrameDuration(existing.durationSeconds ?? defaultAnimateFrameDuration(selectedScene)),
+        characterRefIds: existing.characterRefIds || [],
+        loras: normalizeProductionLoras(existing.loras),
+        voiceActorInput: existing.voiceActorInput || { enabled: false, saved: false },
+        queueForGeneration: existingIsConsumedLastFrame ? existing.queueForGeneration === true : existing.queueForGeneration !== false,
+        animationMode: existingIsFirstLastFrame ? "first_last_frame" : existingIsReferenceVideo ? existing.animationMode : "image_to_video",
+        firstFrameIndex: existingIsFirstLastFrame ? existing.firstFrameIndex ?? index : undefined,
+        lastFrameIndex: existingIsFirstLastFrame ? existing.lastFrameIndex : undefined,
+        promptSourceFrameIndex: existing.promptSourceFrameIndex ?? (existingIsFirstLastFrame ? index : undefined),
+        timelineRole: existingTimelineRole,
+        consumedByFrameIndex: existingIsConsumedLastFrame ? existing.consumedByFrameIndex : undefined,
+        consumedLastFrameIndex: existingIsFirstLastFrame ? existing.consumedLastFrameIndex ?? existing.lastFrameIndex : undefined,
+        keepAsSeparateSceneAfterPairing: existing.keepAsSeparateSceneAfterPairing ?? false,
+      } as ProductionFrameAnimation;
+    });
+  }
+
+  function qwenSceneFrameClipsForAnimateV36BPU3(
+    scenesForAnimate: QwenCompletedSceneForAnimateV36BPU3[],
+    existingClips: ProductionFrameClip[]
+  ): ProductionFrameClip[] {
+    return scenesForAnimate.map((_scene, index) => ({
+      ...(existingClips[index] || {}),
+      status: existingClips[index]?.status || "idle",
+      sourceFrameIndex: index,
+    } as ProductionFrameClip));
+  }
+
+  function syncCompletedQwenScenesToAnimateV36BPU3(options?: { silent?: boolean }) {
+    if (!selectedScene) return 0;
+
+    const completedScenes = loadCompletedQwenScenesForAnimateV36BPU3();
+    if (!completedScenes.length) {
+      if (!options?.silent) {
+        setNotice("No completed Qwen storyboard scenes found. Complete at least one scene in Storyboard first.");
+      }
+      return 0;
+    }
+
+    const images = qwenSceneImagesForAnimateV36BPU3(completedScenes);
+    const existingDrafts = animateFrameDrafts(selectedScene);
+    const existingClips = animateFrameClips(selectedScene);
+    const animationFrames = qwenSceneAnimationDraftsForAnimateV36BPU3(completedScenes, existingDrafts);
+    const frameClips = qwenSceneFrameClipsForAnimateV36BPU3(completedScenes, existingClips);
+    const outputClipCount = completedScenes.length;
+    const signature = qwenSceneHandoffSignatureV36BPU3(completedScenes);
+
+    updateSceneById(selectedScene.id, {
+      imageCount: completedScenes.length,
+      images,
+      animationFrames,
+      frameClips,
+      prompt: completedScenes.map((scene, index) => `Scene ${index + 1}: ${scene.name}`).join("\n"),
+      motionNotes: [
+        `Qwen storyboard handoff: ${completedScenes.length} completed scene image(s).`,
+        `${outputClipCount} scene-by-scene image-to-video clip(s) queued by default.`,
+        "Pair adjacent scenes manually when a first-frame/last-frame transition is needed.",
+      ].filter(Boolean).join(" "),
+      qwenAnimateHandoffSourceV36BPU3: QWEN_ANIMATE_HANDOFF_SOURCE_V36BPU3,
+      qwenAnimateHandoffSignatureV36BPU3: signature,
+      qwenAnimateHandoffUpdatedAtV36BPU3: new Date().toISOString(),
+    } as any);
+
+    if (!options?.silent) {
+      setNotice(
+        `Synced ${completedScenes.length} completed storyboard scene image(s) into Animate as ${outputClipCount} scene clip(s). Pair adjacent scenes manually for first-frame/last-frame.`
+      );
+    }
+
+    return completedScenes.length;
+  }
+
+
+  function focusAnimateSceneEditorV36BPU6(index: number) {
+    if (typeof document === "undefined") return;
+
+    const safeIndexV36BPU10B = Math.max(0, Math.floor(Number(index) || 0));
+    setActiveAnimateSceneIndexV36BPU10B(safeIndexV36BPU10B);
+    index = safeIndexV36BPU10B;
+
+    const selector = `[data-otg-animate-scene-editor="${index}"]`;
+    const openEditor = () => {
+      const details = document.querySelector(selector) as HTMLDetailsElement | null;
+      if (!details) return false;
+      details.open = true;
+      details.scrollIntoView({ behavior: "smooth", block: "start" });
+      return true;
+    };
+
+    if (openEditor()) return;
+
+    const synced = syncCompletedQwenScenesToAnimateV36BPU3({ silent: false });
+    if (!synced) {
+      setNotice(`Scene ${index + 1} editor is not available yet. Sync storyboard scenes first.`);
+      return;
+    }
+
+    let attemptsV36BPU12 = 0;
+    const retryOpenV36BPU12 = () => {
+      attemptsV36BPU12 += 1;
+      if (openEditor()) return;
+      if (attemptsV36BPU12 >= 12) {
+        setNotice(`Scene ${index + 1} editor is still not available. Wait for the scene list to refresh, then click it again.`);
+        return;
+      }
+      window.setTimeout(retryOpenV36BPU12, 150);
+    };
+    window.setTimeout(retryOpenV36BPU12, 150);
+  }
+
+  function renderQwenAnimateHandoffSummaryV36BPU3(
+    completedScenes: QwenCompletedSceneForAnimateV36BPU3[],
+    pairCount: number,
+    outputClipCount: number
+  ) {
+    if (!completedScenes.length) {
+      return (
+        <div className="mt-4 rounded-[14px] border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-100">
+          No completed Qwen storyboard scenes are available for Animate yet. Complete scenes in Storyboard, then return here.
+        </div>
+      );
+    }
+
+    const drafts = selectedScene ? animateFrameDrafts(selectedScene) : [];
+
+    return (
+      <div className="mt-4 rounded-[14px] border border-violet-300/20 bg-violet-300/10 p-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-violet-100/80">Storyboard scene handoff</p>
+            <h3 className="mt-1 text-lg font-black text-white">
+              {completedScenes.length} storyboard scene(s) - {pairCount} manual first/last pair(s) - {outputClipCount || completedScenes.length} output clip(s)
+            </h3>
+            <p className="mt-1 text-xs leading-5 text-white/60">
+              Each storyboard image is its own scene clip by default. Click a scene card to open its editor below. Pair a scene with the adjacent next scene only when you want first-frame/last-frame output.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={!selectedScene || Boolean(busySceneId)}
+            onClick={() => syncCompletedQwenScenesToAnimateV36BPU3({ silent: false })}
+            className="rounded-[12px] border border-violet-200/40 bg-violet-300/15 px-4 py-3 text-sm font-black text-violet-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Sync Storyboard Scenes
+          </button>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+          {completedScenes.map((scene, index) => {
+            const draft = drafts[index] || {};
+            const isConsumedLastFrame = isAnimateLastFrameConsumed(draft);
+            const isFirstLastFrame = draft.animationMode === "first_last_frame" && draft.lastFrameIndex === index + 1;
+            const isReferenceVideo = draft.animationMode === "reference_to_video_gguf";
+            const badge = isReferenceVideo
+              ? "Reference-to-video GGUF scene"
+              : isFirstLastFrame
+                ? `Scene ${index + 1} -> Scene ${index + 2}`
+                : isConsumedLastFrame
+                  ? `Last frame for Scene ${Number(draft.consumedByFrameIndex) + 1}`
+                  : "Image-to-video scene";
+
+            return (
+              <button
+                key={`${scene.id}-${index}`}
+                type="button"
+                onClick={() => focusAnimateSceneEditorV36BPU6(index)}
+                className={isConsumedLastFrame ? "overflow-hidden rounded-[12px] border border-purple-300/30 bg-purple-950/30 text-left opacity-80" : "overflow-hidden rounded-[12px] border border-white/10 bg-black/25 text-left transition hover:border-cyan-300/50"}
+              >
+                <div className="relative aspect-video bg-black">
+                  <img src={scene.url} alt={scene.name} className="h-full w-full object-cover" />
+                  <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-1 text-[10px] font-black text-white">
+                    Scene {index + 1}
+                  </span>
+                  <span className={isFirstLastFrame ? "absolute bottom-2 left-2 rounded-full bg-violet-300/90 px-2 py-1 text-[10px] font-black text-slate-950" : isConsumedLastFrame ? "absolute bottom-2 left-2 rounded-full bg-purple-300/90 px-2 py-1 text-[10px] font-black text-slate-950" : "absolute bottom-2 left-2 rounded-full bg-emerald-300/90 px-2 py-1 text-[10px] font-black text-slate-950"}>
+                    {badge}
+                  </span>
+                </div>
+                <div className="p-2 text-xs text-white/70">
+                  <div className="truncate font-black text-white">{scene.name}</div>
+                  <div className="truncate text-white/40">{scene.workflowImage || scene.url}</div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
     );
   }
+
+  // PRODUCTION_STORYBOARD_MAIN_LAYOUT_TWEAKS_V2_PATCH
+  // PRODUCTION_STORYBOARD_MAIN_LAYOUT_TWEAKS_V7_PATCH
+  
+
+// OTG V36BO4B: count selected background as one of the three Qwen image references.
+function otgReferenceHasImageV36BO4B(value: any): boolean {
+  if (!value) return false;
+  if (typeof value === "string") return Boolean(value.trim());
+  if (Array.isArray(value)) return value.some((item) => otgReferenceHasImageV36BO4B(item));
+  if (typeof value !== "object") return false;
+
+  const imageKeys = [
+    "fileName",
+    "previewUrl",
+    "workflowImage",
+    "workflowImagePath",
+    "workflowImageUrl",
+    "sourceWorkflowImageV36AF",
+    "plateWorkflowImageV36AF",
+    "sourceDisplayImageV36AF",
+    "displayImage",
+    "imagePath",
+    "imageUrl",
+    "backgroundImage",
+    "backgroundImagePath",
+    "backgroundWorkflowImage",
+    "backgroundWorkflowImagePath",
+    "selectedBackgroundId",
+    "backgroundId",
+  ];
+
+  return imageKeys.some((key) => {
+    const raw = value?.[key];
+    return typeof raw === "string" ? Boolean(raw.trim()) : Boolean(raw);
+  });
+}
+
+function otgSceneHasBackgroundReferenceV36BO4B(scene: any): boolean {
+  if (!scene || typeof scene !== "object") return false;
+
+  const directKeys = [
+    "backgroundReference",
+    "backgroundRef",
+    "selectedBackground",
+    "background",
+    "backgroundImage",
+    "backgroundImagePath",
+    "backgroundWorkflowImage",
+    "backgroundWorkflowImagePath",
+    "backgroundPreviewUrl",
+    "backgroundName",
+    "storyboardBackgroundReference",
+    "storyboardBackgroundReferenceV36AK",
+  ];
+
+  if (directKeys.some((key) => otgReferenceHasImageV36BO4B(scene?.[key]))) return true;
+
+  const refs = Array.isArray(scene?.characterRefs) ? scene.characterRefs : [];
+  return refs.some((ref: any) => {
+    const label = `${ref?.label || ""} ${ref?.sourceCharacterName || ""}`.toLowerCase();
+    return label.includes("bg:") || label.includes("background");
+  });
+}
+
+function selectedSceneReferenceCountV36BO4B(scene: ProductionScene | null | undefined) {
+  const characterCount = createCharacterSlots(scene?.characterRefs)
+    .filter((ref) => {
+      const label = `${ref?.label || ""} ${ref?.sourceCharacterName || ""}`.toLowerCase();
+      const isBackgroundChip = label.includes("bg:") || label.includes("background");
+      if (isBackgroundChip) return false;
+      return Boolean(ref?.fileName || ref?.previewUrl || ref?.sourceCharacterId || ref?.referenceAudioPath);
+    })
+    .length;
+
+  const backgroundCount = otgSceneHasBackgroundReferenceV36BO4B(scene) ? 1 : 0;
+  return Math.min(CHARACTER_REFERENCE_SLOTS, characterCount + backgroundCount);
+}
+
+function visibleCharacterReferenceSlotCount(scene: ProductionScene | null | undefined) {
+  const usedCount = (scene?.characterRefs || []).filter((ref) => {
+    const maybeRef = ref as CharacterReference & { imagePath?: string; workflowImagePath?: string; workflowImageUrl?: string };
+    return Boolean(
+      ref?.previewUrl ||
+        ref?.fileName ||
+        ref?.sourceCharacterId ||
+        ref?.referenceAudioPath ||
+        maybeRef?.imagePath ||
+        maybeRef?.workflowImagePath ||
+        maybeRef?.workflowImageUrl
+    );
+  }).length;
+
+  const requestedCount = Math.max(1, Number(scene?.characterRefSlotCount || 1) || 1);
+  return Math.min(CHARACTER_REFERENCE_SLOTS, Math.max(1, requestedCount, usedCount));
+}
 
   function addCharacterReferenceSlot() {
     if (!selectedScene) return;
 
     const nextCount = Math.min(
       CHARACTER_REFERENCE_SLOTS,
-      visibleCharacterReferenceSlotCount(selectedScene) + 1
+      selectedSceneReferenceCountV36BO4D(selectedScene) + 1
     );
 
     updateSelectedScene({ characterRefSlotCount: nextCount });
@@ -1070,51 +4407,226 @@ export default function StoryboardPanel() {
     return Math.max(1, Math.min(MAX_SCENE_DURATION_SECONDS, Math.round(value)));
   }
 
-  function clampStoryboardImageCount(value: number) {
-    if (!Number.isFinite(value)) return DEFAULT_SCENE_IMAGE_COUNT;
-    return Math.max(1, Math.min(MAX_SCENE_IMAGE_COUNT, Math.round(value)));
-  }
+  
+function clampStoryboardImageCount(value: unknown) {
+  const numeric = Math.floor(Number(value));
+  if (!Number.isFinite(numeric)) return DEFAULT_SCENE_IMAGE_COUNT;
+  return Math.max(1, Math.min(MAX_SCENE_IMAGE_COUNT, numeric));
+}
 
   function normalizePromptLine(line: string) {
     // Preserve live textarea whitespace. Do not trim here or the spacebar appears broken.
     return String(line || "").replace(/^\s*next\s+scene\s*\d*\s*:\s*/i, "");
   }
 
-  function scenePromptLines(scene: ProductionScene | null | undefined, countOverride?: number) {
-    const count = clampStoryboardImageCount(countOverride ?? scene?.imageCount ?? DEFAULT_SCENE_IMAGE_COUNT);
-    const lines = Array.from({ length: count }, () => "");
-    const rawLines = String(scene?.prompt || "").split(/\r?\n/);
-    let activeIndex: number | null = null;
-    let sawIndexedLine = false;
+  
+// OTG V36BO4C: prompt parsing and reference counting for Qwen next-scene builder.
+function otgCleanScenePromptTextV36BO4C(value: unknown) {
+  return String(value ?? "")
+    .replace(/\r\n/g, "\n")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .replace(/^Next Scene(?:\s+\d+)?\s*[:;]\s*/i, "")
+    .trim();
+}
 
-    rawLines.forEach((rawLine, fallbackIndex) => {
-      const match = rawLine.match(/^\s*next\s+scene\s*(\d+)\s*:\s*(.*)$/i);
-      if (match) {
-        const nextIndex = Number(match[1]) - 1;
-        activeIndex = nextIndex >= 0 && nextIndex < count ? nextIndex : null;
-        sawIndexedLine = true;
-        if (activeIndex !== null) lines[activeIndex] = match[2] || "";
-        return;
-      }
+function otgReferenceHasImageV36BO4C(value: any): boolean {
+  if (!value) return false;
+  if (typeof value === "string") return Boolean(value.trim());
+  if (Array.isArray(value)) return value.some((item) => otgReferenceHasImageV36BO4C(item));
+  if (typeof value !== "object") return false;
 
-      if (sawIndexedLine) {
-        if (activeIndex !== null && rawLine.trim()) {
-          lines[activeIndex] = `${lines[activeIndex]} ${rawLine.trim()}`.replace(/\s+/g, " ").trim();
-        }
-        return;
-      }
+  const imageKeys = [
+    "fileName",
+    "previewUrl",
+    "workflowImage",
+    "workflowImagePath",
+    "workflowImageUrl",
+    "sourceWorkflowImageV36AF",
+    "plateWorkflowImageV36AF",
+    "sourceDisplayImageV36AF",
+    "displayImage",
+    "imagePath",
+    "imageUrl",
+    "backgroundImage",
+    "backgroundImagePath",
+    "backgroundWorkflowImage",
+    "backgroundWorkflowImagePath",
+    "selectedBackgroundId",
+    "backgroundId",
+  ];
 
-      if (fallbackIndex < count) lines[fallbackIndex] = normalizePromptLine(rawLine);
-    });
+  return imageKeys.some((key) => {
+    const raw = value?.[key];
+    return typeof raw === "string" ? Boolean(raw.trim()) : Boolean(raw);
+  });
+}
 
-    return lines;
+function otgSceneHasBackgroundReferenceV36BO4C(scene: any): boolean {
+  if (!scene || typeof scene !== "object") return false;
+
+  const directKeys = [
+    "backgroundReference",
+    "backgroundRef",
+    "selectedBackground",
+    "background",
+    "backgroundImage",
+    "backgroundImagePath",
+    "backgroundWorkflowImage",
+    "backgroundWorkflowImagePath",
+    "backgroundPreviewUrl",
+    "backgroundName",
+    "storyboardBackgroundReference",
+    "storyboardBackgroundReferenceV36AK",
+  ];
+
+  if (directKeys.some((key) => otgReferenceHasImageV36BO4C(scene?.[key]))) return true;
+
+  const refs = Array.isArray(scene?.characterRefs) ? scene.characterRefs : [];
+  return refs.some((ref: any) => {
+    const label = `${ref?.label || ""} ${ref?.sourceCharacterName || ""}`.toLowerCase();
+    return label.includes("bg:") || label.includes("background");
+  });
+}
+
+function selectedSceneReferenceCountV36BO4C(scene: ProductionScene | null | undefined) {
+  const characterCount = createCharacterSlots(scene?.characterRefs)
+    .filter((ref) => {
+      const label = `${ref?.label || ""} ${ref?.sourceCharacterName || ""}`.toLowerCase();
+      const isBackgroundChip = label.includes("bg:") || label.includes("background");
+      if (isBackgroundChip) return false;
+      return Boolean(ref?.fileName || ref?.previewUrl || ref?.sourceCharacterId || ref?.referenceAudioPath);
+    })
+    .length;
+
+  const backgroundCount = otgSceneHasBackgroundReferenceV36BO4C(scene) ? 1 : 0;
+  return Math.min(CHARACTER_REFERENCE_SLOTS, characterCount + backgroundCount);
+}
+
+
+
+// OTG V36BO4D: repair prompt parsing and reference counting for Qwen next-scene builder.
+function otgCleanScenePromptTextV36BO4D(value: unknown) {
+  return String(value ?? "")
+    .replace(/\r\n/g, "\n")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .replace(/^Next Scene(?:\s+\d+)?\s*[:;]\s*/i, "")
+    .trim();
+}
+
+function selectedSceneReferenceCountV36BO4D(scene: ProductionScene | null | undefined) {
+  const refs = createCharacterSlots(scene?.characterRefs);
+  let backgroundCount = 0;
+  let nonBackgroundCount = 0;
+
+  for (const ref of refs) {
+    const label = `${ref?.label || ""} ${ref?.sourceCharacterName || ""}`.toLowerCase();
+    const hasImage = Boolean(ref?.fileName || ref?.previewUrl || ref?.sourceCharacterId || ref?.referenceAudioPath);
+    if (!hasImage) continue;
+
+    if (label.includes("bg:") || label.includes("background")) backgroundCount = 1;
+    else nonBackgroundCount += 1;
   }
 
-  function buildCompiledScenePrompt(lines: string[]) {
-    return lines
-      .map((line, index) => `Next Scene ${index + 1}: ${normalizePromptLine(line)}`)
+  const directBackground = Boolean(
+    (scene as any)?.backgroundReference ||
+      (scene as any)?.backgroundRef ||
+      (scene as any)?.selectedBackground ||
+      (scene as any)?.background ||
+      (scene as any)?.backgroundImage ||
+      (scene as any)?.backgroundImagePath ||
+      (scene as any)?.backgroundWorkflowImage ||
+      (scene as any)?.backgroundWorkflowImagePath ||
+      (scene as any)?.storyboardBackgroundReference ||
+      (scene as any)?.storyboardBackgroundReferenceV36AK
+  );
+
+  if (directBackground) backgroundCount = 1;
+  return Math.min(CHARACTER_REFERENCE_SLOTS, nonBackgroundCount + backgroundCount);
+}
+
+
+
+function scenePromptLines(scene: ProductionScene | null | undefined, countOverride?: number) {
+  const count = clampStoryboardImageCount(countOverride ?? scene?.imageCount ?? DEFAULT_SCENE_IMAGE_COUNT);
+  const lines = Array.from({ length: count }, () => "");
+  const raw = String(scene?.prompt || "").replace(/\r\n/g, "\n").trim();
+
+  if (!raw) return lines;
+
+  const rawLines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  let wroteExplicitLine = false;
+
+  for (const line of rawLines) {
+    const numbered = line.match(/^Next Scene\s+(\d+)\s*[:;]\s*(.*)$/i);
+    if (numbered) {
+      const index = Math.max(0, Math.min(count - 1, Number(numbered[1]) - 1));
+      lines[index] = otgCleanScenePromptTextV36BO4D(numbered[2]);
+      wroteExplicitLine = true;
+      continue;
+    }
+
+    const unnumbered = line.match(/^Next Scene\s*[:;]\s*(.*)$/i);
+    if (unnumbered) {
+      const cleaned = otgCleanScenePromptTextV36BO4D(unnumbered[1]);
+      lines[0] = [lines[0], cleaned].filter(Boolean).join(" ").trim();
+      wroteExplicitLine = true;
+      continue;
+    }
+
+    if (count === 1 || !wroteExplicitLine) {
+      lines[0] = [lines[0], otgCleanScenePromptTextV36BO4D(line)].filter(Boolean).join(" ").trim();
+    }
+  }
+
+  return lines.map((line) => normalizePromptLine(line));
+}
+
+
+  // OTG_STORYBOARD_RAW_PROMPT_EDIT_V36AM
+  function storyboardEditablePromptLineV36AM(value: unknown): string {
+    return String(value ?? "")
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .map((part) => part.replace(/^\s*Next\s+Scene(?:\s+\d+)?\s*:\s*/i, ""))
       .join("\n");
   }
+
+  // OTG_STORYBOARD_SPACE_TYPING_FIX_V36AN
+  function storyboardRawPromptStorageV36AN(lines: string[]): string {
+    return lines
+      .map((line) => String(line ?? "").replace(/\r\n/g, "\n"))
+      .join("\n");
+  }
+
+  function storyboardCompiledPromptForDisplayV36AM(scene: ProductionScene): string {
+    return buildCompiledScenePrompt(scenePromptLines(scene));
+  }
+  
+
+
+
+function buildCompiledScenePrompt(lines: string[]) {
+  const cleaned = lines
+    .map((line) => otgCleanScenePromptTextV36BO4D(line))
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return `Next Scene: ${cleaned || "continue the scene"}`;
+}
 
   function makeFreshProductionScene(index: number): ProductionScene {
     const base = initialScenes[index] || initialScenes[0] || selectedScene || scenes[0];
@@ -1126,25 +4638,26 @@ export default function StoryboardPanel() {
       durationSeconds: DEFAULT_SCENE_DURATION_SECONDS,
       imageCount: DEFAULT_SCENE_IMAGE_COUNT,
       aspectRatio: "16:9",
-      prompt: Array.from({ length: DEFAULT_SCENE_IMAGE_COUNT }, (_, index) => `Next Scene ${index + 1}: `).join("\n"),
+      prompt: "",
       motionNotes: "",
       status: "pending_images" as SceneStatus,
       images: [],
-      characterRefs: createCharacterSlots(),
+      characterRefs: createCharacterSlots([]),
     characterRefSlotCount: 1,
 };
   }
 
   function handleNewProduction() {
-    const currentTitle = projectTitle.trim();
-    const nextTitle = window.prompt(
-      "New production name",
-      currentTitle && currentTitle !== "Untitled Production" ? currentTitle : ""
-    );
+    const nextTitle = window.prompt("Please enter project name", "");
 
     if (nextTitle === null) return;
 
-    const cleanTitle = nextTitle.trim() || "Untitled Production";
+    const cleanTitle = nextTitle.trim();
+    if (!cleanTitle) {
+      setNotice("Project name is required before starting a new production.");
+      return;
+    }
+
     const firstScene = makeFreshProductionScene(0);
 
     setProjectTitle(cleanTitle);
@@ -1152,6 +4665,18 @@ export default function StoryboardPanel() {
     setScenes([firstScene]);
     setSelectedSceneId(firstScene.id);
     setCharacterFiles({});
+    setLockedSceneNameIds({});
+    setLockedCharacterNameKeys({});
+    setExportPreset("standard");
+    setProductionSnapshots([]);
+    setMediaPreflight(null);
+    setAssembleResult(null);
+    setManualSavedAt("");
+    setManualSaveSignature("");
+    setLastSavedAt("");
+    setSaveState("idle");
+    setSaveDetails("Autosave will start when you move to the next or previous production step.");
+    setProductionHomeMode("pipeline");
     setNotice(`New production created: ${cleanTitle}.`);
   }
 
@@ -1179,7 +4704,7 @@ export default function StoryboardPanel() {
 
     updateSelectedScene({
       imageCount: nextCount,
-      prompt: buildCompiledScenePrompt(currentLines),
+      prompt: storyboardRawPromptStorageV36AN(currentLines),
     });
   }
 
@@ -1187,10 +4712,10 @@ export default function StoryboardPanel() {
     if (!selectedScene) return;
 
     const lines = scenePromptLines(selectedScene);
-    lines[lineIndex] = normalizePromptLine(value);
+    lines[lineIndex] = storyboardEditablePromptLineV36AM(value);
 
     updateSelectedScene({
-      prompt: buildCompiledScenePrompt(lines),
+      prompt: storyboardRawPromptStorageV36AN(lines),
     });
   }
 
@@ -1215,6 +4740,7 @@ export default function StoryboardPanel() {
       updateCharacterReference(sceneId, slotIndex, {
         fileName: undefined,
         previewUrl: undefined,
+        workflowImagePath: undefined,
         sourceCharacterId: undefined,
         sourceCharacterName: undefined,
         referenceAudioPath: undefined,
@@ -1286,10 +4812,10 @@ export default function StoryboardPanel() {
     if (!scene) return;
     const hasCharacters = createCharacterSlots(scene.characterRefs).some((ref) => ref.fileName || ref.previewUrl || ref.sourceCharacterId || ref.referenceAudioPath);
     if (!hasCharacters) {
-      setNotice("There are no character references to clear.");
+      setNotice("There are no character & background references to clear.");
       return;
     }
-    if (!window.confirm("Clear all character references for this scene?")) return;
+    if (!window.confirm("Clear all character & background references for this scene?")) return;
 
     setCharacterFiles((prev) => {
       const next = { ...prev };
@@ -1301,17 +4827,45 @@ export default function StoryboardPanel() {
         item.id === sceneId
           ? {
               ...item,
-              characterRefs: createCharacterSlots(),
+              characterRefs: createCharacterSlots([]),
               characterRefSlotCount: 1,
             }
           : item
       )
     );
-    setNotice("Cleared all character references for this scene.");
+    setNotice("Cleared all character & background references for this scene.");
   }
 
   function characterReferenceSlotLabel(slotIndex: number) {
     return `Character ${slotIndex + 1}`;
+  }
+
+  function characterReferenceLockKey(sceneId: string, slotIndex: number, ref?: CharacterReference) {
+    return `${sceneId}:${slotIndex}:${ref?.id || `character_${slotIndex + 1}`}`;
+  }
+
+  function saveSceneName(scene: ProductionScene) {
+    const cleanTitle = String(scene.title || "").trim() || scene.title || "Scene";
+    updateSceneById(scene.id, { title: cleanTitle });
+    setLockedSceneNameIds((previous) => ({ ...previous, [scene.id]: true }));
+    setNotice(`Saved scene name: ${cleanTitle}.`);
+  }
+
+  function changeSceneName(sceneId: string) {
+    setLockedSceneNameIds((previous) => ({ ...previous, [sceneId]: false }));
+    setNotice("Scene name unlocked. Edit it, then click Save Name again.");
+  }
+
+  function saveCharacterReferenceName(sceneId: string, slotIndex: number, ref: CharacterReference) {
+    const cleanLabel = String(ref.label || ref.sourceCharacterName || characterReferenceSlotLabel(slotIndex)).trim() || characterReferenceSlotLabel(slotIndex);
+    updateCharacterReference(sceneId, slotIndex, { label: cleanLabel });
+    setLockedCharacterNameKeys((previous) => ({ ...previous, [characterReferenceLockKey(sceneId, slotIndex, ref)]: true }));
+    setNotice(`Saved character reference name: ${cleanLabel}.`);
+  }
+
+  function changeCharacterReferenceName(sceneId: string, slotIndex: number, ref: CharacterReference) {
+    setLockedCharacterNameKeys((previous) => ({ ...previous, [characterReferenceLockKey(sceneId, slotIndex, ref)]: false }));
+    setNotice("Character name unlocked. Edit it, then click Save again.");
   }
 
   function characterLibraryImageUrl(imagePath: string) {
@@ -1335,6 +4889,115 @@ export default function StoryboardPanel() {
         .slice(0, 80) || "character";
 
     return `${base}.${ext}`;
+  }
+
+  function characterLibraryDescriptionV36BPU26B(entry: any) {
+    const metadata = entry?.metadata && typeof entry.metadata === "object" ? entry.metadata : {};
+    const identity = (metadata as any).characterIdentity && typeof (metadata as any).characterIdentity === "object" ? (metadata as any).characterIdentity : {};
+
+    return String(
+      entry?.globalPromptIdentityBlock ||
+        entry?.description ||
+        entry?.completeDescription ||
+        entry?.lockedCompleteDescription ||
+        entry?.characterDescription ||
+        entry?.promptBlock ||
+        entry?.identityBlock ||
+        (metadata as any).promptReadyDescription ||
+        (metadata as any).completeDescription ||
+        (metadata as any).lockedCompleteDescription ||
+        (metadata as any).identityBlock ||
+        (identity as any).promptReadyDescription ||
+        (identity as any).description ||
+        entry?.name ||
+        "",
+    ).trim();
+  }
+
+  function normalizeCharacterLibraryItemsForAnimateV36BPU26B(data: any): CharacterLibraryPickerItem[] {
+    const raw: any[] = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.characters)
+        ? data.characters
+        : Array.isArray(data?.items)
+          ? data.items
+          : Array.isArray(data?.data)
+            ? data.data
+            : [];
+
+    const seen = new Set<string>();
+
+    return raw
+      .map((entry: any, index: number) => {
+        const imagePath = String(
+          entry?.defaultCharacterPreviewImagePath ||
+            entry?.defaultCharacterImagePath ||
+            entry?.backgroundRemovedDefaultImagePath ||
+            entry?.previewImagePath ||
+            entry?.imagePath ||
+            entry?.transparentImagePath ||
+            "",
+        ).trim();
+        const workflowImagePath = String(
+          entry?.characterCardWorkflowImagePath ||
+            entry?.characterCardPath ||
+            entry?.workflowImagePath ||
+            entry?.workflowImage ||
+            entry?.defaultCharacterImagePath ||
+            entry?.imagePath ||
+            "",
+        ).trim();
+        const name = String(entry?.name || entry?.title || entry?.label || `Character ${index + 1}`).trim();
+        const id = String(entry?.id || imagePath || workflowImagePath || name || index).trim();
+        const imageUrl = imagePath ? characterLibraryImageUrl(imagePath) : "";
+        const workflowImageUrl = workflowImagePath ? characterLibraryImageUrl(workflowImagePath) : imageUrl;
+        const key = id.toLowerCase();
+
+        if (!id || seen.has(key) || (!imageUrl && !workflowImageUrl)) return null;
+        seen.add(key);
+
+        return {
+          id,
+          name,
+          imagePath,
+          imageUrl,
+          workflowImagePath,
+          workflowImageUrl,
+          referenceAudioPath: entry?.referenceAudioPath ? String(entry.referenceAudioPath) : undefined,
+          description: characterLibraryDescriptionV36BPU26B(entry),
+        } as CharacterLibraryPickerItem;
+      })
+      .filter((item): item is CharacterLibraryPickerItem => Boolean(item))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+  }
+
+  async function loadAnimateSavedCharacterPresetsV36BPU26B() {
+    if (animateCharacterPresetLoadingV36BPU26B) return;
+
+    setAnimateCharacterPresetLoadingV36BPU26B(true);
+    setAnimateCharacterPresetErrorV36BPU26B("");
+
+    try {
+      const response = await fetch("/api/characters", {
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : `Could not load characters (${response.status}).`);
+      }
+
+      const items = normalizeCharacterLibraryItemsForAnimateV36BPU26B(data);
+      setAnimateSavedCharacterPresetsV36BPU26B(items);
+      if (!items.length) setAnimateCharacterPresetErrorV36BPU26B("No saved character presets with usable images were found.");
+    } catch (error) {
+      setAnimateSavedCharacterPresetsV36BPU26B([]);
+      setAnimateCharacterPresetErrorV36BPU26B(error instanceof Error ? error.message : "Could not load saved character presets.");
+    } finally {
+      setAnimateCharacterPresetLoadingV36BPU26B(false);
+    }
   }
 
   async function loadCharacterPickerItems() {
@@ -1367,7 +5030,8 @@ export default function StoryboardPanel() {
 
       const items: CharacterLibraryPickerItem[] = raw
         .map((entry: any, index: number) => {
-          const imagePath = String(entry?.imagePath || "").trim();
+          const imagePath = String(entry?.productionReferenceImagePath || entry?.backgroundRemovedImagePath || entry?.previewImagePath || entry?.fullBodyImagePath || entry?.imagePath || "").trim();
+          const workflowImagePath = String(entry?.characterCardPath || entry?.cardImagePath || imagePath).trim();
           const name = String(entry?.name || entry?.title || entry?.label || `Character ${index + 1}`).trim();
 
           return {
@@ -1375,13 +5039,15 @@ export default function StoryboardPanel() {
             name,
             imagePath,
             imageUrl: imagePath ? characterLibraryImageUrl(imagePath) : "",
+            workflowImagePath,
+            workflowImageUrl: workflowImagePath ? characterLibraryImageUrl(workflowImagePath) : "",
             referenceAudioPath: entry?.referenceAudioPath ? String(entry.referenceAudioPath) : undefined,
           };
         })
         .filter((item) => {
-          if (!item.imagePath || !item.imageUrl) return false;
-          if (seen.has(item.imagePath)) return false;
-          seen.add(item.imagePath);
+          if (!item.imagePath || !item.imageUrl || !item.workflowImagePath || !item.workflowImageUrl) return false;
+          if (seen.has(item.workflowImagePath)) return false;
+          seen.add(item.workflowImagePath);
           return true;
         });
 
@@ -1414,13 +5080,13 @@ export default function StoryboardPanel() {
   }
 
   async function applyCharacterPickerItem(item: CharacterLibraryPickerItem) {
-    if (!characterPickerSceneId || characterPickerSlotIndex === null || !item.imageUrl) return;
+    if (!characterPickerSceneId || characterPickerSlotIndex === null || !item.workflowImageUrl) return;
 
     setCharacterPickerSelectingId(item.id);
     setCharacterPickerError("");
 
     try {
-      const res = await fetch(item.imageUrl, {
+      const res = await fetch(item.workflowImageUrl, {
 
         cache: "no-store",
         credentials: "include",
@@ -1441,6 +5107,9 @@ export default function StoryboardPanel() {
 
       setCharacterReferenceFile(characterPickerSceneId, characterPickerSlotIndex, file);
       updateCharacterReference(characterPickerSceneId, characterPickerSlotIndex, {
+        fileName: file.name,
+        previewUrl: item.imageUrl,
+        workflowImagePath: item.workflowImagePath,
         sourceCharacterId: item.id,
         sourceCharacterName: item.name,
         referenceAudioPath: item.referenceAudioPath,
@@ -1500,7 +5169,7 @@ export default function StoryboardPanel() {
       })
     );
     if (expandedStoryboardImageIndex === imageIndex) setExpandedStoryboardImageIndex(null);
-    setNotice(`Cleared storyboard image ${imageIndex + 1}.`);
+    setNotice(`Cleared scene image ${imageIndex + 1}.`);
   }
 
   function clearAllStoryboardImages(sceneId: string) {
@@ -1508,10 +5177,10 @@ export default function StoryboardPanel() {
     if (!scene) return;
     const hasImages = scene.images.some((image) => storyboardImageHasContent(image) || image?.status === "queued" || image?.status === "error");
     if (!hasImages) {
-      setNotice("There are no storyboard images to clear.");
+      setNotice("There are no scene pass preview to clear.");
       return;
     }
-    if (!window.confirm("Clear all storyboard images for this scene? Prompt text will stay in place.")) return;
+    if (!window.confirm("Clear all scene pass preview for this scene? Prompt text will stay in place.")) return;
 
     setScenes((prev) =>
       prev.map((item) =>
@@ -1528,7 +5197,7 @@ export default function StoryboardPanel() {
       )
     );
     setExpandedStoryboardImageIndex(null);
-    setNotice("Cleared all storyboard images for this scene. Prompt text was kept.");
+    setNotice("Cleared all scene pass preview for this scene. Prompt text was kept.");
   }
 
   // OTG_PRODUCTION_STORYBOARD_SLOT_UPLOAD_V1
@@ -1667,7 +5336,7 @@ export default function StoryboardPanel() {
         className="fixed inset-0 z-[90] grid place-items-center bg-black/80 p-4 backdrop-blur-sm"
         role="dialog"
         aria-modal="true"
-        aria-label="Expanded storyboard image preview"
+        aria-label="Expanded scene image preview"
         onClick={() => setExpandedStoryboardImageIndex(null)}
       >
         <div
@@ -1722,7 +5391,7 @@ export default function StoryboardPanel() {
 
           <div className="grid max-h-[72vh] place-items-center bg-black">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={row.url} alt={`${scene.title} storyboard image ${row.index + 1}`} className="max-h-[72vh] w-full object-contain" />
+            <img src={row.url} alt={`${scene.title} scene image ${row.index + 1}`} className="max-h-[72vh] w-full object-contain" />
           </div>
 
           <div className="grid gap-3 border-t border-white/10 bg-white/[0.03] p-4 text-xs text-white/60 md:grid-cols-4">
@@ -1789,12 +5458,79 @@ export default function StoryboardPanel() {
 
   function saveDraft() {
     try {
-      persistProductionDraftSnapshot(manifestPreview, manifest.updatedAt, "manual");
-      setNotice("Project saved. You can refresh or leave this page and return to the same scene and step.");
+      const { snapshot, savedAt } = productionSnapshotForStorage(activeStage);
+      persistProductionDraftSnapshot(snapshot, savedAt, "manual");
+      setNotice("Save complete. Project currently saved.");
     } catch (error) {
       setSaveState("error");
       setSaveDetails(error instanceof Error ? error.message : "Could not save project.");
       setNotice(error instanceof Error ? error.message : "Could not save draft.");
+    }
+  }
+
+  function autosaveProductionStep(nextStage: ProductionStage) {
+    try {
+      const { snapshot, savedAt } = productionSnapshotForStorage(nextStage);
+      persistProductionDraftSnapshot(snapshot, savedAt, "auto");
+    } catch (error) {
+      setSaveState("error");
+      setSaveDetails(error instanceof Error ? error.message : "Autosave failed. Use Save Project and check browser storage.");
+    }
+  }
+
+  function transitionProductionStage(nextStage: ProductionStage) {
+    if (nextStage === activeStage) return;
+    autosaveProductionStep(nextStage);
+    setActiveStage(nextStage);
+  }
+
+  function handleBackToProductionHome() {
+    if (hasUnsavedManualChanges) {
+      const saveFirst = window.confirm(
+        "Your project has changes that have not been manually saved. Click OK to save before returning home, or Cancel to return without a manual save. Autosave will still be available through Continue."
+      );
+      if (saveFirst) saveDraft();
+    }
+    setProductionHomeMode("home");
+  }
+
+  function continueFromAutosave() {
+    try {
+      const autoMeta = productionStoredSaveMeta(PRODUCTION_AUTOSAVE_KEY) || productionStoredSaveMeta(DRAFT_STORAGE_KEY);
+      if (!autoMeta) {
+        setNotice("No autosave is available yet. Start a new production or load a manual save.");
+        return;
+      }
+      restoreProductionSnapshotFromStorage(autoMeta.raw, "auto");
+    } catch (error) {
+      setSaveState("error");
+      setNotice(error instanceof Error ? error.message : "Could not continue from autosave.");
+    }
+  }
+
+  function loadManualProduction() {
+    try {
+      const manualMeta = productionStoredSaveMeta(PRODUCTION_MANUAL_SAVE_KEY);
+      if (!manualMeta) {
+        setNotice("No manual save is available yet. Use Save Project inside the production pipeline first.");
+        return;
+      }
+
+      const autoMeta = productionStoredSaveMeta(PRODUCTION_AUTOSAVE_KEY) || productionStoredSaveMeta(DRAFT_STORAGE_KEY);
+      const autoTime = autoMeta?.savedAt ? new Date(autoMeta.savedAt).getTime() : 0;
+      const manualTime = manualMeta.savedAt ? new Date(manualMeta.savedAt).getTime() : 0;
+
+      if (autoTime > manualTime) {
+        const continueManual = window.confirm(
+          "The autosave for this project is more current than the last manual save. Loading this project will open the last manually saved version instead. Click OK to load the manual save, or Cancel and use Continue to open the autosave."
+        );
+        if (!continueManual) return;
+      }
+
+      restoreProductionSnapshotFromStorage(manualMeta.raw, "manual");
+    } catch (error) {
+      setSaveState("error");
+      setNotice(error instanceof Error ? error.message : "Could not load manual save.");
     }
   }
 
@@ -1807,9 +5543,11 @@ export default function StoryboardPanel() {
     setProductionSnapshots([]);
     setMediaPreflight(null);
     setAssembleResult(null);
+    setManualSavedAt("");
+    setManualSaveSignature("");
     setSaveState("idle");
     setLastSavedAt("");
-    setSaveDetails("Project was reset manually. Autosave will keep this new default draft.");
+    setSaveDetails("Project was reset manually. Autosave will start when you move between production steps.");
     setNotice("Storyboard reset to the default draft.");
   }
 
@@ -1827,7 +5565,7 @@ export default function StoryboardPanel() {
     sceneCharacterFiles: Record<number, File>,
     options: { sourceImagePath?: string } = {}
   ) {
-    const prompt = String(scene.prompt || "").trim();
+    const prompt = otgCleanNextScenePromptForWorkflowV36BO4(scene.prompt);
     const { width, height } = aspectToSize(scene.aspectRatio);
     const body = new FormData();
 
@@ -1838,6 +5576,13 @@ export default function StoryboardPanel() {
     body.set("requestKind", "production-storyboard-scene");
     body.set("prompt", prompt);
     body.set("positivePrompt", prompt);
+    body.set("scenePrompt", prompt);
+    body.set("otgNextScenePromptV36BO4D", prompt);
+    body.set("otgCompiledPromptV36BO4D", prompt);
+    body.set("otgNextScenePromptV36BO4C", prompt);
+    body.set("otgCompiledPromptV36BO4C", prompt);
+    body.set("otgNextScenePromptV36BO4", prompt);
+    body.set("otgCompiledPromptV36BO4", prompt);
     body.set("negativePrompt", "low quality, blurry, distorted anatomy, extra limbs, text, watermark, subtitles, logo, UI overlay");
     body.set("orientation", aspectToOrientation(scene.aspectRatio));
     body.set("width", String(width));
@@ -1880,28 +5625,632 @@ export default function StoryboardPanel() {
     return promptId;
   }
 
+  // OTG_STORYBOARD_STABLE_CARD_REFERENCE_IMAGES_V36AZ3
+  // Storyboard production workflows must receive stable app/file references only.
+  // Browser preview URLs such as blob:, data:, and filesystem: cannot be read by the server or ComfyUI.
+  // Character references prefer saved character-card workflow images.
+  // Background references prefer stitched background plate workflow images.
+  function storyboardIsBrowserOnlyWorkflowImageV36AZ3(value: unknown) {
+    const text = String(value || "").trim();
+
+    return (
+      !text ||
+      /^blob:/i.test(text) ||
+      /^data:/i.test(text) ||
+      /^filesystem:/i.test(text)
+    );
+  }
+
+  function storyboardCleanWorkflowImageCandidateV36AZ3(value: unknown) {
+    const text = String(value || "").trim();
+
+    if (storyboardIsBrowserOnlyWorkflowImageV36AZ3(text)) {
+      return "";
+    }
+
+    return text;
+  }
+
+  function storyboardReferenceMatchesV36AZ3(left: any, right: any) {
+    const leftId = String(left?.id || "").trim();
+    const rightId = String(right?.id || "").trim();
+
+    if (leftId && rightId && leftId === rightId) return true;
+
+    const leftSlotId = String(left?.slotId || "").trim();
+    const rightSlotId = String(right?.slotId || "").trim();
+
+    if (leftSlotId && rightSlotId && leftSlotId === rightSlotId) return true;
+
+    const leftName = String(left?.name || left?.label || left?.title || "").trim().toLowerCase();
+    const rightName = String(right?.name || right?.label || right?.title || "").trim().toLowerCase();
+
+    if (leftName && rightName && leftName === rightName) return true;
+
+    return false;
+  }
+
+  function storyboardFirstStableWorkflowImageV36AZ3(values: unknown[]) {
+    for (const value of values) {
+      const cleaned = storyboardCleanWorkflowImageCandidateV36AZ3(value);
+      if (cleaned) return cleaned;
+    }
+
+    return "";
+  }
+
+  function storyboardFindRegistryReferenceV36AZ3(reference: any): any {
+    const selected = reference || {};
+    const pool = Array.isArray(sceneReferencePoolV32) ? sceneReferencePoolV32 : [];
+
+    return pool.find((candidate: any) => storyboardReferenceMatchesV36AZ3(selected, candidate)) || null;
+  }
+
+  function storyboardFindSavedBackgroundReferenceV36AZ3(reference: any): any {
+    const selected = reference || {};
+    const savedBackgrounds = Array.isArray(storyboardBackgroundReferencesV36AK)
+      ? storyboardBackgroundReferencesV36AK
+      : [];
+
+    return (
+      savedBackgrounds.find((candidate: any) => storyboardReferenceMatchesV36AZ3(selected, candidate)) ||
+      (storyboardBackgroundReferenceV30 && storyboardReferenceMatchesV36AZ3(selected, storyboardBackgroundReferenceV30)
+        ? storyboardBackgroundReferenceV30
+        : null)
+    );
+  }
+
+  function storyboardStableWorkflowImageForReferenceV36AZ3(reference: any) {
+    const selected = reference || {};
+    const registry = storyboardFindRegistryReferenceV36AZ3(selected) as any;
+    const kind = String(selected.kind || selected.sourceType || registry?.kind || registry?.sourceType || "").toLowerCase();
+    const isBackground = kind === "background";
+
+    if (isBackground) {
+      const savedBackground = storyboardFindSavedBackgroundReferenceV36AZ3(selected) as any;
+
+      return storyboardFirstStableWorkflowImageV36AZ3([
+        savedBackground?.plateWorkflowImageV36AF,
+        savedBackground?.workflowImage,
+        selected.plateWorkflowImageV36AF,
+        selected.workflowImage,
+        registry?.plateWorkflowImageV36AF,
+        registry?.workflowImage,
+        savedBackground?.sourceWorkflowImageV36AF,
+        selected.sourceWorkflowImageV36AF,
+        savedBackground?.imagePath,
+        savedBackground?.imageUrl,
+        selected.imagePath,
+        selected.imageUrl,
+        registry?.imagePath,
+        registry?.imageUrl,
+      ]);
+    }
+
+    return storyboardFirstStableWorkflowImageV36AZ3([
+      registry?.workflowImage,
+      registry?.cardWorkflowImage,
+      registry?.characterWorkflowImage,
+      registry?.sourceWorkflowImage,
+      registry?.sourceImagePath,
+      registry?.imagePath,
+      registry?.imageUrl,
+      selected.workflowImage,
+      selected.cardWorkflowImage,
+      selected.characterWorkflowImage,
+      selected.sourceWorkflowImage,
+      selected.sourceImagePath,
+      selected.imagePath,
+      selected.imageUrl,
+      registry?.displayImage,
+      selected.displayImage,
+    ]);
+  }
+
+  function storyboardStableWorkflowImagesForPayloadV36AZ3(referencePayload: StoryboardPromptReferencePayloadV35) {
+    const selectedReferences = Array.isArray(referencePayload?.selectedReferences)
+      ? referencePayload.selectedReferences
+      : [];
+
+    const stableFromSelected = selectedReferences
+      .map((reference) => storyboardStableWorkflowImageForReferenceV36AZ3(reference))
+      .filter(Boolean);
+
+    const stableFallback = Array.isArray(referencePayload?.workflowImages)
+      ? referencePayload.workflowImages
+          .map((value) => storyboardCleanWorkflowImageCandidateV36AZ3(value))
+          .filter(Boolean)
+      : [];
+
+    const combined: string[] = [];
+    const seen = new Set<string>();
+
+    for (const value of [...stableFromSelected, ...stableFallback]) {
+      const key = value.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      combined.push(value);
+    }
+
+    return combined.slice(0, 3);
+  }
+
+  // OTG_STORYBOARD_IMPORT_BROWSER_BLOB_REFERENCES_V36BB
+  // Converts browser-only reference URLs into stable server-side files before /api/production/picture.
+  // blob:/data:/filesystem: URLs are valid only inside the browser tab; ComfyUI and the backend cannot read them.
+  function storyboardIsBrowserOnlyWorkflowImageV36BB(value: unknown) {
+    const text = String(value || "").trim();
+
+    return (
+      /^blob:/i.test(text) ||
+      /^data:/i.test(text) ||
+      /^filesystem:/i.test(text)
+    );
+  }
+
+  function storyboardCleanWorkflowImageCandidateV36BB(value: unknown) {
+    const text = String(value || "").trim();
+
+    if (!text || storyboardIsBrowserOnlyWorkflowImageV36BB(text)) {
+      return "";
+    }
+
+    return text;
+  }
+
+  function storyboardReferenceMatchesV36BB(left: any, right: any) {
+    const leftId = String(left?.id || "").trim();
+    const rightId = String(right?.id || "").trim();
+
+    if (leftId && rightId && leftId === rightId) return true;
+
+    const leftSlotId = String(left?.slotId || "").trim();
+    const rightSlotId = String(right?.slotId || "").trim();
+
+    if (leftSlotId && rightSlotId && leftSlotId === rightSlotId) return true;
+
+    const leftName = String(left?.name || left?.label || left?.title || "").trim().toLowerCase();
+    const rightName = String(right?.name || right?.label || right?.title || "").trim().toLowerCase();
+
+    return Boolean(leftName && rightName && leftName === rightName);
+  }
+
+  function storyboardFirstStableWorkflowImageV36BB(values: unknown[]) {
+    for (const value of values) {
+      const cleaned = storyboardCleanWorkflowImageCandidateV36BB(value);
+      if (cleaned) return cleaned;
+    }
+
+    return "";
+  }
+
+  function storyboardFirstBrowserOnlyWorkflowImageV36BB(values: unknown[]) {
+    for (const value of values) {
+      const text = String(value || "").trim();
+
+      if (storyboardIsBrowserOnlyWorkflowImageV36BB(text)) {
+        return text;
+      }
+    }
+
+    return "";
+  }
+
+  function storyboardFindRegistryReferenceV36BB(reference: any): any {
+    const selected = reference || {};
+    const pool = Array.isArray(sceneReferencePoolV32) ? sceneReferencePoolV32 : [];
+
+    return pool.find((candidate: any) => storyboardReferenceMatchesV36BB(selected, candidate)) || null;
+  }
+
+  function storyboardFindSavedBackgroundReferenceV36BB(reference: any): any {
+    const selected = reference || {};
+    const savedBackgrounds = Array.isArray(storyboardBackgroundReferencesV36AK)
+      ? storyboardBackgroundReferencesV36AK
+      : [];
+
+    return (
+      savedBackgrounds.find((candidate: any) => storyboardReferenceMatchesV36BB(selected, candidate)) ||
+      (storyboardBackgroundReferenceV30 && storyboardReferenceMatchesV36BB(selected, storyboardBackgroundReferenceV30)
+        ? storyboardBackgroundReferenceV30
+        : null)
+    );
+  }
+
+  function storyboardStableWorkflowImageForReferenceV36BB(reference: any) {
+    const selected = reference || {};
+    const registry = storyboardFindRegistryReferenceV36BB(selected) as any;
+    const kind = String(selected.kind || selected.sourceType || registry?.kind || registry?.sourceType || "").toLowerCase();
+    const isBackground = kind === "background";
+
+    if (isBackground) {
+      const savedBackground = storyboardFindSavedBackgroundReferenceV36BB(selected) as any;
+
+      return storyboardFirstStableWorkflowImageV36BB([
+        savedBackground?.plateWorkflowImageV36AF,
+        savedBackground?.workflowImage,
+        selected.plateWorkflowImageV36AF,
+        selected.workflowImage,
+        registry?.plateWorkflowImageV36AF,
+        registry?.workflowImage,
+        savedBackground?.sourceWorkflowImageV36AF,
+        selected.sourceWorkflowImageV36AF,
+        savedBackground?.imagePath,
+        savedBackground?.imageUrl,
+        selected.imagePath,
+        selected.imageUrl,
+        registry?.imagePath,
+        registry?.imageUrl,
+      ]);
+    }
+
+    return storyboardFirstStableWorkflowImageV36BB([
+      registry?.workflowImage,
+      registry?.cardWorkflowImage,
+      registry?.characterWorkflowImage,
+      registry?.sourceWorkflowImage,
+      registry?.sourceImagePath,
+      registry?.imagePath,
+      registry?.imageUrl,
+      selected.workflowImage,
+      selected.cardWorkflowImage,
+      selected.characterWorkflowImage,
+      selected.sourceWorkflowImage,
+      selected.sourceImagePath,
+      selected.imagePath,
+      selected.imageUrl,
+    ]);
+  }
+
+  function storyboardBrowserOnlyImageForReferenceV36BB(reference: any) {
+    const selected = reference || {};
+    const registry = storyboardFindRegistryReferenceV36BB(selected) as any;
+
+    return storyboardFirstBrowserOnlyWorkflowImageV36BB([
+      selected.workflowImage,
+      selected.cardWorkflowImage,
+      selected.characterWorkflowImage,
+      selected.sourceWorkflowImage,
+      selected.sourceImagePath,
+      selected.imagePath,
+      selected.imageUrl,
+      selected.displayImage,
+      registry?.workflowImage,
+      registry?.cardWorkflowImage,
+      registry?.characterWorkflowImage,
+      registry?.sourceWorkflowImage,
+      registry?.sourceImagePath,
+      registry?.imagePath,
+      registry?.imageUrl,
+      registry?.displayImage,
+    ]);
+  }
+
+  async function storyboardImportBrowserOnlyReferenceImageV36BB(source: string, promptKey: string, label: string) {
+    const sourceUrl = String(source || "").trim();
+
+    if (!storyboardIsBrowserOnlyWorkflowImageV36BB(sourceUrl)) {
+      return "";
+    }
+
+    const blobResponse = await fetch(sourceUrl);
+
+    if (!blobResponse.ok) {
+      throw new Error(`Could not read browser reference image ${label}.`);
+    }
+
+    const blob = await blobResponse.blob();
+
+    if (!blob || !blob.size) {
+      throw new Error(`Browser reference image ${label} was empty.`);
+    }
+
+    const form = new FormData();
+    const safeLabel = String(label || "reference").replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "") || "reference";
+    const extension = blob.type.includes("jpeg") || blob.type.includes("jpg") ? "jpg" : blob.type.includes("webp") ? "webp" : "png";
+
+    form.set("image", blob, `${safeLabel}.${extension}`);
+    form.set("promptKey", promptKey);
+    form.set("label", safeLabel);
+
+    const response = await fetch("/api/storyboard/import-reference", {
+      method: "POST",
+      body: form,
+      credentials: "include",
+    });
+
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.ok) {
+      throw new Error(String(data?.error || `Could not import browser reference image ${label}.`));
+    }
+
+    const serverPath = String(data?.serverPath || data?.workflowImage || data?.imagePath || "").trim();
+
+    if (!serverPath) {
+      throw new Error(`Imported browser reference image ${label} returned no server path.`);
+    }
+
+    return serverPath;
+  }
+
+  async function storyboardEnsureStableWorkflowImagesForPayloadV36BB(referencePayload: StoryboardPromptReferencePayloadV35, promptKey: string) {
+    const selectedReferences = Array.isArray(referencePayload?.selectedReferences)
+      ? referencePayload.selectedReferences
+      : [];
+
+    const combined: string[] = [];
+    const seen = new Set<string>();
+
+    function pushStable(value: unknown) {
+      const cleaned = storyboardCleanWorkflowImageCandidateV36BB(value);
+
+      if (!cleaned) return;
+
+      const key = cleaned.toLowerCase();
+
+      if (seen.has(key)) return;
+
+      seen.add(key);
+      combined.push(cleaned);
+    }
+
+    for (const reference of selectedReferences) {
+      const stable = storyboardStableWorkflowImageForReferenceV36BB(reference);
+
+      if (stable) {
+        pushStable(stable);
+        continue;
+      }
+
+      const browserOnly = storyboardBrowserOnlyImageForReferenceV36BB(reference);
+
+      if (browserOnly) {
+        const imported = await storyboardImportBrowserOnlyReferenceImageV36BB(
+          browserOnly,
+          promptKey,
+          String(reference?.name || (reference as any)?.label || reference?.id || "reference"),
+        );
+
+        pushStable(imported);
+      }
+    }
+
+    const workflowImages = Array.isArray(referencePayload?.workflowImages)
+      ? referencePayload.workflowImages
+      : [];
+
+    for (let index = 0; index < workflowImages.length; index += 1) {
+      const candidate = workflowImages[index];
+      const stable = storyboardCleanWorkflowImageCandidateV36BB(candidate);
+
+      if (stable) {
+        pushStable(stable);
+        continue;
+      }
+
+      const browserOnly = String(candidate || "").trim();
+
+      if (storyboardIsBrowserOnlyWorkflowImageV36BB(browserOnly)) {
+        const imported = await storyboardImportBrowserOnlyReferenceImageV36BB(
+          browserOnly,
+          promptKey,
+          `workflow-reference-${index + 1}`,
+        );
+
+        pushStable(imported);
+      }
+    }
+
+    const displayImages = Array.isArray(referencePayload?.displayImages)
+      ? referencePayload.displayImages
+      : [];
+
+    for (let index = 0; index < displayImages.length && combined.length < selectedReferences.length; index += 1) {
+      const browserOnly = String(displayImages[index] || "").trim();
+
+      if (storyboardIsBrowserOnlyWorkflowImageV36BB(browserOnly)) {
+        const imported = await storyboardImportBrowserOnlyReferenceImageV36BB(
+          browserOnly,
+          promptKey,
+          `display-reference-${index + 1}`,
+        );
+
+        pushStable(imported);
+      }
+    }
+
+    return combined.slice(0, 3);
+  }
+
+  // OTG_STORYBOARD_FINAL_REFERENCE_NORMALIZER_V36BD
+  // Final gate before /api/production/picture.
+  // The production route must never receive browser-only blob/data/filesystem URLs.
+  function storyboardIsBrowserOnlyReferenceV36BD(value: unknown) {
+    const text = String(value || "").trim();
+
+    return (
+      /^blob:/i.test(text) ||
+      /^data:/i.test(text) ||
+      /^filesystem:/i.test(text)
+    );
+  }
+
+  function storyboardCleanStableReferenceV36BD(value: unknown) {
+    const text = String(value || "").trim();
+
+    if (!text || storyboardIsBrowserOnlyReferenceV36BD(text)) {
+      return "";
+    }
+
+    return text;
+  }
+
+  async function storyboardImportBrowserReferenceV36BD(source: string, promptKey: string, label: string) {
+    const sourceUrl = String(source || "").trim();
+
+    if (!storyboardIsBrowserOnlyReferenceV36BD(sourceUrl)) {
+      return "";
+    }
+
+    const blobResponse = await fetch(sourceUrl);
+
+    if (!blobResponse.ok) {
+      throw new Error(`Could not read browser-only storyboard reference ${label}.`);
+    }
+
+    const blob = await blobResponse.blob();
+
+    if (!blob || !blob.size) {
+      throw new Error(`Browser-only storyboard reference ${label} was empty.`);
+    }
+
+    const safeLabel = String(label || "reference")
+      .replace(/[^a-z0-9_-]+/gi, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "reference";
+
+    const extension = blob.type.includes("jpeg") || blob.type.includes("jpg")
+      ? "jpg"
+      : blob.type.includes("webp")
+        ? "webp"
+        : "png";
+
+    const form = new FormData();
+    form.set("image", blob, `${safeLabel}.${extension}`);
+    form.set("promptKey", promptKey);
+    form.set("label", safeLabel);
+
+    const response = await fetch("/api/storyboard/import-reference", {
+      method: "POST",
+      body: form,
+      credentials: "include",
+    });
+
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.ok) {
+      throw new Error(String(data?.error || `Could not import storyboard reference ${label}.`));
+    }
+
+    const serverPath = String(data?.serverPath || data?.workflowImage || data?.imagePath || "").trim();
+
+    if (!serverPath) {
+      throw new Error(`Imported storyboard reference ${label} returned no server path.`);
+    }
+
+    return serverPath;
+  }
+
+  function storyboardPotentialReferenceValuesV36BD(referencePayload: any) {
+    const values: unknown[] = [];
+
+    const selectedReferences = Array.isArray(referencePayload?.selectedReferences)
+      ? referencePayload.selectedReferences
+      : [];
+
+    for (const reference of selectedReferences) {
+      values.push(
+        reference?.workflowImage,
+        reference?.cardWorkflowImage,
+        reference?.characterWorkflowImage,
+        reference?.sourceWorkflowImage,
+        reference?.sourceImagePath,
+        reference?.imagePath,
+        reference?.imageUrl,
+        reference?.displayImage,
+      );
+    }
+
+    if (Array.isArray(referencePayload?.workflowImages)) {
+      values.push(...referencePayload.workflowImages);
+    }
+
+    if (Array.isArray(referencePayload?.displayImages)) {
+      values.push(...referencePayload.displayImages);
+    }
+
+    return values;
+  }
+
+  async function storyboardFinalNormalizeWorkflowImagesV36BD(
+    currentImages: unknown[],
+    referencePayload: any,
+    promptKey: string,
+    targetNumber: number,
+  ) {
+    const output: string[] = [];
+    const seen = new Set<string>();
+
+    async function pushValue(value: unknown, label: string) {
+      const stable = storyboardCleanStableReferenceV36BD(value);
+
+      if (stable) {
+        const key = stable.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          output.push(stable);
+        }
+        return;
+      }
+
+      const browserOnly = String(value || "").trim();
+
+      if (storyboardIsBrowserOnlyReferenceV36BD(browserOnly)) {
+        const imported = await storyboardImportBrowserReferenceV36BD(browserOnly, promptKey, label);
+        const key = imported.toLowerCase();
+
+        if (imported && !seen.has(key)) {
+          seen.add(key);
+          output.push(imported);
+        }
+      }
+    }
+
+    const primary = Array.isArray(currentImages) ? currentImages : [];
+
+    for (let index = 0; index < primary.length; index += 1) {
+      await pushValue(primary[index], `slot-${targetNumber}-workflow-${index + 1}`);
+    }
+
+    if (output.some((value) => value)) {
+      return output.slice(0, 3);
+    }
+
+    const fallbackValues = storyboardPotentialReferenceValuesV36BD(referencePayload);
+
+    for (let index = 0; index < fallbackValues.length && output.length < 3; index += 1) {
+      await pushValue(fallbackValues[index], `slot-${targetNumber}-fallback-${index + 1}`);
+    }
+
+    return output.slice(0, 3);
+  }
+
   async function generateSelectedSceneImages() {
+    // OTG_STORYBOARD_CONTINUE_PER_PROMPT_ERRORS_V36AW
+    // One prompt = one workflow job. A failed prompt must not stop later prompts.
+    // If five prompted slots fail, all five slots must show Error.
     if (!selectedScene || busySceneId) return;
 
     const imageCount = clampStoryboardImageCount(selectedScene.imageCount);
     const sceneId = selectedScene.id;
     const promptLines = scenePromptLines(selectedScene, imageCount);
-    const existingImages = Array.from({ length: imageCount }, (_, index) => selectedScene.images[index]);
     const targets = storyboardSlotGenerationTargets(selectedScene);
     const targetIndexes = targets.map((target) => target.index);
-    const textOnlyTargets = targets.filter((target) => target.mode === "generate");
-    const uploadedEditTargets = targets.filter((target) => target.mode === "edit_uploaded" && target.uploadedPath);
 
     if (!targets.length) {
       setNotice("Add prompt text to an empty slot or to an uploaded image slot before generating. Uploaded images with no prompt are skipped.");
       return;
     }
 
-    const sceneCharacterFiles = characterFiles[sceneId] || {};
-
     setBusySceneId(sceneId);
     resetStoryboardGenerationProgress(targets.length);
-    setNotice(`Submitting storyboard image job(s) for ${targets.length} prompted slot(s). Blank slots and uploaded images without prompts are skipped.`);
+    setNotice(`Submitting ${targets.length} separate storyboard workflow job(s). Each prompt uses its own checked references and matching StoryBoard JSON.`);
+
+    let completedCount = 0;
+    let successCount = 0;
+    let failureCount = 0;
+    const failures: string[] = [];
 
     const queuedImages = Array.from({ length: imageCount }, (_, index) => {
       const current = selectedScene.images[index] || {
@@ -1909,9 +6258,11 @@ export default function StoryboardPanel() {
         approved: false,
       };
       const target = targets.find((item) => item.index === index);
+
       if (!target) {
         return current;
       }
+
       return {
         ...current,
         approved: false,
@@ -1922,83 +6273,218 @@ export default function StoryboardPanel() {
       };
     });
 
+    let nextImages = queuedImages.slice();
+
     updateSceneById(sceneId, {
       imageCount,
       status: "pending_images",
-      images: queuedImages,
+      images: nextImages,
     });
 
     try {
-      const promptIdsByIndex = new Map<number, string>();
+      for (const target of targets) {
+        const targetNumber = target.index + 1;
 
-      if (textOnlyTargets.length) {
-        const prompt = buildCompiledScenePrompt(textOnlyTargets.map((target) => promptLines[target.index] || ""));
-        const promptId = await submitStoryboardScene(
-          {
-            ...selectedScene,
-            imageCount: textOnlyTargets.length,
-            prompt,
-            images: selectedScene.images.slice(),
-          },
-          sceneCharacterFiles
-        );
-        textOnlyTargets.forEach((target) => promptIdsByIndex.set(target.index, promptId));
+        try {
+          const promptKey = getStoryboardPromptCanonicalKeyV35J(`scene-prompt-${targetNumber}`);
+          const referencePayload = getStoryboardReferencePayloadForPromptV35(promptKey);
+
+          let referenceWorkflowImages = await storyboardEnsureStableWorkflowImagesForPayloadV36BB(referencePayload, promptKey);
+
+          if (!referenceWorkflowImages.length && target.mode === "edit_uploaded" && String(target.uploadedPath || "").trim()) {
+            const uploadedPathSourceV36BB = String(target.uploadedPath || "").trim();
+
+            if (storyboardIsBrowserOnlyWorkflowImageV36BB(uploadedPathSourceV36BB)) {
+              const importedUploadedPathV36BB = await storyboardImportBrowserOnlyReferenceImageV36BB(
+                uploadedPathSourceV36BB,
+                promptKey,
+                `uploaded-slot-${targetNumber}`,
+              );
+              referenceWorkflowImages = importedUploadedPathV36BB ? [importedUploadedPathV36BB] : [];
+            } else {
+              const uploadedPathV36BB = storyboardCleanWorkflowImageCandidateV36BB(uploadedPathSourceV36BB);
+              referenceWorkflowImages = uploadedPathV36BB ? [uploadedPathV36BB] : [];
+            }
+          }
+
+                    referenceWorkflowImages = await storyboardFinalNormalizeWorkflowImagesV36BD(
+            referenceWorkflowImages,
+            referencePayload,
+            promptKey,
+            targetNumber,
+          );
+
+          if (referenceWorkflowImages.some((value) => storyboardIsBrowserOnlyReferenceV36BD(value))) {
+            throw new Error(`Storyboard image ${targetNumber} still has browser-only reference images after import.`);
+          }
+if (!referenceWorkflowImages.length) {
+            throw new Error(`Storyboard image ${targetNumber} has no checked reference images. Select at least one character or background for that prompt.`);
+          }
+
+          const checkedCount = Math.max(1, Math.min(5, referenceWorkflowImages.length));
+          const workflowFile = storyboardWorkflowFileForReferenceCountV36AQ(checkedCount);
+          const rawPromptLine = String(promptLines[target.index] || target.prompt || "").trim();
+
+          if (!rawPromptLine) {
+            throw new Error(`Storyboard image ${targetNumber} has no prompt text.`);
+          }
+
+          const singlePrompt = exactProductionFramePrompt(buildCompiledScenePrompt([rawPromptLine]));
+
+          setNotice(`Submitting scene image ${targetNumber} with ${checkedCount} checked reference image(s) using ${workflowFile}.`);
+
+          setStoryboardComfyProgress({
+            ...emptyComfyProgressState(),
+            running: true,
+            readyToSync: false,
+            percent: Math.round((completedCount / Math.max(1, targets.length)) * 100),
+            label: `Submitting scene image ${targetNumber}...`,
+            detail: `${completedCount}/${targets.length} attempted. ${successCount} succeeded, ${failureCount} failed.`,
+          });
+
+          const response = await fetch("/api/production/picture", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+              productionId: `${projectTitle.trim() || "production"}-${sceneId}-storyboard-${targetNumber}`,
+              productionName: projectTitle.trim() || "Production",
+              title: `${projectTitle.trim() || "Production"} - ${selectedScene.title} - Image ${targetNumber}`,
+              storyboardCount: checkedCount,
+              workflowFile,
+              characterImages: referenceWorkflowImages,
+              workflowImages: referenceWorkflowImages,
+              displayImages: Array.isArray(referencePayload.displayImages)
+                ? referencePayload.displayImages.map((value) => String(value || "").trim()).filter(Boolean).slice(0, 3)
+                : [],
+              prompt: singlePrompt,
+              positivePrompt: singlePrompt,
+              promptText: singlePrompt,
+              scenePrompt: singlePrompt,
+              fullPrompt: singlePrompt,
+              scenePrompts: [singlePrompt],
+              negativePrompt: "low quality, blurry, distorted anatomy, extra limbs, text, watermark, subtitles, logo, UI overlay",
+              defaultStyle: selectedScene.style || "realistic cinematic style",
+              promptKey,
+              storyboardPromptKey: promptKey,
+              scenePromptKey: promptKey,
+              imageIndex: targetNumber,
+              frameIndex: targetNumber,
+              storyboardIndex: targetNumber,
+              slotIndex: targetNumber,
+              selectedReferences: referencePayload.selectedReferences || [],
+              selectedReferenceCount: referencePayload.selectedReferenceCount || referenceWorkflowImages.length,
+              referenceInstruction: referencePayload.referenceInstruction || "",
+              otgDirectOneWorkflowPerPromptV36AU: true,
+              otgContinuePerPromptErrorsV36AW: true,
+              otgImportedBrowserReferencesV36BB: true,
+              otgFinalReferenceNormalizerV36BD: true,
+              otgOneJobPerPromptV36AQ: true,
+              otgPerPromptWorkflowSplitV36AP: true,
+              otgOneScenePerBatchRequestV36AT: true,
+            }),
+          });
+
+          const rawResponseText = await response.text();
+          let data: any = null;
+
+          try {
+            data = rawResponseText ? JSON.parse(rawResponseText) : null;
+          } catch {
+            data = { raw: rawResponseText };
+          }
+
+          if (!response.ok || !data?.ok) {
+            throw new Error(String(data?.error || data?.message || data?.raw || `Storyboard image ${targetNumber} failed (${response.status}).`));
+          }
+
+          const promptId = String(data?.promptId || data?.prompt_id || "").trim();
+          const imagePath = String(data?.imagePath || data?.serverPath || data?.generatedImagePath || "").trim();
+          const imageUrl =
+            String(data?.imageUrl || data?.serverUrl || data?.generatedImageUrl || "").trim() ||
+            (imagePath ? `/api/file?path=${encodeURIComponent(imagePath)}` : "");
+
+          if (!imageUrl) {
+            throw new Error(`Storyboard image ${targetNumber} completed but returned no image URL.`);
+          }
+
+          const fileName = String(
+            data?.fileName ||
+              data?.name ||
+              data?.remoteFile?.filename ||
+              imagePath.split(/[\\/]/).pop() ||
+              `storyboard-image-${targetNumber}.png`,
+          ).trim();
+
+          nextImages = nextImages.map((image, index) =>
+            index === target.index
+              ? {
+                  ...image,
+                  promptId: promptId || image.promptId,
+                  status: "ready" as const,
+                  approved: true,
+                  error: undefined,
+                  source: "generated" as const,
+                  fileName,
+                  url: `${imageUrl}${imageUrl.includes("?") ? "&" : "?"}v=${Date.now()}`,
+                  editingUploadedSource: false,
+                }
+              : image,
+          );
+
+          successCount += 1;
+        } catch (targetError) {
+          const message = targetError instanceof Error ? targetError.message : `Storyboard image ${targetNumber} failed.`;
+          failureCount += 1;
+          failures.push(`Image ${targetNumber}: ${message}`);
+
+          nextImages = nextImages.map((image, index) =>
+            index === target.index
+              ? {
+                  ...image,
+                  status: "error" as const,
+                  approved: false,
+                  error: message,
+                  editingUploadedSource: false,
+                }
+              : image,
+          );
+
+          setNotice(`Storyboard image ${targetNumber} failed. Continuing with remaining prompts.`);
+        } finally {
+          completedCount += 1;
+
+          const allReady = Array.from({ length: imageCount }, (_, index) => nextImages[index]).every((image) => storyboardImageHasContent(image));
+
+          updateSceneById(sceneId, {
+            imageCount,
+            status: allReady ? "images_ready" : "pending_images",
+            images: nextImages,
+          });
+
+          setStoryboardComfyProgress({
+            ...emptyComfyProgressState(),
+            running: completedCount < targets.length,
+            readyToSync: false,
+            percent: Math.round((completedCount / Math.max(1, targets.length)) * 100),
+            label:
+              completedCount < targets.length
+                ? "Storyboard generation running..."
+                : failureCount
+                  ? "Storyboard generation completed with errors."
+                  : "Storyboard images generated.",
+            detail: `${completedCount}/${targets.length} attempted. ${successCount} succeeded, ${failureCount} failed.`,
+          });
+        }
       }
 
-      for (const target of uploadedEditTargets) {
-        const promptId = await submitStoryboardScene(
-          {
-            ...selectedScene,
-            imageCount: 1,
-            prompt: buildCompiledScenePrompt([promptLines[target.index] || ""]),
-            images: selectedScene.images.slice(),
-          },
-          sceneCharacterFiles,
-          { sourceImagePath: target.uploadedPath }
-        );
-        promptIdsByIndex.set(target.index, promptId);
+      if (failureCount && successCount) {
+        setNotice(`Generated ${successCount} scene image(s). ${failureCount} failed. ${failures.slice(0, 2).join(" ")}`);
+      } else if (failureCount) {
+        setNotice(`All ${failureCount} scene image job(s) failed. ${failures.slice(0, 2).join(" ")}`);
+      } else {
+        setNotice(`Generated ${successCount} scene image(s). Each prompt was submitted as its own workflow job.`);
       }
-
-      updateSceneById(sceneId, {
-        imageCount,
-        status: "pending_images",
-        images: queuedImages.map((image, index) =>
-          targetIndexes.includes(index)
-            ? {
-                ...image,
-                promptId: promptIdsByIndex.get(index),
-                status: "queued" as const,
-                approved: false,
-                error: undefined,
-                source: "generated" as const,
-              }
-            : image
-        ),
-      });
-
-      setNotice(`Submitted ${new Set(promptIdsByIndex.values()).size} storyboard job(s) for ${targets.length} prompted slot(s). Use Sync Results after Comfy finishes.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not submit storyboard scene job.";
-      setStoryboardComfyProgress({
-        ...emptyComfyProgressState(),
-        running: false,
-        readyToSync: false,
-        percent: 0,
-        label: "Storyboard generation failed to start.",
-        detail: message,
-      });
-
-      updateSceneById(sceneId, {
-        imageCount,
-        status: "pending_images",
-        images: queuedImages.map((image, index) => ({
-          ...image,
-          status: index === targetIndexes[0] ? ("error" as const) : image.status,
-          error: index === targetIndexes[0] ? message : undefined,
-        })),
-      });
-
-      setNotice(message);
     } finally {
       setBusySceneId("");
     }
@@ -2037,18 +6523,81 @@ export default function StoryboardPanel() {
     });
   }
 
+  function syncableStoryboardImageSlot(scene: ProductionScene | null | undefined, index: number) {
+    if (!scene || busySceneId) return false;
+    const image = scene.images[index];
+    return Boolean(
+      image?.promptId &&
+        image.status === "queued" &&
+        !storyboardImageHasContent(image)
+    );
+  }
+
+  function normalizeStoryboardSyncItem(raw: any): { name: string; url: string } | null {
+    if (!raw) return null;
+
+    if (typeof raw === "string") {
+      const name = raw.trim();
+      return name ? { name, url: `/api/gallery/file?name=${encodeURIComponent(name)}` } : null;
+    }
+
+    const name = String(
+      raw?.name ||
+        raw?.fileName ||
+        raw?.filename ||
+        raw?.sourceName ||
+        raw?.outputName ||
+        raw?.path ||
+        raw?.serverPath ||
+        ""
+    ).trim();
+
+    const directUrl = String(raw?.url || raw?.fileUrl || raw?.publicUrl || raw?.previewUrl || raw?.imageUrl || "").trim();
+    const serverPath = String(raw?.serverPath || raw?.path || raw?.filePath || "").trim();
+
+    const url =
+      directUrl ||
+      (serverPath ? `/api/file?path=${encodeURIComponent(serverPath)}` : "") ||
+      (name ? `/api/gallery/file?name=${encodeURIComponent(name)}` : "");
+
+    return name && url ? { name, url } : null;
+  }
+
+  function extractStoryboardSyncItems(data: any): Array<{ name: string; url: string }> {
+    const buckets = [
+      data?.items,
+      data?.saved,
+      data?.savedItems,
+      data?.files,
+      data?.outputs,
+      data?.images,
+      data?.results,
+      data?.file ? [data.file] : [],
+      data?.image ? [data.image] : [],
+      data?.output ? [data.output] : [],
+      data?.result ? [data.result] : [],
+    ];
+
+    const items: Array<{ name: string; url: string }> = [];
+
+    for (const bucket of buckets) {
+      if (!Array.isArray(bucket)) continue;
+      for (const raw of bucket) {
+        const item = normalizeStoryboardSyncItem(raw);
+        if (item && !items.some((existing) => existing.name === item.name || existing.url === item.url)) {
+          items.push(item);
+        }
+      }
+    }
+
+    return items;
+  }
+
   async function syncSelectedSceneImages() {
     if (!selectedScene || busySceneId) return;
 
     const syncTargetIndexes = Array.from({ length: clampStoryboardImageCount(selectedScene.imageCount) }, (_, index) => index)
-      .filter((index) => {
-        const image = selectedScene.images[index];
-        return Boolean(
-          image?.promptId &&
-            image.status === "queued" &&
-            (image.editingUploadedSource || !storyboardImageHasContent({ ...image, status: image.status }))
-        );
-      });
+      .filter((index) => syncableStoryboardImageSlot(selectedScene, index));
 
     const promptIds = Array.from(
       new Set(syncTargetIndexes.map((index) => selectedScene.images[index]?.promptId).filter((id): id is string => !!id))
@@ -2074,7 +6623,7 @@ export default function StoryboardPanel() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ promptId }),
+          body: JSON.stringify({ promptId, forceDirect: true }),
         });
 
         const data = await res.json().catch(() => null);
@@ -2085,29 +6634,10 @@ export default function StoryboardPanel() {
           continue;
         }
 
-        const directItems = Array.isArray(data?.items)
-          ? data.items
-              .map((item: any) => {
-                const name = String(item?.name || item?.fileName || "").trim();
-                const url = String(item?.url || "").trim();
-                return name && url ? { name, url } : null;
-              })
-              .filter((item: { name: string; url: string } | null): item is { name: string; url: string } => Boolean(item))
-          : [];
+        const extractedItems = extractStoryboardSyncItems(data);
 
-        const legacyItems =
-          !directItems.length && Array.isArray(data?.saved)
-            ? data.saved
-                .map((name: unknown) => String(name || "").trim())
-                .filter(Boolean)
-                .map((name: string) => ({
-                  name,
-                  url: `/api/gallery/file?name=${encodeURIComponent(name)}`,
-                }))
-            : [];
-
-        for (const item of [...directItems, ...legacyItems]) {
-          if (!savedItems.some((existing) => existing.name === item.name)) savedItems.push(item);
+        for (const item of extractedItems) {
+          if (!savedItems.some((existing) => existing.name === item.name || existing.url === item.url)) savedItems.push(item);
         }
       }
 
@@ -2152,9 +6682,9 @@ export default function StoryboardPanel() {
       });
 
       if (!orderedSavedItems.length) {
-        setNotice("No storyboard images were returned yet. Run Sync Results again after Comfy finishes.");
+        setNotice("No image files were returned for this exact promptId. Regenerate this storyboard slot or confirm the sync route can read Comfy history for the prompt.");
       } else if (ready >= expectedCount) {
-        setNotice(`Mapped generated image(s) into the empty slots. All ${expectedCount} storyboard slots are ready.`);
+        setNotice(`Mapped the newest generated image result(s) into empty storyboard slots. All ${expectedCount} storyboard slots are ready.`);
         setStoryboardComfyProgress({
           ...emptyComfyProgressState(),
           running: false,
@@ -2164,7 +6694,7 @@ export default function StoryboardPanel() {
           detail: "sync-complete",
         });
       } else {
-        setNotice(`Mapped storyboard results into empty slots. ${ready}/${expectedCount} total slot(s) are ready.`);
+        setNotice(`Mapped the newest storyboard result(s) into empty slots. ${ready}/${expectedCount} total slot(s) are ready.`);
       }
     } finally {
       setBusySceneId("");
@@ -2183,8 +6713,8 @@ export default function StoryboardPanel() {
 
 
 
-  function animateCharacterOptions(scene: ProductionScene | null | undefined) {
-    return createCharacterSlots(scene?.characterRefs)
+    function animateCharacterOptions(scene: ProductionScene | null | undefined) {
+    const sceneOptions = createCharacterSlots(scene?.characterRefs)
       .filter((ref) => {
         const maybeRef = ref as CharacterReference & { imagePath?: string; description?: string };
         return Boolean(ref.previewUrl || ref.fileName || maybeRef.imagePath);
@@ -2193,11 +6723,11 @@ export default function StoryboardPanel() {
         const maybeRef = ref as CharacterReference & { imagePath?: string; description?: string; name?: string };
         const fileName = String(ref.fileName || maybeRef.imagePath || "").trim();
         const previewUrl = String(ref.previewUrl || "").trim();
-        const stableSource = `${index}_${fileName || maybeRef.imagePath || previewUrl || ref.id || `character_${index + 1}`}`;
+        const stableSource = `scene_${index}_${fileName || maybeRef.imagePath || previewUrl || ref.id || `character_${index + 1}`}`;
         const stableId = stableSource
           .replace(/[^a-zA-Z0-9_.-]+/g, "_")
           .replace(/^_+|_+$/g, "")
-          .slice(0, 140) || `character_${index + 1}`;
+          .slice(0, 140) || `scene_character_${index + 1}`;
 
         return {
           id: stableId,
@@ -2206,9 +6736,48 @@ export default function StoryboardPanel() {
           label: String(ref.label || maybeRef.name || `Character ${index + 1}`).trim(),
           fileName,
           previewUrl,
-          description: String(maybeRef.description || ref.label || maybeRef.name || `Character ${index + 1}`).trim(),
+          description: String(
+            (maybeRef as any).lockedCompleteDescription ||
+              (maybeRef as any).completeDescription ||
+              (maybeRef as any).characterDescription ||
+              (maybeRef as any).promptBlock ||
+              (maybeRef as any).identityBlock ||
+              (maybeRef as any).globalPromptBlock ||
+              maybeRef.description ||
+              ref.label ||
+              maybeRef.name ||
+              `Character ${index + 1}`
+          ).trim(),
+          sourceType: "scene" as const,
         };
       });
+
+    const savedOptions = animateSavedCharacterPresetsV36BPU26B.map((item, index) => {
+      const stableSource = `saved_${item.id || item.name || item.imagePath || index}`;
+      const stableId = stableSource
+        .replace(/[^a-zA-Z0-9_.-]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 140) || `saved_character_${index + 1}`;
+
+      return {
+        id: stableId,
+        sourceId: item.id,
+        index: sceneOptions.length + index,
+        label: String(item.name || `Saved Character ${index + 1}`).trim(),
+        fileName: String(item.imagePath || item.workflowImagePath || "Saved character preset").trim(),
+        previewUrl: String(item.imageUrl || item.workflowImageUrl || "").trim(),
+        description: String((item as any).description || item.name || `Saved Character ${index + 1}`).trim(),
+        sourceType: "saved" as const,
+      };
+    });
+
+    const seen = new Set<string>();
+    return [...sceneOptions, ...savedOptions].filter((character) => {
+      const key = String(character.sourceId || character.id || character.label || "").toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
 
@@ -2223,26 +6792,21 @@ export default function StoryboardPanel() {
     return animateCharacterOptions(scene).filter((character) => ids.has(character.id));
   }
 
-  function animateGlobalPromptForFrame(scene: ProductionScene | null | undefined, frameIndex: number) {
-    const sceneTitle = String(scene?.title || "Scene").trim();
-    const selectedCharacters = selectedAnimateCharacters(scene, frameIndex);
-    const lines = [
-      `Scene context: ${sceneTitle}.`,
-      "Maintain visual continuity with the storyboard frame.",
-    ];
+  function repairJoinedAnimatePromptWordsV36BPU39(value: string) {
+    return String(value || "")
+      .replace(/\b(slowly|quickly|rapidly|gently|carefully|calmly|quietly|suddenly)(walks|walking|walk|runs|running|run|moves|moving|move|steps|stepping|step)\b/gi, "$1 $2")
+      .replace(/\b(bottom|top|far|near|left|right|middle)(left|right|corner|side|screen|frame)\b/gi, "$1 $2")
+      .replace(/\b(the)(man|woman|boy|girl|character|camera|screen|scene)\b/gi, "$1 $2")
+      .replace(/\b(his|her|their|the)(face|back|hands|arms|legs|body|screen)\b/gi, "$1 $2");
+  }
 
-    if (selectedCharacters.length) {
-      lines.push(
-        `Characters in this clip: ${selectedCharacters
-          .map((character) => `${character.label}: ${character.description}`)
-          .join("; ")}.`
-      );
-      lines.push("Preserve the selected characters' identity, outfit, proportions, and facial details.");
-    } else {
-      lines.push("No recurring character is intentionally present in this clip.");
-    }
+  function preserveAnimateManualPromptSpacingV36BPU22(value: unknown) {
+    return repairJoinedAnimatePromptWordsV36BPU39(String(value ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n"));
+  }
+const manualAnimatePositivePromptOnlyV36BPU21 = (value: unknown) => preserveAnimateManualPromptSpacingV36BPU22(value);
 
-    return lines.join(" ");
+function animateGlobalPromptForFrame(draft: any, frame?: any) {
+    return preserveAnimateManualPromptSpacingV36BPU22(draft?.prompt);
   }
 
 
@@ -2264,17 +6828,69 @@ export default function StoryboardPanel() {
     });
   }
 
+  function animateCharacterPromptBlockV36BPU25(character: {
+    label?: string;
+    description?: string;
+    fileName?: string;
+    id?: string;
+  }) {
+    const label = String(character?.label || character?.id || "Character").trim();
+    const description = String(character?.description || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+
+    if (!description || description === label) return label;
+    return `${label}: ${description}`;
+  }
+
+  function appendAnimateCharacterDescriptionToPromptV36BPU25(
+    frameIndex: number,
+    character: {
+      id: string;
+      label?: string;
+      description?: string;
+      fileName?: string;
+    },
+  ) {
+    if (!selectedScene) return;
+
+    const drafts = animateFrameDrafts(selectedScene);
+    const currentPrompt = String(drafts[frameIndex]?.prompt || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    const characterBlock = animateCharacterPromptBlockV36BPU25(character);
+
+    if (!characterBlock.trim()) {
+      setNotice("Selected character has no usable description to add.");
+      return;
+    }
+
+    if (currentPrompt.includes(characterBlock)) {
+      toggleAnimateFrameCharacter(frameIndex, character.id, true);
+      setNotice(`${String(character.label || "Character").trim()} description is already in this Animate prompt.`);
+      return;
+    }
+
+    const separator = currentPrompt && !currentPrompt.endsWith("\n") ? "\n" : "";
+    const nextPrompt = `${currentPrompt}${separator}${characterBlock}`;
+
+    updateAnimateFrameDraft(frameIndex, { prompt: nextPrompt });
+    toggleAnimateFrameCharacter(frameIndex, character.id, true);
+    setNotice(`Added ${String(character.label || "character").trim()} description to the Animate prompt.`);
+  }
+
+
   // PRODUCTION_ANIMATE_GENERATE_V1_PATCH
 
 // OTG_PRODUCTION_DEFAULT_ANIMATE_USE_GENERATE_I2V_V1_START
   const PRODUCTION_DEFAULT_I2V_WORKFLOW_ID =
-    process.env.NEXT_PUBLIC_OTG_PRODUCTION_DEFAULT_I2V_WORKFLOW_ID || "Create a Video from Images";
+    process.env.NEXT_PUBLIC_OTG_PRODUCTION_DEFAULT_I2V_WORKFLOW_ID || "production/image-to-video-ltx23-1-1";
   const PRODUCTION_DEFAULT_I2V_WORKFLOW_LABEL =
-    process.env.NEXT_PUBLIC_OTG_PRODUCTION_DEFAULT_I2V_WORKFLOW_LABEL || "Create a Video from Images";
+    process.env.NEXT_PUBLIC_OTG_PRODUCTION_DEFAULT_I2V_WORKFLOW_LABEL || "Production Image to Video";
   const PRODUCTION_FIRST_LAST_WORKFLOW_ID =
-    process.env.NEXT_PUBLIC_OTG_PRODUCTION_FIRST_LAST_WORKFLOW_ID || "presets/Create First Image to Last Image Video";
+    process.env.NEXT_PUBLIC_OTG_PRODUCTION_FIRST_LAST_WORKFLOW_ID || "production/first-frame-last-frame-ltx23-1-1";
   const PRODUCTION_FIRST_LAST_WORKFLOW_LABEL =
-    process.env.NEXT_PUBLIC_OTG_PRODUCTION_FIRST_LAST_WORKFLOW_LABEL || "Create First to Last Image Video";
+    process.env.NEXT_PUBLIC_OTG_PRODUCTION_FIRST_LAST_WORKFLOW_LABEL || "Production First Frame Last Frame";
+  const PRODUCTION_REFERENCE_VIDEO_GGUF_WORKFLOW_ID = "production-reference-video-gguf";
+  const PRODUCTION_REFERENCE_VIDEO_GGUF_WORKFLOW_LABEL = "Production Reference-to-video GGUF";
+  const PRODUCTION_REFERENCE_VIDEO_GGUF_VOICE_ACTOR_WORKFLOW_ID = "production-reference-video-gguf-voice-actor";
+  const PRODUCTION_REFERENCE_VIDEO_GGUF_VOICE_ACTOR_WORKFLOW_LABEL = "Production Reference-to-video GGUF Voice Actor";
 
   async function productionDefaultAnimateImageFile(imageUrl: string, fallbackName: string) {
     const url = String(imageUrl || "").trim();
@@ -2530,13 +7146,24 @@ export default function StoryboardPanel() {
     if (!productionDefaultAnimateIsVideoItem(item)) return false;
 
     const requestKind = productionDefaultStrictRequestKind(item);
-    if (requestKind && requestKind !== "production-default-image-to-video") return false;
+    if (
+      requestKind &&
+      requestKind !== "production-default-image-to-video" &&
+      requestKind !== "production-first-last-frame-video" &&
+      requestKind !== "production-reference-video-gguf" &&
+      requestKind !== "production-reference-video-gguf-voice-actor" &&
+      requestKind !== "production-reference-video-gguf-test"
+    ) return false;
 
     const workflowId = productionDefaultStrictWorkflowId(item);
     if (
       workflowId &&
       PRODUCTION_DEFAULT_I2V_WORKFLOW_ID &&
-      workflowId !== PRODUCTION_DEFAULT_I2V_WORKFLOW_ID
+      workflowId !== PRODUCTION_DEFAULT_I2V_WORKFLOW_ID &&
+      workflowId !== PRODUCTION_FIRST_LAST_WORKFLOW_ID &&
+      workflowId !== PRODUCTION_REFERENCE_VIDEO_GGUF_WORKFLOW_ID &&
+      workflowId !== PRODUCTION_REFERENCE_VIDEO_GGUF_VOICE_ACTOR_WORKFLOW_ID &&
+      workflowId !== "production-reference-video-gguf-test"
     ) {
       return false;
     }
@@ -2614,16 +7241,22 @@ export default function StoryboardPanel() {
     const frameClips = animateFrameClips(selectedScene);
     const drafts = animateFrameDrafts(selectedScene);
     const syncTargetIndexes = frameClips
-      .map((clip, index) => (drafts[index]?.queueForGeneration !== false && clip?.promptId ? index : -1))
+      .map((clip, index) => (
+        drafts[index]?.queueForGeneration !== false &&
+        !isAnimateLastFrameConsumed(drafts[index]) &&
+        clip?.promptId
+          ? index
+          : -1
+      ))
       .filter((index) => index >= 0);
 
     if (!frameClips.length) {
-      setNotice("No frame clip slots found for this scene.");
+      setNotice("No scene clip slots found for this production scene.");
       return;
     }
 
     if (!syncTargetIndexes.length) {
-      setNotice("No queued Animate clips are waiting to sync. Check a frame as Queue and generate it first.");
+      setNotice("No queued Animate clips are waiting to sync. Check a scene as Queue and generate it first.");
       return;
     }
 
@@ -2636,7 +7269,7 @@ export default function StoryboardPanel() {
         .sort((a, b) => productionDefaultStrictUpdatedAt(b) - productionDefaultStrictUpdatedAt(a));
 
       if (!galleryItems.length) {
-        setNotice("No generated video clips found yet. Wait for Comfy to finish, then Sync Frame Clips again.");
+        setNotice("No generated video clips found yet. Wait for Comfy to finish, then Sync Scene Clips again.");
         return;
       }
 
@@ -2700,6 +7333,10 @@ export default function StoryboardPanel() {
         frameClips: nextClips,
         status: readyCount >= nextClips.length ? "clip_ready" : selectedScene.status,
       });
+      autosaveProductionScenePatchV36BPU43(sceneId, {
+        frameClips: nextClips,
+        status: readyCount >= nextClips.length ? "clip_ready" : selectedScene.status,
+      }, "animate");
 
       if (mappedCount || clearedWrongCount) {
         setNotice(
@@ -2720,30 +7357,81 @@ export default function StoryboardPanel() {
   async function generateSelectedFrameClips() {
     if (!selectedScene || busySceneId) return;
 
-    const sceneSnapshot = selectedScene;
+    let sceneSnapshot = selectedScene;
     const sceneId = sceneSnapshot.id;
-    const frames = storyboardFramesForAnimate(sceneSnapshot);
-    const drafts = animateFrameDrafts(sceneSnapshot);
-    const existingClips = animateFrameClips(sceneSnapshot);
-    const expectedCount = clampStoryboardImageCount(sceneSnapshot.imageCount);
-    const queuedFrameIndexes = drafts
-      .map((draft, index) => (draft.queueForGeneration !== false && !isAnimateLastFrameConsumed(draft) ? index : -1))
-      .filter((index) => index >= 0);
+    let frames = storyboardFramesForAnimate(sceneSnapshot);
+    let drafts = animateFrameDrafts(sceneSnapshot);
+    let existingClips = animateFrameClips(sceneSnapshot);
+    let expectedCount = clampStoryboardImageCount(sceneSnapshot.imageCount);
+
+    const completedQwenScenesForSubmitV36BPU19 = loadCompletedQwenScenesForAnimateV36BPU3();
+    if (completedQwenScenesForSubmitV36BPU19.length > frames.length) {
+      const qwenImagesForSubmitV36BPU19 = qwenSceneImagesForAnimateV36BPU3(completedQwenScenesForSubmitV36BPU19);
+      const qwenDraftsForSubmitV36BPU19 = qwenSceneAnimationDraftsForAnimateV36BPU3(completedQwenScenesForSubmitV36BPU19, drafts);
+      const qwenClipsForSubmitV36BPU19 = qwenSceneFrameClipsForAnimateV36BPU3(completedQwenScenesForSubmitV36BPU19, existingClips);
+
+      frames = qwenImagesForSubmitV36BPU19.map((image, index) => {
+        const fileName = String(image.fileName || "").trim();
+        const url = String(
+          image.url ||
+            (image as any).imageUrl ||
+            (fileName ? `/api/gallery/file?name=${encodeURIComponent(fileName)}` : "")
+        ).trim();
+
+        return {
+          index,
+          image,
+          approved: Boolean(image.approved || image.status === "ready" || url),
+          fileName,
+          url,
+        };
+      });
+      drafts = qwenDraftsForSubmitV36BPU19;
+      existingClips = qwenClipsForSubmitV36BPU19;
+      expectedCount = completedQwenScenesForSubmitV36BPU19.length;
+      sceneSnapshot = {
+        ...sceneSnapshot,
+        imageCount: expectedCount,
+        images: qwenImagesForSubmitV36BPU19,
+        animationFrames: qwenDraftsForSubmitV36BPU19,
+        frameClips: qwenClipsForSubmitV36BPU19,
+      } as ProductionScene;
+
+      updateSceneById(sceneId, {
+        imageCount: expectedCount,
+        images: qwenImagesForSubmitV36BPU19,
+        animationFrames: qwenDraftsForSubmitV36BPU19,
+        frameClips: qwenClipsForSubmitV36BPU19,
+      });
+    }
+    drafts = drafts.map((draft, index) => ({
+      ...draft,
+      durationSeconds: animateDurationWithOverrideV36BPU42(sceneId, index, draft.durationSeconds),
+    }));
+    const activeSubmitFrameIndexV36BPU20C = Math.max(
+      0,
+      Math.min(frames.length - 1, Math.floor(Number(activeAnimateSceneIndexV36BPU10B) || 0))
+    );
+    const activeSubmitDraftV36BPU20C = drafts[activeSubmitFrameIndexV36BPU20C];
+
+    const queuedFrameIndexes = activeSubmitDraftV36BPU20C?.queueForGeneration !== false && !isAnimateLastFrameConsumed(activeSubmitDraftV36BPU20C)
+      ? [activeSubmitFrameIndexV36BPU20C]
+      : [];
     const missingFrames = frames.filter((frame) => !frame.approved || !frame.url);
 
     if (missingFrames.length) {
-      setNotice(`Approve and sync all storyboard images before animation. Missing ${missingFrames.length}/${expectedCount}.`);
+      setNotice(`Approve and sync all storyboard scene previews before animation. Missing ${missingFrames.length}/${expectedCount}.`);
       return;
     }
 
     if (!queuedFrameIndexes.length) {
-      setNotice("No Animate frames are queued. Check at least one frame as Queue before generating.");
+      setNotice("No Animate scenes are queued. Check at least one scene as Queue before generating.");
       return;
     }
 
     setBusySceneId(sceneId);
     resetAnimateGenerationProgress(queuedFrameIndexes.length);
-    setNotice(`Submitting ${queuedFrameIndexes.length} queued LTX 2.3 image-to-video clip job(s).`);
+    setNotice(`Submitting current Animate scene ${activeSubmitFrameIndexV36BPU20C + 1} as 1 LTX 2.3 clip job.`);
 
     let nextClips: ProductionFrameClip[] = Array.from({ length: expectedCount }, (_, index) => ({
       ...existingClips[index],
@@ -2761,6 +7449,8 @@ export default function StoryboardPanel() {
         const draft = drafts[index];
         const pairedLastFrameIndex = draft.animationMode === "first_last_frame" ? draft.lastFrameIndex : undefined;
         const isFirstLastFrame = pairedLastFrameIndex === index + 1;
+        const isReferenceVideoGguf = draft.animationMode === "reference_to_video_gguf";
+        const isReferenceVideoMode = isReferenceVideoGguf;
         const lastFrame = isFirstLastFrame ? frames[pairedLastFrameIndex] : null;
         const selectedCharacters = selectedAnimateCharacters(sceneSnapshot, index);
         const firstUsableCharacter = selectedCharacters.find((character) => {
@@ -2768,9 +7458,10 @@ export default function StoryboardPanel() {
           return url && !url.startsWith("blob:");
         });
 
-        const indexImageUrl = firstUsableCharacter?.previewUrl || frame.url;
-        const localPrompt = String(draft.prompt || "").trim();
-        const globalPrompt = animateGlobalPromptForFrame(sceneSnapshot, index);
+        const referenceVideoCharacter = isReferenceVideoMode ? firstUsableCharacter : undefined;
+        const indexImageUrl = isReferenceVideoMode ? frame.url : firstUsableCharacter?.previewUrl || frame.url;
+        const localPrompt = preserveAnimateManualPromptSpacingV36BPU22(draft.prompt);
+        const globalPrompt = "";
 
         if (!frame.url) {
           nextClips[index] = {
@@ -2792,6 +7483,16 @@ export default function StoryboardPanel() {
           continue;
         }
 
+        if (isReferenceVideoMode && !referenceVideoCharacter?.previewUrl) {
+          nextClips[index] = {
+            ...nextClips[index],
+            status: "error" as const,
+            error: "Reference-to-video needs one selected character reference.",
+          };
+          updateSceneById(sceneId, { frameClips: nextClips });
+          continue;
+        }
+
         const outputPrefix = isFirstLastFrame
           ? productionFirstLastAnimateOutputPrefix(sceneId, index, Number(pairedLastFrameIndex))
           : productionDefaultAnimateOutputPrefix(sceneId, index);
@@ -2802,15 +7503,91 @@ export default function StoryboardPanel() {
         const lastFrameFile = isFirstLastFrame && lastFrame?.url
           ? await productionDefaultAnimateImageFile(lastFrame.url, `${sceneId}_frame_${Number(pairedLastFrameIndex) + 1}_last.png`)
           : null;
+        const referenceVideoFile = isReferenceVideoMode && referenceVideoCharacter?.previewUrl
+          ? await productionDefaultAnimateImageFile(referenceVideoCharacter.previewUrl, `${sceneId}_frame_${index + 1}_gguf_ref_1.png`)
+          : null;
+
+        const voiceActorInput = draft.voiceActorInput || {};
+        const useVoiceActorInput = Boolean(voiceActorInput.enabled && voiceActorInput.saved);
+        const useReferenceVideoGgufVoiceActor = Boolean(isReferenceVideoGguf && useVoiceActorInput);
+        const workflowFileName = useReferenceVideoGgufVoiceActor
+            ? "production-reference-video-gguf-voice-actor.json"
+          : isReferenceVideoGguf
+            ? "production-reference-video-gguf.json"
+          : useVoiceActorInput
+          ? PRODUCTION_LIPSYNC_WORKFLOW_FILE
+          : isFirstLastFrame
+              ? "production-first-frame-last-frame.json"
+              : "production-image-to-video.json";
+        const workflowRelativePath = `workflows/production/${workflowFileName}`;
+        const workflowId = useReferenceVideoGgufVoiceActor
+            ? PRODUCTION_REFERENCE_VIDEO_GGUF_VOICE_ACTOR_WORKFLOW_ID
+          : isReferenceVideoGguf
+            ? PRODUCTION_REFERENCE_VIDEO_GGUF_WORKFLOW_ID
+          : useVoiceActorInput
+          ? PRODUCTION_LIPSYNC_WORKFLOW_ID
+          : isFirstLastFrame
+              ? PRODUCTION_FIRST_LAST_WORKFLOW_ID
+              : PRODUCTION_DEFAULT_I2V_WORKFLOW_ID;
+        const workflowLabel = useReferenceVideoGgufVoiceActor
+            ? PRODUCTION_REFERENCE_VIDEO_GGUF_VOICE_ACTOR_WORKFLOW_LABEL
+          : isReferenceVideoGguf
+            ? PRODUCTION_REFERENCE_VIDEO_GGUF_WORKFLOW_LABEL
+          : useVoiceActorInput
+          ? PRODUCTION_LIPSYNC_WORKFLOW_LABEL
+          : isFirstLastFrame
+              ? PRODUCTION_FIRST_LAST_WORKFLOW_LABEL
+              : PRODUCTION_DEFAULT_I2V_WORKFLOW_LABEL;
+
+        if (voiceActorInput.enabled && !useVoiceActorInput) {
+          throw new Error(`Frame ${index + 1} has Voice Actor Input enabled, but no saved recording.`);
+        }
+
+        const voiceActorBlob = useVoiceActorInput ? voiceActorAudioBlobs[index] : null;
+        if (useVoiceActorInput && !voiceActorBlob) {
+          throw new Error(`Frame ${index + 1} voice actor recording is not available in this browser session. Redo the recording.`);
+        }
+
+        if (
+          useVoiceActorInput &&
+          Number(voiceActorInput.durationSeconds || 0) > Number(draft.durationSeconds || 0) + 0.25 &&
+          typeof window !== "undefined"
+        ) {
+          const proceed = window.confirm(
+            `Frame ${index + 1} voice actor recording is ${Number(voiceActorInput.durationSeconds || 0).toFixed(1)}s, but the clip duration is ${draft.durationSeconds}s. The workflow trim duration will stay ${draft.durationSeconds}s. Submit anyway?`
+          );
+          if (!proceed) {
+            throw new Error(`Frame ${index + 1} voice actor input needs redo before submit.`);
+          }
+        }
 
         const form = new FormData();
-        form.append("workflowId", isFirstLastFrame ? PRODUCTION_FIRST_LAST_WORKFLOW_ID : PRODUCTION_DEFAULT_I2V_WORKFLOW_ID);
-        form.append("preset", isFirstLastFrame ? PRODUCTION_FIRST_LAST_WORKFLOW_ID : PRODUCTION_DEFAULT_I2V_WORKFLOW_ID);
-        form.append("workflowLabel", isFirstLastFrame ? PRODUCTION_FIRST_LAST_WORKFLOW_LABEL : PRODUCTION_DEFAULT_I2V_WORKFLOW_LABEL);
-        form.append("requestKind", isFirstLastFrame ? "production-first-last-frame-video" : "production-default-image-to-video");
+        form.append("workflowId", workflowId);
+        form.append("preset", workflowId);
+        form.append("workflowLabel", workflowLabel);
+        form.append("workflowFile", workflowFileName);
+        form.append("workflowPath", workflowRelativePath);
+        form.append("workflowJsonPath", workflowRelativePath);
+        form.append("workflowPresetPath", workflowRelativePath);
+        form.append("workflowSource", "production-pipeline-uploaded-json");
+        form.append(
+          "requestKind",
+          useReferenceVideoGgufVoiceActor
+              ? "production-reference-video-gguf-voice-actor"
+            : isReferenceVideoGguf
+              ? "production-reference-video-gguf"
+            : useVoiceActorInput
+            ? isFirstLastFrame
+              ? "production-lipsync-first-last-video"
+              : "production-lipsync-image-to-video"
+            : isFirstLastFrame
+                ? "production-first-last-frame-video"
+                : "production-default-image-to-video"
+        );
+        form.append("voiceActorBaseMode", useVoiceActorInput ? (isReferenceVideoMode ? String(draft.animationMode) : isFirstLastFrame ? "first_last_frame" : "image_to_video") : "");
         form.append("title", isFirstLastFrame ? `${sceneSnapshot.title} - Clip ${index + 1} FF-LF` : `${sceneSnapshot.title} - Clip ${index + 1}`);
-        form.append("prompt", `${globalPrompt}\n\n${localPrompt}`.trim());
-        form.append("positivePrompt", `${globalPrompt}\n\n${localPrompt}`.trim());
+        form.append("prompt", localPrompt);
+        form.append("positivePrompt", localPrompt);
         form.append("negativePrompt", "");
         form.append("durationSeconds", String(draft.durationSeconds));
         form.append("seconds", String(draft.durationSeconds));
@@ -2828,18 +7605,64 @@ export default function StoryboardPanel() {
         form.append("fps", "24");
         form.append("width", "1280");
         form.append("height", "720");
+        if (isReferenceVideoMode) {
+          const referenceVideoFrameCount = Math.max(1, Math.round(Number(draft.durationSeconds || 15) * 25));
+          const referenceVideoLatentLength = referenceVideoFrameCount;
+          form.set("width", "1280");
+          form.set("height", "720");
+          form.set("fps", "25");
+          form.set("frameRate", "25");
+          form.set("frameCount", String(referenceVideoFrameCount));
+          form.set("numFrames", String(referenceVideoFrameCount));
+          form.set("totalFrames", String(referenceVideoFrameCount));
+          form.set("targetFrames", String(referenceVideoFrameCount));
+          form.set("referenceVideoFrameCount", String(referenceVideoFrameCount));
+          form.set("latentLength", String(referenceVideoLatentLength));
+          form.set("videoLength", String(referenceVideoLatentLength));
+        }
         form.append("outputPrefix", outputPrefix);
+        const frameLoras = normalizeProductionLoras(draft.loras);
+        if (frameLoras.length) {
+          form.append("loras", JSON.stringify(frameLoras.map((item) => ({
+            name: item.name,
+            strength: item.strength,
+            strengthModel: item.strength,
+            strengthClip: item.strength,
+          }))));
+        }
+        if (useVoiceActorInput && voiceActorBlob) {
+          const audioName = voiceActorInput.audioName || `voice_actor_frame_${index + 1}.webm`;
+          form.append("audioA", voiceActorBlob, audioName);
+          form.append("voiceActorInput", "true");
+          form.append("voiceActorRecordedSeconds", String(voiceActorInput.durationSeconds || ""));
+          form.append("voiceActorTrimSeconds", String(draft.durationSeconds));
+        }
         form.append("sceneId", sceneId);
         form.append("sceneTitle", sceneSnapshot.title);
         form.append("frameIndex", String(index));
-        form.append("animationMode", isFirstLastFrame ? "first_last_frame" : "image_to_video");
+        form.append("animationMode", isReferenceVideoMode ? String(draft.animationMode) : isFirstLastFrame ? "first_last_frame" : "image_to_video");
         form.append("promptSourceFrameIndex", String(index));
         form.append("imageA", sourceFile, sourceFile.name);
-        if (lastFrameFile) {
+        if (isReferenceVideoMode && referenceVideoFile) {
+          form.append("image", sourceFile, sourceFile.name);
+          form.append("backgroundImage", sourceFile, sourceFile.name);
+          form.append("imageB", referenceVideoFile, referenceVideoFile.name);
+          form.append("referenceImage1", referenceVideoFile, referenceVideoFile.name);
+          form.append("referenceSlot1", referenceVideoFile, referenceVideoFile.name);
+          if (useVoiceActorInput) {
+            form.append("voiceActorUsesLastFrame", "false");
+          }
+        } else if (lastFrameFile) {
           form.append("imageB", lastFrameFile, lastFrameFile.name);
           form.append("lastFrameIndex", String(pairedLastFrameIndex));
+          if (useVoiceActorInput) {
+            form.append("voiceActorUsesLastFrame", "true");
+          }
         } else {
           form.append("image", sourceFile, sourceFile.name);
+          if (useVoiceActorInput) {
+            form.append("voiceActorUsesLastFrame", "false");
+          }
         }
 
         const res = await fetch("/api/comfy", {
@@ -2866,7 +7689,7 @@ const data = await res.json().catch(() => null);
           outputPrefix,
           sourceFrameIndex: index,
           requestedDurationSeconds: draft.durationSeconds,
-          animationMode: isFirstLastFrame ? "first_last_frame" : "image_to_video",
+          animationMode: isReferenceVideoMode ? String(draft.animationMode) : isFirstLastFrame ? "first_last_frame" : "image_to_video",
           firstFrameIndex: index,
           lastFrameIndex: isFirstLastFrame ? Number(pairedLastFrameIndex) : undefined,
           promptSourceFrameIndex: index,
@@ -2879,7 +7702,10 @@ const data = await res.json().catch(() => null);
         });
       }
 
-      setNotice(`Submitted ${queuedFrameIndexes.length} queued LTX 2.3 frame clip job(s). Use Sync Frame Clips after Comfy finishes.`);
+      setNotice(`Submitted current Animate scene ${activeSubmitFrameIndexV36BPU20C + 1} as 1 LTX 2.3 clip job. Use Sync Scene Clips after Comfy finishes. Submit frames=${frames.length}; first/last pairs=${drafts.filter((item, itemIndex) => item.animationMode === "first_last_frame" && item.lastFrameIndex === itemIndex + 1).length}.`);
+      autosaveProductionScenePatchV36BPU43(sceneId, {
+        frameClips: nextClips,
+      }, "animate");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not submit frame clips.";
       setNotice(message);
@@ -2900,10 +7726,10 @@ const data = await res.json().catch(() => null);
     return Array.from({ length: expectedCount }, (_, index) => {
       const image = scene?.images?.[index];
       const fileName = String(image?.fileName || "").trim();
-      const url = String(
+      const url = repoCachedComfyImageUrlV36BPU29(String(
         image?.url ||
           (fileName ? `/api/gallery/file?name=${encodeURIComponent(fileName)}` : "")
-      ).trim();
+      ).trim());
 
       return {
         index,
@@ -2917,14 +7743,15 @@ const data = await res.json().catch(() => null);
 
   function animateFrameDrafts(scene: ProductionScene | null | undefined): ProductionFrameAnimation[] {
     const expectedCount = clampStoryboardImageCount(scene?.imageCount ?? DEFAULT_SCENE_IMAGE_COUNT);
-    const sourcePrompts = scenePromptLines(scene, expectedCount);
     const existing = scene?.animationFrames || [];
     const fallbackSeconds = defaultAnimateFrameDuration(scene);
 
     return Array.from({ length: expectedCount }, (_, index) => ({
-      prompt: existing[index]?.prompt ?? sourcePrompts[index] ?? "",
+      prompt: preserveAnimateManualPromptSpacingV36BPU22(existing[index]?.prompt ?? ""),
       durationSeconds: clampAnimateFrameDuration(existing[index]?.durationSeconds ?? fallbackSeconds),
       characterRefIds: existing[index]?.characterRefIds || [],
+      loras: normalizeProductionLoras(existing[index]?.loras),
+      voiceActorInput: existing[index]?.voiceActorInput || { enabled: false, saved: false },
       queueForGeneration: existing[index]?.queueForGeneration !== false,
       animationMode: existing[index]?.animationMode || "image_to_video",
       firstFrameIndex: existing[index]?.firstFrameIndex,
@@ -2963,18 +7790,340 @@ const data = await res.json().catch(() => null);
     return animateFrameDrafts(scene).reduce((total, frame) => total + frame.durationSeconds, 0);
   }
 
-  function updateAnimateFrameDraft(index: number, patch: Partial<ProductionFrameAnimation>) {
-    if (!selectedScene) return;
+  function clampProductionLoraStrength(value: any) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 1;
+    return Math.max(MIN_PRODUCTION_LORA_STRENGTH, Math.min(MAX_PRODUCTION_LORA_STRENGTH, Math.round(numeric * 100) / 100));
+  }
+
+  function normalizeProductionLoras(loras: ProductionLoraSelection[] | undefined | null) {
+    const seen = new Set<string>();
+    const normalized: ProductionLoraSelection[] = [];
+
+    for (const item of Array.isArray(loras) ? loras : []) {
+      const name = String(item?.name || "").trim();
+      const key = name.toLowerCase();
+      if (!name || seen.has(key)) continue;
+      seen.add(key);
+      normalized.push({
+        name,
+        strength: clampProductionLoraStrength(item?.strength ?? 1),
+      });
+      if (normalized.length >= MAX_PRODUCTION_ANIMATE_LORAS) break;
+    }
+
+    return normalized;
+  }
+
+  function selectedProductionLoraName(frameIndex: number) {
+    return String(
+      animateLoraPickByFrame[frameIndex] ||
+        productionLoraOptions[0]?.name ||
+        ""
+    ).trim();
+  }
+
+  function setSelectedProductionLoraName(frameIndex: number, name: string) {
+    setAnimateLoraPickByFrame((previous) => ({
+      ...previous,
+      [frameIndex]: name,
+    }));
+  }
+
+  function addProductionLoraToFrame(frameIndex: number) {
+    const name = selectedProductionLoraName(frameIndex);
+    if (!name) {
+      setNotice("No LORA selected.");
+      return;
+    }
 
     const frames = animateFrameDrafts(selectedScene);
-    frames[index] = {
-      ...frames[index],
-      ...patch,
-      durationSeconds: clampAnimateFrameDuration(patch.durationSeconds ?? frames[index].durationSeconds),
-      queueForGeneration: patch.queueForGeneration ?? frames[index].queueForGeneration,
-    };
+    const current = normalizeProductionLoras(frames[frameIndex]?.loras);
+    if (current.some((item) => item.name.toLowerCase() === name.toLowerCase())) {
+      setNotice(`${name} is already added to Frame ${frameIndex + 1}.`);
+      return;
+    }
+    if (current.length >= MAX_PRODUCTION_ANIMATE_LORAS) {
+      setNotice(`Frame ${frameIndex + 1} already has the maximum ${MAX_PRODUCTION_ANIMATE_LORAS} LORAs.`);
+      return;
+    }
 
-    updateSelectedScene({ animationFrames: frames });
+    updateAnimateFrameDraft(frameIndex, {
+      loras: [...current, { name, strength: 1 }],
+    });
+  }
+
+  function updateProductionFrameLoraStrength(frameIndex: number, loraName: string, strength: number) {
+    const frames = animateFrameDrafts(selectedScene);
+    const current = normalizeProductionLoras(frames[frameIndex]?.loras);
+    updateAnimateFrameDraft(frameIndex, {
+      loras: current.map((item) =>
+        item.name === loraName ? { ...item, strength: clampProductionLoraStrength(strength) } : item
+      ),
+    });
+  }
+
+  function removeProductionLoraFromFrame(frameIndex: number, loraName: string) {
+    const frames = animateFrameDrafts(selectedScene);
+    const current = normalizeProductionLoras(frames[frameIndex]?.loras);
+    updateAnimateFrameDraft(frameIndex, {
+      loras: current.filter((item) => item.name !== loraName),
+    });
+  }
+
+  function voiceActorInputForFrame(frameIndex: number) {
+    const frames = animateFrameDrafts(selectedScene);
+    return frames[frameIndex]?.voiceActorInput || { enabled: false, saved: false };
+  }
+
+  function updateVoiceActorInputForFrame(frameIndex: number, patch: Partial<ProductionVoiceActorInput>) {
+    const current = voiceActorInputForFrame(frameIndex);
+    updateAnimateFrameDraft(frameIndex, {
+      voiceActorInput: {
+        ...current,
+        ...patch,
+      },
+    });
+  }
+
+  function audioExtensionForMimeType(mimeType: string) {
+    const lower = String(mimeType || "").toLowerCase();
+    if (lower.includes("wav")) return "wav";
+    if (lower.includes("ogg")) return "ogg";
+    if (lower.includes("mp4") || lower.includes("m4a")) return "m4a";
+    return "webm";
+  }
+
+  async function startVoiceActorRecording(frameIndex: number) {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setNotice("This browser does not support microphone recording.");
+      return;
+    }
+
+    if (voiceActorRecordingFrameIndex !== null) {
+      setNotice("Stop the current recording before starting another one.");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const preferredTypes = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/ogg;codecs=opus",
+        "audio/mp4",
+      ];
+      const mimeType = preferredTypes.find((type) => {
+        try {
+          return typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type);
+        } catch {
+          return false;
+        }
+      });
+
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      voiceActorChunksRef.current = [];
+      voiceActorStartedAtRef.current = Date.now();
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          voiceActorChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const actualMime = recorder.mimeType || mimeType || "audio/webm";
+        const blob = new Blob(voiceActorChunksRef.current, { type: actualMime });
+        const durationSeconds = Math.max(0.1, (Date.now() - voiceActorStartedAtRef.current) / 1000);
+        const ext = audioExtensionForMimeType(actualMime);
+        const audioName = `voice_actor_frame_${frameIndex + 1}_${Date.now()}.${ext}`;
+        const audioUrl = URL.createObjectURL(blob);
+
+        setVoiceActorAudioBlobs((previous) => ({
+          ...previous,
+          [frameIndex]: blob,
+        }));
+
+        updateVoiceActorInputForFrame(frameIndex, {
+          enabled: true,
+          saved: false,
+          audioName,
+          audioUrl,
+          durationSeconds,
+          mimeType: actualMime,
+          recordedAt: new Date().toISOString(),
+        });
+
+        setVoiceActorRecordingFrameIndex(null);
+        voiceActorRecorderRef.current = null;
+        voiceActorStreamRef.current?.getTracks().forEach((track) => track.stop());
+        voiceActorStreamRef.current = null;
+      };
+
+      voiceActorRecorderRef.current = recorder;
+      voiceActorStreamRef.current = stream;
+      setVoiceActorRecordingFrameIndex(frameIndex);
+      recorder.start();
+    } catch (error) {
+      setVoiceActorRecordingFrameIndex(null);
+      voiceActorRecorderRef.current = null;
+      voiceActorStreamRef.current?.getTracks().forEach((track) => track.stop());
+      voiceActorStreamRef.current = null;
+      setNotice(error instanceof Error ? error.message : "Could not start microphone recording.");
+    }
+  }
+
+  function stopVoiceActorRecording() {
+    const recorder = voiceActorRecorderRef.current;
+    if (!recorder) return;
+    if (recorder.state !== "inactive") {
+      recorder.stop();
+    }
+  }
+
+  function redoVoiceActorRecording(frameIndex: number) {
+    setVoiceActorAudioBlobs((previous) => {
+      const next = { ...previous };
+      delete next[frameIndex];
+      return next;
+    });
+    updateVoiceActorInputForFrame(frameIndex, {
+      saved: false,
+      audioName: "",
+      audioUrl: "",
+      durationSeconds: 0,
+      mimeType: "",
+      recordedAt: "",
+    });
+  }
+
+  function saveVoiceActorRecording(frameIndex: number) {
+    const input = voiceActorInputForFrame(frameIndex);
+    if (!voiceActorAudioBlobs[frameIndex] || !input.audioName) {
+      setNotice("Record audio before saving voice actor input.");
+      return;
+    }
+    updateVoiceActorInputForFrame(frameIndex, {
+      enabled: true,
+      saved: true,
+    });
+    setNotice(`Voice actor input saved for Frame ${frameIndex + 1}.`);
+  }
+
+    function updateAnimateFrameDraft(
+      index: number,
+      patch: Partial<ProductionFrameAnimation>,
+      options?: {
+        renderFrames?: ReturnType<typeof storyboardFramesForAnimate>;
+        completedQwenScenes?: QwenCompletedSceneForAnimateV36BPU3[];
+      }
+    ) {
+    if (!selectedScene) return;
+
+    const safeIndex = Math.max(0, Math.floor(Number(index) || 0));
+    const renderFrames = Array.isArray(options?.renderFrames) ? options.renderFrames : [];
+    const completedQwenScenes = Array.isArray(options?.completedQwenScenes) ? options.completedQwenScenes : [];
+    if (patch.durationSeconds !== undefined) {
+      const nextDuration = clampAnimateFrameDuration(Number(patch.durationSeconds));
+      setAnimateDurationOverrideByFrameV36BPU42((previous) => ({
+        ...previous,
+        [animateDurationOverrideKeyV36BPU42(selectedScene.id, safeIndex)]: nextDuration,
+      }));
+    }
+
+    setScenes((previousScenes) =>
+      previousScenes.map((scene) => {
+        if (scene.id !== selectedScene.id) return scene;
+
+        const canonicalFrames = storyboardFramesForAnimate(scene);
+        const useRenderFrames = renderFrames.length > canonicalFrames.length;
+        const nextScene: ProductionScene = { ...scene };
+
+        if (useRenderFrames) {
+          // V36BPU40: duration edits must write to the same hydrated frame list the Animate UI renders.
+          const qwenImages = completedQwenScenes.length >= renderFrames.length
+            ? qwenSceneImagesForAnimateV36BPU3(completedQwenScenes)
+            : [];
+          nextScene.imageCount = renderFrames.length;
+          nextScene.images = renderFrames.map((frame, frameIndex) => {
+            const qwenImage = qwenImages[frameIndex];
+            const currentImage = scene.images?.[frameIndex] || frame.image || qwenImage || {};
+            const url = String(frame.url || (currentImage as any).url || (currentImage as any).imageUrl || (qwenImage as any)?.url || "").trim();
+            const fileName = String(frame.fileName || (currentImage as any).fileName || (qwenImage as any)?.fileName || "").trim();
+            return {
+              ...(qwenImage || {}),
+              ...(currentImage as any),
+              id: (currentImage as any).id || (qwenImage as any)?.id || `animate-frame-${frameIndex + 1}`,
+              approved: true,
+              status: (currentImage as any).status || "ready",
+              url,
+              imageUrl: (currentImage as any).imageUrl || url,
+              fileName,
+            } as StoryboardImage;
+          });
+        }
+
+        const drafts = animateFrameDrafts(nextScene).map((draft) => ({ ...draft }));
+        const fallbackDurationSeconds = defaultAnimateFrameDuration(nextScene);
+
+        while (drafts.length <= safeIndex) {
+          const nextIndex = drafts.length;
+          drafts.push({
+            prompt: "",
+            durationSeconds: fallbackDurationSeconds,
+            characterRefIds: [],
+            loras: [],
+            voiceActorInput: { enabled: false, saved: false },
+            queueForGeneration: true,
+            animationMode: "image_to_video",
+            firstFrameIndex: undefined,
+            lastFrameIndex: undefined,
+            promptSourceFrameIndex: nextIndex,
+            timelineRole: "normal",
+            consumedByFrameIndex: undefined,
+            consumedLastFrameIndex: undefined,
+            keepAsSeparateSceneAfterPairing: false,
+          } as ProductionFrameAnimation);
+        }
+
+        const current = drafts[safeIndex] || ({
+          prompt: "",
+          durationSeconds: fallbackDurationSeconds,
+          characterRefIds: [],
+          loras: [],
+          voiceActorInput: { enabled: false, saved: false },
+          queueForGeneration: true,
+          animationMode: "image_to_video",
+          promptSourceFrameIndex: safeIndex,
+          timelineRole: "normal",
+          keepAsSeparateSceneAfterPairing: false,
+        } as ProductionFrameAnimation);
+
+        drafts[safeIndex] = {
+          ...current,
+          ...patch,
+          prompt: patch.prompt !== undefined ? otgAnimateManualPromptRawV36BPU24B(patch.prompt) : current.prompt,
+          durationSeconds: clampAnimateFrameDuration(patch.durationSeconds ?? current.durationSeconds ?? fallbackDurationSeconds),
+          characterRefIds: patch.characterRefIds ?? current.characterRefIds ?? [],
+          loras: patch.loras !== undefined ? normalizeProductionLoras(patch.loras) : normalizeProductionLoras(current.loras),
+          voiceActorInput: patch.voiceActorInput ?? current.voiceActorInput ?? { enabled: false, saved: false },
+          queueForGeneration: patch.queueForGeneration ?? current.queueForGeneration ?? true,
+          animationMode: patch.animationMode ?? current.animationMode ?? "image_to_video",
+          firstFrameIndex: patch.firstFrameIndex ?? current.firstFrameIndex,
+          lastFrameIndex: patch.lastFrameIndex ?? current.lastFrameIndex,
+          promptSourceFrameIndex: patch.promptSourceFrameIndex ?? current.promptSourceFrameIndex ?? safeIndex,
+          timelineRole: patch.timelineRole ?? current.timelineRole ?? "normal",
+          consumedByFrameIndex: patch.consumedByFrameIndex ?? current.consumedByFrameIndex,
+          consumedLastFrameIndex: patch.consumedLastFrameIndex ?? current.consumedLastFrameIndex,
+          keepAsSeparateSceneAfterPairing: patch.keepAsSeparateSceneAfterPairing ?? current.keepAsSeparateSceneAfterPairing ?? false,
+        };
+
+        return {
+          ...nextScene,
+          animationFrames: drafts,
+        };
+      })
+    );
   }
 
     function buildDirectorImportedFrames(): ProductionDirectorImportedFrame[] {
@@ -2997,7 +8146,7 @@ const data = await res.json().catch(() => null);
       imported.push({
         imagePath,
         imageUrl,
-        prompt: String(drafts[frame.index]?.prompt || scene.prompt || "").trim(),
+        prompt: preserveAnimateManualPromptSpacingV36BPU22(drafts[frame.index]?.prompt ?? ""),
         label: `${scene.title || "Scene"} frame ${frame.index + 1}`,
       });
     });
@@ -3026,78 +8175,338 @@ const data = await res.json().catch(() => null);
     return draft?.timelineRole === "last_frame_for" && draft.consumedByFrameIndex !== undefined && !draft.keepAsSeparateSceneAfterPairing;
   }
 
-  function setAnimateNextSceneAsLastFrame(frameIndex: number, enabled: boolean) {
-    if (!selectedScene) return;
-
-    const frames = storyboardFramesForAnimate(selectedScene);
-    const drafts = animateFrameDrafts(selectedScene);
-    const nextIndex = frameIndex + 1;
-
-    if (!enabled) {
-      const pairedLastIndex = drafts[frameIndex]?.lastFrameIndex;
-      drafts[frameIndex] = {
-        ...drafts[frameIndex],
-        animationMode: "image_to_video",
-        firstFrameIndex: undefined,
-        lastFrameIndex: undefined,
-        promptSourceFrameIndex: undefined,
+  function sceneForAnimatePairingV36BPU18(
+    scene: ProductionScene,
+    renderedCompletedScenes?: QwenCompletedSceneForAnimateV36BPU3[],
+    renderFrames?: ReturnType<typeof storyboardFramesForAnimate>
+  ) {
+    let workingScene = scene;
+    let frames = storyboardFramesForAnimate(workingScene);
+    const canonicalFramesLengthBeforeHydration = frames.length;
+    let drafts = animateFrameDrafts(workingScene).map((draft) => ({ ...draft }));
+    let frameClips = animateFrameClips(workingScene);
+    const completedScenesFromRender = Array.isArray(renderedCompletedScenes) ? renderedCompletedScenes : [];
+    const completedScenes = completedScenesFromRender.length ? completedScenesFromRender : loadCompletedQwenScenesForAnimateV36BPU3();
+    const renderFramesFromCall = Array.isArray(renderFrames) ? renderFrames : [];
+    let syncPatch: Partial<ProductionScene> & Record<string, any> = {};
+    const frameFromImageV36BPU22 = (image: StoryboardImage, index: number) => {
+      const fileName = String(image.fileName || "").trim();
+      const url = String(image.url || (image as any).imageUrl || (fileName ? `/api/gallery/file?name=${encodeURIComponent(fileName)}` : "")).trim();
+      return {
+        index,
+        image,
+        approved: Boolean(image.approved || image.status === "ready" || url),
+        fileName,
+        url,
       };
+    };
+    const extendDraftsForFrameCountV36BPU22 = (sourceDrafts: ProductionFrameAnimation[], count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        ...(sourceDrafts[index] || {}),
+        prompt: preserveAnimateManualPromptSpacingV36BPU22(sourceDrafts[index]?.prompt || ``),
+        durationSeconds: clampAnimateFrameDuration(sourceDrafts[index]?.durationSeconds ?? defaultAnimateFrameDuration(scene)),
+        characterRefIds: sourceDrafts[index]?.characterRefIds || [],
+        loras: normalizeProductionLoras(sourceDrafts[index]?.loras),
+        voiceActorInput: sourceDrafts[index]?.voiceActorInput || { enabled: false, saved: false },
+        queueForGeneration: sourceDrafts[index]?.queueForGeneration !== false,
+        animationMode: sourceDrafts[index]?.animationMode || "image_to_video",
+        timelineRole: sourceDrafts[index]?.timelineRole || "normal",
+        keepAsSeparateSceneAfterPairing: sourceDrafts[index]?.keepAsSeparateSceneAfterPairing ?? false,
+      } as ProductionFrameAnimation));
+    const extendClipsForFrameCountV36BPU22 = (sourceClips: ProductionFrameClip[], count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        ...(sourceClips[index] || {}),
+        status: sourceClips[index]?.status || "idle",
+        sourceFrameIndex: sourceClips[index]?.sourceFrameIndex ?? index,
+      } as ProductionFrameClip));
 
-      if (pairedLastIndex !== undefined && drafts[pairedLastIndex]?.consumedByFrameIndex === frameIndex) {
-        drafts[pairedLastIndex] = {
-          ...drafts[pairedLastIndex],
+    // V36BPU20: Pair/unpair must hydrate the stale canonical scene from the same full Qwen scene list used by render.
+    if (completedScenes.length > frames.length) {
+      const syncedImages = qwenSceneImagesForAnimateV36BPU3(completedScenes);
+      const syncedDrafts = qwenSceneAnimationDraftsForAnimateV36BPU3(completedScenes, drafts).map((draft) => ({ ...draft }));
+      const syncedClips = qwenSceneFrameClipsForAnimateV36BPU3(completedScenes, frameClips);
+
+      workingScene = {
+        ...workingScene,
+        imageCount: completedScenes.length,
+        images: syncedImages,
+        animationFrames: syncedDrafts,
+        frameClips: syncedClips,
+      } as ProductionScene;
+
+      frames = syncedImages.map(frameFromImageV36BPU22);
+      drafts = syncedDrafts;
+      frameClips = syncedClips;
+      syncPatch = {
+        imageCount: completedScenes.length,
+        images: syncedImages,
+        animationFrames: syncedDrafts,
+        frameClips: syncedClips,
+        prompt: completedScenes.map((item, index) => `Scene ${index + 1}: ${item.name}`).join("\n"),
+        motionNotes: [
+          `Qwen storyboard handoff: ${completedScenes.length} completed scene image(s).`,
+          `${completedScenes.length} scene-by-scene image-to-video clip(s) queued by default.`,
+          "Pair adjacent scenes manually when a first-frame/last-frame transition is needed.",
+        ].filter(Boolean).join(" "),
+        qwenAnimateHandoffSourceV36BPU3: QWEN_ANIMATE_HANDOFF_SOURCE_V36BPU3,
+        qwenAnimateHandoffSignatureV36BPU3: qwenSceneHandoffSignatureV36BPU3(completedScenes),
+        qwenAnimateHandoffUpdatedAtV36BPU3: new Date().toISOString(),
+      };
+    }
+
+    if (renderFramesFromCall.length > frames.length) {
+      const syncedImages = renderFramesFromCall.map((frame, index) => ({
+        ...(frame.image || {}),
+        id: frame.image?.id || `animate-render-frame-${index + 1}`,
+        promptId: frame.image?.promptId || `animate-render-frame-${index + 1}`,
+        prompt: (frame.image as any)?.prompt || `Scene ${index + 1}`,
+        status: frame.image?.status || "ready",
+        approved: frame.image?.approved ?? Boolean(frame.approved || frame.url),
+        url: frame.image?.url || frame.url,
+        fileName: frame.image?.fileName || frame.fileName || `scene_${index + 1}.png`,
+        imageUrl: (frame.image as any)?.imageUrl || frame.url,
+        imagePath: (frame.image as any)?.imagePath || (frame.image as any)?.workflowImage || frame.fileName || frame.url,
+        workflowImage: (frame.image as any)?.workflowImage || (frame.image as any)?.imagePath || frame.fileName || frame.url,
+      } as unknown as StoryboardImage));
+      const syncedDrafts = extendDraftsForFrameCountV36BPU22(drafts, renderFramesFromCall.length);
+      const syncedClips = extendClipsForFrameCountV36BPU22(frameClips, renderFramesFromCall.length);
+
+      workingScene = {
+        ...workingScene,
+        imageCount: renderFramesFromCall.length,
+        images: syncedImages,
+        animationFrames: syncedDrafts,
+        frameClips: syncedClips,
+      } as ProductionScene;
+
+      frames = renderFramesFromCall;
+      drafts = syncedDrafts;
+      frameClips = syncedClips;
+      syncPatch = {
+        ...syncPatch,
+        imageCount: renderFramesFromCall.length,
+        images: syncedImages,
+        animationFrames: syncedDrafts,
+        frameClips: syncedClips,
+        qwenAnimateHandoffUpdatedAtV36BPU3: new Date().toISOString(),
+      };
+    }
+
+    return { workingScene, frames, drafts, syncPatch, canonicalFramesLengthBeforeHydration, qwenScenesLength: completedScenes.length, renderFramesLength: renderFramesFromCall.length };
+  }
+
+  function firstLastPairDebugTextV36BPU19() {
+    const debug = firstLastPairDebugV36BPU19;
+    const parts = [
+      `Last first/last action: ${debug.action}`,
+      debug.sceneId ? `scene=${debug.sceneId}` : "scene=none",
+      debug.frameIndex !== undefined ? `frame=${debug.frameIndex}` : "frame=none",
+      debug.framesLength !== undefined ? `frames=${debug.framesLength}` : "frames=unknown",
+    ];
+    if (debug.reason) parts.push(`reason=${debug.reason}`);
+    return parts.join(", ");
+  }
+
+  function recordFirstLastPairDebugV36BPU19(
+    action: "none" | "panel-capture" | "clicked" | "applied" | "rejected",
+    sceneId: string,
+    frameIndex: number,
+    framesLength: number | undefined,
+    reason = ""
+  ) {
+    setFirstLastPairDebugV36BPU19({
+      action,
+      sceneId,
+      frameIndex,
+      framesLength,
+      reason,
+    });
+  }
+
+  function pairAnimateSceneWithNext(args: {
+    sceneId: string;
+    frameIndex: number;
+    renderFrames?: ReturnType<typeof storyboardFramesForAnimate>;
+    completedQwenScenes?: QwenCompletedSceneForAnimateV36BPU3[];
+  }) {
+    const { sceneId, frameIndex, renderFrames = [], completedQwenScenes = [] } = args;
+    const safeFrameIndex = Math.max(0, Math.floor(Number(frameIndex) || 0));
+    const nextIndex = safeFrameIndex + 1;
+    setActiveAnimateSceneIndexV36BPU10B(safeFrameIndex);
+    setNotice(`Pair button clicked for Scene ${safeFrameIndex + 1}.`);
+    recordFirstLastPairDebugV36BPU19("clicked", sceneId, safeFrameIndex, renderFrames.length, `handler=pairAnimateSceneWithNext, renderFrames=${renderFrames.length}, qwenScenes=${completedQwenScenes.length}`);
+
+    let noticeText = "";
+    let didApply = false;
+    let debugFramesLength = renderFrames.length;
+    let debugDetail = `handler=pairAnimateSceneWithNext, renderFrames=${renderFrames.length}, qwenScenes=${completedQwenScenes.length}`;
+
+    setScenes((previousScenes) => {
+      let foundScene = false;
+      const nextScenes = previousScenes.map((scene) => {
+        if (scene.id !== sceneId) return scene;
+        foundScene = true;
+
+        const { workingScene, frames, drafts, syncPatch, canonicalFramesLengthBeforeHydration, qwenScenesLength, renderFramesLength } = sceneForAnimatePairingV36BPU18(scene, completedQwenScenes, renderFrames);
+        debugFramesLength = frames.length;
+        debugDetail = `handler=pairAnimateSceneWithNext, renderFrames=${renderFramesLength}, qwenScenes=${qwenScenesLength}, canonicalBefore=${canonicalFramesLengthBeforeHydration}, hydratedFrames=${frames.length}`;
+
+        if (!drafts[safeFrameIndex]) {
+          noticeText = `Pair rejected: Scene ${safeFrameIndex + 1} is not available.`;
+          return scene;
+        }
+
+        if (safeFrameIndex >= frames.length - 1 || !frames[nextIndex]) {
+          noticeText = "Pair rejected: the final Animate scene cannot use the next scene as a last frame.";
+          return scene;
+        }
+
+        if (isAnimateLastFrameConsumed(drafts[safeFrameIndex])) {
+          noticeText = `Pair rejected: Scene ${safeFrameIndex + 1} is already being used as another clip's last frame.`;
+          return scene;
+        }
+
+        if (isAnimateLastFrameConsumed(drafts[nextIndex])) {
+          noticeText = `Pair rejected: Scene ${nextIndex + 1} is already being used as another clip's last frame.`;
+          return scene;
+        }
+
+        if (!frames[safeFrameIndex]?.url || !frames[nextIndex]?.url) {
+          noticeText = `Pair rejected: Scene ${safeFrameIndex + 1} and Scene ${nextIndex + 1} both need approved images before pairing.`;
+          return scene;
+        }
+
+        // V36BPU18: explicit functional pair write; render reads this same canonical animationFrames array.
+        drafts[safeFrameIndex] = {
+          ...drafts[safeFrameIndex],
+          animationMode: "first_last_frame",
+          firstFrameIndex: safeFrameIndex,
+          lastFrameIndex: nextIndex,
+          promptSourceFrameIndex: safeFrameIndex,
+          timelineRole: "normal",
+          consumedByFrameIndex: undefined,
+          consumedLastFrameIndex: nextIndex,
+          queueForGeneration: true,
+        };
+        drafts[nextIndex] = {
+          ...drafts[nextIndex],
+          animationMode: "image_to_video",
+          firstFrameIndex: undefined,
+          lastFrameIndex: undefined,
+          promptSourceFrameIndex: undefined,
+          timelineRole: "last_frame_for",
+          consumedByFrameIndex: safeFrameIndex,
+          consumedLastFrameIndex: undefined,
+          queueForGeneration: false,
+          keepAsSeparateSceneAfterPairing: drafts[nextIndex]?.keepAsSeparateSceneAfterPairing ?? false,
+        };
+
+        didApply = true;
+        noticeText = `Pair applied Scene ${safeFrameIndex + 1} -> Scene ${nextIndex + 1}. imageA=Scene ${safeFrameIndex + 1}, imageB=Scene ${nextIndex + 1}, animationMode=first_last_frame.`;
+        return { ...workingScene, ...syncPatch, animationFrames: drafts };
+      });
+
+      if (!foundScene) {
+        noticeText = `Pair rejected: selected production scene was not found.`;
+        return previousScenes;
+      }
+
+      return didApply ? nextScenes : previousScenes;
+    });
+
+    window.setTimeout(() => {
+      const finalNotice = noticeText || "Pair rejected: no first-frame/last-frame state change was applied.";
+      setNotice(finalNotice);
+      recordFirstLastPairDebugV36BPU19(didApply ? "applied" : "rejected", sceneId, safeFrameIndex, debugFramesLength, `${debugDetail}, ${didApply ? `Pair applied Scene ${safeFrameIndex + 1} -> Scene ${nextIndex + 1}` : finalNotice}`);
+    }, 0);
+  }
+
+  function unpairAnimateScene(args: {
+    sceneId: string;
+    frameIndex: number;
+    renderFrames?: ReturnType<typeof storyboardFramesForAnimate>;
+    completedQwenScenes?: QwenCompletedSceneForAnimateV36BPU3[];
+  }) {
+    const { sceneId, frameIndex, renderFrames = [], completedQwenScenes = [] } = args;
+    const safeFrameIndex = Math.max(0, Math.floor(Number(frameIndex) || 0));
+    const nextIndex = safeFrameIndex + 1;
+    setActiveAnimateSceneIndexV36BPU10B(safeFrameIndex);
+    setNotice(`Unpair button clicked for Scene ${safeFrameIndex + 1}.`);
+    recordFirstLastPairDebugV36BPU19("clicked", sceneId, safeFrameIndex, renderFrames.length, `handler=unpairAnimateScene, renderFrames=${renderFrames.length}, qwenScenes=${completedQwenScenes.length}`);
+
+    let noticeText = "";
+    let didApply = false;
+    let debugFramesLength = renderFrames.length;
+    let debugDetail = `handler=unpairAnimateScene, renderFrames=${renderFrames.length}, qwenScenes=${completedQwenScenes.length}`;
+
+    setScenes((previousScenes) => {
+      let foundScene = false;
+      const nextScenes = previousScenes.map((scene) => {
+        if (scene.id !== sceneId) return scene;
+        foundScene = true;
+
+        const { workingScene, frames, drafts, syncPatch, canonicalFramesLengthBeforeHydration, qwenScenesLength, renderFramesLength } = sceneForAnimatePairingV36BPU18(scene, completedQwenScenes, renderFrames);
+        debugFramesLength = frames.length;
+        debugDetail = `handler=unpairAnimateScene, renderFrames=${renderFramesLength}, qwenScenes=${qwenScenesLength}, canonicalBefore=${canonicalFramesLengthBeforeHydration}, hydratedFrames=${frames.length}`;
+
+        if (!drafts[safeFrameIndex]) {
+          noticeText = `Unpair rejected: Scene ${safeFrameIndex + 1} is not available.`;
+          return scene;
+        }
+
+        const pairedLastIndex = typeof drafts[safeFrameIndex]?.lastFrameIndex === "number" ? Number(drafts[safeFrameIndex].lastFrameIndex) : nextIndex;
+        drafts[safeFrameIndex] = {
+          ...drafts[safeFrameIndex],
+          animationMode: "image_to_video",
+          firstFrameIndex: undefined,
+          lastFrameIndex: undefined,
+          promptSourceFrameIndex: undefined,
+          consumedLastFrameIndex: undefined,
           timelineRole: "normal",
           consumedByFrameIndex: undefined,
           queueForGeneration: true,
         };
+        if (drafts[pairedLastIndex]?.consumedByFrameIndex === safeFrameIndex) {
+          drafts[pairedLastIndex] = {
+            ...drafts[pairedLastIndex],
+            animationMode: "image_to_video",
+            firstFrameIndex: undefined,
+            lastFrameIndex: undefined,
+            promptSourceFrameIndex: undefined,
+            timelineRole: "normal",
+            consumedByFrameIndex: undefined,
+            consumedLastFrameIndex: undefined,
+            queueForGeneration: true,
+          };
+        }
+
+        didApply = true;
+        noticeText = `Unpaired Scene ${safeFrameIndex + 1}. Scene ${pairedLastIndex + 1} can animate independently again.`;
+        return { ...workingScene, ...syncPatch, animationFrames: drafts };
+      });
+
+      if (!foundScene) {
+        noticeText = `Unpair rejected: selected production scene was not found.`;
+        return previousScenes;
       }
 
-      updateSelectedScene({ animationFrames: drafts });
-      setNotice(`Unpaired Frame ${frameIndex + 1}. Frame ${nextIndex + 1} can animate independently again.`);
-      return;
+      return didApply ? nextScenes : previousScenes;
+    });
+
+    window.setTimeout(() => {
+      const finalNotice = noticeText || "Unpair rejected: no first-frame/last-frame state change was applied.";
+      setNotice(finalNotice);
+      recordFirstLastPairDebugV36BPU19(didApply ? "applied" : "rejected", sceneId, safeFrameIndex, debugFramesLength, `${debugDetail}, ${finalNotice}`);
+    }, 0);
+  }
+
+  function setAnimateNextSceneAsLastFrame(frameIndex: number, enabled: boolean) {
+    if (!selectedScene?.id) return;
+    if (enabled) {
+      pairAnimateSceneWithNext({ sceneId: selectedScene.id, frameIndex });
+    } else {
+      unpairAnimateScene({ sceneId: selectedScene.id, frameIndex });
     }
-
-    if (frameIndex >= frames.length - 1) {
-      setNotice("The final Animate frame cannot use the next scene as a last frame.");
-      return;
-    }
-
-    if (isAnimateLastFrameConsumed(drafts[frameIndex])) {
-      setNotice(`Frame ${frameIndex + 1} is already being used as another clip's last frame. Unpair it first.`);
-      return;
-    }
-
-    if (isAnimateLastFrameConsumed(drafts[nextIndex])) {
-      setNotice(`Frame ${nextIndex + 1} is already being used as another clip's last frame.`);
-      return;
-    }
-
-    if (!frames[frameIndex]?.url || !frames[nextIndex]?.url) {
-      setNotice(`Frame ${frameIndex + 1} and Frame ${nextIndex + 1} both need approved images before pairing.`);
-      return;
-    }
-
-    drafts[frameIndex] = {
-      ...drafts[frameIndex],
-      animationMode: "first_last_frame",
-      firstFrameIndex: frameIndex,
-      lastFrameIndex: nextIndex,
-      promptSourceFrameIndex: frameIndex,
-      timelineRole: "normal",
-      consumedByFrameIndex: undefined,
-      queueForGeneration: true,
-    };
-    drafts[nextIndex] = {
-      ...drafts[nextIndex],
-      animationMode: "image_to_video",
-      timelineRole: "last_frame_for",
-      consumedByFrameIndex: frameIndex,
-      queueForGeneration: false,
-      keepAsSeparateSceneAfterPairing: drafts[nextIndex]?.keepAsSeparateSceneAfterPairing ?? false,
-    };
-
-    updateSelectedScene({ animationFrames: drafts });
-    setNotice(`Frame ${frameIndex + 1} will use Frame ${nextIndex + 1} as its last frame. Frame ${nextIndex + 1} is skipped by default.`);
   }
 
   function resetAnimateGenerationProgress(clipCount: number) {
@@ -3196,7 +8605,7 @@ const data = await res.json().catch(() => null);
       running,
       readyToSync,
       percent,
-      label: readyToSync ? "Comfy generation looks complete. Run Sync Results." : running ? "Comfy generation is running." : "",
+      label: readyToSync ? "Comfy generation looks complete. Run Complete Scene." : running ? "Comfy generation is running." : "",
       detail: statusText || "",
       elapsedMs: Number.isFinite(Number(data?.elapsedMs)) ? Number(data.elapsedMs) : null,
       estimatedRemainingMs: Number.isFinite(Number(data?.estimatedRemainingMs)) ? Number(data.estimatedRemainingMs) : null,
@@ -3245,28 +8654,38 @@ const data = await res.json().catch(() => null);
   }
 
   function pickUniqueStoryboardSavedItems(savedItems: any[], expectedCount: number) {
-    const sorted = sortStoryboardSavedItems(savedItems || []);
-    const seen = new Set<string>();
-    const unique: any[] = [];
+    const sortedNewestFirst = sortStoryboardSavedItems(savedItems || []).sort((a, b) => {
+      const an = storyboardSavedItemOrderNumber(a);
+      const bn = storyboardSavedItemOrderNumber(b);
 
-    for (const item of sorted) {
+      if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) return bn - an;
+      if (Number.isFinite(an)) return -1;
+      if (Number.isFinite(bn)) return 1;
+      return 0;
+    });
+
+    const seen = new Set<string>();
+    const newestUnique: any[] = [];
+
+    for (const item of sortedNewestFirst) {
       const key = storyboardSavedItemDedupeKey(item);
       if (key && seen.has(key)) continue;
       if (key) seen.add(key);
-      unique.push(item);
+      newestUnique.push(item);
+      if (newestUnique.length >= expectedCount) break;
     }
 
-    return unique
-      .slice(0, Math.max(expectedCount, unique.length))
-      .sort((a, b) => {
-        const an = storyboardSavedItemOrderNumber(a);
-        const bn = storyboardSavedItemOrderNumber(b);
-        if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) return an - bn;
-        if (Number.isFinite(an)) return -1;
-        if (Number.isFinite(bn)) return 1;
-        return 0;
-      })
-      .slice(0, expectedCount);
+    // Select the newest N outputs, then map them back into slot order.
+    // Example: if slots 2 and 4 were regenerated and Comfy produced 00003 and 00004,
+    // use 00003 for the first queued slot and 00004 for the next queued slot.
+    return newestUnique.sort((a, b) => {
+      const an = storyboardSavedItemOrderNumber(a);
+      const bn = storyboardSavedItemOrderNumber(b);
+      if (Number.isFinite(an) && Number.isFinite(bn) && an !== bn) return an - bn;
+      if (Number.isFinite(an)) return -1;
+      if (Number.isFinite(bn)) return 1;
+      return String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { numeric: true, sensitivity: "base" });
+    });
   }
 
   function renderStoryboardGenerationStatus(scene: ProductionScene | null | undefined) {
@@ -3295,7 +8714,7 @@ const data = await res.json().catch(() => null);
       <div className="mt-4 rounded-[14px] border border-cyan-300/20 bg-cyan-300/10 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="text-xs font-black uppercase tracking-[0.18em] text-cyan-100/80">
+            <div className="text-xs font-black uppercase tracking-[0.18em] text-white/80">
               {statusLabel}
             </div>
             <div className="mt-1 text-sm text-cyan-50/80">
@@ -3337,10 +8756,10 @@ const data = await res.json().catch(() => null);
           {stats.complete
             ? "All storyboard slots are approved. Continue to Animate."
             : storyboardComfyProgress.readyToSync
-              ? "Comfy appears finished. Click Sync Results to map one unique output into each storyboard slot."
+              ? "Comfy appears finished. Click Complete Scene to map one unique output into each storyboard slot."
               : storyboardComfyProgress.running
-                ? storyboardComfyProgress.label || "Comfy is still generating. Sync Results should be used after it completes."
-                : "If Comfy has finished, click Sync Results. The sync step now deduplicates temp and renamed copies."}
+                ? storyboardComfyProgress.label || "Comfy is still generating. Complete Scene should be used after it completes."
+                : "If Comfy has finished, click Complete Scene. The sync step now deduplicates temp and renamed copies."}
         </div>
       </div>
     );
@@ -3348,9 +8767,18 @@ const data = await res.json().catch(() => null);
 
   function renderAnimateGenerationStatus(scene: ProductionScene | null | undefined) {
     const clips = animateFrameClips(scene);
-    const total = clips.length;
-    const ready = clips.filter((clip: any) => clip?.status === "ready").length;
-    const queued = clips.filter((clip: any) => clip?.status === "queued" || clip?.promptId).length;
+    const submittedClips = clips.filter((clip: any) => {
+      const promptId = String(clip?.promptId || "").trim();
+      return Boolean(promptId || clip?.status === "queued" || clip?.status === "ready");
+    });
+    const progressClips = submittedClips.length ? submittedClips : clips;
+    const total = Math.max(
+      progressClips.length,
+      animateComfyProgress.totalPrompts || 0,
+      animateComfyProgress.running ? 1 : 0
+    );
+    const ready = progressClips.filter((clip: any) => clip?.status === "ready").length;
+    const queued = submittedClips.length;
     const hasSubmitted = queued > 0 || ready > 0 || animateComfyProgress.running || animateComfyProgress.readyToSync;
 
     if (!scene || !total || !hasSubmitted) return null;
@@ -3367,8 +8795,8 @@ const data = await res.json().catch(() => null);
       <div className="mb-4 rounded-[14px] border border-cyan-300/20 bg-cyan-300/10 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="text-xs font-black uppercase tracking-[0.18em] text-cyan-100/80">
-              {ready >= total ? "Frame clips synced" : animateComfyProgress.readyToSync ? "Ready to sync clips" : "Animating frame clips"}
+            <div className="text-xs font-black uppercase tracking-[0.18em] text-white/80">
+              {ready >= total ? "Scene clips synced" : animateComfyProgress.readyToSync ? "Ready to sync clips" : "Animating scene clips"}
             </div>
             <div className="mt-1 text-sm text-cyan-50/80">
               {ready}/{total} synced
@@ -3405,10 +8833,10 @@ const data = await res.json().catch(() => null);
 
         <div className="mt-3 text-xs leading-5 text-cyan-50/75">
           {ready >= total
-            ? "All frame clips are synced and ready for review."
+            ? "All scene clips are synced and ready for review."
             : animateComfyProgress.readyToSync
-              ? "Comfy appears finished. Click Sync Frame Clips to import and map each clip."
-              : animateComfyProgress.label || "ComfyUI is animating frame clips."}
+              ? "Comfy appears finished. Click Sync Scene Clips to import and map each clip."
+              : animateComfyProgress.label || "ComfyUI is animating scene clips."}
         </div>
       </div>
     );
@@ -3557,86 +8985,155 @@ const data = await res.json().catch(() => null);
   }
 // OTG_PRODUCTION_ANIMATE_CLIP_EXPAND_V1_END
 function renderAnimateStage() {
-    const directorImportedFrames = buildDirectorImportedFrames();
-
     return (
       <section className="space-y-4">
         {renderExpandedAnimateClipModal(selectedScene, selectedScene ? animateFrameClips(selectedScene) : [])} {/* OTG_PRODUCTION_ANIMATE_CLIP_EXPAND_SCENE_REFERENCE_FIX_V1 */}
-        <ProductionAnimateModeSwitch mode={productionAnimateMode} onChange={setProductionAnimateMode} />
-        {productionAnimateMode === "director" ? (
-          <ProductionDirectorModeUI
-            productionId={selectedScene?.id || ""}
-            productionName={selectedScene?.title || "Untitled Production"}
-            importedFrames={directorImportedFrames}
-          />
-        ) : (
-          renderDefaultAnimateStage()
-        )}
+        <section className="rounded-[14px] border border-slate-200 bg-slate-950 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-black uppercase tracking-[0.18em] text-violet-400">Animate Mode</div>
+              <p className="mt-1 text-xs text-slate-300">Default Mode is active for Animate. Director Mode is temporarily disabled while the production workflow is being updated.</p>
+              <p data-marker="OTG_PRODUCTION_ANIMATE_RESTORE_UI_V1_NOTE" className="mt-2 text-xs font-bold text-emerald-200">Animate controls restored: set scene prompts, queue scene clips, animate all ready clips, then sync generated clips.</p>
+            </div>
+            <div className="flex rounded-[14px] border border-slate-700 bg-slate-900 p-1 text-xs font-black">
+              <span className="rounded-[10px] bg-slate-800 px-4 py-2 text-white">Default Mode</span>
+              <span className="rounded-[10px] px-4 py-2 text-slate-500 opacity-60" title="Temporarily disabled">Director Mode</span>
+            </div>
+          </div>
+        </section>
+        {renderDefaultAnimateStage()}
       </section>
     );
   }
 function renderDefaultAnimateStage() {
     const scene = selectedScene;
-    const frames = storyboardFramesForAnimate(scene);
-    const animateDrafts = animateFrameDrafts(scene);
-    const frameClips = animateFrameClips(scene);
+    let frames = storyboardFramesForAnimate(scene);
+    let animateDrafts = animateFrameDrafts(scene);
+    let frameClips = animateFrameClips(scene);
     const characterOptions = animateCharacterOptions(scene);
-    const approvedFrames = frames.filter((frame) => frame.approved && frame.url);
-    const expectedCount = clampStoryboardImageCount(scene?.imageCount ?? DEFAULT_SCENE_IMAGE_COUNT);
+    let approvedFrames = frames.filter((frame) => frame.approved && frame.url);
+    let expectedCount = clampStoryboardImageCount(scene?.imageCount ?? DEFAULT_SCENE_IMAGE_COUNT);
     const totalAnimateSeconds = animateTotalSeconds(scene);
     const readyClips = frameClips.filter((clip) => clip.status === "ready" && clip.url);
     const canPrepareClips = Boolean(scene && approvedFrames.length >= expectedCount);
-    const queuedAnimateFrames = animateDrafts.filter((draft) => draft.queueForGeneration !== false).length;
-
+    let effectiveAnimateClipCountV36BPU3 = animateDrafts.filter((draft) => draft.queueForGeneration !== false && !isAnimateLastFrameConsumed(draft)).length;
+    let readyEffectiveClipsV36BPU3 = frameClips.filter((clip, index) => {
+      const draft = animateDrafts[index];
+      return draft?.queueForGeneration !== false && !isAnimateLastFrameConsumed(draft) && clip.status === "ready" && clip.url;
+    }).length;
+    let queuedAnimateFrames = effectiveAnimateClipCountV36BPU3;
+    const completedQwenScenesForAnimateV36BPU3 = loadCompletedQwenScenesForAnimateV36BPU3();
+    if (completedQwenScenesForAnimateV36BPU3.length > frames.length) {
+      const qwenImagesForUiV36BPU12 = qwenSceneImagesForAnimateV36BPU3(completedQwenScenesForAnimateV36BPU3);
+      frames = qwenImagesForUiV36BPU12.map((image, index) => {
+        const fileName = String(image.fileName || "").trim();
+        const url = String(image.url || (image as any).imageUrl || (fileName ? `/api/gallery/file?name=${encodeURIComponent(fileName)}` : "")).trim();
+        return {
+          index,
+          image,
+          approved: Boolean(image.approved || image.status === "ready" || url),
+          fileName,
+          url,
+        };
+      });
+      animateDrafts = qwenSceneAnimationDraftsForAnimateV36BPU3(completedQwenScenesForAnimateV36BPU3, animateDrafts);
+      frameClips = qwenSceneFrameClipsForAnimateV36BPU3(completedQwenScenesForAnimateV36BPU3, frameClips);
+      approvedFrames = frames.filter((frame) => frame.approved && frame.url);
+      expectedCount = completedQwenScenesForAnimateV36BPU3.length;
+      effectiveAnimateClipCountV36BPU3 = animateDrafts.filter((draft) => draft.queueForGeneration !== false && !isAnimateLastFrameConsumed(draft)).length;
+      readyEffectiveClipsV36BPU3 = frameClips.filter((clip, index) => {
+        const draft = animateDrafts[index];
+        return draft?.queueForGeneration !== false && !isAnimateLastFrameConsumed(draft) && clip.status === "ready" && clip.url;
+      }).length;
+      queuedAnimateFrames = effectiveAnimateClipCountV36BPU3;
+    }
+    const qwenFirstLastPairCountV36BPU3 = animateDrafts.filter((draft, index) => draft.animationMode === "first_last_frame" && draft.lastFrameIndex === index + 1 && !isAnimateLastFrameConsumed(draft)).length;
+    const qwenOutputClipCountV36BPU6 = animateDrafts.filter((draft) => draft.queueForGeneration !== false && !isAnimateLastFrameConsumed(draft)).length;
+    const focusedAnimateSceneIndexV36BPU10B = Math.max(0, Math.min(Math.max(0, frames.length - 1), activeAnimateSceneIndexV36BPU10B));
     return (
       <section className="space-y-6 pb-28">
-        <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
+        <div data-otg-animate-restored="Render Plan" data-marker="OTG_PRODUCTION_ANIMATE_RESTORE_UI_V1" className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
               <p className="text-[11px] font-black uppercase tracking-[0.28em] text-cyan-200/80">Animate</p>
               <h2 className="mt-2 text-2xl font-black text-white">Image-to-Video Clip Setup</h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-white/65">
-                Each storyboard image becomes its own LTX 2.3 image-to-video clip. Expand a frame, write its motion prompt, set seconds, and choose which storyboard characters are present.
+                Each storyboard scene becomes its own LTX 2.3 image-to-video clip by default. Click a scene card, write its motion prompt, set seconds, add LoRAs or Voice Actor Input, and optionally pair it with the next scene as last frame.
               </p>
             </div>
 
             <div className="rounded-[14px] border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/70">
               <div className="font-black text-white">{scene?.title || "No scene selected"}</div>
-              <div>Frames ready: {approvedFrames.length}/{expectedCount}</div>
-              <div>Clips ready: {readyClips.length}/{expectedCount}</div>
-              <div>Queued: {queuedAnimateFrames}/{expectedCount}</div>
+              <div>Scenes ready: {approvedFrames.length}/{expectedCount}</div>
+              <div>Clips ready: {readyEffectiveClipsV36BPU3}/{effectiveAnimateClipCountV36BPU3 || expectedCount}</div>
+              <div>Queued: {queuedAnimateFrames}/{effectiveAnimateClipCountV36BPU3 || expectedCount}</div>
               <div>Total clip time: {totalAnimateSeconds}s</div>
             </div>
           </div>
 
+          {renderQwenAnimateHandoffSummaryV36BPU3(
+            completedQwenScenesForAnimateV36BPU3,
+            qwenFirstLastPairCountV36BPU3,
+            qwenOutputClipCountV36BPU6
+          )}
+
           {!canPrepareClips ? (
             <div className="mt-4 rounded-[14px] border border-amber-300/25 bg-amber-300/10 p-4 text-sm text-amber-100">
-              Approve and sync all storyboard images for this scene before animation.
+              Approve and sync all scene pass preview for this scene before animation.
             </div>
           ) : (
             <div className="mt-4 rounded-[14px] border border-emerald-300/25 bg-emerald-300/10 p-4 text-sm text-emerald-100">
-              Storyboard frames are ready. Each frame will submit one Generate-page image-to-video job.
+              Storyboard scenes are ready. Each queued scene submits one Animate job; paired last-frame scenes are skipped as separate outputs.
             </div>
           )}
         </div>
 
-        <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
+        <div data-otg-animate-restored="Render Plan" data-marker="OTG_PRODUCTION_ANIMATE_RESTORE_UI_V1" className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
           <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-white/45">Ordered Frames</p>
-              <h3 className="text-lg font-black text-white">Frame Animation Prompts</h3>
-              <p className="mt-1 text-sm text-white/55">
-                Expand each frame, inspect the image, choose included characters, then write exact motion instructions and clip length.
+              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-white/45">Ordered Scenes</p>
+              <h3 className="text-lg font-black text-white">Scene Animation Prompts</h3>
+              <p className="mt-1 text-sm text-white/35">
+                Expand each scene, inspect the image, choose included characters, then write exact motion instructions, clip length, LoRA, and Voice Actor Input.
               </p>
             </div>
             <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-black text-white/60">
-              {queuedAnimateFrames} queued image-to-video job{queuedAnimateFrames === 1 ? "" : "s"}
+              {queuedAnimateFrames} queued scene clip{queuedAnimateFrames === 1 ? "" : "s"}
             </span>
           </div>
 
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-white/10 bg-black/20 p-3">
+            <div>
+              <div className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Current Scene</div>
+              <div className="text-sm font-black text-white">Scene {focusedAnimateSceneIndexV36BPU10B + 1} of {frames.length}</div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={focusedAnimateSceneIndexV36BPU10B <= 0}
+                onClick={() => focusAnimateSceneEditorV36BPU6(focusedAnimateSceneIndexV36BPU10B - 1)}
+                className="rounded-[12px] border border-white/10 bg-white/[0.06] px-3 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-35"
+              >
+                Previous Scene
+              </button>
+              <button
+                type="button"
+                disabled={focusedAnimateSceneIndexV36BPU10B >= frames.length - 1}
+                onClick={() => focusAnimateSceneEditorV36BPU6(focusedAnimateSceneIndexV36BPU10B + 1)}
+                className="rounded-[12px] border border-violet-300/30 bg-violet-300/10 px-3 py-2 text-xs font-black text-violet-50 disabled:cursor-not-allowed disabled:opacity-35"
+              >
+                Next Scene
+              </button>
+            </div>
+          </div>
+
           <div className="space-y-3">
-            {frames.map((frame) => {
-              const draft = animateDrafts[frame.index];
+            {frames.filter((frame) => frame.index === focusedAnimateSceneIndexV36BPU10B).map((frame) => {
+              const rawDraft = animateDrafts[frame.index];
+              const draft = {
+                ...rawDraft,
+                durationSeconds: animateDurationWithOverrideV36BPU42(scene?.id || "", frame.index, rawDraft.durationSeconds),
+              };
               const clip = frameClips[frame.index];
               const selectedIds = new Set(draft.characterRefIds || []);
               const globalPromptPreview = animateGlobalPromptForFrame(scene, frame.index);
@@ -3646,11 +9143,22 @@ function renderDefaultAnimateStage() {
               const consumedByFrameIndex = draft.consumedByFrameIndex;
               const isConsumedLastFrame = isAnimateLastFrameConsumed(draft);
               const nextFrame = frames[frame.index + 1];
+              const updateRenderedAnimateFrameDurationV36BPU41 = (value: number) => updateAnimateFrameDraft(
+                frame.index,
+                { durationSeconds: Number(value) },
+                { renderFrames: frames, completedQwenScenes: completedQwenScenesForAnimateV36BPU3 }
+              );
 
               return (
-                <details key={frame.index} className={isConsumedLastFrame ? "overflow-hidden rounded-[16px] border border-purple-300/20 bg-purple-950/20 opacity-70" : "overflow-hidden rounded-[16px] border border-white/10 bg-black/20"}>
+                <details
+                  key={frame.index}
+                  id={`animate-scene-editor-${frame.index + 1}`}
+                  data-otg-animate-scene-editor={String(frame.index)}
+                  open={frame.index === focusedAnimateSceneIndexV36BPU10B}
+                  className={isConsumedLastFrame ? "overflow-hidden rounded-[16px] border border-purple-300/20 bg-purple-950/20 opacity-70" : "overflow-hidden rounded-[16px] border border-white/10 bg-black/20"}
+                >
                   <summary className="grid cursor-pointer list-none gap-3 p-3 md:grid-cols-[220px_1fr_auto] md:items-center">
-                    <div className="relative aspect-video overflow-hidden rounded-[12px] bg-white/5">
+                    <div className="relative aspect-video overflow-hidden rounded-[12px] bg-white/3">
                       {frame.url ? (
                         <img
                           src={frame.url}
@@ -3673,7 +9181,11 @@ function renderDefaultAnimateStage() {
                           type="checkbox"
                           checked={isQueuedForGeneration}
                           disabled={isConsumedLastFrame}
-                          onChange={(event) => updateAnimateFrameDraft(frame.index, { queueForGeneration: event.target.checked })}
+                          onChange={(event) => updateAnimateFrameDraft(
+                            frame.index,
+                            { queueForGeneration: event.target.checked },
+                            { renderFrames: frames, completedQwenScenes: completedQwenScenesForAnimateV36BPU3 }
+                          )}
                           className="h-3.5 w-3.5 accent-cyan-300"
                         />
                         {isQueuedForGeneration ? "Queue" : "Skip"}
@@ -3686,16 +9198,16 @@ function renderDefaultAnimateStage() {
                         <span className={frame.approved ? "rounded-full bg-emerald-300/15 px-2 py-1 text-xs font-black text-emerald-300" : "rounded-full bg-amber-300/15 px-2 py-1 text-xs font-black text-amber-300"}>
                           {frame.approved ? "Storyboard Ready" : "Not Ready"}
                         </span>
-                        <span className="rounded-full bg-white/5 px-2 py-1 text-xs font-black text-white/55">
+                        <span className="rounded-full bg-white/3 px-2 py-1 text-xs font-black text-white/35">
                           {draft.durationSeconds}s
                         </span>
-                        <span className="rounded-full bg-white/5 px-2 py-1 text-xs font-black text-white/55">
+                        <span className="rounded-full bg-white/3 px-2 py-1 text-xs font-black text-white/35">
                           Characters: {selectedIds.size}
                         </span>
-                        <span className="rounded-full bg-white/5 px-2 py-1 text-xs font-black text-white/55">
+                        <span className="rounded-full bg-white/3 px-2 py-1 text-xs font-black text-white/35">
                           Clip: {clip.status}
                         </span>
-                        <span className={isQueuedForGeneration ? "rounded-full bg-cyan-300/15 px-2 py-1 text-xs font-black text-cyan-200" : "rounded-full bg-white/5 px-2 py-1 text-xs font-black text-white/45"}>
+                        <span className={isQueuedForGeneration ? "rounded-full bg-cyan-300/15 px-2 py-1 text-xs font-black text-cyan-200" : "rounded-full bg-white/3 px-2 py-1 text-xs font-black text-white/45"}>
                           {isQueuedForGeneration ? "Queue" : "Skip"}
                         </span>
                         {isFirstLastFrame ? (
@@ -3734,7 +9246,7 @@ function renderDefaultAnimateStage() {
                           </div>
                         )}
                       </div>
-                      <div className="truncate rounded-[12px] border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/50">
+                      <div className="truncate rounded-[12px] border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/30">
                         {frame.fileName || "No source file"}
                       </div>
 
@@ -3743,11 +9255,17 @@ function renderDefaultAnimateStage() {
                           Characters Present
                         </div>
 
+                        {animateCharacterPresetErrorV36BPU26B ? (
+                          <p className="mt-2 text-xs leading-5 text-amber-200/75">Saved character preset loading failed: {animateCharacterPresetErrorV36BPU26B}</p>
+                        ) : animateCharacterPresetLoadingV36BPU26B ? (
+                          <p className="mt-2 text-xs leading-5 text-cyan-100/60">Loading saved character presets...</p>
+                        ) : null}
+
                         {characterOptions.length ? (
                           <div className="mt-3 space-y-2">
                             {characterOptions.map((character) => (
                               <label
-                                key={character.id}
+                                key={character.id || "character"}
                                 className="flex cursor-pointer items-center gap-3 rounded-[12px] border border-white/10 bg-black/20 p-2"
                               >
                                 <input
@@ -3757,7 +9275,7 @@ function renderDefaultAnimateStage() {
                                   onClick={(event) => event.stopPropagation()}
                                   className="h-4 w-4"
                                 />
-                                <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-[10px] border border-white/10 bg-white/5 text-xs font-black text-white/45">
+                                <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-[10px] border border-white/10 bg-white/3 text-xs font-black text-white/45">
                                   {character.previewUrl ? (
                                     <img src={character.previewUrl} alt={character.label} className="h-full w-full object-cover" />
                                   ) : (
@@ -3767,13 +9285,24 @@ function renderDefaultAnimateStage() {
                                 <div className="min-w-0">
                                   <div className="truncate text-sm font-black text-white">{character.label}</div>
                                   <div className="truncate text-xs text-white/45">{character.fileName || "Storyboard reference"}</div>
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      appendAnimateCharacterDescriptionToPromptV36BPU25(frame.index, character);
+                                    }}
+                                    className="mt-1 rounded-full border border-cyan-300/25 bg-cyan-300/10 px-2 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-cyan-100 hover:border-cyan-200/50 hover:bg-cyan-300/20"
+                                  >
+                                    Add description to prompt
+                                  </button>
                                 </div>
                               </label>
                             ))}
                           </div>
                         ) : (
-                          <p className="mt-2 text-sm leading-6 text-white/50">
-                            No storyboard character references are available for this scene.
+                          <p className="mt-2 text-sm leading-6 text-white/30">
+                            No scene-attached or saved character presets are available for this scene.
                           </p>
                         )}
                       </div>
@@ -3786,81 +9315,414 @@ function renderDefaultAnimateStage() {
                         </span>
                         <textarea
                           value={draft.prompt}
-                          onChange={(event) => updateAnimateFrameDraft(frame.index, { prompt: event.target.value })}
+                          onChange={(event) => updateAnimateFrameDraft(
+                            frame.index,
+                            { prompt: event.target.value },
+                            { renderFrames: frames, completedQwenScenes: completedQwenScenesForAnimateV36BPU3 }
+                          )}
                           rows={6}
-                          className="mt-2 w-full resize-y rounded-[14px] border border-white/10 bg-black/30 p-3 text-sm leading-6 text-white outline-none focus:border-cyan-300/50"
+                          className="mt-2 w-full resize-y rounded-[14px] border border-white/10 bg-black/30 p-3 text-sm leading-6 text-white outline-none focus:border-cyan-300/30"
                           placeholder={`Describe how frame ${frame.index + 1} should move. Include camera motion, subject motion, speed, mood, and what must stay consistent.`}
                         />
                       </label>
 
-                      <label className="block max-w-[220px]">
-                        <span className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-                          Clip Duration - {draft.durationSeconds}s
-                        </span>
-                        <input
-                          type="range"
-                          min={MIN_ANIMATE_FRAME_DURATION_SECONDS}
-                          max={MAX_ANIMATE_FRAME_DURATION_SECONDS}
-                          step={1}
-                          value={draft.durationSeconds}
-                          onChange={(event) => updateAnimateFrameDraft(frame.index, { durationSeconds: Number(event.target.value) })}
-                          className="mt-2 w-full accent-cyan-300"
-                        />
-                        <div className="mt-1 flex justify-between text-[11px] font-black uppercase tracking-[0.16em] text-white/35">
-                          <span>{MIN_ANIMATE_FRAME_DURATION_SECONDS}s</span>
-                          <span>{MAX_ANIMATE_FRAME_DURATION_SECONDS}s</span>
+                      <div className="grid gap-3 lg:grid-cols-[260px_1fr]">
+                        <div className="block">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
+                              Clip Duration
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  updateRenderedAnimateFrameDurationV36BPU41(draft.durationSeconds - 1);
+                                }}
+                                disabled={draft.durationSeconds <= MIN_ANIMATE_FRAME_DURATION_SECONDS}
+                                className="grid h-7 w-7 place-items-center rounded-[8px] border border-white/10 bg-black/30 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-35"
+                                aria-label="Decrease clip duration"
+                              >
+                                -
+                              </button>
+                              <input
+                                type="number"
+                                min={MIN_ANIMATE_FRAME_DURATION_SECONDS}
+                                max={MAX_ANIMATE_FRAME_DURATION_SECONDS}
+                                step={1}
+                                value={draft.durationSeconds}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onMouseDown={(event) => event.stopPropagation()}
+                                onClick={(event) => event.stopPropagation()}
+                                onChange={(event) => updateRenderedAnimateFrameDurationV36BPU41(Number(event.target.value))}
+                                className="h-7 w-14 rounded-[8px] border border-white/10 bg-black/40 px-2 text-center text-xs font-black text-white outline-none focus:border-cyan-300/40"
+                                aria-label="Clip duration seconds"
+                              />
+                              <span className="text-[11px] font-black text-white/45">s</span>
+                              <button
+                                type="button"
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  updateRenderedAnimateFrameDurationV36BPU41(draft.durationSeconds + 1);
+                                }}
+                                disabled={draft.durationSeconds >= MAX_ANIMATE_FRAME_DURATION_SECONDS}
+                                className="grid h-7 w-7 place-items-center rounded-[8px] border border-white/10 bg-black/30 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-35"
+                                aria-label="Increase clip duration"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+                          <input
+                            type="range"
+                            min={MIN_ANIMATE_FRAME_DURATION_SECONDS}
+                            max={MAX_ANIMATE_FRAME_DURATION_SECONDS}
+                            step={1}
+                            value={draft.durationSeconds}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onClick={(event) => event.stopPropagation()}
+                            onInput={(event) => updateRenderedAnimateFrameDurationV36BPU41(Number(event.currentTarget.value))}
+                            onChange={(event) => updateRenderedAnimateFrameDurationV36BPU41(Number(event.target.value))}
+                            className="mt-2 w-full touch-none accent-cyan-300"
+                          />
+                          <div className="mt-1 flex justify-between text-[11px] font-black uppercase tracking-[0.16em] text-white/35">
+                            <span>{MIN_ANIMATE_FRAME_DURATION_SECONDS}s</span>
+                            <span className="text-cyan-100">{draft.durationSeconds}s</span>
+                            <span>{MAX_ANIMATE_FRAME_DURATION_SECONDS}s</span>
+                          </div>
                         </div>
-                      </label>
 
-                      <div className="rounded-[14px] border border-purple-300/20 bg-purple-300/10 p-3">
+                        <div className="rounded-[14px] border border-cyan-300/15 bg-cyan-300/10 p-3">
+                          <div className="text-xs font-black uppercase tracking-[0.18em] text-white/80">LORA</div>
+                          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                            <select
+                              value={selectedProductionLoraName(frame.index)}
+                              onChange={(event) => setSelectedProductionLoraName(frame.index, event.target.value)}
+                              disabled={productionLoraLoading || !productionLoraOptions.length || normalizeProductionLoras(draft.loras).length >= MAX_PRODUCTION_ANIMATE_LORAS}
+                              className="min-w-0 flex-1 rounded-[10px] border border-white/10 bg-black/40 px-3 py-2 text-xs font-bold text-white outline-none focus:border-cyan-300/30 disabled:cursor-not-allowed disabled:opacity-45"
+                            >
+                              {productionLoraOptions.length ? (
+                                productionLoraOptions.map((option) => (
+                                  <option key={option.name} value={option.name}>{option.name}</option>
+                                ))
+                              ) : (
+                                <option value="">{productionLoraLoading ? "Loading LORAs..." : "No LORAs found"}</option>
+                              )}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => addProductionLoraToFrame(frame.index)}
+                              disabled={productionLoraLoading || !selectedProductionLoraName(frame.index) || normalizeProductionLoras(draft.loras).length >= MAX_PRODUCTION_ANIMATE_LORAS}
+                              className="rounded-[10px] bg-cyan-400 px-3 py-2 text-xs font-black text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Add
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => refreshProductionLoraOptions(true)}
+                              disabled={productionLoraLoading}
+                              className="rounded-[10px] border border-white/10 bg-black/30 px-3 py-2 text-xs font-black text-cyan-100 transition hover:border-cyan-300/40 disabled:cursor-not-allowed disabled:opacity-45"
+                              title="Force reload LORAs from the ComfyUI worker"
+                            >
+                              {productionLoraLoading ? "Refreshing..." : "Refresh"}
+                            </button>
+                          </div>
+                          {productionLoraError ? (
+                            <div className="mt-2 text-[11px] font-bold text-amber-200">{productionLoraError}</div>
+                          ) : null}
+
+                          <div className="mt-3 space-y-2">
+                            {normalizeProductionLoras(draft.loras).length ? (
+                              normalizeProductionLoras(draft.loras).map((lora) => (
+                                <div key={lora.name} className="rounded-[10px] border border-white/10 bg-black/25 p-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="min-w-0 truncate text-xs font-black text-white">{lora.name}</div>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeProductionLoraFromFrame(frame.index, lora.name)}
+                                      className="shrink-0 rounded-full border border-white/10 px-2 py-1 text-[10px] font-black text-white/60 transition hover:text-white"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                  <div className="mt-2 flex items-center gap-2">
+                                    <input
+                                      type="range"
+                                      min={MIN_PRODUCTION_LORA_STRENGTH}
+                                      max={MAX_PRODUCTION_LORA_STRENGTH}
+                                      step={0.05}
+                                      value={lora.strength}
+                                      onChange={(event) => updateProductionFrameLoraStrength(frame.index, lora.name, Number(event.target.value))}
+                                      className="w-full accent-cyan-300"
+                                    />
+                                    <span className="w-10 text-right text-[11px] font-black text-cyan-100">{lora.strength.toFixed(2)}</span>
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="rounded-[10px] border border-dashed border-white/10 px-3 py-2 text-xs text-white/45">
+                                No LORAs added. Up to {MAX_PRODUCTION_ANIMATE_LORAS} per clip.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-[14px] border border-rose-300/20 bg-rose-400/10 p-3">
                         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                           <div>
-                            <div className="text-xs font-black uppercase tracking-[0.18em] text-purple-100/70">
+                            <div className="text-xs font-black uppercase tracking-[0.18em] text-rose-100/80">Voice Actor Input</div>
+                            <p className="mt-1 text-xs leading-5 text-rose-50/65">
+                              Record a voice performance for this frame. Works with normal image-to-video and first-frame / last-frame. The saved recording is sent to the lip-sync workflow; trim duration matches the clip duration.
+                            </p>
+                          </div>
+                          <label className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.16em] text-white/70">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(draft.voiceActorInput?.enabled)}
+                              onChange={(event) => {
+                                const enabled = event.target.checked;
+                                updateVoiceActorInputForFrame(frame.index, {
+                                  enabled,
+                                  saved: enabled ? draft.voiceActorInput?.saved : false,
+                                });
+                              }}
+                              className="h-4 w-4 accent-rose-400"
+                            />
+                            Enable
+                          </label>
+                        </div>
+
+                        {draft.voiceActorInput?.enabled ? (
+                          <div className="mt-3 rounded-[12px] border border-white/10 bg-black/25 p-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {voiceActorRecordingFrameIndex === frame.index ? (
+                                <button
+                                  type="button"
+                                  onClick={stopVoiceActorRecording}
+                                  className="rounded-full bg-red-600 px-4 py-2 text-sm font-black text-white shadow-lg shadow-red-950/30 transition hover:bg-red-500"
+                                >
+                                  Stop
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => startVoiceActorRecording(frame.index)}
+                                  disabled={!draft.voiceActorInput?.enabled || voiceActorRecordingFrameIndex !== null}
+                                  className="rounded-full bg-red-600 px-4 py-2 text-sm font-black text-white shadow-lg shadow-red-950/30 transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Record
+                                </button>
+                              )}
+
+                              {draft.voiceActorInput?.audioUrl ? (
+                                <>
+                                  <audio controls src={draft.voiceActorInput.audioUrl} className="h-9 max-w-full" />
+                                  <span className="rounded-full border border-white/10 px-2 py-1 text-[11px] font-black text-white/60">
+                                    {Number(draft.voiceActorInput.durationSeconds || 0).toFixed(1)}s recorded
+                                  </span>
+                                  {Number(draft.voiceActorInput.durationSeconds || 0) > Number(draft.durationSeconds || 0) + 0.25 ? (
+                                    <span className="rounded-full border border-amber-300/30 bg-amber-300/10 px-2 py-1 text-[11px] font-black text-amber-100">
+                                      Longer than {draft.durationSeconds}s clip
+                                    </span>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    onClick={() => redoVoiceActorRecording(frame.index)}
+                                    className="rounded-[10px] border border-white/10 bg-black/30 px-3 py-2 text-xs font-black text-white/70 transition hover:text-white"
+                                  >
+                                    Redo
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => saveVoiceActorRecording(frame.index)}
+                                    disabled={!voiceActorAudioBlobs[frame.index]}
+                                    className="rounded-[10px] bg-emerald-500 px-3 py-2 text-xs font-black text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    {draft.voiceActorInput?.saved ? "Saved" : "Save"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(event) => void handleVoiceActorTranscribeFromButton(event.currentTarget)}
+                                    disabled={!draft.voiceActorInput?.audioUrl}
+                                    className="rounded-[10px] border border-cyan-300/40 bg-cyan-500/20 px-3 py-2 text-xs font-black text-cyan-50 transition hover:bg-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    Transcribe
+                                  </button>
+                                  <div className="basis-full rounded-xl border border-cyan-300/20 bg-cyan-950/20 p-3 text-xs text-cyan-100" data-otg="OTG_VOICE_ACTOR_TRANSCRIBE_VISIBLE_UI_V26">
+                                    <div className="font-black uppercase tracking-[0.16em] text-cyan-200">Lip sync note</div>
+                                    <p className="mt-1 text-white/80">
+                                      For best lip sync, the exact words spoken in Voice Actor Input should also be written in the frame prompt.
+                                    </p>
+                                  </div>
+                                </>
+                              ) : (
+                                <span className="text-xs font-bold text-white/30">No recording yet.</span>
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div
+                        className="rounded-[14px] border border-purple-300/20 bg-purple-300/10 p-3"
+                        onPointerDownCapture={() => {
+                          if (scene?.id) recordFirstLastPairDebugV36BPU19("panel-capture", scene.id, frame.index, frames.length, "pointerdown capture fired");
+                        }}
+                        onClickCapture={() => {
+                          if (scene?.id) recordFirstLastPairDebugV36BPU19("panel-capture", scene.id, frame.index, frames.length, "click capture fired");
+                        }}
+                      >
+                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <div className="text-xs font-black uppercase tracking-[0.18em] text-white/75">
                               First-frame / Last-frame Pair
                             </div>
                             <p className="mt-1 text-sm leading-6 text-purple-50/75">
-                              Use Frame {frame.index + 1} as the first frame and Frame {frame.index + 2} as the last frame. Prompt stays from Frame {frame.index + 1}.
+                              Use Scene {frame.index + 1} as the first frame and Scene {frame.index + 2} as the last frame. Prompt stays from Scene {frame.index + 1}.
                             </p>
                           </div>
                           {isFirstLastFrame ? (
                             <button
                               type="button"
-                              onClick={() => setAnimateNextSceneAsLastFrame(frame.index, false)}
-                              className="rounded-[12px] border border-white/10 bg-black/25 px-3 py-2 text-xs font-black text-white"
+                              aria-pressed="true"
+                              onPointerDown={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                firstLastPairPointerHandledAtRefV36BPU19.current = Date.now();
+                                if (scene?.id) {
+                                  unpairAnimateScene({
+                                    sceneId: scene.id,
+                                    frameIndex: frame.index,
+                                    renderFrames: frames,
+                                    completedQwenScenes: completedQwenScenesForAnimateV36BPU3,
+                                  });
+                                }
+                              }}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                if (Date.now() - firstLastPairPointerHandledAtRefV36BPU19.current < 800) return;
+                                if (scene?.id) {
+                                  unpairAnimateScene({
+                                    sceneId: scene.id,
+                                    frameIndex: frame.index,
+                                    renderFrames: frames,
+                                    completedQwenScenes: completedQwenScenesForAnimateV36BPU3,
+                                  });
+                                }
+                              }}
+                              className="flex cursor-pointer items-center gap-2 rounded-[12px] border border-purple-200/50 bg-purple-300/25 px-3 py-2 text-xs font-black text-purple-50"
                             >
-                              Unpair
+                              <span className="grid h-4 w-4 place-items-center rounded-[4px] border border-purple-100 bg-purple-200 text-[10px] font-black text-slate-950">
+                                ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ
+                              </span>
+                              Unpair next scene as last frame
                             </button>
                           ) : (
-                            <label className="flex cursor-pointer items-center gap-2 rounded-[12px] border border-purple-300/25 bg-black/20 px-3 py-2 text-xs font-black text-purple-50">
-                              <input
-                                type="checkbox"
-                                checked={false}
-                                disabled={frame.index >= frames.length - 1 || isConsumedLastFrame}
-                                onChange={(event) => {
-                                  if (event.target.checked) setAnimateNextSceneAsLastFrame(frame.index, true);
-                                }}
-                                className="h-4 w-4 accent-purple-300"
-                              />
-                              Use next scene as last frame
-                            </label>
+                            <button
+                              type="button"
+                              aria-pressed="false"
+                              disabled={frame.index >= frames.length - 1 || isConsumedLastFrame}
+                              onPointerDown={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                firstLastPairPointerHandledAtRefV36BPU19.current = Date.now();
+                                if (scene?.id) {
+                                  pairAnimateSceneWithNext({
+                                    sceneId: scene.id,
+                                    frameIndex: frame.index,
+                                    renderFrames: frames,
+                                    completedQwenScenes: completedQwenScenesForAnimateV36BPU3,
+                                  });
+                                }
+                              }}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                if (Date.now() - firstLastPairPointerHandledAtRefV36BPU19.current < 800) return;
+                                if (scene?.id) {
+                                  pairAnimateSceneWithNext({
+                                    sceneId: scene.id,
+                                    frameIndex: frame.index,
+                                    renderFrames: frames,
+                                    completedQwenScenes: completedQwenScenesForAnimateV36BPU3,
+                                  });
+                                }
+                              }}
+                              className="flex cursor-pointer items-center gap-2 rounded-[12px] border border-purple-300/25 bg-black/20 px-3 py-2 text-xs font-black text-purple-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <span className="grid h-4 w-4 place-items-center rounded-[4px] border border-purple-200/50 bg-black/40 text-[10px] font-black text-transparent">
+                                .
+                              </span>
+                              Pair next scene as last frame
+                            </button>
                           )}
                         </div>
+
+                        <div className="mt-3 rounded-[12px] border border-emerald-300/25 bg-emerald-950/25 px-3 py-3 text-xs leading-5 text-emerald-50/85">
+                          <div className="flex flex-col gap-2">
+                            <div>
+                              <p className="font-black uppercase tracking-[0.14em] text-emerald-100">Reference-to-video GGUF</p>
+                              <p className="text-emerald-50/70">Uses this scene image as the background and the first selected character as reference slot 1.</p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={isConsumedLastFrame}
+                              onClick={() => {
+                                updateAnimateFrameDraft(frame.index, {
+                                  animationMode: draft.animationMode === "reference_to_video_gguf" ? "image_to_video" : "reference_to_video_gguf",
+                                  firstFrameIndex: undefined,
+                                  lastFrameIndex: undefined,
+                                  promptSourceFrameIndex: frame.index,
+                                  timelineRole: "normal",
+                                  consumedByFrameIndex: undefined,
+                                  consumedLastFrameIndex: undefined,
+                                  queueForGeneration: true,
+                                });
+                                setNotice(draft.animationMode === "reference_to_video_gguf" ? "Reference-to-video GGUF disabled for this scene." : "Reference-to-video GGUF enabled. Select one character reference for slot 1.");
+                              }}
+                              className="rounded-[12px] border border-emerald-200/35 bg-black/20 px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-emerald-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {draft.animationMode === "reference_to_video_gguf" ? "Use Image-to-video" : "Use GGUF Reference"}
+                            </button>
+                          </div>
+                          {draft.animationMode === "reference_to_video_gguf" ? (
+                            <p className="mt-2 rounded-[10px] border border-emerald-200/20 bg-black/25 px-3 py-2 text-emerald-50/80">
+                              Workflow queue: GGUF reference-to-video. background = Scene {frame.index + 1}; reference slot 1 = first checked character; Voice Actor uses the GGUF audio-reference workflow when enabled.
+                            </p>
+                          ) : null}
+                        </div>
+
+                        <div className="mt-3 rounded-[12px] border border-fuchsia-200/30 bg-fuchsia-950/30 px-3 py-2 text-xs font-bold leading-5 text-fuchsia-50">
+                          {firstLastPairDebugTextV36BPU19()}
+                        </div>
                         {isFirstLastFrame ? (
-                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                          <>
+                            <div className="mt-3 rounded-[12px] border border-purple-200/25 bg-black/25 px-3 py-2 text-xs leading-5 text-purple-50/80">
+                              Workflow queue: first-frame/last-frame preset. imageA = Scene {frame.index + 1}; imageB = Scene {Number(pairedLastFrameIndex) + 1}; animationMode = first_last_frame.
+                            </div>
+                            <div className="mt-3 grid gap-3 md:grid-cols-2">
                             <div className="overflow-hidden rounded-[12px] border border-white/10 bg-black/25">
-                              <div className="px-3 py-2 text-xs font-black uppercase tracking-[0.16em] text-white/45">First: Frame {frame.index + 1}</div>
+                              <div className="px-3 py-2 text-xs font-black uppercase tracking-[0.16em] text-white/45">First: Scene {frame.index + 1}</div>
                               {frame.url ? <img src={frame.url} alt={`First frame ${frame.index + 1}`} className="aspect-video w-full object-cover" /> : null}
                             </div>
                             <div className="overflow-hidden rounded-[12px] border border-white/10 bg-black/25">
-                              <div className="px-3 py-2 text-xs font-black uppercase tracking-[0.16em] text-white/45">Last: Frame {Number(pairedLastFrameIndex) + 1}</div>
+                              <div className="px-3 py-2 text-xs font-black uppercase tracking-[0.16em] text-white/45">Last: Scene {Number(pairedLastFrameIndex) + 1}</div>
                               {nextFrame?.url ? <img src={nextFrame.url} alt={`Last frame ${Number(pairedLastFrameIndex) + 1}`} className="aspect-video w-full object-cover" /> : (
                                 <div className="flex aspect-video items-center justify-center text-xs text-white/35">Missing last frame</div>
                               )}
                             </div>
-                          </div>
+                            </div>
+                          </>
                         ) : isConsumedLastFrame ? (
                           <p className="mt-3 rounded-[12px] border border-purple-300/20 bg-black/20 px-3 py-2 text-sm text-purple-50/75">
-                            This frame is consumed as the last frame for Frame {Number(consumedByFrameIndex) + 1}. Unpair that source frame to animate this one separately.
+                            This scene is consumed as the last frame for Scene {Number(consumedByFrameIndex) + 1}. Unpair that source scene to animate this one separately.
                           </p>
                         ) : null}
                       </div>
@@ -3888,12 +9750,12 @@ function renderDefaultAnimateStage() {
           </div>
         </div>
 
-        <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
+        <div data-otg-animate-restored="Render Plan" data-marker="OTG_PRODUCTION_ANIMATE_RESTORE_UI_V1" className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
           <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="text-[11px] font-black uppercase tracking-[0.28em] text-white/45">Review</p>
               <h3 className="text-lg font-black text-white">Generated Clips</h3>
-              <p className="mt-1 text-sm text-white/55">
+              <p className="mt-1 text-sm text-white/35">
                 Synced clips will appear here for review before moving to the next Production step. Double-click a clip to expand it.
               </p>
             </div>
@@ -3903,29 +9765,24 @@ function renderDefaultAnimateStage() {
                 disabled={!scene || Boolean(busySceneId) || queuedAnimateFrames < 1}
                 onClick={generateSelectedFrameClips}
                 className="rounded-[12px] bg-cyan-300 px-4 py-3 text-sm font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Generate Frame Clips
-              </button>
+              >Animate Current Scene</button>
               <button
                 type="button"
                 disabled={!frameClips.some((clip, index) => animateDrafts[index]?.queueForGeneration !== false && clip.promptId) || Boolean(busySceneId)}
                 onClick={syncSelectedFrameClips}
                 className="rounded-[12px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Sync Frame Clips
-              </button>
+              >Sync Generated Clips</button>
             </div>
           </div>
 
           {renderAnimateGenerationStatus(scene)}
-
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             {frameClips.map((clip, index) => {
               const draft = animateDrafts[index];
               const consumed = isAnimateLastFrameConsumed(draft);
               return (
               <div key={index} className={consumed ? "overflow-hidden rounded-[14px] border border-purple-300/20 bg-purple-950/20 opacity-70" : "overflow-hidden rounded-[14px] border border-white/10 bg-black/25"}>
-                <div className="relative aspect-video bg-white/5">
+                <div className="relative aspect-video bg-white/3">
                   {clip.url ? (
                     <video src={clip.url} className="h-full w-full object-cover" controls
                       onDoubleClick={() => setExpandedAnimateClipIndex(index)}
@@ -3947,7 +9804,7 @@ function renderDefaultAnimateStage() {
                   ) : null}
                 </div>
                 <div className="px-3 py-2 text-xs">
-                  <div className={clip.status === "ready" ? "font-black text-emerald-300" : clip.status === "error" ? "font-black text-red-300" : "font-black text-white/50"}>
+                  <div className={clip.status === "ready" ? "font-black text-emerald-300" : clip.status === "error" ? "font-black text-red-300" : "font-black text-white/30"}>
                     {clip.status}
                   </div>
                   <div className="mt-1 truncate text-white/40">{clip.fileName || "No clip yet"}</div>
@@ -4175,7 +10032,7 @@ function renderDefaultAnimateStage() {
       id: String(segment?.id || `sfx_${index}`),
       mode: segment?.mode === "full_clip" ? "full_clip" : "timed",
       label: String(segment?.label || `SFX ${index + 1}`),
-      prompt: String(segment?.prompt || segment?.source || ""),
+      prompt: exactProductionFramePrompt(String(segment?.prompt || segment?.source || "")),
       audioUrl: String(segment?.audioUrl || ""),
       audioFileName: String(segment?.audioFileName || "").trim(),
       startSeconds: clampEditSeconds(Number(segment?.startSeconds ?? segment?.startSec), 0),
@@ -4192,7 +10049,7 @@ function renderDefaultAnimateStage() {
       id: String(range?.id || `vfx_${index}`),
       startSeconds: clampEditSeconds(Number(range?.startSeconds ?? range?.startSec), 0),
       endSeconds: clampEditSeconds(Number(range?.endSeconds ?? range?.endSec), durationSec),
-      prompt: String(range?.prompt || ""),
+      prompt: exactProductionFramePrompt(String(range?.prompt || "")),
       strength: Math.max(0, Math.min(1, Number(range?.strength) || 0.5)),
     })) as ProductionEditVisualFxRange[];
 
@@ -4204,7 +10061,7 @@ function renderDefaultAnimateStage() {
           id: "vfx_0",
           startSeconds: clampEditSeconds(Number(legacyVisualFix?.startSec), 0),
           endSeconds: clampEditSeconds(Number(legacyVisualFix?.endSec), durationSec),
-          prompt: String(legacyVisualFix?.prompt || ""),
+          prompt: exactProductionFramePrompt(String(legacyVisualFix?.prompt || "")),
           strength: 0.5,
         },
       ];
@@ -4267,7 +10124,7 @@ function renderDefaultAnimateStage() {
         ...music,
         enabled: Boolean(music.enabled),
         source: (["none", "generate", "library", "upload"].includes(String(music.source)) ? music.source : "none") as ProductionClipEditManifest["music"]["source"],
-        prompt: String(music.prompt || ""),
+        prompt: exactProductionFramePrompt(String(music.prompt || "")),
         audioUrl: String(music.audioUrl || ""),
         audioFileName: String(music.audioFileName || music.fileName || "").trim(),
         startSeconds: clampEditSeconds(Number(music.startSeconds ?? music.startSec), base.music.startSeconds),
@@ -4290,6 +10147,7 @@ function renderDefaultAnimateStage() {
       status: normalizeProductionEditStatus(raw.status),
       editedUrl: String(raw.editedUrl || ""),
       editedFileName: String(raw.editedFileName || ""),
+      renderedDurationSeconds: Number.isFinite(Number(raw.renderedDurationSeconds)) ? Number(raw.renderedDurationSeconds) : undefined,
       error: raw.error ? String(raw.error) : undefined,
       updatedAt: String(raw.updatedAt || new Date().toISOString()),
     };
@@ -4561,6 +10419,10 @@ function renderDefaultAnimateStage() {
       frameClips: nextClips,
       status: "clip_ready",
     });
+    autosaveProductionScenePatchV36BPU43(selectedScene.id, {
+      frameClips: nextClips,
+      status: "clip_ready",
+    }, activeStage);
     setSelectedEditClipKey(editClipStableKey(selectedScene, nextClip, nextClips.length - 1));
     setEditGalleryOpen(false);
     setNotice(`Added gallery clip to Edit: ${fileName || "selected video"}.`);
@@ -4587,6 +10449,7 @@ function renderDefaultAnimateStage() {
     }
 
     updateSelectedScene({ frameClips: clips });
+    autosaveProductionScenePatchV36BPU43(selectedScene.id, { frameClips: clips }, activeStage);
     setEditDraftsByClipKey((current) => {
       const next = { ...current };
       delete next[removingKey];
@@ -4872,6 +10735,25 @@ function extractRenderedEditOutput(data: any) {
       output?.prompt_id ||
       ""
   ).trim();
+  async function handleTranscribeVoiceActorInput(frameId: string, audioBlob?: Blob | null, applyTranscript?: (value: string) => void) {
+    if (!audioBlob) {
+      window.alert("Record voice actor input before transcribing.");
+      return;
+    }
+
+    setVoiceActorTranscribingByFrame((prev) => ({ ...prev, [frameId]: true }));
+    try {
+      const transcript = await transcribeProductionVoiceActorAudio(audioBlob);
+      setVoiceActorTranscriptByFrame((prev) => ({ ...prev, [frameId]: transcript }));
+      if (applyTranscript) {
+        applyTranscript(transcript);
+      }
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Voice actor transcription failed.");
+    } finally {
+      setVoiceActorTranscribingByFrame((prev) => ({ ...prev, [frameId]: false }));
+    }
+  }
 
   return { url, path, fileName, promptId };
 }
@@ -4931,6 +10813,98 @@ function replaceSelectedEditClipWithRenderedOutput(
   return true;
 }
 
+
+function restoreSelectedEditClipOriginal(clipKey: string, durationSec: number) {
+  if (!selectedScene || !clipKey) return false;
+
+  const rows = editClipRows(selectedScene);
+  const row = rows.find((item) => item.key === clipKey);
+  if (!row) return false;
+
+  const frameClips = animateFrameClips(selectedScene).slice();
+  const currentClip: any = frameClips[row.index] || row.clip || {};
+  const originalUrl = String(currentClip.originalUrl || "").trim();
+  const originalFileName = String(currentClip.originalFileName || "").trim();
+
+  if (!originalUrl && !originalFileName) {
+    updateEditDraft(clipKey, durationSec, {
+      trimStartSeconds: 0,
+      trimEndSeconds: durationSec,
+      playbackRate: 1,
+      expandMode: "none",
+      editedUrl: "",
+      editedFileName: "",
+      error: "",
+      status: "draft",
+    } as any);
+    setNotice("No prior edited replacement was found. Reset trim settings only.");
+    return false;
+  }
+
+  const restoredUrl = originalUrl || currentClip.url || "";
+  const restoredFileName = originalFileName || currentClip.fileName || fileNameFromUrl(restoredUrl);
+  const restoredDuration = currentClip.requestedDurationSeconds || row.durationSec || durationSec;
+
+  const restoredClip: any = {
+    ...currentClip,
+    url: restoredUrl,
+    fileName: restoredFileName,
+    error: undefined,
+    sourceFrameIndex: row.index,
+    requestedDurationSeconds: restoredDuration,
+  };
+
+  delete restoredClip.editedAt;
+  delete restoredClip.editSource;
+
+  const restoredManifest = normalizeProductionEditManifest(
+    {
+      ...row,
+      sourceUrl: restoredUrl,
+      sourceFileName: restoredFileName,
+      clip: restoredClip,
+    } as any,
+    {
+      ...createDefaultProductionEditManifest(
+        {
+          ...row,
+          sourceUrl: restoredUrl,
+          sourceFileName: restoredFileName,
+          clip: restoredClip,
+        } as any,
+        restoredDuration
+      ),
+      sourceUrl: restoredUrl,
+      sourceFileName: restoredFileName,
+      trimStartSeconds: 0,
+      trimEndSeconds: restoredDuration,
+      playbackRate: 1,
+      expandMode: "none",
+      editedUrl: "",
+      editedFileName: "",
+      error: "",
+      status: "draft",
+      updatedAt: new Date().toISOString(),
+    } as any,
+    restoredDuration
+  );
+
+  restoredClip.editManifest = restoredManifest;
+  frameClips[row.index] = restoredClip;
+
+  updateSceneById(selectedScene.id, {
+    frameClips,
+  });
+
+  setEditDraftsByClipKey((previous) => ({
+    ...previous,
+    [clipKey]: restoredManifest,
+  }));
+
+  setSelectedEditClipKey(clipKey);
+  setNotice(`Restored original Clip ${row.index + 1}.`);
+  return true;
+}
 function handleRenderedEditReplacementResponse(
   clipKey: string,
   durationSec: number,
@@ -5251,13 +11225,22 @@ function handleRenderedEditReplacementResponse(
 
     const manifest = normalizeProductionEditManifest(row, editDraftForClip(clipKey, durationSec), durationSec);
 
+    // OTG_PRODUCTION_VISUAL_EDIT_CLEANUP_RENDER_RATE_V36BK2
+    // Playback rate is display-only on Visual Edit. Slow down uses a fixed safe preview rate.
+    const renderPlaybackRateV36BK2 =
+      manifest.expandMode === "slow_down" && manifest.playbackRate >= 1 ? 0.5 : manifest.playbackRate;
+
     if (!manifest.sourceUrl && !manifest.sourceFileName) {
       setNotice("Select a generated source clip before rendering.");
       return;
     }
+    // OTG_PRODUCTION_VISUAL_EDIT_CLEANUP_FREEZE_CLIENT_V36BK2
+    // Freeze start/end are allowed through the Cut path. The render route handles supported timing behavior.
+    // OTG_PRODUCTION_VISUAL_EDIT_CLEANUP_SLOWDOWN_CLIENT_V36BK2
+    // Slow down uses renderPlaybackRateV36BK2 because playback rate is no longer user-editable.
 
-    if (Math.abs(manifest.playbackRate - 1) > 0.001 || manifest.expandMode !== "none") {
-      setNotice("Current render supports trim and basic audio cleanup only. Set playback rate to 1 and expand mode to None before rendering.");
+    if (manifest.expandMode === "none" && Math.abs(manifest.playbackRate - 1) > 0.001) {
+      setNotice("Playback rate changes require expand mode Slow down.");
       return;
     }
 
@@ -5280,7 +11263,7 @@ function handleRenderedEditReplacementResponse(
             },
             trimStartSeconds: manifest.trimStartSeconds,
             trimEndSeconds: manifest.trimEndSeconds,
-            playbackRate: manifest.playbackRate,
+            playbackRate: renderPlaybackRateV36BK2,
             expandMode: manifest.expandMode,
             sourceFileName: manifest.sourceFileName,
             audioPolicy: manifest.audioPolicy,
@@ -5302,7 +11285,7 @@ function handleRenderedEditReplacementResponse(
         status: "render_ready",
         editedUrl: String(data.editedUrl || ""),
         editedFileName: String(data.editedFileName || ""),
-        trimEndSeconds: Number(data.durationSeconds) > 0 ? manifest.trimStartSeconds + Number(data.durationSeconds) : manifest.trimEndSeconds,
+        renderedDurationSeconds: Number(data.durationSeconds) > 0 ? Number(data.durationSeconds) : undefined,
         error: "",
         updatedAt: new Date().toISOString(),
       }, durationSec);
@@ -5403,7 +11386,24 @@ function handleRenderedEditReplacementResponse(
           (data as any)?.prompt_id,
       });
 
-setNotice(`Rendered edited Clip ${row.index + 1}.`);
+      // OTG_TRIM_REPLACE_SELECTED_CLIP_V1
+      handleRenderedEditReplacementResponse(clipKey, durationSec, renderedManifest, {
+        ...(data || {}),
+        result: {
+          ...((data || {}).result || {}),
+          ...(renderedManifest as any),
+        },
+        output: {
+          ...((data || {}).output || {}),
+          ...(renderedManifest as any),
+        },
+        editedUrl: renderedManifest.editedUrl,
+        editedFileName: renderedManifest.editedFileName,
+        renderedVideoUrl: renderedManifest.editedUrl,
+        fileName: renderedManifest.editedFileName,
+      });
+
+      setNotice(`Cut applied to Clip ${row.index + 1}. The edited clip replaced the original. Use Undo to restore the original.`);
     } catch (error) {
       const failedManifest = normalizeProductionEditManifest(row, {
         ...manifest,
@@ -5429,6 +11429,11 @@ setNotice(`Rendered edited Clip ${row.index + 1}.`);
     if (!row || !selectedScene) return;
 
     const manifest = normalizeProductionEditManifest(row, editDraftForClip(clipKey, durationSec), durationSec);
+
+    // OTG_PRODUCTION_VISUAL_EDIT_CLEANUP_RENDER_RATE_V36BK2
+    // Playback rate is display-only on Visual Edit. Slow down uses a fixed safe preview rate.
+    const renderPlaybackRateV36BK2 =
+      manifest.expandMode === "slow_down" && manifest.playbackRate >= 1 ? 0.5 : manifest.playbackRate;
     const visualRange = manifest.visualFxRanges.find((range) => range.prompt.trim()) || null;
     if (!visualRange) {
       setNotice("Add a Visual Fix prompt before rendering visual FX.");
@@ -5736,6 +11741,213 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
     );
   }
 // OTG_PRODUCTION_EDIT_EXPANDED_PREVIEW_V1_END
+  // OTG_SAVE_SELECTED_PRODUCTION_VIDEO_V1_START
+  function saveActiveProductionEditClip(clipKey: string, durationSec: number) {
+    if (!selectedScene || !clipKey) {
+      setNotice("Select a clip before saving.");
+      return false;
+    }
+
+    const row = findEditRowByKey(clipKey);
+    if (!row) {
+      setNotice("Could not find the selected clip to save.");
+      return false;
+    }
+
+    const nowIso = new Date().toISOString();
+    const currentDraft = editDraftForClip(clipKey, durationSec);
+    const frameClips = animateFrameClips(selectedScene).slice();
+    const currentClip: any = frameClips[row.index] || row.clip || {};
+
+    const currentUrl = String(
+      currentClip.url ||
+      currentDraft.editedUrl ||
+      row.sourceUrl ||
+      currentDraft.sourceUrl ||
+      ""
+    ).trim();
+
+    const currentFileName = String(
+      currentClip.fileName ||
+      currentDraft.editedFileName ||
+      currentDraft.sourceFileName ||
+      (currentUrl ? fileNameFromUrl(currentUrl) : "") ||
+      ""
+    ).trim();
+
+    const savedManifest = normalizeProductionEditManifest(
+      row,
+      {
+        ...currentDraft,
+        sourceUrl: currentDraft.sourceUrl || row.sourceUrl || currentUrl,
+        sourceFileName: currentDraft.sourceFileName || row.sourceFileName || currentFileName,
+        editedUrl: currentDraft.editedUrl || (currentClip.editSource ? currentUrl : ""),
+        editedFileName: currentDraft.editedFileName || (currentClip.editSource ? currentFileName : ""),
+        status: "saved",
+        error: "",
+        savedAt: nowIso,
+        updatedAt: nowIso,
+      } as any,
+      durationSec
+    );
+
+    const savedClip: any = {
+      ...currentClip,
+      url: currentUrl || currentClip.url,
+      fileName: currentFileName || currentClip.fileName,
+      editManifest: savedManifest,
+      savedAt: nowIso,
+      sourceFrameIndex: row.index,
+      requestedDurationSeconds: currentClip.requestedDurationSeconds || row.durationSec || durationSec,
+    };
+
+    frameClips[row.index] = savedClip;
+
+    updateSceneById(selectedScene.id, {
+      frameClips,
+    });
+
+    setEditDraftsByClipKey((previous) => ({
+      ...previous,
+      [clipKey]: savedManifest,
+    }));
+
+    setSelectedEditClipKey(clipKey);
+    setNotice(`Video saved for Clip ${row.index + 1}. You can click Next: Audio Studio.`);
+    return true;
+  }
+  // OTG_SAVE_SELECTED_PRODUCTION_VIDEO_V1_END
+
+  // OTG_LTX_EDIT_ANYTHING_VIDEO_WIRE_V1_START
+  async function renderLtxEditAnythingClip(clipKey: string, durationSec: number) {
+    if (!clipKey || renderingVisualFxClipKey || renderingEditClipKey) return;
+
+    const row = findEditRowByKey(clipKey);
+    if (!row || !selectedScene) return;
+
+    const field = document.getElementById("otg-production-edit-prompt-v36bl2") as HTMLTextAreaElement | null;
+    const editDraftAnyV36BM2 = editDraftForClip(clipKey, durationSec) as any;
+    const prompt = String(field?.value || editDraftAnyV36BM2.visualEditPromptV36BL2 || editDraftAnyV36BM2.visualFixPrompt || "").trim();
+
+    if (!prompt) {
+      setNotice("Enter an edit instruction first.");
+      return;
+    }
+
+    const draft = normalizeProductionEditManifest(row, {
+      ...editDraftForClip(clipKey, durationSec),
+      visualEditPromptV36BL2: prompt,
+      visualFixPrompt: prompt,
+      visualFixEnabled: true,
+      status: "draft",
+      updatedAt: new Date().toISOString(),
+    } as any, durationSec);
+
+    const sourceUrl = String(
+      (row.clip as any)?.url ||
+      draft.editedUrl ||
+      row.sourceUrl ||
+      draft.sourceUrl ||
+      ""
+    ).trim();
+
+    const sourceFileName = String(
+      (row.clip as any)?.fileName ||
+      draft.editedFileName ||
+      draft.sourceFileName ||
+      (sourceUrl ? fileNameFromUrl(sourceUrl) : "") ||
+      ""
+    ).trim();
+
+    if (!sourceUrl && !sourceFileName) {
+      setNotice("Select a source clip before submitting an edit.");
+      return;
+    }
+
+    setRenderingVisualFxClipKey(clipKey);
+
+    try {
+      updateEditDraft(clipKey, durationSec, {
+        visualEditPromptV36BL2: prompt,
+        visualFixPrompt: prompt,
+        visualFixEnabled: true,
+        status: "draft",
+        error: "",
+      } as any);
+
+      const promptLower = prompt.toLowerCase();
+      const inferredTask =
+        /\bremove|delete|erase\b/.test(promptLower) ? "remove" :
+        /\badd|insert|put\b/.test(promptLower) ? "add" :
+        /\bstyle|stylize|anime|cartoon|convert|ghibli|paint|render as\b/.test(promptLower) ? "convert" :
+        "replace";
+
+      const form = new FormData();
+      form.append("video_source", "gallery");
+      form.append("video_name", sourceFileName);
+
+      const scope = galleryScopeFromUrl(sourceUrl);
+      if (scope) form.append("video_scope", scope);
+
+      form.append("video_title", `${selectedScene.title || "Scene"} Clip ${row.index + 1} Edit`);
+      form.append("task", inferredTask);
+      form.append("instruction", prompt);
+      form.append("negativePrompt", "");
+      form.append("durationSeconds", String(Math.max(1, Math.min(16, Number(durationSec) || 8))));
+      form.append("fps", "24");
+      form.append("longerSide", "512");
+      form.append("outputTitle", `production_edit_${selectedScene.id}_clip_${row.index + 1}`);
+      form.append("useVideoReasoning", "true");
+      form.append("obscuraStrength", "2.3");
+
+      setNotice(`Submitting LTX Edit Anything for Clip ${row.index + 1}.`);
+
+      const response = await fetch("/api/edit-video/ltx-edit", {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || data?.ok === false) {
+        throw new Error(data?.error || "Edit Video render failed.");
+      }
+const renderedManifest = normalizeProductionEditManifest(row, {
+        ...draft,
+        status: "render_ready",
+        editedUrl: String(data.editedUrl || data.galleryUrl || data.url || data.videoUrl || data.outputUrl || ""),
+        editedFileName: String(data.editedFileName || data.fileName || data.name || ""),
+        renderedDurationSeconds: Number(data.durationSeconds) > 0 ? Number(data.durationSeconds) : undefined,
+        visualEditPromptV36BL2: prompt,
+        visualFixPrompt: prompt,
+        visualFixEnabled: true,
+        error: "",
+        updatedAt: new Date().toISOString(),
+      } as any, durationSec);
+
+      handleRenderedEditReplacementResponse(clipKey, durationSec, renderedManifest, {
+        ...(data || {}),
+        editedUrl: renderedManifest.editedUrl,
+        editedFileName: renderedManifest.editedFileName,
+        renderedVideoUrl: renderedManifest.editedUrl,
+        fileName: renderedManifest.editedFileName,
+      });
+
+      setNotice(`Edit applied to Clip ${row.index + 1}. The edited clip replaced the original. Use Undo to restore the original.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Edit Video render failed.";
+      updateEditDraft(clipKey, durationSec, {
+        status: "error",
+        error: message,
+      } as any);
+      setNotice(message);
+    } finally {
+      setRenderingVisualFxClipKey("");
+    }
+  }
+  // OTG_LTX_EDIT_ANYTHING_VIDEO_WIRE_V1_END
+
 
   function renderEditStage() {
     const scene = selectedScene;
@@ -5748,6 +11960,38 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
     const durationSec = activeRow?.durationSec || clampStoryboardDuration(scene?.durationSeconds ?? DEFAULT_SCENE_DURATION_SECONDS);
     const draft = activeKey ? editDraftForClip(activeKey, durationSec) : createDefaultProductionEditManifest(activeRow, durationSec);
     const visualRange = draft.visualFxRanges[0] || createProductionEditVisualFxRange(0, durationSec);
+
+    // OTG_SELECTED_EDIT_CLIP_PREVIEW_V1_VARS
+    const activePreviewUrl = String(
+      (activeRow?.clip as any)?.url ||
+      draft.editedUrl ||
+      activeRow?.sourceUrl ||
+      draft.sourceUrl ||
+      ""
+    ).trim();
+
+    const activePreviewFileName = String(
+      (activeRow?.clip as any)?.fileName ||
+      draft.editedFileName ||
+      draft.sourceFileName ||
+      (activePreviewUrl ? fileNameFromUrl(activePreviewUrl) : "") ||
+      "selected clip"
+    ).trim();
+
+    const activePreviewIsEdited = Boolean(
+      (activeRow?.clip as any)?.editSource ||
+      (activeRow?.clip as any)?.editedAt ||
+      draft.editedUrl
+    );
+
+    const activePreviewCanUndo = Boolean(
+      (activeRow?.clip as any)?.originalUrl ||
+      (activeRow?.clip as any)?.originalFileName
+    );
+    const unsupportedEditExpandMode = draft.expandMode === "freeze_start" || draft.expandMode === "freeze_end";
+    const invalidSlowDownEditTiming = draft.expandMode === "slow_down" && draft.playbackRate >= 1;
+    const invalidPlaybackRateWithoutSlowDown = draft.expandMode === "none" && Math.abs(draft.playbackRate - 1) > 0.001;
+    const editRenderBlockedByTiming = unsupportedEditExpandMode || invalidSlowDownEditTiming || invalidPlaybackRateWithoutSlowDown;
     const readyCount = rows.filter((row) => {
       const rowDraft = normalizeProductionEditManifest(row, editDraftsByClipKey[row.key] || row.clip.editManifest, row.durationSec);
       return rowDraft.status === "manifest_saved" || rowDraft.status === "render_ready";
@@ -5769,13 +12013,13 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
     return (
       <section className="space-y-4">
         {renderExpandedEditPreviewModal(scene, rows)}
-        <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
+        <div data-otg-animate-restored="Render Plan" data-marker="OTG_PRODUCTION_ANIMATE_RESTORE_UI_V1" className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-cyan-200/80">Edit</p>
-              <h2 className="mt-2 text-2xl font-black text-white">Clip Edit Workbench</h2>
+              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-cyan-200/80">Visual Edit</p>
+              <h2 className="mt-2 text-2xl font-black text-white">Clip Visual Edit Workbench</h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-white/65">
-                Finish each generated clip before Assemble. Keep edits per clip: trim, timed dubbing, music, sound effects, audio cleanup, and visual-fix notes.
+                Finish visual timing and visual-fix notes before Audio Studio. Voice dubbing, added voices, music, and mix work are planned in the next Production section.
               </p>
             </div>
             <div className="rounded-[14px] border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/70">
@@ -5791,7 +12035,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
           <div className="rounded-[18px] border border-purple-300/25 bg-purple-300/10 p-5">
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.28em] text-purple-100/80">Gallery</p>
+                <p className="text-[11px] font-black uppercase tracking-[0.28em] text-white/80">Gallery</p>
                 <h3 className="mt-1 text-lg font-black text-white">Add gallery video to Edit</h3>
                 <p className="mt-1 text-sm text-purple-50/70">This adds a clip reference to the scene without deleting or moving the original gallery file.</p>
               </div>
@@ -5844,7 +12088,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                               type="button"
                               disabled={!itemUrl}
                               onClick={() => setEditGalleryPreviewKey(previewKey)}
-                              className="relative rounded-[12px] border border-white/20 bg-black/65 px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-white/85 shadow-[0_14px_40px_rgba(0,0,0,0.35)] transition hover:border-purple-300/50 hover:text-purple-100 disabled:cursor-not-allowed disabled:opacity-35"
+                              className="relative rounded-[12px] border border-white/20 bg-black/65 px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-white/85 shadow-[0_14px_40px_rgba(0,0,0,0.35)] transition hover:border-purple-300/30 hover:text-purple-100 disabled:cursor-not-allowed disabled:opacity-35"
                             >
                               Preview Clip
                             </button>
@@ -5910,7 +12154,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                   <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Clip List</p>
                   <h3 className="mt-1 text-lg font-black text-white">Scene clips</h3>
                 </div>
-                <span className="rounded-full border border-white/10 bg-black/25 px-3 py-1 text-xs font-black text-white/50">
+                <span className="rounded-full border border-white/10 bg-black/25 px-3 py-1 text-xs font-black text-white/30">
                   {rows.length} clip{rows.length === 1 ? "" : "s"}
                 </span>
               </div>
@@ -6009,7 +12253,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                           <button type="button" onClick={() => setSelectedEditClipKey(row.key)} className="w-full text-left">
                             <div className="flex items-center justify-between gap-2">
                               <span className="font-black">Clip {row.index + 1}</span>
-                              <span className={isSaved ? "shrink-0 rounded-full bg-emerald-300/15 px-2 py-1 text-[11px] font-black text-emerald-300" : "shrink-0 rounded-full bg-white/5 px-2 py-1 text-[11px] font-black text-white/45"}>
+                              <span className={isSaved ? "shrink-0 rounded-full bg-emerald-300/15 px-2 py-1 text-[11px] font-black text-emerald-300" : "shrink-0 rounded-full bg-white/3 px-2 py-1 text-[11px] font-black text-white/45"}>
                                 {editStatusLabel(rowDraft.status)}
                               </span>
                             </div>
@@ -6069,8 +12313,8 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
 
             <div className="space-y-4">
               <div className="grid gap-5 xl:grid-cols-[minmax(360px,1fr)_minmax(320px,420px)]">
-                <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-4">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div data-otg-animate-restored="Render Plan" data-marker="OTG_PRODUCTION_ANIMATE_RESTORE_UI_V1" className="rounded-[18px] border border-white/10 bg-white/[0.04] p-4">
+                  <div className="mb-3 flex flex-col gap-3">
                     <div>
                       <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Preview</p>
                       <h3 className="text-lg font-black text-white">{activeRow?.title || "Clip"}</h3>
@@ -6108,7 +12352,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                   )}
                 </div>
 
-                <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-4">
+                <div data-otg-v36bk2-hidden="Render Plan" data-marker="OTG_PRODUCTION_VISUAL_EDIT_CLEANUP_V36BK2" data-otg-v36bl2-hidden="Render Plan" data-otg-v36bl2-marker="OTG_PRODUCTION_EDIT_TWO_CUE_CARDS_V36BL2" className="hidden rounded-[18px] border border-white/10 bg-white/[0.04] p-4">
                   <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Render Plan</p>
                   <div className="mt-3 space-y-2 text-sm text-white/65">
                     <div>1. Trim clip</div>
@@ -6131,8 +12375,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                     disabled={
                       !activeKey ||
                       Boolean(renderingEditClipKey) ||
-                      Math.abs(draft.playbackRate - 1) > 0.001 ||
-                      draft.expandMode !== "none"
+                      editRenderBlockedByTiming
                     }
                     onClick={() => renderTrimOnlyEditClip(activeKey, durationSec)}
                     className="mt-2 w-full rounded-[12px] border border-emerald-300/30 bg-emerald-300/10 px-4 py-3 text-sm font-black text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
@@ -6154,15 +12397,23 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                       {draft.error}
                     </div>
                   ) : null}
-                  {(Math.abs(draft.playbackRate - 1) > 0.001 || draft.expandMode !== "none") ? (
+                  {unsupportedEditExpandMode ? (
                     <div className="mt-2 rounded-[12px] border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-xs font-bold text-amber-100">
-                      Current render supports trim and basic audio cleanup only. Use playback rate 1 and expand mode None.
+                      Freeze start/end expand modes are not supported by this render path yet. Use None or Slow down.
+                    </div>
+                  ) : invalidSlowDownEditTiming ? (
+                    <div className="mt-2 rounded-[12px] border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-xs font-bold text-amber-100">
+                      Slow down requires playback rate below 1.
+                    </div>
+                  ) : invalidPlaybackRateWithoutSlowDown ? (
+                    <div className="mt-2 rounded-[12px] border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-xs font-bold text-amber-100">
+                      Playback rate changes require expand mode Slow down.
                     </div>
                   ) : null}
                 </div>
               </div>
 
-              <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
+              <div data-otg-v36bk2-hidden="Voice Dubbing" data-marker="OTG_PRODUCTION_VISUAL_EDIT_CLEANUP_V36BK2" data-otg-v36bl2-hidden="Trim and Timing" data-otg-v36bl2-marker="OTG_PRODUCTION_EDIT_TWO_CUE_CARDS_V36BL2" className="hidden rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
                 <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Trim and Timing</p>
                 <div className="mt-4">
                   {renderEditRangeSlider({
@@ -6178,54 +12429,56 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                   })}
                 </div>
                 <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  <label className="block">
+                                    <label className="block">
                     <span className="text-xs font-black uppercase tracking-[0.16em] text-white/45">Start seconds</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={durationSec}
-                      step={0.1}
-                      value={draft.trimStartSeconds}
-                      onChange={(event) => {
-                        const range = clampEditRange(Number(event.target.value), draft.trimEndSeconds, durationSec);
-                        updateEditDraft(activeKey, durationSec, { trimStartSeconds: range.start, trimEndSeconds: range.end, status: "draft" });
-                      }}
-                      className="mt-2 w-full rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/50"
-                    />
+                    <div className="mt-2 rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm font-black text-white/80">
+                      {Number(draft.trimStartSeconds || 0).toFixed(1)}s
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={!activeKey || Boolean(renderingEditClipKey) || editRenderBlockedByTiming}
+                        onClick={() => renderTrimOnlyEditClip(activeKey, durationSec)}
+                        className="rounded-[10px] border border-emerald-300/30 bg-emerald-300/10 px-3 py-2 text-xs font-black uppercase tracking-[0.12em] text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {renderingEditClipKey === activeKey ? "Cutting..." : "Cut"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!activeKey || Boolean(renderingEditClipKey)}
+                        onClick={() => restoreSelectedEditClipOriginal(activeKey, durationSec)}
+                        className="rounded-[10px] border border-white/10 bg-white/3 px-3 py-2 text-xs font-black uppercase tracking-[0.12em] text-white/75 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Undo
+                      </button>
+                      <button
+                      type="button"
+                      disabled={!activeKey || Boolean(renderingVisualFxClipKey) || Boolean(renderingEditClipKey)}
+                      onClick={() => saveActiveProductionEditClip(activeKey, durationSec)}
+                      className="rounded-[12px] bg-violet-500/20 px-4 py-3 text-sm font-black text-violet-200 transition hover:bg-violet-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Save
+                    </button>
+                    </div>
                   </label>
-                  <label className="block">
+                                    <label className="block">
                     <span className="text-xs font-black uppercase tracking-[0.16em] text-white/45">End seconds</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={durationSec}
-                      step={0.1}
-                      value={draft.trimEndSeconds}
-                      onChange={(event) => {
-                        const range = clampEditRange(draft.trimStartSeconds, Number(event.target.value), durationSec);
-                        updateEditDraft(activeKey, durationSec, { trimStartSeconds: range.start, trimEndSeconds: range.end, status: "draft" });
-                      }}
-                      className="mt-2 w-full rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/50"
-                    />
+                    <div className="mt-2 rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm font-black text-white/80">
+                      {Number(draft.trimEndSeconds || 0).toFixed(1)}s
+                    </div>
                   </label>
-                  <label className="block">
+                                    <label className="block">
                     <span className="text-xs font-black uppercase tracking-[0.16em] text-white/45">Playback rate</span>
-                    <input
-                      type="number"
-                      min={0.25}
-                      max={2}
-                      step={0.05}
-                      value={draft.playbackRate}
-                      onChange={(event) => updateEditDraft(activeKey, durationSec, { playbackRate: Math.max(0.25, Math.min(2, Number(event.target.value) || 1)), status: "draft" })}
-                      className="mt-2 w-full rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/50"
-                    />
+                    <div className="mt-2 rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm font-black text-white/80">
+                      {draft.expandMode === "slow_down" ? "0.5x auto" : `${Number(draft.playbackRate || 1).toFixed(2)}x`}
+                    </div>
                   </label>
                   <label className="block">
                     <span className="text-xs font-black uppercase tracking-[0.16em] text-white/45">Expand mode</span>
                     <select
                       value={draft.expandMode}
                       onChange={(event) => updateEditDraft(activeKey, durationSec, { expandMode: event.target.value as ProductionClipEditManifest["expandMode"], status: "draft" })}
-                      className="mt-2 w-full rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/50"
+                      className="mt-2 w-full rounded-[12px] border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/30"
                     >
                       <option value="none" className="bg-slate-950">None</option>
                       <option value="freeze_start" className="bg-slate-950">Freeze start</option>
@@ -6236,12 +12489,12 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                 </div>
               </div>
 
-              <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
+              <div data-otg-v36bk2-hidden="Voice Dubbing" data-marker="OTG_PRODUCTION_VISUAL_EDIT_CLEANUP_V36BK2" className="hidden rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Voice Dubbing</p>
                     <h3 className="text-lg font-black text-white">Timed voice conversion</h3>
-                    <p className="mt-1 max-w-2xl text-xs leading-5 text-white/50">
+                    <p className="mt-1 max-w-2xl text-xs leading-5 text-white/30">
                       Select a storyboard character voice, then mark the clip range where that speaker should be converted.
                     </p>
                   </div>
@@ -6268,7 +12521,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                   </div>
                 </div>
 
-                <div className="mt-3 rounded-[12px] border border-white/10 bg-black/20 px-3 py-2 text-xs text-white/55">
+                <div className="mt-3 rounded-[12px] border border-white/10 bg-black/20 px-3 py-2 text-xs text-white/35">
                   {productionVoiceModelsLoading ? "Loading saved character voices..." : null}
                   {!productionVoiceModelsLoading && productionVoiceModelsError ? productionVoiceModelsError : null}
                   {!productionVoiceModelsLoading && !productionVoiceModelsError
@@ -6298,7 +12551,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                             >
                               <option value={segment.character || ""} className="bg-slate-950">{segment.character || "Select speaker"}</option>
                               {sceneVoiceCharacters.map((character) => (
-                                <option key={character.id} value={character.id} className="bg-slate-950">
+                                <option key={character.id || "character"} value={character.id} className="bg-slate-950">
                                   {character.label}
                                 </option>
                               ))}
@@ -6337,7 +12590,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                             <span className="normal-case tracking-normal text-cyan-100">{rangeStart}s to {rangeEnd}s of {durationSec}s</span>
                           </div>
                           <div className="mt-3 grid gap-3 md:grid-cols-2">
-                            <label className="block text-xs text-white/55">
+                            <label className="block text-xs text-white/35">
                               Start
                               <input
                                 type="range"
@@ -6352,7 +12605,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                                 className="mt-2 w-full accent-cyan-300"
                               />
                             </label>
-                            <label className="block text-xs text-white/55">
+                            <label className="block text-xs text-white/35">
                               End
                               <input
                                 type="range"
@@ -6402,7 +12655,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
               </div>
 
               <div className="grid gap-5 xl:grid-cols-2">
-                <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
+                <div data-otg-v36bk2-hidden="Background Music" data-marker="OTG_PRODUCTION_VISUAL_EDIT_CLEANUP_V36BK2" className="hidden rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
                   <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Music</p>
                   <h3 className="text-lg font-black text-white">Background music</h3>
 
@@ -6444,7 +12697,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                           <p className="text-sm font-black text-cyan-50">ACE-Step background bed</p>
-                          <p className="mt-1 text-xs leading-5 text-white/50">Uses the selected clip audio as a 4-second style reference, then saves the generated music into the gallery for render.</p>
+                          <p className="mt-1 text-xs leading-5 text-white/30">Uses the selected clip audio as a 4-second style reference, then saves the generated music into the gallery for render.</p>
                         </div>
                         <button
                           type="button"
@@ -6456,7 +12709,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                         </button>
                       </div>
                       {aceMusicStatusByClipKey[activeKey] ? (
-                        <p className="mt-2 text-xs font-bold text-white/58">{aceMusicStatusByClipKey[activeKey]}</p>
+                        <p className="mt-2 text-xs font-bold text-white/38">{aceMusicStatusByClipKey[activeKey]}</p>
                       ) : null}
                     </div>
                     {renderEditRangeSlider({
@@ -6533,7 +12786,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                   </div>
                 </div>
 
-                <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
+                <div data-otg-v36bk2-hidden="Sound Effects" data-marker="OTG_PRODUCTION_VISUAL_EDIT_CLEANUP_V36BK2" className="hidden rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Sound Effects</p>
@@ -6566,7 +12819,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                               <option value="full_clip" className="bg-slate-950">Entire clip</option>
                             </select>
                           </label>
-                          <div className="rounded-[10px] border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/55">
+                          <div className="rounded-[10px] border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/35">
                             {segment.mode === "full_clip"
                               ? `Applies across 0s to ${durationSec}s.`
                               : `Starts at ${segment.startSeconds}s for ${segment.durationSeconds}s.`}
@@ -6620,7 +12873,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                               "rounded-[10px] border px-3 py-2 text-xs font-black",
                               segment.fadeInSec > 0
                                 ? "border-cyan-300/40 bg-cyan-300/20 text-cyan-50"
-                                : "border-white/10 bg-black/20 text-white/55"
+                                : "border-white/10 bg-black/20 text-white/35"
                             )}
                           >
                             Fade In
@@ -6632,7 +12885,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                               "rounded-[10px] border px-3 py-2 text-xs font-black",
                               segment.fadeOutSec > 0
                                 ? "border-cyan-300/40 bg-cyan-300/20 text-cyan-50"
-                                : "border-white/10 bg-black/20 text-white/55"
+                                : "border-white/10 bg-black/20 text-white/35"
                             )}
                           >
                             Fade Out
@@ -6650,7 +12903,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
               </div>
 
               <div className="grid gap-5 xl:grid-cols-2">
-                <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
+                <div data-otg-v36bk2-hidden="Audio Cleanup" data-marker="OTG_PRODUCTION_VISUAL_EDIT_CLEANUP_V36BK2" className="hidden rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
                   <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Audio Cleanup</p>
                   <h3 className="text-lg font-black text-white">Original audio policy</h3>
                   <div className="mt-4 space-y-3">
@@ -6737,13 +12990,368 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                       </div>
                     ) : null}
 
-                    <div className="rounded-[12px] border border-white/10 bg-black/20 p-3 text-xs leading-5 text-white/50">
+                    <div className="rounded-[12px] border border-white/10 bg-black/20 p-3 text-xs leading-5 text-white/30">
                       Render supports trim, audio cleanup, timed voice, music, SFX, and optional LTX visual FX.
                     </div>
                   </div>
                 </div>
+                {/* OTG_SELECTED_EDIT_CLIP_PREVIEW_V1_CARD */}
+                <div className="xl:col-span-2 rounded-[18px] border border-cyan-300/20 bg-black/30 p-5 shadow-[0_0_28px_rgba(103,232,249,0.08)]">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.22em] text-cyan-100/65">Selected Clip Preview</p>
+                      <h3 className="mt-1 text-lg font-black text-white">
+                        {activeRow ? `Clip ${activeRow.index + 1}` : "No clip selected"}
+                      </h3>
+                      <p className="mt-1 max-w-2xl truncate text-xs font-bold text-white/45">
+                        {activePreviewFileName}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={classNames(
+                        "rounded-full border px-3 py-1 text-xs font-black",
+                        activePreviewIsEdited
+                          ? "border-emerald-300/35 bg-emerald-300/12 text-emerald-100"
+                          : "border-white/10 bg-white/[0.06] text-white/60"
+                      )}>
+                        {activePreviewIsEdited ? "Edited clip active" : "Original clip active"}
+                      </span>
+                      {activePreviewCanUndo ? (
+                        <button
+                          type="button"
+                          disabled={!activeKey || Boolean(renderingEditClipKey)}
+                          onClick={() => restoreSelectedEditClipOriginal(activeKey, durationSec)}
+                          className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1 text-xs font-black text-white/75 transition hover:bg-white/[0.10] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Undo to Original
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
 
-                <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
+                  {activePreviewUrl ? (
+                    <video
+                      key={`${activeKey}-${activePreviewUrl}`}
+                      src={activePreviewUrl}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      className="mt-4 aspect-video w-full rounded-[16px] border border-white/10 bg-black object-contain shadow-inner"
+                    />
+                  ) : (
+                    <div className="mt-4 grid aspect-video place-items-center rounded-[16px] border border-white/10 bg-black/40 text-sm font-bold text-white/45">
+                      Select a clip to preview it here.
+                    </div>
+                  )}
+                </div>
+
+                                {/* OTG_PRODUCTION_EDIT_TWO_CUE_CARDS_V36BL2 */}
+                <div data-otg-v36bl2-card="trim-video" className="rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Trim Video</p>
+                      <p className="mt-2 text-sm leading-6 text-white/35">
+                        Drag the left handle to cut the beginning. Drag the right handle to cut the ending.
+                      </p>
+                    </div>
+                    <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-black text-white/60">
+                      {Number(draft.trimStartSeconds || 0).toFixed(1)}s to {Number(draft.trimEndSeconds || durationSec || 0).toFixed(1)}s
+                    </span>
+                  </div>
+                  {/* OTG_PRODUCTION_TRIM_VISIBLE_RAIL_V36BL3 */}
+                  <style>{`
+                    .otg-v36bl3-trimSlider {
+                      isolation: isolate;
+                      overflow: visible;
+                    }
+
+                    .otg-v36bl3-trimSlider > div {
+                      pointer-events: none;
+                    }
+
+                    .otg-v36bl3-range {
+                      -webkit-appearance: none;
+                      appearance: none;
+                      background: transparent;
+                      color: transparent;
+                      border: 0;
+                      outline: none;
+                      box-shadow: none;
+                      opacity: 0;
+                      pointer-events: none;
+                    }
+
+                    .otg-v36bl3-range:focus {
+                      outline: none;
+                      box-shadow: none;
+                    }
+
+                    .otg-v36bl3-range::-webkit-slider-runnable-track {
+                      width: 100%;
+                      height: 80px;
+                      background: transparent;
+                      border: 0;
+                      box-shadow: none;
+                    }
+
+                    .otg-v36bl3-range::-webkit-slider-thumb {
+                      -webkit-appearance: none;
+                      appearance: none;
+                      pointer-events: auto;
+                      width: 32px;
+                      height: 80px;
+                      margin-top: 0;
+                      background: transparent;
+                      border: 0;
+                      border-radius: 0;
+                      box-shadow: none;
+                      cursor: ew-resize;
+                    }
+
+                    .otg-v36bl3-range::-moz-range-track {
+                      width: 100%;
+                      height: 80px;
+                      background: transparent;
+                      border: 0;
+                      box-shadow: none;
+                    }
+
+                    .otg-v36bl3-range::-moz-range-progress {
+                      background: transparent;
+                      border: 0;
+                    }
+
+                    .otg-v36bl3-range::-moz-range-thumb {
+                      pointer-events: auto;
+                      width: 32px;
+                      height: 80px;
+                      background: transparent;
+                      border: 0;
+                      border-radius: 0;
+                      box-shadow: none;
+                      cursor: ew-resize;
+                    }
+                  `}</style>
+
+                  <div data-otg-v36bl3-trim-rail="true" className="mt-5">
+                    {(() => {
+                      const safeDurationV36BL3 = Math.max(0.1, Number(durationSec || 0.1));
+                      const trimStartV36BL3 = Math.max(
+                        0,
+                        Math.min(safeDurationV36BL3, Number(draft.trimStartSeconds || 0)),
+                      );
+                      const trimEndV36BL3 = Math.max(
+                        trimStartV36BL3 + 0.1,
+                        Math.min(safeDurationV36BL3, Number(draft.trimEndSeconds || safeDurationV36BL3)),
+                      );
+                      const leftPercentV36BL3 = Math.max(
+                        0,
+                        Math.min(100, (trimStartV36BL3 / safeDurationV36BL3) * 100),
+                      );
+                      const rightPercentV36BL3 = Math.max(
+                        0,
+                        Math.min(100, (trimEndV36BL3 / safeDurationV36BL3) * 100),
+                      );
+                      const activeWidthV36BL3 = Math.max(0, rightPercentV36BL3 - leftPercentV36BL3);
+
+                      return (
+                        <div className="rounded-[16px] border border-white/10 bg-black/25 p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Trim Range</p>
+                            <span className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-1 text-xs font-black text-cyan-100">
+                              {trimStartV36BL3.toFixed(1)}s to {trimEndV36BL3.toFixed(1)}s
+                            </span>
+                          </div>
+
+                          <div className="otg-v36bl3-trimSlider relative mt-8 h-20 overflow-visible">
+                            <div className="absolute left-0 right-0 top-1/2 h-3 -translate-y-1/2 rounded-full border border-cyan-100/25 bg-cyan-200/20 shadow-[inset_0_0_12px_rgba(255,255,255,0.10),0_0_18px_rgba(103,232,249,0.16)]" />
+                            <div
+                              className="absolute top-1/2 h-3 -translate-y-1/2 rounded-full border border-cyan-100/80 bg-cyan-300/90 shadow-[0_0_24px_rgba(103,232,249,0.50)]"
+                              style={{
+                                left: `${leftPercentV36BL3}%`,
+                                width: `${activeWidthV36BL3}%`,
+                              }}
+                            />
+                            <div
+                              className="absolute top-0 -translate-x-1/2 rounded-full border border-white/10 bg-slate-950 px-2 py-1 text-[10px] font-black text-white"
+                              style={{ left: `${leftPercentV36BL3}%` }}
+                            >
+                              {trimStartV36BL3.toFixed(1)}s
+                            </div>
+                            <div
+                              className="absolute top-0 -translate-x-1/2 rounded-full border border-white/10 bg-slate-950 px-2 py-1 text-[10px] font-black text-white"
+                              style={{ left: `${rightPercentV36BL3}%` }}
+                            >
+                              {trimEndV36BL3.toFixed(1)}s
+                            </div>
+                            {/* OTG_V36BL3_VISUAL_BALLPOINTS */}
+                            <div
+                              aria-hidden="true"
+                              className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-cyan-50 bg-cyan-300 shadow-[0_0_0_2px_rgba(15,23,42,0.95),0_0_18px_rgba(103,232,249,0.90),0_0_34px_rgba(103,232,249,0.35)]"
+                              style={{ left: `clamp(10px, ${leftPercentV36BL3}%, calc(100% - 10px))` }}
+                            />
+                            <div
+                              aria-hidden="true"
+                              className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-cyan-50 bg-cyan-300 shadow-[0_0_0_2px_rgba(15,23,42,0.95),0_0_18px_rgba(103,232,249,0.90),0_0_34px_rgba(103,232,249,0.35)]"
+                              style={{ left: `clamp(10px, ${rightPercentV36BL3}%, calc(100% - 10px))` }}
+                            />
+
+                            <input
+                              aria-label="Trim start seconds"
+                              type="range"
+                              min={0}
+                              max={safeDurationV36BL3}
+                              step={0.1}
+                              value={trimStartV36BL3}
+                              onChange={(event) => {
+                                const nextStart = Number(event.target.value);
+                                const range = clampEditRange(nextStart, trimEndV36BL3, safeDurationV36BL3);
+                                updateEditDraft(activeKey, durationSec, {
+                                  trimStartSeconds: range.start,
+                                  trimEndSeconds: range.end,
+                                  status: "draft",
+                                });
+                              }}
+                              className="otg-v36bl3-range absolute inset-0 h-20 w-full"
+                            />
+                            <input
+                              aria-label="Trim end seconds"
+                              type="range"
+                              min={0}
+                              max={safeDurationV36BL3}
+                              step={0.1}
+                              value={trimEndV36BL3}
+                              onChange={(event) => {
+                                const nextEnd = Number(event.target.value);
+                                const range = clampEditRange(trimStartV36BL3, nextEnd, safeDurationV36BL3);
+                                updateEditDraft(activeKey, durationSec, {
+                                  trimStartSeconds: range.start,
+                                  trimEndSeconds: range.end,
+                                  status: "draft",
+                                });
+                              }}
+                              className="otg-v36bl3-range absolute inset-0 h-20 w-full"
+                            />
+
+                            <div className="absolute bottom-0 left-0 text-[10px] font-black text-white/45">0s</div>
+                            <div className="absolute bottom-0 right-0 text-[10px] font-black text-white/45">
+                              {safeDurationV36BL3.toFixed(1)}s
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-[14px] border border-white/10 bg-black/25 px-3 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/35">Start seconds</p>
+                      <p className="mt-1 text-lg font-black text-white">{Number(draft.trimStartSeconds || 0).toFixed(1)}s</p>
+                    </div>
+                    <div className="rounded-[14px] border border-white/10 bg-black/25 px-3 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/35">End seconds</p>
+                      <p className="mt-1 text-lg font-black text-white">{Number(draft.trimEndSeconds || durationSec || 0).toFixed(1)}s</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={!activeKey || Boolean(renderingEditClipKey) || editRenderBlockedByTiming}
+                      onClick={() => renderTrimOnlyEditClip(activeKey, durationSec)}
+                      className="rounded-[12px] border border-emerald-300/30 bg-emerald-300/10 px-4 py-3 text-sm font-black text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {renderingEditClipKey === activeKey ? "Cutting..." : "Cut"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!activeKey || Boolean(renderingEditClipKey)}
+                      onClick={() => restoreSelectedEditClipOriginal(activeKey, durationSec)}
+                      className="rounded-[12px] border border-white/10 bg-white/3 px-4 py-3 text-sm font-black text-white/75 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Undo
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!activeKey || Boolean(renderingVisualFxClipKey) || Boolean(renderingEditClipKey)}
+                      onClick={() => saveActiveProductionEditClip(activeKey, durationSec)}
+                      className="rounded-[12px] bg-violet-500/20 px-4 py-3 text-sm font-black text-violet-200 transition hover:bg-violet-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Save
+                    </button>
+                  </div>
+
+                  {draft.error ? (
+                    <div className="mt-3 rounded-[12px] border border-rose-300/25 bg-rose-300/10 px-3 py-2 text-xs font-bold text-rose-100">
+                      {draft.error}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div data-otg-v36bl2-card="edit-video" className="rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Edit Video</p>
+                    <p className="mt-2 text-sm leading-6 text-white/35">
+                      Type the visual change you want for this clip. Keep the edit specific.
+                    </p>
+                  </div>
+
+                  <textarea
+                    id="otg-production-edit-prompt-v36bl2"
+                    data-otg-v36bl2-edit-prompt="true"
+                    placeholder="Example: remove the glowing artifact near the character's left hand. Keep the same character, outfit, camera, lighting, and background."
+                    className="mt-4 min-h-[120px] w-full rounded-[14px] border border-white/10 bg-black/30 px-3 py-3 text-sm leading-6 text-white outline-none placeholder:text-white/30 focus:border-cyan-300/30"
+                  />
+
+                  <div className="mt-4 rounded-[14px] border border-white/10 bg-black/20 p-4">
+                    <p className="text-xs font-black uppercase tracking-[0.16em] text-cyan-100/75">Edit Guidelines</p>
+                    <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-white/38">
+                      <li>Say exactly what to add, remove, replace, restyle, or fix.</li>
+                      <li>Keep identity stable unless the change is intentional.</li>
+                      <li>Use one clear edit at a time for better results.</li>
+                      <li>Good: "remove the floating artifact near the left hand." Bad: "make it better."</li>
+                    </ul>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={!activeKey || Boolean(renderingVisualFxClipKey) || Boolean(renderingEditClipKey)}
+                      onClick={() => renderLtxEditAnythingClip(activeKey, durationSec)}
+                      className="rounded-[12px] border border-emerald-300/30 bg-emerald-300/10 px-4 py-3 text-sm font-black text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {renderingVisualFxClipKey === activeKey ? "Editing..." : "Submit Edit"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!activeKey}
+                      onClick={() => {
+                        const field = document.getElementById("otg-production-edit-prompt-v36bl2") as HTMLTextAreaElement | null;
+                        if (field) field.value = "";
+                        updateEditDraft(activeKey, durationSec, {
+                          visualEditPromptV36BL2: "",
+                          visualFixPrompt: "",
+                          visualFixEnabled: false,
+                          editedUrl: "",
+                          editedFileName: "",
+                          error: "",
+                          status: "draft",
+                        } as any);
+                      }}
+                      className="rounded-[12px] border border-white/10 bg-white/3 px-4 py-3 text-sm font-black text-white/75 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Undo
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!activeKey || Boolean(renderingVisualFxClipKey) || Boolean(renderingEditClipKey)}
+                      onClick={() => saveActiveProductionEditClip(activeKey, durationSec)}
+                      className="rounded-[12px] bg-violet-500/20 px-4 py-3 text-sm font-black text-violet-200 transition hover:bg-violet-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+<div data-otg-v36bl2-hidden="Visual Fix" data-otg-v36bl2-marker="OTG_PRODUCTION_EDIT_TWO_CUE_CARDS_V36BL2" className="hidden rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
                   <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Visual Fix</p>
                   <label className="mt-4 flex items-center gap-3 text-sm font-bold text-white/75">
                     <input type="checkbox" checked={Boolean(visualRange.prompt)} onChange={(event) => updateEditDraftNested(activeKey, durationSec, "visualFxRanges", event.target.checked ? [visualRange] : [{ ...visualRange, prompt: "" }])} />
@@ -6790,9 +13398,1025 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                 </div>
               </div>
 
-              <details className="rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
-                <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.18em] text-white/55">Edit Manifest Preview</summary>
+              <details data-otg-v36bl2-hidden="Edit Manifest Preview" data-otg-v36bl2-marker="OTG_PRODUCTION_EDIT_TWO_CUE_CARDS_V36BL2" className="hidden rounded-[18px] border border-white/10 bg-white/[0.04] p-6">
+                <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.18em] text-white/35">Edit Manifest Preview</summary>
                 <pre className="mt-3 max-h-80 overflow-auto rounded-[14px] bg-black/40 p-4 text-xs leading-5 text-cyan-50/80">{JSON.stringify(draft, null, 2)}</pre>
+              </details>
+            </div>
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  // OTG_AUDIO_STUDIO_REAL_SONY_WOOSH_SFX_V36BPW11B
+  async function startAudioStudioSonyWooshSfx(
+    row: ProductionEditClipRow | null | undefined,
+    clipKey: string,
+    clipDurationSec: number,
+    sfxMode: "auto" | "manual" = "auto",
+    manualPrompt = ""
+  ) {
+    const normalizedClipId = String(clipKey || "").trim();
+    if (!normalizedClipId || !row) {
+      setNotice("Select a clip before rendering Sony Woosh SFX.");
+      return;
+    }
+
+    const sourceUrl = String(
+      (row.clip as any)?.url ||
+      row.sourceUrl ||
+      ""
+    ).trim();
+    const sourceFileName = String(
+      (row.clip as any)?.fileName ||
+      row.sourceFileName ||
+      (sourceUrl ? fileNameFromUrl(sourceUrl) : "") ||
+      ""
+    ).trim();
+
+    if (!sourceFileName) {
+      setNotice("Sony Woosh SFX needs a saved gallery/source filename for the selected clip.");
+      return;
+    }
+
+    const safeDurationSec = Math.max(1, Math.min(8, Number(clipDurationSec || row.durationSec || selectedScene?.durationSeconds || 8) || 8));
+    const selectedSonyWooshMode = sfxMode === "manual" ? "manual" : "auto";
+    const autoSonyWooshPrompt = "Automatically analyze the video motion and timing, then add polished Sony-style cinematic woosh, swish, pass-by, impact, and transition sound effects synchronized to visible movement. Clean trailer SFX, no dialogue, no music, no narration.";
+    const manualSonyWooshPrompt = String(manualPrompt || "").trim();
+    if (selectedSonyWooshMode === "manual" && !manualSonyWooshPrompt) {
+      setNotice("Enter a manual Sony Woosh sound-effects prompt first.");
+      return;
+    }
+    const prompt = selectedSonyWooshMode === "manual" ? manualSonyWooshPrompt : autoSonyWooshPrompt;
+    const title = `${selectedScene?.title || "Scene"} ${row.title || "Clip"} ${selectedSonyWooshMode === "manual" ? "Manual SFX" : "Auto Sony Woosh SFX"}`
+      .replace(/[^a-zA-Z0-9_. -]+/g, "_")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const form = new FormData();
+
+    // Prefer upload mode when the current preview URL is readable. This avoids Gallery video not found
+    // when Audio Studio is using a /api/file preview rather than a saved Gallery item.
+    let usedUploadSource = false;
+    if (sourceUrl) {
+      try {
+        const sourceResponse = await fetch(sourceUrl, {
+          cache: "no-store",
+          credentials: "include",
+        });
+        if (sourceResponse.ok) {
+          const sourceBlob = await sourceResponse.blob();
+          if (sourceBlob.size > 0) {
+            const uploadName = sourceFileName || fileNameFromUrl(sourceUrl) || "sony_woosh_source.mp4";
+            form.append("video_source", "upload");
+            form.append("video_file", sourceBlob, uploadName);
+            usedUploadSource = true;
+          }
+        }
+      } catch {
+        usedUploadSource = false;
+      }
+    }
+
+    if (!usedUploadSource) {
+      form.append("video_source", "gallery");
+      form.append("video_name", sourceFileName);
+      const scope = galleryScopeFromUrl(sourceUrl);
+      if (scope) form.append("video_scope", scope);
+    }
+
+    form.append("video_title", title || "sony_woosh_sfx");
+    form.append("title", title || "sony_woosh_sfx");
+    form.append("prompt", prompt);
+    form.append("sfxMode", selectedSonyWooshMode);
+    form.append("model", "vflow");
+    form.append("durationSeconds", String(safeDurationSec));
+    form.append("keepOriginalAudio", "1");
+    form.append("originalVolume", "1");
+    form.append("sfxVolume", "0.85");
+
+    setAudioStudioSonyWooshBusy(true);
+    setAudioStudioSonyWooshError("");
+    setNotice("Rendering Sony Woosh SFX with the existing Edit Video Woosh workflow...");
+
+    try {
+      const response = await fetch("/api/edit-video/woosh-sfx", {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.ok) {
+        throw new Error(String(data?.error || "Sony Woosh SFX render failed."));
+      }
+
+      let outputUrl = String(data.url || "");
+      let outputFileName = String(data.fileName || data.name || "");
+      let savedResponseJson: any = null;
+
+      if (data.jobId && data.fileName) {
+        const saveResponse = await fetch("/api/edit-video/woosh-save", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jobId: data.jobId,
+            fileName: data.fileName,
+            title,
+            videoName: sourceFileName,
+            prompt,
+            sfxMode: selectedSonyWooshMode,
+            model: data.model || "vflow",
+            keepOriginalAudio: data.keepOriginalAudio !== false,
+            originalVolume: Number(data.originalVolume ?? 1),
+            sfxVolume: Number(data.sfxVolume ?? 0.85),
+            durationSeconds: Number(data.durationSeconds || safeDurationSec) || null,
+            sizeBytes: Number(data.sizeBytes || 0) || undefined,
+          }),
+        });
+        savedResponseJson = await saveResponse.json().catch(() => null);
+        if (saveResponse.ok && savedResponseJson?.ok) {
+          outputUrl = String(savedResponseJson.url || outputUrl);
+          outputFileName = String(savedResponseJson.fileName || savedResponseJson.name || outputFileName);
+        }
+      }
+
+      setAudioDubPreviewResult({
+        ok: true,
+        kind: "sony_woosh_sfx",
+        jobId: data.jobId,
+        promptId: data.promptId,
+        previewVideoUrl: outputUrl,
+        previewVideoPath: outputFileName || outputUrl,
+        previewVideoFileName: outputFileName,
+        sourceVideoName: sourceFileName,
+        prompt,
+        sfxMode: selectedSonyWooshMode,
+        model: data.model || "vflow",
+        saved: Boolean(savedResponseJson?.ok),
+        raw: data,
+      });
+
+      setNotice(
+        outputUrl
+          ? `Sony Woosh SFX rendered for ${row.title || "selected clip"}. Preview updated${savedResponseJson?.ok ? " and saved to Gallery." : "."}`
+          : "Sony Woosh SFX rendered, but no preview URL was returned."
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Sony Woosh SFX render failed.";
+      setAudioStudioSonyWooshError(message);
+      setNotice(message);
+    } finally {
+      setAudioStudioSonyWooshBusy(false);
+    }
+  }
+  async function queueProductionAudioStudioAction(
+    action: ProductionAudioStudioAction,
+    clipId: string,
+    extraInput: Record<string, unknown> = {}
+  ) {
+    const normalizedClipId = String(clipId || "").trim();
+    if (!normalizedClipId) {
+      setAudioStudioJobs((previous) => ({
+        ...previous,
+        [action]: {
+          phase: "error",
+          error: "Select a clip before queueing an Audio Studio job.",
+        },
+      }));
+      setNotice("Select a clip before queueing an Audio Studio job.");
+      return;
+    }
+
+    setAudioStudioJobs((previous) => ({
+      ...previous,
+      [action]: { phase: "submitting" },
+    }));
+    setNotice("Submitting Audio Studio queued job...");
+
+    try {
+      const job = await queueAudioStudioJob({
+        action,
+        clipId: normalizedClipId,
+        characterId: selectedScene?.id || null,
+        sceneId: selectedScene?.id || "",
+        sceneTitle: selectedScene?.title || "",
+        ...extraInput,
+      });
+      setAudioStudioJobs((previous) => ({
+        ...previous,
+        [action]: { phase: "queued", job },
+      }));
+      setNotice(`Queued job: ${job.jobId}. Backend worker not connected yet.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not queue Audio Studio job.";
+      setAudioStudioJobs((previous) => ({
+        ...previous,
+        [action]: { phase: "error", error: message },
+      }));
+      setNotice(message);
+    }
+  }
+
+  async function persistAudioStudioResultToServer(
+    clipId: string,
+    audioStudioResult: ProductionAudioStudioResult,
+    jobId: string
+  ) {
+    try {
+      const response = await fetch("/api/production/audio-studio/results", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        cache: "no-store",
+        body: JSON.stringify({
+          clipId,
+          audioStudioResult,
+        }),
+      });
+      const json = await response.json().catch(() => null) as {
+        item?: ProductionAudioStudioResultItem;
+        items?: ProductionAudioStudioResultItem[];
+        error?: string;
+      } | null;
+
+      if (!response.ok || !json?.item) {
+        throw new Error(json?.error || "Could not save Audio Studio result to clip record.");
+      }
+
+      setAudioStudioPersistedResults((previous) => {
+        const next = { ...previous };
+        for (const item of json.items || [json.item]) {
+          if (item?.clipId && item.audioStudioResult?.status === "mock_ready") {
+            next[item.clipId] = item;
+          }
+        }
+        return next;
+      });
+      setNotice(`Mock Audio Studio result saved to clip record. Source job: ${jobId}.`);
+    } catch (error) {
+      setNotice(
+        `${error instanceof Error ? error.message : "Could not save Audio Studio result to clip record."} Retained locally only. Source job: ${jobId}.`
+      );
+    }
+  }
+
+  function audioStudioResultFromJob(job: QueuedContractJob): ProductionAudioStudioResult | null {
+    if (job.jobType !== "production_audio_studio" || job.status !== "completed") return null;
+    const mockResult =
+      job.result && typeof job.result === "object" && !Array.isArray(job.result)
+        ? job.result as Record<string, unknown>
+        : {};
+    const updatedClipUrl = typeof mockResult.updatedClipUrl === "string" ? mockResult.updatedClipUrl : undefined;
+    const dubbedClipUrl = typeof mockResult.dubbedClipUrl === "string" ? mockResult.dubbedClipUrl : undefined;
+    const finalClipUrl = typeof mockResult.finalClipUrl === "string" ? mockResult.finalClipUrl : undefined;
+
+    return {
+      status: "mock_ready",
+      action: job.action as ProductionAudioStudioAction,
+      sourceJobId: job.jobId,
+      updatedClipUrl,
+      dubbedClipUrl,
+      finalClipUrl,
+      mockResult,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  function renderAudioStudioJobStatus(action: ProductionAudioStudioAction) {
+    const state = audioStudioJobs[action];
+    if (!state || state.phase === "idle") return null;
+
+    if (state.phase === "submitting") {
+      return <p className="mt-3 text-xs font-bold text-cyan-100">Submitting...</p>;
+    }
+
+    if (state.phase === "error") {
+      return <p className="mt-3 text-xs font-bold text-rose-200">{state.error || "Audio Studio job failed."}</p>;
+    }
+
+    const job = state.job;
+    const resultEntries =
+      job?.result && typeof job.result === "object" && !Array.isArray(job.result)
+        ? Object.entries(job.result as Record<string, unknown>)
+        : [];
+    const completed = job?.status === "completed";
+
+    return (
+      <div className="mt-3 rounded-[12px] border border-white/10 bg-black/20 p-3 text-xs leading-5 text-white/65">
+        <p className="font-black text-white">Queued job: {job?.jobId || "pending"}</p>
+        <p>Status: {job?.status || state.phase}</p>
+        {typeof job?.progress === "number" ? <p>Progress: {job.progress}%</p> : null}
+        {job?.message ? <p>Message: {job.message}</p> : null}
+
+        {completed ? (
+          <div className="mt-3 rounded-[10px] border border-emerald-300/25 bg-emerald-300/10 p-3 text-emerald-100">
+            <p className="font-black">Mock Audio Studio result ready</p>
+            <p className="mt-1 text-emerald-100/75">Mock result - backend adapter not connected yet.</p>
+            {resultEntries.length ? (
+              <div className="mt-2 space-y-1">
+                {resultEntries.map(([key, value]) => (
+                  <p key={key} className="break-all">
+                    <span className="font-black">{key}:</span> {String(value)}
+                  </p>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-emerald-100/70">No mock artifact URL returned.</p>
+            )}
+          </div>
+        ) : (
+          <p>Backend worker not connected yet.</p>
+        )}
+      </div>
+    );
+  }
+
+  // OTG_AUDIO_STUDIO_ANALYZE_CLIP_AUDIO_V1_START
+  async function analyzeClipAudioForDubbing(clip: any, clipIndex: number) {
+    if (!selectedScene) {
+      setNotice("Select a scene before analyzing clip audio.");
+      return;
+    }
+
+    if (!clip) {
+      setNotice("No saved clip was found for Audio Studio. Save or sync a clip first.");
+      return;
+    }
+
+    const sourceUrl = String(clip.url || clip.editedUrl || "").trim();
+    const sourceFileName = String(
+      clip.fileName ||
+      clip.editedFileName ||
+      (sourceUrl ? fileNameFromUrl(sourceUrl) : "") ||
+      ""
+    ).trim();
+
+    if (!sourceUrl && !sourceFileName) {
+      setNotice("The selected clip does not have a usable video source.");
+      return;
+    }
+
+    setAudioClipAnalysisBusy(true);
+    setAudioClipAnalysisResult(null);
+    setAudioClipVoiceCharacterMap({});
+    setAudioDubPreviewResult(null);
+    setAudioDubPreviewError("");
+    setNotice(`Analyzing audio for Clip ${clipIndex + 1}...`);
+
+    try {
+      const response = await fetch("/api/production/audio/analyze-clip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        credentials: "include",
+        body: JSON.stringify({
+          sceneId: selectedScene.id,
+          sceneTitle: selectedScene.title,
+          clipIndex,
+          sourceUrl,
+          sourceFileName,
+          expectedSpeakerCount: audioExpectedSpeakerCount || undefined,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || data?.ok === false) {
+        throw new Error(data?.error || "Analyze Clip Audio failed.");
+      }
+
+      setAudioClipAnalysisResult(data);
+
+      const voiceCount = Array.isArray(data.voices) ? data.voices.length : 0;
+      setAudioClipVoiceCharacterMap(
+        Array.isArray(data.voices)
+          ? Object.fromEntries(data.voices.map((voice: any, index: number) => [String(voice.id || `speaker_${index + 1}`), ""]))
+          : {}
+      );
+      setNotice(
+        voiceCount
+          ? `Analyze Clip Audio complete. Detected ${voiceCount} voice lane${voiceCount === 1 ? "" : "s"}.`
+          : "Analyze Clip Audio complete, but no clear dialogue was detected."
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Analyze Clip Audio failed.";
+      setNotice(message);
+      setAudioClipAnalysisResult({
+        ok: false,
+        error: message,
+        voices: [],
+      });
+      setAudioClipVoiceCharacterMap({});
+    } finally {
+      setAudioClipAnalysisBusy(false);
+    }
+  }
+  // OTG_AUDIO_STUDIO_ANALYZE_CLIP_AUDIO_V1_END
+
+  async function startAudioStudioDubPreview(
+    clip: { url?: string; fileName?: string; editedUrl?: string; editedFileName?: string } | null,
+    clipIndex: number,
+    voiceOptions: ProductionVoiceModelOption[],
+  ) {
+    if (!selectedScene || !clip) {
+      setNotice("Select a saved clip before starting voice dub.");
+      return;
+    }
+
+    // OTG_AUDIO_STUDIO_SEGMENT_FIRST_DUB_V36BPW5
+    const detectedVoices = Array.isArray(audioClipAnalysisResult?.voices) ? audioClipAnalysisResult.voices : [];
+    const selectedVoiceMappings = Object.entries(audioClipVoiceCharacterMap)
+      .filter(([, characterId]) => String(characterId || "").trim())
+      .map(([voiceId, characterId]) => {
+        const selectedVoice = voiceOptions.find((option) => (
+          option.engine === "character" &&
+          (option.characterId === characterId || option.id === characterId)
+        ));
+        const detectedVoice = detectedVoices.find((voice: any, index: number) => (
+          String(voice?.id || voice?.voiceId || voice?.speakerId || `speaker_${index + 1}`) === voiceId
+        ));
+        const segments = (Array.isArray(detectedVoice?.segments) ? detectedVoice.segments : [])
+          .map((segment: any) => {
+            const start = Number(segment?.start ?? segment?.startSeconds ?? segment?.from ?? segment?.begin);
+            const end = Number(segment?.end ?? segment?.endSeconds ?? segment?.to ?? segment?.stop);
+            return Number.isFinite(start) && Number.isFinite(end) && end > start
+              ? { start, end }
+              : null;
+          })
+          .filter(Boolean);
+        return {
+          voiceId,
+          characterId,
+          voiceModelId: selectedVoice?.id || "",
+          voicePath: selectedVoice?.path || "",
+          voiceName: selectedVoice?.name || String(characterId || ""),
+          segments,
+        };
+      });
+    if (!selectedVoiceMappings.length) {
+      setNotice("Analyze the clip and map at least one detected voice to a character voice model before starting dub.");
+      return;
+    }
+
+    const missingVoiceMapping = selectedVoiceMappings.find((mapping) => !mapping.voicePath);
+    if (missingVoiceMapping) {
+      setNotice(`Detected ${missingVoiceMapping.voiceId} is mapped to a character without a usable Characters-tab voice model.`);
+      return;
+    }
+
+    const missingSegmentMapping = selectedVoiceMappings.find((mapping) => !Array.isArray(mapping.segments) || !mapping.segments.length);
+    if (selectedVoiceMappings.length > 1 && missingSegmentMapping) {
+      setNotice(`Detected ${missingSegmentMapping.voiceId} has no usable diarization segments. Re-analyze the clip before starting multi-voice dub.`);
+      return;
+    }
+
+    const sourceUrl = String(clip.url || clip.editedUrl || "").trim();
+    const sourceFileName = String(clip.fileName || clip.editedFileName || (sourceUrl ? fileNameFromUrl(sourceUrl) : "") || "").trim();
+    if (!sourceUrl && !sourceFileName) {
+      setNotice("The selected clip does not have a usable video source for voice dub.");
+      return;
+    }
+
+    setAudioDubPreviewBusy(true);
+    setAudioDubPreviewResult(null);
+    setAudioDubPreviewError("");
+    setNotice(`Starting voice dub preview for Clip ${clipIndex + 1}...`);
+
+    try {
+      const response = await fetch("/api/production/audio/dub-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        credentials: "include",
+        body: JSON.stringify({
+          sceneId: selectedScene.id,
+          sceneTitle: selectedScene.title,
+          clipIndex,
+          sourceUrl,
+          sourceFileName,
+          voicePath: selectedVoiceMappings[0]?.voicePath || "",
+          voiceModelId: selectedVoiceMappings[0]?.voiceModelId || "",
+          characterId: selectedVoiceMappings[0]?.characterId || "",
+          mappedVoiceId: selectedVoiceMappings[0]?.voiceId || "",
+          voiceMappings: selectedVoiceMappings,
+          audioClipAnalysis: audioClipAnalysisResult,
+          voiceCharacterMap: audioClipVoiceCharacterMap,
+          title: `Scene ${clipIndex + 1} voice dub preview`,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data?.ok === false) {
+        throw new Error(data?.error || "Voice dub preview failed.");
+      }
+
+      setAudioDubPreviewResult(data);
+      setNotice("Voice dub preview ready. Play the preview video and approve or adjust the mapping.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Voice dub preview failed.";
+      setAudioDubPreviewError(message);
+      setNotice(message);
+    } finally {
+      setAudioDubPreviewBusy(false);
+    }
+  }
+
+
+
+  function renderAudioStudioStage() {
+    const scene = selectedScene;
+    const rows = editClipRows(scene);
+    const activeKey =
+      selectedEditClipKey && rows.some((row) => row.key === selectedEditClipKey)
+        ? selectedEditClipKey
+        : rows[0]?.key || "";
+    const activeRow = rows.find((row) => row.key === activeKey) || rows[0] || null;
+    const voiceModelOptions = productionVoiceOptionsForScene(scene);
+    const characterVoiceModelOptions = voiceModelOptions.filter((option) => option.engine === "character" && option.usable);
+
+    if (!scene) {
+      return (
+        <section className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5 text-white">
+          <p className="text-[11px] font-black uppercase tracking-[0.28em] text-cyan-200/80">Audio Studio</p>
+          <h2 className="mt-2 text-2xl font-black">Dub and Add Voices</h2>
+          <p className="mt-2 text-sm text-white/65">Select a scene before planning audio jobs.</p>
+        </section>
+      );
+    }
+
+    return (
+      <section className="space-y-4">
+        <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-cyan-200/80">Audio Studio</p>
+              <h2 className="mt-2 text-2xl font-black text-white">Dub and Add Voices</h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/65">
+                Plan audio jobs after Visual Edit: dub an existing performance into a saved character voice, or add a new off-screen voice to the clip mix.
+              </p>
+            </div>
+            <div className="rounded-[14px] border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/70">
+              <div className="font-black text-white">{scene.title}</div>
+              <div>Clips found: {rows.length}</div>
+              <div>Character voice models: {characterVoiceModelOptions.length}</div>
+              <div>Status: queued job skeleton</div>
+            </div>
+          </div>
+        </div>
+
+        {!rows.length ? (
+          <div className="rounded-[18px] border border-amber-300/25 bg-amber-300/10 p-5 text-sm text-amber-100">
+            Generate or add a clip in Animate / Visual Edit before creating Audio Studio jobs.
+          </div>
+        ) : (
+          <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+            <aside className="space-y-3 rounded-[18px] border border-white/10 bg-white/[0.04] p-4">
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Clip</p>
+              {rows.map((row) => (
+                <button
+                  key={row.key}
+                  type="button"
+                  onClick={() => setSelectedEditClipKey(row.key)}
+                  className={classNames(
+                    "w-full rounded-[14px] border p-3 text-left transition",
+                    row.key === activeKey ? "border-cyan-300/40 bg-cyan-300/10 text-cyan-50" : "border-white/10 bg-black/20 text-white/70 hover:bg-white/[0.06]",
+                  )}
+                >
+                  <span className="block text-sm font-black">Clip {row.index + 1}</span>
+                  <span className="mt-1 block truncate text-xs text-white/45">{row.sourceFileName || "No filename"}</span>
+                  {row.clip.audioStudioResult ? (
+                    <span className="mt-2 inline-flex rounded-full border border-emerald-300/30 bg-emerald-300/10 px-2 py-1 text-[11px] font-black text-emerald-100">
+                      Audio mock ready
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </aside>
+
+            <div className="space-y-5">
+              <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-4">
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Preview</p>
+                {activeRow?.sourceUrl ? (
+                  <video key={activeRow.sourceUrl} controls className="mt-3 aspect-video w-full rounded-[14px] bg-black object-contain">
+                    <source src={activeRow.sourceUrl} />
+                  </video>
+                ) : (
+                  <div className="mt-3 grid aspect-video place-items-center rounded-[14px] border border-dashed border-white/15 bg-black/25 text-sm text-white/45">
+                    No clip preview available.
+                  </div>
+                )}
+              </div>
+
+              {activeRow?.clip.audioStudioResult ? (
+                <div className="rounded-[18px] border border-emerald-300/25 bg-emerald-300/10 p-4 text-sm text-emerald-100">
+                  <p className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-100/70">Stored Audio Studio Result</p>
+                  <div className="mt-3 grid gap-1 text-xs leading-5">
+                    <div>Status: {activeRow.clip.audioStudioResult.status}</div>
+                    <div>Action: {activeRow.clip.audioStudioResult.action}</div>
+                    <div className="break-all">Source job: {activeRow.clip.audioStudioResult.sourceJobId}</div>
+                    {activeRow.clip.audioStudioResult.updatedClipUrl ? <div className="break-all">updatedClipUrl: {activeRow.clip.audioStudioResult.updatedClipUrl}</div> : null}
+                    {activeRow.clip.audioStudioResult.dubbedClipUrl ? <div className="break-all">dubbedClipUrl: {activeRow.clip.audioStudioResult.dubbedClipUrl}</div> : null}
+                    {activeRow.clip.audioStudioResult.finalClipUrl ? <div className="break-all">finalClipUrl: {activeRow.clip.audioStudioResult.finalClipUrl}</div> : null}
+                    <div>
+                      {audioStudioPersistedResults[activeRow.key]?.audioStudioResult?.sourceJobId === activeRow.clip.audioStudioResult.sourceJobId
+                        ? "Saved to clip record."
+                        : "Retained locally only until the clip record save completes."}
+                    </div>
+                    <div>Mock result - backend adapter not connected yet.</div>
+                  </div>
+                </div>
+              ) : null}
+
+                              {/* OTG_AUDIO_STUDIO_VOICE_DUBBING_UI_V2_START */}
+                {(() => {
+                  const sceneAny = (selectedScene || {}) as any;
+
+                  // OTG_AUDIO_STUDIO_ANALYZE_ACTIVE_CLIP_V1
+                  const activeAudioStudioClipAny = (activeRow?.clip || {}) as any;
+                  const activeAudioStudioClip = activeRow
+                    ? {
+                        ...activeAudioStudioClipAny,
+                        url: activeRow.sourceUrl || activeAudioStudioClipAny.url || "",
+                        fileName: activeRow.sourceFileName || activeAudioStudioClipAny.fileName || "",
+                        editedUrl: activeAudioStudioClipAny.editedUrl || "",
+                        editedFileName: activeAudioStudioClipAny.editedFileName || "",
+                      }
+                    : null;
+                  const activeAudioStudioClipIndex = activeRow?.index ?? 0;
+
+
+                  const rawCharacterGroups = [
+                    sceneAny.characters,
+                    sceneAny.characterCards,
+                    sceneAny.checkedCharacters,
+                    sceneAny.selectedCharacters,
+                    sceneAny.productionCharacters,
+                    sceneAny.clipCharacters,
+                    sceneAny.cast,
+                    sceneAny.sceneCharacters,
+                  ];
+
+                  const seenDubCharacterIds = new Set<string>();
+
+                  const sceneCharacterDubCharacters = rawCharacterGroups
+                    .flatMap((group: any) => Array.isArray(group) ? group : [])
+                    .filter((character: any) => character && typeof character === "object")
+                    .filter((character: any) => {
+                      const roleText = String(character.role || character.type || character.kind || character.category || "").toLowerCase();
+                      if (roleText.includes("background") || roleText.includes("environment") || character.isBackground) return false;
+                      if (character.checked === false || character.selected === false || character.enabled === false) return false;
+                      return true;
+                    })
+                    .map((character: any, index: number) => {
+                      const id = String(character.id || character.cardId || character.name || character.title || `character_${index}`);
+                      const name = String(character.name || character.title || character.label || `Character ${index + 1}`).trim();
+                      const voiceModel =
+                        character.savedVoiceModelId ||
+                        character.voiceModelId ||
+                        character.applioModelId ||
+                        character.voiceModelPath ||
+                        character.applioModelPath ||
+                        character.voice?.modelId ||
+                        character.voice?.modelPath ||
+                        character.voiceModel?.id ||
+                        character.voiceModel?.path ||
+                        "";
+
+                      return {
+                        id,
+                        name,
+                        role: String(character.role || character.type || character.kind || "Character"),
+                        voiceModel: String(voiceModel || ""),
+                      };
+                    });
+
+                  const voiceModelDubCharacters = characterVoiceModelOptions.map((option: ProductionVoiceModelOption, index: number) => ({
+                    id: String(option.characterId || option.id || `voice_model_${index + 1}`),
+                    name: String(option.name || `Character Voice ${index + 1}`),
+                    role: option.engine === "uploaded" ? "Uploaded voice model" : "Character voice model",
+                    voiceModel: String(option.path || option.displayPath || option.id || ""),
+                  }));
+
+                  const checkedDubCharacters = [...sceneCharacterDubCharacters, ...voiceModelDubCharacters]
+                    .filter((character: any) => {
+                      if (seenDubCharacterIds.has(character.id)) return false;
+                      seenDubCharacterIds.add(character.id);
+                      return true;
+                    });
+
+                  const analyzedVoiceRows = Array.isArray(audioClipAnalysisResult?.voices)
+                    ? audioClipAnalysisResult.voices
+                    : [];
+
+                  const detectedVoiceRows = analyzedVoiceRows.length
+                    ? analyzedVoiceRows.map((voice: any, index: number) => ({
+                        id: String(voice.id || `speaker_${index + 1}`),
+                        label: String(voice.label || `Voice ${index + 1}`),
+                        description: String(
+                          voice.description ||
+                          `${voice.segmentCount || voice.segments?.length || 0} detected segment(s), ${Number(voice.totalSpeechSeconds || 0).toFixed(1)}s speech`
+                        ),
+                        status: String(voice.status || "detected"),
+                        segmentCount: Number(voice.segmentCount || voice.segments?.length || 0),
+                        totalSpeechSeconds: Number(voice.totalSpeechSeconds || 0),
+                      }))
+                    : Array.from({ length: 3 }, (_unused, index) => ({
+                        id: `speaker_${index + 1}`,
+                        label: `Voice ${index + 1}`,
+                        description: index === 0 ? "Primary detected dialogue speaker" : `Detected dialogue speaker ${index + 1}`,
+                        status: "pending",
+                        segmentCount: 0,
+                        totalSpeechSeconds: 0,
+                      }));
+
+                  return (
+                    <div className="space-y-4">
+                      <section className="rounded-[18px] border border-cyan-300/20 bg-cyan-300/[0.06] p-5 shadow-[0_0_26px_rgba(103,232,249,0.08)]">
+                        <div className="flex flex-col gap-4">
+                          <div>
+                            <p className="text-[11px] font-black uppercase tracking-[0.24em] text-cyan-200/80">
+                              Voice Dubbing
+                            </p>
+                            <h3 className="mt-2 text-xl font-black text-white">
+                              Separate dialogue, detect speakers, map voices to characters
+                            </h3>
+                            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-white/60">
+                              Uses Demucs-style source separation plus speaker diarization. Detect up to five dialogue voices, then map each voice lane to a checked clip character. Checked characters without saved voice models are skipped automatically.
+                            </p>
+                          </div>
+
+                          <div className="flex flex-wrap items-end gap-3">
+                            <label className="grid gap-1 text-xs font-black uppercase tracking-[0.18em] text-cyan-100/70">
+                              Expected voices
+                              <select
+                                value={audioExpectedSpeakerCount}
+                                onChange={(event) => setAudioExpectedSpeakerCount(Number(event.target.value) || 0)}
+                                className="min-w-[104px] rounded-[12px] border border-cyan-200/25 bg-black/40 px-3 py-2 text-sm font-black normal-case tracking-normal text-white outline-none focus:border-cyan-200/70"
+                              >
+                                <option value={0}>Auto</option>
+                                <option value={1}>1 voice</option>
+                                <option value={2}>2 voices</option>
+                                <option value={3}>3 voices</option>
+                                <option value={4}>4 voices</option>
+                                <option value={5}>5 voices</option>
+                              </select>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => analyzeClipAudioForDubbing(activeAudioStudioClip, activeAudioStudioClipIndex)} disabled={audioClipAnalysisBusy || !activeAudioStudioClip}
+                              className="rounded-[14px] border border-cyan-200/30 bg-cyan-300/10 px-4 py-3 text-sm font-black text-white transition hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {audioClipAnalysisBusy ? "Analyzing..." : "Analyze Clip Audio"}
+                            </button>
+                          </div>
+                        </div>
+                      </section>
+
+                      <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+                        <section className="rounded-[18px] border border-violet-300/20 bg-violet-500/[0.08] p-5">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-violet-200/80">
+                                Audio Separation
+                              </p>
+                              <h3 className="mt-2 text-lg font-black text-white">
+                                Demucs + speaker diarization
+                              </h3>
+                            </div>
+                            <span className="rounded-full border border-white/10 bg-black/25 px-3 py-1 text-xs font-black text-white/60">
+                              1-5 voices
+                            </span>
+                          </div>
+
+                          <div className="mt-4 grid gap-3">
+                            <div className="rounded-[14px] border border-white/10 bg-black/20 p-4">
+                              <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Step 1</p>
+                              <p className="mt-1 text-sm font-black text-white">Split dialogue from music, SFX, and ambience</p>
+                              <p className="mt-1 text-xs font-semibold leading-5 text-white/30">
+                                Demucs prepares a cleaner dialogue stem before speaker detection.
+                              </p>
+                            </div>
+
+                            <div className="rounded-[14px] border border-white/10 bg-black/20 p-4">
+                              <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Step 2</p>
+                              <p className="mt-1 text-sm font-black text-white">Detect who is talking and create voice lanes</p>
+                              <p className="mt-1 text-xs font-semibold leading-5 text-white/30">
+                                Speaker diarization returns Voice 1 through Voice 5 with timing ranges.
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mt-5 space-y-3">
+                            {detectedVoiceRows.map((voiceRow: any) => (
+                              <div key={voiceRow.id} className="rounded-[14px] border border-white/10 bg-black/25 p-4">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                  <div>
+                                    <p className="text-sm font-black text-white">{voiceRow.label}</p>
+                                    <p className="mt-1 text-xs font-semibold text-white/45">{voiceRow.description}</p>
+                                  </div>
+                                  <span className="rounded-full border border-cyan-200/20 bg-cyan-300/10 px-3 py-1 text-xs font-black text-cyan-100">
+                                    {voiceRow.status === "detected" ? `${voiceRow.segmentCount || 0} segment(s)` : "Pending analysis"}
+                                  </span>
+                                </div>
+                                {voiceRow.status === "detected" ? (
+                                  <p className="mt-2 text-xs font-bold text-white/70">
+                                    {Number(voiceRow.totalSpeechSeconds || 0).toFixed(1)}s detected speech. Select a character voice model below to replace this lane.
+                                  </p>
+                                ) : null}
+
+                                <label className="mt-3 block text-[11px] font-black uppercase tracking-[0.18em] text-white/45">
+                                  Map to checked character
+                                </label>
+                                <select
+                                  value={audioClipVoiceCharacterMap[voiceRow.id] || ""}
+                                  onChange={(event) => {
+                                    const nextValue = event.target.value;
+                                    setAudioClipVoiceCharacterMap((previous) => ({
+                                      ...previous,
+                                      [voiceRow.id]: nextValue,
+                                    }));
+                                  }}
+                                  className="mt-2 w-full rounded-[12px] border border-white/10 bg-slate-950/80 px-3 py-3 text-sm font-bold text-white outline-none focus:border-cyan-300/30"
+                                >
+                                  <option value="">Skip this detected voice</option>
+                                  {checkedDubCharacters.map((character: any) => (
+                                    <option key={`${voiceRow.id}_${character.id}`} value={character.id} disabled={!character.voiceModel}>
+                                      {character.voiceModel ? `${character.name} - saved voice model` : `${character.name} - skip: no saved voice model`}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+
+                        <section className="rounded-[18px] border border-violet-300/20 bg-violet-500/[0.08] p-5">
+                          <p className="text-[11px] font-black uppercase tracking-[0.24em] text-violet-200/80">
+                            Checked Clip Characters
+                          </p>
+                          <h3 className="mt-2 text-lg font-black text-white">
+                            Available character voice models
+                          </h3>
+                          <p className="mt-2 text-sm font-semibold leading-6 text-white/35">
+                            Backgrounds are excluded. Checked clip characters and saved character voice options appear here.
+                          </p>
+
+                          <div className="mt-4 space-y-3">
+                            {checkedDubCharacters.length ? (
+                              checkedDubCharacters.map((character: any, index: number) => (
+                                <div key={character.id || "character"} className="rounded-[14px] border border-white/10 bg-black/25 p-4">
+                                  <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div>
+                                      <p className="text-sm font-black text-white">{index + 1}. {character.name}</p>
+                                      <p className="mt-1 text-xs font-semibold text-white/45">{character.role}</p>
+                                    </div>
+
+                                    <span className={
+                                      character.voiceModel
+                                        ? "rounded-full border border-emerald-300/25 bg-emerald-300/10 px-3 py-1 text-xs font-black text-emerald-100"
+                                        : "rounded-full border border-amber-300/25 bg-amber-300/10 px-3 py-1 text-xs font-black text-amber-100"
+                                    }>
+                                      {character.voiceModel ? "Voice model ready" : "Skipped: no voice"}
+                                    </span>
+                                  </div>
+
+                                  {character.voiceModel ? (
+                                    <p className="mt-3 truncate text-xs font-semibold text-white/45">{character.voiceModel}</p>
+                                  ) : (
+                                    <p className="mt-3 text-xs font-semibold text-white/45">
+                                      Add a saved voice model on the character card to enable dubbing.
+                                    </p>
+                                  )}
+                                </div>
+                              ))
+                            ) : (
+                              <div className="rounded-[14px] border border-amber-300/20 bg-amber-300/[0.07] p-4 text-sm font-bold text-amber-100">
+                                No checked non-background clip characters found yet.
+                              </div>
+                            )}
+                          </div>
+                        </section>
+                      </div>
+
+                      <section className="rounded-[18px] border border-emerald-300/20 bg-emerald-300/[0.06] p-5">
+                        <div className="flex flex-wrap items-start justify-between gap-4">
+                          <div>
+                            <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-100/80">Voice Dub Preview</p>
+                            <h3 className="mt-2 text-lg font-black text-white">Start character voice dub</h3>
+                            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-white/55">
+                              Uses the selected detected voice mapping and the saved Characters-tab voice model to generate a preview video with the replaced voice.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => startAudioStudioDubPreview(activeAudioStudioClip, activeAudioStudioClipIndex, characterVoiceModelOptions)}
+                            disabled={audioDubPreviewBusy || !activeAudioStudioClip || !Object.values(audioClipVoiceCharacterMap).some(Boolean)}
+                            className="rounded-[14px] border border-emerald-200/30 bg-emerald-300/10 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-300/15 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {audioDubPreviewBusy ? "Dubbing..." : "Start Dub Preview"}
+                          </button>
+                        </div>
+
+                        {audioDubPreviewError ? (
+                          <p className="mt-4 rounded-[12px] border border-rose-300/25 bg-rose-500/10 px-4 py-3 text-sm font-bold text-rose-100">
+                            {audioDubPreviewError}
+                          </p>
+                        ) : null}
+
+                        {audioDubPreviewResult?.previewVideoUrl ? (
+                          <div className="mt-4 overflow-hidden rounded-[14px] border border-white/10 bg-black/25 p-3">
+                            <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">Dubbed preview</p>
+                            <video key={audioDubPreviewResult.previewVideoUrl} controls className="aspect-video w-full rounded-[12px] bg-black object-contain">
+                              <source src={audioDubPreviewResult.previewVideoUrl} />
+                            </video>
+                            <p className="mt-2 break-all text-xs font-semibold text-white/45">{audioDubPreviewResult.previewVideoPath || audioDubPreviewResult.previewVideoUrl}</p>
+                          </div>
+                        ) : null}
+                      </section>
+                    </div>
+                  );
+                })()}
+                {/* OTG_AUDIO_STUDIO_VOICE_DUBBING_UI_V2_END */}
+<div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Mix Queue</p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-1">
+                  {([
+                    // OTG_AUDIO_STUDIO_SONY_WOOSH_ONLY_MIX_QUEUE_V36BPW12
+                    // OTG_AUDIO_STUDIO_SONY_WOOSH_AUTO_MANUAL_BUTTONS_V36BPW13B
+                    ["add_sound_effect", "Auto Sony Woosh"],
+                    ["add_sound_effect", "Manual Sony Woosh"],
+                  ] as Array<[ProductionAudioStudioAction, string]>).map(([action, label]) => (
+                    <div key={`${action}-${label}`} className="rounded-[14px] border border-white/10 bg-black/20 p-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (action === "add_sound_effect") {
+                            const sonyWooshMode = /manual/i.test(String(label || "")) ? "manual" : "auto";
+                            const manualPrompt =
+                              sonyWooshMode === "manual"
+                                ? window.prompt(
+                                    "Describe the sound effects to add to this video.",
+                                    "add cinematic whooshes synced to movement, sharp transition swishes, and a deep impact at the cut"
+                                  )
+                                : "";
+                            if (sonyWooshMode === "manual" && !String(manualPrompt || "").trim()) {
+                              setNotice("Manual Sony Woosh cancelled or empty.");
+                              return;
+                            }
+
+                            void startAudioStudioSonyWooshSfx(
+                              activeRow,
+                              activeKey,
+                              activeRow?.durationSec || clampStoryboardDuration(selectedScene?.durationSeconds ?? DEFAULT_SCENE_DURATION_SECONDS),
+                              sonyWooshMode,
+                              String(manualPrompt || "").trim()
+                            );
+                            return;
+                          }
+
+                          const selectedVoiceMappings = Object.entries(audioClipVoiceCharacterMap)
+                            .filter(([, characterId]) => String(characterId || "").trim())
+                            .map(([voiceId, characterId]) => ({ voiceId, characterId }));
+
+                          if (action === "replace_voice" && !selectedVoiceMappings.length) {
+                            setNotice("Analyze the clip and map at least one detected voice to a checked character voice before replacing voice.");
+                            return;
+                          }
+
+                          void queueProductionAudioStudioAction(action, activeKey, {
+                            sourceFileName: activeRow?.sourceFileName || "",
+                            mixMode: action === "render_audio_mix" ? "preview" : "queued_placeholder",
+                            ...(action === "replace_voice" ? {
+                              audioClipAnalysis: audioClipAnalysisResult,
+                              voiceCharacterMap: audioClipVoiceCharacterMap,
+                              selectedVoiceMappings,
+                            } : {}),
+                          });
+                        }}
+                        disabled={!activeRow || audioStudioJobs[action]?.phase === "submitting" || (action === "add_sound_effect" && audioStudioSonyWooshBusy)}
+                        className="w-full rounded-[12px] border border-white/15 bg-white/[0.06] px-3 py-2 text-sm font-black text-white disabled:opacity-45"
+                      >
+                        {action === "add_sound_effect" && audioStudioSonyWooshBusy ? "Rendering..." : audioStudioJobs[action]?.phase === "submitting" ? "Submitting..." : label}
+                      </button>
+                      {renderAudioStudioJobStatus(action)}
+                      {action === "add_sound_effect" && audioStudioSonyWooshError ? (
+                        <div className="mt-2 rounded-[10px] border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-xs font-bold text-rose-100">
+                          {audioStudioSonyWooshError}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <details className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
+                <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.18em] text-white/35">Advanced Audio Job Notes</summary>
+                <div className="mt-3 grid gap-3 text-sm leading-6 text-white/60 md:grid-cols-2">
+                  <p>Sony Woosh SFX calls the existing Edit Video Sony Woosh workflow and saves the result to Gallery when possible.</p>
+                  <p>Other Audio Studio Mix Queue actions are hidden for now while Sony Woosh is being validated. Auto uses a video-analysis prompt; Manual asks for your SFX prompt.</p>
+                </div>
               </details>
             </div>
           </div>
@@ -6891,7 +14515,8 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
     const next = snapshot.manifest;
     setProjectTitle(next.projectTitle || "Untitled Production");
     setActiveStage(next.activeStage || "storyboard");
-    setProductionAnimateMode(next.productionAnimateMode || "default");
+    // Director Mode is temporarily disabled; always restore Animate to Default Mode for now.
+    setProductionAnimateMode("default");
     setExportPreset(next.exportPreset || "standard");
     setScenes(Array.isArray(next.scenes) && next.scenes.length ? next.scenes : initialScenes);
     setSelectedSceneId(next.selectedSceneId || next.scenes?.[0]?.id || initialScenes[0]?.id || "");
@@ -6931,7 +14556,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
               <div key={item.label} className="rounded-[14px] border border-white/10 bg-black/20 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-black text-white">{item.label}</span>
-                  <span className="text-xs font-black text-white/55">{item.done}/{item.total}</span>
+                  <span className="text-xs font-black text-white/35">{item.done}/{item.total}</span>
                 </div>
                 <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
                   <div className="h-full rounded-full bg-cyan-300" style={{ width: `${Math.max(0, Math.min(100, percent))}%` }} />
@@ -7052,7 +14677,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
         originalFileName: row.sourceFileName,
         editedFileName: manifest.editedFileName || "",
         manifestStatus: manifest.status,
-        durationSec: row.durationSec,
+        durationSec: hasEdited && manifest.renderedDurationSeconds ? manifest.renderedDurationSeconds : row.durationSec,
       };
     });
   }
@@ -7109,6 +14734,266 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
     })).filter((item) => item.from && item.to);
   }
 
+  async function generateAssemblyBackgroundMusicV36BPW15() {
+    if (!selectedScene || assemblyMusicGenerating) return;
+
+    const rows = assembleSourceRows(selectedScene).filter((row) => row.url);
+    if (!rows.length) {
+      setNotice("Generate or sync Assemble clips before creating background music.");
+      return;
+    }
+
+    const prompt = assemblyMusicPrompt.trim();
+    if (!prompt) {
+      setAssemblyMusicError("Enter a background music prompt first.");
+      setNotice("Enter a background music prompt first.");
+      return;
+    }
+
+    const totalTimelineSeconds = Math.max(
+      1,
+      rows.reduce((sum, row) => sum + Number(row.durationSec || 0), 0) ||
+        selectedScene.durationSeconds ||
+        DEFAULT_SCENE_DURATION_SECONDS
+    );
+    const safeStartSeconds = Math.max(0, Math.min(totalTimelineSeconds, Number(assemblyMusicStartSeconds) || 0));
+    const safeEndSeconds = Math.max(
+      safeStartSeconds + 1,
+      Math.min(totalTimelineSeconds, Number(assemblyMusicEndSeconds) || totalTimelineSeconds)
+    );
+    const durationSeconds = Math.max(5, Math.min(300, Math.round(safeEndSeconds - safeStartSeconds)));
+
+    setAssemblyMusicGenerating(true);
+    setAssemblyMusicError("");
+    setNotice("Generating background music with Stable Audio 3...");
+
+    try {
+      const response = await fetch("/api/production/assembly-music", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          productionId: selectedScene.id,
+          title: `${selectedScene.title || "scene"}_background_music`,
+          prompt,
+          durationSeconds,
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.ok) {
+        throw new Error(String(data?.error || "Background music generation failed."));
+      }
+
+      setAssemblyMusicResult(data);
+      setNotice(`Background music generated. Volume is set to ${Math.round(assemblyMusicVolume * 100)}%. It will be mixed when you Stitch Timeline.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Background music generation failed.";
+      setAssemblyMusicError(message);
+      setNotice(message);
+    } finally {
+      setAssemblyMusicGenerating(false);
+    }
+  }
+  async function detectAssemblyMusicTimelineV36BPW17() {
+    if (!selectedScene) return;
+
+    const rows = assembleSourceRows(selectedScene).filter((row) => row.url);
+    const fallbackDurationSeconds = Math.max(
+      1,
+      rows.reduce((sum, row) => sum + Number(row.durationSec || 0), 0) ||
+        selectedScene.durationSeconds ||
+        DEFAULT_SCENE_DURATION_SECONDS
+    );
+    const videoPath = String(assembleResult?.videoPath || selectedScene.assembledVideoPath || "").trim();
+
+    setNotice("Detecting final timeline duration...");
+
+    try {
+      const response = await fetch("/api/production/assembly-music-detect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          videoPath,
+          fallbackDurationSeconds,
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.ok) {
+        throw new Error(String(data?.error || "Timeline detection failed."));
+      }
+
+      const detected = Math.max(1, Math.ceil(Number(data.roundedDurationSeconds || data.durationSeconds || fallbackDurationSeconds)));
+      setAssemblyMusicDetectedTimelineSeconds(detected);
+      setAssemblyMusicStartSeconds(0);
+      setAssemblyMusicEndSeconds(detected);
+      setNotice(`Detected final timeline length: ${detected}s (${data.source || "timeline"}).`);
+    } catch (error) {
+      const fallback = Math.max(1, Math.ceil(fallbackDurationSeconds));
+      setAssemblyMusicDetectedTimelineSeconds(fallback);
+      setAssemblyMusicStartSeconds(0);
+      setAssemblyMusicEndSeconds(fallback);
+      setNotice(`Timeline detection used fallback row duration: ${fallback}s.`);
+    }
+  }
+
+  async function addAssemblyMusicToStitchedVideoV36BPW17() {
+    if (!selectedScene || assemblyMusicMixing) return;
+
+    const videoPath = String(assembleResult?.videoPath || selectedScene.assembledVideoPath || "").trim();
+    if (!videoPath) {
+      setNotice("Stitch the timeline first, then add background music.");
+      return;
+    }
+
+    if (!(assemblyMusicResult?.musicPath || assemblyMusicResult?.audioPath || assemblyMusicResult?.musicFileName || assemblyMusicResult?.audioFileName)) {
+      setNotice("Generate background music first.");
+      return;
+    }
+
+    setAssemblyMusicMixing(true);
+    setAssemblyMusicError("");
+    setNotice("Adding background music to the stitched video...");
+
+    try {
+      const previousOutputs = selectedScene.assembledOutputs || [];
+      setAssemblyMusicUndoSnapshot({
+        assembleResult,
+        assembledVideoUrl: selectedScene.assembledVideoUrl,
+        assembledVideoPath: selectedScene.assembledVideoPath,
+        assembledOutputs: previousOutputs,
+      });
+
+      const mixResponse = await fetch("/api/production/assembly-music-mix", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          productionId: selectedScene.id,
+          videoPath,
+          videoUrl: assembleResult?.videoUrl || selectedScene.assembledVideoUrl,
+          musicPath: assemblyMusicResult.musicPath || assemblyMusicResult.audioPath,
+          musicFileName: assemblyMusicResult.musicFileName || assemblyMusicResult.audioFileName,
+          musicVolume: assemblyMusicVolume,
+          musicStartSeconds: assemblyMusicStartSeconds,
+          musicEndSeconds: assemblyMusicEndSeconds,
+          fadeInSeconds: assemblyMusicFadeInSeconds,
+          fadeOutSeconds: assemblyMusicFadeOutSeconds,
+        }),
+      });
+      const mixData = await mixResponse.json().catch(() => null);
+      if (!mixResponse.ok || !mixData?.ok) {
+        throw new Error(String(mixData?.error || "Background music mix failed."));
+      }
+
+      const updatedResult = {
+        ...(assembleResult || {}),
+        videoUrl: String(mixData.videoUrl || assembleResult?.videoUrl || selectedScene.assembledVideoUrl || ""),
+        videoPath: String(mixData.videoPath || assembleResult?.videoPath || selectedScene.assembledVideoPath || ""),
+        backgroundMusic: {
+          musicPath: mixData.musicPath || assemblyMusicResult.musicPath || assemblyMusicResult.audioPath,
+          musicVolume: assemblyMusicVolume,
+          musicStartSeconds: mixData.musicStartSeconds ?? assemblyMusicStartSeconds,
+          musicEndSeconds: mixData.musicEndSeconds ?? assemblyMusicEndSeconds,
+          fadeInSeconds: mixData.fadeInSeconds ?? assemblyMusicFadeInSeconds,
+          fadeOutSeconds: mixData.fadeOutSeconds ?? assemblyMusicFadeOutSeconds,
+        },
+      } as ProductionAssembleStitchResult;
+
+      const outputLibrary = [updatedResult, ...previousOutputs].slice(0, 12);
+      setAssembleResult(updatedResult);
+      updateSelectedScene({
+        assembledVideoUrl: updatedResult.videoUrl,
+        assembledVideoPath: updatedResult.videoPath,
+        assembledOutputs: outputLibrary,
+        status: "complete",
+      });
+
+      setNotice("Background music was added to the stitched video.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Background music mix failed.";
+      setAssemblyMusicError(message);
+      setNotice(message);
+    } finally {
+      setAssemblyMusicMixing(false);
+    }
+  }
+
+  function undoAssemblyMusicV36BPW17() {
+    if (!selectedScene || !assemblyMusicUndoSnapshot) {
+      setNotice("No background music change to undo.");
+      return;
+    }
+
+    setAssembleResult(assemblyMusicUndoSnapshot.assembleResult || null);
+    updateSelectedScene({
+      assembledVideoUrl: assemblyMusicUndoSnapshot.assembledVideoUrl,
+      assembledVideoPath: assemblyMusicUndoSnapshot.assembledVideoPath,
+      assembledOutputs: assemblyMusicUndoSnapshot.assembledOutputs || [],
+      status: assemblyMusicUndoSnapshot.assembledVideoPath || assemblyMusicUndoSnapshot.assembledVideoUrl ? "complete" : selectedScene.status,
+    });
+    setAssemblyMusicUndoSnapshot(null);
+    setNotice("Undid the last background music add.");
+  }
+  async function addAssemblyFinalToGalleryV36BPW18() {
+    if (!selectedScene || assemblyGallerySaving) return;
+
+    const videoPath = String(assembleResult?.videoPath || selectedScene.assembledVideoPath || "").trim();
+    const videoUrl = String(assembleResult?.videoUrl || selectedScene.assembledVideoUrl || "").trim();
+
+    if (!videoPath) {
+      setNotice("Stitch the timeline first, then add the final video to Gallery.");
+      return;
+    }
+
+    setAssemblyGallerySaving(true);
+    setNotice("Adding final Assembly video to Gallery...");
+
+    try {
+      const response = await fetch("/api/production/assembly-add-to-gallery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          sceneId: selectedScene.id,
+          sceneTitle: selectedScene.title,
+          title: `${selectedScene.title || "Scene"} Final Assembly`,
+          videoPath,
+          videoUrl,
+          exportPreset,
+          backgroundMusic: (assembleResult as any)?.backgroundMusic || null,
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.ok) {
+        throw new Error(String(data?.error || "Add to Gallery failed."));
+      }
+
+      setAssemblyGalleryResult(data);
+
+      const updatedResult = {
+        ...(assembleResult || {}),
+        videoUrl: videoUrl || String(data.url || data.galleryUrl || ""),
+        videoPath,
+        galleryUrl: String(data.url || data.galleryUrl || ""),
+        galleryFileName: String(data.fileName || data.name || ""),
+        savedToGalleryAt: new Date().toISOString(),
+      } as any;
+
+      const outputLibrary = [updatedResult, ...(selectedScene.assembledOutputs || [])].slice(0, 12);
+      setAssembleResult(updatedResult as ProductionAssembleStitchResult);
+      updateSelectedScene({
+        assembledOutputs: outputLibrary,
+      });
+
+      setNotice(`Added final Assembly video to Gallery: ${data.fileName || data.name || "saved video"}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Add to Gallery failed.";
+      setNotice(message);
+    } finally {
+      setAssemblyGallerySaving(false);
+    }
+  }
   async function stitchAssembleTimeline() {
     if (!selectedScene || assemblingSceneId) return;
     const rows = assembleSourceRows(selectedScene).filter((row) => row.url);
@@ -7120,7 +15005,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
     const transitions = assembleTransitionsForRows(selectedScene, rows.length);
     setAssemblingSceneId(selectedScene.id);
     setAssembleResult(null);
-    setNotice("Stitching Assemble timeline with selected transitions...");
+    setNotice(assemblyMusicResult ? "Stitching Assemble timeline, then mixing background music..." : "Stitching Assemble timeline with selected transitions...");
 
     try {
       const response = await fetch("/api/production/stitch", {
@@ -7152,17 +15037,48 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
         preset: exportPreset,
         createdAt: new Date().toISOString(),
       };
-      const outputLibrary = [result, ...(selectedScene.assembledOutputs || [])].slice(0, 12);
-      setAssembleResult(result);
+      let finalResult = result;
+      let backgroundMusicApplied = false;
+
+      if (assemblyMusicResult?.musicPath || assemblyMusicResult?.audioPath || assemblyMusicResult?.musicFileName || assemblyMusicResult?.audioFileName) {
+        const mixResponse = await fetch("/api/production/assembly-music-mix", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            productionId: selectedScene.id,
+            videoPath: result.videoPath,
+            videoUrl: result.videoUrl,
+            musicPath: assemblyMusicResult.musicPath || assemblyMusicResult.audioPath,
+            musicFileName: assemblyMusicResult.musicFileName || assemblyMusicResult.audioFileName,
+            musicVolume: assemblyMusicVolume,
+            musicStartSeconds: assemblyMusicStartSeconds,
+            musicEndSeconds: assemblyMusicEndSeconds,
+          }),
+        });
+        const mixData = await mixResponse.json().catch(() => null);
+        if (!mixResponse.ok || !mixData?.ok) {
+          throw new Error(String(mixData?.error || "Background music mix failed."));
+        }
+        finalResult = {
+          ...result,
+          videoUrl: String(mixData.videoUrl || result.videoUrl),
+          videoPath: String(mixData.videoPath || result.videoPath),
+        };
+        backgroundMusicApplied = true;
+      }
+
+      const outputLibrary = [finalResult, ...(selectedScene.assembledOutputs || [])].slice(0, 12);
+      setAssembleResult(finalResult);
       updateSelectedScene({
         assembleTransitions: transitions,
-        assembledVideoUrl: result.videoUrl,
-        assembledVideoPath: result.videoPath,
+        assembledVideoUrl: finalResult.videoUrl,
+        assembledVideoPath: finalResult.videoPath,
         assembledOutputs: outputLibrary,
         exportPreset,
         status: "complete",
       });
-      setNotice(`Assembled timeline is ready. Applied ${result.transitionsApplied} transition${result.transitionsApplied === 1 ? "" : "s"}.`);
+      setNotice(`Assembled timeline is ready${backgroundMusicApplied ? " with background music" : ""}. Applied ${finalResult.transitionsApplied} transition${finalResult.transitionsApplied === 1 ? "" : "s"}.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Timeline stitch failed.");
     } finally {
@@ -7181,6 +15097,31 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
     }).length;
     const editedClipsReady = rows.filter((row) => row.sourceKind === "edited").length;
     const transitionCount = transitions.filter((transition) => transition.type !== "cut").length;
+    const assemblyTimelineSecondsV36BPW17 = Math.max(
+      1,
+      Math.round(
+        assemblyMusicDetectedTimelineSeconds ||
+          rows.reduce((sum, row) => sum + Number(row.durationSec || 0), 0) ||
+          scene?.durationSeconds ||
+          DEFAULT_SCENE_DURATION_SECONDS
+      )
+    );
+    const assemblyMusicStartSafeV36BPW17 = Math.max(0, Math.min(assemblyTimelineSecondsV36BPW17, Number(assemblyMusicStartSeconds) || 0));
+    const assemblyMusicEndSafeV36BPW17 = Math.max(
+      assemblyMusicStartSafeV36BPW17 + 1,
+      Math.min(assemblyTimelineSecondsV36BPW17, Number(assemblyMusicEndSeconds) || assemblyTimelineSecondsV36BPW17)
+    );
+    const assemblyMusicLengthV36BPW17 = Math.max(1, Math.round(assemblyMusicEndSafeV36BPW17 - assemblyMusicStartSafeV36BPW17));
+    const assemblyTimelineSecondsV36BPW16C = Math.max(
+      1,
+      Math.round(rows.reduce((sum, row) => sum + Number(row.durationSec || 0), 0) || scene?.durationSeconds || DEFAULT_SCENE_DURATION_SECONDS)
+    );
+    const assemblyMusicStartSafeV36BPW16C = Math.max(0, Math.min(assemblyTimelineSecondsV36BPW16C, Number(assemblyMusicStartSeconds) || 0));
+    const assemblyMusicEndSafeV36BPW16C = Math.max(
+      assemblyMusicStartSafeV36BPW16C + 1,
+      Math.min(assemblyTimelineSecondsV36BPW16C, Number(assemblyMusicEndSeconds) || assemblyTimelineSecondsV36BPW16C)
+    );
+    const assemblyMusicLengthV36BPW16C = Math.max(1, Math.round(assemblyMusicEndSafeV36BPW16C - assemblyMusicStartSafeV36BPW16C));
 
     if (!scene) {
       return (
@@ -7214,7 +15155,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
 
         {renderProductionOverviewPanel(scene)}
 
-        <div className="grid gap-4 xl:grid-cols-2">
+<div className="grid gap-4 xl:grid-cols-2">
           {renderProductionQueuePanel()}
           {renderSnapshotPanel()}
         </div>
@@ -7310,7 +15251,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
                   </div>
                 )}
 
-                <div className="mt-3 space-y-1 text-xs text-white/55">
+                <div className="mt-3 space-y-1 text-xs text-white/35">
                   <div className="break-all"><span className="text-white/35">Using:</span> {row.fileName || "none"}</div>
                   <div className="break-all"><span className="text-white/35">Original:</span> {row.originalFileName || "none"}</div>
                   <div className="break-all"><span className="text-white/35">Edited:</span> {row.editedFileName || "none"}</div>
@@ -7481,7 +15422,7 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
         ) : null}
 
         <details className="rounded-[18px] border border-white/10 bg-white/[0.04] p-5">
-          <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.18em] text-white/55">Assemble Source Manifest</summary>
+          <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.18em] text-white/35">Assemble Source Manifest</summary>
           <pre className="mt-3 max-h-80 overflow-auto rounded-[14px] bg-black/40 p-4 text-xs leading-5 text-cyan-50/80">{JSON.stringify({
             sceneId: scene.id,
             clipsFound,
@@ -7499,11 +15440,312 @@ setNotice(`Rendered visual FX for Clip ${row.index + 1}. Assemble will use the e
             assembledVideoPath: scene.assembledVideoPath || "",
           }, null, 2)}</pre>
         </details>
-      </section>
+
+        <div className="rounded-[18px] border border-emerald-300/20 bg-emerald-300/[0.06] p-5">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-black uppercase tracking-[0.28em] text-emerald-200/80">Background Music</p>
+              <h3 className="mt-2 text-xl font-black text-white">Add music to the final stitched clip</h3>
+              <p className="mt-2 text-sm leading-6 text-white/60">
+                Detect the final video length, choose when the music starts and stops, generate the track, then use Add Music to place it into the stitched video.
+              </p>
+              <textarea
+                value={assemblyMusicPrompt}
+                onChange={(event) => setAssemblyMusicPrompt(event.target.value)}
+                rows={3}
+                className="mt-4 w-full rounded-[14px] border border-white/10 bg-black/30 px-3 py-2 text-sm leading-6 text-white outline-none placeholder:text-white/35 focus:border-emerald-300/40"
+                placeholder="Describe the background music for the final assembled video."
+              />
+
+              <div className="mt-4 rounded-[14px] border border-white/10 bg-black/20 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/45">Music Placement Tool</p>
+                    <p className="mt-1 text-xs leading-5 text-white/50">
+                      Timeline length: {assemblyTimelineSecondsV36BPW17}s. Music length: {assemblyMusicLengthV36BPW17}s.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => void detectAssemblyMusicTimelineV36BPW17()} className="rounded-[10px] border border-emerald-300/30 bg-emerald-300/15 px-3 py-2 text-xs font-black text-emerald-100">
+                      Detect Timeline
+                    </button>
+                    <button type="button" onClick={() => { setAssemblyMusicStartSeconds(0); setAssemblyMusicEndSeconds(assemblyTimelineSecondsV36BPW17); }} className="rounded-[10px] border border-white/10 bg-white/[0.06] px-3 py-2 text-xs font-black text-white/70 hover:border-emerald-300/35 hover:text-emerald-100">
+                      Full
+                    </button>
+                    <button type="button" onClick={() => { setAssemblyMusicStartSeconds(0); setAssemblyMusicEndSeconds(Math.min(12, assemblyTimelineSecondsV36BPW17)); }} className="rounded-[10px] border border-white/10 bg-white/[0.06] px-3 py-2 text-xs font-black text-white/70 hover:border-emerald-300/35 hover:text-emerald-100">
+                      Opening
+                    </button>
+                    <button type="button" onClick={() => { const start = Math.max(0, Math.round(assemblyTimelineSecondsV36BPW17 * 0.25)); const end = Math.max(start + 1, Math.round(assemblyTimelineSecondsV36BPW17 * 0.75)); setAssemblyMusicStartSeconds(start); setAssemblyMusicEndSeconds(end); }} className="rounded-[10px] border border-white/10 bg-white/[0.06] px-3 py-2 text-xs font-black text-white/70 hover:border-emerald-300/35 hover:text-emerald-100">
+                      Middle
+                    </button>
+                    <button type="button" onClick={() => { const start = Math.max(0, assemblyTimelineSecondsV36BPW17 - 12); setAssemblyMusicStartSeconds(start); setAssemblyMusicEndSeconds(assemblyTimelineSecondsV36BPW17); }} className="rounded-[10px] border border-white/10 bg-white/[0.06] px-3 py-2 text-xs font-black text-white/70 hover:border-emerald-300/35 hover:text-emerald-100">
+                      Ending
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                  <label className="block">
+                    <span className="text-[11px] font-black uppercase tracking-[0.16em] text-white/40">Start Second</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={assemblyTimelineSecondsV36BPW17}
+                      value={assemblyMusicStartSeconds}
+                      onChange={(event) => {
+                        const nextStart = Math.max(0, Math.min(assemblyTimelineSecondsV36BPW17, Number(event.target.value) || 0));
+                        setAssemblyMusicStartSeconds(nextStart);
+                        if (assemblyMusicEndSeconds <= nextStart) setAssemblyMusicEndSeconds(Math.min(assemblyTimelineSecondsV36BPW17, nextStart + 5));
+                      }}
+                      className="mt-2 w-full rounded-[10px] border border-white/10 bg-black/30 px-3 py-2 text-sm font-bold text-white outline-none"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-black uppercase tracking-[0.16em] text-white/40">Stop Second</span>
+                    <input
+                      type="number"
+                      min={Math.max(1, assemblyMusicStartSeconds + 1)}
+                      max={assemblyTimelineSecondsV36BPW17}
+                      value={assemblyMusicEndSeconds}
+                      onChange={(event) => setAssemblyMusicEndSeconds(Math.max(assemblyMusicStartSeconds + 1, Math.min(assemblyTimelineSecondsV36BPW17, Number(event.target.value) || assemblyTimelineSecondsV36BPW17)))}
+                      className="mt-2 w-full rounded-[10px] border border-white/10 bg-black/30 px-3 py-2 text-sm font-bold text-white outline-none"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-black uppercase tracking-[0.16em] text-white/40">Fade In</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={30}
+                      step={0.25}
+                      value={assemblyMusicFadeInSeconds}
+                      onChange={(event) => setAssemblyMusicFadeInSeconds(Math.max(0, Math.min(30, Number(event.target.value) || 0)))}
+                      className="mt-2 w-full rounded-[10px] border border-white/10 bg-black/30 px-3 py-2 text-sm font-bold text-white outline-none"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-black uppercase tracking-[0.16em] text-white/40">Fade Out</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={30}
+                      step={0.25}
+                      value={assemblyMusicFadeOutSeconds}
+                      onChange={(event) => setAssemblyMusicFadeOutSeconds(Math.max(0, Math.min(30, Number(event.target.value) || 0)))}
+                      className="mt-2 w-full rounded-[10px] border border-white/10 bg-black/30 px-3 py-2 text-sm font-bold text-white outline-none"
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="w-full rounded-[14px] border border-white/10 bg-black/20 p-4 xl:w-[340px]">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Music Volume</span>
+                <span className="text-sm font-black text-emerald-100">{Math.round(assemblyMusicVolume * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={assemblyMusicVolume}
+                onChange={(event) => setAssemblyMusicVolume(Math.max(0, Math.min(1, Number(event.target.value) || 0)))}
+                className="mt-3 w-full"
+              />
+              <div className="mt-4 grid gap-2">
+                <button
+                  type="button"
+                  disabled={assemblyMusicGenerating || !rows.length}
+                  onClick={() => void generateAssemblyBackgroundMusicV36BPW15()}
+                  className="w-full rounded-[12px] border border-emerald-300/30 bg-emerald-300/15 px-4 py-3 text-sm font-black text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {assemblyMusicGenerating ? "Generating Music..." : "Generate Background Music"}
+                </button>
+                <button
+                  type="button"
+                  disabled={assemblyMusicMixing || !(assemblyMusicResult?.audioPath || assemblyMusicResult?.musicPath || assemblyMusicResult?.audioFileName || assemblyMusicResult?.musicFileName) || !(assembleResult?.videoPath || scene.assembledVideoPath)}
+                  onClick={() => void addAssemblyMusicToStitchedVideoV36BPW17()}
+                  className="w-full rounded-[12px] border border-cyan-300/30 bg-cyan-300/15 px-4 py-3 text-sm font-black text-cyan-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {assemblyMusicMixing ? "Adding Music..." : "Add Music to Video"}
+                </button>
+                <button
+                  type="button"
+                  disabled={!assemblyMusicUndoSnapshot}
+                  onClick={() => undoAssemblyMusicV36BPW17()}
+                  className="w-full rounded-[12px] border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-sm font-black text-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Undo Music Add
+                </button>
+                <button
+                  type="button"
+                  disabled={assemblyGallerySaving || !(assembleResult?.videoPath || scene.assembledVideoPath)}
+                  onClick={() => void addAssemblyFinalToGalleryV36BPW18()}
+                  className="w-full rounded-[12px] border border-fuchsia-300/30 bg-fuchsia-300/15 px-4 py-3 text-sm font-black text-fuchsia-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {assemblyGallerySaving ? "Adding to Gallery..." : "Add Final to Gallery"}
+                </button>
+                {assemblyGalleryResult?.url || assemblyGalleryResult?.galleryUrl ? (
+                  <a
+                    href={assemblyGalleryResult.url || assemblyGalleryResult.galleryUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block rounded-[12px] border border-white/10 bg-white/[0.06] px-4 py-3 text-center text-xs font-black text-white/70 hover:border-fuchsia-300/30 hover:text-fuchsia-100"
+                  >
+                    Open Saved Gallery Video
+                  </a>
+                ) : null}
+              </div>
+              {assemblyMusicResult?.audioUrl || assemblyMusicResult?.musicUrl ? (
+                <div className="mt-4 rounded-[12px] border border-white/10 bg-black/25 p-3">
+                  <p className="mb-2 text-xs font-black uppercase tracking-[0.16em] text-white/40">Generated Music Preview</p>
+                  <audio controls src={assemblyMusicResult.audioUrl || assemblyMusicResult.musicUrl} className="w-full" />
+                  <p className="mt-2 break-all text-xs text-white/35">{assemblyMusicResult.audioFileName || assemblyMusicResult.musicFileName}</p>
+                </div>
+              ) : null}
+              {assemblyMusicError ? (
+                <div className="mt-3 rounded-[12px] border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-xs font-bold text-rose-100">
+                  {assemblyMusicError}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+</section>
     );
   }
 // OTG_PRODUCTION_ASSEMBLE_EDIT_HANDOFF_V1_END
 // OTG_PRODUCTION_EDIT_WORKBENCH_V1_END
+// OTG_PRODUCTION_SCENE_CARD_MOSAIC_V1_START
+  function sceneReadyStoryboardImages(scene: ProductionScene | null | undefined) {
+    if (!scene) return [] as Array<{ index: number; url: string; fileName: string }>;
+
+    return Array.from({ length: clampStoryboardImageCount(scene.imageCount) }, (_, index) => {
+      const image = scene.images[index];
+      const url = String(image?.url || "").trim();
+      return {
+        index,
+        url,
+        fileName: String(image?.fileName || "").trim(),
+      };
+    }).filter((row) => row.url);
+  }
+
+  function scenePreviewGridClass(count: number) {
+    if (count <= 1) return "grid-cols-1";
+    if (count <= 4) return "grid-cols-2";
+    if (count <= 9) return "grid-cols-3";
+    return "grid-cols-4";
+  }
+
+  function renderSceneCardPreview(scene: ProductionScene, sceneIndex: number) {
+    const readyImages = sceneReadyStoryboardImages(scene).slice(0, MAX_SCENE_IMAGE_COUNT);
+    const count = readyImages.length;
+
+    if (!count) {
+      return <div className={classNames("h-14 rounded-[10px] bg-gradient-to-br", thumbnailClass(sceneIndex))} />;
+    }
+
+    return (
+      <div
+        className={classNames(
+          "grid h-14 overflow-hidden rounded-[10px] border border-white/60 bg-slate-900",
+          scenePreviewGridClass(count)
+        )}
+        title={`${count} synced scene image${count === 1 ? "" : "s"}`}
+      >
+        {readyImages.map((image) => (
+          <div key={`${scene.id}-preview-${image.index}`} className="relative min-h-0 min-w-0 overflow-hidden bg-slate-800">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={image.url}
+              alt={`${scene.title} scene image ${image.index + 1}`}
+              className="h-full w-full object-cover"
+              loading="lazy"
+            />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  function renderScenePreviewModal() {
+    if (!scenePreviewSceneId) return null;
+    const scene = scenes.find((item) => item.id === scenePreviewSceneId);
+    if (!scene) return null;
+
+    const readyImages = sceneReadyStoryboardImages(scene);
+
+    return (
+      <div
+        className="fixed inset-0 z-[170] overflow-y-auto bg-slate-950/85 px-4 py-6 backdrop-blur-sm"
+        onClick={() => setScenePreviewSceneId("")}
+      >
+        <div
+          className="mx-auto max-w-6xl rounded-[22px] border border-violet-300/30 bg-slate-950 p-5 text-white shadow-2xl"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
+            <div>
+              <div className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">Scene Preview</div>
+              <h3 className="mt-1 text-2xl font-black">{scene.title}</h3>
+              <p className="mt-1 text-sm text-white/60">
+                {readyImages.length}/{clampStoryboardImageCount(scene.imageCount)} synced scene image{readyImages.length === 1 ? "" : "s"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setScenePreviewSceneId("")}
+              className="rounded-[10px] border border-white/15 bg-white/10 px-4 py-2 text-sm font-black text-white transition hover:bg-white/15"
+            >
+              Close
+            </button>
+          </div>
+
+          {readyImages.length ? (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {readyImages.map((image) => (
+                <button
+                  key={`${scene.id}-modal-${image.index}`}
+                  type="button"
+                  onClick={() => {
+                    setSelectedSceneId(scene.id);
+                    setExpandedStoryboardImageIndex(image.index);
+                    setScenePreviewSceneId("");
+                  }}
+                  className="overflow-hidden rounded-[14px] border border-white/10 bg-white/[0.04] text-left transition hover:border-violet-300/60 hover:bg-white/[0.08]"
+                >
+                  <div className="relative aspect-video bg-slate-900">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={image.url}
+                      alt={`${scene.title} scene image ${image.index + 1}`}
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                    />
+                    <span className="absolute left-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/65 text-xs font-black text-white">
+                      {image.index + 1}
+                    </span>
+                  </div>
+                  <div className="px-3 py-2">
+                    <div className="truncate text-xs font-bold text-white/75">{image.fileName || `Storyboard image ${image.index + 1}`}</div>
+                    <div className="mt-1 text-[11px] font-black uppercase tracking-[0.12em] text-violet-200">Open image</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-[16px] border border-white/10 bg-white/[0.04] p-6 text-center text-sm text-white/65">
+              No synced scene pass preview yet.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+// OTG_PRODUCTION_SCENE_CARD_MOSAIC_V1_END
+
 function renderProductionStageNavigation() {
     const currentIndex = stages.findIndex((stage) => stage.id === activeStage);
     const previousStage = currentIndex > 0 ? stages[currentIndex - 1] : null;
@@ -7512,50 +15754,61 @@ function renderProductionStageNavigation() {
     return (
       <nav
         aria-label="Production stage navigation"
+        data-otg-production-stage-bottom-compact="true"
         className="mt-6 rounded-[18px] border border-slate-200 bg-white p-4 shadow-sm"
       >
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="grid gap-3">
           <button
             type="button"
             disabled={!previousStage}
             onClick={() => {
-              if (previousStage) setActiveStage(previousStage.id);
+              if (previousStage) transitionProductionStage(previousStage.id);
             }}
-            className="rounded-[12px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+            className="w-full rounded-[12px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Previous{previousStage ? `: ${previousStage.label}` : ""}
           </button>
 
-          <div className="flex flex-wrap items-center justify-center gap-2">
+          <div className="grid grid-cols-5 gap-2" data-otg-production-stage-square-row="true">
             {stages.map((stage, index) => (
               <button
                 key={stage.id}
                 type="button"
-                onClick={() => setActiveStage(stage.id)}
+                onClick={() => transitionProductionStage(stage.id)}
                 className={[
-                  "h-9 min-w-9 rounded-full border px-3 text-xs font-black transition",
+                  "aspect-square min-w-0 rounded-[10px] border px-1 py-2 text-center transition",
                   stage.id === activeStage
                     ? "border-violet-300 bg-violet-600 text-white"
-                    : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50",
+                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
                 ].join(" ")}
                 aria-current={stage.id === activeStage ? "page" : undefined}
                 title={stage.label}
               >
-                {index + 1}
+                <span className="block text-sm font-black leading-none">{index + 1}</span>
+                <span className="mt-1 block break-words text-[9px] font-black leading-[1.05]">{stage.label}</span>
               </button>
             ))}
           </div>
 
-          <button
-            type="button"
-            disabled={!nextStage}
-            onClick={() => {
-              if (nextStage) setActiveStage(nextStage.id);
-            }}
-            className="rounded-[12px] bg-violet-600 px-4 py-3 text-sm font-black text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Next{nextStage ? `: ${nextStage.label}` : ""}
-          </button>
+          <div className="grid gap-2">
+            <button
+              type="button"
+              onClick={saveDraft}
+              className="w-full rounded-[12px] bg-emerald-500 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-600"
+            >
+              Save Project
+            </button>
+            <button
+              type="button"
+              disabled={!nextStage}
+              onClick={() => {
+                if (nextStage) transitionProductionStage(nextStage.id);
+              }}
+              className="w-full rounded-[12px] bg-violet-600 px-4 py-3 text-sm font-black text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Next{nextStage ? `: ${nextStage.label}` : ""}
+            </button>
+          </div>
         </div>
 
         <div className="mt-3 text-center text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
@@ -7565,8 +15818,122 @@ function renderProductionStageNavigation() {
     );
   }
 // OTG_PRODUCTION_STAGE_BOTTOM_NAV_V1_END
+// OTG_PRODUCTION_VERTICAL_STACK_V1
+// OTG_PRODUCTION_COMPACT_ROTATING_STAGE_NAV_V1
+  function openProductionPipeline(options: { startAtStoryboard?: boolean } = {}) {
+    if (options.startAtStoryboard) transitionProductionStage("storyboard");
+    setProductionHomeMode("pipeline");
+  }
+
+  const productionHomeCardClass = "rounded-[18px] border border-white/10 bg-white/[0.05] p-5 text-left shadow-[0_18px_60px_rgba(76,29,149,0.22)] transition hover:border-violet-300/60 hover:bg-white/[0.08]";
+  const productionHomeButtonClass = "mt-4 rounded-[12px] bg-violet-500 px-4 py-2 text-sm font-black text-white shadow-[0_10px_30px_rgba(139,92,246,0.28)] transition hover:bg-violet-400";
+
+  function renderProductionHomeShell(title: string, children: React.ReactNode) {
+    return (
+      <div data-theme={theme} className="production-board min-h-[calc(100vh-160px)] rounded-[8px] border border-violet-500/20 bg-slate-950 p-5 text-white shadow-[0_20px_70px_rgba(15,23,42,0.4)]">
+        <div className="mx-auto max-w-6xl">
+          <button
+            type="button"
+            onClick={() => setProductionHomeMode("home")}
+            className="mb-5 rounded-[12px] border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-black text-violet-100 transition hover:border-violet-300/60 hover:bg-white/[0.08]"
+          >
+            Back to Production Home
+          </button>
+          <section className="rounded-[24px] border border-white/10 bg-gradient-to-br from-violet-950 via-slate-950 to-slate-900 p-6 shadow-[0_24px_80px_rgba(76,29,149,0.28)]">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-violet-200">Production</p>
+            <h1 className="mt-2 text-3xl font-black tracking-tight text-white">{title}</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-white/65">Start, resume, manage, or review production projects.</p>
+            <div className="mt-6">{children}</div>
+          </section>
+        </div>
+      </div>
+    );
+  }
+
+  if (productionHomeMode === "home") {
+    return (
+      <div data-theme={theme} className="production-board min-h-[calc(100vh-160px)] rounded-[8px] border border-violet-500/20 bg-slate-950 p-5 text-white shadow-[0_20px_70px_rgba(15,23,42,0.4)]">
+        <div className="mx-auto max-w-6xl">
+          <section className="rounded-[24px] border border-white/10 bg-gradient-to-br from-violet-950 via-slate-950 to-slate-900 p-6 shadow-[0_24px_80px_rgba(76,29,149,0.28)]">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-violet-200">Production</p>
+            <h1 className="mt-2 text-4xl font-black tracking-tight text-white">Production</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-white/65">Start, resume, manage, or review production projects.</p>
+
+            <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <button type="button" onClick={handleNewProduction} className={productionHomeCardClass}>
+                <span className="text-lg font-black text-white">New</span>
+                <span className="mt-2 block text-xs leading-5 text-white/35">Enter a project name, then open the workflow at Storyboard.</span>
+              </button>
+              <button type="button" onClick={continueFromAutosave} className={productionHomeCardClass}>
+                <span className="text-lg font-black text-white">Continue</span>
+                <span className="mt-2 block text-xs leading-5 text-white/35">Resume the latest autosave state.</span>
+              </button>
+              <button type="button" onClick={() => setProductionHomeMode("load")} className={productionHomeCardClass}>
+                <span className="text-lg font-black text-white">Load</span>
+                <span className="mt-2 block text-xs leading-5 text-white/35">Choose from available saved production workspaces.</span>
+              </button>
+              <button type="button" onClick={() => setProductionHomeMode("delete")} className={productionHomeCardClass}>
+                <span className="text-lg font-black text-white">Delete</span>
+                <span className="mt-2 block text-xs leading-5 text-white/35">Review deletion options without removing media assets.</span>
+              </button>
+              <button type="button" onClick={() => setProductionHomeMode("completed")} className={productionHomeCardClass}>
+                <span className="text-lg font-black text-white">Completed</span>
+                <span className="mt-2 block text-xs leading-5 text-white/35">Review finished productions in read-only mode.</span>
+              </button>
+            </div>
+          </section>
+        </div>
+      </div>
+    );
+  }
+
+  if (productionHomeMode === "load") {
+    const manualMeta = typeof window !== "undefined" ? productionStoredSaveMeta(PRODUCTION_MANUAL_SAVE_KEY) : null;
+    return renderProductionHomeShell(
+      "Load Production",
+      <div className="rounded-[18px] border border-white/10 bg-black/20 p-4">
+        {manualMeta ? (
+          <>
+            <p className="text-sm font-black text-white">{manualMeta.projectTitle}</p>
+            <p className="mt-1 text-xs leading-5 text-white/35">Last manual save: {formatSaveTime(manualMeta.savedAt) || "unknown time"}</p>
+            <button type="button" onClick={loadManualProduction} className={productionHomeButtonClass}>
+              Load Manual Save
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="text-sm font-black text-white">No manual saved production yet.</p>
+            <p className="mt-1 text-xs leading-5 text-white/35">Use Save Project inside the production pipeline to create a manual load point.</p>
+          </>
+        )}
+      </div>,
+    );
+  }
+
+  if (productionHomeMode === "delete") {
+    return renderProductionHomeShell(
+      "Delete Production",
+      <div className="rounded-[18px] border border-rose-300/20 bg-rose-500/10 p-4">
+        <p className="text-sm font-black text-rose-100">Delete current production</p>
+        <p className="mt-2 text-sm leading-6 text-rose-50/70">Production deletion will be enabled after project library storage is finalized.</p>
+        <button type="button" disabled className="mt-4 rounded-[12px] border border-rose-300/20 bg-rose-300/10 px-4 py-2 text-sm font-black text-rose-100/30">
+          Delete
+        </button>
+      </div>,
+    );
+  }
+
+  if (productionHomeMode === "completed") {
+    return renderProductionHomeShell(
+      "Completed Productions",
+      <div className="rounded-[18px] border border-white/10 bg-black/20 p-4">
+        <p className="text-sm text-white/65">No completed productions yet.</p>
+      </div>,
+    );
+  }
+
   return (
-    <div data-theme={theme} className="production-board min-h-[calc(100vh-160px)] rounded-[8px] border border-slate-200 bg-slate-50 text-slate-950 shadow-[0_20px_70px_rgba(15,23,42,0.12)]">
+  <div data-theme={theme} data-otg-production-pipeline-vertical="true" className="production-board w-full max-w-full overflow-x-hidden min-h-[calc(100vh-160px)] rounded-[8px] border border-slate-200 bg-slate-50 text-slate-950 shadow-[0_20px_70px_rgba(15,23,42,0.12)]">
       <style jsx global>{`
         .production-board {
           transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
@@ -7672,488 +16039,255 @@ function renderProductionStageNavigation() {
           --tw-gradient-to: #334155 var(--tw-gradient-to-position) !important;
         }
       `}</style>
-      <header className="border-b border-slate-200 bg-white px-4 py-4 md:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-600">Production Workflow</p>
-            <input
-              value={projectTitle}
-              onChange={(event) => setProjectTitle(event.target.value)}
-              className="mt-1 w-full max-w-xl rounded-[8px] border border-transparent bg-transparent px-0 py-1 text-2xl font-black tracking-tight text-slate-950 outline-none hover:border-slate-200 hover:px-2 focus:border-violet-300 focus:bg-white focus:px-2"
-              aria-label="Project title"
-            />
+      <header className="border-b border-white/10 bg-slate-950 px-4 py-4 md:px-6">
+        <div className="flex flex-col gap-4">
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200/90">Production Workflow</p>
+            <h1 className="mt-1 max-w-xl truncate text-2xl font-black tracking-tight text-white" title={projectTitle.trim() || "Untitled Production"}>
+              {projectTitle.trim() || "Untitled Production"}
+            </h1>
+            <div className={classNames("mt-2 inline-flex rounded-full border px-3 py-1 text-xs font-black", manualSaveStatusLabel === "Project currently saved" ? "border-emerald-300/40 bg-emerald-400/15 text-emerald-100" : "border-amber-300/40 bg-amber-400/15 text-amber-100")}>
+              {manualSaveStatusLabel}
+            </div>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="flex items-center gap-2 rounded-[8px] border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700"
-              aria-label={`Switch to ${theme === "light" ? "dark" : "light"} production theme`}
-            >
-              <span className={classNames("relative h-5 w-9 rounded-full border", theme === "dark" ? "border-violet-300 bg-violet-600" : "border-slate-300 bg-slate-100")}>
-                <span className={classNames("absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow-sm", theme === "dark" ? "left-4" : "left-0.5")} />
-              </span>
-              {theme === "light" ? "Light" : "Dark"}
-            </button>
-            <button type="button" onClick={handleNewProduction} className="rounded-[8px] border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-bold text-violet-700">New</button>
+          <div className="grid w-full gap-2">
             <button
               type="button"
               onClick={saveDraft}
-              className="rounded-[10px] border border-emerald-300 bg-emerald-500 px-4 py-2 text-sm font-black text-white shadow-[0_10px_30px_rgba(16,185,129,0.28)] transition hover:bg-emerald-600"
+              className="w-full rounded-[10px] border border-emerald-300 bg-emerald-500 px-4 py-3 text-sm font-black text-white shadow-[0_10px_30px_rgba(16,185,129,0.28)] transition hover:bg-emerald-600"
             >
               Save Project
             </button>
-            <button type="button" onClick={resetDraft} className="rounded-[8px] border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">Reset</button>
+            <button
+              type="button"
+              onClick={handleBackToProductionHome}
+              className="w-full rounded-[10px] border border-violet-300/30 bg-violet-500/20 px-4 py-3 text-sm font-black text-violet-100 transition hover:bg-violet-500/30"
+            >
+              Back to Production Home
+            </button>
           </div>
         </div>
         <div
           className={classNames(
             "mt-4 rounded-[12px] border px-4 py-3 shadow-sm",
-            saveState === "saved"
-              ? "border-emerald-300 bg-emerald-50"
-              : saveState === "error"
-                ? "border-rose-300 bg-rose-50"
-                : "border-cyan-200 bg-cyan-50"
+            saveState === "error"
+              ? "border-rose-300/40 bg-rose-950/35"
+              : "border-cyan-300/35 bg-cyan-950/30"
           )}
           aria-live="polite"
         >
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-2">
             <div>
-              <div
-                className={classNames(
-                  "flex items-center gap-2 text-sm font-black",
-                  saveState === "saved" ? "text-emerald-700" : saveState === "error" ? "text-rose-700" : "text-cyan-800"
-                )}
-              >
-                <span
-                  className={classNames(
-                    "h-3 w-3 rounded-full",
-                    saveState === "saved" ? "bg-emerald-500" : saveState === "error" ? "bg-rose-500" : "bg-cyan-500"
-                  )}
-                />
-                {saveState === "saved"
-                  ? "Project saved"
-                  : saveState === "error"
-                    ? "Save needs attention"
-                    : "Autosave is protecting this project"}
+              <div className={classNames("flex items-center gap-2 text-sm font-black", saveState === "error" ? "text-rose-100" : "text-cyan-100")}>
+                <span className={classNames("h-3 w-3 rounded-full", saveState === "error" ? "bg-rose-500" : "bg-cyan-500")} />
+                {saveState === "error" ? "Save needs attention" : "Autosave status"}
               </div>
-              <p className="mt-1 text-xs font-semibold text-slate-600">
+              <p className="mt-1 text-xs font-semibold text-white/75">
                 {saveDetails}
-                {lastSavedAt ? ` Last saved ${formatSaveTime(lastSavedAt)}.` : ""}
+                {lastSavedAt ? ` Last autosaved ${formatSaveTime(lastSavedAt)}.` : " Autosave will update when you move to the next or previous production step."}
+                {manualSavedAt ? ` Last manual save ${formatSaveTime(manualSavedAt)}.` : ""}
               </p>
             </div>
-            <div className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+            <div className="text-xs font-black uppercase tracking-[0.14em] text-white/70">
               {selectedScene ? `${selectedScene.title} - ${stages.find((stage) => stage.id === activeStage)?.label || "Storyboard"}` : "No scene selected"}
             </div>
           </div>
         </div>
-        {notice ? <p className="mt-3 text-sm font-semibold text-slate-500">{notice}</p> : null}
+        {notice ? <p className="mt-3 text-sm font-semibold text-white/80">{notice}</p> : null}
 
-        <nav className="mt-5 grid gap-2 md:grid-cols-4">
-          {stages.map((stage, index) => {
-            const active = activeStage === stage.id;
+        <nav
+          className="mt-5 rounded-[16px] border border-white/10 bg-white/[0.035] p-3"
+          data-otg-production-stage-rotating-rail="true"
+          aria-label="Production workflow steps"
+        >
+          {stages.filter((stage) => stage.id === activeStage).map((stage) => {
+            const activeIndex = stages.findIndex((item) => item.id === stage.id);
+            const rotatedStages = [
+              ...stages.slice(activeIndex + 1),
+              ...stages.slice(0, activeIndex),
+            ];
+
             return (
-              <button
-                key={stage.id}
-                type="button"
-                onClick={() => setActiveStage(stage.id)}
-                className={classNames(
-                  "flex items-center gap-3 rounded-[8px] border px-4 py-3 text-left transition",
-                  active ? "border-violet-500 bg-violet-600 text-white shadow-sm" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-white"
-                )}
-              >
-                <span className={classNames("grid h-7 w-7 place-items-center rounded-full text-xs font-black", active ? "bg-white/18 text-white" : "bg-white text-slate-500")}>{index + 1}</span>
-                <span>
-                  <span className="block text-sm font-black">{stage.label}</span>
-                  <span className={classNames("block text-xs", active ? "text-white/78" : "text-slate-500")}>{stage.description}</span>
-                </span>
-              </button>
-            );
-          })}
-        </nav>
-      </header>
-
-      <div
-        className={[
-          "grid min-h-[720px] grid-cols-1 md:grid-cols-[260px_minmax(0,1fr)]",
-          activeStage === "edit"
-            ? "xl:grid-cols-[280px_minmax(0,1fr)]"
-            : "xl:grid-cols-[280px_minmax(0,1fr)_280px]",
-        ].join(" ")}
-      >
-        <aside className="border-b border-slate-200 bg-white p-4 md:border-b-0 md:border-r">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-black uppercase tracking-[0.14em] text-slate-500">Scenes</h2>
-              <p className="mt-1 text-xs text-slate-500">{readyScenes}/{scenes.length} ready</p>
-            </div>
-            <button type="button" onClick={addSceneLimited} disabled={scenes.length >= MAX_PRODUCTION_SCENES} className="rounded-[8px] border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">Add</button>
-          </div>
-
-          <div className="mt-4 space-y-2">
-            {scenes.map((scene, index) => {
-              const meta = statusMeta(scene.status);
-              const selected = scene.id === selectedScene?.id;
-              return (
+              <div key={stage.id}>
                 <button
-                  key={scene.id}
                   type="button"
-                  onClick={() => setSelectedSceneId(scene.id)}
-                  className={classNames(
-                    "flex w-full gap-3 rounded-[8px] border p-2 text-left transition",
-                    selected ? "border-violet-400 bg-violet-50" : "border-slate-200 bg-white hover:border-slate-300"
-                  )}
+                  onClick={() => transitionProductionStage(stage.id)}
+                  className="flex w-full items-center gap-3 rounded-[12px] border border-violet-400 bg-violet-600 px-4 py-3 text-left text-white shadow-[0_14px_36px_rgba(124,58,237,0.24)]"
+                  aria-current="page"
                 >
-                  <div className={classNames("h-14 w-14 shrink-0 rounded-[8px] bg-gradient-to-br", thumbnailClass(index))} />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-black text-slate-950">{sceneNumber(index)} {scene.title}</div>
-                    <div className="mt-1 text-xs text-slate-500">{scene.durationSeconds.toFixed(1)}s - {scene.imageCount} images</div>
-                    <div className={classNames("mt-1 flex items-center gap-1.5 text-xs font-bold", meta.text)}>
-                      <span className={classNames("h-2 w-2 rounded-full", meta.dot)} />
-                      {meta.label}
-                    </div>
-                  </div>
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[10px] bg-white/18 text-base font-black text-white">{activeIndex + 1}</span>
+                  <span className="min-w-0 truncate text-lg font-black tracking-tight">{stage.label}</span>
                 </button>
-              );
-            })}
-          </div>
-        </aside>
 
-        <main className="min-w-0 bg-slate-50 p-4 pb-32 md:p-6 md:pb-36">
-          {activeStage === "storyboard" && selectedScene ? (
-            <section className="space-y-5">
-              {renderExpandedStoryboardImageModal(selectedScene)}
-              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-4">
-                <div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <h2 className="text-2xl font-black tracking-tight text-slate-950">Scene {sceneNumber(selectedIndex)}</h2>
-                    <input
-                      value={selectedScene.title}
-                      onChange={(event) => updateSelectedScene({ title: event.target.value })}
-                      className="min-w-[220px] rounded-[8px] border border-transparent bg-transparent px-2 py-1 text-xl font-semibold text-slate-600 outline-none hover:border-slate-200 focus:border-violet-300 focus:bg-white"
-                    />
-                  </div>
-                  <p className="mt-1 text-sm text-slate-500">Create and approve all images before animation.</p>
-                  {renderStoryboardGenerationStatus(selectedScene)}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={duplicateScene} className="rounded-[8px] border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">Duplicate</button>
-                  <button type="button" onClick={deleteScene} className="rounded-[8px] border border-rose-200 bg-white px-3 py-2 text-sm font-bold text-rose-600">Delete</button>
-                </div>
-              </div>
-
-
-
-
-              <div className="rounded-[8px] border border-slate-200 bg-white p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <h3 className="text-sm font-black uppercase tracking-[0.14em] text-slate-500">Storyboard Images</h3>
-                    <div className="storyboard-image-count-controls flex items-center gap-2 rounded-[8px] border border-slate-200 bg-slate-50 px-2 py-1">
-                      <div className="min-w-[44px] text-center text-sm font-black text-slate-700">
-                        {selectedScene.imageCount}
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <button
-                          type="button"
-                          aria-label="Increase storyboard image count"
-                          onClick={() => updateSelectedSceneImageCount(selectedScene.imageCount + 1)}
-                          disabled={selectedScene.imageCount >= MAX_SCENE_IMAGE_COUNT}
-                          className="grid h-5 w-6 place-items-center rounded border border-slate-200 bg-white text-[10px] font-black text-slate-700 disabled:cursor-not-allowed disabled:opacity-35"
-                        >
-                          {"\u2191"}
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Decrease storyboard image count"
-                          onClick={() => updateSelectedSceneImageCount(selectedScene.imageCount - 1)}
-                          disabled={selectedScene.imageCount <= 1}
-                          className="grid h-5 w-6 place-items-center rounded border border-slate-200 bg-white text-[10px] font-black text-slate-700 disabled:cursor-not-allowed disabled:opacity-35"
-                        >
-                          {"\u2193"}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => clearAllStoryboardImages(selectedScene.id)}
-                      disabled={busySceneId === selectedScene.id || !selectedScene.images.some((image) => storyboardImageHasContent(image) || image?.status === "queued" || image?.status === "error")}
-                      className="rounded-[8px] border border-rose-200 bg-white px-4 py-2 text-sm font-bold text-rose-600 disabled:cursor-not-allowed disabled:opacity-45"
-                    >
-                      Clear All Images
-                    </button>
-                    <button
-                      type="button"
-                      onClick={generateSelectedSceneImages}
-                      disabled={busySceneId === selectedScene.id || storyboardSlotGenerationTargets(selectedScene).length === 0}
-                      className="rounded-[8px] bg-violet-600 px-4 py-2 text-sm font-black text-white disabled:opacity-60"
-                    >
-                      {busySceneId === selectedScene.id ? "Working..." : "Generate Images"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={syncSelectedSceneImages}
-                      disabled={busySceneId === selectedScene.id || !selectedScene.images.some((image) => image.status === "queued" && image.promptId)}
-                      className="rounded-[8px] border border-slate-200 px-4 py-2 text-sm font-bold text-slate-500 disabled:opacity-55"
-                    >
-                      Sync Results
-                    </button>
-                  </div>
-                </div>
-                <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  {Array.from({ length: selectedScene.imageCount }, (_, index) => {
-                    const img = selectedScene.images[index];
-                    const state = img?.status || (img?.approved ? "ready" : "empty");
+                <div className="mt-3 grid grid-cols-4 gap-2" data-otg-production-rotating-stage-squares="true">
+                  {rotatedStages.map((otherStage) => {
+                    const stageIndex = stages.findIndex((item) => item.id === otherStage.id);
                     return (
-                      <div key={`${selectedScene.id}-image-${index}`} className="group overflow-hidden rounded-[8px] border border-slate-200 bg-slate-100">
-                        <div
-                          className={classNames(
-                            "relative aspect-video bg-gradient-to-br",
-                            img?.url ? "cursor-zoom-in" : "",
-                            img ? thumbnailClass(index) : "from-slate-100 to-slate-200"
-                          )}
-                          onDoubleClick={() => {
-                            if (img?.url) setExpandedStoryboardImageIndex(index);
-                          }}
-                        >
-                          {img?.url ? (
-                            <button
-                              type="button"
-                              onClick={() => setExpandedStoryboardImageIndex(index)}
-                              className="block h-full w-full"
-                              aria-label={`Expand storyboard image ${index + 1}`}
-                            >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={img.url} alt={`${selectedScene.title} storyboard frame ${index + 1}`} className="h-full w-full object-cover" />
-                              <span className="absolute bottom-2 right-2 rounded-full bg-black/65 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-white opacity-0 transition group-hover:opacity-100">
-                                Expand
-                              </span>
-                            </button>
-                          ) : null}
-                          <span className="absolute left-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/55 text-xs font-black text-white">{index + 1}</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs">
-                          <span
-                            title={img?.error || img?.promptId || undefined}
-                            className={classNames(
-                              "flex min-w-0 items-center gap-1.5 truncate font-bold",
-                              state === "ready" ? "text-emerald-600" : state === "queued" ? "text-amber-600" : state === "error" ? "text-rose-600" : "text-slate-400"
-                            )}
-                          >
-                            <span
-                              className={classNames(
-                                "h-2 w-2 shrink-0 rounded-full",
-                                state === "ready" ? "bg-emerald-500" : state === "queued" ? "bg-amber-500" : state === "error" ? "bg-rose-500" : "bg-slate-300"
-                              )}
-                            />
-                            {state === "ready" ? (img?.source === "uploaded" ? "Uploaded" : "Approved") : state === "queued" ? "Queued" : state === "error" ? "Error" : "Empty"}
-                          </span>
-                          <span className="truncate text-slate-400">{img?.fileName || ""}</span>
-                        </div>
-                        <label className="mx-3 mb-3 flex cursor-pointer items-center justify-center rounded-[8px] border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 transition hover:border-violet-300 hover:text-violet-700">
-                          Upload Image
-                          <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp,image/gif"
-                            className="sr-only"
-                            onChange={(event) => {
-                              void uploadStoryboardImageSlot(selectedScene.id, index, event.target.files?.[0]);
-                              event.currentTarget.value = "";
-                            }}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => clearStoryboardImageSlot(selectedScene.id, index)}
-                          disabled={!img || (!storyboardImageHasContent(img) && img.status !== "queued" && img.status !== "error")}
-                          className="mx-3 mb-3 flex w-[calc(100%-1.5rem)] items-center justify-center rounded-[8px] border border-rose-200 bg-white px-3 py-2 text-xs font-black text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          Clear Image
-                        </button>
-                      </div>
+                      <button
+                        key={otherStage.id}
+                        type="button"
+                        onClick={() => transitionProductionStage(otherStage.id)}
+                        className="aspect-square min-w-0 rounded-[10px] border border-slate-200 bg-slate-50 px-1 py-2 text-center text-slate-700 transition hover:border-violet-300 hover:bg-white"
+                        title={otherStage.label}
+                      >
+                        <span className="block text-sm font-black leading-none">{stageIndex + 1}</span>
+                        <span className="mt-1 block break-words text-[10px] font-black leading-[1.05]">{otherStage.label}</span>
+                      </button>
                     );
                   })}
                 </div>
               </div>
+            );
+          })}
+        </nav>
 
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-                <div className="space-y-4">
-                  <div className="rounded-[8px] border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-black uppercase tracking-[0.14em] text-slate-500">Character References</div>
-                        <p className="mt-1 text-xs leading-5 text-slate-500">
-                          Optional. Add 1 to 5 reference images before writing scene prompts.
-                        </p>
+        <section className="mt-5 rounded-[14px] border border-slate-200 bg-slate-50 p-3">
+          <div className="mb-3 flex flex-col gap-3">
+            <div>
+              <h2 className="text-sm font-black uppercase tracking-[0.14em] text-slate-500">Scenes</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                {activeStage === "animate" && selectedScene && (selectedScene as any).qwenAnimateHandoffSourceV36BPU3
+                  ? `${storyboardFramesForAnimate(selectedScene).filter((frame) => frame.approved && frame.url).length}/${storyboardFramesForAnimate(selectedScene).length} ready - storyboard scene clips`
+                  : `${readyScenes}/${scenes.length} ready - maximum ${MAX_PRODUCTION_SCENES} scenes`}
+              </p>
+            </div>
+            {activeStage === "storyboard" ? (
+              <button
+                type="button"
+                onClick={addSceneLimited}
+                disabled={scenes.length >= MAX_PRODUCTION_SCENES}
+                className="w-full rounded-[10px] border border-violet-200 bg-white px-4 py-3 text-sm font-black text-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {scenes.length >= MAX_PRODUCTION_SCENES ? `Maximum ${MAX_PRODUCTION_SCENES} scenes reached` : `+ Add Scene (${scenes.length}/${MAX_PRODUCTION_SCENES})`}
+              </button>
+            ) : null}
+          </div>
+
+          {activeStage === "animate" && selectedScene && (selectedScene as any).qwenAnimateHandoffSourceV36BPU3 ? (
+            <div className="grid gap-3">
+              {storyboardFramesForAnimate(selectedScene).map((frame) => {
+                const draft = animateFrameDrafts(selectedScene)[frame.index];
+                const clip = animateFrameClips(selectedScene)[frame.index];
+                const consumed = isAnimateLastFrameConsumed(draft);
+                const paired = draft?.animationMode === "first_last_frame" && draft?.lastFrameIndex === frame.index + 1;
+                const ready = Boolean(frame.approved && frame.url);
+                const selected = frame.index === activeAnimateSceneIndexV36BPU10B;
+                const statusLabel = consumed
+                  ? `Last frame for Scene ${Number(draft?.consumedByFrameIndex) + 1}`
+                  : paired
+                    ? `Paired to Scene ${Number(draft?.lastFrameIndex) + 1}`
+                    : clip?.status === "ready"
+                      ? "Clip ready"
+                      : ready
+                        ? "Storyboard Ready"
+                        : "Pending image";
+
+                return (
+                  <div key={`animate-scene-strip-${frame.index}`} className="w-full min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => focusAnimateSceneEditorV36BPU6(frame.index)}
+                      className={classNames(
+                        "block w-full rounded-[12px] border p-2 text-left transition",
+                        consumed
+                          ? "border-purple-300/40 bg-purple-950/30 hover:border-purple-200/70"
+                          : selected
+                            ? "border-violet-400 bg-violet-950/40 shadow-sm hover:border-violet-200"
+                            : "border-slate-700 bg-slate-950 hover:border-slate-500"
+                      )}
+                      title={`Open Scene ${frame.index + 1} animation editor`}
+                    >
+                      <div className="aspect-video overflow-hidden rounded-[10px] bg-slate-900">
+                        {frame.url ? (
+                          <img
+                            src={frame.url}
+                            alt={`Scene ${frame.index + 1} storyboard image`}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-[10px] font-black text-slate-500">No image</div>
+                        )}
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs font-bold text-slate-400">
-                          {visibleCharacterReferenceSlotCount(selectedScene)}/{CHARACTER_REFERENCE_SLOTS}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={addCharacterReferenceSlot}
-                          disabled={visibleCharacterReferenceSlotCount(selectedScene) >= CHARACTER_REFERENCE_SLOTS}
-                          className="rounded-[8px] border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-black text-violet-700 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          + Add Character
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => clearAllCharacterReferences(selectedScene.id)}
-                          disabled={!createCharacterSlots(selectedScene.characterRefs).some((ref) => ref.fileName || ref.previewUrl || ref.sourceCharacterId || ref.referenceAudioPath)}
-                          className="rounded-[8px] border border-rose-200 bg-white px-3 py-2 text-xs font-black text-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          Clear All
-                        </button>
+                      <div className="mt-2 truncate text-xs font-black text-white">Scene {frame.index + 1}</div>
+                      <div className="mt-1 text-[11px] text-slate-400">
+                        {draft?.durationSeconds || defaultAnimateFrameDuration(selectedScene)}s - {paired ? "first/last pair" : consumed ? "last frame only" : "image-to-video"}
                       </div>
-                    </div>
-                    <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                      {createCharacterSlots(selectedScene.characterRefs).slice(0, visibleCharacterReferenceSlotCount(selectedScene)).map((ref, index) => (
-                        <div key={ref.id} className="rounded-[8px] border border-slate-200 bg-white p-2">
-                          <div className="flex items-center gap-2">
-                            <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-[8px] border border-slate-200 bg-slate-100 text-xs font-black text-slate-400">
-                              {ref.previewUrl ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img src={ref.previewUrl} alt={ref.label} className="h-full w-full object-cover" />
-                              ) : (
-                                index + 1
-                              )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <input
-                                value={ref.label}
-                                onChange={(event) => updateCharacterReference(selectedScene.id, index, { label: event.target.value })}
-                                className="w-full rounded-[8px] border border-slate-200 px-2 py-1 text-xs font-bold outline-none focus:border-violet-300"
-                                aria-label={`Character ${index + 1} label`}
-                              />
-                              <div className="mt-1 truncate text-[11px] text-slate-500">{ref.fileName || "No image selected"}</div>
-                            </div>
-                          </div>
-                          <div className="mt-2 flex gap-2">
-                            <label className="flex-1 cursor-pointer rounded-[8px] border border-slate-200 px-2 py-1.5 text-center text-xs font-bold text-slate-600">
-                              Choose
-                              <input
-                                type="file"
-                                accept="image/*"
-                                className="sr-only"
-                                onChange={(event) => setCharacterReferenceFile(selectedScene.id, index, event.target.files?.[0] || null)}
-                              />
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => openCharacterPicker(selectedScene.id, index)}
-                              className="flex-1 rounded-[8px] border border-cyan-300/40 bg-cyan-50 px-2 py-1.5 text-center text-xs font-bold text-cyan-700 transition hover:bg-cyan-100"
-                            >
-                              From Characters
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setCharacterReferenceFile(selectedScene.id, index, null)}
-                              className="rounded-[8px] border border-slate-200 px-2 py-1.5 text-xs font-bold text-slate-500"
-                            >
-                              Clear
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => removeCharacterReferenceSlot(selectedScene.id, index)}
-                              className="rounded-[8px] border border-rose-200 px-2 py-1.5 text-xs font-bold text-rose-600"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                      <div className={classNames(
+                        "mt-1 flex items-center gap-1.5 text-[11px] font-bold",
+                        consumed ? "text-purple-200" : ready ? "text-emerald-200" : "text-amber-200"
+                      )}>
+                        <span className={classNames("h-2 w-2 rounded-full", consumed ? "bg-purple-300" : ready ? "bg-emerald-300" : "bg-amber-300")} />
+                        {statusLabel}
+                      </div>
+                    </button>
                   </div>
-
-                  <section className="rounded-[8px] border border-slate-200 bg-white p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-black uppercase tracking-[0.14em] text-slate-500">
-                          Scene {selectedIndex + 1} Setup
-                        </div>
-                        <p className="mt-1 text-xs leading-5 text-slate-500">
-                          Each image gets its own prompt. The compiled Next Scene lines below are what generation uses.
-                        </p>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {scenes.map((scene, index) => {
+                const meta = statusMeta(scene.status);
+                const selected = scene.id === selectedScene?.id;
+                const readyImages = sceneReadyStoryboardImages(scene);
+                return (
+                  <div key={scene.id} className="w-full min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSceneId(scene.id)}
+                      className={classNames(
+                        "block w-full rounded-[12px] border p-2 text-left transition",
+                        selected ? "border-violet-400 bg-violet-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300"
+                      )}
+                      title="Select scene"
+                    >
+                      {renderSceneCardPreview(scene, index)}
+                      <div className="mt-2 truncate text-xs font-black text-slate-950">{sceneNumber(index)} {scene.title}</div>
+                      <div className="mt-1 text-[11px] text-slate-500">{scene.durationSeconds.toFixed(1)}s - {scene.imageCount} image{scene.imageCount === 1 ? "" : "s"}</div>
+                      <div className={classNames("mt-1 flex items-center gap-1.5 text-[11px] font-bold", meta.text)}>
+                        <span className={classNames("h-2 w-2 rounded-full", meta.dot)} />
+                        {meta.label}
                       </div>
-                      <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-black text-slate-500">
-                        Status: {statusMeta(selectedScene.status).label}
-                      </div>
-                    </div>
+                    </button>
 
+                    {readyImages.length ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedSceneId(scene.id);
+                          setScenePreviewSceneId(scene.id);
+                        }}
+                        className="mt-2 w-full rounded-[10px] border border-violet-300 bg-violet-600 px-2 py-2 text-center text-[11px] font-black text-white shadow-sm transition hover:bg-violet-700"
+                      >
+                        View Synced Images
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      </header>
 
+      {renderScenePreviewModal()}
 
-
-                    <div className="mt-5">
-                      <div className="text-sm font-black uppercase tracking-[0.14em] text-slate-500">Scene Prompts</div>
-                      <div className="mt-3 grid gap-3">
-                        {scenePromptLines(selectedScene).map((line, index) => (
-                          <label key={`${selectedScene.id}_scene_prompt_${index}`} className="block rounded-[8px] border border-slate-200 bg-slate-50 p-3">
-                            <span className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
-                              Scene Prompt {index + 1}
-                            </span>
-                            <textarea
-                              value={line}
-                              onChange={(event) => updateSelectedScenePromptLine(index, event.target.value)}
-                              rows={3}
-                              className="mt-2 w-full resize-none rounded-[8px] border border-slate-200 px-3 py-2 text-sm leading-6 text-slate-700 outline-none focus:border-violet-300"
-                              placeholder={`Next Scene ${index + 1}: describe what image ${index + 1} should show.`}
-                            />
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-
-                    <details className="mt-5 rounded-[8px] border border-slate-200 bg-slate-50 p-3">
-                      <summary className="cursor-pointer text-xs font-black uppercase tracking-[0.14em] text-slate-500">
-                        Compiled Scene Prompt / Next Scene Lines
-                      </summary>
-                      <textarea
-                        value={selectedScene.prompt}
-                        onChange={(event) => updateSelectedScene({ prompt: event.target.value })}
-                        rows={6}
-                        className="mt-3 w-full resize-none rounded-[8px] border border-slate-200 px-3 py-3 text-sm leading-6 text-slate-700 outline-none focus:border-violet-300"
-                        placeholder="Next Scene 1: ..."
-                      />
-                    </details>
-                  </section>
-                </div>
-                <div className="grid gap-3">
-                  <button type="button" disabled className="rounded-[8px] border border-slate-200 bg-white px-4 py-3 text-left text-sm font-black text-slate-400">Review Storyboard</button>
-                  <button type="button" disabled className="rounded-[8px] bg-violet-600 px-4 py-3 text-left text-sm font-black text-white disabled:opacity-60">Lock Storyboard & Continue</button>
-                </div>
-              </div>
-
-              <details className="rounded-[8px] border border-slate-200 bg-white p-4">
-                <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.14em] text-slate-500">Production Manifest Preview</summary>
-                <pre className="mt-3 max-h-72 overflow-auto rounded-[8px] bg-slate-950 p-4 text-xs leading-5 text-slate-100">{manifestPreview}</pre>
-              </details>
+      <div className="grid min-h-[720px] w-full max-w-full grid-cols-1 overflow-x-hidden">
+        <main className="min-w-0 w-full max-w-full overflow-x-hidden bg-slate-50 p-4 pb-32 md:p-6 md:pb-36">
+          {activeStage === "storyboard" && selectedScene ? (
+            <section className="space-y-5">
+              <QwenSceneBuilderPanel
+                productionProjectTitle={projectTitle}
+                productionSceneId={selectedScene?.id || selectedSceneId}
+                productionSceneName={selectedScene?.title || "Scene"}
+              />
             </section>
-          ) : activeStage === "animate" ? (renderAnimateStage()) : activeStage === "edit" ? (renderEditStage()) : activeStage === "assemble" ? (renderAssembleStage()) : (<StageShell stage={activeStage} active={activeStage} />)}
+          ) : activeStage === "animate" ? (renderAnimateStage()) : activeStage === "edit" ? (renderEditStage()) : activeStage === "audio" ? (renderAudioStudioStage()) : activeStage === "assemble" ? (renderAssembleStage()) : (<StageShell stage={activeStage} active={activeStage} />)}
           {renderProductionStageNavigation()}
         </main>
 
-        <aside className={["border-t border-slate-200 bg-white p-4 xl:border-l xl:border-t-0", activeStage === "edit" ? "hidden" : ""].join(" ")}>
-          <h2 className="text-sm font-black uppercase tracking-[0.14em] text-violet-600">Scene Properties</h2>
-          {selectedScene ? (
-            <div className="mt-4 space-y-4">
-              <label className="block">
-                <span className="text-xs font-bold text-slate-500">Title</span>
-                <input value={selectedScene.title} onChange={(event) => updateSelectedScene({ title: event.target.value })} className="mt-1 w-full rounded-[8px] border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-300" />
-              </label>
-              <label className="block">
-                <span className="text-xs font-bold text-slate-500">Style</span>
-                <select value={selectedScene.style} onChange={(event) => updateSelectedScene({ style: event.target.value })} className="mt-1 w-full rounded-[8px] border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-300">
-                  <option>Cinematic Fantasy</option>
-                  <option>Realistic Film</option>
-                  <option>Anime Feature</option>
-                  <option>Noir Trailer</option>
-                </select>
-              </label>
-              {characterPickerSceneId && characterPickerSlotIndex !== null ? (
+
+        {characterPickerSceneId && characterPickerSlotIndex !== null ? (
                 <div
                   className="fixed inset-0 z-[160] overflow-y-auto bg-slate-950/80 px-4 py-6 backdrop-blur-sm"
                   onClick={closeCharacterPicker}
@@ -8216,21 +16350,21 @@ function renderProductionStageNavigation() {
                             type="button"
                             onClick={() => void applyCharacterPickerItem(item)}
                             disabled={Boolean(characterPickerSelectingId)}
-                            className="group overflow-hidden rounded-[14px] border border-slate-200 bg-white text-left transition hover:border-cyan-300 hover:bg-cyan-50 disabled:cursor-wait disabled:opacity-60"
+                            className="group overflow-hidden rounded-[14px] border border-slate-200 bg-white text-center transition hover:border-cyan-300 hover:bg-cyan-50 disabled:cursor-wait disabled:opacity-60"
                           >
-                            <div className="aspect-square bg-slate-100">
+                            <div className="aspect-[3/4] bg-slate-100 p-2">
                               {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
                                 src={item.imageUrl}
                                 alt={item.name}
-                                className="h-full w-full object-cover"
+                                className="h-full w-full object-contain"
                                 loading="lazy"
                               />
                             </div>
-                            <div className="border-t border-slate-200 px-3 py-2">
-                              <div className="truncate text-xs font-black text-slate-800">{item.name}</div>
+                            <div className="border-t border-slate-200 px-3 py-3 text-center">
+                              <div className="truncate text-sm font-black text-slate-900">{item.name}</div>
                               {characterPickerSelectingId === item.id ? (
-                                <div className="mt-1 text-[11px] font-bold text-cyan-700">Selecting...</div>
+                                <div className="mt-1 text-xs font-bold text-cyan-700">Selecting...</div>
                               ) : null}
                             </div>
                           </button>
@@ -8241,31 +16375,6 @@ function renderProductionStageNavigation() {
                 </div>
               ) : null}
 
-              <label className="block">
-                <span className="text-xs font-bold text-slate-500">Motion Notes</span>
-                <textarea value={selectedScene.motionNotes} onChange={(event) => updateSelectedScene({ motionNotes: event.target.value })} rows={4} className="mt-1 w-full resize-none rounded-[8px] border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-300" placeholder="Slow push-in, subtle drift..." />
-              </label>
-              <div className="grid grid-cols-2 gap-3 rounded-[8px] border border-slate-200 bg-slate-50 p-3">
-                <div>
-                  <div className="text-xs font-bold text-slate-500">Total Scenes</div>
-                  <div className="mt-1 text-lg font-black">{scenes.length}</div>
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-500">Total Images</div>
-                  <div className="mt-1 text-lg font-black">{totals.images}</div>
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-500">Duration</div>
-                  <div className="mt-1 text-lg font-black">{totals.duration.toFixed(1)}s</div>
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-500">Ready</div>
-                  <div className="mt-1 text-lg font-black">{readyScenes}</div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </aside>
       </div>
     </div>
   );

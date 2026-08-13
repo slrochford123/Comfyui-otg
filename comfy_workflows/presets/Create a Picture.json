@@ -1,46 +1,107 @@
 {
-  "73": {
+  "3": {
     "inputs": {
-      "filename_prefix": "ernie-image-turbo",
-      "images": [
-        "106",
+      "cfg": 8,
+      "denoise": 1,
+      "latent_image": [
+        "6",
         0
-      ]
+      ],
+      "model": [
+        "4",
+        0
+      ],
+      "negative": [
+        "8",
+        0
+      ],
+      "positive": [
+        "7",
+        0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "seed": 42,
+      "steps": 12
     },
-    "class_type": "SaveImage",
+    "class_type": "KSampler",
     "_meta": {
-      "title": "Save Image"
+      "title": "KSampler"
     }
   },
-  "104": {
+  "4": {
     "inputs": {
-      "width": 1024,
-      "height": 1024,
-      "batch_size": 1
+      "ckpt_name": "qwen_image_2512_fp8_e4m3fn.safetensors"
     },
-    "class_type": "EmptyFlux2LatentImage",
+    "class_type": "CheckpointLoaderSimple",
     "_meta": {
-      "title": "Empty Flux 2 Latent"
+      "title": "Load Checkpoint"
     }
   },
-  "105": {
+  "5": {
     "inputs": {
-      "unet_name": "ernie-image-turbo.safetensors",
-      "weight_dtype": "default"
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image"
     },
-    "class_type": "UNETLoader",
+    "class_type": "CLIPLoader",
     "_meta": {
-      "title": "Load Diffusion Model"
+      "title": "Load CLIP"
     }
   },
-  "106": {
+  "6": {
+    "inputs": {
+      "batch_size": 1,
+      "height": 512,
+      "width": 512
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "7": {
+    "inputs": {
+      "clip": [
+        "5",
+        0
+      ],
+      "text": "__OTG_POSITIVE_PROMPT__"
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "8": {
+    "inputs": {
+      "clip": [
+        "5",
+        0
+      ],
+      "text": "__OTG_NEGATIVE_PROMPT__"
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "9": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "10": {
     "inputs": {
       "samples": [
-        "107",
+        "3",
         0
       ],
       "vae": [
-        "110",
+        "9",
         0
       ]
     },
@@ -49,85 +110,24 @@
       "title": "VAE Decode"
     }
   },
-  "107": {
+  "11": {
     "inputs": {
-      "seed": 423299999918804,
-      "steps": 8,
-      "cfg": 1,
-      "sampler_name": "euler",
-      "scheduler": "simple",
-      "denoise": 1,
-      "model": [
-        "105",
-        0
-      ],
-      "positive": [
-        "108",
-        0
-      ],
-      "negative": [
-        "111",
-        0
-      ],
-      "latent_image": [
-        "104",
+      "filename_prefix": "otg-qwen-image",
+      "images": [
+        "10",
         0
       ]
     },
-    "class_type": "KSampler",
+    "class_type": "SaveImage",
     "_meta": {
-      "title": "KSampler"
-    }
-  },
-  "108": {
-    "inputs": {
-      "text": "__OTG_POSITIVE_PROMPT__",
-      "clip": [
-        "109",
-        0
-      ]
-    },
-    "class_type": "CLIPTextEncode",
-    "_meta": {
-      "title": "CLIP Text Encode (Prompt)"
-    }
-  },
-  "109": {
-    "inputs": {
-      "clip_name": "ministral-3-3b.safetensors",
-      "type": "flux2",
-      "device": "default"
-    },
-    "class_type": "CLIPLoader",
-    "_meta": {
-      "title": "Load CLIP"
-    }
-  },
-  "110": {
-    "inputs": {
-      "vae_name": "flux2-vae.safetensors"
-    },
-    "class_type": "VAELoader",
-    "_meta": {
-      "title": "Load VAE"
-    }
-  },
-  "111": {
-    "inputs": {
-      "conditioning": [
-        "108",
-        0
-      ]
-    },
-    "class_type": "ConditioningZeroOut",
-    "_meta": {
-      "title": "ConditioningZeroOut"
+      "title": "Save Image"
     }
   },
   "__otg": {
-    "promptNodeId": "108",
-    "description": "ERNIE-Image-Turbo text-to-image preset cleaned for OTG. Removed PreviewAny and prompt-enhancer helper nodes that were causing Comfy validation failures in the web app.",
-    "modelFamily": "ernie-image-turbo",
-    "supportsNegativePrompt": false
+    "promptNodeId": "7",
+    "negativeNodeId": "8",
+    "description": "Default OTG Generate text-to-image preset uses the Linux-verified Qwen Image workflow from remote_smoke_test.sh. Ernie/Flux2 is disabled here because ministral-3-3b.safetensors with CLIP type flux2 fails with a Llama2 size mismatch on Linux ComfyUI.",
+    "modelFamily": "qwen-image-2512",
+    "supportsNegativePrompt": true
   }
 }

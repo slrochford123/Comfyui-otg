@@ -1,0 +1,27 @@
+[Unit]
+Description=ComfyUI-OTG TEST Linux Qwen3 Character Voice Worker
+Wants=network-online.target
+After=network-online.target otg-test.service otg-comfyui.service
+Requires=otg-test.service
+
+[Service]
+Type=simple
+User=shawn-rochford
+Group=shawn-rochford
+WorkingDirectory=/home/shawn-rochford/AI/deploy/otg-test/current
+EnvironmentFile=/etc/otg/character-completion-worker.env
+EnvironmentFile=/etc/otg/character-voice-worker.env
+ExecStart=/usr/bin/python3 /home/shawn-rochford/AI/deploy/otg-test/current/scripts/linux/otg-character-voice-worker.py --base-url http://100.75.162.64:3001 --device-id linux-qwen3-voice --worker-id linux-qwen3-voice-worker --poll-seconds 10
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=30
+Nice=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+ReadWritePaths=/home/shawn-rochford/AI/runtime/test /home/shawn-rochford/AI/deploy/otg-test /home/shawn-rochford/AI/work/OTG-Test2
+
+[Install]
+WantedBy=multi-user.target

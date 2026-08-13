@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import * as React from "react";
 import * as THREE from "three";
@@ -6,8 +6,29 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import OtgMultiAngleControl from "./OtgMultiAngleControl";
 import AnglesDirectorCameraControl from "./AnglesDirectorCameraControl";
+import SplatViewer from "./SplatViewer";
+import { serializeAnglesCamera } from "@/lib/anglesCamera";
 
 type AnglesTab = "camera" | "model" | "textures";
+const ANGLES_VERTICAL_MIN = -30;
+const ANGLES_VERTICAL_MAX = 60;
+const ANGLES_HORIZONTAL_MIN = -180;
+const ANGLES_HORIZONTAL_MAX = 180;
+const ANGLES_ZOOM_MIN = -5;
+const ANGLES_ZOOM_MAX = 5;
+
+function clampAnglesNumber(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(min, Math.min(max, value));
+}
+
+function normalizeAnglesHorizontal(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  let next = value % 360;
+  if (next > 180) next -= 360;
+  if (next < -180) next += 360;
+  return Math.max(ANGLES_HORIZONTAL_MIN, Math.min(ANGLES_HORIZONTAL_MAX, next));
+}
 type ViewerLoadState = "idle" | "loading" | "loaded" | "error";
 type AnglesImageResult = { label: string; url: string; filename?: string };
 // OTG_ANGLES_GALLERY_PICKER: Gallery image picker for Angles Camera tab.
@@ -31,11 +52,11 @@ type AnglesGalleryImageItem = {
 const TAB_META: Record<AnglesTab, { label: string; help: string }> = {
   camera: {
     label: "Camera",
-    help: "Upload the source image here. Upload automatically starts the base Hunyuan 3D build on port 8080.",
+    help: "Upload the source image here. Use 3D Model to generate a TripoSplat model through ComfyUI.",
   },
   model: {
     label: "3D Model",
-    help: "Shows the base 3D model generated from the original uploaded image by Hunyuan 3D on port 8080.",
+    help: "Shows the 3D Model generated from the original uploaded image by the TripoSplat ComfyUI workflow.",
   },
   textures: {
     label: "Textures",
@@ -86,6 +107,10 @@ function modelExtFromUrl(url: string) {
 
 function canPreviewInViewer(url: string) {
   return /\.(glb|gltf)$/i.test(extractModelPathFromUrl(url));
+}
+
+function isSpzModelUrl(url: string) {
+  return /\.spz$/i.test(extractModelPathFromUrl(url));
 }
 
 // OTG_ANGLES_CLIENT_FRESH_IMAGE_URL_V2
@@ -196,6 +221,25 @@ export default function AnglesPanel() {
   const [horizontal, setHorizontal] = React.useState(0);
   const [vertical, setVertical] = React.useState(0);
   const [zoom, setZoom] = React.useState(0);
+  // OTG_SPZ_SAFE_CAMERA_STATE_GUARD
+  // Keep SPZ camera controls inside practical visible bounds.
+  React.useEffect(() => {
+    const nextHorizontal = normalizeAnglesHorizontal(horizontal);
+    const nextVertical = clampAnglesNumber(vertical, ANGLES_VERTICAL_MIN, ANGLES_VERTICAL_MAX);
+    const nextZoom = clampAnglesNumber(zoom, ANGLES_ZOOM_MIN, ANGLES_ZOOM_MAX);
+
+    if (Math.abs(nextHorizontal - horizontal) > 0.001) {
+      setHorizontal(nextHorizontal);
+    }
+
+    if (Math.abs(nextVertical - vertical) > 0.001) {
+      setVertical(nextVertical);
+    }
+
+    if (Math.abs(nextZoom - zoom) > 0.001) {
+      setZoom(nextZoom);
+    }
+  }, [horizontal, vertical, zoom]);
 
   const [baseBusy, setBaseBusy] = React.useState(false);
   const [baseMsg, setBaseMsg] = React.useState("Upload an image to begin.");
@@ -212,6 +256,30 @@ export default function AnglesPanel() {
   const [viewerLoadMessage, setViewerLoadMessage] = React.useState("");
 
   const currentModelUrl = activeTab === "textures" ? texturedModelUrl : activeTab === "model" ? baseModelUrl : "";
+
+  // OTG_SPZ_NEW_MODEL_CAMERA_RESET
+
+  // A refreshed page can rehydrate stale yaw/pitch/zoom. When a newly generated SPZ URL
+
+  // arrives, reset the Angles camera and let the Spark viewer mount from a clean frame.
+
+  const lastSpzModelUrlRef = React.useRef("");
+
+  React.useEffect(() => {
+
+    if (!currentModelUrl || !isSpzModelUrl(currentModelUrl)) return;
+
+    if (lastSpzModelUrlRef.current === currentModelUrl) return;
+
+    lastSpzModelUrlRef.current = currentModelUrl;
+
+    setHorizontal(0);
+
+    setVertical(0);
+
+    setZoom(0);
+
+  }, [currentModelUrl]);
   const currentPreviewSupported = activeTab === "textures" ? texturedPreviewSupported : basePreviewSupported;
   const [isMobileLayout, setIsMobileLayout] = React.useState(false);
 
@@ -356,6 +424,13 @@ export default function AnglesPanel() {
       setViewerLoadMessage("");
       return;
     }
+    if (isSpzModelUrl(currentModelUrl)) {
+      disposeViewer();
+      setViewerLoadState("loaded");
+      setViewerLoadMessage("Spark SPZ splat viewer ready.");
+      return;
+    }
+
     if (!canPreviewInViewer(currentModelUrl)) {
       disposeViewer();
       setViewerLoadState("error");
@@ -565,13 +640,13 @@ export default function AnglesPanel() {
     async (selectedFile: File) => {
       const deviceId = getOrCreateDeviceId();
       setBaseBusy(true);
-      setBaseMsg("Generating base 3D model on Hunyuan 3D port 8080...");
+      setBaseMsg("Generating TripoSplat 3D Model through ComfyUI...");
       setBaseJobId("");
       setBaseModelUrl("");
       setBasePreviewSupported(false);
       setTexturedModelUrl("");
       setTexturedPreviewSupported(false);
-      setTextureMsg("Texture pass: queued after base model");
+      setTextureMsg("Texture pass removed. TripoSplat 3D Model path is ready.");
       try {
         const fd = new FormData();
         fd.append("image", selectedFile, selectedFile.name);
@@ -597,9 +672,9 @@ const res = await fetch("/api/angles/model-3d", {
         setBaseJobId(nextJobId);
         setBaseModelUrl(String(json.modelUrl || ""));
         setBasePreviewSupported(Boolean(json.previewSupported));
-        setBaseMsg("Base model: ready");
+        setBaseMsg("3D Model: ready");
         if (nextJobId) {
-          void startTextureGeneration(nextJobId, deviceId);
+          setTextureMsg("Texture pass removed. TripoSplat 3D Model path is ready.");
         }
       } catch (error: any) {
         setBaseMsg(error?.message || "Base model generation failed.");
@@ -626,13 +701,15 @@ const res = await fetch("/api/angles/model-3d", {
       const fd = new FormData();
         fd.append("image", file, file.name);
 
-        const angleHorizontal = ((Math.round(horizontalRef.current) % 360) + 360) % 360;
-        const angleVertical = ((Math.round(verticalRef.current) % 360) + 360) % 360;
-        const angleZoom = Math.max(1, Math.min(10, 5 + Number(zoomRef.current || 0)));
+        const camera = serializeAnglesCamera(
+          horizontalRef.current,
+          verticalRef.current,
+          zoomRef.current
+        );
 
-        fd.append("angleHorizontal", String(angleHorizontal));
-        fd.append("angleVertical", String(angleVertical));
-        fd.append("angleZoom", String(angleZoom));
+        fd.append("angleHorizontal", String(camera.horizontal));
+        fd.append("angleVertical", String(camera.vertical));
+        fd.append("angleZoom", String(camera.zoom));
         fd.append("angleDefaultPrompts", "true");
         fd.append("angleCameraView", "true");
 
@@ -674,9 +751,6 @@ const res = await fetch("/api/angles/model-3d", {
     }
 
     const deviceId = getOrCreateDeviceId();
-    const normalizedHorizontal = ((horizontal % 360) + 360) % 360;
-    const normalizedZoom = Math.max(1, Math.min(10, 5 + zoom));
-
     setAnglesBusy(true);
     setAnglesMsg("Submitting current camera angle to ComfyUI...");
     setAnglesImages([]);
@@ -685,13 +759,15 @@ const res = await fetch("/api/angles/model-3d", {
       const fd = new FormData();
         fd.append("image", file, file.name);
 
-        const angleHorizontal = ((Math.round(horizontalRef.current) % 360) + 360) % 360;
-        const angleVertical = ((Math.round(verticalRef.current) % 360) + 360) % 360;
-        const angleZoom = Math.max(1, Math.min(10, 5 + Number(zoomRef.current || 0)));
+        const camera = serializeAnglesCamera(
+          horizontalRef.current,
+          verticalRef.current,
+          zoomRef.current
+        );
 
-        fd.append("angleHorizontal", String(angleHorizontal));
-        fd.append("angleVertical", String(angleVertical));
-        fd.append("angleZoom", String(angleZoom));
+        fd.append("angleHorizontal", String(camera.horizontal));
+        fd.append("angleVertical", String(camera.vertical));
+        fd.append("angleZoom", String(camera.zoom));
         fd.append("angleDefaultPrompts", "true");
         fd.append("angleCameraView", "true");
 
@@ -910,29 +986,11 @@ const res = await fetch("/api/angles/model-3d", {
       <button
         type="button"
         className="otg-btnGhost"
-        onClick={() => baseJobId && void startTextureGeneration(baseJobId, getOrCreateDeviceId())}
-        disabled={!baseJobId || baseBusy || textureBusy}
-        style={{ borderRadius: 999, padding: "10px 14px" }}
-      >
-        {textureBusy ? "Creating Texture..." : "Create Texture Model"}
-      </button>
-      <button
-        type="button"
-        className="otg-btnGhost"
         onClick={() => setActiveTab("model")}
         disabled={!baseModelUrl}
         style={{ borderRadius: 999, padding: "10px 14px" }}
       >
         Open 3D Model
-      </button>
-      <button
-        type="button"
-        className="otg-btnGhost"
-        onClick={() => setActiveTab("textures")}
-        disabled={!baseJobId}
-        style={{ borderRadius: 999, padding: "10px 14px" }}
-      >
-        Open Textures
       </button>
       <button
         type="button"
@@ -996,14 +1054,39 @@ const res = await fetch("/api/angles/model-3d", {
           }}
         >
           {modelUrl ? (
-            <>
-              <div ref={viewerMountRef} style={{ width: "100%", height: viewerStageHeight, borderRadius: 12, overflow: "hidden", maxWidth: "100%" }} />
-              {viewerLoadState !== "loaded" ? (
-                <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", background: "rgba(2,6,23,0.28)" }}>
-                  {viewerLoadMessage || "Loading 3D model..."}
-                </div>
-              ) : null}
-            </>
+            isSpzModelUrl(modelUrl) ? (
+              <SplatViewer
+                key={modelUrl}
+                modelUrl={modelUrl}
+                height={viewerStageHeight}
+                horizontal={horizontal}
+                vertical={vertical}
+                zoom={zoom}
+                onCameraChange={(next) => {
+                  setHorizontal(normalizeAnglesHorizontal(next.horizontal));
+                  setVertical(clampAnglesNumber(next.vertical, ANGLES_VERTICAL_MIN, ANGLES_VERTICAL_MAX));
+                  setZoom(clampAnglesNumber(next.zoom, ANGLES_ZOOM_MIN, ANGLES_ZOOM_MAX));
+                }}
+                disabled={busyState}
+                onReady={() => {
+                  setViewerLoadState("loaded");
+                  setViewerLoadMessage("SPZ splat viewer ready.");
+                }}
+                onError={(message) => {
+                  setViewerLoadState("error");
+                  setViewerLoadMessage(message);
+                }}
+              />
+            ) : (
+              <>
+                <div ref={viewerMountRef} style={{ width: "100%", height: viewerStageHeight, borderRadius: 12, overflow: "hidden", maxWidth: "100%" }} />
+                {viewerLoadState !== "loaded" ? (
+                  <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", background: "rgba(2,6,23,0.28)" }}>
+                    {viewerLoadMessage || "Loading 3D model..."}
+                  </div>
+                ) : null}
+              </>
+            )
           ) : (
             <div className="otg-muted">{busyState ? "Please wait..." : "No model available yet for this tab."}</div>
           )}
@@ -1162,11 +1245,11 @@ const res = await fetch("/api/angles/model-3d", {
       {anglesGalleryPickerModal}
       <div className="otg-card" style={{ padding: 16 }}>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <EndpointBadge label="Hunyuan 3D / hy3dgen: 127.0.0.1:8080" />
+          <EndpointBadge label="TripoSplat 3D Model / ComfyUI: 127.0.0.1:8188" />
         </div>
 
         <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {(["camera", "model", "textures"] as AnglesTab[]).map((tabId) => {
+          {(["camera", "model"] as AnglesTab[]).map((tabId) => {
             const active = activeTab === tabId;
             return (
               <button
@@ -1238,7 +1321,7 @@ const res = await fetch("/api/angles/model-3d", {
                 {imagePreviewUrl ? (
                   <img src={imagePreviewUrl} alt="source" draggable={false} style={{ maxWidth: "100%", maxHeight: "100%", height: "auto", objectFit: "contain", userSelect: "none" }} />
                 ) : (
-                  <div className="otg-help">Upload an image to start the base Hunyuan 3D build.</div>
+                  <div className="otg-help">Upload an image, then create the TripoSplat 3D Model.</div>
                 )}
               </div>
             </div>

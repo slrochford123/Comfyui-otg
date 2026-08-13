@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { configuredImageComfyBaseUrl, configuredVideoComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
@@ -102,8 +102,9 @@ function sortDirectSyncFiles(files: DirectSyncHistoryFile[]) {
     const ka = directSyncOrderKey(a.filename);
     const kb = directSyncOrderKey(b.filename);
 
-    if (ka.lastNumber !== kb.lastNumber) return ka.lastNumber - kb.lastNumber;
-    return ka.file.localeCompare(kb.file, undefined, { numeric: true, sensitivity: "base" });
+    // Prefer newer Comfy output names such as _00004 over _00001.
+    if (ka.lastNumber !== kb.lastNumber) return kb.lastNumber - ka.lastNumber;
+    return kb.file.localeCompare(ka.file, undefined, { numeric: true, sensitivity: "base" });
   });
 }
 
@@ -284,7 +285,7 @@ async function runSync(req: NextRequest, body: Record<string, any>) {
       const normalItems = Array.isArray(payloadAny.items) ? payloadAny.items : [];
       const normalStatus = String(payloadAny.status || "").trim().toLowerCase();
 
-      if (!normalSaved.length && !normalItems.length && (!normalStatus || normalStatus === "pending")) {
+      if (!normalSaved.length && !normalItems.length && (!normalStatus || normalStatus === "pending" || normalStatus === "already-synced")) {
         const fallback = await syncPromptOutputsDirectFallback({
           promptId,
           ownerKey: owner.ownerKey,
@@ -303,7 +304,7 @@ async function runSync(req: NextRequest, body: Record<string, any>) {
             normalSyncStatus: payloadAny.status || "pending",
             normalSyncSavedCount: normalSaved.length,
             normalSyncItemCount: normalItems.length,
-            fallbackReason: "normal-sync-returned-empty-pending",
+            fallbackReason: "normal-sync-returned-empty-pending-or-already-synced",
             ...fallbackPayload,
           });
         }
@@ -314,7 +315,7 @@ async function runSync(req: NextRequest, body: Record<string, any>) {
           owner,
           ...payload,
           fallbackAttempted: true,
-          fallbackReason: "normal-sync-returned-empty-pending",
+          fallbackReason: "normal-sync-returned-empty-pending-or-already-synced",
           fallbackError: fallbackPayload.error || null,
           fallbackTriedBaseUrls: fallbackPayload.triedBaseUrls || [],
         });
@@ -393,3 +394,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
 }
+
+

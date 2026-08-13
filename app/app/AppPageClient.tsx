@@ -5,8 +5,40 @@ import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
 import type { GalleryActionKind } from "./components/GalleryWorkspace";
+import {
+  APP_COLOR_MODE_KEY,
+  APP_CUSTOM_COLOR_KEY,
+  APP_THEME_KEY,
+  APP_THEME_OPTIONS,
+  DEFAULT_CUSTOM_COLOR,
+  generateThemeFromColor,
+  resolveThemeBaseColor,
+  themeTokensToCssVars,
+  type AppColorMode,
+  type AppThemeId,
+} from "@/lib/appTheme";
 import "./components/ProductionAnimateModeSwitch";
 import "./components/ProductionDirectorModeUI";
+import {
+  IMAGE_LORA_ADULT_ACK_VERSION,
+  IMAGE_LORA_MAX_SELECTIONS,
+  IMAGE_MODELS,
+  IMAGE_OPERATION_LABELS,
+  imageModelById,
+  imageModelsForOperation,
+  type GenerateMediaMode,
+  type ImageOperation,
+} from "@/lib/imageGenerateWorkflows";
+import {
+  VIDEO_FORMAT_OPTIONS,
+  VIDEO_GENERATION_OPTIONS,
+  VIDEO_MODEL_OPTIONS,
+  resolveVideoGenerateWorkflow,
+  type VideoGenerationType,
+  type VideoModelFamily,
+  type VideoModelFormat,
+} from "@/lib/videoGenerateWorkflows";
+import VideoLoraPanel, { shouldShowVideoLoraPanel, type VideoLoraSelectionValue } from "./components/VideoLoraPanel";
 
 const PanelLoading = () => (
   <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 text-sm text-white/60">
@@ -16,11 +48,12 @@ const PanelLoading = () => (
 
 const AnglesPanel = dynamic(() => import("./components/AnglesPanel"), { loading: PanelLoading });
 const StoryboardPanel = dynamic(() => import("./components/StoryboardPanel"), { loading: PanelLoading });
-const CharactersPanel = dynamic(() => import("./components/CharactersPanel"), { loading: PanelLoading });
+const CharactersPanel = dynamic(() => import("./components/CharacterHubPanel"), { loading: PanelLoading });
 const VoicesPanel = dynamic(() => import("./components/VoicesPanel"), { loading: PanelLoading });
 const SupportPanel = dynamic(() => import("./components/SupportPanel"), { loading: PanelLoading });
 const EditVideoPanel = dynamic(() => import("./components/EditVideoPanel"), { loading: PanelLoading });
 const GalleryWorkspace = dynamic(() => import("./components/GalleryWorkspace"), { loading: PanelLoading });
+const AdminQuickPanel = dynamic(() => import("./components/AdminQuickPanel"), { loading: PanelLoading });
 const ProductionCharacterReferencePickerBridge = dynamic(() => import("./components/ProductionCharacterReferencePickerBridge"), { ssr: false, loading: () => null });
 
 type WorkflowItem = {
@@ -28,6 +61,19 @@ type WorkflowItem = {
   label: string;
   title?: string;
   runtime: string;
+};
+
+type ImageLoraCatalogEntry = {
+  name: string;
+  label: string;
+  description: string;
+  usage: string;
+  strength: number;
+  mature: boolean;
+  modelId: string;
+  enabled: boolean;
+  discoveredOn: string[];
+  missingOn: string[];
 };
 
 type WorkflowApiItem = {
@@ -81,7 +127,6 @@ type GalleryItem = {
 };
 
 type GalleryViewMode = "default" | "grid" | "list";
-type AppThemeId = "midnight" | "violet" | "ocean" | "ember" | "forest";
 type AppFontScale = "small" | "normal" | "large" | "xl";
 type AppUiMode = "clean" | "classic";
 
@@ -103,8 +148,24 @@ type SceneReferenceSlotKey = "char1" | "char2" | "char3" | "bg";
 type SceneCharacterPickerItem = {
   id: string;
   name: string;
+
+  // Display image shown in the chooser tile.
   imagePath: string;
   imageUrl: string;
+
+  // Image actually applied to Production scene slots.
+  // This must be the saved multi-angle character card/reference sheet.
+  referenceImagePath: string;
+  referenceImageUrl: string;
+  characterIdentity?: SceneSelectedCharacterIdentity | null;
+};
+
+type SceneSelectedCharacterIdentity = {
+  slot: "char1" | "char2" | "char3";
+  id: string;
+  name: string;
+  promptReadyDescription: string;
+  lockedAt: string;
 };
 
 type SceneReferenceSlotStatus = "idle" | "running" | "done";
@@ -160,6 +221,9 @@ type PersistedGenerateState = {
   prompt?: string;
   negativePrompt?: string;
   workflowId?: string;
+  videoGenerationType?: VideoGenerationType;
+  videoModelFamily?: VideoModelFamily;
+  videoModelFormat?: VideoModelFormat;
   orientation?: "portrait" | "landscape";
   durationSeconds?: number;
   uploadedFileName?: string;
@@ -199,13 +263,6 @@ type PromptAssessment = {
   summary: string;
 };
 
-type ImportedCharacterDraft = {
-  token: string;
-  imagePath: string;
-  imageUrl: string;
-  imageName: string;
-};
-
 type ViewerCollection = "gallery" | "favorites";
 
 type ViewerState = {
@@ -241,71 +298,12 @@ type ExtendModalState = {
 };
 
 const APP_STATE_KEY = "otg:test:page-state:v1";
-const PRODUCTION_FEATURE_ENABLED = process.env.NEXT_PUBLIC_OTG_ENABLE_PRODUCTION === "1";
-const APP_THEME_KEY = "otg:test:theme:v1";
+const PRODUCTION_FEATURE_ENABLED = true;
 const APP_FONT_SCALE_KEY = "otg:test:font-scale:v1";
 const APP_UI_MODE_KEY = "otg:test:ui-mode:v1";
 const APP_USER_CACHE_KEY = "otg:test:last-user:v1";
 const APP_NOTIFICATION_HISTORY_KEY = "otg:test:android-notified-completions:v1";
 const APP_NOTIFICATION_CHANNEL_ID = "otg-generation-complete";
-
-type AppThemeOption = {
-  id: AppThemeId;
-  label: string;
-  description: string;
-  background: string;
-  accent: string;
-  accentSoft: string;
-  panel: string;
-};
-
-const APP_THEME_OPTIONS: AppThemeOption[] = [
-  {
-    id: "midnight",
-    label: "Midnight",
-    description: "Default dark blue/purple OTG shell.",
-    background: "radial-gradient(circle at top left, rgba(87, 72, 255, 0.18), transparent 34%), radial-gradient(circle at top right, rgba(0, 225, 255, 0.10), transparent 30%), #05060b",
-    accent: "#8b5cf6",
-    accentSoft: "rgba(139, 92, 246, 0.18)",
-    panel: "rgba(0, 0, 0, 0.45)",
-  },
-  {
-    id: "violet",
-    label: "Violet Neon",
-    description: "Brighter purple/blue control accents.",
-    background: "radial-gradient(circle at top left, rgba(168, 85, 247, 0.24), transparent 34%), radial-gradient(circle at bottom right, rgba(56, 189, 248, 0.16), transparent 32%), #070313",
-    accent: "#c084fc",
-    accentSoft: "rgba(192, 132, 252, 0.20)",
-    panel: "rgba(18, 7, 35, 0.60)",
-  },
-  {
-    id: "ocean",
-    label: "Ocean Blue",
-    description: "Cool cyan/blue app shell.",
-    background: "radial-gradient(circle at top left, rgba(14, 165, 233, 0.22), transparent 34%), radial-gradient(circle at bottom right, rgba(45, 212, 191, 0.13), transparent 34%), #031018",
-    accent: "#38bdf8",
-    accentSoft: "rgba(56, 189, 248, 0.18)",
-    panel: "rgba(2, 20, 31, 0.62)",
-  },
-  {
-    id: "ember",
-    label: "Ember",
-    description: "Warm orange/red accents for higher contrast.",
-    background: "radial-gradient(circle at top left, rgba(249, 115, 22, 0.22), transparent 34%), radial-gradient(circle at bottom right, rgba(244, 63, 94, 0.13), transparent 34%), #120704",
-    accent: "#fb923c",
-    accentSoft: "rgba(251, 146, 60, 0.18)",
-    panel: "rgba(31, 10, 4, 0.62)",
-  },
-  {
-    id: "forest",
-    label: "Forest",
-    description: "Green/teal app shell.",
-    background: "radial-gradient(circle at top left, rgba(34, 197, 94, 0.18), transparent 34%), radial-gradient(circle at bottom right, rgba(20, 184, 166, 0.12), transparent 34%), #04110a",
-    accent: "#34d399",
-    accentSoft: "rgba(52, 211, 153, 0.16)",
-    panel: "rgba(3, 24, 13, 0.62)",
-  },
-];
 
 const APP_FONT_SCALE_OPTIONS: { id: AppFontScale; label: string; rootSize: string; description: string }[] = [
   { id: "small", label: "Small", rootSize: "14px", description: "More content on screen." },
@@ -396,6 +394,47 @@ function composeGeneratePromptWithStyle(bodyPrompt: string, stylePreset?: Genera
   }
 
   return uniqueSections.join("\n\n");
+}
+
+const MISSING_LOCKED_CHARACTER_DESCRIPTION_MESSAGE =
+  "Complete and lock the character description for each selected character before generating a multi-character scene.";
+const MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP =
+  "Missing locked character description. Open Character Builder and click Complete Description, then Lock Description.";
+
+function stripAppCharacterContinuityBlock(input: string) {
+  const text = String(input || "").trim();
+  if (!text) return "";
+  const upper = text.toUpperCase();
+  if (!upper.startsWith("CHARACTER CONTINUITY:")) return text;
+
+  const sceneMarker = "\nSCENE:";
+  const sceneIndex = upper.indexOf(sceneMarker);
+  if (sceneIndex >= 0) {
+    return text.slice(sceneIndex + sceneMarker.length).trim();
+  }
+
+  return text.replace(/^CHARACTER CONTINUITY:[\s\S]*?(?:\n{2,}|$)/i, "").trim();
+}
+
+function buildCharacterContinuityPrompt(identities: SceneSelectedCharacterIdentity[]) {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const identity of identities) {
+    const prompt = String(identity.promptReadyDescription || "").replace(/\s+/g, " ").trim();
+    if (!prompt || !identity.lockedAt) continue;
+    const key = `${identity.id || identity.name || ""}:${prompt}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push(`* ${prompt}`);
+  }
+  return lines.length ? `CHARACTER CONTINUITY:\n\n${lines.join("\n")}` : "";
+}
+
+function injectCharacterContinuityPrompt(scenePrompt: string, characterContinuityPrompt: string) {
+  const cleanedScene = stripAppCharacterContinuityBlock(scenePrompt);
+  const continuity = String(characterContinuityPrompt || "").trim();
+  if (!continuity) return cleanedScene;
+  return `${continuity}\n\nSCENE:\n${cleanedScene}`.trim();
 }
 
 const PROMPT_GUIDES: Record<PromptGuideMode, PromptGuideContent> = {
@@ -560,6 +599,8 @@ function inferPromptGuideMode(workflow: WorkflowItem | undefined): PromptGuideMo
     haystack.includes("from image") ||
     haystack.includes("from picture") ||
     haystack.includes("from pictures") ||
+    haystack.includes("first image") ||
+    haystack.includes("last image") ||
     haystack.includes("animate")
   ) {
     return "image_to_video";
@@ -1238,15 +1279,60 @@ async function fetchWorkflowsForApp() {
 
 export default function AppPageClient({ initialUser = null }: { initialUser?: InitialAppUser }) {
   const queryClient = useQueryClient();
+
+  // OTG_DEFAULT_DARK_THEME_V1: dark is the app default theme.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.documentElement.classList.add("dark");
+    document.body.classList.add("dark");
+  }, []);
   const [tab, setTab] = useState<SpinTabId>("generate");
+
+  // OTG_PRODUCTION_FORCE_DARK_THEME_V1: force Production tab surfaces to dark even if stale light classes persist.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const enabled = true;
+    document.documentElement.classList.toggle("otg-force-dark-production", enabled);
+    document.body.classList.toggle("otg-force-dark-production", enabled);
+    return () => {
+      document.documentElement.classList.remove("otg-force-dark-production");
+      document.body.classList.remove("otg-force-dark-production");
+    };
+  }, [tab]);
+  const [enhancePromptLevel, setEnhancePromptLevel] = useState<"short" | "medium" | "cinematic">("medium");
   const [assistanceTab, setAssistanceTab] = useState<AssistanceTab>("describe");
   const [username, setUsername] = useState(() => initialUser?.username || initialUser?.email || readCachedUsername());
   const [connected, setConnected] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
+  const [videoBackendStatus, setVideoBackendStatus] = useState<{
+    activeLabel: string;
+    activeGpu: string;
+    fallbackActive: boolean;
+    fallbackStatus: string;
+  } | null>(null);
   const [isAdmin, setIsAdmin] = useState(Boolean(initialUser?.admin));
 
   const [workflows, setWorkflows] = useState<WorkflowItem[]>(WORKFLOW_FALLBACKS);
   const [workflowId, setWorkflowId] = useState(WORKFLOW_FALLBACKS[0].id);
+  const [generateMediaMode, setGenerateMediaMode] = useState<GenerateMediaMode>("image");
+  const [imageOperation, setImageOperation] = useState<ImageOperation>("create");
+  const [videoGenerationType, setVideoGenerationType] = useState<VideoGenerationType>("create");
+  const [videoModelFamily, setVideoModelFamily] = useState<VideoModelFamily>("ltx23");
+  const [videoModelFormat, setVideoModelFormat] = useState<VideoModelFormat>("safetensors");
+  const [selectedImageLoras, setSelectedImageLoras] = useState<Record<string, number>>({});
+  const [selectedVideoLoras, setSelectedVideoLoras] = useState<VideoLoraSelectionValue[]>([]);
+  const [imageLoraAccessEnabled, setImageLoraAccessEnabled] = useState(false);
+  const [imageLoraDisclaimerOpen, setImageLoraDisclaimerOpen] = useState(false);
+  const [imageLoraAgeConfirmed, setImageLoraAgeConfirmed] = useState(false);
+  const [imageLoraCatalog, setImageLoraCatalog] = useState<ImageLoraCatalogEntry[]>([]);
+  const [adminImageLoras, setAdminImageLoras] = useState<ImageLoraCatalogEntry[]>([]);
+  const [adminLoraBusy, setAdminLoraBusy] = useState(false);
+  const [adminLoraMessage, setAdminLoraMessage] = useState("");
+  const [adminNewLora, setAdminNewLora] = useState<ImageLoraCatalogEntry>({
+    name: "", label: "", description: "", usage: "", strength: 1, mature: false,
+    modelId: "", enabled: false, discoveredOn: [], missingOn: [],
+  });
+  const [editInputCount, setEditInputCount] = useState(1);
   const [prompt, setPrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("");
   const [promptRelayBeat1, setPromptRelayBeat1] = useState("");
@@ -1254,7 +1340,6 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [promptRelayBeat3, setPromptRelayBeat3] = useState("");
   const [promptRelayBeat4, setPromptRelayBeat4] = useState("");
   const [promptUndoStack, setPromptUndoStack] = useState<string[]>([]);
-  const [negativePromptUndoStack, setNegativePromptUndoStack] = useState<string[]>([]);
   const [orientation, setOrientation] = useState<"portrait" | "landscape">("portrait");
   const [durationSeconds, setDurationSeconds] = useState(10);
   const [activeGenerateStyleId, setActiveGenerateStyleId] = useState("");
@@ -1266,6 +1351,8 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [customAudioFileName, setCustomAudioFileName] = useState("");
   const [customAudioPreviewUrl, setCustomAudioPreviewUrl] = useState("");
   const [uploadedImagePreviewUrl, setUploadedImagePreviewUrl] = useState("");
+  const [secondImageFileName, setSecondImageFileName] = useState("");
+  const [thirdImageFileName, setThirdImageFileName] = useState("");
   const [lastFrameFileName, setLastFrameFileName] = useState("");
   const [lastFramePreviewUrl, setLastFramePreviewUrl] = useState("");
   const [lastFrameImageMeta, setLastFrameImageMeta] = useState<{ width: number; height: number } | null>(null);
@@ -1277,8 +1364,6 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [generateGalleryLoading, setGenerateGalleryLoading] = useState(false);
   const [generateGalleryError, setGenerateGalleryError] = useState("");
   const [generateGallerySelecting, setGenerateGallerySelecting] = useState("");
-  const [createCharacterBusy, setCreateCharacterBusy] = useState(false);
-  const [characterImportDraft, setCharacterImportDraft] = useState<ImportedCharacterDraft | null>(null);
   const [gpuTarget, setGpuTarget] = useState(GPU_OPTIONS[0].value);
   const [enhancing, setEnhancing] = useState(false);
   const [formattingPrompt, setFormattingPrompt] = useState(false);
@@ -1293,7 +1378,9 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [settingsPipelineBusy, setSettingsPipelineBusy] = useState(false);
   const [settingsPipelineMessage, setSettingsPipelineMessage] = useState("");
   const [settingsLocalMessage, setSettingsLocalMessage] = useState("");
-  const [appThemeId, setAppThemeId] = useState<AppThemeId>("midnight");
+  const [appThemeId, setAppThemeId] = useState<AppThemeId>("purple");
+  const [appColorMode, setAppColorMode] = useState<AppColorMode>("dark");
+  const [appCustomColor, setAppCustomColor] = useState(DEFAULT_CUSTOM_COLOR);
   const [appFontScale, setAppFontScale] = useState<AppFontScale>("normal");
   const [appUiMode, setAppUiMode] = useState<AppUiMode>("clean");
   const [settingsAppearanceMessage, setSettingsAppearanceMessage] = useState("");
@@ -1308,6 +1395,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [deleteAccountMessage, setDeleteAccountMessage] = useState("");
 
   const [generateBusy, setGenerateBusy] = useState(false);
+  const generateSubmitInFlightRef = useRef(false);
   const [progressStatus, setProgressStatus] = useState<"idle" | "running" | "complete" | "error">("idle");
   const [progressQueue, setProgressQueue] = useState(0);
   const [progressPercent, setProgressPercent] = useState(0);
@@ -1332,7 +1420,12 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [latestPreviewKind, setLatestPreviewKind] = useState<"image" | "video" | "">("");
   const [latestPreviewMeta, setLatestPreviewMeta] = useState<{ width: number; height: number } | null>(null);
   const latestPreviewIdentityRef = useRef("");
-  const selectedAppTheme = APP_THEME_OPTIONS.find((theme) => theme.id === appThemeId) || APP_THEME_OPTIONS[0];
+  const selectedThemeBaseColor = resolveThemeBaseColor(appThemeId, appCustomColor);
+  const selectedThemeTokens = useMemo(
+    () => generateThemeFromColor(selectedThemeBaseColor, appColorMode),
+    [appColorMode, selectedThemeBaseColor]
+  );
+  const selectedThemeCssVars = useMemo(() => themeTokensToCssVars(selectedThemeTokens), [selectedThemeTokens]);
   const selectedFontScale = APP_FONT_SCALE_OPTIONS.find((option) => option.id === appFontScale) || APP_FONT_SCALE_OPTIONS[1];
 
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
@@ -1427,6 +1520,9 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [sceneChar1Name, setSceneChar1Name] = useState("");
   const [sceneChar2Name, setSceneChar2Name] = useState("");
   const [sceneChar3Name, setSceneChar3Name] = useState("");
+  const [sceneChar1Identity, setSceneChar1Identity] = useState<SceneSelectedCharacterIdentity | null>(null);
+  const [sceneChar2Identity, setSceneChar2Identity] = useState<SceneSelectedCharacterIdentity | null>(null);
+  const [sceneChar3Identity, setSceneChar3Identity] = useState<SceneSelectedCharacterIdentity | null>(null);
   const [sceneBgName, setSceneBgName] = useState("");
   const [sceneChar1PreviewUrl, setSceneChar1PreviewUrl] = useState("");
   const [sceneChar2PreviewUrl, setSceneChar2PreviewUrl] = useState("");
@@ -1459,6 +1555,21 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
     char3: "idle",
     bg: "idle",
   });
+  const selectedSceneCharacterIdentities = useMemo(
+    () => [sceneChar1Identity, sceneChar2Identity, sceneChar3Identity].filter(Boolean) as SceneSelectedCharacterIdentity[],
+    [sceneChar1Identity, sceneChar2Identity, sceneChar3Identity]
+  );
+  const missingLockedSceneCharacterDescriptions = useMemo(
+    () =>
+      selectedSceneCharacterIdentities.filter(
+        (identity) => !String(identity.promptReadyDescription || "").trim() || !String(identity.lockedAt || "").trim()
+      ),
+    [selectedSceneCharacterIdentities]
+  );
+  const characterContinuityPrompt = useMemo(
+    () => buildCharacterContinuityPrompt(selectedSceneCharacterIdentities),
+    [selectedSceneCharacterIdentities]
+  );
   const [sceneTransitionMode, setSceneTransitionMode] = useState<SceneTransitionMode>("auto");
   const [sceneTransitionPickerOpen, setSceneTransitionPickerOpen] = useState(false);
   const [askInput, setAskInput] = useState("");
@@ -1468,11 +1579,15 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [askImagePreviewUrl, setAskImagePreviewUrl] = useState("");
 
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const secondImageInputRef = useRef<HTMLInputElement | null>(null);
+  const thirdImageInputRef = useRef<HTMLInputElement | null>(null);
   const customAudioInputRef = useRef<HTMLInputElement | null>(null);
   const lastFrameInputRef = useRef<HTMLInputElement | null>(null);
   const describeInputRef = useRef<HTMLInputElement | null>(null);
   const askImageInputRef = useRef<HTMLInputElement | null>(null);
   const uploadedFileRef = useRef<File | null>(null);
+  const secondImageFileRef = useRef<File | null>(null);
+  const thirdImageFileRef = useRef<File | null>(null);
   const customAudioFileRef = useRef<File | null>(null);
   const lastFrameFileRef = useRef<File | null>(null);
   const describeFileRef = useRef<File | null>(null);
@@ -1487,9 +1602,93 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
 
+  const selectedVideoConfiguration = useMemo(
+    () => resolveVideoGenerateWorkflow(videoGenerationType, videoModelFamily, videoModelFormat),
+    [videoGenerationType, videoModelFamily, videoModelFormat]
+  );
+  const selectedVideoWorkflowItem = useMemo(
+    () =>
+      selectedVideoConfiguration?.workflowId
+        ? workflows.find((workflow) => workflow.id === selectedVideoConfiguration.workflowId) || null
+        : null,
+    [selectedVideoConfiguration, workflows]
+  );
+  const videoWorkflowReady = Boolean(selectedVideoConfiguration?.workflowId && selectedVideoWorkflowItem);
   const selectedWorkflow = useMemo(() => {
+    if (generateMediaMode === "video") {
+      if (selectedVideoWorkflowItem) return selectedVideoWorkflowItem;
+      const modelLabel = VIDEO_MODEL_OPTIONS.find((option) => option.id === videoModelFamily)?.label || videoModelFamily;
+      const formatLabel = VIDEO_FORMAT_OPTIONS.find((option) => option.id === videoModelFormat)?.label || videoModelFormat;
+      return {
+        id: selectedVideoConfiguration?.workflowId || "pending-video-workflow",
+        label: `${modelLabel} ${formatLabel}`,
+        runtime: selectedVideoConfiguration?.workflowId
+          ? "The configured workflow was not found in TEST."
+          : "Workflow JSON pending verification.",
+      };
+    }
     return workflows.find((workflow) => workflow.id === workflowId) || workflows[0] || WORKFLOW_FALLBACKS[0];
-  }, [workflowId, workflows]);
+  }, [generateMediaMode, selectedVideoConfiguration, selectedVideoWorkflowItem, videoModelFamily, videoModelFormat, workflowId, workflows]);
+  const isWanWorkflowSelected =
+    generateMediaMode === "video" &&
+    String(selectedVideoConfiguration?.workflowId || workflowId || "").trim().toLowerCase().includes("wan");
+  const selectedVideoLoraFamily: "wan" | "ltx" = videoModelFamily === "wan22" ? "wan" : "ltx";
+
+  const selectedImageModel = useMemo(() => imageModelById(workflowId), [workflowId]);
+  const activeImageLoras = useMemo(
+    () => imageLoraCatalog.filter((lora) => lora.enabled && lora.modelId === selectedImageModel?.id),
+    [imageLoraCatalog, selectedImageModel]
+  );
+  const operationImageModels = useMemo(() => imageModelsForOperation(imageOperation), [imageOperation]);
+  const videoNeedsStarterImage = generateMediaMode === "video" && videoGenerationType !== "create";
+  const videoNeedsLastFrameImage = generateMediaMode === "video" && videoGenerationType === "first_last";
+
+  useEffect(() => {
+    if (generateMediaMode !== "image") return;
+    const allowed = imageModelsForOperation(imageOperation);
+    if (!allowed.length) return;
+    if (!allowed.some((model) => model.id === workflowId)) setWorkflowId(allowed[0].id);
+  }, [generateMediaMode, imageOperation, workflowId]);
+
+  useEffect(() => {
+    if (generateMediaMode !== "video" || !selectedVideoConfiguration?.workflowId) return;
+    setWorkflowId(selectedVideoConfiguration.workflowId);
+  }, [generateMediaMode, selectedVideoConfiguration]);
+
+  useEffect(() => {
+    setSelectedImageLoras({});
+    setEditInputCount(1);
+    secondImageFileRef.current = null;
+    thirdImageFileRef.current = null;
+    setSecondImageFileName("");
+    setThirdImageFileName("");
+  }, [workflowId]);
+
+  const loadImageLoraCatalog = useCallback(async () => {
+    const response = await fetch("/api/image-loras", { cache: "no-store", credentials: "include" });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && Array.isArray(data?.entries)) setImageLoraCatalog(data.entries);
+  }, []);
+
+  const loadAdminImageLoras = useCallback(async () => {
+    if (!isAdmin) return;
+    const response = await fetch("/api/admin/image-loras", { cache: "no-store", credentials: "include" });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && Array.isArray(data?.entries)) setAdminImageLoras(data.entries);
+  }, [isAdmin]);
+
+  useEffect(() => { void loadImageLoraCatalog(); }, [loadImageLoraCatalog]);
+  useEffect(() => {
+    if (tab === "settings" && isAdmin) void loadAdminImageLoras();
+  }, [isAdmin, loadAdminImageLoras, tab]);
+
+  useEffect(() => {
+    try {
+      setImageLoraAccessEnabled(window.localStorage.getItem("otg-image-lora-adult-ack") === IMAGE_LORA_ADULT_ACK_VERSION);
+    } catch {
+      setImageLoraAccessEnabled(false);
+    }
+  }, []);
 
   const currentPromptGuideMode = useMemo(() => inferPromptGuideMode(selectedWorkflow), [selectedWorkflow]);
   const activePromptGuide = PROMPT_GUIDES[promptGuideMode];
@@ -1547,33 +1746,39 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   }, []);
 
   const isVideoWorkflowSelected = useMemo(() => {
+    if (generateMediaMode === "video") return true;
     const id = String(selectedWorkflow?.id || "").toLowerCase();
     const label = String(selectedWorkflow?.label || "").toLowerCase();
     return id.includes("video") || label.includes("video") || id.includes("animate") || label.includes("animate");
-  }, [selectedWorkflow]);
+  }, [generateMediaMode, selectedWorkflow]);
 
-      const isFirstLastImageVideoWorkflowSelected = useMemo(() => {
+  const isFirstLastImageVideoWorkflowSelected = useMemo(() => {
+    if (generateMediaMode === "video") return videoNeedsLastFrameImage;
     const id = String(selectedWorkflow?.id || "").toLowerCase();
     const label = String(selectedWorkflow?.label || "").toLowerCase();
     return id.includes("first image to last image") || label.includes("first to last image") || label.includes("first image to last image");
-  }, [selectedWorkflow]);
-const isVideoUpscalerWorkflowSelected = useMemo(() => {
+  }, [generateMediaMode, selectedWorkflow, videoNeedsLastFrameImage]);
+  const isVideoUpscalerWorkflowSelected = useMemo(() => {
+    if (generateMediaMode === "video") return false;
     const id = String(selectedWorkflow?.id || "").toLowerCase();
     const label = String(selectedWorkflow?.label || "").toLowerCase();
     return id.includes("rtx sr upscaler") || label.includes("rtx sr") || label.includes("upscale video");
-  }, [selectedWorkflow]);
+  }, [generateMediaMode, selectedWorkflow]);
 
   const isEditImageWorkflowSelected = useMemo(() => {
+    if (generateMediaMode === "image" && imageOperation === "edit") return true;
     const id = String(selectedWorkflow?.id || "").toLowerCase();
     const label = String(selectedWorkflow?.label || "").toLowerCase();
     return id.includes("edit image") || id.includes("edit picture") || label.includes("edit image") || label.includes("edit picture");
-  }, [selectedWorkflow]);
+  }, [generateMediaMode, imageOperation, selectedWorkflow]);
 const isAnimeImagesWorkflowSelected = useMemo(() => {
+    if (generateMediaMode === "image" && imageOperation === "anime") return true;
     const id = String(selectedWorkflow?.id || "").toLowerCase();
     const label = String(selectedWorkflow?.label || "").toLowerCase();
     return id.includes("create anime images") || label.includes("create anime images");
-  }, [selectedWorkflow]);
+  }, [generateMediaMode, imageOperation, selectedWorkflow]);
   const isCustomAudioVideoWorkflowSelected = useMemo(() => {
+    if (generateMediaMode === "video") return false;
     const id = String(selectedWorkflow?.id || "").toLowerCase();
     const label = String(selectedWorkflow?.label || "").toLowerCase();
     const haystack = id + " " + label;
@@ -1583,7 +1788,7 @@ const isAnimeImagesWorkflowSelected = useMemo(() => {
       haystack.includes("image audio 2 video") ||
       haystack.includes("create video with custom audio")
     );
-  }, [selectedWorkflow]);
+  }, [generateMediaMode, selectedWorkflow]);
 
 const activeGenerateStylePreset = useMemo(
     () => GENERATE_STYLE_PRESETS.find((preset) => preset.id === activeGenerateStyleId) || null,
@@ -1667,7 +1872,7 @@ const activeGenerateStylePreset = useMemo(
     setGenerateGalleryError("");
 
     try {
-      const res = await fetch("/api/gallery?media=image&sort=newest&per=500", { cache: "no-store" });
+      const res = await fetch("/api/gallery?media=image&sort=newest&per=80", { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || data?.ok === false) {
@@ -1779,60 +1984,6 @@ const activeGenerateStylePreset = useMemo(
     },
     [generateGalleryPickerTarget, getGenerateGalleryItemName, updateGenerateInputPreview, updateLastFrameInputPreview]
   );
-
-const handleCreateCharacterFromGenerate = useCallback(async () => {
-    if (!latestPreviewUrl || latestPreviewKind !== "image") {
-      setStatusMessage("Generate a portrait image first.");
-      return;
-    }
-    if (!latestPreviewMeta || latestPreviewMeta.height <= latestPreviewMeta.width) {
-      setStatusMessage("Create Character only works with generated portrait images.");
-      return;
-    }
-
-    setCreateCharacterBusy(true);
-    setStatusMessage("Sending generated portrait to Characters...");
-    try {
-      const response = await fetch(latestPreviewUrl, {
-        cache: "no-store",
-        credentials: "include",
-      });
-      if (!response.ok) {
-        throw new Error(`Could not read the generated image (${response.status}).`);
-      }
-      const blob = await response.blob();
-      const filename = latestPreviewName || "generated-portrait.png";
-      const imageFile = new File([blob], filename, { type: blob.type || "image/png" });
-
-      const form = new FormData();
-      form.append("image", imageFile, imageFile.name);
-
-      const res = await fetch("/api/characters/upload", {
-        method: "POST",
-        credentials: "include",
-        headers: { "x-otg-device-id": "web_generate_character_import" },
-        body: form,
-      });
-      const data = await res.json().catch(() =>
-      null);
-      if (!res.ok || !data?.ok || !data?.serverPath) {
-        throw new Error(data?.error || `Character image upload failed (${res.status})`);
-      }
-      setCharacterImportDraft({
-        token: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        imagePath: String(data.serverPath),
-        imageUrl: String(data.fileUrl || ""),
-        imageName: String(data.filename || imageFile.name || "portrait image"),
-      });
-      setTab("characters");
-      setStatusMessage("Generated portrait sent to Characters. Finish the character record there.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Failed to send generated portrait to Characters.");
-    } finally {
-      setCreateCharacterBusy(false);
-    }
-  }, [latestPreviewKind, latestPreviewMeta, latestPreviewName, latestPreviewUrl]);
-
 
   const clearSceneReferenceAnalysis = useCallback((slot: SceneReferenceSlotKey) => {
     setSceneReferenceAnalyses((prev) => ({ ...prev, [slot]: "" }));
@@ -2097,6 +2248,15 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       if (typeof persisted.prompt === "string") setPrompt(persisted.prompt);
       if (typeof persisted.negativePrompt === "string") setNegativePrompt(persisted.negativePrompt);
       if (typeof persisted.workflowId === "string") setWorkflowId(persisted.workflowId);
+      if (VIDEO_GENERATION_OPTIONS.some((option) => option.id === persisted.videoGenerationType)) {
+        setVideoGenerationType(persisted.videoGenerationType as VideoGenerationType);
+      }
+      if (VIDEO_MODEL_OPTIONS.some((option) => option.id === persisted.videoModelFamily)) {
+        setVideoModelFamily(persisted.videoModelFamily as VideoModelFamily);
+      }
+      if (VIDEO_FORMAT_OPTIONS.some((option) => option.id === persisted.videoModelFormat)) {
+        setVideoModelFormat(persisted.videoModelFormat as VideoModelFormat);
+      }
       if (persisted.orientation === "portrait" || persisted.orientation === "landscape") setOrientation(persisted.orientation);
       if (typeof persisted.durationSeconds === "number") setDurationSeconds(clampGenerateDuration(persisted.durationSeconds));
       if (typeof persisted.uploadedFileName === "string") setUploadedFileName(persisted.uploadedFileName);
@@ -2122,9 +2282,27 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     }
 
     try {
-      const savedTheme = window.localStorage.getItem(APP_THEME_KEY) as AppThemeId | null;
-      if (savedTheme && APP_THEME_OPTIONS.some((theme) => theme.id === savedTheme)) {
-        setAppThemeId(savedTheme);
+      const legacyThemeMap: Record<string, AppThemeId> = {
+        midnight: "purple",
+        violet: "purple",
+        ocean: "blue",
+        ember: "red",
+        forest: "green",
+      };
+      const savedThemeRaw = window.localStorage.getItem(APP_THEME_KEY) || window.localStorage.getItem("otg:test:theme:v1");
+      const savedTheme = savedThemeRaw ? legacyThemeMap[savedThemeRaw] || savedThemeRaw : "";
+      if (APP_THEME_OPTIONS.some((theme) => theme.id === savedTheme)) {
+        setAppThemeId(savedTheme as AppThemeId);
+      }
+
+      const savedColorMode = window.localStorage.getItem(APP_COLOR_MODE_KEY) as AppColorMode | null;
+      if (savedColorMode === "light" || savedColorMode === "dark") {
+        setAppColorMode(savedColorMode);
+      }
+
+      const savedCustomColor = window.localStorage.getItem(APP_CUSTOM_COLOR_KEY);
+      if (savedCustomColor && /^#[0-9a-f]{6}$/i.test(savedCustomColor)) {
+        setAppCustomColor(savedCustomColor);
       }
 
       const savedFontScale = window.localStorage.getItem(APP_FONT_SCALE_KEY) as AppFontScale | null;
@@ -2156,7 +2334,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         tabParam === "settings" ||
         tabParam === "support"
       ) {
-        setTab(!PRODUCTION_FEATURE_ENABLED && tabParam === "storyboard" ? "generate" : tabParam);
+        setTab(tabParam);
       }
     } catch {
       // ignore
@@ -2171,6 +2349,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         prompt,
         negativePrompt,
         workflowId,
+        videoGenerationType,
+        videoModelFamily,
+        videoModelFormat,
         orientation,
         durationSeconds: clampGenerateDuration(durationSeconds),
         uploadedFileName,
@@ -2191,6 +2372,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     prompt,
     negativePrompt,
     workflowId,
+    videoGenerationType,
+    videoModelFamily,
+    videoModelFormat,
     orientation,
     durationSeconds,
     uploadedFileName,
@@ -2206,20 +2390,25 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     if (typeof document === "undefined") return;
 
     const root = document.documentElement;
-    root.style.setProperty("--otg-accent", selectedAppTheme.accent);
-    root.style.setProperty("--otg-accent-soft", selectedAppTheme.accentSoft);
-    root.style.setProperty("--otg-panel", selectedAppTheme.panel);
+    Object.entries(selectedThemeCssVars).forEach(([name, value]) => {
+      root.style.setProperty(name, value);
+    });
     root.style.fontSize = selectedFontScale.rootSize;
+    root.style.colorScheme = appColorMode;
+    root.dataset.otgTheme = appThemeId;
+    root.dataset.otgColorMode = appColorMode;
     root.dataset.otgUiMode = appUiMode;
 
     try {
       window.localStorage.setItem(APP_THEME_KEY, appThemeId);
+      window.localStorage.setItem(APP_COLOR_MODE_KEY, appColorMode);
+      window.localStorage.setItem(APP_CUSTOM_COLOR_KEY, appCustomColor);
       window.localStorage.setItem(APP_FONT_SCALE_KEY, appFontScale);
       window.localStorage.setItem(APP_UI_MODE_KEY, appUiMode);
     } catch {
       // ignore
     }
-  }, [appThemeId, appFontScale, appUiMode, selectedAppTheme.accent, selectedAppTheme.accentSoft, selectedAppTheme.panel, selectedFontScale.rootSize]);
+  }, [appColorMode, appCustomColor, appThemeId, appFontScale, appUiMode, selectedFontScale.rootSize, selectedThemeCssVars]);
 
   useEffect(() => {
     return () => {
@@ -2229,12 +2418,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       }
     };
   }, []);
-
-  useEffect(() => {
-    if (isVideoWorkflowSelected && orientation === "portrait") {
-      setOrientation("landscape");
-    }
-  }, [isVideoWorkflowSelected, orientation]);
 
   const loadGallery = useCallback(async () => {
     const requestSeq = ++galleryRequestSeqRef.current;
@@ -2252,7 +2435,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       const params = new URLSearchParams();
       params.set("sort", gallerySort);
       params.set("filter", galleryFilter);
-      params.set("per", "5000");
+      params.set("per", "80");
       if (gallerySearchQuery) params.set("search", gallerySearchQuery);
 
       const res = await fetch(`/api/gallery?${params.toString()}`, {
@@ -2339,7 +2522,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ forcePull: true, limit: 5000 }),
+        body: JSON.stringify({ forcePull: true, limit: 500 }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -2396,10 +2579,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }, [stopMicCapture]);
 
   useEffect(() => {
-    if (!PRODUCTION_FEATURE_ENABLED && tab === "storyboard") {
-      setTab("generate");
-      return;
-    }
     if (!isAdmin && tab === "voices") {
       setTab("generate");
     }
@@ -2454,6 +2633,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               data?.serverHint === "Connected"
           )
         );
+        if (data?.videoBackend) {
+          setVideoBackendStatus({
+            activeLabel: String(data.videoBackend.activeLabel || "No video backend available"),
+            activeGpu: String(data.videoBackend.activeGpu || ""),
+            fallbackActive: Boolean(data.videoBackend.fallbackActive),
+            fallbackStatus: String(data.videoBackend.fallbackStatus || ""),
+          });
+        }
         if (typeof data?.message === "string" && data.message.trim()) {
           setStatusMessage(data.message.trim());
         }
@@ -2546,7 +2733,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     };
   }, [latestPreviewKind, latestPreviewUrl]);
 
-  const refreshProgress = useCallback(async () => {
+  const refreshProgress = useCallback(async (): Promise<"idle" | "running" | "complete" | "error" | null> => {
     try {
       const res = await fetch("/api/progress", {
         cache: "no-store",
@@ -2584,14 +2771,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         refreshedCompletePromptRef.current = "";
         setProgressStatus("error");
         setProgressPercent(nextPercent || 100);
-        return;
+        return "error";
       }
 
       if (running) {
         refreshedCompletePromptRef.current = "";
         setProgressStatus("running");
         setProgressPercent(nextPercent);
-        return;
+        return "running";
       }
 
       if (nextStatus === "complete") {
@@ -2608,7 +2795,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
             kind: latestPreviewKind,
           });
         }
-        return;
+        return "complete";
       }
 
       refreshedCompletePromptRef.current = "";
@@ -2622,8 +2809,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         currentNodeId: "",
         currentNodeProgress: "",
       });
+      return "idle";
     } catch {
       // ignore
+      return null;
     }
   }, [refreshLatestContent]);
 
@@ -2634,25 +2823,19 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       if (cancelled) return;
 
       await refreshProgress().catch(() => null);
-
-      if (cancelled) return;
-
-      if (tab === "generate") {
-        await refreshLatestContent().catch(() => null);
-      }
     };
 
     void tick();
 
     const timer = window.setInterval(() => {
       void tick();
-    }, 3000);
+    }, progressStatus === "running" ? 3000 : 15000);
 
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [tab, refreshProgress, refreshLatestContent]);
+  }, [progressStatus, refreshProgress]);
 
   useEffect(() => {
     if (tab !== "gallery" && tab !== "favorites") return;
@@ -2682,37 +2865,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       window.clearInterval(timer);
     };
   }, [tab, viewerState, loadGallery, loadFavorites]);
-
-  useEffect(() => {
-    if (tab !== "gallery" && tab !== "favorites") return;
-
-    let cancelled = false;
-
-    const runBackfill = async () => {
-      await fetch("/api/gallery/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ limit: 8 }),
-      }).catch(() => null);
-
-      if (cancelled) return;
-
-      if (tab === "gallery") {
-        await loadGallery().catch(() => null);
-      }
-
-      if (tab === "favorites") {
-        await loadFavorites().catch(() => null);
-      }
-    };
-
-    void runBackfill();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [tab, loadGallery, loadFavorites]);
+  // Auto gallery sync disabled for mobile startup performance.
+  // Manual gallery/content refresh still works from explicit user actions.
 
   const enhancePromptText = useCallback(async (
     inputText: string,
@@ -2729,6 +2883,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       headers: { "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify({
+        enhanceLevel: enhancePromptLevel,
+        level: enhancePromptLevel,
+        size: enhancePromptLevel,
         prompt: cleaned,
         workflowId: workflowHint || selectedWorkflow.id,
         styleLabel: options?.styleLabel || "",
@@ -2739,6 +2896,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+
       throw new Error(typeof data?.error === "string" ? data.error : "Enhance Prompt failed");
     }
 
@@ -2748,7 +2906,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     }
 
     return nextPrompt;
-  }, [selectedWorkflow.id]);
+  }, [selectedWorkflow.id, enhancePromptLevel]);
 
   const submitToComfy = useCallback(
     async (
@@ -2822,9 +2980,17 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         currentNodeProgress: "",
       });
       refreshedCompletePromptRef.current = "";
-      await Promise.all([refreshProgress(), loadGallery(), loadFavorites()]);
+      await refreshProgress();
+
+      if (tab === "gallery") {
+        await loadGallery();
+      }
+
+      if (tab === "favorites") {
+        await loadFavorites();
+      }
     },
-    [loadFavorites, loadGallery, refreshProgress]
+    [loadFavorites, loadGallery, refreshProgress, tab]
   );
 
   const fetchGalleryItemAsFile = useCallback(async (item: GalleryItem, fallbackBaseName: string) => {
@@ -3193,11 +3359,12 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }, [moveViewer, viewerState]);
 
   const isPromptRelayWorkflowSelected = useMemo(() => {
+    if (generateMediaMode === "video") return false;
     const id = String(selectedWorkflow?.id || "").toLowerCase();
     const label = String(selectedWorkflow?.label || "").toLowerCase();
     const haystack = `${id} ${label}`;
     return haystack.includes("prompt relay") || haystack.includes("scene-controlled") || haystack.includes("scene controlled");
-  }, [selectedWorkflow]);
+  }, [generateMediaMode, selectedWorkflow]);
 
   const promptRelayLocalPrompts = useMemo(() => {
     return [promptRelayBeat1, promptRelayBeat2, promptRelayBeat3, promptRelayBeat4]
@@ -3206,8 +3373,20 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       .join("\n|\n");
   }, [promptRelayBeat1, promptRelayBeat2, promptRelayBeat3, promptRelayBeat4]);
   const handleGenerate = useCallback(async () => {
-    if (generateBusy) return;
-    const finalPrompt = composeGeneratePrompt(prompt, activeGenerateStylePreset);
+    if (generateSubmitInFlightRef.current || generateBusy) return;
+    if (generateMediaMode === "video" && !videoWorkflowReady) {
+      setStatusMessage("This video workflow is not installed in TEST yet. Choose a ready workflow or provide its JSON.");
+      return;
+    }
+    const styledPrompt = composeGeneratePrompt(prompt, activeGenerateStylePreset);
+    const hasSelectedSceneCharacters = selectedSceneCharacterIdentities.length > 0;
+    if (hasSelectedSceneCharacters && missingLockedSceneCharacterDescriptions.length) {
+      setStatusMessage(MISSING_LOCKED_CHARACTER_DESCRIPTION_MESSAGE);
+      return;
+    }
+    const finalPrompt = hasSelectedSceneCharacters
+      ? injectCharacterContinuityPrompt(styledPrompt, characterContinuityPrompt)
+      : styledPrompt;
     const relayLocalPromptsForSubmit = promptRelayLocalPrompts.trim();
     if (!isVideoUpscalerWorkflowSelected && !finalPrompt.trim()) {
       setStatusMessage("Enter a prompt first.");
@@ -3223,9 +3402,22 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setStatusMessage("Upload an input image first.");
       return;
     }
+    if (isEditImageWorkflowSelected && editInputCount >= 2 && !secondImageFileRef.current) {
+      setStatusMessage("Upload the second reference image or remove that slot.");
+      return;
+    }
+    if (isEditImageWorkflowSelected && editInputCount >= 3 && !thirdImageFileRef.current) {
+      setStatusMessage("Upload the third reference image or remove that slot.");
+      return;
+    }
 
     if (isCustomAudioVideoWorkflowSelected && (!uploadedFileRef.current || !customAudioFileRef.current)) {
       setStatusMessage("Upload an input image and a custom audio file first.");
+      return;
+    }
+
+    if (videoNeedsStarterImage && !videoNeedsLastFrameImage && !uploadedFileRef.current) {
+      setStatusMessage("Upload a starter image first.");
       return;
     }
 
@@ -3234,6 +3426,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       return;
     }
 
+    generateSubmitInFlightRef.current = true;
     setGenerateBusy(true);
     setStatusMessage("");
     refreshedCompletePromptRef.current = "";
@@ -3254,9 +3447,29 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
     try {
       const body = new FormData();
-      body.set("workflowId", workflowId);
+      const submitWorkflowId =
+        generateMediaMode === "video"
+          ? String(selectedVideoConfiguration?.workflowId || "")
+          : workflowId;
+      const submittedDurationSeconds = isWanWorkflowSelected ? 5 : durationSeconds;
+      body.set("workflowId", submitWorkflowId);
       body.set("prompt", finalPrompt);
       body.set("negativePrompt", negativePrompt);
+      if (hasSelectedSceneCharacters && characterContinuityPrompt.trim()) {
+        body.set("characterContinuityPrompt", characterContinuityPrompt.trim());
+        body.set(
+          "selectedCharacterIdentities",
+          JSON.stringify(
+            selectedSceneCharacterIdentities.map((identity) => ({
+              slot: identity.slot,
+              id: identity.id,
+              name: identity.name,
+              lockedAt: identity.lockedAt,
+              promptReadyDescription: identity.promptReadyDescription,
+            }))
+          )
+        );
+      }
       if (isPromptRelayWorkflowSelected) {
         body.set("promptRelayGlobalPrompt", finalPrompt);
         body.set("promptRelayLocalPrompts", relayLocalPromptsForSubmit);
@@ -3264,9 +3477,25 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         body.set("promptRelayEpsilon", "0.001");
       }
       body.set("orientation", orientation);
-      body.set("durationSeconds", String(durationSeconds));
+      body.set("durationSeconds", String(submittedDurationSeconds));
       body.set("gpuTarget", gpuTarget);
       body.set("seed", String(randomSeed()));
+      if (generateMediaMode === "video") {
+        body.set("requestKind", "video");
+        body.set("width", orientation === "portrait" ? "720" : "1280");
+        body.set("height", orientation === "portrait" ? "1280" : "720");
+        body.set("frameRate", "24");
+        body.set("frameCount", String(submittedDurationSeconds * 24 + 1));
+        if (selectedVideoLoras.length) {
+          body.set("videoLoras", JSON.stringify(selectedVideoLoras.slice(0, 2)));
+        }
+      }
+      if (generateMediaMode === "image") {
+        body.set("width", orientation === "portrait" ? "720" : "1280");
+        body.set("height", orientation === "portrait" ? "1280" : "720");
+        body.delete("durationSeconds");
+        body.set("requestKind", "image");
+      }
       if (isAnimeImagesWorkflowSelected) {
         body.set("width", orientation === "portrait" ? "720" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "720");
@@ -3279,11 +3508,29 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         body.set("height", orientation === "portrait" ? "1280" : "720");
       }
 
-      if (uploadedFileRef.current) {
+      if (uploadedFileRef.current && (generateMediaMode !== "video" || videoNeedsStarterImage)) {
         if (isVideoUpscalerWorkflowSelected) {
           body.set("videoA", uploadedFileRef.current);
         } else {
           body.set("imageA", uploadedFileRef.current);
+        }
+      }
+
+      if (isEditImageWorkflowSelected && editInputCount >= 2 && secondImageFileRef.current) {
+        body.set("imageB", secondImageFileRef.current);
+      }
+      if (isEditImageWorkflowSelected && editInputCount >= 3 && thirdImageFileRef.current) {
+        body.set("imageC", thirdImageFileRef.current);
+      }
+      if (Object.keys(selectedImageLoras).length && selectedImageModel) {
+        const choices = activeImageLoras
+          .filter((lora) => Object.prototype.hasOwnProperty.call(selectedImageLoras, lora.name))
+          .slice(0, IMAGE_LORA_MAX_SELECTIONS)
+          .map((lora) => ({ name: lora.name, strength: selectedImageLoras[lora.name] }));
+        if (choices.length) {
+          body.set("loras", JSON.stringify(choices));
+          body.set("loraAdultAcknowledged", imageLoraAccessEnabled ? "true" : "false");
+          body.set("loraAdultAcknowledgementVersion", IMAGE_LORA_ADULT_ACK_VERSION);
         }
       }
 
@@ -3297,8 +3544,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       }
 
       if (isFirstLastImageVideoWorkflowSelected) {
-        body.set("workflowId", "presets/Create First Image to Last Image Video");
-        body.set("workflow", "presets/Create First Image to Last Image Video");
+        body.set("workflowId", submitWorkflowId);
+        body.set("workflow", submitWorkflowId);
         if (uploadedFileRef.current) {
           body.set("imageA", uploadedFileRef.current);
         }
@@ -3312,18 +3559,33 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setProgressPercent(100);
       setStatusMessage(error instanceof Error ? error.message : "Generate failed.");
     } finally {
+      generateSubmitInFlightRef.current = false;
       setGenerateBusy(false);
     }
   }, [
     activeGenerateStylePreset,
+    characterContinuityPrompt,
     composeGeneratePrompt,
     durationSeconds,
+    editInputCount,
     generateBusy,
+    generateMediaMode,
+    videoNeedsStarterImage,
+    videoNeedsLastFrameImage,
+    videoWorkflowReady,
+    selectedVideoConfiguration,
+    selectedVideoLoras,
     gpuTarget,
     negativePrompt,
     orientation,
     prompt,
     selectedWorkflow,
+    selectedImageLoras,
+    activeImageLoras,
+    imageLoraAccessEnabled,
+    selectedImageModel,
+    selectedSceneCharacterIdentities,
+    missingLockedSceneCharacterDescriptions,
     submitToComfy,
     workflowId,
     isAnimeImagesWorkflowSelected,
@@ -3331,7 +3593,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     isPromptRelayWorkflowSelected,
     isEditImageWorkflowSelected,
     isCustomAudioVideoWorkflowSelected,
-    promptRelayLocalPrompts,]);
+    isFirstLastImageVideoWorkflowSelected,
+    isWanWorkflowSelected,
+    promptRelayLocalPrompts,
+  ]);
 
 
   const galleryActionsLocked = galleryBusy || galleryForcePullBusy || favoritesBusy || !!galleryActionBusyName;
@@ -3363,71 +3628,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
 
   async function handleGalleryCreateCharacter(item: GalleryItem) {
-    const name = getGalleryItemKey(item);
-    if (!name) {
-      setStatusMessage("Missing gallery image name.");
-      return;
-    }
-    if (!isSupportedCharacterGalleryImage(name, item)) {
-      setStatusMessage("Characters can only use Gallery images, not videos.");
-      return;
-    }
-    if (!canStartGalleryAction()) return;
-
-    beginGalleryAction(name, "character-import");
-    setStatusMessage("Checking Gallery image for portrait character import...");
-    try {
-      const fileUrl = galleryOriginalFileUrl(item) || String(item.url || "");
-      if (!fileUrl) {
-        throw new Error("Could not resolve the Gallery image file.");
-      }
-
-      const response = await fetch(fileUrl, {
-        cache: "no-store",
-        credentials: "include",
-      });
-      if (!response.ok) {
-        throw new Error(`Could not read the Gallery image (${response.status}).`);
-      }
-
-      const blob = await response.blob();
-      if (!String(blob.type || "").startsWith("image/")) {
-        throw new Error("Characters can only use image files, not videos.");
-      }
-
-      const dimensions = await readGalleryImageDimensionsFromBlob(blob);
-      if (dimensions.height <= dimensions.width) {
-        throw new Error("Characters requires a portrait image. Choose an image where height is greater than width.");
-      }
-
-      const imageFile = new File([blob], name || "gallery-portrait.png", { type: blob.type || "image/png" });
-      const form = new FormData();
-      form.append("image", imageFile, imageFile.name);
-
-      const res = await fetch("/api/characters/upload", {
-        method: "POST",
-        credentials: "include",
-        headers: { "x-otg-device-id": "web_gallery_character_import" },
-        body: form,
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.ok || !data?.serverPath) {
-        throw new Error(data?.error || `Character image upload failed (${res.status})`);
-      }
-
-      setCharacterImportDraft({
-        token: `gallery_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        imagePath: String(data.serverPath),
-        imageUrl: String(data.fileUrl || ""),
-        imageName: String(data.filename || imageFile.name || "gallery portrait image"),
-      });
-      setTab("characters");
-      setStatusMessage("Gallery portrait sent to Characters. Finish the character record there.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Failed to send Gallery portrait to Characters.");
-    } finally {
-      finishGalleryAction();
-    }
+    void item;
+    setStatusMessage("Characters are created from the Characters tab.");
+    setTab("characters");
   }
 
   async function handleGalleryDownload(item: GalleryItem) {
@@ -4150,14 +4353,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     });
   }
 
-  function pushNegativePromptUndoSnapshot(value: string) {
-    setNegativePromptUndoStack((prev) => {
-      if ((prev[prev.length - 1] ?? null) === value) return prev;
-      const next = [...prev, value];
-      return next.length > 40 ? next.slice(next.length - 40) : next;
-    });
-  }
-
   function handleClearPrompt() {
     if (!prompt) return;
     pushPromptUndoSnapshot(prompt);
@@ -4176,24 +4371,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setPromptAssessmentOpen(false);
       setPromptAssessment(null);
       setStatusMessage("Prompt restored.");
-      return next;
-    });
-  }
-
-  function handleClearNegativePrompt() {
-    if (!negativePrompt) return;
-    pushNegativePromptUndoSnapshot(negativePrompt);
-    setNegativePrompt("");
-    setStatusMessage("Negative prompt cleared.");
-  }
-
-  function handleUndoNegativePrompt() {
-    setNegativePromptUndoStack((prev) => {
-      if (!prev.length) return prev;
-      const next = [...prev];
-      const restore = next.pop() ?? "";
-      setNegativePrompt(restore);
-      setStatusMessage("Negative prompt restored.");
       return next;
     });
   }
@@ -4354,6 +4531,66 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }
 
 
+  async function adminLoraRequest(payload: Record<string, unknown>) {
+    setAdminLoraBusy(true);
+    setAdminLoraMessage("");
+    try {
+      const response = await fetch("/api/admin/image-loras", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.ok) throw new Error(String(data?.error || `LoRA admin request failed (${response.status}).`));
+      if (Array.isArray(data.entries)) setAdminImageLoras(data.entries);
+      await loadImageLoraCatalog();
+      return data;
+    } finally {
+      setAdminLoraBusy(false);
+    }
+  }
+
+  async function handleAdminLoraSync() {
+    try {
+      const data = await adminLoraRequest({ action: "sync" });
+      const backendSummary = Array.isArray(data?.backends)
+        ? data.backends.map((backend: any) => `${backend.id}: ${backend.ok ? `${backend.count} found` : backend.error}`).join("; ")
+        : "Inventory updated.";
+      setAdminLoraMessage(`LoRA folders synchronized. ${backendSummary}`);
+    } catch (error: any) {
+      setAdminLoraMessage(String(error?.message || error));
+    }
+  }
+
+  async function handleAdminLoraSave(entry: ImageLoraCatalogEntry) {
+    try {
+      await adminLoraRequest({ action: "upsert", entry });
+      setAdminLoraMessage(`Saved ${entry.label || entry.name}.`);
+    } catch (error: any) {
+      setAdminLoraMessage(String(error?.message || error));
+    }
+  }
+
+  async function handleAdminLoraDelete(entry: ImageLoraCatalogEntry) {
+    if (!window.confirm(`Remove ${entry.label || entry.name} from the web app catalog? The model file will remain on disk.`)) return;
+    try {
+      await adminLoraRequest({ action: "delete", name: entry.name });
+      setAdminLoraMessage(`Removed ${entry.label || entry.name} from the app catalog. The model file was not deleted.`);
+    } catch (error: any) {
+      setAdminLoraMessage(String(error?.message || error));
+    }
+  }
+
+  async function handleAdminLoraAdd() {
+    if (!adminNewLora.name.trim()) {
+      setAdminLoraMessage("Enter the exact LoRA filename first.");
+      return;
+    }
+    await handleAdminLoraSave(adminNewLora);
+    setAdminNewLora({ name: "", label: "", description: "", usage: "", strength: 1, mature: false, modelId: "", enabled: false, discoveredOn: [], missingOn: [] });
+  }
+
   async function handleSettingsCheckComfy() {
     if (settingsComfyBusy) return;
 
@@ -4370,6 +4607,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       setConnected(ok);
       setSettingsComfyBaseUrl(baseUrl);
+      if (data?.videoBackend) {
+        setVideoBackendStatus({
+          activeLabel: String(data.videoBackend.activeLabel || "No video backend available"),
+          activeGpu: String(data.videoBackend.activeGpu || ""),
+          fallbackActive: Boolean(data.videoBackend.fallbackActive),
+          fallbackStatus: String(data.videoBackend.fallbackStatus || ""),
+        });
+      }
       setSettingsComfyCheckedAt(new Date().toLocaleString());
       setStatusMessage(ok ? "Comfy connection verified." : "Comfy connection failed.");
       if (typeof data?.serverHint === "string" && data.serverHint.trim()) {
@@ -4444,6 +4689,21 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     setAppThemeId(nextThemeId);
     const label = APP_THEME_OPTIONS.find((theme) => theme.id === nextThemeId)?.label || "selected";
     setSettingsAppearanceMessage(`Theme changed to ${label}.`);
+  }
+
+  function handleColorModeChange(nextColorMode: AppColorMode) {
+    setAppColorMode(nextColorMode);
+    setSettingsAppearanceMessage(`${nextColorMode === "dark" ? "Dark" : "Light"} mode enabled.`);
+  }
+
+  function toggleColorMode() {
+    handleColorModeChange(appColorMode === "dark" ? "light" : "dark");
+  }
+
+  function handleCustomColorChange(nextColor: string) {
+    setAppCustomColor(nextColor);
+    setAppThemeId("custom");
+    setSettingsAppearanceMessage("Custom theme color applied.");
   }
 
   function handleFontScaleChange(nextFontScale: AppFontScale) {
@@ -4751,6 +5011,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     clearSceneReferenceAnalysis(slot);
     if (slot === "char1") {
       revokeScenePreview(sceneChar1PreviewUrl);
+      setSceneChar1Identity(null);
       if (!file) {
         setSceneChar1File(null);
         setSceneChar1Name("");
@@ -4766,6 +5027,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
     if (slot === "char2") {
       revokeScenePreview(sceneChar2PreviewUrl);
+      setSceneChar2Identity(null);
       if (!file) {
         setSceneChar2File(null);
         setSceneChar2Name("");
@@ -4781,6 +5043,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
     if (slot === "char3") {
       revokeScenePreview(sceneChar3PreviewUrl);
+      setSceneChar3Identity(null);
       if (!file) {
         setSceneChar3File(null);
         setSceneChar3Name("");
@@ -4819,7 +5082,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }
 
   function sceneCharacterFileName(item: SceneCharacterPickerItem, mime: string) {
-    const source = item.imagePath || item.name || "character";
+    const source = item.referenceImagePath || item.imagePath || item.name || "character";
     const base =
       String(item.name || source.split(/[\\/]/).pop() || "character")
         .replace(/\.[^.]+$/, "")
@@ -4838,55 +5101,144 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     return `${base}.${ext}`;
   }
 
+  function buildSceneSelectedCharacterIdentity(slot: SceneReferenceSlotKey, entry: any, name: string, id: string): SceneSelectedCharacterIdentity | null {
+    if (slot === "bg") return null;
+    const metadata = entry?.metadata && typeof entry.metadata === "object" && !Array.isArray(entry.metadata) ? entry.metadata : {};
+    const identity =
+      entry?.characterIdentity && typeof entry.characterIdentity === "object" && !Array.isArray(entry.characterIdentity)
+        ? entry.characterIdentity
+        : metadata?.characterIdentity && typeof metadata.characterIdentity === "object" && !Array.isArray(metadata.characterIdentity)
+          ? metadata.characterIdentity
+          : {};
+    const promptReadyDescription = String(
+      identity?.promptReadyDescription || entry?.promptReadyDescription || metadata?.promptReadyDescription || ""
+    )
+      .replace(/\s+/g, " ")
+      .trim();
+    const lockedAt = String(identity?.lockedAt || entry?.lockedAt || metadata?.lockedAt || "").trim();
+
+    return {
+      slot,
+      id: String(id || entry?.id || name || "").trim(),
+      name,
+      promptReadyDescription,
+      lockedAt,
+    };
+  }
+
+  function setSelectedSceneCharacterIdentity(slot: SceneReferenceSlotKey, identity: SceneSelectedCharacterIdentity | null) {
+    if (slot === "char1") setSceneChar1Identity(identity);
+    if (slot === "char2") setSceneChar2Identity(identity);
+    if (slot === "char3") setSceneChar3Identity(identity);
+  }
+
   async function loadSceneCharacterPickerItems() {
     setSceneCharacterPickerLoading(true);
     setSceneCharacterPickerError("");
 
     try {
-      const res = await fetch("/api/characters", {
-        cache: "no-store",
-        credentials: "include",
-      });
+      const fetchAttempts: Array<RequestInit & { label: string }> = [
+        {
+          label: "characters-device",
+          cache: "no-store",
+          credentials: "omit",
+          headers: { "x-otg-device-id": "web_characters_builder" },
+        },
+        {
+          label: "omit-no-device",
+          cache: "no-store",
+          credentials: "omit",
+        },
+        {
+          label: "include-session",
+          cache: "no-store",
+          credentials: "include",
+        },
+      ];
 
-      const data = await res.json().catch(() => ({}));
+      let raw: any[] = [];
+      let lastError = "";
 
-      if (!res.ok) {
-        throw new Error(typeof data?.error === "string" ? data.error : `Character load failed (${res.status})`);
+      for (const attempt of fetchAttempts) {
+        try {
+          const { label, ...fetchOptions } = attempt;
+          const res = await fetch("/api/characters", fetchOptions);
+          const data = await res.json().catch(() => ({}));
+
+          if (!res.ok) {
+            lastError = typeof data?.error === "string" ? data.error : `Character load failed (${res.status})`;
+            continue;
+          }
+
+          const nextRaw: any[] = Array.isArray(data)
+            ? data
+            : Array.isArray(data?.characters)
+              ? data.characters
+              : Array.isArray(data?.items)
+                ? data.items
+                : [];
+
+          if (nextRaw.length) {
+            raw = nextRaw;
+            break;
+          }
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : "Character load failed.";
+        }
       }
-
-      const raw: any[] = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.characters)
-          ? data.characters
-          : Array.isArray(data?.items)
-            ? data.items
-            : [];
 
       const seen = new Set<string>();
 
       const items: SceneCharacterPickerItem[] = raw
         .map((entry: any, index: number) => {
-          const imagePath = String(entry?.imagePath || "").trim();
           const name = String(entry?.name || entry?.title || entry?.label || `Character ${index + 1}`).trim();
 
+          const displayImagePath = String(
+            entry?.previewImagePath ||
+              entry?.fullBodyImagePath ||
+              entry?.imagePath ||
+              entry?.characterCardPath ||
+              entry?.cardImagePath ||
+              entry?.characterCardImagePath ||
+              ""
+          ).trim();
+
+          const referenceImagePath = String(
+            entry?.characterCardPath ||
+              entry?.cardImagePath ||
+              entry?.characterCardImagePath ||
+              entry?.referenceCardPath ||
+              ""
+          ).trim();
+          const id = String(entry?.id || referenceImagePath || displayImagePath || name || index);
+
           return {
-            id: String(entry?.id || imagePath || name || index),
+            id,
             name,
-            imagePath,
-            imageUrl: imagePath ? sceneCharacterImageUrl(imagePath) : "",
+            imagePath: displayImagePath,
+            imageUrl: displayImagePath ? sceneCharacterImageUrl(displayImagePath) : "",
+            referenceImagePath,
+            referenceImageUrl: referenceImagePath ? sceneCharacterImageUrl(referenceImagePath) : "",
+            characterIdentity: buildSceneSelectedCharacterIdentity("char1", entry, name, id),
           };
         })
         .filter((item) => {
           if (!item.imagePath || !item.imageUrl) return false;
-          if (seen.has(item.imagePath)) return false;
-          seen.add(item.imagePath);
+
+          const key = item.id || item.name || item.imagePath;
+          if (seen.has(key)) return false;
+          seen.add(key);
           return true;
         });
 
+      items.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
       setSceneCharacterPickerItems(items);
 
       if (!items.length) {
-        setSceneCharacterPickerError("No saved characters with images were found.");
+        setSceneCharacterPickerError(
+          lastError ||
+            "No saved characters with display images were found. Go to Characters, click Refresh, then save the character card again if needed."
+        );
       }
     } catch (error) {
       setSceneCharacterPickerItems([]);
@@ -4895,7 +5247,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setSceneCharacterPickerLoading(false);
     }
   }
-
   function openSceneCharacterPicker(slot: SceneReferenceSlotKey) {
     setSceneCharacterPickerSlot(slot);
     setSceneCharacterPickerError("");
@@ -4904,24 +5255,28 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }
 
   async function applySceneCharacterToReference(slot: SceneReferenceSlotKey, item: SceneCharacterPickerItem) {
-    if (!item.imageUrl) return;
+    if (!item.referenceImageUrl) {
+      setSceneCharacterPickerError(`${item.name} is missing a saved character card. Open Characters, regenerate/save the character card, then return to Production.`);
+      return;
+    }
 
     setSceneCharacterPickerSelectingId(item.id);
     setSceneCharacterPickerError("");
 
     try {
-      const res = await fetch(item.imageUrl, {
+      const res = await fetch(item.referenceImageUrl, {
         cache: "no-store",
-        credentials: "include",
+        credentials: "omit",
+        headers: { "x-otg-device-id": "web_characters_builder" },
       });
 
       if (!res.ok) {
-        throw new Error(`Could not load character image (${res.status}).`);
+        throw new Error(`Could not load character card reference image (${res.status}).`);
       }
 
       const blob = await res.blob();
       if (!String(blob.type || "").startsWith("image/")) {
-        throw new Error("Selected character file is not an image.");
+        throw new Error("Selected character card file is not an image.");
       }
 
       const file = new File([blob], sceneCharacterFileName(item, blob.type || "image/png"), {
@@ -4929,11 +5284,26 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       });
 
       setSceneReference(slot, file);
+      if (slot !== "bg") {
+        const identity = item.characterIdentity
+          ? {
+              ...item.characterIdentity,
+              slot,
+              id: item.id,
+              name: item.name,
+            }
+          : null;
+        setSelectedSceneCharacterIdentity(slot, identity);
+      }
       setSceneCharacterPickerSlot(null);
       setSceneCharacterPickerSelectingId("");
-      setStatusMessage(`${item.name} selected for ${sceneReferenceSlotLabel(slot)}.`);
+      if (slot !== "bg" && (!item.characterIdentity?.promptReadyDescription || !item.characterIdentity?.lockedAt)) {
+        setStatusMessage(`${item.name} selected. ${MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP}`);
+      } else {
+        setStatusMessage(`${item.name} character card selected for ${sceneReferenceSlotLabel(slot)}.`);
+      }
     } catch (error) {
-      setSceneCharacterPickerError(error instanceof Error ? error.message : "Could not select character.");
+      setSceneCharacterPickerError(error instanceof Error ? error.message : "Could not select character card.");
     } finally {
       setSceneCharacterPickerSelectingId("");
     }
@@ -5094,6 +5464,11 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       return;
     }
 
+    if (missingLockedSceneCharacterDescriptions.length) {
+      setStatusMessage(MISSING_LOCKED_CHARACTER_DESCRIPTION_MESSAGE);
+      return;
+    }
+
     if (scenePlanBusy) return;
 
     setScenePlanBusy(true);
@@ -5125,6 +5500,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                 "Continuity Notes:",
                 "",
                 "Reference handling rules:",
+                "- Treat saved Production characters as character-card reference sheets when available: one image may contain multiple angles, close-ups, and full-body views of the same character.",
+                "- Use all views in the character card as one identity reference, not as multiple different people.",
                 "- Treat uploaded character images as identity anchors first: face, skin tone, age range, hair cues, build, and recognizable presence.",
                 "- Separate identity continuity from wardrobe continuity. Preserve identity first. Only preserve clothing and accessories when they are continuity-critical and not contradicted by the current scene request.",
                 "- If the scene request explicitly changes wardrobe, time period, church attire, age state, or styling, obey the scene request over the source image clothing.",
@@ -5157,6 +5534,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                 "",
                 "Reference Image Card:",
                 sceneVisionContext || "No reference image analysis available.",
+                "",
+                "Locked Character Continuity:",
+                characterContinuityPrompt || "None.",
               ].join("\n"),
             },
           ],
@@ -5199,6 +5579,11 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     const promptCheck = evaluateScenePromptStrength(sceneDraft);
     if (!promptCheck.canGenerate) {
       setStatusMessage(`Prompt too weak. Add: ${promptCheck.missing.join(", ")}.`);
+      return;
+    }
+
+    if (missingLockedSceneCharacterDescriptions.length) {
+      setStatusMessage(MISSING_LOCKED_CHARACTER_DESCRIPTION_MESSAGE);
       return;
     }
 
@@ -5270,6 +5655,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                 "",
                 "Reference Card:",
                 sceneReferenceCard.trim(),
+                "",
+                "Locked Character Continuity:",
+                characterContinuityPrompt || "None.",
                 "",
                 "Current Scene Request:",
                 cleanedSceneDraft,
@@ -5372,10 +5760,17 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }
 
   const activeTabLabel = APP_TAB_LABELS[tab] || "OTG";
-  const appShellBackground = appUiMode === "clean" ? "#08090d" : selectedAppTheme.background;
+  const appShellBackground = selectedThemeTokens.background;
 
   return (
-    <main className="min-h-screen text-white transition-[background] duration-300" style={{ background: appShellBackground }} data-otg-theme={appThemeId} data-otg-font-scale={appFontScale} data-otg-ui-mode={appUiMode}>
+    <main
+      className="min-h-screen text-white transition-[background] duration-300"
+      style={{ background: appShellBackground, ...selectedThemeCssVars } as React.CSSProperties}
+      data-otg-theme={appThemeId}
+      data-otg-color-mode={appColorMode}
+      data-otg-font-scale={appFontScale}
+      data-otg-ui-mode={appUiMode}
+    >
       <div className={cn("pointer-events-none fixed inset-0 z-0", appUiMode === "clean" ? "hidden" : "")}>
         <div className="absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_center,rgba(80,120,255,0.18),rgba(120,60,255,0.10),transparent_62%)]" />
       </div>
@@ -5393,6 +5788,16 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={toggleColorMode}
+                className="otg-themeSwitch"
+                aria-pressed={appColorMode === "dark"}
+                title="Toggle light and dark mode"
+              >
+                <span className="otg-themeSwitchKnob" />
+                <span>{appColorMode === "dark" ? "Dark" : "Light"}</span>
+              </button>
               <button
                 type="button"
                 onClick={() => handleUiModeChange(appUiMode === "clean" ? "classic" : "clean")}
@@ -5426,9 +5831,27 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       {appUiMode === "classic" ? (
       <div className="pointer-events-none fixed right-3 top-4 z-30 md:right-5 md:top-5">
-        <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-2 text-sm font-semibold text-white shadow-[0_0_20px_rgba(0,0,0,0.35)]">
-          <span className={cn("inline-block h-2.5 w-2.5 rounded-full", connected ? "bg-green-400" : "bg-red-400")} />
-          <span>{connected ? "Connected" : "Disconnected"}</span>
+        <div className="pointer-events-auto inline-flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleColorMode}
+            className="otg-themeSwitch"
+            aria-pressed={appColorMode === "dark"}
+            title="Toggle light and dark mode"
+          >
+            <span className="otg-themeSwitchKnob" />
+            <span>{appColorMode === "dark" ? "Dark" : "Light"}</span>
+          </button>
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-2 text-sm font-semibold text-white shadow-[0_0_20px_rgba(0,0,0,0.35)]">
+            <span className={cn("inline-block h-2.5 w-2.5 rounded-full", connected ? "bg-green-400" : "bg-red-400")} />
+            <span>{connected ? "Connected" : "Disconnected"}</span>
+          </div>
+          {videoBackendStatus ? (
+            <div className={cn("inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-semibold shadow-[0_0_20px_rgba(0,0,0,0.35)]", videoBackendStatus.fallbackActive ? "border-amber-400/35 bg-amber-950/80 text-amber-100" : "border-white/10 bg-black/60 text-white/80")}>
+              <span>{videoBackendStatus.activeLabel}</span>
+              {videoBackendStatus.fallbackActive ? <span>Fallback active</span> : null}
+            </div>
+          ) : null}
         </div>
       </div>
       ) : null}
@@ -5446,21 +5869,320 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               <h1 className="text-4xl font-black tracking-tight text-white">Generate</h1>
             </div>
 
+            <div className="grid grid-cols-2 gap-3" aria-label="Generation type">
+              {(["image", "video"] as GenerateMediaMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={generateMediaMode === mode}
+                  onClick={() => {
+                    setGenerateMediaMode(mode);
+                    if (mode === "image") {
+                      const first = imageModelsForOperation(imageOperation)[0];
+                      if (first) setWorkflowId(first.id);
+                    } else if (selectedVideoConfiguration?.workflowId) {
+                      setWorkflowId(selectedVideoConfiguration.workflowId);
+                    }
+                  }}
+                  className={cn(
+                    "min-h-24 rounded-[28px] border px-5 py-5 text-lg font-black transition md:text-2xl",
+                    generateMediaMode === mode
+                      ? "border-cyan-300/55 bg-cyan-400/15 text-white shadow-[0_0_32px_rgba(34,211,238,0.16)]"
+                      : "border-white/10 bg-black/45 text-white/55 hover:bg-white/[0.06]"
+                  )}
+                >
+                  {mode === "image" ? "Image Generation" : "Video Generation"}
+                </button>
+              ))}
+            </div>
+
             <Card title="Workflow">
-              <select
-                value={workflowId}
-                onChange={(e) => setWorkflowId(e.target.value)}
-                className="w-full rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
-              >
-                {workflows.map((workflow) => (
-                  <option key={workflow.id} value={workflow.id} className="bg-[#0b1020]">
-                    {workflow.label}
-                  </option>
-                ))}
-              </select>
+              {generateMediaMode === "image" ? (
+                <div className="space-y-4">
+                  <select
+                    value={imageOperation}
+                    onChange={(event) => setImageOperation(event.target.value as ImageOperation)}
+                    className="w-full rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
+                  >
+                    {(Object.keys(IMAGE_OPERATION_LABELS) as ImageOperation[]).map((operation) => (
+                      <option key={operation} value={operation} className="bg-[#0b1020]">
+                        {IMAGE_OPERATION_LABELS[operation]}
+                      </option>
+                    ))}
+                  </select>
+                  <div className={cn("grid gap-2", operationImageModels.length > 1 ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-1")}>
+                    {operationImageModels.map((model) => (
+                      <button
+                        key={model.id}
+                        type="button"
+                        aria-pressed={workflowId === model.id}
+                        onClick={() => setWorkflowId(model.id)}
+                        className={cn(
+                          "min-h-14 rounded-[18px] border px-3 py-3 text-sm font-black transition",
+                          workflowId === model.id
+                            ? "border-purple-300/60 bg-purple-500/25 text-white"
+                            : "border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]"
+                        )}
+                      >
+                        {model.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  <div>
+                    <div className="mb-2 text-xs font-black uppercase tracking-[0.2em] text-white/50">Video type</div>
+                    <div className="grid gap-2 md:grid-cols-3">
+                      {VIDEO_GENERATION_OPTIONS.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          aria-pressed={videoGenerationType === option.id}
+                          onClick={() => setVideoGenerationType(option.id)}
+                          className={cn(
+                            "min-h-20 rounded-[18px] border px-4 py-3 text-left transition",
+                            videoGenerationType === option.id
+                              ? "border-purple-300/60 bg-purple-500/25 text-white"
+                              : "border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]"
+                          )}
+                        >
+                          <span className="block text-sm font-black">{option.label}</span>
+                          <span className="mt-1 block text-xs leading-5 text-white/45">{option.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="mb-2 text-xs font-black uppercase tracking-[0.2em] text-white/50">Video model</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {VIDEO_MODEL_OPTIONS.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          aria-pressed={videoModelFamily === option.id}
+                          onClick={() => setVideoModelFamily(option.id)}
+                          className={cn(
+                            "min-h-14 rounded-[18px] border px-4 py-3 text-sm font-black transition",
+                            videoModelFamily === option.id
+                              ? "border-cyan-300/55 bg-cyan-400/15 text-white"
+                              : "border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]"
+                          )}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="mb-2 text-xs font-black uppercase tracking-[0.2em] text-white/50">Model format</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {VIDEO_FORMAT_OPTIONS.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          aria-pressed={videoModelFormat === option.id}
+                          onClick={() => setVideoModelFormat(option.id)}
+                          className={cn(
+                            "min-h-14 rounded-[18px] border px-4 py-3 text-sm font-black transition",
+                            videoModelFormat === option.id
+                              ? "border-emerald-300/55 bg-emerald-400/15 text-white"
+                              : "border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]"
+                          )}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className={cn(
+                    "rounded-[18px] border px-4 py-3 text-sm",
+                    videoWorkflowReady
+                      ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-50"
+                      : "border-amber-400/25 bg-amber-500/10 text-amber-50"
+                  )}>
+                    {videoWorkflowReady
+                      ? `Ready: ${selectedVideoWorkflowItem?.label || selectedVideoConfiguration?.workflowId}`
+                      : selectedVideoConfiguration?.workflowId
+                        ? `TEST workflow not found: ${selectedVideoConfiguration.workflowId}`
+                        : "Workflow JSON pending. This combination cannot be submitted until its verified workflow is installed."}
+                  </div>
+                </div>
+              )}
               <p className="text-sm text-white/72">{selectedWorkflow.runtime}</p>
-              <p className="text-sm text-white/50">Select a runnable workflow from comfy_workflows.</p>
             </Card>
+
+            {generateMediaMode === "image" ? (
+              <Card title="LoRA">
+                {selectedImageModel?.defaultLora ? (
+                  <div className="rounded-[18px] border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-50">
+                    Workflow default: {selectedImageModel.defaultLora}
+                  </div>
+                ) : null}
+                {activeImageLoras.length ? (
+                  <div className="space-y-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (imageLoraAccessEnabled) return;
+                        setImageLoraAgeConfirmed(false);
+                        setImageLoraDisclaimerOpen(true);
+                      }}
+                      className={cn(
+                        "w-full rounded-[20px] border px-5 py-4 text-sm font-black transition",
+                        imageLoraAccessEnabled
+                          ? "border-emerald-400/35 bg-emerald-500/15 text-emerald-100"
+                          : "border-red-400/50 bg-red-600/25 text-red-100 hover:bg-red-600/35"
+                      )}
+                    >
+                      {imageLoraAccessEnabled ? "LoRAs Enabled - 18+ Confirmed" : "Enable LoRAs (18+)"}
+                    </button>
+
+                    <div className="text-sm text-white/60">
+                      Select up to {IMAGE_LORA_MAX_SELECTIONS}. Only LoRAs compatible with {selectedImageModel?.label || "this model"} are shown.
+                    </div>
+
+                    <div className="space-y-3">
+                      {activeImageLoras.map((lora) => {
+                        const selected = Object.prototype.hasOwnProperty.call(selectedImageLoras, lora.name);
+                        const selectedCount = Object.keys(selectedImageLoras).length;
+                        const atLimit = selectedCount >= IMAGE_LORA_MAX_SELECTIONS;
+                        return (
+                          <div
+                            key={lora.name}
+                            className={cn(
+                              "w-full rounded-[20px] border p-4 text-left transition",
+                              selected
+                                ? "border-purple-300/55 bg-purple-500/20"
+                                : "border-white/10 bg-white/[0.035] hover:bg-white/[0.07]"
+                            )}
+                          >
+                            <button
+                              type="button"
+                              aria-pressed={selected}
+                              disabled={imageLoraAccessEnabled && atLimit && !selected}
+                              onClick={() => {
+                                if (!imageLoraAccessEnabled) {
+                                  setImageLoraAgeConfirmed(false);
+                                  setImageLoraDisclaimerOpen(true);
+                                  return;
+                                }
+                                setSelectedImageLoras((current) => {
+                                  if (Object.prototype.hasOwnProperty.call(current, lora.name)) {
+                                    const next = { ...current };
+                                    delete next[lora.name];
+                                    return next;
+                                  }
+                                  return Object.keys(current).length < IMAGE_LORA_MAX_SELECTIONS
+                                    ? { ...current, [lora.name]: lora.strength }
+                                    : current;
+                                });
+                              }}
+                              className="w-full text-left disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="font-black text-white">{lora.label}</div>
+                                <div className="flex shrink-0 gap-2">
+                                  {lora.mature ? (
+                                    <span className="rounded-full border border-red-400/35 bg-red-500/15 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-red-100">Mature</span>
+                                  ) : null}
+                                  <span className="rounded-full border border-white/10 px-2 py-1 text-[10px] font-black text-white/65">{selected ? "Selected" : `Default ${lora.strength.toFixed(2)}`}</span>
+                                </div>
+                              </div>
+                              <p className="mt-2 text-sm leading-6 text-white/65">{lora.description}</p>
+                              <p className="mt-1 text-xs leading-5 text-cyan-100/65">{lora.usage}</p>
+                            </button>
+                            {selected ? (
+                              <label className="mt-4 block">
+                                <span className="flex items-center justify-between text-xs font-black uppercase tracking-wider text-white/55">
+                                  <span>Strength</span>
+                                  <span>{Number(selectedImageLoras[lora.name]).toFixed(2)}</span>
+                                </span>
+                                <input
+                                  type="range"
+                                  min="0"
+                                  max="2"
+                                  step="0.05"
+                                  value={selectedImageLoras[lora.name]}
+                                  onChange={(event) => {
+                                    const strength = Math.max(0, Math.min(2, Number(event.target.value)));
+                                    setSelectedImageLoras((current) => ({ ...current, [lora.name]: strength }));
+                                  }}
+                                  className="mt-2 w-full accent-purple-500"
+                                />
+                              </label>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {Object.keys(selectedImageLoras).length ? (
+                      <div className="rounded-[16px] border border-purple-300/20 bg-purple-500/10 px-4 py-3 text-sm text-purple-50">
+                        {Object.keys(selectedImageLoras).length} of {IMAGE_LORA_MAX_SELECTIONS} LoRAs selected.
+                      </div>
+                    ) : null}
+
+                    {imageLoraDisclaimerOpen ? (
+                      <div className="fixed inset-0 z-[180] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+                        <div role="dialog" aria-modal="true" aria-labelledby="image-lora-disclaimer-title" className="w-full max-w-xl rounded-[28px] border border-red-400/30 bg-[#0b1020] p-6 shadow-2xl">
+                          <h2 id="image-lora-disclaimer-title" className="text-2xl font-black text-white">LoRA Content Notice</h2>
+                          <p className="mt-4 leading-7 text-white/75">
+                            Some available LoRAs can generate mature content, including nudity, gore, or other material intended only for adults. You must be at least 18 years old to enable LoRAs.
+                          </p>
+                          <p className="mt-3 leading-7 text-white/75">
+                            By continuing, you agree that you are responsible for the prompts you submit, the content you generate, and how that content is used.
+                          </p>
+                          <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-[18px] border border-white/10 bg-white/[0.04] p-4 text-sm leading-6 text-white/80">
+                            <input
+                              type="checkbox"
+                              checked={imageLoraAgeConfirmed}
+                              onChange={(event) => setImageLoraAgeConfirmed(event.target.checked)}
+                              className="mt-1 h-5 w-5 accent-red-500"
+                            />
+                            <span>I confirm that I am at least 18 years old and accept responsibility for the content I generate.</span>
+                          </label>
+                          <div className="mt-6 grid grid-cols-2 gap-3">
+                            <button type="button" onClick={() => setImageLoraDisclaimerOpen(false)} className="rounded-[18px] border border-white/10 bg-white/[0.05] px-4 py-3 font-black text-white/75">Cancel</button>
+                            <button
+                              type="button"
+                              disabled={!imageLoraAgeConfirmed}
+                              onClick={() => {
+                                if (!imageLoraAgeConfirmed) return;
+                                try {
+                                  window.localStorage.setItem("otg-image-lora-adult-ack", IMAGE_LORA_ADULT_ACK_VERSION);
+                                } catch {}
+                                setImageLoraAccessEnabled(true);
+                                setImageLoraDisclaimerOpen(false);
+                              }}
+                              className="rounded-[18px] border border-red-300/45 bg-red-600 px-4 py-3 font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Confirm and Enable
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : selectedImageModel?.defaultLora ? null : (
+                  <p className="text-sm text-white/45">No LoRAs are configured for this model.</p>
+                )}
+              </Card>
+            ) : selectedVideoConfiguration?.workflowId && shouldShowVideoLoraPanel(generateMediaMode, selectedVideoLoraFamily) ? (
+              <Card title="Video LoRAs">
+                <VideoLoraPanel
+                  workflowId={selectedVideoConfiguration.workflowId}
+                  family={selectedVideoLoraFamily}
+                  value={selectedVideoLoras}
+                  onChange={setSelectedVideoLoras}
+                  prompt={prompt}
+                  onPromptChange={setPrompt}
+                />
+              </Card>
+            ) : null}
 
             <Card
               title="Choose style of picture and video"
@@ -5671,6 +6393,23 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                 <ActionButton onClick={handleEnhancePrompt} disabled={enhancing || !prompt.trim()}>
                   {enhancing ? "Enhancing..." : "Enhance Prompt"}
                 </ActionButton>
+                <div className="flex flex-wrap items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-950/60 p-1" data-otg="OTG_ENHANCE_LEVEL_UI_V4">
+                  {(["short", "medium", "cinematic"] as const).map((level) => (
+                    <button
+                      key={level}
+                      type="button"
+                      onClick={() => setEnhancePromptLevel(level)}
+                      className={
+                        enhancePromptLevel === level
+                          ? "rounded-lg border border-purple-300 bg-purple-500 px-3 py-2 text-xs font-black capitalize text-white"
+                          : "rounded-lg border border-zinc-700 bg-zinc-900/70 px-3 py-2 text-xs font-black capitalize text-zinc-300 hover:border-purple-300 hover:text-white"
+                      }
+                      aria-pressed={enhancePromptLevel === level}
+                    >
+                      {level === "cinematic" ? "Long" : level}
+                    </button>
+                  ))}
+                </div>
                 {showPromptBuilderAssistant ? (
                   <ActionButton onClick={handlePromptBuilderAssistant} disabled={formattingPrompt || !prompt.trim()}>
                     {formattingPrompt ? "Checking Prompt..." : "Prompt Builder Assistant"}
@@ -5874,32 +6613,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               </Card>
             ) : null}
 
-            <Card title="Negative prompt">
-              <textarea
-                value={negativePrompt}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  if (next !== negativePrompt) pushNegativePromptUndoSnapshot(negativePrompt);
-                  setNegativePrompt(next);
-                }}
-                rows={4}
-                placeholder="Describe what to avoid."
-                className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-              />
-              <div className="flex flex-wrap items-center gap-3">
-                <GhostButton onClick={handleClearNegativePrompt} disabled={!negativePrompt}>
-                  Clear
-                </GhostButton>
-                <GhostButton onClick={handleUndoNegativePrompt} disabled={!negativePromptUndoStack.length}>
-                  Undo
-                </GhostButton>
-              </div>
-            </Card>
-
             <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
               <Card title="Orientation">
                 <div className="flex flex-wrap gap-3">
-                  <PillButton active={orientation === "portrait"} onClick={() => !isVideoWorkflowSelected && setOrientation("portrait")}>
+                  <PillButton active={orientation === "portrait"} onClick={() => setOrientation("portrait")}>
                     Portrait
                   </PillButton>
                   <PillButton active={orientation === "landscape"} onClick={() => setOrientation("landscape")}>
@@ -5907,11 +6624,11 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                   </PillButton>
                 </div>
                 <p className="text-sm text-white/50">
-                  {isVideoWorkflowSelected ? "Video is currently landscape-only." : "Images can switch between portrait and landscape."}
+                  Images and videos are locked to 720p in portrait or landscape.
                 </p>
               </Card>
 
-              <Card title="Duration">
+              {generateMediaMode === "video" && !isWanWorkflowSelected ? <Card title="Duration">
                 <select
                   value={String(durationSeconds)}
                   onChange={(e) => setDurationSeconds(clampGenerateDuration(Number(e.target.value)))}
@@ -5924,20 +6641,19 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                   ))}
                 </select>
                 <p className="text-sm text-white/50">Choose 5, 10, or 15 seconds.</p>
-              </Card>
+              </Card> : null}
             </div>
 
             <div>
-              <Card title={isVideoUpscalerWorkflowSelected ? "Input video" : "Input image"}>
+              {(videoNeedsStarterImage || isEditImageWorkflowSelected) ? <Card title={videoNeedsLastFrameImage ? "First frame image" : videoNeedsStarterImage ? "Starter image" : "Input image"}>
                 <div className="flex flex-wrap items-center gap-3">
-                  <ActionButton onClick={() => imageInputRef.current?.click()}>{isVideoUpscalerWorkflowSelected ? "Upload video" : "Upload image"}</ActionButton>
+                  <ActionButton onClick={() => imageInputRef.current?.click()}>{videoNeedsLastFrameImage ? "Upload first image" : videoNeedsStarterImage ? "Upload starter image" : "Upload image"}</ActionButton>
                   <ActionButton
                     onClick={() => {
                       setGenerateGalleryPickerTarget("input");
                       setGenerateGalleryPickerOpen(true);
                       void loadGenerateGalleryItems();
                     }}
-                    disabled={isVideoUpscalerWorkflowSelected}
                   >
                     Choose from Gallery
                   </ActionButton>
@@ -5946,7 +6662,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                 <input
                   ref={imageInputRef}
                   type="file"
-                  accept={isVideoUpscalerWorkflowSelected ? "video/*" : "image/*"}
+                  accept="image/*"
                   className="hidden"
                   onChange={(e) => {
                     const file = e.target.files?.[0] || null;
@@ -5965,21 +6681,72 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                       )
                     ) : (
                       <div className="flex h-full items-center justify-center px-6 text-center text-sm text-white/40">
-                        {isVideoUpscalerWorkflowSelected ? "Uploaded source video preview appears here." : "Uploaded input image preview appears here."}
+                        {videoNeedsLastFrameImage ? "Uploaded first frame preview appears here." : videoNeedsStarterImage ? "Uploaded starter image preview appears here." : "Uploaded input image preview appears here."}
                       </div>
                     )}
                   </div>
                   <div className="border-t border-white/10 px-4 py-3">
                     <div className="text-xs text-white/52">
                       {uploadedImageMeta
-                        ? `Starter image: ${uploadedImageMeta.width} x ${uploadedImageMeta.height}${uploadedImageMeta.height > uploadedImageMeta.width ? " - portrait" : " - landscape"}`
-                        : isVideoUpscalerWorkflowSelected
-                      ? "Upload the source video you want to upscale with RTX SR."
-                      : "Upload a starter image if you want to build image-to-video from a still frame."}
+                        ? `${videoNeedsLastFrameImage ? "First image" : videoNeedsStarterImage ? "Starter image" : "Input image"}: ${uploadedImageMeta.width} x ${uploadedImageMeta.height}${uploadedImageMeta.height > uploadedImageMeta.width ? " - portrait" : " - landscape"}`
+                        : videoNeedsLastFrameImage
+                          ? "Upload the first frame image for the transition."
+                          : videoNeedsStarterImage
+                            ? "Upload the still image that starts the video."
+                            : "Upload the image you want to edit."}
                     </div>
                   </div>
                 </div>
-              </Card>
+                {isEditImageWorkflowSelected && selectedImageModel ? (
+                  <div className="mt-4 space-y-3">
+                    {editInputCount >= 2 ? (
+                      <div className="flex flex-wrap items-center gap-3 rounded-[18px] border border-white/10 bg-white/[0.03] p-3">
+                        <ActionButton onClick={() => secondImageInputRef.current?.click()}>Upload image 2</ActionButton>
+                        <span className="min-w-0 flex-1 truncate text-sm text-white/60">{secondImageFileName || "No file selected"}</span>
+                        <GhostButton onClick={() => {
+                          secondImageFileRef.current = null;
+                          thirdImageFileRef.current = null;
+                          setSecondImageFileName("");
+                          setThirdImageFileName("");
+                          setEditInputCount(1);
+                        }}>Remove</GhostButton>
+                        <input ref={secondImageInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => {
+                          const file = event.target.files?.[0] || null;
+                          secondImageFileRef.current = file;
+                          setSecondImageFileName(file?.name || "");
+                        }} />
+                      </div>
+                    ) : null}
+                    {editInputCount >= 3 ? (
+                      <div className="flex flex-wrap items-center gap-3 rounded-[18px] border border-white/10 bg-white/[0.03] p-3">
+                        <ActionButton onClick={() => thirdImageInputRef.current?.click()}>Upload image 3</ActionButton>
+                        <span className="min-w-0 flex-1 truncate text-sm text-white/60">{thirdImageFileName || "No file selected"}</span>
+                        <GhostButton onClick={() => {
+                          thirdImageFileRef.current = null;
+                          setThirdImageFileName("");
+                          setEditInputCount(2);
+                        }}>Remove</GhostButton>
+                        <input ref={thirdImageInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => {
+                          const file = event.target.files?.[0] || null;
+                          thirdImageFileRef.current = file;
+                          setThirdImageFileName(file?.name || "");
+                        }} />
+                      </div>
+                    ) : null}
+                    {selectedImageModel.maxInputImages > editInputCount ? (
+                      <button
+                        type="button"
+                        aria-label="Add another reference image"
+                        onClick={() => setEditInputCount((count) => Math.min(selectedImageModel.maxInputImages, count + 1))}
+                        className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-cyan-300/35 bg-cyan-400/10 text-2xl font-black text-cyan-100"
+                      >
+                        +
+                      </button>
+                    ) : null}
+                    <p className="text-sm text-white/45">This workflow accepts up to {selectedImageModel.maxInputImages} reference image{selectedImageModel.maxInputImages === 1 ? "" : "s"}.</p>
+                  </div>
+                ) : null}
+              </Card> : null}
               {generateGalleryPickerOpen ? (
                 <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/80 px-4 py-6 backdrop-blur-sm">
                   <div className="mx-auto flex max-h-[86vh] max-w-5xl flex-col overflow-hidden rounded-[28px] border border-cyan-400/20 bg-[#070b16] shadow-[0_0_60px_rgba(0,0,0,0.55)]">
@@ -6146,24 +6913,11 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                       {latestPreviewKind === "image" && latestPreviewMeta
                         ? `Generated image: ${latestPreviewMeta.width} x ${latestPreviewMeta.height}${latestPreviewMeta.height > latestPreviewMeta.width ? " - portrait" : " - landscape"}`
                         : latestPreviewKind === "video"
-                          ? "Create Character works only with generated portrait images."
-                          : "Create Character works only with generated portrait images."}
+                          ? "Latest generated video."
+                          : "Generate content to update this preview."}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <ActionButton
-                      onClick={() => void handleCreateCharacterFromGenerate()}
-                      disabled={
-                        createCharacterBusy ||
-                        progressStatus === "running" ||
-                        latestPreviewKind !== "image" ||
-                        !latestPreviewUrl ||
-                        !latestPreviewMeta ||
-                        latestPreviewMeta.height <= latestPreviewMeta.width
-                      }
-                    >
-                      {createCharacterBusy ? "Sending..." : "Create Character"}
-                    </ActionButton>
                     <GhostButton onClick={() => void refreshLatestContent(true)} disabled={progressStatus === "running"}>
                       Refresh preview
                     </GhostButton>
@@ -6216,7 +6970,18 @@ ${sceneReferenceCard || ""}`.toLowerCase();
             <Card title="Generate action">
               <p className="text-sm text-white/60">The Generate button stays here as the last step.</p>
               <div className="flex flex-wrap items-center gap-3">
-                <ActionButton onClick={handleGenerate} disabled={generateBusy || !prompt.trim() || (isPromptRelayWorkflowSelected && (!uploadedFileName || !promptRelayLocalPrompts.trim())) || (isCustomAudioVideoWorkflowSelected && (!uploadedFileName || !customAudioFileName))}>
+                <ActionButton
+                  onClick={handleGenerate}
+                  disabled={
+                    generateBusy ||
+                    !prompt.trim() ||
+                    (generateMediaMode === "video" && !videoWorkflowReady) ||
+                    (videoNeedsStarterImage && !uploadedFileName) ||
+                    (videoNeedsLastFrameImage && !lastFrameFileName) ||
+                    (isPromptRelayWorkflowSelected && (!uploadedFileName || !promptRelayLocalPrompts.trim())) ||
+                    (isCustomAudioVideoWorkflowSelected && (!uploadedFileName || !customAudioFileName))
+                  }
+                >
                   {generateBusy ? "Submitting..." : "Generate"}
                 </ActionButton>
                 <span className="text-sm text-white/55">Sends the current prompt and controls to ComfyUI.</span>
@@ -6474,6 +7239,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                           )}
                         </div>
                         <div className="truncate text-[11px] text-white/50">{sceneChar1Name || "Required"}</div>
+                        {sceneChar1Identity && (!sceneChar1Identity.promptReadyDescription || !sceneChar1Identity.lockedAt) ? (
+                          <div className="text-[11px] leading-4 text-amber-200">{MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP}</div>
+                        ) : null}
                       </div>
 
                       <div className="space-y-2">
@@ -6502,6 +7270,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                           )}
                         </div>
                         <div className="truncate text-[11px] text-white/50">{sceneChar2Name || "Optional"}</div>
+                        {sceneChar2Identity && (!sceneChar2Identity.promptReadyDescription || !sceneChar2Identity.lockedAt) ? (
+                          <div className="text-[11px] leading-4 text-amber-200">{MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP}</div>
+                        ) : null}
                       </div>
 
                       <div className="space-y-2">
@@ -6530,6 +7301,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                           )}
                         </div>
                         <div className="truncate text-[11px] text-white/50">{sceneChar3Name || "Optional"}</div>
+                        {sceneChar3Identity && (!sceneChar3Identity.promptReadyDescription || !sceneChar3Identity.lockedAt) ? (
+                          <div className="text-[11px] leading-4 text-amber-200">{MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP}</div>
+                        ) : null}
                       </div>
 
                       <div className="space-y-2">
@@ -6759,10 +7533,19 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                         {sceneWriteBusy ? "Creating..." : "Create Scene"}
                       </ActionButton>
 
-                      <ActionButton onClick={() => sendTextToGenerate(sceneOutput)} disabled={!sceneOutput.trim()}>
+                      <ActionButton onClick={() => sendTextToGenerate(sceneOutput)} disabled={!sceneOutput.trim() || missingLockedSceneCharacterDescriptions.length > 0}>
                         Send to Generate
                       </ActionButton>
                     </div>
+                    {missingLockedSceneCharacterDescriptions.length ? (
+                      <div className="rounded-[16px] border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+                        {MISSING_LOCKED_CHARACTER_DESCRIPTION_MESSAGE}
+                      </div>
+                    ) : characterContinuityPrompt ? (
+                      <div className="rounded-[16px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100">
+                        Locked character continuity will be injected above the Generate prompt.
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="space-y-4">
@@ -6857,7 +7640,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                         Choose Character for {sceneReferenceSlotLabel(sceneCharacterPickerSlot)}
                       </h3>
                       <p className="text-sm text-white/55">
-                        Uses saved Characters tab images and applies the selected image to this Scene Creator reference slot.
+                        Shows saved Characters tab thumbnails. Selecting a character applies its saved multi-angle character card to this Scene Creator reference slot.
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -6893,7 +7676,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                           key={item.id}
                           type="button"
                           onClick={() => void applySceneCharacterToReference(sceneCharacterPickerSlot, item)}
-                          disabled={Boolean(sceneCharacterPickerSelectingId)}
+                          disabled={Boolean(sceneCharacterPickerSelectingId) || !item.referenceImageUrl}
                           className="group overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] text-left transition hover:border-cyan-300/40 hover:bg-white/[0.07] disabled:cursor-wait disabled:opacity-60"
                         >
                           <div className="aspect-square bg-black/45">
@@ -6906,6 +7689,13 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                           </div>
                           <div className="border-t border-white/10 px-3 py-2">
                             <div className="truncate text-xs font-semibold text-white">{item.name}</div>
+                            {!item.referenceImageUrl ? (
+                              <div className="mt-1 text-[10px] font-semibold text-amber-300">Missing character card</div>
+                            ) : item.characterIdentity && (!item.characterIdentity.promptReadyDescription || !item.characterIdentity.lockedAt) ? (
+                              <div className="mt-1 text-[10px] font-semibold text-amber-300">Missing locked description</div>
+                            ) : (
+                              <div className="mt-1 text-[10px] font-semibold text-cyan-200">Uses character card</div>
+                            )}
                             {sceneCharacterPickerSelectingId === item.id ? (
                               <div className="mt-1 text-[11px] text-cyan-200">Selecting...</div>
                             ) : null}
@@ -7218,8 +8008,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         ) : null}
 
         {tab === "angles" ? <AnglesPanel /> : null}
-        {PRODUCTION_FEATURE_ENABLED && tab === "storyboard" ? <StoryboardPanel /> : null}
-        {tab === "characters" ? <CharactersPanel importedDraft={characterImportDraft} onImportedDraftConsumed={() => setCharacterImportDraft(null)} /> : null}
+        {tab === "storyboard" ? <StoryboardPanel /> : null}
+        {tab === "characters" ? <CharactersPanel isAdmin={isAdmin} /> : null}
         {tab === "editvideo" ? <EditVideoPanel onRefreshGallery={() => void loadGallery()} /> : null}
 
         {tab === "support" ? <SupportPanel /> : null}
@@ -7232,9 +8022,116 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">Check your account, verify the active Comfy connection, and recover stuck local pipeline state without deleting Gallery or Favorites.</p>
             </div>
 
+            {isAdmin ? <AdminQuickPanel /> : null}
+
             <div className="grid gap-4 lg:grid-cols-2">
-              <Card title="Appearance">
+              {isAdmin ? (
+                <div className="lg:col-span-2">
+                  <Card title="Admin LoRA Manager">
+                    <details className="group">
+                      <summary className="cursor-pointer rounded-[20px] border border-white/10 bg-white/[0.04] px-5 py-4 text-left transition hover:bg-white/[0.07]">
+                        <span className="block font-black text-white">Manage the shared LoRA catalog</span>
+                        <span className="mt-1 block text-sm leading-6 text-white/55">Tap to expand or collapse the admin controls.</span>
+                      </summary>
+                    <div className="mt-5 space-y-5">
+                      <div className="rounded-[20px] border border-cyan-400/20 bg-cyan-500/10 p-4 text-sm leading-6 text-cyan-50/85">
+                        Only admins can change the shared LoRA catalog. Synchronize scans both ComfyUI backends, adds newly discovered files as disabled/unassigned review items, and flags missing files. Removing an entry here never deletes its model file from disk.
+                      </div>
+                      <div className="flex flex-wrap gap-3">
+                        <ActionButton onClick={() => void handleAdminLoraSync()} disabled={adminLoraBusy}>
+                          {adminLoraBusy ? "Updating..." : "Update LoRAs from ComfyUI"}
+                        </ActionButton>
+                        <GhostButton onClick={() => void loadAdminImageLoras()} disabled={adminLoraBusy}>Refresh Catalog</GhostButton>
+                      </div>
+                      {adminLoraMessage ? <div className="rounded-[18px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/75">{adminLoraMessage}</div> : null}
+
+                      <div className="rounded-[22px] border border-white/10 bg-black/35 p-4">
+                        <div className="font-black text-white">Add LoRA to the app catalog</div>
+                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                          <input value={adminNewLora.name} onChange={(event) => setAdminNewLora((current) => ({ ...current, name: event.target.value }))} placeholder="Exact folder/filename.safetensors" className="rounded-[16px] border border-white/10 bg-black/45 px-4 py-3 text-white" />
+                          <input value={adminNewLora.label} onChange={(event) => setAdminNewLora((current) => ({ ...current, label: event.target.value }))} placeholder="Display name" className="rounded-[16px] border border-white/10 bg-black/45 px-4 py-3 text-white" />
+                          <select value={adminNewLora.modelId} onChange={(event) => setAdminNewLora((current) => ({ ...current, modelId: event.target.value }))} className="rounded-[16px] border border-white/10 bg-black/45 px-4 py-3 text-white">
+                            <option value="">Unassigned / admin review</option>
+                            {IMAGE_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+                          </select>
+                          <input type="number" min="0" max="2" step="0.05" value={adminNewLora.strength} onChange={(event) => setAdminNewLora((current) => ({ ...current, strength: Number(event.target.value) }))} className="rounded-[16px] border border-white/10 bg-black/45 px-4 py-3 text-white" />
+                          <textarea value={adminNewLora.description} onChange={(event) => setAdminNewLora((current) => ({ ...current, description: event.target.value }))} placeholder="Description" className="rounded-[16px] border border-white/10 bg-black/45 px-4 py-3 text-white" />
+                          <textarea value={adminNewLora.usage} onChange={(event) => setAdminNewLora((current) => ({ ...current, usage: event.target.value }))} placeholder="Usage instructions" className="rounded-[16px] border border-white/10 bg-black/45 px-4 py-3 text-white" />
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-4 text-sm text-white/75">
+                          <label className="flex items-center gap-2"><input type="checkbox" checked={adminNewLora.mature} onChange={(event) => setAdminNewLora((current) => ({ ...current, mature: event.target.checked }))} /> Mature content</label>
+                          <label className="flex items-center gap-2"><input type="checkbox" checked={adminNewLora.enabled} onChange={(event) => setAdminNewLora((current) => ({ ...current, enabled: event.target.checked }))} /> Enabled for users</label>
+                        </div>
+                        <div className="mt-4"><ActionButton onClick={() => void handleAdminLoraAdd()} disabled={adminLoraBusy}>Add LoRA</ActionButton></div>
+                      </div>
+
+                      <div className="space-y-4">
+                        {adminImageLoras.map((entry, index) => (
+                          <div key={entry.name} className="rounded-[22px] border border-white/10 bg-black/35 p-4">
+                            <div className="break-all font-mono text-xs text-white/45">{entry.name}</div>
+                            <div className="mt-3 grid gap-3 md:grid-cols-2">
+                              <input value={entry.label} onChange={(event) => setAdminImageLoras((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item))} placeholder="Display name" className="rounded-[16px] border border-white/10 bg-black/45 px-4 py-3 text-white" />
+                              <select value={entry.modelId} onChange={(event) => setAdminImageLoras((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, modelId: event.target.value } : item))} className="rounded-[16px] border border-white/10 bg-black/45 px-4 py-3 text-white">
+                                <option value="">Unassigned / hidden</option>
+                                {IMAGE_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+                              </select>
+                              <textarea value={entry.description} onChange={(event) => setAdminImageLoras((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item))} placeholder="Description" className="rounded-[16px] border border-white/10 bg-black/45 px-4 py-3 text-white" />
+                              <textarea value={entry.usage} onChange={(event) => setAdminImageLoras((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, usage: event.target.value } : item))} placeholder="Usage instructions" className="rounded-[16px] border border-white/10 bg-black/45 px-4 py-3 text-white" />
+                              <label className="text-sm text-white/65">Default strength<input type="number" min="0" max="2" step="0.05" value={entry.strength} onChange={(event) => setAdminImageLoras((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, strength: Number(event.target.value) } : item))} className="mt-1 w-full rounded-[16px] border border-white/10 bg-black/45 px-4 py-3 text-white" /></label>
+                              <div className="flex flex-wrap items-center gap-4 text-sm text-white/75">
+                                <label className="flex items-center gap-2"><input type="checkbox" checked={entry.mature} onChange={(event) => setAdminImageLoras((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, mature: event.target.checked } : item))} /> Mature</label>
+                                <label className="flex items-center gap-2"><input type="checkbox" checked={entry.enabled} onChange={(event) => setAdminImageLoras((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, enabled: event.target.checked } : item))} /> Enabled</label>
+                              </div>
+                            </div>
+                            <div className="mt-3 text-xs text-white/50">Found on: {entry.discoveredOn.join(", ") || "not detected"} · Missing on: {entry.missingOn.join(", ") || "none"}</div>
+                            <div className="mt-4 flex flex-wrap gap-3">
+                              <ActionButton onClick={() => void handleAdminLoraSave(entry)} disabled={adminLoraBusy}>Save</ActionButton>
+                              <button type="button" onClick={() => void handleAdminLoraDelete(entry)} disabled={adminLoraBusy} className="rounded-full border border-red-400/35 bg-red-500/10 px-5 py-3 font-black text-red-100">Remove from App</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    </details>
+                  </Card>
+                </div>
+              ) : null}
+              <Card title="Themes">
                 <div className="space-y-5">
+                  <div className="rounded-[22px] border border-white/10 bg-black/35 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-white">Light and dark mode</p>
+                        <p className="mt-1 text-sm leading-6 text-white/60">Switches the entire app shell while keeping your selected theme color.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={toggleColorMode}
+                        className="otg-themeSwitch"
+                        aria-pressed={appColorMode === "dark"}
+                      >
+                        <span className="otg-themeSwitchKnob" />
+                        <span>{appColorMode === "dark" ? "Dark" : "Light"}</span>
+                      </button>
+                    </div>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      {(["dark", "light"] as AppColorMode[]).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => handleColorModeChange(mode)}
+                          className={cn(
+                            "rounded-[18px] border px-4 py-3 text-left transition",
+                            appColorMode === mode ? "border-cyan-300/45 bg-cyan-500/12 text-white" : "border-white/10 bg-black/30 text-white/72 hover:bg-white/[0.06]"
+                          )}
+                        >
+                          <span className="block font-semibold">{mode === "dark" ? "Dark mode" : "Light mode"}</span>
+                          <span className="mt-1 block text-xs text-white/50">{mode === "dark" ? "Low-glare studio surfaces." : "Bright readable workspace surfaces."}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="rounded-[22px] border border-white/10 bg-black/35 p-4">
                     <p className="text-sm font-semibold text-white">Interface mode</p>
                     <p className="mt-1 text-sm leading-6 text-white/60">Use Clean for a simplified app shell, or switch back to Classic if you prefer the original layout.</p>
@@ -7259,29 +8156,68 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                   <div>
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-white">Theme color</p>
-                        <p className="mt-1 text-sm leading-6 text-white/60">Changes the app shell theme on this device. This is a local preference and does not affect other users.</p>
+                        <p className="text-sm font-semibold text-white">Theme palette</p>
+                        <p className="mt-1 text-sm leading-6 text-white/60">Choose a preset or generate a complementary palette from a custom color. This is saved on this device.</p>
                       </div>
-                      <div className="h-12 w-12 rounded-full border border-white/15" style={{ background: selectedAppTheme.accent }} aria-hidden="true" />
+                      <div className="h-12 w-12 rounded-full border border-white/15" style={{ background: selectedThemeTokens.primary }} aria-hidden="true" />
                     </div>
                     <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                      {APP_THEME_OPTIONS.map((theme) => (
-                        <button
-                          key={theme.id}
-                          type="button"
-                          onClick={() => handleThemeChange(theme.id)}
-                          className={cn(
-                            "rounded-[22px] border p-4 text-left transition",
-                            appThemeId === theme.id ? "border-white/35 bg-white/[0.10]" : "border-white/10 bg-black/35 hover:bg-white/[0.06]"
-                          )}
-                        >
-                          <span className="flex items-center gap-3">
-                            <span className="h-8 w-8 rounded-full border border-white/15" style={{ background: theme.accent }} aria-hidden="true" />
-                            <span className="font-semibold text-white">{theme.label}</span>
-                          </span>
-                          <span className="mt-2 block text-sm leading-5 text-white/58">{theme.description}</span>
-                        </button>
-                      ))}
+                      {APP_THEME_OPTIONS.map((theme) => {
+                        const themePreviewColor = theme.id === "custom" ? appCustomColor : theme.baseColor;
+                        const isSelectedTheme = appThemeId === theme.id;
+                        if (theme.id === "custom") {
+                          return (
+                            <div
+                              key={theme.id}
+                              className={cn(
+                                "rounded-[22px] border p-4 text-left transition",
+                                isSelectedTheme ? "border-white/35 bg-white/[0.10]" : "border-white/10 bg-black/35"
+                              )}
+                            >
+                              <div className="flex items-center gap-3">
+                                <span className="h-8 w-8 rounded-full border border-white/15" style={{ background: themePreviewColor }} aria-hidden="true" />
+                                <span className="font-semibold text-white">{theme.label}</span>
+                              </div>
+                              <p className="mt-2 text-sm leading-5 text-white/58">{theme.description}</p>
+                              <div className="mt-3 flex flex-wrap items-center gap-3">
+                                <input
+                                  type="color"
+                                  value={appCustomColor}
+                                  onChange={(event) => handleCustomColorChange(event.target.value)}
+                                  className="h-9 w-14 cursor-pointer rounded-lg border border-white/15 bg-transparent p-1"
+                                  aria-label="Choose custom theme color"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleThemeChange("custom")}
+                                  className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-2 text-xs font-black text-white/72 transition hover:bg-white/[0.10]"
+                                >
+                                  Apply custom
+                                </button>
+                                <span className="text-xs font-semibold text-white/55">{appCustomColor.toUpperCase()}</span>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <button
+                            key={theme.id}
+                            type="button"
+                            onClick={() => handleThemeChange(theme.id)}
+                            className={cn(
+                              "rounded-[22px] border p-4 text-left transition",
+                              isSelectedTheme ? "border-white/35 bg-white/[0.10]" : "border-white/10 bg-black/35 hover:bg-white/[0.06]"
+                            )}
+                          >
+                            <span className="flex items-center gap-3">
+                              <span className="h-8 w-8 rounded-full border border-white/15" style={{ background: themePreviewColor }} aria-hidden="true" />
+                              <span className="font-semibold text-white">{theme.label}</span>
+                            </span>
+                            <span className="mt-2 block text-sm leading-5 text-white/58">{theme.description}</span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -7374,6 +8310,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               </Card>
 
               <Card title="Comfy connection">
+                {videoBackendStatus ? (
+                  <div className={cn("rounded-[22px] border p-4", videoBackendStatus.fallbackActive ? "border-amber-400/30 bg-amber-950/30" : "border-emerald-400/20 bg-emerald-950/20")}>
+                    <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Active video backend</p>
+                    <p className="mt-2 text-lg font-semibold text-white">{videoBackendStatus.activeLabel}</p>
+                    {videoBackendStatus.activeGpu ? <p className="mt-1 text-sm text-white/72">{videoBackendStatus.activeGpu}</p> : null}
+                    <p className="mt-2 text-sm text-white/72">{videoBackendStatus.fallbackStatus}</p>
+                  </div>
+                ) : null}
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="rounded-[22px] border border-white/10 bg-black/35 p-4">
                     <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Status</p>
@@ -7508,7 +8452,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         onEdit={handleGalleryEdit}
         onAnimate={handleGalleryAnimate}
         onExtend={handleGalleryExtend}
-        onCreateCharacter={handleGalleryCreateCharacter}
         onDelete={handleGalleryDelete}
         onOpenViewer={openViewer}
         viewerState={viewerState}
@@ -7552,7 +8495,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       />
 
             <ProductionCharacterReferencePickerBridge />
-<SpinDialNav tab={tab} onTab={setTab} isAdmin={isAdmin} showProduction={PRODUCTION_FEATURE_ENABLED} uiMode={appUiMode} />
+<SpinDialNav tab={tab} onTab={setTab} isAdmin={isAdmin} showProduction={true} uiMode={appUiMode} />
     </main>
   );
 }

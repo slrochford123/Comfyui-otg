@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import fssync from "node:fs";
 
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 import { loadWorkflowById, extractPromptGraph, validatePromptGraph } from "@/lib/workflows";
 import { removeBackgroundBestEffort } from "@/app/api/angles/_lib/backgroundRemoval";
 
@@ -82,7 +83,10 @@ function timeoutSignal(ms: number) {
 async function fetchStage(url: string, init: RequestInit, stage: string, timeoutMs: number) {
   const { signal, cancel } = timeoutSignal(timeoutMs);
   try {
-    return await fetch(url, { ...init, signal, cache: "no-store" });
+    const promptBase = url.endsWith("/prompt") ? url.slice(0, -7) : "";
+    return promptBase
+      ? await submitComfyPromptWith5060Lease({ baseUrl: promptBase, workerId: "api-angles-trellis-3d", init: { ...init, signal, cache: "no-store" } })
+      : await fetch(url, { ...init, signal, cache: "no-store" });
   } catch (e: any) {
     const msg = e?.name === "AbortError" ? `Request timed out after ${timeoutMs}ms.` : (e?.message || String(e));
     throw new StageError(stage, msg);

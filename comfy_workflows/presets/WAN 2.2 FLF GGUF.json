@@ -1,0 +1,371 @@
+{
+  "__otg": {
+    "label": "WAN 2.2 - First and Last Frame - GGUF",
+    "description": "WAN 2.2 first/last-frame video using the BoundBite v10 Q8 GGUF high/low pair without an extra speed LoRA.",
+    "video": true,
+    "img2img": true,
+    "videoGenerate": {
+      "modelId": "wan22",
+      "operation": "first_last_frame",
+      "format": "gguf",
+      "outputNodeIds": ["174"],
+      "sizeNodeIds": ["127"],
+      "frameNodeIds": ["177"],
+      "fpsNodeIds": ["174"],
+      "firstImageNodeId": "139",
+      "lastImageNodeId": "147"
+    }
+  },
+  "127": {
+    "inputs": {
+      "width": 720,
+      "height": 1280,
+      "upscale_method": "nearest-exact",
+      "keep_proportion": "stretch",
+      "pad_color": "0, 0, 0",
+      "crop_position": "center",
+      "divisible_by": 2,
+      "device": "cpu",
+      "image": [
+        "139",
+        0
+      ]
+    },
+    "class_type": "ImageResizeKJv2",
+    "_meta": {
+      "title": "Resize Image v2"
+    }
+  },
+  "137": {
+    "inputs": {
+      "text": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走, talking",
+      "clip": [
+        "150",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "139": {
+    "inputs": {
+      "image": "a9e39530-d0da-47eb-bf5e-d1f4011acb60.jpeg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Start Image"
+    }
+  },
+  "140": {
+    "inputs": {
+      "text": "A graceful and masterful warrior ",
+      "clip": [
+        "150",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "147": {
+    "inputs": {
+      "image": "1667ed66-33c0-43c0-8e86-a8cf2f29bfd2.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "End Image"
+    }
+  },
+  "148": {
+    "inputs": {
+      "width": [
+        "127",
+        1
+      ],
+      "height": [
+        "127",
+        2
+      ],
+      "upscale_method": "nearest-exact",
+      "keep_proportion": "stretch",
+      "pad_color": "0, 0, 0",
+      "crop_position": "center",
+      "divisible_by": 2,
+      "device": "cpu",
+      "image": [
+        "147",
+        0
+      ]
+    },
+    "class_type": "ImageResizeKJv2",
+    "_meta": {
+      "title": "Resize Image v2"
+    }
+  },
+  "149": {
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "150": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "151": {
+    "inputs": {
+      "lora_name": "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+      "strength_model": 1,
+      "model": [
+        "156",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "155": {
+    "inputs": {
+      "lora_name": "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+      "strength_model": 1.0000000000000002,
+      "model": [
+        "157",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "156": {
+    "inputs": {
+      "unet_name": "DasiwaWAN22I2V14BBoundbiteV10_q8High.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "157": {
+    "inputs": {
+      "unet_name": "DasiwaWAN22I2V14BBoundbiteV10_q8Low.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "162": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": 940298883118260,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 0,
+      "end_at_step": 2,
+      "return_with_leftover_noise": "enable",
+      "model": [
+        "171",
+        0
+      ],
+      "positive": [
+        "177",
+        0
+      ],
+      "negative": [
+        "177",
+        1
+      ],
+      "latent_image": [
+        "177",
+        2
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Advanced)"
+    }
+  },
+  "163": {
+    "inputs": {
+      "add_noise": "disable",
+      "noise_seed": 14185814588091,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 2,
+      "end_at_step": 10000,
+      "return_with_leftover_noise": "disable",
+      "model": [
+        "173",
+        0
+      ],
+      "positive": [
+        "177",
+        0
+      ],
+      "negative": [
+        "177",
+        1
+      ],
+      "latent_image": [
+        "162",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Advanced)"
+    }
+  },
+  "168": {
+    "inputs": {
+      "sage_attention": "auto",
+      "allow_compile": false,
+      "model": [
+        "156",
+        0
+      ]
+    },
+    "class_type": "PathchSageAttentionKJ",
+    "_meta": {
+      "title": "Patch Sage Attention KJ"
+    }
+  },
+  "169": {
+    "inputs": {
+      "sage_attention": "auto",
+      "allow_compile": false,
+      "model": [
+        "157",
+        0
+      ]
+    },
+    "class_type": "PathchSageAttentionKJ",
+    "_meta": {
+      "title": "Patch Sage Attention KJ"
+    }
+  },
+  "170": {
+    "inputs": {
+      "samples": [
+        "163",
+        0
+      ],
+      "vae": [
+        "149",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "171": {
+    "inputs": {
+      "shift": 8.000000000000002,
+      "model": [
+        "168",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "173": {
+    "inputs": {
+      "shift": 8.000000000000002,
+      "model": [
+        "169",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "174": {
+    "inputs": {
+      "frame_rate": 24,
+      "loop_count": 0,
+      "filename_prefix": "WanI2V/wan22",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "170",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "177": {
+    "inputs": {
+      "width": [
+        "127",
+        1
+      ],
+      "height": [
+        "127",
+        2
+      ],
+      "length": 81,
+      "batch_size": 1,
+      "positive": [
+        "140",
+        0
+      ],
+      "negative": [
+        "137",
+        0
+      ],
+      "vae": [
+        "149",
+        0
+      ],
+      "start_image": [
+        "127",
+        0
+      ],
+      "end_image": [
+        "148",
+        0
+      ]
+    },
+    "class_type": "WanFirstLastFrameToVideo",
+    "_meta": {
+      "title": "WanFirstLastFrameToVideo"
+    }
+  }
+}

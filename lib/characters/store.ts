@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { OTG_DATA_ROOT, ensureDir, readJsonSafe, safeJoin, safeSegment } from "@/lib/paths";
+import type { CharacterVoiceProfile, VoiceModelArtifact } from "@/lib/characterVoiceAudioStudio";
 
 export type CharacterRecord = {
   id: string;
@@ -9,12 +10,31 @@ export type CharacterRecord = {
   imagePath: string;
   previewImagePath?: string;
   transparentImagePath?: string;
+  originalSourceImagePath?: string;
+  fullBodyImagePath?: string;
+  characterCardPath?: string;
+  characterCardWorkflowImagePath?: string;
+  characterCardPreviewImagePath?: string;
+  defaultCharacterImagePath?: string;
+  defaultCharacterPreviewImagePath?: string;
+  defaultCharacterSourceImagePath?: string;
+  backgroundRemovedDefaultImagePath?: string;
+  defaultCharacterImageStatus?: "background_removed" | "fallback_original_card" | "missing";
   description: string;
   voiceStyleDefinition: string;
   introLine: string;
   introVideoPath?: string;
   referenceAudioPath?: string;
   source?: string;
+  metadata?: Record<string, unknown>;
+  voiceSettings?: Record<string, unknown>;
+  characterVoiceProfile?: CharacterVoiceProfile;
+  voiceModelArtifacts?: VoiceModelArtifact[];
+  voicePackPaths?: Record<string, string>;
+  voiceEngineUsed?: string;
+  voicePromptPresetMetadata?: Record<string, unknown>;
+  yellingPresetMetadata?: Record<string, unknown>;
+  globalPromptIdentityBlock?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -25,12 +45,39 @@ export type CreateCharacterInput = {
   imagePath: string;
   previewImagePath?: string;
   transparentImagePath?: string;
+  originalSourceImagePath?: string;
+  fullBodyImagePath?: string;
+  characterCardPath?: string;
+  characterCardWorkflowImagePath?: string;
+  characterCardPreviewImagePath?: string;
+  defaultCharacterImagePath?: string;
+  defaultCharacterPreviewImagePath?: string;
+  defaultCharacterSourceImagePath?: string;
+  backgroundRemovedDefaultImagePath?: string;
+  defaultCharacterImageStatus?: "background_removed" | "fallback_original_card" | "missing";
   description: string;
   voiceStyleDefinition?: string;
   introLine?: string;
   introVideoPath?: string;
   referenceAudioPath?: string;
   source?: string;
+  metadata?: Record<string, unknown>;
+  voiceSettings?: Record<string, unknown>;
+  characterVoiceProfile?: CharacterVoiceProfile;
+  voiceModelArtifacts?: VoiceModelArtifact[];
+  voicePackPaths?: Record<string, string>;
+  voiceEngineUsed?: string;
+  voicePromptPresetMetadata?: Record<string, unknown>;
+  yellingPresetMetadata?: Record<string, unknown>;
+  globalPromptIdentityBlock?: string;
+};
+
+export type UpdateCharacterVoiceSelectionInput = {
+  referenceAudioPath: string;
+  voiceSettings?: Record<string, unknown>;
+  voiceEngineUsed?: string;
+  voiceStyleDefinition?: string;
+  metadata?: Record<string, unknown>;
 };
 
 function charactersRoot(ownerKey: string): string {
@@ -44,6 +91,9 @@ function characterFile(ownerKey: string, characterId: string): string {
 }
 
 function normalizeRecord(input: CreateCharacterInput, existing?: CharacterRecord | null): CharacterRecord {
+  if (input.characterVoiceProfile) {
+    validateCharacterVoiceProfileArtifactFiles(input.characterVoiceProfile);
+  }
   const id = safeSegment(input.id || input.name || `character_${Date.now()}`);
   const now = new Date().toISOString();
   return {
@@ -52,15 +102,93 @@ function normalizeRecord(input: CreateCharacterInput, existing?: CharacterRecord
     imagePath: String(input.imagePath || "").trim(),
     previewImagePath: input.previewImagePath ? String(input.previewImagePath).trim() : undefined,
     transparentImagePath: input.transparentImagePath ? String(input.transparentImagePath).trim() : undefined,
+    originalSourceImagePath: input.originalSourceImagePath ? String(input.originalSourceImagePath).trim() : undefined,
+    fullBodyImagePath: input.fullBodyImagePath ? String(input.fullBodyImagePath).trim() : undefined,
+    characterCardPath: input.characterCardPath ? String(input.characterCardPath).trim() : undefined,
+    characterCardWorkflowImagePath: input.characterCardWorkflowImagePath ? String(input.characterCardWorkflowImagePath).trim() : undefined,
+    characterCardPreviewImagePath: input.characterCardPreviewImagePath ? String(input.characterCardPreviewImagePath).trim() : undefined,
+    defaultCharacterImagePath: input.defaultCharacterImagePath ? String(input.defaultCharacterImagePath).trim() : undefined,
+    defaultCharacterPreviewImagePath: input.defaultCharacterPreviewImagePath ? String(input.defaultCharacterPreviewImagePath).trim() : undefined,
+    defaultCharacterSourceImagePath: input.defaultCharacterSourceImagePath ? String(input.defaultCharacterSourceImagePath).trim() : undefined,
+    backgroundRemovedDefaultImagePath: input.backgroundRemovedDefaultImagePath ? String(input.backgroundRemovedDefaultImagePath).trim() : undefined,
+    defaultCharacterImageStatus: input.defaultCharacterImageStatus,
     description: String(input.description || "").trim(),
     voiceStyleDefinition: String(input.voiceStyleDefinition || "").trim(),
     introLine: String(input.introLine || "").trim(),
     introVideoPath: input.introVideoPath ? String(input.introVideoPath).trim() : undefined,
     referenceAudioPath: input.referenceAudioPath ? String(input.referenceAudioPath).trim() : undefined,
     source: input.source ? String(input.source).trim() : undefined,
+    metadata: input.metadata && typeof input.metadata === "object" ? input.metadata : undefined,
+    voiceSettings: input.voiceSettings && typeof input.voiceSettings === "object" ? input.voiceSettings : undefined,
+    characterVoiceProfile: input.characterVoiceProfile && typeof input.characterVoiceProfile === "object" ? input.characterVoiceProfile : undefined,
+    voiceModelArtifacts: Array.isArray(input.voiceModelArtifacts) ? input.voiceModelArtifacts : undefined,
+    voicePackPaths: input.voicePackPaths && typeof input.voicePackPaths === "object" ? input.voicePackPaths : undefined,
+    voiceEngineUsed: input.voiceEngineUsed ? String(input.voiceEngineUsed).trim() : undefined,
+    voicePromptPresetMetadata: input.voicePromptPresetMetadata && typeof input.voicePromptPresetMetadata === "object" ? input.voicePromptPresetMetadata : undefined,
+    yellingPresetMetadata: input.yellingPresetMetadata && typeof input.yellingPresetMetadata === "object" ? input.yellingPresetMetadata : undefined,
+    globalPromptIdentityBlock: input.globalPromptIdentityBlock ? String(input.globalPromptIdentityBlock).trim() : undefined,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
   };
+}
+
+function hasBytes(filePath: string | undefined): boolean {
+  const clean = String(filePath || "").trim();
+  if (!clean) return false;
+  try {
+    return fs.existsSync(clean) && fs.statSync(clean).isFile() && fs.statSync(clean).size > 0;
+  } catch {
+    return false;
+  }
+}
+
+function isInsideDataRoot(filePath: string): boolean {
+  const dataRoot = path.resolve(OTG_DATA_ROOT);
+  const resolved = path.resolve(filePath);
+  const relative = path.relative(dataRoot, resolved);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function isRealTrainedArtifactCandidate(item: unknown): item is Record<string, unknown> & { modelPath?: string; indexPath?: string } {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  const artifact = item as Record<string, unknown>;
+  return (
+    artifact.adapter === "applio_real_training" ||
+    artifact.mode === "real" ||
+    artifact.mock === false ||
+    artifact.status === "trained"
+  );
+}
+
+function validateCharacterVoiceProfileArtifactFiles(profile: CharacterVoiceProfile): void {
+  const candidates: Array<{ label: string; modelPath?: string; indexPath?: string }> = [];
+  if (
+    profile.status === "trained" ||
+    profile.trainingAdapter === "applio_real_training" ||
+    profile.trainingMock === false
+  ) {
+    candidates.push({ label: "characterVoiceProfile", modelPath: profile.modelPath, indexPath: profile.indexPath });
+  }
+  if (Array.isArray(profile.voiceModelArtifacts)) {
+    for (const artifact of profile.voiceModelArtifacts) {
+      if (isRealTrainedArtifactCandidate(artifact)) {
+        candidates.push({
+          label: `voiceModelArtifacts.${String(artifact.id || artifact.sourceJobId || "artifact")}`,
+          modelPath: artifact.modelPath,
+          indexPath: artifact.indexPath,
+        });
+      }
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (!hasBytes(candidate.modelPath)) {
+      throw new Error(`Cannot persist trained Applio voice profile: ${candidate.label}.modelPath is missing or empty.`);
+    }
+    if (!hasBytes(candidate.indexPath)) {
+      throw new Error(`Cannot persist trained Applio voice profile: ${candidate.label}.indexPath is missing or empty.`);
+    }
+  }
 }
 
 export function listCharacters(ownerKey: string): CharacterRecord[] {
@@ -89,6 +217,71 @@ export function createCharacter(ownerKey: string, input: CreateCharacterInput): 
   return next;
 }
 
+export function updateCharacterVoiceSelection(
+  ownerKey: string,
+  characterId: string,
+  input: UpdateCharacterVoiceSelectionInput,
+): CharacterRecord | null {
+  const filePath = characterFile(ownerKey, characterId);
+  const existing = readJsonSafe<CharacterRecord | null>(filePath, null);
+  if (!existing) return null;
+
+  const referenceAudioPath = String(input.referenceAudioPath || "").trim();
+  if (!referenceAudioPath) {
+    throw new Error("Character referenceAudioPath is required.");
+  }
+  if (!isInsideDataRoot(referenceAudioPath)) {
+    throw new Error("Character reference audio must be inside the OTG data folder.");
+  }
+  if (!hasBytes(referenceAudioPath)) {
+    throw new Error("Character reference audio is missing or empty.");
+  }
+
+  const next: CharacterRecord = {
+    ...existing,
+    referenceAudioPath,
+    voiceSettings:
+      input.voiceSettings && typeof input.voiceSettings === "object" && !Array.isArray(input.voiceSettings)
+        ? input.voiceSettings
+        : existing.voiceSettings,
+    voiceEngineUsed: input.voiceEngineUsed
+      ? String(input.voiceEngineUsed).trim()
+      : existing.voiceEngineUsed,
+    voiceStyleDefinition: input.voiceStyleDefinition !== undefined
+      ? String(input.voiceStyleDefinition || "").trim()
+      : existing.voiceStyleDefinition,
+    metadata: {
+      ...(existing.metadata && typeof existing.metadata === "object" ? existing.metadata : {}),
+      ...(input.metadata && typeof input.metadata === "object" && !Array.isArray(input.metadata) ? input.metadata : {}),
+    },
+    updatedAt: new Date().toISOString(),
+  };
+
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, JSON.stringify(next, null, 2), "utf8");
+  return next;
+}
+
+export function updateCharacterVoiceProfile(
+  ownerKey: string,
+  characterId: string,
+  characterVoiceProfile: CharacterVoiceProfile
+): CharacterRecord | null {
+  const filePath = characterFile(ownerKey, characterId);
+  const existing = readJsonSafe<CharacterRecord | null>(filePath, null);
+  if (!existing) return null;
+  validateCharacterVoiceProfileArtifactFiles(characterVoiceProfile);
+
+  const next: CharacterRecord = {
+    ...existing,
+    characterVoiceProfile,
+    updatedAt: new Date().toISOString(),
+  };
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, JSON.stringify(next, null, 2), "utf8");
+  return next;
+}
+
 export function deleteCharacter(ownerKey: string, characterId: string): { deleted: boolean; removedFiles: string[] } {
   const filePath = characterFile(ownerKey, characterId);
   const existing = readJsonSafe<CharacterRecord | null>(filePath, null);
@@ -102,7 +295,22 @@ export function deleteCharacter(ownerKey: string, characterId: string): { delete
   }
 
   const dataRoot = path.resolve(OTG_DATA_ROOT);
-  for (const candidate of [existing?.imagePath, existing?.previewImagePath, existing?.transparentImagePath, existing?.introVideoPath, existing?.referenceAudioPath]) {
+  for (const candidate of [
+    existing?.imagePath,
+    existing?.previewImagePath,
+    existing?.transparentImagePath,
+    existing?.originalSourceImagePath,
+    existing?.fullBodyImagePath,
+    existing?.characterCardPath,
+    existing?.characterCardWorkflowImagePath,
+    existing?.characterCardPreviewImagePath,
+    existing?.defaultCharacterImagePath,
+    existing?.defaultCharacterPreviewImagePath,
+    existing?.defaultCharacterSourceImagePath,
+    existing?.backgroundRemovedDefaultImagePath,
+    existing?.introVideoPath,
+    existing?.referenceAudioPath,
+  ]) {
     const target = String(candidate || "").trim();
     if (!target) continue;
     const resolved = path.resolve(target);

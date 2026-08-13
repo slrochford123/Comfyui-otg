@@ -4,27 +4,58 @@ import fs from "node:fs/promises";
 import fssync from "node:fs";
 
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 import { loadWorkflowById, extractPromptGraph, validatePromptGraph } from "@/lib/workflows";
 import { removeBackgroundBestEffort } from "@/app/api/angles/_lib/backgroundRemoval";
+import {
+  clampAnglesWorkflowVertical,
+  clampAnglesWorkflowZoom,
+  normalizeAnglesWorkflowHorizontal,
+} from "@/lib/anglesCamera";
+import {
+  selectAnglesGeneratedOutput,
+  type AnglesHistoryFile,
+} from "@/lib/anglesHistory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
-type HistoryFile = { filename: string; subfolder?: string; type?: string };
+function clampAnglesWorkflowInputs(workflow: any) {
+  const visit = (value: any) => {
+    if (!value || typeof value !== "object") return;
 
-const DEFAULT_ANGLES_IMAGE_COMFY_URL = "http://127.0.0.1:8288";
+    if (value.class_type === CAMERA_NODE_TYPE && value.inputs) {
+      value.inputs.horizontal_angle = normalizeAnglesWorkflowHorizontal(
+        value.inputs.horizontal_angle
+      );
+      value.inputs.vertical_angle = clampAnglesWorkflowVertical(
+        value.inputs.vertical_angle
+      );
+      value.inputs.zoom = clampAnglesWorkflowZoom(value.inputs.zoom);
+    }
+
+    for (const child of Object.values(value)) {
+      visit(child);
+    }
+  };
+
+  visit(workflow);
+  return workflow;
+}
+
+const DEFAULT_ANGLES_IMAGE_COMFY_URL = "http://127.0.0.1:8188";
 const ANGLES_IMAGE_WORKFLOW_ID = "internal/angles_multiview_texture_turntable_v12_hotfix";
 
 const LOAD_IMAGE_NODE_ID = "41";
 const CAMERA_NODE_ID = "93";
+const CAMERA_NODE_TYPE = "QwenMultiangleCameraNode";
 const SAMPLER_NODE_ID = "108";
 const DECODE_NODE_ID = "103";
 const OUTPUT_NODE_ID = "110";
 
-const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif)(?:$|\?)/i;
 const DEFAULT_POLL_MAX_MS = 5 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 1_500;
+
 
 class StageError extends Error {
   stage: string;
@@ -71,16 +102,6 @@ function parsePositiveInt(raw: string | undefined, fallback: number) {
   return Math.floor(n);
 }
 
-function clamp(n: number, lo: number, hi: number) {
-  if (!Number.isFinite(n)) return lo;
-  return Math.max(lo, Math.min(hi, n));
-}
-
-function normalizeDegrees(raw: number) {
-  if (!Number.isFinite(raw)) return 0;
-  return ((Math.round(raw) % 360) + 360) % 360;
-}
-
 function timeoutSignal(ms: number) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
@@ -90,7 +111,10 @@ function timeoutSignal(ms: number) {
 async function fetchStage(url: string, init: RequestInit, stage: string, timeoutMs: number) {
   const { signal, cancel } = timeoutSignal(timeoutMs);
   try {
-    return await fetch(url, { ...init, signal, cache: "no-store" });
+    const promptBase = url.endsWith("/prompt") ? url.slice(0, -7) : "";
+    return promptBase
+      ? await submitComfyPromptWith5060Lease({ baseUrl: promptBase, workerId: "api-angles-create-image", init: { ...init, signal, cache: "no-store" } })
+      : await fetch(url, { ...init, signal, cache: "no-store" });
   } catch (e: any) {
     const msg = e?.name === "AbortError" ? `Request timed out after ${timeoutMs}ms.` : e?.message || String(e);
     throw new StageError(stage, msg);
@@ -123,47 +147,34 @@ async function assertComfyReachable(baseUrl: string) {
   return parsed.json ?? parsed.text;
 }
 
-function extractImageFilesFromHistory(record: any): HistoryFile[] {
-  const out: HistoryFile[] = [];
-  const seen = new Set<string>();
+async function assertAnglesCameraNodeAvailable(baseUrl: string) {
+  const response = await fetchStage(
+    `${baseUrl}/object_info/${encodeURIComponent(CAMERA_NODE_TYPE)}`,
+    { method: "GET" },
+    "angles_image_node_check",
+    15_000
+  );
+  const parsed = await readJsonOrText(response);
+  const nodeInfo = parsed.json?.[CAMERA_NODE_TYPE];
 
-  const visit = (value: any) => {
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item);
-      return;
-    }
-    if (!value || typeof value !== "object") return;
-
-    const filename = value.filename ? String(value.filename) : "";
-    if (filename && IMAGE_EXT_RE.test(filename)) {
-      const hf: HistoryFile = {
-        filename,
-        subfolder: value.subfolder ? String(value.subfolder) : "",
-        type: value.type ? String(value.type) : "output",
-      };
-      const key = `${hf.type}|${hf.subfolder}|${hf.filename}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        out.push(hf);
+  if (!response.ok || !nodeInfo) {
+    throw new StageError(
+      "angles_image_node_check",
+      `${CAMERA_NODE_TYPE} is not installed on the configured Angles backend.`,
+      503,
+      {
+        endpoint: baseUrl,
+        nodeType: CAMERA_NODE_TYPE,
+        responseStatus: response.status,
+        response: parsed.json ?? parsed.text,
       }
-    }
+    );
+  }
 
-    for (const nested of Object.values(value)) visit(nested);
-  };
-
-  visit(record?.outputs || record);
-  return out;
+  return nodeInfo;
 }
 
-function pickBestImageFile(files: HistoryFile[], expectedBase: string) {
-  if (!files.length) return null;
-  const byPrefix = files.find((f) => f.filename.startsWith(expectedBase));
-  if (byPrefix) return byPrefix;
-  const outputFile = files.find((f) => (f.type || "output") === "output");
-  return outputFile || files[0];
-}
-
-async function fetchComfyViewBytes(baseUrl: string, f: HistoryFile) {
+async function fetchComfyViewBytes(baseUrl: string, f: AnglesHistoryFile) {
   const filename = encodeURIComponent(f.filename);
   const type = encodeURIComponent(f.type || "output");
   const subfolder = encodeURIComponent(f.subfolder || "");
@@ -224,7 +235,7 @@ function configureQwenMultiangleWorkflow(
   loadImage.inputs.image = opts.uploadedName;
 
   const camera = graph?.[CAMERA_NODE_ID];
-  if (camera?.class_type !== "QwenMultiangleCameraNode" || !camera.inputs) {
+  if (camera?.class_type !== CAMERA_NODE_TYPE || !camera.inputs) {
     throw new StageError(
       "angles_image_prepare_workflow",
       `Angles Qwen workflow is missing QwenMultiangleCameraNode ${CAMERA_NODE_ID}.`,
@@ -232,9 +243,9 @@ function configureQwenMultiangleWorkflow(
       { workflowId: ANGLES_IMAGE_WORKFLOW_ID, nodeId: CAMERA_NODE_ID, found: camera?.class_type }
     );
   }
-  camera.inputs.horizontal_angle = opts.horizontal;
-  camera.inputs.vertical_angle = opts.vertical;
-  camera.inputs.zoom = opts.zoom;
+  camera.inputs.horizontal_angle = normalizeAnglesWorkflowHorizontal(opts.horizontal);
+  camera.inputs.vertical_angle = clampAnglesWorkflowVertical(opts.vertical);
+  camera.inputs.zoom = clampAnglesWorkflowZoom(opts.zoom);
   camera.inputs.default_prompts = opts.defaultPrompts;
   camera.inputs.camera_view = opts.cameraView;
 
@@ -298,9 +309,9 @@ export async function POST(req: NextRequest) {
     const rawHorizontal = parseNumber(fd.get("angleHorizontal"), 0);
     const rawVertical = parseNumber(fd.get("angleVertical"), 0);
     const rawZoom = parseNumber(fd.get("angleZoom"), 5);
-    const horizontal = normalizeDegrees(rawHorizontal);
-    const vertical = clamp(Math.round(rawVertical), -90, 90);
-    const zoom = clamp(Math.round(rawZoom), 1, 10);
+    const horizontal = normalizeAnglesWorkflowHorizontal(rawHorizontal);
+    const vertical = clampAnglesWorkflowVertical(rawVertical);
+    const zoom = clampAnglesWorkflowZoom(rawZoom);
     const defaultPrompts = parseBool(fd.get("angleDefaultPrompts"), false);
     const cameraView = parseBool(fd.get("angleCameraView"), false);
     const rawSeed = parseNumber(fd.get("seed"), -1);
@@ -322,6 +333,7 @@ export async function POST(req: NextRequest) {
     }
 
     const healthInfo = await assertComfyReachable(COMFY_BASE_URL);
+    await assertAnglesCameraNodeAvailable(COMFY_BASE_URL);
 
     const up = new FormData();
     up.append("image", new Blob([new Uint8Array(uploadBytes)], { type: "image/png" }), uploadName);
@@ -380,7 +392,7 @@ export async function POST(req: NextRequest) {
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: graph, client_id: comfyClientId }),
+        body: JSON.stringify({ prompt: clampAnglesWorkflowInputs(graph), client_id: comfyClientId }),
       },
       "angles_image_submit_prompt",
       30_000
@@ -400,8 +412,8 @@ export async function POST(req: NextRequest) {
 
     const promptId = String(submitJson.prompt_id);
     const start = Date.now();
-    let imageFile: HistoryFile | null = null;
-    let historyFiles: HistoryFile[] = [];
+    let imageFile: AnglesHistoryFile | null = null;
+    let historyFiles: AnglesHistoryFile[] = [];
     let lastHistorySummary: any = null;
 
     while (Date.now() - start < pollMaxMs) {
@@ -424,12 +436,19 @@ export async function POST(req: NextRequest) {
       }
 
       const record = histJson?.[promptId] ?? histJson;
-      historyFiles = extractImageFilesFromHistory(record);
-      imageFile = pickBestImageFile(historyFiles, expectedBase);
+      const selectedOutput = selectAnglesGeneratedOutput(
+        record,
+        OUTPUT_NODE_ID,
+        expectedBase
+      );
+      historyFiles = selectedOutput.outputNodeFiles;
+      imageFile = selectedOutput.imageFile;
       lastHistorySummary = {
         status: record?.status ?? null,
         nodeIds: Object.keys(record?.outputs || {}),
-        files: historyFiles,
+        outputNodeId: OUTPUT_NODE_ID,
+        outputNodeFiles: selectedOutput.outputNodeFiles,
+        allFiles: selectedOutput.allFiles,
       };
 
       if (imageFile) break;
@@ -453,7 +472,7 @@ export async function POST(req: NextRequest) {
           endpoint: COMFY_BASE_URL,
           expectedPrefix: prefix,
           outputNodeId: OUTPUT_NODE_ID,
-          note: "The route keeps PreviewImage node 110 and retrieves the resulting temp image from ComfyUI history. If this still fails, inspect ComfyUI history outputs for node 110.",
+          note: "The route accepts image files only from generated output node 110. Camera-node preview files from node 93 are intentionally ignored.",
           lastHistorySummary,
         }
       );
