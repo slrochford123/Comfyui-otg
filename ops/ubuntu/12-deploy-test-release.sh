@@ -17,7 +17,7 @@ case "$REL_ID" in
 esac
 
 REPO_DIR="$REPO_DIR" \
-ENV_FILE=${ENV_FILE:-/home/shawn-rochford/AI/work/OTG-Test2/.env.local} \
+ENV_FILE=${ENV_FILE:-/home/shawn-rochford/AI/runtime/test/config/app-env/.env.local} \
   "$SCRIPT_DIR/build-test-release.sh" "$REL_ID"
 
 release_dir="$DEPLOY_ROOT/releases/$REL_ID"

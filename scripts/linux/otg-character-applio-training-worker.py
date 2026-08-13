@@ -829,7 +829,7 @@ def run_training(args: argparse.Namespace, job: Dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Dedicated OTG Linux Applio training worker.")
-    parser.add_argument("--repo", default=os.environ.get("OTG_REPO", "/home/shawn-rochford/AI/work/OTG-Test2"))
+    parser.add_argument("--repo", default=os.environ.get("OTG_REPO", "/home/shawn-rochford/AI/deploy/otg-test/current"))
     parser.add_argument("--base-url", default=os.environ.get("OTG_BASE_URL", "http://100.75.162.64:3001"))
     parser.add_argument("--device-id", default=os.environ.get("OTG_DEVICE_ID", "linux-applio"))
     parser.add_argument("--worker-id", default=os.environ.get("OTG_WORKER_ID", "linux-applio-training-worker"))

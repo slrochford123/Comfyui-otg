@@ -6,7 +6,7 @@ REPO_DIR=${REPO_DIR:-$(cd -- "$SCRIPT_DIR/../.." && pwd)}
 DEPLOY_ROOT=/home/shawn-rochford/AI/deploy/otg-test
 RELEASES_DIR=$DEPLOY_ROOT/releases
 REL_ID=${1:-test-$(date -u +%Y%m%dT%H%M%SZ)}
-ENV_FILE=${ENV_FILE:-/home/shawn-rochford/AI/work/OTG-Test2/.env.local}
+ENV_FILE=${ENV_FILE:-/home/shawn-rochford/AI/runtime/test/config/app-env/.env.local}
 OUT_DIR=$RELEASES_DIR/$REL_ID
 STAGE_DIR=$RELEASES_DIR/.${REL_ID}.partial.$$
 

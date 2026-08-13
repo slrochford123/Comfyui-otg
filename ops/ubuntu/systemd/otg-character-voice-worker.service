@@ -21,7 +21,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=false
-ReadWritePaths=/home/shawn-rochford/AI/runtime/test /home/shawn-rochford/AI/deploy/otg-test /home/shawn-rochford/AI/work/OTG-Test2
+ReadWritePaths=/home/shawn-rochford/AI/runtime/test /home/shawn-rochford/AI/deploy/otg-test
 
 [Install]
 WantedBy=multi-user.target

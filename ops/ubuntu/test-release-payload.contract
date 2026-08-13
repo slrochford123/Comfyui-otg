@@ -32,6 +32,8 @@ tree	scripts
 file	scripts/index_tts2_clone_pack_bridge.py
 file	scripts/process_pedalboard_voice_fx.py
 file	scripts/process_voice_fx.py
+file	scripts/cosy_voice_sample_bridge.py
+file	scripts/otg_texture_mesh.py
 file	scripts/qwen3_voice_design_preview.py
 file	scripts/qwen3tts/generate.py
 file	scripts/seedvc/dub.py
