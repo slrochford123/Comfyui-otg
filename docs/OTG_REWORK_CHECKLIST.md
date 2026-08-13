@@ -1297,3 +1297,52 @@ Stable 3001 source audit: `otg-test.service` runs the standalone release at `/ho
 
 <!-- OTG_ADMIN_GALLERY_AGENT_ENV_PARSER_FIX_20260812 -->
 - [x] Admin Gallery Agent installer runtime env parser repaired: replaced quote-sensitive awk parsing with a root-readable Python parser after the first shawn service-start attempt failed before unit rendering.
+
+## 2026-08-13 Exact current-3003 PROD promotion and acceptance
+
+### Completed
+- [x] Froze the actual running TEST 3003 source as the authoritative V3 publishable snapshot: 1,159 files, manifest SHA-256 `5e0b6bc970f03d53affa4db1418a5ef9832c4558377a7503d7d8aa8ffe734356`.
+- [x] Materialized the frozen source into a clean release checkout and verified byte-for-byte source identity.
+- [x] Validated Node 20.20.2 / npm 10.8.2, npm CI, TypeScript, 98/98 Vitest files, 699/699 tests on the source host, standalone production build, secret hygiene, no packaged runtime DB, and no source-runtime contamination.
+- [x] Published exact release branch `release-current-3003-v3-20260812T195021` at commit `75d65980531dcbed49821991eabbedb711de8714`, tree `a0aae894b3173646bb4714981ee58de67d8e72a1`; GitHub `test` remained untouched.
+- [x] Fresh SLR checkout reproduced the exact 1,159-file frozen manifest.
+- [x] Classified the single SLR Vitest failure as host-local historical capability-evidence path portability; all 16 recorded RTX 5060 evidence files were independently verified on Shawn.
+- [x] SLR native probes for Next SWC, Sharp, and better-sqlite3 passed; clean-environment Next production build passed.
+- [x] Alternate-port candidate runtime validation passed with isolated auth/data, RTX 5060 Gallery, RTX 3090 Gallery, media HEAD, and no live-PROD data handles.
+- [x] Manual visual candidate validation confirmed the current Character Studio / Character Gallery / Background Gallery / Asset Gallery interface and rejected the legacy Character Builder UI.
+- [x] Promoted exact candidate to `/opt/otg/releases/prod-current3003-75d65980-20260813T011142` with atomic `current-prod` switch and rollback backup.
+- [x] Live `.win` acceptance confirmed by user after promotion.
+- [x] Immediate rollback release and promotion backup preserved.
+- [x] Authorized `Downloads` contents cleaned on Shawn and SLR after successful production acceptance.
+- [x] Post-promotion stale-release/worktree/preservation inventory captured without deleting runtime/model/service files.
+
+### Remaining post-promotion
+- [x] Review Cloudflare credential ownership/mode audit and reduce permissions only if the active service user retains read access. Completed: cloudflared runs as root; credential hardened to root:root mode 600; cloudflared-only restart and live .win validation passed.
+- [ ] Review stale deploy candidates, old releases, worktrees, patch backups, and preservation archives from the post-promotion inventory; delete only explicitly classified obsolete items.
+- [ ] Keep the active PROD release, immediate rollback release, promotion backup, exact validated candidate, and V3 frozen preservation snapshot until cleanup/hardening is complete.
+- [ ] Complete the broader app service/tool dependency audit before any cleanup of ComfyUI, models, Python environments, worker services, or other AI runtime directories.
+- [ ] Re-evaluate the LTX-2.5 readiness gate after cleanup/hardening; do not begin stress testing while remaining host/runtime blockers are unresolved.
+
+## 2026-08-13 TEST Linux release payload/deployment contract repair
+
+- [x] Root cause confirmed: the generic standalone builder copied `.next/standalone`, `.next/static`, and `public`, but did not define or validate the broader cwd-relative runtime payload. Historical TEST releases consequently had inconsistent shapes; active E003 omitted `scripts/linux`, causing all seven enabled Character workers to restart-loop on missing Python entrypoints.
+- [x] The immediate seven-worker runtime repair was already completed before this deployment-contract task. The exact restored entrypoints remain unchanged, and all seven enabled 3001 workers are active/running with stable restart counts.
+- [x] Preserved the pre-change builder, checklist, live TEST unit files, launcher, current symlink, repaired worker payload, and checksums under `/home/shawn-rochford/AI/preservation/test-release-contract-20260813T022431Z`.
+- [x] Restored generic staging/PROD builder `ops/ubuntu/06-build-release.sh` byte-for-byte and mode-for-mode to blob `2c8729feb3d8603eac74473feafe580d74f2ddec` from release commit `75d65980531dcbed49821991eabbedb711de8714`; it contains no TEST payload or destination logic.
+- [x] Added dedicated unprivileged TEST builder `ops/ubuntu/build-test-release.sh`, hard-bound to `/home/shawn-rochford/AI/deploy/otg-test`. It privately stages and explicitly packages the standalone server, `.next/static`, `public`, `config`, `comfy_workflows`, `workflows`, `scripts` (including `scripts/linux`), `app/workflows`, `app/app/workflows`, and build metadata, then publishes atomically only after materialization completes.
+- [x] Kept `ops/ubuntu/12-deploy-test-release.sh` as the canonical TEST-only build/validate/activate entrypoint: dedicated unprivileged TEST builder, then validator, then sudo transactional TEST activator. The operator command remains `./ops/ubuntu/12-deploy-test-release.sh <release-id>` and root execution is rejected.
+- [x] Converted the fail-closed payload contract to deterministic `type<TAB>release-relative path` records, so paths containing spaces are preserved. Explicit validation for `comfy_workflows/presets/3D Model.json` is restored and fixture coverage proves present/absent behavior.
+- [x] Fail-closed pre-activation validation enforces the static runtime contract, derives enabled Character worker executables from live systemd unit `ExecStart` lines, and follows release-local Python helper dependencies referenced by those workers.
+- [x] Transactional activation validates before an atomic symlink switch, records `PREVIOUS_RELEASE.txt`, restarts only `otg-test.service` plus enabled workers whose units reference the TEST release symlink, verifies HTTP health and stable active/running worker state, and automatically restores/restarts the previous release on verification failure. The privileged arbitrary-command verification hook was removed; the controlled rollback-fixture failure and all unit/runtime-verification bypasses are prohibited against the live TEST root.
+- [x] Shell syntax checks pass for all changed deployment scripts and rollback script.
+- [x] Focused deployment contract test passes: a missing systemd worker is rejected before symlink activation, a complete payload is accepted, a required path containing spaces is accepted only when present, a controlled post-switch fixture failure restores the prior symlink, live TEST rejects verification bypass, and both TEST builder/driver reject root execution.
+- [x] Actual Node 20.20.2 standalone build completed and materialized `/home/shawn-rochford/AI/deploy/otg-test/releases/release-contract-repair-20260813T022431Z`; the full validator accepts it and derives all seven enabled worker entrypoints.
+- [x] Read-only baseline and final checks: TEST port 3001 HTTP health is 200, PROD external health is 200, and PROD deployment/service/tunnel were not modified or restarted.
+- [x] The previously materialized TEST candidate `/home/shawn-rochford/AI/deploy/otg-test/releases/release-contract-repair-20260813T022431Z` is retired and must not be activated because it was built from the dirty development worktree. Its validator result remains useful as deployment-contract evidence, but it is not an eligible release artifact. Current TEST remains E003; any future activation must use a newly built, source-controlled candidate satisfying the hardened release contract.
+
+### Separate boot-order issue — repaired and reboot-verified
+
+- [x] Tailscale boot-order defect repaired and reboot-verified on 2026-08-13: TEST now has `Wants=`/`After=tailscaled.service` and a fail-closed `ExecStartPre` that waits up to 120 seconds for `100.75.162.64/32` on `tailscale0`. The validation reboot started TEST only after the address existed, produced `NRestarts=0`, returned TEST HTTP 200, and produced no `EADDRNOTAVAIL`.
+- [x] Tailscale-guard validation exposed a separate latent TEST launcher defect: `@next/env` was resolved from `OTG_WORK_REPO=/home/shawn-rochford/AI/work/OTG-Test2`, whose `node_modules` no longer contained that package. The launcher now resolves `@next/env` from `OTG_DEPLOY_ROOT/current` while continuing to load TEST env files from `OTG_WORK_REPO`. The same reboot produced no `@next/env` startup failure.
+- [x] Runtime durability is now represented in source control: the TEST release payload contract explicitly requires both `node_modules/@next/env/package.json` and `node_modules/@next/env/dist/index.js`; the reboot-verified launcher, Tailscale readiness helper, and systemd drop-in are tracked under `ops/ubuntu/test-runtime`; and `ops/ubuntu/13-install-test-runtime.sh` provides a TEST-only backed-up installer without automatic service restart.
+- [ ] `OTG_WORK_REPO=/home/shawn-rochford/AI/work/OTG-Test2` remains an intentional TEST env-file dependency. Do not delete that tree until TEST env loading is migrated to a dedicated persistent env location.
