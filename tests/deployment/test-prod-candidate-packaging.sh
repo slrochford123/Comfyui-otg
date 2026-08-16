@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 PACKAGER="$ROOT/ops/build-prod-candidate.sh"
-grep -Fq 'runtime_path in config comfy_workflows workflows scripts app/workflows app/app/workflows' "$PACKAGER"
+grep -Fq 'runtime_path in config comfy_workflows workflows app/workflows app/app/workflows' "$PACKAGER"
+grep -Fq 'scripts/qwen3_voice_design_preview.py' "$PACKAGER"
 grep -Fq 'scripts/android' "$PACKAGER"
 grep -Fq 'forbidden top-level payload present' "$PACKAGER"
 grep -Fq 'RELEASE_MANIFEST.sha256' "$PACKAGER"

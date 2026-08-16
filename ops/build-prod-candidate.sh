@@ -59,15 +59,35 @@ fi
 copy_required() {
   local source=$1 target=$2
   [ -e "$source" ] || die "required source path missing: $source"
-  mkdir -p "$(dirname "$STAGE_DIR/$target")"
-  cp -a "$source" "$STAGE_DIR/$target"
+  if [ -d "$source" ]; then
+    mkdir -p "$STAGE_DIR/$target"
+    cp -a "$source/." "$STAGE_DIR/$target/"
+  else
+    mkdir -p "$(dirname "$STAGE_DIR/$target")"
+    cp -a "$source" "$STAGE_DIR/$target"
+  fi
 }
 
 copy_required .next/standalone/. .
 copy_required .next/static .next/static
 copy_required public public
-for runtime_path in config comfy_workflows workflows scripts app/workflows app/app/workflows; do
+for runtime_path in config comfy_workflows workflows app/workflows app/app/workflows; do
   copy_required "$runtime_path" "$runtime_path"
+done
+
+# Only scripts called by PROD application routes are runtime payload. Windows,
+# Android, TEST launchers, patch scripts, and development helpers stay out.
+for runtime_script in \
+  scripts/qwen3_voice_design_preview.py \
+  scripts/index_tts2_clone_pack_bridge.py \
+  scripts/process_pedalboard_voice_fx.py \
+  scripts/process_voice_fx.py \
+  scripts/otg_texture_mesh.py \
+  scripts/whisper/transcribe.py \
+  scripts/wan2gp/run-job.mjs \
+  scripts/seedvc/dub.py \
+  scripts/qwen3tts/generate.py; do
+  copy_required "$runtime_script" "$runtime_script"
 done
 
 # Android helpers, source trees, state, tests, and build caches are not server runtime.

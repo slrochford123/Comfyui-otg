@@ -20,7 +20,7 @@ This checklist is for a later, explicitly approved PROD promotion. It does not a
 The candidate packager stages an explicit allowlist from a clean checkout:
 
 - standalone `server.js`, standalone `node_modules`, `.next/static`, and `public`;
-- runtime `config`, `comfy_workflows`, `workflows`, `scripts`, `app/workflows`, and `app/app/workflows`;
+- runtime `config`, `comfy_workflows`, `workflows`, the explicitly referenced PROD route scripts, `app/workflows`, and `app/app/workflows`;
 - `.release_id`, source/build metadata, and `RELEASE_MANIFEST.sha256`.
 
 The following are source-only or unsafe for a server release and must be absent:
