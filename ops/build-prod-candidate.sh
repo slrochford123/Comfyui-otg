@@ -8,6 +8,7 @@ set -Eeuo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=${REPO_DIR:-$(cd -- "$SCRIPT_DIR/.." && pwd)}
 CANDIDATES_ROOT=${CANDIDATES_ROOT:-/home/slrochford123/AI/deploy/otg-prod-candidates}
+PROD_BUILD_ENV_FILE=${PROD_BUILD_ENV_FILE:-/opt/otg/env/.env.prod}
 RELEASE_ID=${RELEASE_ID:-}
 EXPECTED_COMMIT=${EXPECTED_COMMIT:-}
 NODE_REQUIRED=v20.20.2
@@ -26,6 +27,12 @@ cd "$REPO_DIR"
 [ -d .git ] || die "source checkout is not a Git worktree"
 [ "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT" ] || die "source commit is not $EXPECTED_COMMIT"
 [ -z "$(git status --porcelain)" ] || die "source worktree is dirty"
+[ -r "$PROD_BUILD_ENV_FILE" ] || die "PROD build environment file is not readable"
+set -a
+# shellcheck disable=SC1090
+source "$PROD_BUILD_ENV_FILE"
+set +a
+[ -n "${AUTH_SECRET:-}" ] || die "PROD build environment does not provide AUTH_SECRET"
 
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
@@ -66,6 +73,9 @@ done
 if find "$STAGE_DIR" -type f \( -name '.env' -o -name '.env.*' -o -name '*.db' -o -name '*.db-*' -o -name '*.sqlite' -o -name '*.sqlite-*' -o -name '*.sqlite3' -o -name '*.sqlite3-*' -o -name '*.bak' -o -name '*.backup' \) -print -quit | grep -q .; then
   die "final payload contains a secret, database, or backup file"
 fi
+for secret_value in "${AUTH_SECRET:-}" "${OTG_JWT_SECRET:-}" "${OTG_WORKER_TOKEN:-}"; do
+  [ -z "$secret_value" ] || ! grep -RFl -- "$secret_value" "$STAGE_DIR" >/dev/null || die "a configured secret was embedded in the final payload"
+done
 if find "$STAGE_DIR" -type d \( -name '.git' -o -name 'android' -o -name 'data' -o -name 'tests' -o -name 'coverage' -o -iname '*backup*' \) -print -quit | grep -q .; then
   die "final payload contains a forbidden source/state directory"
 fi
