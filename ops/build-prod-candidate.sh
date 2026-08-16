@@ -45,7 +45,16 @@ mkdir -p "$CANDIDATES_ROOT"
 STAGE_DIR=$(mktemp -d "$CANDIDATES_ROOT/.${RELEASE_ID}.stage.XXXXXX")
 
 npm ci --include=dev
+set +e
 npm run build
+build_status=$?
+set -e
+if [ "$build_status" -eq 139 ]; then
+  printf 'PROD CANDIDATE BUILD: retrying one native build after segmentation fault\n' >&2
+  npm run build
+elif [ "$build_status" -ne 0 ]; then
+  exit "$build_status"
+fi
 
 copy_required() {
   local source=$1 target=$2
