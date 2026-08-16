@@ -143,6 +143,7 @@ git rev-parse HEAD^{tree} > "$STAGE_DIR/.build.tree"
 node -v > "$STAGE_DIR/.build.node"
 npm -v > "$STAGE_DIR/.build.npm"
 (cd "$STAGE_DIR" && find . -type f ! -name 'RELEASE_MANIFEST.sha256' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r path; do sha256sum -- "$path"; done) > "$STAGE_DIR/RELEASE_MANIFEST.sha256"
+chmod go-w "$STAGE_DIR"
 
 mv -- "$STAGE_DIR" "$OUT_DIR"
 STAGE_DIR=""
