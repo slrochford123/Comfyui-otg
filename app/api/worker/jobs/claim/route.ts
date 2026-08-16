@@ -28,15 +28,16 @@ function claimProviders(value: unknown): string[] {
   return single ? [single] : [];
 }
 
-function isUniversalCharacterVoiceClaim(jobType: string, action: string): boolean {
+function isUniversalCharacterVoiceClaim(jobType: string, action: string, workerId: string): boolean {
+  if (jobType !== "character_voice_pipeline") return false;
+  if (action === "test_trained_voice") {
+    return workerId === "linux-applio-inference-worker";
+  }
   return (
-    jobType === "character_voice_pipeline" &&
-    (
-      action === "generate_training_dataset" ||
-      action === "create_voice_sample" ||
-      action === "start_applio_training" ||
-      action === "generate_character_preview"
-    )
+    action === "generate_training_dataset" ||
+    action === "create_voice_sample" ||
+    action === "start_applio_training" ||
+    action === "generate_character_preview"
   );
 }
 
@@ -60,8 +61,8 @@ export async function POST(req: NextRequest) {
     if (body.value.claimScope === "all_owners") {
       const token = requireWorkerToken(req);
       if (!token.ok) return jsonError(token.error, token.status);
-      if (!isUniversalCharacterVoiceClaim(jobType, action)) {
-        return jsonError("Universal claim is restricted to registered character_voice_pipeline Windows voice jobs.", 400);
+      if (!isUniversalCharacterVoiceClaim(jobType, action, workerId)) {
+        return jsonError("Universal claim is not permitted for this worker and registered job route.", 400);
       }
       const job = claimRemoteWorkerJobAcrossOwners(workerId, jobType, action, claimOptions);
       return NextResponse.json({ ok: true, route, job }, { headers: withNoStore() });

@@ -35,6 +35,15 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 
+if [ "${OTG_WORKER_CONTROL_ENABLED:-}" != "1" ]; then
+  echo "FAIL: canonical TEST requires OTG_WORKER_CONTROL_ENABLED=1 in $ENV_FILE" >&2
+  exit 1
+fi
+if [ -z "${OTG_WORKER_CONTROL_TOKEN:-${OTG_WORKER_TOKEN:-}}" ]; then
+  echo "FAIL: canonical TEST worker-control authentication token is not configured in $ENV_FILE" >&2
+  exit 1
+fi
+
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
 NODE_VER=$(tr -d '\r\n\t ' < .nvmrc)

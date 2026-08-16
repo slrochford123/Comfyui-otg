@@ -501,3 +501,12 @@ Previous live TEST safety stop — 2026-08-11 (pre-implementation snapshot; supe
 - [ ] BLOCKED fallback lifecycle: `otg-character-ltx-audio-5060-3003.service` is not installed on this host/control plane and 5060 port 8191 was not listening. The existing 3003 LTX worker remains a 3090-only worker using `/home/shawn-rochford/AI/runtime/test/voice-gpu.lock`.
 - [ ] Live matrix cases 1-9 were not run. Per the duplicate/race stop condition, zero controlled LTX or image generations were submitted and no live-verification item is marked complete.
 - [ ] Final regression and TypeScript verification were not run after the safety stop; implementation-level verification must precede live generation testing.
+
+## 2026-08-16 live TEST defect follow-up
+
+- [x] Applio inference HTTP 400 traced to the universal-claim route omitting the already registered `test_trained_voice` action used by `linux-applio-inference-worker`.
+- [x] Claim policy repaired narrowly: only the dedicated Linux Applio inference worker may universally claim `test_trained_voice`; unrelated workers and unrelated universal job actions remain rejected. Focused regression passes 58/58.
+- [x] WorkerManager status HTTP 404 traced to persistent canonical TEST configuration retaining `OTG_WORKER_CONTROL_ENABLED=0`. This TEST contract requires the authenticated control/status plane because the installed SLR lifecycle agent is active; the route remains bearer-authenticated and sanitizes returned status details.
+- [x] TEST release building now fails closed unless WorkerManager control is explicitly enabled and a worker-control/worker bearer token is configured. Non-TEST defaults remain disabled.
+- [ ] Activate the scoped follow-up TEST release transactionally, then prove authenticated status, stable seven-worker state, and absence of repeated Applio claim HTTP 400 before marking these defects live-complete.
+- [x] No PROD mutation or deployment is in scope.

@@ -170,6 +170,8 @@ set -e
 [ "$driver_root_status" -ne 0 ] || { echo "FAIL: TEST deploy driver accepted root execution" >&2; exit 1; }
 grep -Fq "must run unprivileged" "$FIXTURE_ROOT/builder-root.out"
 grep -Fq "not root" "$FIXTURE_ROOT/driver-root.out"
+grep -Fq 'OTG_WORKER_CONTROL_ENABLED:-}' "$TEST_BUILDER"
+grep -Fq 'OTG_WORKER_CONTROL_TOKEN:-${OTG_WORKER_TOKEN:-}' "$TEST_BUILDER"
 ! grep -Fq 'OTG_TEST_VERIFY_COMMAND' "$ACTIVATOR"
 ! grep -Eq 'bash[[:space:]]+-c' "$ACTIVATOR"
 
@@ -181,3 +183,4 @@ echo "OK: live TEST root rejected runtime-verification bypass"
 echo "OK: TEST builder and deploy driver rejected root execution"
 echo "OK: deployed @next/env dependency is explicit and fail-closed"
 echo "OK: canonical TEST launcher and Tailscale runtime sources are valid"
+echo "OK: canonical TEST build requires authenticated WorkerManager control"

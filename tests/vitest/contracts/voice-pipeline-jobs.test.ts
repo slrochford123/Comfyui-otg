@@ -1958,6 +1958,84 @@ describe("voice pipeline job contracts", () => {
     }
   });
 
+  it("allows only the dedicated Linux Applio inference worker to claim trained-voice tests across owners", async () => {
+    const previousToken = process.env.OTG_WORKER_TOKEN;
+    process.env.OTG_WORKER_TOKEN = "test-worker-token";
+    try {
+      const queued = createCharacterVoicePipelineJob("applio-owner", {
+        action: "test_trained_voice",
+        characterId: "char-applio",
+        trainedModelPath: "/models/char-applio.pth",
+        trainedIndexPath: "/models/char-applio.index",
+        inputAudioPath: "/samples/char-applio.wav",
+        trainedArtifactMock: false,
+      });
+      expect(queued.ok).toBe(true);
+      if (!queued.ok) throw new Error("Expected queued job.");
+
+      const { POST: claimWorkerJobRoute } = await import("@/app/api/worker/jobs/claim/route");
+      const unrelatedWorker = await claimWorkerJobRoute(new NextRequest("http://localhost/api/worker/jobs/claim", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer test-worker-token",
+        },
+        body: JSON.stringify({
+          jobType: "character_voice_pipeline",
+          action: "test_trained_voice",
+          claimScope: "all_owners",
+          workerId: "linux-character-preview-worker",
+        }),
+      }));
+      expect(unrelatedWorker.status).toBe(400);
+      expect(getQueuedContractJob("applio-owner", queued.job.jobId)).toMatchObject({ status: "queued" });
+
+      const universalBypass = await claimWorkerJobRoute(new NextRequest("http://localhost/api/worker/jobs/claim", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer test-worker-token",
+        },
+        body: JSON.stringify({
+          jobType: "character_voice_pipeline",
+          action: "apply_voice_fx",
+          claimScope: "all_owners",
+          workerId: "linux-applio-inference-worker",
+        }),
+      }));
+      expect(universalBypass.status).toBe(400);
+
+      const dedicatedWorker = await claimWorkerJobRoute(new NextRequest("http://localhost/api/worker/jobs/claim", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer test-worker-token",
+        },
+        body: JSON.stringify({
+          jobType: "character_voice_pipeline",
+          action: "test_trained_voice",
+          claimScope: "all_owners",
+          workerId: "linux-applio-inference-worker",
+        }),
+      }));
+      const json = await dedicatedWorker.json();
+      expect(dedicatedWorker.status).toBe(200);
+      expect(json.job).toMatchObject({
+        ownerKey: "applio-owner",
+        jobType: "character_voice_pipeline",
+        action: "test_trained_voice",
+        status: "running",
+        workerId: "linux-applio-inference-worker",
+      });
+    } finally {
+      if (previousToken === undefined) {
+        delete process.env.OTG_WORKER_TOKEN;
+      } else {
+        process.env.OTG_WORKER_TOKEN = previousToken;
+      }
+    }
+  });
+
   it("lets token-authenticated voice design workers checkpoint create_voice_sample progress", async () => {
     const previousToken = process.env.OTG_WORKER_TOKEN;
     process.env.OTG_WORKER_TOKEN = "test-worker-token";
