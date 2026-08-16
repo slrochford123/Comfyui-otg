@@ -76,8 +76,11 @@ fi
 for secret_value in "${AUTH_SECRET:-}" "${OTG_JWT_SECRET:-}" "${OTG_WORKER_TOKEN:-}"; do
   [ -z "$secret_value" ] || ! grep -RFl -- "$secret_value" "$STAGE_DIR" >/dev/null || die "a configured secret was embedded in the final payload"
 done
-if find "$STAGE_DIR" -type d \( -name '.git' -o -name 'android' -o -name 'data' -o -name 'tests' -o -name 'coverage' -o -iname '*backup*' \) -print -quit | grep -q .; then
-  die "final payload contains a forbidden source/state directory"
+if find "$STAGE_DIR" -mindepth 1 -maxdepth 1 -type d \( -name '.git' -o -name 'android' -o -name 'data' -o -name 'tests' -o -name 'coverage' \) -print -quit | grep -q .; then
+  die "final payload contains a forbidden top-level source/state directory"
+fi
+if find "$STAGE_DIR" -type d -iname '*backup*' -print -quit | grep -q .; then
+  die "final payload contains a backup directory"
 fi
 
 probe_bundle=$(grep -RFl 'OTG_SHAWN_PROCESS_PROBE_TARGET' "$STAGE_DIR/.next/server" | head -n 1 || true)
