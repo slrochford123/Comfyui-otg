@@ -1409,3 +1409,10 @@ Stable 3001 source audit: `otg-test.service` runs the standalone release at `/ho
 - [x] Focused contracts cover local Shawn Qwen Code ownership, remote Shawn Qwen Code ownership with zero Ollama residency, remote probe failure, fully idle Shawn availability, and stale resident-model ownership.
 - [ ] PROD source/release activation and live runtime acceptance pending.
 - [ ] Live cross-node video fallback remains intentionally pending until one workflow is verified compatible on both GPUs.
+
+## 2026-08-16 PROD candidate packaging repair
+
+- [x] Root cause recorded: the rejected candidate was assembled by combining the standalone build with a broad source-tree copy, which admitted `android/` and other source-only top-level content. The generic legacy builder has no explicit source allowlist or sealed-candidate manifest contract.
+- [x] Deterministic packager added at `ops/build-prod-candidate.sh`. It requires a clean exact source commit and Node 20.20.2, stages only standalone runtime, static/public assets, configuration/workflows, runtime scripts, and workflow payloads, rejects forbidden state/secrets/source content, verifies compiled WorkerManager/Qwen/cluster/Shawn-probe modules, and generates metadata plus a final-file SHA256 manifest.
+- [x] Packaging regression contract added at `tests/deployment/test-prod-candidate-packaging.sh`; rejected candidate remains sealed and untouched.
+- [ ] Build and validate a new v2 candidate from `efa743d7457b24f4d4275ca7e1f2f60033c423f2`; PROD activation remains pending.
