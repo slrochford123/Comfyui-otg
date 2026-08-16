@@ -1402,3 +1402,10 @@ Stable 3001 source audit: `otg-test.service` runs the standalone release at `/ho
 - [ ] Live cross-node video fallback generation is pending because no currently verified safe video workflow is compatible on both nodes. This is a separate non-regression readiness capability gap and is not marked passed.
 
 **TWO-NODE TEST CLUSTER: LIVE VALIDATION PASS**
+
+## 2026-08-16 two-node PROD promotion
+
+- [x] PROD topology gap repaired in source: Shawn-hosted applications retain the local fixed `ps -eo comm=,args=` Qwen Code probe, while non-Shawn application hosts require an explicitly configured SSH target, identity file, and SSH config and execute only that same fixed process-list command with BatchMode, identity isolation, forwarding disabled, short connection/process timeouts, and fail-closed error handling.
+- [x] Focused contracts cover local Shawn Qwen Code ownership, remote Shawn Qwen Code ownership with zero Ollama residency, remote probe failure, fully idle Shawn availability, and stale resident-model ownership.
+- [ ] PROD source/release activation and live runtime acceptance pending.
+- [ ] Live cross-node video fallback remains intentionally pending until one workflow is verified compatible on both GPUs.

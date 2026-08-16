@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import os from "node:os";
+import path from "node:path";
 import { promisify } from "node:util";
 
 import {
@@ -34,10 +35,46 @@ type OccupancyDependencies = {
   fetcher?: typeof fetch;
   processList?: () => Promise<string>;
   locks?: ResourceLock[];
+  hostname?: string;
+  environment?: NodeJS.ProcessEnv;
+  execProcessFile?: typeof execFileAsync;
 };
 
-async function defaultProcessList(): Promise<string> {
-  const result = await execFileAsync("ps", ["-eo", "comm=,args="], { timeout: 2_000, maxBuffer: 1024 * 1024 });
+function isShawnAppHost(hostname: string): boolean {
+  const short = String(hostname || "").trim().toLowerCase().split(".")[0];
+  return short === "shawn" || short === "otg-shawn";
+}
+
+function requiredRemoteProbeValue(environment: NodeJS.ProcessEnv, name: string): string {
+  const value = String(environment[name] || "").trim();
+  if (!value) throw new Error(`Missing ${name}.`);
+  return value;
+}
+
+async function defaultProcessList(deps: OccupancyDependencies): Promise<string> {
+  const hostname = deps.hostname ?? os.hostname();
+  const runner = deps.execProcessFile || execFileAsync;
+  if (isShawnAppHost(hostname)) {
+    const result = await runner("ps", ["-eo", "comm=,args="], { timeout: 2_000, maxBuffer: 1024 * 1024 });
+    return result.stdout;
+  }
+
+  const environment = deps.environment || process.env;
+  const target = requiredRemoteProbeValue(environment, "OTG_SHAWN_PROCESS_PROBE_TARGET");
+  const identityFile = requiredRemoteProbeValue(environment, "OTG_SHAWN_PROCESS_PROBE_IDENTITY_FILE");
+  const configFile = requiredRemoteProbeValue(environment, "OTG_SHAWN_PROCESS_PROBE_SSH_CONFIG");
+  if (!/^[A-Za-z0-9_.@:-]+$/.test(target) || target.startsWith("-")) throw new Error("Invalid Shawn process probe target.");
+  if (!path.isAbsolute(identityFile) || !path.isAbsolute(configFile)) throw new Error("Shawn process probe files must be absolute paths.");
+  const result = await runner("ssh", [
+    "-F", configFile,
+    "-i", identityFile,
+    "-o", "BatchMode=yes",
+    "-o", "IdentitiesOnly=yes",
+    "-o", "ClearAllForwardings=yes",
+    "-o", "ConnectTimeout=3",
+    "--", target,
+    "ps", "-eo", "comm=,args=",
+  ], { timeout: 5_000, maxBuffer: 1024 * 1024 });
   return result.stdout;
 }
 
@@ -98,7 +135,7 @@ export async function detectShawnExternalOccupancy(deps: OccupancyDependencies =
     return { available: false, external: false, recoverable: false, reason: "worker-lock" };
   }
   try {
-    const processList = await (deps.processList || defaultProcessList)();
+    const processList = await (deps.processList ? deps.processList() : defaultProcessList(deps));
     if (qwenCodeIsRunning(processList)) {
       return { available: false, external: true, recoverable: false, reason: "qwen-code" };
     }

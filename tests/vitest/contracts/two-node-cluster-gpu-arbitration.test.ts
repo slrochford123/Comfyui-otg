@@ -90,6 +90,85 @@ describe("two-node cluster GPU arbitration", () => {
     expect(resident).toMatchObject({ available: false, external: true, recoverable: true, reason: "qwen-resident-stale" });
   });
 
+  it("detects local Qwen Code when the application host is Shawn", async () => {
+    const execProcessFile = vi.fn(async () => ({
+      stdout: "node /opt/qwen-code/cli.js --model qwen3.6:27b",
+      stderr: "",
+    }));
+    const occupancy = await detectShawnExternalOccupancy({
+      locks: [],
+      hostname: "shawn",
+      execProcessFile: execProcessFile as never,
+      fetcher: vi.fn(),
+    });
+    expect(occupancy).toMatchObject({ available: false, external: true, reason: "qwen-code" });
+    expect(execProcessFile).toHaveBeenCalledWith("ps", ["-eo", "comm=,args="], expect.any(Object));
+  });
+
+  it("detects remote Shawn Qwen Code from slr even with zero resident models", async () => {
+    const execProcessFile = vi.fn(async () => ({
+      stdout: "node C:/Users/shawn/AppData/Roaming/npm/node_modules/@qwen-code/qwen-code/bin/qwen.js --model qwen3.6:27b",
+      stderr: "",
+    }));
+    const fetcher = vi.fn();
+    const occupancy = await detectShawnExternalOccupancy({
+      locks: [],
+      hostname: "slr",
+      environment: {
+        OTG_SHAWN_PROCESS_PROBE_TARGET: "otg-shawn-process-probe",
+        OTG_SHAWN_PROCESS_PROBE_IDENTITY_FILE: "/etc/otg/ssh/shawn-process-probe",
+        OTG_SHAWN_PROCESS_PROBE_SSH_CONFIG: "/etc/otg/ssh/config",
+      },
+      execProcessFile: execProcessFile as never,
+      fetcher,
+    });
+    expect(occupancy).toMatchObject({ available: false, external: true, reason: "qwen-code" });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(execProcessFile).toHaveBeenCalledWith("ssh", [
+      "-F", "/etc/otg/ssh/config",
+      "-i", "/etc/otg/ssh/shawn-process-probe",
+      "-o", "BatchMode=yes",
+      "-o", "IdentitiesOnly=yes",
+      "-o", "ClearAllForwardings=yes",
+      "-o", "ConnectTimeout=3",
+      "--", "otg-shawn-process-probe",
+      "ps", "-eo", "comm=,args=",
+    ], expect.any(Object));
+  });
+
+  it("fails closed when the remote Shawn process probe fails", async () => {
+    const occupancy = await detectShawnExternalOccupancy({
+      locks: [],
+      hostname: "slr",
+      environment: {
+        OTG_SHAWN_PROCESS_PROBE_TARGET: "otg-shawn-process-probe",
+        OTG_SHAWN_PROCESS_PROBE_IDENTITY_FILE: "/etc/otg/ssh/shawn-process-probe",
+        OTG_SHAWN_PROCESS_PROBE_SSH_CONFIG: "/etc/otg/ssh/config",
+      },
+      execProcessFile: vi.fn(async () => { throw new Error("remote unavailable"); }) as never,
+      fetcher: vi.fn(),
+    });
+    expect(occupancy).toEqual({ available: false, external: true, recoverable: false, reason: "probe-error" });
+  });
+
+  it("reports Shawn available only after empty process, model, and Comfy probes", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ models: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ queue_running: [], queue_pending: [] }), { status: 200 }));
+    const occupancy = await detectShawnExternalOccupancy({
+      locks: [],
+      hostname: "slr",
+      environment: {
+        OTG_SHAWN_PROCESS_PROBE_TARGET: "otg-shawn-process-probe",
+        OTG_SHAWN_PROCESS_PROBE_IDENTITY_FILE: "/etc/otg/ssh/shawn-process-probe",
+        OTG_SHAWN_PROCESS_PROBE_SSH_CONFIG: "/etc/otg/ssh/config",
+      },
+      execProcessFile: vi.fn(async () => ({ stdout: "ollama serve", stderr: "" })) as never,
+      fetcher,
+    });
+    expect(occupancy).toEqual({ available: true, external: false, recoverable: false, reason: "available" });
+  });
+
   it("does not probe or clear residency while an app Qwen or video lock exists", async () => {
     for (const purpose of ["qwen36", "video"] as const) {
       const held = acquire(SHAWN_GPU_LOCK_ID, purpose, purpose);
