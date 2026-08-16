@@ -75,6 +75,22 @@ for runtime_path in config comfy_workflows workflows app/workflows app/app/workf
   copy_required "$runtime_path" "$runtime_path"
 done
 
+# Capability evidence is operational metadata, not a PROD runtime input. Keep
+# support measurements but omit machine-local test-output paths.
+node - "$STAGE_DIR/config/comfy-workflow-capabilities.json" <<'NODE'
+const fs = require("node:fs");
+const file = process.argv[2];
+const document = JSON.parse(fs.readFileSync(file, "utf8"));
+function scrub(value) {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) { for (const item of value) scrub(item); return; }
+  if (Object.prototype.hasOwnProperty.call(value, "outputPaths")) delete value.outputPaths;
+  for (const child of Object.values(value)) scrub(child);
+}
+scrub(document);
+fs.writeFileSync(file, `${JSON.stringify(document, null, 2)}\n`);
+NODE
+
 # Only scripts called by PROD application routes are runtime payload. Windows,
 # Android, TEST launchers, patch scripts, and development helpers stay out.
 for runtime_script in \
@@ -111,6 +127,9 @@ fi
 if find "$STAGE_DIR" -type d -iname '*backup*' -print -quit | grep -q .; then
   die "final payload contains a backup directory"
 fi
+if rg -l 'OTG-Test2|OTG-Test-Runtime|runtime/test|deploy/otg-test' "$STAGE_DIR" --glob '!RELEASE_MANIFEST.sha256' --glob '!.next/cache/**' | grep -q .; then
+  die "TEST worktree/runtime path shipped in final payload"
+fi
 
 probe_bundle=$(grep -RFl 'OTG_SHAWN_PROCESS_PROBE_TARGET' "$STAGE_DIR/.next/server" | head -n 1 || true)
 [ -n "$probe_bundle" ] || die "compiled Shawn remote-occupancy probe is absent"
@@ -123,7 +142,7 @@ printf '%s\n' "$EXPECTED_COMMIT" > "$STAGE_DIR/.build.commit"
 git rev-parse HEAD^{tree} > "$STAGE_DIR/.build.tree"
 node -v > "$STAGE_DIR/.build.node"
 npm -v > "$STAGE_DIR/.build.npm"
-(cd "$STAGE_DIR" && find . -type f -printf '%P\n' | LC_ALL=C sort | while IFS= read -r path; do sha256sum -- "$path"; done) > "$STAGE_DIR/RELEASE_MANIFEST.sha256"
+(cd "$STAGE_DIR" && find . -type f ! -name 'RELEASE_MANIFEST.sha256' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r path; do sha256sum -- "$path"; done) > "$STAGE_DIR/RELEASE_MANIFEST.sha256"
 
 mv -- "$STAGE_DIR" "$OUT_DIR"
 STAGE_DIR=""

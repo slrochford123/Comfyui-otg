@@ -229,7 +229,7 @@ async function synthesizeQwen3(text: string, speakerWav: string, outWav: string)
         body,
       });
     } catch (error: any) {
-      throw new Error(`Qwen3-TTS service is not reachable. Start C:\AI\OTG-Test2\scripts\voice\run_qwen3_tts_api.bat at ${serviceUrl} or set QWEN3_TTS_COMMAND. ${error?.message || ""}`.trim());
+      throw new Error(`Qwen3-TTS service is not reachable at ${serviceUrl}. Set QWEN3_TTS_COMMAND if required. ${error?.message || ""}`.trim());
     }
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data?.ok === false) {

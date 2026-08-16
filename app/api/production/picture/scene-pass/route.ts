@@ -408,7 +408,6 @@ function scenePassCandidateRepoRootsV36BPG1() {
     cwd,
     path.resolve(cwd, ".."),
     path.resolve(cwd, "../.."),
-    "C:\\AI\\OTG-Test2",
   ].filter(Boolean);
 
   return Array.from(new Set(roots.map((root) => path.resolve(root))));
@@ -705,7 +704,7 @@ async function prepareScenePassReferencesForComfyV36BPG1(references: NormalizedR
 function workflowCandidatePathsV36BPE1() {
   const cwd = path.resolve(process.cwd());
   const fileName = path.basename(WORKFLOW_RELATIVE_PATH);
-  const repoRoot = process.env.OTG_REPO_ROOT || process.env.OTG_TEST_REPO_ROOT || "C:\\AI\\OTG-Test2";
+  const repoRoot = process.env.OTG_REPO_ROOT || process.env.OTG_TEST_REPO_ROOT || process.cwd();
 
   const candidates = [
     path.resolve(cwd, WORKFLOW_RELATIVE_PATH),
