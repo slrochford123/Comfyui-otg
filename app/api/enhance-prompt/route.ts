@@ -1,11 +1,10 @@
 import { NextRequest } from "next/server";
+import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
 
 export const runtime = "nodejs";
 
 type EnhanceLevel = "short" | "medium" | "cinematic";
 type EnhanceMode = "image" | "video";
-
-const DEFAULT_OLLAMA_BASE = "http://127.0.0.1:11434";
 
 function cleanText(value: unknown) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -112,16 +111,7 @@ function heuristicEnhancePrompt(prompt: string, level: EnhanceLevel, mode: Enhan
 }
 
 async function ollamaGenerate(payload: Record<string, unknown>, timeoutMs: number) {
-  const base = (process.env.OLLAMA_BASE_URL || process.env.OLLAMA_URL || DEFAULT_OLLAMA_BASE).replace(/\/+$/, "");
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${base}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
+  const response = await qwenClusterFetch("/api/generate", payload, { timeoutMs });
     const text = await response.text();
     let json: any = null;
     try {
@@ -132,10 +122,7 @@ async function ollamaGenerate(payload: Record<string, unknown>, timeoutMs: numbe
     if (!response.ok) {
       throw new Error(json?.error || `Ollama failed with ${response.status}`);
     }
-    return cleanText(json?.response || "");
-  } finally {
-    clearTimeout(timer);
-  }
+  return cleanText(json?.response || "");
 }
 
 async function parseIncoming(req: NextRequest) {
@@ -167,7 +154,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     const stylePrompt = cleanText(body.stylePrompt || body.styleDescription || body.styleText || "");
     const level = normalizeLevel(body.enhanceLevel || body.level || body.size || body.amount);
     const mode = normalizeMode(body.mode || body.mediaType, workflowId);
-    const model = modelForLevel(level);
+    const model = QWEN_CLUSTER_MODEL;
     const timeoutMs = Math.max(800, Math.min(5000, Number(process.env.OLLAMA_PROMPT_ENHANCE_TIMEOUT_MS || 2500)));
     const numPredict = numPredictForLevel(level);
 

@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOwnerContext } from "@/lib/ownerKey";
+import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const DEFAULT_OLLAMA_BASE = "http://127.0.0.1:11434";
+// Legacy OLLAMA_CHARACTER_DESCRIPTION_URL and OLLAMA_BASE_URL configuration
+// names remain documented for compatibility; endpoint selection now belongs
+// exclusively to qwenClusterFetch so routes cannot bypass GPU arbitration.
+
 const DEFAULT_CHARACTER_TIMEOUT_MS = 45_000;
 const MAX_CHARACTER_TIMEOUT_MS = 60_000;
 
@@ -106,23 +110,8 @@ async function generateWithOllama(args: {
   original: string;
   draft?: string;
 }) {
-  const baseUrl = (
-    process.env.OLLAMA_CHARACTER_DESCRIPTION_URL ||
-    process.env.OLLAMA_BASE_URL ||
-    process.env.OLLAMA_URL ||
-    DEFAULT_OLLAMA_BASE
-  ).replace(/\/+$/, "");
-
-  const controller = new AbortController();
-
   const timeoutMs = characterDescriptionTimeoutMs();
-
-  const timer = setTimeout(
-    () => controller.abort(),
-    timeoutMs,
-  );
-
-  try {
+  {
     const promptParts = [
       args.instruction,
       "",
@@ -143,15 +132,10 @@ async function generateWithOllama(args: {
       "Final enhanced character description only:",
     );
 
-    const response = await fetch(
-      `${baseUrl}/api/generate`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: enhancerModel(),
+    const response = await qwenClusterFetch(
+      "/api/generate",
+        {
+          model: QWEN_CLUSTER_MODEL,
           stream: false,
           keep_alive:
             process.env.OLLAMA_CHARACTER_DESCRIPTION_KEEP_ALIVE ||
@@ -164,9 +148,8 @@ async function generateWithOllama(args: {
             num_predict: 170,
             num_ctx: 2048,
           },
-        }),
-        signal: controller.signal,
-      },
+        },
+      { timeoutMs },
     );
 
     const raw = await response.text();
@@ -201,8 +184,6 @@ async function generateWithOllama(args: {
     }
 
     return result;
-  } finally {
-    clearTimeout(timer);
   }
 }
 

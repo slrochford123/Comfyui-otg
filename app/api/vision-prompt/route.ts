@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createRequire } from "module";
 import path from "path";
 import fs from "fs";
+import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
 
 const require = createRequire(import.meta.url);
 
@@ -231,19 +232,6 @@ async function fileToVisionBase64(filePath: string, options: { autoDescribe?: bo
   }
 
   return options.autoDescribe ? resizeForAutoDescribe(buf, ext || "image") : resizeForOllamaVision(buf, ext || "image");
-}
-
-async function detectVisionModel(baseUrl: string): Promise<string | null> {
-  try {
-    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/api/tags`, { cache: "no-store" as any });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const models: string[] = data?.models?.map((m: any) => m?.name).filter(Boolean) ?? [];
-    const preferred = models.find((m) => /vision|vl|qwen.*vl|llava/i.test(m));
-    return preferred ?? (models[0] ?? null);
-  } catch {
-    return null;
-  }
 }
 
 function buildDescriptorFromJson(j: any) {
@@ -487,15 +475,11 @@ function normalizeVisionImagePath(rawImagePath: string, dataRootRaw: string): No
 }
 
 async function ollamaGenerate(
-  baseUrl: string,
-  model: string,
   prompt: string,
   b64: string,
   timeoutMs: number,
   options: { autoDescribe?: boolean } = {},
 ) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const numCtx = options.autoDescribe
     ? readPositiveIntEnv("OTG_AUTO_DESCRIBE_NUM_CTX", DEFAULT_AUTO_DESCRIBE_NUM_CTX, 2048, 8192)
     : readPositiveIntEnv("OTG_VISION_NUM_CTX", DEFAULT_VISION_NUM_CTX, 1024, 8192);
@@ -503,7 +487,7 @@ async function ollamaGenerate(
     ? readPositiveIntEnv("OTG_AUTO_DESCRIBE_NUM_PREDICT", DEFAULT_AUTO_DESCRIBE_NUM_PREDICT, 80, 180)
     : readPositiveIntEnv("OTG_VISION_NUM_PREDICT", DEFAULT_VISION_NUM_PREDICT, 64, 180);
   const payload = {
-    model,
+    model: QWEN_CLUSTER_MODEL,
     stream: false,
     prompt,
     images: [b64],
@@ -517,12 +501,7 @@ async function ollamaGenerate(
 
   let r: Response;
   try {
-    r = await fetch(`${baseUrl.replace(/\/$/, "")}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
+    r = await qwenClusterFetch("/api/generate", payload, { requiredContextTokens: numCtx, timeoutMs });
   } catch (error: any) {
     if (error?.name === "AbortError") {
       return {
@@ -532,8 +511,6 @@ async function ollamaGenerate(
       };
     }
     return { ok: false as const, status: 502, body: error?.message || String(error) };
-  } finally {
-    clearTimeout(timer);
   }
 
   const text = await r.text();
@@ -678,8 +655,6 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const baseUrl =
-      process.env.OLLAMA_BASE_URL || process.env.OTG_OLLAMA_BASE_URL || "http://127.0.0.1:11434";
     const isBackground = selectedPurpose === "background";
     const isFreeformCharacter = String(characterAnatomyMode || "").toLowerCase() === "freeform";
     const completeDescriptionProvider = cleanProviderName(
@@ -689,11 +664,7 @@ export async function POST(req: NextRequest) {
       process.env.OTG_COMPLETE_DESCRIPTION_OPENAI_MODEL || DEFAULT_COMPLETE_DESCRIPTION_OPENAI_MODEL;
     const completeDescriptionLocalModel =
       process.env.OTG_COMPLETE_DESCRIPTION_LOCAL_MODEL || DEFAULT_COMPLETE_DESCRIPTION_LOCAL_MODEL;
-    const envModel = isCharacterDetails
-      ? completeDescriptionLocalModel || process.env.OTG_AUTO_DESCRIBE_VISION_MODEL || process.env.OLLAMA_VISION_MODEL
-      : process.env.OLLAMA_VISION_MODEL;
-
-    let model = envModel || "redule26/huihui_ai_qwen2.5-vl-7b-abliterated";
+    const model = QWEN_CLUSTER_MODEL;
     const visionImage = await fileToVisionBase64(resolved, { autoDescribe: isCharacterDetails });
     const { b64 } = visionImage;
     const autoDescribeTimeoutMs = readPositiveIntEnv(
@@ -801,19 +772,9 @@ export async function POST(req: NextRequest) {
             completeDescriptionTimeoutMs
           );
         } else {
-          model = completeDescriptionLocalModel || model;
-          result = await ollamaGenerate(baseUrl, model, finalPrompt, b64, completeDescriptionTimeoutMs, {
+          result = await ollamaGenerate(finalPrompt, b64, completeDescriptionTimeoutMs, {
             autoDescribe: true,
           });
-          if (!result.ok && result.status === 404) {
-            const fallback = await detectVisionModel(baseUrl);
-            if (fallback && fallback !== model) {
-              model = fallback;
-              result = await ollamaGenerate(baseUrl, model, finalPrompt, b64, completeDescriptionTimeoutMs, {
-                autoDescribe: true,
-              });
-            }
-          }
         }
 
         console.info("[CompleteDescription] provider_response", {
@@ -865,14 +826,7 @@ export async function POST(req: NextRequest) {
       }
     } else {
       const startedAt = Date.now();
-      let gen = await ollamaGenerate(baseUrl, model, finalPrompt, b64, autoDescribeTimeoutMs);
-      if (!gen.ok && gen.status === 404) {
-        const fallback = await detectVisionModel(baseUrl);
-        if (fallback && fallback !== model) {
-          model = fallback;
-          gen = await ollamaGenerate(baseUrl, model, finalPrompt, b64, autoDescribeTimeoutMs);
-        }
-      }
+      const gen = await ollamaGenerate(finalPrompt, b64, autoDescribeTimeoutMs);
       if (!gen.ok) {
         return NextResponse.json(
           { error: `OllamaVision request failed (${gen.status}): ${gen.body}` },
@@ -888,14 +842,7 @@ export async function POST(req: NextRequest) {
         ? `Rewrite the following into ONLY valid JSON (one line), keys: location,time,lighting,objects,mood. No markdown.\nTEXT:\n${gen.output}`
         : `Rewrite the following into ONLY valid JSON (one line), keys: gender,age_range,ethnicity,skin_tone,hair_style,hair_color,eye_color,outfit_top,outfit_bottom,footwear,accessories,build,notable_features. No markdown.\nTEXT:\n${gen.output}`;
 
-      let gen2 = await ollamaGenerate(baseUrl, model, repairPrompt, b64, autoDescribeTimeoutMs);
-      if (!gen2.ok && gen2.status === 404) {
-        const fallback = await detectVisionModel(baseUrl);
-        if (fallback && fallback !== model) {
-          model = fallback;
-          gen2 = await ollamaGenerate(baseUrl, model, repairPrompt, b64, autoDescribeTimeoutMs);
-        }
-      }
+      const gen2 = await ollamaGenerate(repairPrompt, b64, autoDescribeTimeoutMs);
 
       if (gen2.ok) parsed = tryParseJsonLoose(gen2.output);
       }

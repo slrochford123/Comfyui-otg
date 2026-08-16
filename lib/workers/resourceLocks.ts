@@ -58,6 +58,13 @@ function isRequiredLockId(value: unknown): value is WorkerResourceLockId {
   return typeof value === "string" && (REQUIRED_RESOURCE_LOCK_IDS as readonly string[]).includes(value);
 }
 
+/** Keep deployed worker aliases in the same physical lock domain. */
+export function canonicalResourceLockId(lockId: WorkerResourceLockId): WorkerResourceLockId {
+  if (lockId === "gpu:linux-5060ti") return "gpu:slr-5060";
+  if (lockId === "gpu:linux-3090" || lockId === "gpu:windows-3090") return "gpu:shawn-3090";
+  return lockId;
+}
+
 function storeDir(): string {
   const configured = cleanString(process.env.OTG_WORKER_CONTROL_STORE_DIR);
   return configured ? path.resolve(configured) : path.join(OTG_DATA_ROOT, "worker-control");
@@ -155,6 +162,7 @@ export function acquireResourceLock(
   if (!ownerId) return { ok: false, error: "Missing lock ownerId." };
   if (!workerId) return { ok: false, error: "Missing lock workerId." };
 
+  const lockId = canonicalResourceLockId(input.lockId);
   const database = db();
   const now = new Date();
   const timestamp = now.toISOString();
@@ -166,8 +174,8 @@ export function acquireResourceLock(
     // Stale removal and replacement execute under one SQLite write transaction.
     // A concurrent process cannot observe the lock as absent and insert until this
     // transaction commits; the primary key is the final exclusivity constraint.
-    database.prepare("DELETE FROM resource_locks WHERE lock_id = ? AND expires_at <= ?").run(input.lockId, timestamp);
-    const existingRow = database.prepare("SELECT * FROM resource_locks WHERE lock_id = ?").get(input.lockId) as LockRow | undefined;
+    database.prepare("DELETE FROM resource_locks WHERE lock_id = ? AND expires_at <= ?").run(lockId, timestamp);
+    const existingRow = database.prepare("SELECT * FROM resource_locks WHERE lock_id = ?").get(lockId) as LockRow | undefined;
     if (existingRow) {
       const existing = fromRow(existingRow);
       if (existing.ownerId !== ownerId) {
@@ -176,8 +184,8 @@ export function acquireResourceLock(
       database.prepare(`
         UPDATE resource_locks SET heartbeat_at = ?, expires_at = ?
         WHERE lock_id = ? AND owner_id = ? AND fencing_token = ?
-      `).run(timestamp, addSecondsIso(now, ttlSeconds), input.lockId, ownerId, existing.fencingToken);
-      const renewed = database.prepare("SELECT * FROM resource_locks WHERE lock_id = ?").get(input.lockId) as LockRow;
+      `).run(timestamp, addSecondsIso(now, ttlSeconds), lockId, ownerId, existing.fencingToken);
+      const renewed = database.prepare("SELECT * FROM resource_locks WHERE lock_id = ?").get(lockId) as LockRow;
       return { ok: true as const, lock: fromRow(renewed) };
     }
 
@@ -188,11 +196,11 @@ export function acquireResourceLock(
         acquired_at, heartbeat_at, expires_at, fencing_token
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      input.lockId,
+      lockId,
       ownerId,
       input.ownerType,
       workerId,
-      cleanString(input.resourceName) || input.lockId,
+      cleanString(input.resourceName) || lockId,
       timestamp,
       timestamp,
       addSecondsIso(now, ttlSeconds),
@@ -200,7 +208,7 @@ export function acquireResourceLock(
     );
     return {
       ok: true as const,
-      lock: fromRow(database.prepare("SELECT * FROM resource_locks WHERE lock_id = ?").get(input.lockId) as LockRow),
+      lock: fromRow(database.prepare("SELECT * FROM resource_locks WHERE lock_id = ?").get(lockId) as LockRow),
     };
   });
 
@@ -213,6 +221,7 @@ export function heartbeatResourceLock(
   fencingToken: string,
   ttlSeconds = DEFAULT_LOCK_TTL_SECONDS,
 ): ResourceLock | null {
+  const canonicalLockId = canonicalResourceLockId(lockId);
   const database = db();
   const now = new Date();
   const result = database.prepare(`
@@ -221,20 +230,20 @@ export function heartbeatResourceLock(
   `).run(
     now.toISOString(),
     addSecondsIso(now, ttlSeconds),
-    lockId,
+    canonicalLockId,
     cleanString(ownerId),
     cleanString(fencingToken),
     now.toISOString(),
   );
   if (result.changes !== 1) return null;
-  const row = database.prepare("SELECT * FROM resource_locks WHERE lock_id = ?").get(lockId) as LockRow;
+  const row = database.prepare("SELECT * FROM resource_locks WHERE lock_id = ?").get(canonicalLockId) as LockRow;
   return fromRow(row);
 }
 
 export function releaseResourceLock(lockId: WorkerResourceLockId, ownerId: string, fencingToken: string): boolean {
   const result = db().prepare(`
     DELETE FROM resource_locks WHERE lock_id = ? AND owner_id = ? AND fencing_token = ?
-  `).run(lockId, cleanString(ownerId), cleanString(fencingToken));
+  `).run(canonicalResourceLockId(lockId), cleanString(ownerId), cleanString(fencingToken));
   return result.changes === 1;
 }
 

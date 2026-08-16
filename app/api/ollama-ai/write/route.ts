@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,20 +8,6 @@ export const revalidate = 0;
 type CameraAggressiveness = "minimal" | "medium" | "dynamic";
 type LocationStability = "locked" | "allowed";
 type PromptFormat = "next_scenes" | "scene_card";
-
-async function detectTextModel(baseUrl: string): Promise<string | null> {
-  try {
-    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/api/tags`, { cache: "no-store" as any });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const models: string[] = data?.models?.map((m: any) => m?.name).filter(Boolean) ?? [];
-    if (!models.length) return null;
-    const preferred = models.find((m) => !/vision|vl|llava/i.test(m) && /qwen|llama|mistral|phi|gemma/i.test(m));
-    return preferred ?? models.find((m) => !/vision|vl|llava/i.test(m)) ?? models[0];
-  } catch {
-    return null;
-  }
-}
 
 function cleanOutput(s: string) {
   return (s || "")
@@ -105,12 +92,8 @@ export async function POST(req: NextRequest) {
     const cameraAggressiveness = String((body as any).cameraAggressiveness || "medium") as CameraAggressiveness;
     const locationStability = String((body as any).locationStability || "locked") as LocationStability;
 
-    const baseUrl = process.env.OLLAMA_BASE_URL || process.env.OTG_OLLAMA_BASE_URL || "http://127.0.0.1:11434";
-    const model =
-      process.env.OLLAMA_SCENE_CREATOR_MODEL ||
-      process.env.OLLAMA_TEXT_MODEL ||
-      process.env.OLLAMA_MODEL ||
-      "redule26/huihui_ai_qwen2.5-vl-7b-abliterated";
+    const model = QWEN_CLUSTER_MODEL;
+    const timeoutMs = Math.max(1_000, Number(process.env.OLLAMA_SCENE_CREATOR_TIMEOUT_MS || 180_000));
 
     const prompt = buildWritePrompt({ plan, format, style, sceneCount, secondsPerScene, cameraAggressiveness, locationStability });
 
@@ -126,11 +109,7 @@ export async function POST(req: NextRequest) {
       },
     };
 
-    const r = await fetch(`${baseUrl.replace(/\/$/, "")}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const r = await qwenClusterFetch("/api/generate", payload, { timeoutMs });
 
     const raw = await r.text();
     let data: any = null;
@@ -147,6 +126,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ promptText: out }, { headers: { "Cache-Control": "no-store" } });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || String(e) }, { status: 500 });
+    return NextResponse.json({ error: e?.message || String(e) }, { status: Number(e?.status) || 500 });
   }
 }

@@ -963,16 +963,21 @@ def process_one(args: argparse.Namespace) -> int:
                 pass
 
 
-def acquire_5060_lease(args: argparse.Namespace, job_id: str) -> Dict[str, Any]:
+def acquire_cluster_gpu_lease(
+    args: argparse.Namespace,
+    job_id: str,
+    lock_id: str,
+    resource_name: str,
+) -> Dict[str, Any]:
     response = request_json(
         "POST",
         build_url(args.base_url, "/api/worker-control/resource-lock/acquire"),
         auth_headers(args),
         {
-            "lockId": "gpu:linux-5060ti",
+            "lockId": lock_id,
             "ownerId": job_id,
             "workerId": args.worker_id,
-            "resourceName": "ltx-fallback",
+            "resourceName": resource_name,
             # Safety backstop if the app/control-plane heartbeat channel is
             # interrupted after 8191 submission. Normal cleanup releases this
             # immediately; expiry must never race a still-running LTX job.
@@ -982,16 +987,17 @@ def acquire_5060_lease(args: argparse.Namespace, job_id: str) -> Dict[str, Any]:
     )
     lease = response.get("lock")
     if not isinstance(lease, dict) or not clean(lease.get("fencingToken")):
-        raise WorkerError("RTX 5060 Ti GPU resource lease is unavailable.")
+        raise WorkerError(f"Cluster GPU resource lease {lock_id} is unavailable.")
     return lease
 
 
-def heartbeat_5060_lease(args: argparse.Namespace, job_id: str, lease: Dict[str, Any]) -> None:
+def heartbeat_cluster_gpu_lease(args: argparse.Namespace, job_id: str, lease: Dict[str, Any]) -> None:
     request_json(
         "POST",
         build_url(args.base_url, "/api/worker-control/resource-lock/heartbeat"),
         auth_headers(args),
         {
+            "lockId": lease["lockId"],
             "ownerId": job_id,
             "fencingToken": lease["fencingToken"],
             "ttlSeconds": 21600,
@@ -1000,12 +1006,12 @@ def heartbeat_5060_lease(args: argparse.Namespace, job_id: str, lease: Dict[str,
     )
 
 
-def release_5060_lease(args: argparse.Namespace, job_id: str, lease: Dict[str, Any]) -> None:
+def release_cluster_gpu_lease(args: argparse.Namespace, job_id: str, lease: Dict[str, Any]) -> None:
     request_json(
         "POST",
         build_url(args.base_url, "/api/worker-control/resource-lock/release"),
         auth_headers(args),
-        {"ownerId": job_id, "fencingToken": lease["fencingToken"]},
+        {"lockId": lease["lockId"], "ownerId": job_id, "fencingToken": lease["fencingToken"]},
         timeout=args.app_timeout_seconds,
     )
 
@@ -1018,7 +1024,7 @@ def lease_heartbeat_loop(
 ) -> None:
     while not stop.wait(30):
         try:
-            heartbeat_5060_lease(args, job_id, lease)
+            heartbeat_cluster_gpu_lease(args, job_id, lease)
         except Exception as error:
             log(f"[lease] heartbeat failed: {error}")
 
@@ -1173,8 +1179,7 @@ def process_one_failover(args: argparse.Namespace) -> int:
     job_id = ""
     owner_key = ""
     provider = "ltx"
-    primary_lock = None
-    fallback_lease = None
+    active_gpu_lease = None
     heartbeat_stop = threading.Event()
     heartbeat_thread = None
     fallback_started = False
@@ -1229,14 +1234,11 @@ def process_one_failover(args: argparse.Namespace) -> int:
             request_json("GET", build_url(args.comfy_url, "/system_stats"), {}, None, timeout=10)
             primary_graph = load_workflow(Path(args.workflow_path))
             primary_contract = resolve_runtime_contract(args, primary_graph)
-            lock_path = Path(args.gpu_lock_file).expanduser()
-            lock_path.parent.mkdir(parents=True, exist_ok=True)
-            primary_lock = lock_path.open("a+")
             try:
-                fcntl.flock(primary_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as error:
-                primary_lock.close()
-                primary_lock = None
+                active_gpu_lease = acquire_cluster_gpu_lease(
+                    args, job_id, "gpu:shawn-3090", "video"
+                )
+            except Exception as error:
                 raise WorkerError("primary-resource-locked") from error
             queue = request_json("GET", build_url(args.comfy_url, "/queue"), {}, None, timeout=10)
             running, pending = queue_counts(queue)
@@ -1248,17 +1250,18 @@ def process_one_failover(args: argparse.Namespace) -> int:
             primary_failure = clean(error)
             if "primary-resource-locked" not in primary_failure and "primary-busy" not in primary_failure:
                 primary_failure = "primary-unreachable-or-not-ready"
-            if primary_lock is not None:
-                fcntl.flock(primary_lock.fileno(), fcntl.LOCK_UN)
-                primary_lock.close()
-                primary_lock = None
+            if active_gpu_lease is not None:
+                release_cluster_gpu_lease(args, job_id, active_gpu_lease)
+                active_gpu_lease = None
 
         using_fallback = bool(primary_failure)
         if using_fallback:
             metadata.update({"actualGpu": "5060-ti", "backend": "fallback", "fallbackReason": primary_failure, "backendEndpoint": args.fallback_comfy_url, "backendService": "otg-character-ltx-audio-5060-3003.service"})
             checkpoint(args, headers, job_id, 18, "Primary unavailable before submission; preparing RTX 5060 Ti fallback.", metadata)
-            fallback_lease = acquire_5060_lease(args, job_id)
-            heartbeat_thread = threading.Thread(target=lease_heartbeat_loop, args=(args, job_id, fallback_lease, heartbeat_stop), daemon=True)
+            active_gpu_lease = acquire_cluster_gpu_lease(
+                args, job_id, "gpu:slr-5060", "ltx-fallback"
+            )
+            heartbeat_thread = threading.Thread(target=lease_heartbeat_loop, args=(args, job_id, active_gpu_lease, heartbeat_stop), daemon=True)
             heartbeat_thread.start()
             verify_5060_queue_idle(args)
             graph, fallback_meta = verify_split_aux_workflow(args.fallback_workflow_path)
@@ -1273,6 +1276,8 @@ def process_one_failover(args: argparse.Namespace) -> int:
             write_json(patched_workflow_path, graph)
             active_args = fallback_args
         else:
+            heartbeat_thread = threading.Thread(target=lease_heartbeat_loop, args=(args, job_id, active_gpu_lease, heartbeat_stop), daemon=True)
+            heartbeat_thread.start()
             metadata.update({"actualGpu": "3090", "backend": "primary", "fallbackReason": None, "backendEndpoint": args.comfy_url, "backendService": "otg-comfyui.service"})
             graph = load_workflow(Path(args.workflow_path))
             patch_workflow(graph, prompt, filename_prefix, seed, primary_contract, args.carrier_width, args.carrier_height, args.duration_seconds)
@@ -1327,22 +1332,16 @@ def process_one_failover(args: argparse.Namespace) -> int:
                 log(f"[warn] Could not mark LTX job failed: {fail_error}")
         return 1
     finally:
-        if primary_lock is not None:
-            try:
-                fcntl.flock(primary_lock.fileno(), fcntl.LOCK_UN)
-                primary_lock.close()
-                log("[gpu-lock] Released primary GPU lock after job finalization.")
-            except Exception:
-                pass
-        if fallback_lease is not None:
+        if active_gpu_lease is not None:
             heartbeat_stop.set()
             if heartbeat_thread is not None:
                 heartbeat_thread.join(timeout=2)
             try:
-                release_5060_lease(args, job_id, fallback_lease)
-                log("[gpu-lock] Released gpu:linux-5060ti after output persistence and job finalization.")
+                released_lock_id = clean(active_gpu_lease.get("lockId"))
+                release_cluster_gpu_lease(args, job_id, active_gpu_lease)
+                log(f"[gpu-lock] Released {released_lock_id} after output persistence and job finalization.")
             except Exception as release_error:
-                log(f"[warn] Could not release gpu:linux-5060ti: {release_error}")
+                log(f"[warn] Could not release cluster GPU lease: {release_error}")
         if fallback_started:
             try:
                 enqueue_lifecycle(args, "release", job_id)

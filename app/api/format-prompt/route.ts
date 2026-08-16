@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -420,18 +421,8 @@ function readMessageContent(data: Record<string, unknown> | null) {
   return "";
 }
 
-async function postJsonWithTimeout(url: string, payload: Record<string, unknown>, timeoutMs: number) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-      cache: "no-store",
-    });
+async function postJsonWithTimeout(payload: Record<string, unknown>, timeoutMs: number) {
+  const res = await qwenClusterFetch("/api/chat", payload, { timeoutMs });
 
     const raw = await res.text();
     let data: Record<string, unknown> | null = null;
@@ -441,10 +432,7 @@ async function postJsonWithTimeout(url: string, payload: Record<string, unknown>
       data = null;
     }
 
-    return { ok: res.ok, status: res.status, raw, data };
-  } finally {
-    clearTimeout(timeout);
-  }
+  return { ok: res.ok, status: res.status, raw, data };
 }
 
 export async function POST(req: NextRequest) {
@@ -458,8 +446,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Starter image is required for image-to-video formatting." }, { status: 400 });
     }
 
-    const baseUrl = (process.env.OLLAMA_BASE_URL || process.env.OTG_OLLAMA_BASE_URL || "http://127.0.0.1:11434").replace(/\/$/, "");
-    const model = mode === "video_i2v" ? pickVisionModel() : pickTextModel();
+    const model = QWEN_CLUSTER_MODEL;
     const timeoutMs = parseIntEnv("OLLAMA_FORMAT_TIMEOUT_MS") || (mode === "video_i2v" ? 180000 : 120000);
     const numThread = parseIntEnv("OLLAMA_FORMAT_NUM_THREAD") || parseIntEnv("OLLAMA_ENHANCE_NUM_THREAD");
     const keepAliveOff = truthyEnv("OLLAMA_FORMAT_KEEPALIVE_OFF") || truthyEnv("OLLAMA_ENHANCE_KEEPALIVE_OFF");
@@ -500,7 +487,7 @@ export async function POST(req: NextRequest) {
     let formattedPrompt = "";
 
     try {
-      const response = await postJsonWithTimeout(`${baseUrl}/api/chat`, payload, timeoutMs);
+      const response = await postJsonWithTimeout(payload, timeoutMs);
       if (!response.ok) {
         const message = String(response.data?.error || response.raw || "Create Prompt Format failed");
         throw new Error(message);

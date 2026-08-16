@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { assertAllowedWorkerTargetUrl } from "@/lib/runtime/workerTargetPolicy";
+import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,40 +20,25 @@ function enhanceBasic(prompt: string): string {
 }
 
 async function enhanceWithOllama(prompt: string, timeoutMs = 7000): Promise<string> {
-  const baseUrl = assertAllowedWorkerTargetUrl((process.env.OLLAMA_BASE_URL || process.env.OTG_OLLAMA_BASE_URL || "http://127.0.0.1:11434").trim(), "enhance Ollama worker target");
-  const model = (process.env.OLLAMA_MODEL || process.env.OTG_OLLAMA_MODEL || "llama3.1").trim();
-
   const system =
     "Rewrite the user's prompt into a stronger, more specific prompt while STRICTLY preserving the same subject, setting, and key details. " +
     "Do NOT add new characters, new objects, or new locations. Do NOT change identity. " +
     "Keep the original meaning and main nouns. You may reorder, clarify, and add camera/lighting descriptors ONLY if they match the existing scene. " +
     "Output ONLY the enhanced prompt text (no quotes, no markdown, no commentary).";
 
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const r = await fetch(`${baseUrl.replace(/\/$/, "")}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model,
+  const r = await qwenClusterFetch("/api/generate", {
+        model: QWEN_CLUSTER_MODEL,
         prompt: `${system}\n\nUSER:\n${prompt.trim()}\n\nENHANCED:`,
         stream: false,
         options: { temperature: 0.2, top_p: 0.9 },
-      }),
-    });
+      }, { timeoutMs });
 
     const j: any = await r.json().catch(() => null);
     if (!r.ok || !j) throw new Error(j?.error || `Ollama HTTP ${r.status}`);
 
     const out = String(j.response || "").trim();
     if (!out) throw new Error("Ollama returned empty response");
-    return out;
-  } finally {
-    clearTimeout(t);
-  }
+  return out;
 }
 
 export async function POST(req: NextRequest) {

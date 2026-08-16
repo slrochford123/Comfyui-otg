@@ -2,6 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { compatibilityError, loadComfyCapabilityRegistry, resolveWorkflowCapability } from "@/lib/comfyCapabilities";
 import { normalizeVideoLoraFilename } from "@/lib/videoLoras";
+import {
+  clusterGpuLockPurpose,
+  detectShawnExternalOccupancy,
+  SLR_GPU_LOCK_ID,
+} from "@/lib/workers/clusterGpu";
 
 export type VideoCompatibilityMode = "compatible" | "3090_only" | "reduced";
 
@@ -89,7 +94,7 @@ export function videoBackends(): { primary: VideoBackend; fallback: VideoBackend
         process.env.OTG_VIDEO_FALLBACK_COMFY_URL ||
           process.env.COMFYUI_VIDEO_FALLBACK_URL ||
           process.env.COMFYUI_IMAGE_URL ||
-          "http://127.0.0.1:8188"
+          "http://100.98.212.116:8188"
       ),
     },
   };
@@ -375,7 +380,12 @@ export async function selectVideoBackend(
   }
 
   const primarySupport = workflowCapability.backendSupport[backends.primary.id];
-  const primaryProbe = await probeVideoBackend(backends.primary.baseUrl);
+  const primaryOccupancy = process.env.NODE_ENV === "test"
+    ? { available: true, external: false, reason: "available" as const }
+    : await detectShawnExternalOccupancy();
+  const primaryProbe = primaryOccupancy.available
+    ? await probeVideoBackend(backends.primary.baseUrl)
+    : { ok: false, status: null, latencyMs: 0, gpuName: null, error: primaryOccupancy.external ? "RTX 3090 is externally occupied." : "RTX 3090 resource is busy." };
   const primaryMissingLoras = missingSelectedLoras(backends.primary.id, loraOptions);
   if (
     primaryProbe.ok &&
@@ -423,6 +433,19 @@ export async function selectVideoBackend(
       compatibility,
       workflowCapability,
       primaryProbe,
+      manifestVersion: capabilityRegistry.manifestVersion,
+    };
+  }
+
+  const fallbackPurpose = clusterGpuLockPurpose(SLR_GPU_LOCK_ID);
+  if (fallbackPurpose) {
+    return {
+      ok: false as const,
+      status: 409,
+      error: `RTX 5060 Ti fallback is busy with ${fallbackPurpose === "qwen36" ? "Qwen" : "image generation"}; video was not submitted.`,
+      compatibility,
+      primaryProbe,
+      workflowCapability,
       manifestVersion: capabilityRegistry.manifestVersion,
     };
   }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -129,33 +130,6 @@ async function parseIncoming(req: NextRequest): Promise<{ messages: ChatMessage[
   return { messages, images };
 }
 
-async function postJsonWithTimeout(url: string, payload: Record<string, unknown>, timeoutMs: number) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-      cache: "no-store",
-    });
-
-    const raw = await res.text();
-    let data: Record<string, unknown> | null = null;
-    try {
-      data = raw ? JSON.parse(raw) : null;
-    } catch {
-      data = null;
-    }
-
-    return { ok: res.ok, status: res.status, raw, data };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 function shouldFallbackToGenerate(status: number, rawError: string) {
   return status === 404 || /not support|unsupported|unknown|chat failed|model|images/i.test(rawError);
 }
@@ -181,10 +155,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing messages" }, { status: 400 });
     }
 
-    const baseUrl = (process.env.OTG_OLLAMA_BASE_URL || process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434").replace(/\/$/, "");
-    const chatModel = process.env.OLLAMA_CHAT_MODEL || "llama3.2:3b";
-    const visionModel = process.env.OLLAMA_VISION_MODEL || process.env.OLLAMA_CHAT_MODEL || "llama3.2-vision";
-    const model = images.length ? visionModel : chatModel;
+    const model = QWEN_CLUSTER_MODEL;
 
     const timeoutMs = parsePositiveInt(process.env.OLLAMA_CHAT_TIMEOUT_MS, images.length ? 180000 : 90000);
     const numThread = parsePositiveInt(process.env.OLLAMA_CHAT_NUM_THREAD || process.env.OLLAMA_ENHANCE_NUM_THREAD, 0);
@@ -208,11 +179,15 @@ export async function POST(req: NextRequest) {
     if (keepAliveOff) chatPayload.keep_alive = "0s";
 
     try {
-      const chat = await postJsonWithTimeout(`${baseUrl}/api/chat`, chatPayload, timeoutMs);
+      const chatResponse = await qwenClusterFetch("/api/chat", chatPayload, { timeoutMs });
+      const chatRaw = await chatResponse.text();
+      let chatData: Record<string, unknown> | null = null;
+      try { chatData = chatRaw ? JSON.parse(chatRaw) : null; } catch { chatData = null; }
+      const chat = { ok: chatResponse.ok, status: chatResponse.status, raw: chatRaw, data: chatData };
       if (chat.ok) {
         const message = cleanOutput(readMessageContent(chat.data));
         if (message) {
-          return NextResponse.json({ message, model, cpuOnly: true }, { headers: { "Cache-Control": "no-store" } });
+          return NextResponse.json({ message, model, cpuOnly: false }, { headers: { "Cache-Control": "no-store" } });
         }
       }
 
@@ -240,7 +215,11 @@ export async function POST(req: NextRequest) {
     if (images.length) generatePayload.images = images;
     if (keepAliveOff) generatePayload.keep_alive = "0s";
 
-    const generate = await postJsonWithTimeout(`${baseUrl}/api/generate`, generatePayload, timeoutMs);
+    const generateResponse = await qwenClusterFetch("/api/generate", generatePayload, { timeoutMs });
+    const generateRaw = await generateResponse.text();
+    let generateData: Record<string, unknown> | null = null;
+    try { generateData = generateRaw ? JSON.parse(generateRaw) : null; } catch { generateData = null; }
+    const generate = { ok: generateResponse.ok, status: generateResponse.status, raw: generateRaw, data: generateData };
     if (!generate.ok) {
       return NextResponse.json({ error: String(generate.data?.error || generate.raw || "Ollama generate failed") }, { status: 502 });
     }
@@ -250,12 +229,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Empty Ollama response" }, { status: 502 });
     }
 
-    return NextResponse.json({ message, model, cpuOnly: true }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ message, model, cpuOnly: false }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       return NextResponse.json({ error: "Ask AI timed out." }, { status: 504 });
     }
     const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: message || "Ask AI failed" }, { status: 500 });
+    const status = typeof error === "object" && error && "status" in error ? Number((error as { status?: unknown }).status) || 500 : 500;
+    return NextResponse.json({ error: message || "Ask AI failed" }, { status });
   }
 }

@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
 
 function requiredEnv(name: string): string {
   const v = process.env[name];
@@ -15,8 +16,8 @@ export async function ollamaFormatScene(args: {
   characters: string[];
   negative?: string | null;
 }): Promise<string> {
-  const baseUrl = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
-  const model = process.env.OLLAMA_MODEL || "llama2-uncensored:7b";
+  const model = QWEN_CLUSTER_MODEL;
+  const timeoutMs = Math.max(1_000, Number(process.env.STORYBOARD_OLLAMA_TIMEOUT_MS || 60_000));
 
   const charBlock = args.characters
     .map((d, i) => `Character ${i + 1}: ${String(d || "").trim()}`)
@@ -51,16 +52,12 @@ Style lock (exact text): ${args.styleLock || ""}
 Negative (do NOT include in output): ${args.negative || ""}
 `;
 
-  const r = await fetch(`${baseUrl.replace(/\/$/, "")}/api/generate`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
+  const r = await qwenClusterFetch("/api/generate", {
       model,
       prompt: `${sys}\n\n${user}`,
       stream: false,
       options: { temperature: 0.2 },
-    }),
-  });
+  }, { timeoutMs });
 
   const text = await r.text();
   let data: any = null;

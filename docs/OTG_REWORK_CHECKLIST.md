@@ -1,5 +1,30 @@
 # OTG Rework Checklist
 
+## TEST Two-Node Cluster GPU Arbitration — 2026-08-15
+
+### Completed
+- [x] Two-node shared storage is complete at `/mnt/otg-cluster`.
+- [x] Passwordless cluster SSH is complete in both directions (`shawn -> otg-slr` and `slr -> otg-shawn`).
+- [x] Dual Qwen Tailnet endpoints are complete and expose the matching `qwen3.6:27b` model digest.
+- [x] Cluster GPU arbitration extends the existing SQLite fencing-token resource-lock store with independent `gpu:slr-5060` and `gpu:shawn-3090` lock domains.
+- [x] RTX 5060 Ti Qwen/image mutual exclusion is enforced, including compatibility-aware video fallback ownership of the same physical GPU lock.
+- [x] RTX 3090 Qwen/video mutual exclusion is enforced for app-controlled Qwen and Comfy/LTX submissions.
+- [x] External Qwen Code ownership detection conservatively checks Qwen Code processes, unowned Ollama model residency, existing WorkerManager locks, and active ComfyUI queue work without stopping or killing external processes.
+- [x] Dual-Qwen server-side routing prefers the free RTX 5060 Ti, uses the RTX 3090 only when safe, and waits with a clear busy error when neither eligible GPU is available.
+- [x] Context-aware routing enforces the RTX 5060 Ti operational cap of 32768 tokens and routes larger supported contexts only to the RTX 3090.
+- [x] Video fallback retains compatibility checks, acquires the RTX 5060 Ti lock before submission, and preserves ambiguous-submit duplicate prevention.
+- [x] Pre-deployment Comfy submission audit covers general image/video, characters, backgrounds, production, storyboard, angles/3D, edit-video, queue, TTS/voice, and the Linux LTX failover worker. Active TypeScript generation paths converge on the physical-GPU leased submitter, and unknown generation endpoints fail closed.
+- [x] TEST Comfy endpoint aliases map to physical resources, including SLR Tailnet/LAN ports 8188 and 8191 plus Shawn Tailnet/LAN/local ports 8188 and 8288.
+- [x] The active Linux LTX voice failover worker uses canonical WorkerManager leases for both `gpu:shawn-3090` primary and `gpu:slr-5060` fallback; its private primary file lock is no longer used by the active failover path.
+- [x] Stale Shawn Qwen residency is classified as recoverable but remains externally occupied until explicit operator cleanup. Automatic unload is intentionally disabled because external Qwen Code does not participate in WorkerManager locking.
+- [x] Qwen route timeout audit is complete: enhance, format, vision, character description, storyboard, chat, plan, and write calls pass effective timeouts to the cluster router; storyboard preserves one overall deadline across formatting and repair calls.
+- [x] SLR Qwen vision smoke passed with a generated 32x32 red PNG: `qwen3.6:27b` returned `Red.`, `keep_alive=0` unloaded the model, the SLR GPU lease released, and the Comfy queue remained empty.
+- [x] Pre-deployment automated gate passed under Node 20.20.2 with an isolated WorkerManager store: 103 Vitest files / 731 tests, TypeScript, and diff validation.
+
+### Remaining
+- [ ] Complete TEST browser/runtime validation for lane status transitions, concurrent cross-node image/video generation, queued Qwen requests, and compatible video fallback. Do not promote to PROD until this validation is recorded here.
+- [ ] Before starting Shawn video after an abandoned interactive session, explicitly exit Qwen Code, verify no Qwen Code process/active request or Shawn GPU lock, request model unload through the normal local Ollama API with `keep_alive=0`, and confirm `/api/ps` is empty. Never kill Qwen Code or restart Ollama for cleanup.
+
 ## App Theme System
 
 ### Completed

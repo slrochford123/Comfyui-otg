@@ -90,6 +90,12 @@ function characterFile(ownerKey: string, characterId: string): string {
   return safeJoin(charactersRoot(ownerKey), `${safeSegment(characterId || "character")}.json`);
 }
 
+function nextUpdatedAt(previous: string | undefined): string {
+  const now = Date.now();
+  const previousMs = Date.parse(String(previous || ""));
+  return new Date(Number.isFinite(previousMs) ? Math.max(now, previousMs + 1) : now).toISOString();
+}
+
 function normalizeRecord(input: CreateCharacterInput, existing?: CharacterRecord | null): CharacterRecord {
   if (input.characterVoiceProfile) {
     validateCharacterVoiceProfileArtifactFiles(input.characterVoiceProfile);
@@ -254,7 +260,7 @@ export function updateCharacterVoiceSelection(
       ...(existing.metadata && typeof existing.metadata === "object" ? existing.metadata : {}),
       ...(input.metadata && typeof input.metadata === "object" && !Array.isArray(input.metadata) ? input.metadata : {}),
     },
-    updatedAt: new Date().toISOString(),
+    updatedAt: nextUpdatedAt(existing.updatedAt),
   };
 
   ensureDir(path.dirname(filePath));
@@ -275,7 +281,7 @@ export function updateCharacterVoiceProfile(
   const next: CharacterRecord = {
     ...existing,
     characterVoiceProfile,
-    updatedAt: new Date().toISOString(),
+    updatedAt: nextUpdatedAt(existing.updatedAt),
   };
   ensureDir(path.dirname(filePath));
   fs.writeFileSync(filePath, JSON.stringify(next, null, 2), "utf8");

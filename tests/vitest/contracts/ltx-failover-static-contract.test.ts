@@ -64,7 +64,7 @@ describe("TEST RTX 5060 Ti submission coverage", () => {
     const collected = worker.indexOf("copy_comfy_audio", generation);
     const persisted = worker.indexOf("upload_sample", collected);
     const finalized = worker.indexOf('/api/worker/jobs/complete', persisted);
-    const released = worker.indexOf("release_5060_lease", finalized);
+    const released = worker.indexOf("release_cluster_gpu_lease", finalized);
     expect(start).toBeGreaterThanOrEqual(0);
     expect([generation, collected, persisted, finalized, released].every((value) => value >= 0)).toBe(true);
     expect(generation).toBeLessThan(collected);

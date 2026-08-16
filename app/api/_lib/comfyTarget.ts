@@ -184,7 +184,7 @@ export function configuredImageComfyBaseUrl(): string {
   );
   if (explicit) return explicit;
 
-  return "http://127.0.0.1:8188";
+  return "http://100.98.212.116:8188";
 }
 export async function resolveImageComfyBaseUrl(): Promise<{ baseUrl: string; targetId: string | null }> {
   const baseUrl = configuredImageComfyBaseUrl();

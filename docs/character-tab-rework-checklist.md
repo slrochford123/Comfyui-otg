@@ -443,7 +443,7 @@ Required architectural work before failover can be enabled:
 
 - [x] Replace the JSON resource-lock store with atomic cross-process SQLite transactions and expose bearer-authenticated acquire/heartbeat/release operations for `gpu:linux-5060ti`.
 - [x] Make every audited active application prompt path lock-aware whenever it resolves to RTX 5060 Ti port 8188, including the 19 originally identified image routes plus animate-preview, LTX edit, music, woosh, production animation/audio/video, and `lib/comfyVoices.ts`.
-- [x] Audit non-route submission code: the Windows LTX worker targets its separate Windows/3090 endpoint; `scripts/run-comfy-capability-matrix.mjs` is an operator-run diagnostic that can bypass the application lease and must not be run against 5060:8188 during failover operation.
+- [x] Audit non-route submission code: the Windows LTX worker targets its separate legacy Windows/3090 endpoint; `scripts/run-comfy-capability-matrix.mjs` now requires the TEST WorkerManager URL/token, acquires the mapped physical cluster GPU lease before `/prompt`, and retains that lease after an ambiguous submission.
 - [x] Hold application 8188 leases from before `/prompt` until Comfy history reports terminal; hold the fallback lease from before 8191 lifecycle start through output collection, upload/persistence, final job mutation, and failure cleanup.
 - [x] Install the exact already-proven Q3 split-aux API workflow artifact in the TEST worktree and assert required split-aux models, fixed patch/output nodes, zero LoRA nodes, and absence of the full NVFP4 checkpoint.
 

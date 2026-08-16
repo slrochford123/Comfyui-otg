@@ -7,6 +7,7 @@ import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { markRunning } from "@/lib/contentState";
 import { configuredImageComfyBaseUrl, logComfyRouting } from "@/app/api/_lib/comfyTarget";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
+import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
 
 type SceneInput = {
   id?: string;
@@ -131,15 +132,15 @@ async function formatScenes(body: any) {
   // To avoid duplication, keep this route self-contained.
 }
 
-async function ollamaGenerate(prompt: string, signal: AbortSignal) {
-  const baseUrl = env("OLLAMA_BASE_URL", "http://127.0.0.1:11434")!;
-  const model = env("OLLAMA_MODEL_STORYBOARD", env("OLLAMA_MODEL", "llama2"))!;
-  const res = await fetch(`${baseUrl.replace(/\/$/, "")}/api/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, stream: false, prompt }),
-    signal,
-  });
+function remainingOllamaTimeout(deadline: number): number {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new DOMException("Storyboard Qwen deadline elapsed.", "AbortError");
+  return remaining;
+}
+
+async function ollamaGenerate(prompt: string, deadline: number) {
+  const timeoutMs = remainingOllamaTimeout(deadline);
+  const res = await qwenClusterFetch("/api/generate", { model: QWEN_CLUSTER_MODEL, stream: false, prompt }, { timeoutMs });
   const text = await res.text();
   if (!res.ok) {
     return { ok: false as const, status: res.status, body: text };
@@ -229,8 +230,7 @@ function renderFinalPrompt(params: {
 export async function POST(req: NextRequest) {
   const comfyTimeout = Number(env("STORYBOARD_SCENE_TIMEOUT_MS", "600000"));
   const ollamaTimeout = Number(env("STORYBOARD_OLLAMA_TIMEOUT_MS", "60000"));
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ollamaTimeout);
+  const ollamaDeadline = Date.now() + ollamaTimeout;
 
   try {
     let ownerCtx;
@@ -297,7 +297,7 @@ export async function POST(req: NextRequest) {
         "Output JSON now."
       ].join("\n");
 
-      const gen = await ollamaGenerate(prompt, controller.signal);
+      const gen = await ollamaGenerate(prompt, ollamaDeadline);
       if (!gen.ok) {
         return NextResponse.json({ ok: false, error: `Ollama error (${gen.status})`, details: gen.body }, { status: 502 });
       }
@@ -314,7 +314,7 @@ export async function POST(req: NextRequest) {
           "TEXT:",
           gen.output
         ].join("\n");
-        const gen2 = await ollamaGenerate(repairPrompt, controller.signal);
+        const gen2 = await ollamaGenerate(repairPrompt, ollamaDeadline);
         if (!gen2.ok) {
           return NextResponse.json({ ok: false, error: `Ollama repair error (${gen2.status})`, details: gen2.body }, { status: 502 });
         }
@@ -389,7 +389,5 @@ export async function POST(req: NextRequest) {
   } catch (e: any) {
     const msg = e?.name === "AbortError" ? "Ollama request timed out." : (e?.message ?? "Unknown error");
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
-  } finally {
-    clearTimeout(timer);
   }
 }

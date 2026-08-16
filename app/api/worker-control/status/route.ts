@@ -1,13 +1,14 @@
 import { NextRequest } from "next/server";
 
 import { jsonError, jsonOk } from "@/lib/http/routeHelpers";
-import { getWorkerCatalog } from "@/lib/workers/workerCatalog";
-import { listResourceLocks } from "@/lib/workers/resourceLocks";
+import { getWorkerCatalog, getWorkerCatalogEntry, type WorkerResourceLockId } from "@/lib/workers/workerCatalog";
+import { canonicalResourceLockId, listResourceLocks } from "@/lib/workers/resourceLocks";
 import { requireWorkerControlToken } from "@/lib/workers/workerLifecycleAuth";
 import {
   listRecentLifecycleCommands,
   type WorkerLifecycleCommand,
 } from "@/lib/workers/workerLifecycleStore";
+import { getClusterLaneStates, SHAWN_GPU_LOCK_ID, SLR_GPU_LOCK_ID } from "@/lib/workers/clusterGpu";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -102,13 +103,25 @@ export async function GET(req: NextRequest) {
 
   const hasRealActionWorkers = realActionsAvailable();
   const dryRunOnly = !enabled || !hasRealActionWorkers;
+  const commands = listRecentLifecycleCommands(50);
+  const laneStates = await getClusterLaneStates();
+  const activeCommands = commands.filter((command) => ["queued", "claimed", "running"].includes(command.status));
+  const commandTargets = (workerId: string, lockId: typeof SLR_GPU_LOCK_ID | typeof SHAWN_GPU_LOCK_ID) =>
+    (getWorkerCatalogEntry(workerId)?.resources || []).some((resource) =>
+      canonicalResourceLockId(resource as WorkerResourceLockId) === lockId);
+  const slrStarting = activeCommands.some((command) => commandTargets(command.workerId, SLR_GPU_LOCK_ID));
+  const shawnStarting = activeCommands.some((command) => commandTargets(command.workerId, SHAWN_GPU_LOCK_ID));
   return jsonOk({
     enabled,
     dryRunOnly,
     executionMode: dryRunOnly ? "dry-run" : "mixed",
     realActionsAvailable: hasRealActionWorkers,
     catalog: publicWorkerCatalog(),
-    commands: listRecentLifecycleCommands(50).map(publicLifecycleCommand),
+    commands: commands.map(publicLifecycleCommand),
     locks: listResourceLocks(),
+    lanes: {
+      slrImage: { state: slrStarting && laneStates.slrImage === "available" ? "starting" : laneStates.slrImage },
+      shawnVideo: { state: shawnStarting && laneStates.shawnVideo === "available" ? "starting" : laneStates.shawnVideo },
+    },
   });
 }
