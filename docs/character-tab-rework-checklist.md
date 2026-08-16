@@ -508,5 +508,19 @@ Previous live TEST safety stop — 2026-08-11 (pre-implementation snapshot; supe
 - [x] Claim policy repaired narrowly: only the dedicated Linux Applio inference worker may universally claim `test_trained_voice`; unrelated workers and unrelated universal job actions remain rejected. Focused regression passes 58/58.
 - [x] WorkerManager status HTTP 404 traced to persistent canonical TEST configuration retaining `OTG_WORKER_CONTROL_ENABLED=0`. This TEST contract requires the authenticated control/status plane because the installed SLR lifecycle agent is active; the route remains bearer-authenticated and sanitizes returned status details.
 - [x] TEST release building now fails closed unless WorkerManager control is explicitly enabled and a worker-control/worker bearer token is configured. Non-TEST defaults remain disabled.
-- [ ] Activate the scoped follow-up TEST release transactionally, then prove authenticated status, stable seven-worker state, and absence of repeated Applio claim HTTP 400 before marking these defects live-complete.
+- [x] Activated the scoped follow-up TEST release transactionally and proved authenticated status, stable seven-worker state, and absence of repeated Applio claim HTTP 400; both live defects are complete.
 - [x] No PROD mutation or deployment is in scope.
+
+## 2026-08-16 Phase 15 FINAL ACCEPTANCE — TEST only
+
+- [x] Active TEST release and rollback pointer are correct: `two-node-cluster-runtime-repair-20260816T135943Z` is current and `two-node-cluster-gpu-arbitration-20260816T123647Z` is recorded in `PREVIOUS_RELEASE.txt`.
+- [x] TEST is HTTP 200 and `otg-test.service` is active/running with `Result=success`, `NRestarts=0`; no post-ready `EADDRNOTAVAIL` or `@next/env` regression occurred.
+- [x] All seven Character workers remain active/running with stable `NRestarts=0` and no post-ready crash/restart.
+- [x] WorkerManager status is live and authenticated: unauthenticated HTTP 401, authenticated HTTP 200, sanitized SLR/Shawn lane states present, and no credential, local-path, command-line, or WorkerManager-script leakage in the response.
+- [x] The dedicated `linux-applio-inference-worker` now successfully performs its intended universal `test_trained_voice` claim. After the activation listener became ready, the journal recorded zero HTTP 400 claim responses and at least 44 successful idle claims; no destructive training or inference job was manufactured.
+- [x] Final health is clean: no stale SLR/Shawn GPU locks, both Comfy queues idle, both Qwen tags endpoints HTTP 200, Qwen residency sane and attributable, shared cluster storage passed read/write, and neither node shows new NVIDIA Xid or OOM-kill evidence.
+- [x] Phase 8-12 routing evidence is carried forward because the repair did not affect those code paths; expensive generation/routing tests were not rerun.
+- [x] Read-only PROD verification passed on `slr`: release `prod-current3003-75d65980-20260813T011142` remains current, `otg-prod.service` remains active with `NRestarts=0`, and public health is HTTP 200. PROD was not deployed, restarted, or mutated.
+- [ ] Live cross-node video fallback generation is pending because no currently verified safe video workflow is compatible on both nodes. This remains a separate non-regression readiness item and is not marked passed.
+
+**TWO-NODE TEST CLUSTER: LIVE VALIDATION PASS**
