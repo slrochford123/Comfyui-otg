@@ -185,6 +185,9 @@ function installOrUpdateRife(
     fast_mode: true,
     ensemble: true,
     scale_factor: 1,
+    dtype: "float32",
+    torch_compile: false,
+    batch_size: 1,
   };
 
   return { rifeNodeId, scheduleNodeId };
