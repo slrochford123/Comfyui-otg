@@ -15,10 +15,10 @@ export async function POST(req: NextRequest) {
   const body = await readJsonBody<Record<string, unknown>>(req.clone(), { maxBytes: 32 * 1024 });
   if (!body.ok) return jsonError(body.error, { status: body.status });
   const lockId = String(body.value.lockId || "gpu:linux-5060ti") as WorkerResourceLockId;
-  if (!(REQUIRED_RESOURCE_LOCK_IDS as readonly string[]).includes(lockId) || !["gpu:slr-5060", "gpu:shawn-3090", "gpu:linux-5060ti", "gpu:linux-3090", "gpu:windows-3090"].includes(lockId)) {
+  if (!(REQUIRED_RESOURCE_LOCK_IDS as readonly string[]).includes(lockId) || !["gpu:slr-5060", "gpu:shawn-3090", "gpu:linux-5060ti", "gpu:linux-3090"].includes(lockId)) {
     return jsonError("This endpoint is restricted to cluster GPU resources.", { status: 400 });
   }
-  if (["gpu:shawn-3090", "gpu:linux-3090", "gpu:windows-3090"].includes(lockId)) {
+  if (["gpu:shawn-3090", "gpu:linux-3090"].includes(lockId)) {
     const occupancy = await detectShawnExternalOccupancy();
     if (!occupancy.available) return jsonError(occupancy.external ? "RTX 3090 is externally occupied." : "RTX 3090 is busy.", { status: 409 });
   }

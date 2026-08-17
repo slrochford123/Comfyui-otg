@@ -33,11 +33,9 @@ const REQUIRED_STAGE_ORDER: VoiceVideoPipelineStage[] = [
 
 const WORKER_STAGE_REQUIREMENTS: Record<string, VoiceVideoPipelineStage[]> = {
   "qwen3-tts": ["character_selected", "voice_method_selected"],
-  xtts: ["character_selected", "voice_method_selected"],
   cozyvoice: ["character_selected", "voice_method_selected"],
   "voice-dataset": ["character_selected", "voice_sample_approved"],
   applio: ["character_selected", "voice_sample_approved", "dataset_ready"],
-  "comfy-3090-sage-video": ["character_selected", "voice_sample_approved"],
   "voice-ltx": ["character_selected", "voice_sample_approved", "applio_ready"],
 };
 

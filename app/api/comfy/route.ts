@@ -10,6 +10,7 @@ import {
   type VideoLoraRoutingOptions,
 } from "@/lib/videoBackendFailover";
 import { fetchAllVideoLoraInventories } from "@/lib/videoLoraInventory";
+import { shouldAttemptVideoSubmissionFallback } from "@/lib/videoSubmissionFailover";
 import {
   applyVideoLoras,
   publicVideoLoraSelectionMetadata,
@@ -4032,12 +4033,14 @@ export async function POST(req: NextRequest) {
       gpu: videoSelection?.ok ? videoSelection.backend.gpu : null,
       upstreamStatus: upstream.status,
     });
-    const canTryFallback =
-      route.kind === "video" &&
-      videoSelection?.ok &&
-      videoSelection.backend.id === "rtx3090" &&
-      fallbackRequestClone;
-    if (!canTryFallback) {
+    const canTryFallback = shouldAttemptVideoSubmissionFallback({
+      routeKind: route.kind,
+      selectionOk: Boolean(videoSelection?.ok),
+      backendId: videoSelection?.ok ? videoSelection.backend.id : null,
+      hasFallbackRequestClone: Boolean(fallbackRequestClone),
+      upstreamStatus: upstream.status,
+    });
+    if (!canTryFallback || !fallbackRequestClone) {
       return Response.json({ ok: false, upstreamStatus: upstream.status, response: parsed }, { status: upstream.status });
     }
 

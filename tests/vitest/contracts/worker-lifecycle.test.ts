@@ -55,20 +55,10 @@ describe("worker lifecycle foundation", () => {
     expect(getWorkerCatalogEntry("voice-ltx")?.resources).toContain("gpu:linux-3090");
     expect(getWorkerCatalogEntry("qwen3-tts")?.allowedActions).toEqual(["status"]);
     expect(getWorkerCatalogEntry("qwen3-tts")?.enabled).toBe(false);
-    expect(getWorkerCatalogEntry("xtts")?.dryRunOnly).toBe(false);
-    expect(getWorkerCatalogEntry("whisper")?.dryRunOnly).toBe(false);
-    expect(getWorkerCatalogEntry("speaker-diarization")?.dryRunOnly).toBe(false);
-    expect(getWorkerCatalogEntry("speaker-diarization")?.resources).toContain("service:speaker-diarization");
+    for (const legacyWorkerId of ["comfy-3090-sage-video", "xtts", "bg-remove", "whisper", "speaker-diarization", "ace-step"]) {
+      expect(getWorkerCatalogEntry(legacyWorkerId)).toBeNull();
+    }
     expect(getWorkerCatalogEntry("character-preview")?.dryRunOnly).toBe(false);
-    expect(getWorkerCatalogEntry("ace-step")?.dryRunOnly).toBe(false);
-    expect(getWorkerCatalogEntry("ace-step")?.resources).toContain("gpu:windows-3090");
-    expect(getWorkerCatalogEntry("ace-step")?.resources).toContain("service:ace-step");
-    expect(getWorkerCatalogEntry("comfy-3090-sage-video")?.dryRunOnly).toBe(false);
-    expect(getWorkerCatalogEntry("comfy-3090-sage-video")?.resources).toContain("gpu:windows-3090");
-    expect(getWorkerCatalogEntry("comfy-3090-sage-video")?.resources).toContain("comfy:windows-3090");
-    expect(getWorkerCatalogEntry("comfy-3090-sage-video")?.resources).toContain("service:ltx-video");
-    expect(getWorkerCatalogEntry("bg-remove")?.platform).toBe("windows");
-    expect(getWorkerCatalogEntry("bg-remove")?.dryRunOnly).toBe(false);
     expect(getWorkerCatalogEntry("cozyvoice")?.enabled).toBe(true);
     expect(getWorkerCatalogEntry("cozyvoice")?.platform).toBe("linux");
     expect(validateWorkerLifecycleRequest("missing-worker", "start").ok).toBe(false);
@@ -77,9 +67,9 @@ describe("worker lifecycle foundation", () => {
     expect(isWorkerActionAllowed("voice-ltx", "release")).toBe(true);
   });
 
-  it("rejects double active locks for gpu:windows-3090", () => {
+  it("rejects double active locks for the Shawn RTX 3090 physical domain", () => {
     const first = acquireResourceLock({
-      lockId: "gpu:windows-3090",
+      lockId: "gpu:shawn-3090",
       ownerId: "job-a",
       ownerType: "job",
       workerId: "voice-ltx",
@@ -87,18 +77,28 @@ describe("worker lifecycle foundation", () => {
     expect(first.ok).toBe(true);
 
     const second = acquireResourceLock({
-      lockId: "gpu:windows-3090",
+      lockId: "gpu:shawn-3090",
       ownerId: "job-b",
       ownerType: "job",
-      workerId: "comfy-3090-sage-video",
+      workerId: "voice-design",
     });
     expect(second.ok).toBe(false);
     expect(listResourceLocks()).toHaveLength(1);
   });
 
+  it("rejects retired Windows GPU lock IDs", () => {
+    const result = acquireResourceLock({
+      lockId: "gpu:windows-3090" as any,
+      ownerId: "legacy-job",
+      ownerType: "job",
+      workerId: "legacy-worker",
+    });
+    expect(result.ok).toBe(false);
+  });
+
   it("cleans up expired locks", () => {
     const acquired = acquireResourceLock({
-      lockId: "gpu:windows-3090",
+      lockId: "gpu:shawn-3090",
       ownerId: "job-a",
       ownerType: "job",
       workerId: "voice-ltx",
@@ -146,7 +146,7 @@ describe("worker lifecycle foundation", () => {
       body: JSON.stringify({
         agentId: "linux-main-agent",
         platform: "linux",
-        capabilities: ["voice-ltx", "comfy-3090-sage-video"],
+        capabilities: ["voice-ltx"],
       }),
     }));
     const body = await response.json();
@@ -235,7 +235,7 @@ describe("worker lifecycle foundation", () => {
         ...authHeaders(),
       },
       body: JSON.stringify({
-        workerId: "ace-step",
+        workerId: "voice-design",
         action: "ensure-running",
         requestedBy: "unit-test",
         dryRun: false,
@@ -246,7 +246,7 @@ describe("worker lifecycle foundation", () => {
     const serialized = JSON.stringify(body).toLowerCase();
 
     expect(response.status).toBe(200);
-    expect(body.command.workerId).toBe("ace-step");
+    expect(body.command.workerId).toBe("voice-design");
     expect(body.command.action).toBe("ensure-running");
     expect(body.command.dryRun).toBe(false);
     expect(serialized).not.toContain(workerControlToken);
@@ -270,23 +270,20 @@ describe("worker lifecycle foundation", () => {
     expect(invalid.status).toBe(401);
   });
 
-  it("Windows agent real actions remain opt-in and limited to the verified allowlist", () => {
+  it("keeps legacy Windows agent definitions disconnected from the active catalog", () => {
     const agentPy = fs.readFileSync(path.join(process.cwd(), "scripts/windows/otg-worker-agent.py"), "utf8");
     const agentPs1 = fs.readFileSync(path.join(process.cwd(), "scripts/windows/otg-worker-agent.ps1"), "utf8");
-    const realActionLine = agentPy.split(/\r?\n/).find((line) => line.startsWith("REAL_ACTION_WORKERS = ")) || "";
 
     expect(agentPy).toContain("--allow-real-actions");
     expect(agentPs1).toContain("$AllowRealActions");
-    expect(realActionLine).toBe('REAL_ACTION_WORKERS = {"voice-ltx", "qwen3-tts", "voice-design", "voice-dataset", "applio", "xtts", "whisper", "speaker-diarization", "bg-remove", "character-preview", "ace-step", "comfy-3090-sage-video"}');
     expect(agentPy).toContain("Real lifecycle actions are only supported for");
     expect(agentPy).toContain("OTG_WORKER_MANAGER_PATH");
     expect(agentPy).not.toContain('"--worker-token"');
     expect(agentPy).not.toContain("'--worker-token'");
     expect(agentPs1).not.toContain("--worker-token");
-    expect(realActionLine).not.toContain("cozyvoice");
-    expect(realActionLine).toContain("bg-remove");
-    expect(realActionLine).toContain("character-preview");
-    expect(realActionLine).toContain("comfy-3090-sage-video");
+    for (const legacyWorkerId of ["comfy-3090-sage-video", "xtts", "bg-remove", "whisper", "speaker-diarization", "ace-step"]) {
+      expect(getWorkerCatalogEntry(legacyWorkerId)).toBeNull();
+    }
   });
 
   it("status route sanitizes lifecycle result details before returning them", async () => {
@@ -340,14 +337,9 @@ describe("worker lifecycle foundation", () => {
       enabled: true,
       dryRunOnly: false,
     });
-    expect(body.catalog.find((entry: { id: string }) => entry.id === "ace-step")).toMatchObject({
-      enabled: true,
-      dryRunOnly: false,
-    });
-    expect(body.catalog.find((entry: { id: string }) => entry.id === "comfy-3090-sage-video")).toMatchObject({
-      enabled: true,
-      dryRunOnly: false,
-    });
+    for (const legacyWorkerId of ["comfy-3090-sage-video", "xtts", "bg-remove", "whisper", "speaker-diarization", "ace-step"]) {
+      expect(body.catalog.find((entry: { id: string }) => entry.id === legacyWorkerId)).toBeUndefined();
+    }
     expect(serialized).not.toContain("managerpath");
     expect(serialized).not.toContain("c:\\ai\\");
     expect(serialized).not.toContain("worker-manager.ps1");

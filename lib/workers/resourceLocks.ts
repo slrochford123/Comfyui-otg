@@ -61,7 +61,7 @@ function isRequiredLockId(value: unknown): value is WorkerResourceLockId {
 /** Keep deployed worker aliases in the same physical lock domain. */
 export function canonicalResourceLockId(lockId: WorkerResourceLockId): WorkerResourceLockId {
   if (lockId === "gpu:linux-5060ti") return "gpu:slr-5060";
-  if (lockId === "gpu:linux-3090" || lockId === "gpu:windows-3090") return "gpu:shawn-3090";
+  if (lockId === "gpu:linux-3090") return "gpu:shawn-3090";
   return lockId;
 }
 
