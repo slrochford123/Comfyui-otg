@@ -44,7 +44,7 @@ describe("WAN 2.2 16 FPS to RIFE 24 FPS contract", () => {
     expect(timing.nativeFrames + interpolatedPairs).toBe(outputFrames);
   });
 
-  it("injects the exact RIFE schedule after WAN decoding", () => {
+  it("injects the exact RIFE schedule after WAN decoding with the live Shawn-required inputs", () => {
     const graph = wanGraph();
     const result = applyWanRifeFrameTiming(graph, { durationSeconds: 10, workflowId: "wan22-t2v-gguf" });
 
@@ -59,6 +59,9 @@ describe("WAN 2.2 16 FPS to RIFE 24 FPS contract", () => {
     expect(graph[rifeId].inputs.frames).toEqual(["30", 0]);
     expect(graph[rifeId].inputs.multiplier).toBe(2);
     expect(graph[rifeId].inputs.ckpt_name).toBe("rife47.pth");
+    expect(graph[rifeId].inputs.dtype).toBe("float32");
+    expect(graph[rifeId].inputs.torch_compile).toBe(false);
+    expect(graph[rifeId].inputs.batch_size).toBe(1);
     expect(graph[rifeId].inputs.optional_interpolation_states).toEqual([scheduleId, 0]);
     expect(graph[scheduleId].class_type).toBe("Make Interpolation State List");
     expect(String(graph[scheduleId].inputs.frame_indices).split(",")).toHaveLength(80);
@@ -76,6 +79,9 @@ describe("WAN 2.2 16 FPS to RIFE 24 FPS contract", () => {
     expect(Object.values(graph).filter((node) => node.class_type === "Make Interpolation State List")).toHaveLength(1);
     expect(graph["20"].inputs.length).toBe(241);
     expect(String(graph[second.scheduleNodeIds[0]].inputs.frame_indices).split(",")).toHaveLength(120);
+    expect(graph[second.rifeNodeIds[0]].inputs.dtype).toBe("float32");
+    expect(graph[second.rifeNodeIds[0]].inputs.torch_compile).toBe(false);
+    expect(graph[second.rifeNodeIds[0]].inputs.batch_size).toBe(1);
   });
 
   it("leaves non-WAN workflows unchanged", () => {
