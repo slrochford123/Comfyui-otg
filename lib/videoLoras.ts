@@ -232,8 +232,8 @@ export const VIDEO_LORA_PATCH_POINTS: Record<string, VideoLoraPatchDefinition> =
     { name: "high", sourceNodeId: "113", sourceClassTypes: ["LoraLoaderModelOnly"], targetNodeId: "122", targetClassTypes: ["PathchSageAttentionKJ"], targetInput: "model" },
     { name: "low", sourceNodeId: "108", sourceClassTypes: ["LoraLoaderModelOnly"], targetNodeId: "101", targetClassTypes: ["PathchSageAttentionKJ"], targetInput: "model" },
   ], requiredInternalLoras: [
-    { nodeId: "113", filename: "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors" },
-    { nodeId: "108", filename: "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors" },
+    { nodeId: "113", filename: "Wan-2.x/Acceleration/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors" },
+    { nodeId: "108", filename: "Wan-2.x/Acceleration/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors" },
   ] },
   "presets/WAN 2.2 T2V SafeTensor": { family: "wan", mode: "text_to_video", branches: [
     { name: "high", sourceNodeId: "113", sourceClassTypes: ["LoraLoaderModelOnly"], targetNodeId: "122", targetClassTypes: ["PathchSageAttentionKJ"], targetInput: "model" },
