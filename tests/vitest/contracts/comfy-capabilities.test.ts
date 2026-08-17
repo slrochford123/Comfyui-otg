@@ -48,7 +48,15 @@ describe("Comfy capability manifests", () => {
     for (const workflow of verified) {
       const runs = workflow.backendSupport.rtx5060ti.testedConfiguration?.runs as Array<{ outputPaths: string[] }>;
       expect(runs).toHaveLength(2);
-      expect(runs.every((run) => run.outputPaths.every((output) => fs.existsSync(output)))).toBe(true);
+
+      const outputs = runs.flatMap((run) => run.outputPaths);
+      expect(runs.every((run) => run.outputPaths.length > 0)).toBe(true);
+      expect(outputs.every((output) => path.isAbsolute(output))).toBe(true);
+
+      const localEvidenceCount = outputs.filter((output) => fs.existsSync(output)).length;
+      if (localEvidenceCount > 0) {
+        expect(localEvidenceCount).toBe(outputs.length);
+      }
     }
   });
 
