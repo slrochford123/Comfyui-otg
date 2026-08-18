@@ -15,7 +15,9 @@ export default async function AudioStudiosPage() {
           <Link href="/app" className="rounded-[16px] border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white hover:bg-white/10">
             ← Back to Studios
           </Link>
-          <div className="text-xs font-semibold uppercase tracking-[0.22em] text-white/40">Character Audio</div>
+          <div className="text-xs font-semibold uppercase tracking-[0.22em] text-white/40">
+            {isAdmin ? "Character Audio · Admin tools available below" : "Character Audio"}
+          </div>
         </div>
         <VoiceCreatorPanel isAdmin={isAdmin} />
       </div>
