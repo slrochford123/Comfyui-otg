@@ -125,6 +125,16 @@ export default function VoiceCreatorPanel({ isAdmin = false }: { isAdmin?: boole
   }, []);
 
   const presets = React.useMemo(() => catalogs?.[provider]?.[library] || [], [catalogs, provider, library]);
+  const providerCounts = React.useMemo(() => ({
+    ltx25: {
+      natural: catalogs?.ltx25?.natural?.length || 0,
+      fictional: catalogs?.ltx25?.fictional?.length || 0,
+    },
+    minimax_h3: {
+      natural: catalogs?.minimax_h3?.natural?.length || 0,
+      fictional: catalogs?.minimax_h3?.fictional?.length || 0,
+    },
+  }), [catalogs]);
   const filtered = React.useMemo(() => {
     const q = search.trim().toLowerCase();
     return q ? presets.filter((p) => `${p.id} ${p.label} ${p.category}`.toLowerCase().includes(q)) : presets;
@@ -208,8 +218,8 @@ export default function VoiceCreatorPanel({ isAdmin = false }: { isAdmin?: boole
           <div className="space-y-2 text-sm text-white/75">
             <span className="font-semibold">Voice model</span>
             <div className="grid grid-cols-2 gap-2">
-              <button type="button" className={choiceClass(provider === "ltx25")} onClick={() => setProvider("ltx25")}>LTX 2.5<span className="mt-1 block text-[11px] font-medium opacity-70">84 natural · 100 fictional</span></button>
-              <button type="button" className={choiceClass(provider === "minimax_h3")} onClick={() => setProvider("minimax_h3")}>MiniMax H3<span className="mt-1 block text-[11px] font-medium opacity-70">37 natural · 100 fictional</span></button>
+              <button type="button" className={choiceClass(provider === "ltx25")} onClick={() => setProvider("ltx25")}>LTX 2.5<span className="mt-1 block text-[11px] font-medium opacity-70">{providerCounts.ltx25.natural} natural · {providerCounts.ltx25.fictional} fictional</span></button>
+              <button type="button" className={choiceClass(provider === "minimax_h3")} onClick={() => setProvider("minimax_h3")}>MiniMax H3<span className="mt-1 block text-[11px] font-medium opacity-70">{providerCounts.minimax_h3.natural} natural · {providerCounts.minimax_h3.fictional} fictional</span></button>
             </div>
           </div>
         </div>
