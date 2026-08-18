@@ -42,13 +42,13 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, showProductio
       ...(showProduction ? [{ id: "storyboard", label: "Production" } as Item] : []),
       { id: "characters", label: "Characters" },
       { id: "gallery", label: "Gallery" },
-      ...(isAdmin ? [{ id: "voices", label: "Voices" } as Item] : []),
+      { id: "voices", label: "Audio Studios" },
       { id: "favorites", label: "Favorites" },
       { id: "editvideo", label: "Edit Video" },
       { id: "settings", label: "Settings" },
       { id: "support", label: "Support" },
     ],
-    [isAdmin, showProduction]
+    [showProduction]
   );
 
   return (
@@ -65,7 +65,14 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, showProductio
             <button
               key={item.id}
               type="button"
-              onClick={() => !item.disabled && onTab(item.id)}
+              onClick={() => {
+                if (item.disabled) return;
+                if (item.id === "voices") {
+                  window.location.href = "/app/audio-studios";
+                  return;
+                }
+                onTab(item.id);
+              }}
               disabled={item.disabled}
               className={classNames(
                 "inline-flex shrink-0 min-w-[72px] max-w-[88px] items-center justify-center rounded-full border px-2 py-2 text-center text-[11px] font-semibold leading-tight whitespace-normal transition sm:min-w-[120px] sm:max-w-none sm:px-4 sm:py-3 sm:text-base sm:whitespace-nowrap",
