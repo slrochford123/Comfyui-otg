@@ -20,7 +20,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,3 +42,6 @@ jobs:
           npx vitest --config tests/vitest.config.ts run
           tests/vitest/contracts/voice-creator-catalog.test.ts
           tests/vitest/contracts/comfy-workflow-compatibility.test.ts
+
+      - name: Next production build
+        run: npm run build
