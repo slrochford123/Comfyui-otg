@@ -6,6 +6,8 @@ type EnhanceLevel = "short" | "medium" | "cinematic";
 type EnhanceMode = "image" | "video";
 
 const DEFAULT_OLLAMA_BASE = "http://127.0.0.1:11434";
+const DEFAULT_OLLAMA_TIMEOUT_MS = 4500;
+const MAX_OLLAMA_TIMEOUT_MS = 8000;
 
 function cleanText(value: unknown) {
   return String(value || "").replace(/\s+/g, " ").trim();
@@ -168,7 +170,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     const level = normalizeLevel(body.enhanceLevel || body.level || body.size || body.amount);
     const mode = normalizeMode(body.mode || body.mediaType, workflowId);
     const model = modelForLevel(level);
-    const timeoutMs = Math.max(800, Math.min(30000, Number(process.env.OLLAMA_PROMPT_ENHANCE_TIMEOUT_MS || 15000)));
+    const configuredTimeoutMs = Number(process.env.OLLAMA_PROMPT_ENHANCE_TIMEOUT_MS || DEFAULT_OLLAMA_TIMEOUT_MS);
+    const timeoutMs = Math.max(800, Math.min(MAX_OLLAMA_TIMEOUT_MS, Number.isFinite(configuredTimeoutMs) ? configuredTimeoutMs : DEFAULT_OLLAMA_TIMEOUT_MS));
     const numPredict = numPredictForLevel(level);
 
     const enhancedPromptFromFallback = heuristicEnhancePrompt(prompt, level, mode, styleLabel, stylePrompt);
@@ -227,6 +230,8 @@ export async function POST(req: NextRequest): Promise<Response> {
       provider,
       model: provider.startsWith("ollama:") ? model : null,
       warning,
+      fallbackUsed: provider === "heuristic" || provider.includes("+fallback"),
+      timeoutMs,
     });
   } catch (error) {
     return Response.json(
@@ -238,4 +243,3 @@ export async function POST(req: NextRequest): Promise<Response> {
     );
   }
 }
-
