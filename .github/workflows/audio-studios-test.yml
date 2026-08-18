@@ -1,0 +1,54 @@
+name: Audio Studios validation
+
+on:
+  pull_request:
+    branches:
+      - prod-worker-control-integration
+    paths:
+      - "app/api/enhance-prompt/**"
+      - "app/api/voices/creator/**"
+      - "app/app/audio-studios/**"
+      - "app/app/components/VoiceCreatorPanel.tsx"
+      - "app/app/components/SpinDialNav.tsx"
+      - "comfy_workflows/internal/voices/**"
+      - "lib/comfyWorkflowCompatibility.ts"
+      - "lib/voiceCreatorCatalog.ts"
+      - "tests/vitest/contracts/comfy-workflow-compatibility.test.ts"
+      - "tests/vitest/contracts/voice-creator-catalog.test.ts"
+      - ".github/workflows/audio-studios-test.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: audio-studios-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AUTH_SECRET: ci-audio-studios-validation-only-not-for-runtime
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript
+        run: npx tsc --noEmit --pretty false
+
+      - name: Audio Studios contract tests
+        run: >-
+          npx vitest --config tests/vitest.config.ts run
+          tests/vitest/contracts/voice-creator-catalog.test.ts
+          tests/vitest/contracts/comfy-workflow-compatibility.test.ts
+
+      - name: Next production build
+        run: npm run build
