@@ -32,9 +32,25 @@ describe("Audio Studios voice catalogs", () => {
       presentation: "male",
     });
     expect(prompt).toContain("native regional speaker");
+    expect(prompt).toContain("adult male");
     expect(prompt).toContain("The speaker says exactly");
     expect(prompt.toLowerCase()).not.toContain("american");
     expect(prompt.toLowerCase()).not.toContain("speak english");
+  });
+
+  it("injects selected natural casting controls into LTX prompts", () => {
+    const preset = listVoiceCreatorPresets("ltx25", "natural")[0];
+    const prompt = buildVoiceCreatorPrompt({
+      provider: "ltx25",
+      library: "natural",
+      preset,
+      sampleText: "The storm is coming.",
+      age: "elderly",
+      presentation: "female",
+    });
+    expect(prompt).toContain("elderly female");
+    expect(prompt).toContain(preset.label);
+    expect(prompt).toContain("The speaker says exactly");
   });
 
   it("preserves fictional preset identity and clean single-speaker output rules", () => {
