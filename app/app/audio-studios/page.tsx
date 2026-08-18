@@ -1,10 +1,13 @@
 import Link from "next/link";
 import VoiceCreatorPanel from "../components/VoiceCreatorPanel";
+import { isAdminSession } from "@/app/api/_lib/comfyTarget";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default function AudioStudiosPage() {
+export default async function AudioStudiosPage() {
+  const isAdmin = await isAdminSession();
+
   return (
     <main className="min-h-screen bg-[#07080c] px-3 py-4 pb-24 text-white sm:px-6 sm:py-6">
       <div className="mx-auto max-w-[1480px] space-y-4">
@@ -14,7 +17,7 @@ export default function AudioStudiosPage() {
           </Link>
           <div className="text-xs font-semibold uppercase tracking-[0.22em] text-white/40">Character Audio</div>
         </div>
-        <VoiceCreatorPanel />
+        <VoiceCreatorPanel isAdmin={isAdmin} />
       </div>
     </main>
   );
