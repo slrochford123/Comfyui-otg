@@ -5,6 +5,7 @@ on:
     branches:
       - prod-worker-control-integration
     paths:
+      - "app/api/enhance-prompt/**"
       - "app/api/voices/creator/**"
       - "app/app/audio-studios/**"
       - "app/app/components/VoiceCreatorPanel.tsx"
