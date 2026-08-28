@@ -1,0 +1,205 @@
+{
+  "7": {
+    "inputs": {
+      "model_name": "Woosh-VFlow-8s",
+      "model_type": "VFlow"
+    },
+    "class_type": "WooshLoadFlow",
+    "_meta": {
+      "title": "Woosh Model Loader"
+    }
+  },
+  "9": {
+    "inputs": {
+      "audioUI": "",
+      "audio": [
+        "38",
+        1
+      ]
+    },
+    "class_type": "PreviewAudio",
+    "_meta": {
+      "title": "Preview Audio"
+    }
+  },
+  "19": {
+    "inputs": {
+      "mode": "V2A — video to audio (VFlow/DVFlow)"
+    },
+    "class_type": "WooshTextEncode",
+    "_meta": {
+      "title": "Woosh TextConditioning"
+    }
+  },
+  "33": {
+    "inputs": {
+      "frame_rate": 25,
+      "loop_count": 0,
+      "filename_prefix": "Woosh/V2A",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "38",
+        0
+      ],
+      "audio": [
+        "38",
+        1
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "34": {
+    "inputs": {
+      "video": "LTX-2.3_00073.mp4",
+      "force_rate": 25,
+      "custom_width": 0,
+      "custom_height": 0,
+      "frame_load_cap": 201,
+      "skip_first_frames": 0,
+      "select_every_nth": 1,
+      "format": "LTXV"
+    },
+    "class_type": "VHS_LoadVideo",
+    "_meta": {
+      "title": "Load Video (Upload) 🎥🅥🅗🅢"
+    }
+  },
+  "37": {
+    "inputs": {
+      "video_path": "",
+      "max_duration_s": 8,
+      "image_batch": [
+        "34",
+        0
+      ]
+    },
+    "class_type": "WooshLoadVideo",
+    "_meta": {
+      "title": "Woosh Video Loader"
+    }
+  },
+  "38": {
+    "inputs": {
+      "prompt": [
+        "46",
+        0
+      ],
+      "steps": 50,
+      "cfg": 5.5,
+      "seed": 1238815554,
+      "latent_frames": 801,
+      "subprocess": false,
+      "force_offload": false,
+      "gen_model": [
+        "7",
+        0
+      ],
+      "text_conditioning": [
+        "19",
+        0
+      ],
+      "video": [
+        "37",
+        0
+      ]
+    },
+    "class_type": "WooshSample",
+    "_meta": {
+      "title": "Woosh Sampler"
+    }
+  },
+  "45": {
+    "inputs": {
+      "model_name": "Qwen3-VL-4B-Instruct-FP8",
+      "quantization": "8-bit (Balanced)",
+      "attention_mode": "sage",
+      "preset_prompt": "🎬 Cinematic Description",
+      "custom_prompt": "based on the video, write a list of keywords about the background sound, object sound that happen in the video. keywords separate by comma, not other text in your response.",
+      "max_tokens": 512,
+      "keep_model_loaded": true,
+      "seed": 749723368,
+      "video": [
+        "34",
+        0
+      ]
+    },
+    "class_type": "AILab_QwenVL",
+    "_meta": {
+      "title": "QwenVL"
+    }
+  },
+  "46": {
+    "inputs": {
+      "text_undefined": "engine roar, tire screech, leaves crunching, wind rustling through trees",
+      "text": [
+        "45",
+        0
+      ]
+    },
+    "class_type": "ShowText|pysssss",
+    "_meta": {
+      "title": "Show Text 🐍"
+    }
+  },
+  "__otg": {
+    "title": "Sony Woosh V2A Sound Effects",
+    "source": "Job 8e759fba-6d67-4d0e-b23a-19b4d14a845b.json",
+    "requestKind": "edit-video-woosh-sfx",
+    "description": "Uploaded working Woosh V2A graph. Route uploads selected source video to ComfyUI input, then mutates nodes 7/19/34/37/38/33 at runtime.",
+    "inputs": {
+      "video": {
+        "node": "34",
+        "input": "video"
+      },
+      "maxDurationSeconds": {
+        "node": "37",
+        "input": "max_duration_s"
+      },
+      "modelName": {
+        "node": "7",
+        "input": "model_name"
+      },
+      "modelType": {
+        "node": "7",
+        "input": "model_type"
+      },
+      "prompt": {
+        "node": "38",
+        "input": "prompt"
+      },
+      "steps": {
+        "node": "38",
+        "input": "steps"
+      },
+      "cfg": {
+        "node": "38",
+        "input": "cfg"
+      },
+      "seed": {
+        "node": "38",
+        "input": "seed"
+      },
+      "latentFrames": {
+        "node": "38",
+        "input": "latent_frames"
+      },
+      "outputPrefix": {
+        "node": "33",
+        "input": "filename_prefix"
+      },
+      "frameRate": {
+        "node": "33",
+        "input": "frame_rate"
+      }
+    }
+  }
+}

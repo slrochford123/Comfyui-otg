@@ -1,0 +1,108 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__OTG_UPLOAD_IMAGE__"
+    }
+  },
+  "11": {
+    "class_type": "InvertMask",
+    "inputs": {
+      "mask": [
+        "1",
+        1
+      ]
+    }
+  },
+  "64": {
+    "class_type": "Preview3D",
+    "inputs": {
+      "model_file": [
+        "74",
+        0
+      ]
+    }
+  },
+  "68": {
+    "class_type": "LoadTrellis2Models",
+    "inputs": {
+      "resolution": "512",
+      "precision": "auto",
+      "attn_backend": "auto"
+    }
+  },
+  "69": {
+    "class_type": "Trellis2GetConditioning",
+    "inputs": {
+      "model_config": [
+        "68",
+        0
+      ],
+      "image": [
+        "1",
+        0
+      ],
+      "mask": [
+        "11",
+        0
+      ],
+      "background_color": "black"
+    }
+  },
+  "73": {
+    "class_type": "Trellis2ImageToShape",
+    "inputs": {
+      "model_config": [
+        "68",
+        0
+      ],
+      "conditioning": [
+        "69",
+        0
+      ],
+      "seed": 42,
+      "ss_guidance_strength": 7.5,
+      "ss_sampling_steps": 12,
+      "shape_guidance_strength": 7.5,
+      "shape_sampling_steps": 12,
+      "max_tokens": 49152
+    }
+  },
+  "74": {
+    "class_type": "Trellis2ExportGLB",
+    "inputs": {
+      "voxelgrid_path": [
+        "75",
+        1
+      ],
+      "decimation_target": 200000,
+      "texture_size": 1024,
+      "remesh": true,
+      "filename_prefix": "trellis2"
+    }
+  },
+  "75": {
+    "class_type": "Trellis2ShapeToTexturedMesh",
+    "inputs": {
+      "model_config": [
+        "68",
+        0
+      ],
+      "conditioning": [
+        "69",
+        0
+      ],
+      "shape_result": [
+        "73",
+        0
+      ],
+      "seed": 42,
+      "tex_guidance_strength": 7.5,
+      "tex_sampling_steps": 12
+    }
+  },
+  "__otg": {
+    "source": "geometry_texture (1).json",
+    "notes": "Prompt-graph recreation of uploaded Trellis 2 textured GLB workflow for OTG TEST backend routing, with Preview3D restored so Comfy history exposes the exported GLB path."
+  }
+}

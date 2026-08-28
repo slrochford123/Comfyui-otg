@@ -1,0 +1,340 @@
+{
+  "95": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Dialogue"
+    }
+  },
+  "96": {
+    "inputs": {
+      "role_name_1": "Role1",
+      "role_name_2": "Role2",
+      "role_name_3": "Role3",
+      "role_name_4": "Role4",
+      "role_name_5": "Role5",
+      "role_name_6": "Role6",
+      "role_name_7": "Role7",
+      "role_name_8": "Role8",
+      "prompt_1": [
+        "125",
+        0
+      ],
+      "prompt_2": [
+        "126",
+        0
+      ],
+      "prompt_3": [
+        "127",
+        0
+      ],
+      "prompt_4": [
+        "129",
+        0
+      ],
+      "prompt_5": [
+        "130",
+        0
+      ],
+      "prompt_6": [
+        "131",
+        0
+      ],
+      "prompt_7": [
+        "132",
+        0
+      ],
+      "prompt_8": [
+        "133",
+        0
+      ]
+    },
+    "class_type": "FB_Qwen3TTSRoleBank",
+    "_meta": {
+      "title": "\ud83d\udcc7 Qwen3-TTS RoleBank"
+    }
+  },
+  "106": {
+    "inputs": {
+      "filename_prefix": "audio/OTG_Voices",
+      "audioUI": "",
+      "audio": [
+        "128",
+        0
+      ]
+    },
+    "class_type": "SaveAudio",
+    "_meta": {
+      "title": "Save Audio (FLAC)"
+    }
+  },
+  "107": {
+    "inputs": {
+      "audio": "placeholder.wav",
+      "audioUI": ""
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "108": {
+    "inputs": {
+      "audio": "placeholder.wav",
+      "audioUI": ""
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "109": {
+    "inputs": {
+      "audio": "placeholder.wav",
+      "audioUI": ""
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "110": {
+    "inputs": {
+      "audio": "placeholder.wav",
+      "audioUI": ""
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "111": {
+    "inputs": {
+      "audio": "placeholder.wav",
+      "audioUI": ""
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "112": {
+    "inputs": {
+      "audio": "placeholder.wav",
+      "audioUI": ""
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "113": {
+    "inputs": {
+      "audio": "placeholder.wav",
+      "audioUI": ""
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "114": {
+    "inputs": {
+      "audio": "placeholder.wav",
+      "audioUI": ""
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "125": {
+    "inputs": {
+      "ref_text": "",
+      "model_choice": "1.7B",
+      "device": "auto",
+      "precision": "bf16",
+      "attention": "auto",
+      "x_vector_only": true,
+      "unload_model_after_generate": false,
+      "ref_audio": [
+        "107",
+        0
+      ]
+    },
+    "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+    "_meta": {
+      "title": "\ud83c\udfad Qwen3-TTS VoiceClonePrompt"
+    }
+  },
+  "126": {
+    "inputs": {
+      "ref_text": "",
+      "model_choice": "1.7B",
+      "device": "auto",
+      "precision": "bf16",
+      "attention": "auto",
+      "x_vector_only": true,
+      "unload_model_after_generate": false,
+      "ref_audio": [
+        "108",
+        0
+      ]
+    },
+    "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+    "_meta": {
+      "title": "\ud83c\udfad Qwen3-TTS VoiceClonePrompt"
+    }
+  },
+  "127": {
+    "inputs": {
+      "ref_text": "",
+      "model_choice": "1.7B",
+      "device": "auto",
+      "precision": "bf16",
+      "attention": "auto",
+      "x_vector_only": true,
+      "unload_model_after_generate": false,
+      "ref_audio": [
+        "109",
+        0
+      ]
+    },
+    "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+    "_meta": {
+      "title": "\ud83c\udfad Qwen3-TTS VoiceClonePrompt"
+    }
+  },
+  "129": {
+    "inputs": {
+      "ref_text": "",
+      "model_choice": "1.7B",
+      "device": "auto",
+      "precision": "bf16",
+      "attention": "auto",
+      "x_vector_only": true,
+      "unload_model_after_generate": false,
+      "ref_audio": [
+        "110",
+        0
+      ]
+    },
+    "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+    "_meta": {
+      "title": "\ud83c\udfad Qwen3-TTS VoiceClonePrompt"
+    }
+  },
+  "130": {
+    "inputs": {
+      "ref_text": "",
+      "model_choice": "1.7B",
+      "device": "auto",
+      "precision": "bf16",
+      "attention": "auto",
+      "x_vector_only": true,
+      "unload_model_after_generate": false,
+      "ref_audio": [
+        "111",
+        0
+      ]
+    },
+    "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+    "_meta": {
+      "title": "\ud83c\udfad Qwen3-TTS VoiceClonePrompt"
+    }
+  },
+  "131": {
+    "inputs": {
+      "ref_text": "",
+      "model_choice": "1.7B",
+      "device": "auto",
+      "precision": "bf16",
+      "attention": "auto",
+      "x_vector_only": true,
+      "unload_model_after_generate": false,
+      "ref_audio": [
+        "112",
+        0
+      ]
+    },
+    "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+    "_meta": {
+      "title": "\ud83c\udfad Qwen3-TTS VoiceClonePrompt"
+    }
+  },
+  "132": {
+    "inputs": {
+      "ref_text": "",
+      "model_choice": "1.7B",
+      "device": "auto",
+      "precision": "bf16",
+      "attention": "auto",
+      "x_vector_only": true,
+      "unload_model_after_generate": false,
+      "ref_audio": [
+        "113",
+        0
+      ]
+    },
+    "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+    "_meta": {
+      "title": "\ud83c\udfad Qwen3-TTS VoiceClonePrompt"
+    }
+  },
+  "133": {
+    "inputs": {
+      "ref_text": "",
+      "model_choice": "1.7B",
+      "device": "auto",
+      "precision": "bf16",
+      "attention": "auto",
+      "x_vector_only": true,
+      "unload_model_after_generate": false,
+      "ref_audio": [
+        "114",
+        0
+      ]
+    },
+    "class_type": "FB_Qwen3TTSVoiceClonePrompt",
+    "_meta": {
+      "title": "\ud83c\udfad Qwen3-TTS VoiceClonePrompt"
+    }
+  },
+  "128": {
+    "inputs": {
+      "script": [
+        "95",
+        0
+      ],
+      "model_choice": "1.7B",
+      "device": "auto",
+      "precision": "bf16",
+      "language": "Auto",
+      "pause_linebreak": 1.0,
+      "period_pause": 1.0,
+      "comma_pause": 4.0,
+      "question_pause": 5.0,
+      "hyphen_pause": 0.0,
+      "merge_outputs": true,
+      "batch_size": 1,
+      "seed": 20,
+      "max_new_tokens_per_line": 0,
+      "top_p": 0.0,
+      "top_k": 0,
+      "temperature": 0.1,
+      "repetition_penalty": 1.05,
+      "attention": "auto",
+      "unload_model_after_generate": false,
+      "role_bank": [
+        "96",
+        0
+      ]
+    },
+    "class_type": "FB_Qwen3TTSDialogueInference",
+    "_meta": {
+      "title": "\ud83d\udcac Qwen3-TTS DialogueInference"
+    }
+  }
+}

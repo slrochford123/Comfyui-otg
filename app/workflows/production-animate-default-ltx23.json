@@ -1,0 +1,1169 @@
+{
+  "676": {
+    "inputs": {
+      "vae_name": "LTX23_audio_vae_bf16.safetensors",
+      "device": "main_device",
+      "weight_dtype": "bf16"
+    },
+    "class_type": "VAELoaderKJ",
+    "_meta": {
+      "title": "VAELoader KJ"
+    }
+  },
+  "679": {
+    "inputs": {
+      "vae_name": "LTX23_video_vae_bf16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "681": {
+    "inputs": {
+      "clip_name1": "gemma_3_12B_it_fp4_mixed.safetensors",
+      "clip_name2": "ltx-2.3_text_projection_bf16.safetensors",
+      "type": "ltxv",
+      "device": "default"
+    },
+    "class_type": "DualCLIPLoader",
+    "_meta": {
+      "title": "DualCLIPLoader"
+    }
+  },
+  "682": {
+    "inputs": {
+      "lora_name": "LTX2.3-IC-LORA-Dual-Character.safetensors",
+      "strength_model": 0.6,
+      "model": [
+        "683",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "683": {
+    "inputs": {
+      "unet_name": "ltx-2.3-22b-distilled-1.1_transformer_only_mxfp8_block32.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "684": {
+    "inputs": {
+      "model_name": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+    },
+    "class_type": "LatentUpscaleModelLoader",
+    "_meta": {
+      "title": "Load Latent Upscale Model"
+    }
+  },
+  "697": {
+    "inputs": {
+      "value": 24
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "FPS"
+    }
+  },
+  "699": {
+    "inputs": {
+      "value": 1280
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "WIDTH"
+    }
+  },
+  "701": {
+    "inputs": {
+      "value": 720
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "HEIGHT"
+    }
+  },
+  "724": {
+    "inputs": {
+      "video_latent": [
+        "928",
+        2
+      ],
+      "audio_latent": [
+        "734",
+        1
+      ]
+    },
+    "class_type": "LTXVConcatAVLatent",
+    "_meta": {
+      "title": "LTXVConcatAVLatent"
+    }
+  },
+  "725": {
+    "inputs": {
+      "sampler_name": "euler_cfg_pp"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "734": {
+    "inputs": {
+      "av_latent": [
+        "776",
+        0
+      ]
+    },
+    "class_type": "LTXVSeparateAVLatent",
+    "_meta": {
+      "title": "LTXVSeparateAVLatent"
+    }
+  },
+  "735": {
+    "inputs": {
+      "cfg": 1,
+      "model": [
+        "948",
+        0
+      ],
+      "positive": [
+        "928",
+        0
+      ],
+      "negative": [
+        "928",
+        1
+      ]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFGGuider"
+    }
+  },
+  "736": {
+    "inputs": {
+      "noise": [
+        "773",
+        0
+      ],
+      "guider": [
+        "735",
+        0
+      ],
+      "sampler": [
+        "725",
+        0
+      ],
+      "sigmas": [
+        "745",
+        0
+      ],
+      "latent_image": [
+        "724",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "737": {
+    "inputs": {
+      "samples": [
+        "939",
+        2
+      ],
+      "upscale_model": [
+        "684",
+        0
+      ],
+      "vae": [
+        "679",
+        0
+      ]
+    },
+    "class_type": "LTXVLatentUpsampler",
+    "_meta": {
+      "title": "spatial"
+    }
+  },
+  "742": {
+    "inputs": {
+      "sampler_name": "euler_ancestral_cfg_pp"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "743": {
+    "inputs": {
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    },
+    "class_type": "ManualSigmas",
+    "_meta": {
+      "title": "ManualSigmas"
+    }
+  },
+  "744": {
+    "inputs": {
+      "sigmas": "0.909375, 0.725, 0.421875, 0.0"
+    },
+    "class_type": "ManualSigmas",
+    "_meta": {
+      "title": "ManualSigmas (LTX-2)"
+    }
+  },
+  "745": {
+    "inputs": {
+      "sigmas": "0.85, 0.7250, 0.4219, 0.0"
+    },
+    "class_type": "ManualSigmas",
+    "_meta": {
+      "title": "ManualSigmas"
+    }
+  },
+  "752": {
+    "inputs": {
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 4096,
+      "temporal_overlap": 8,
+      "samples": [
+        "942",
+        2
+      ],
+      "vae": [
+        "679",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeTiled",
+    "_meta": {
+      "title": "VAE Decode (Tiled)"
+    }
+  },
+  "753": {
+    "inputs": {
+      "samples": [
+        "754",
+        1
+      ],
+      "audio_vae": [
+        "676",
+        0
+      ]
+    },
+    "class_type": "LTXVAudioVAEDecode",
+    "_meta": {
+      "title": "LTXV Audio VAE Decode"
+    }
+  },
+  "754": {
+    "inputs": {
+      "av_latent": [
+        "736",
+        0
+      ]
+    },
+    "class_type": "LTXVSeparateAVLatent",
+    "_meta": {
+      "title": "LTXVSeparateAVLatent"
+    }
+  },
+  "757": {
+    "inputs": {
+      "frame_rate": [
+        "697",
+        0
+      ],
+      "loop_count": 0,
+      "filename_prefix": "LTX-2",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "752",
+        0
+      ],
+      "audio": [
+        "753",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "765": {
+    "inputs": {
+      "steps": 12,
+      "max_shift": 2.05,
+      "base_shift": 0.95,
+      "stretch": true,
+      "terminal": 0.1,
+      "latent": [
+        "1138",
+        0
+      ]
+    },
+    "class_type": "LTXVScheduler",
+    "_meta": {
+      "title": "LTXVScheduler (for more steps)"
+    }
+  },
+  "773": {
+    "inputs": {
+      "noise_seed": 43
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "774": {
+    "inputs": {
+      "noise_seed": 164375480881911
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "775": {
+    "inputs": {
+      "cfg": 1,
+      "model": [
+        "948",
+        0
+      ],
+      "positive": [
+        "1059:1057",
+        0
+      ],
+      "negative": [
+        "1059:1057",
+        1
+      ]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFGGuider"
+    }
+  },
+  "776": {
+    "inputs": {
+      "noise": [
+        "774",
+        0
+      ],
+      "guider": [
+        "775",
+        0
+      ],
+      "sampler": [
+        "742",
+        0
+      ],
+      "sigmas": [
+        "743",
+        0
+      ],
+      "latent_image": [
+        "1138",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "780": {
+    "inputs": {
+      "chunks": 2,
+      "dim_threshold": 4096,
+      "model": [
+        "682",
+        0
+      ]
+    },
+    "class_type": "LTXVChunkFeedForward",
+    "_meta": {
+      "title": "LTXV Chunk FeedForward"
+    }
+  },
+  "818": {
+    "inputs": {
+      "text": "blurry, oversaturated, pixelated, low resolution, grainy, distorted, noise, compression artifacts, jpeg artifacts, glitches, watermark, text, logo, signature, copyright, subtitles, distorted sound, saturated sound, loud",
+      "clip": [
+        "681",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Negative Prompt"
+    }
+  },
+  "820": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "SEGMENT 1"
+    }
+  },
+  "899": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": true,
+        "lora": "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "strength": 1
+      },
+      "lora_2": {
+        "on": true,
+        "lora": "consistence_edit_v2.safetensors",
+        "strength": 1
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "780",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree)"
+    }
+  },
+  "928": {
+    "inputs": {
+      "num_guides": "4",
+      "num_guides.frame_idx_1": 0,
+      "num_guides.strength_1": [
+        "1118",
+        0
+      ],
+      "num_guides.frame_idx_2": [
+        "950",
+        0
+      ],
+      "num_guides.strength_2": [
+        "1118",
+        0
+      ],
+      "num_guides.frame_idx_3": [
+        "934",
+        1
+      ],
+      "num_guides.strength_3": [
+        "1118",
+        0
+      ],
+      "num_guides.frame_idx_4": [
+        "935",
+        1
+      ],
+      "num_guides.strength_4": [
+        "1118",
+        0
+      ],
+      "positive": [
+        "939",
+        0
+      ],
+      "negative": [
+        "939",
+        1
+      ],
+      "vae": [
+        "679",
+        0
+      ],
+      "latent": [
+        "737",
+        0
+      ],
+      "num_guides.image_1": [
+        "954:830",
+        0
+      ],
+      "num_guides.image_2": [
+        "1071:1067",
+        0
+      ],
+      "num_guides.image_3": [
+        "1081:1077",
+        0
+      ],
+      "num_guides.image_4": [
+        "1091:1087",
+        0
+      ]
+    },
+    "class_type": "LTXVAddGuideMulti",
+    "_meta": {
+      "title": "LTXVAddGuideMulti"
+    }
+  },
+  "934": {
+    "inputs": {
+      "expression": "a + b",
+      "values.a": [
+        "950",
+        0
+      ],
+      "values.b": [
+        "1074",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "935": {
+    "inputs": {
+      "expression": "a + b",
+      "values.a": [
+        "934",
+        1
+      ],
+      "values.b": [
+        "1084",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "939": {
+    "inputs": {
+      "positive": [
+        "1059:1057",
+        0
+      ],
+      "negative": [
+        "1059:1057",
+        1
+      ],
+      "latent": [
+        "734",
+        0
+      ]
+    },
+    "class_type": "LTXVCropGuides",
+    "_meta": {
+      "title": "LTXVCropGuides"
+    }
+  },
+  "942": {
+    "inputs": {
+      "positive": [
+        "928",
+        0
+      ],
+      "negative": [
+        "928",
+        1
+      ],
+      "latent": [
+        "754",
+        0
+      ]
+    },
+    "class_type": "LTXVCropGuides",
+    "_meta": {
+      "title": "LTXVCropGuides"
+    }
+  },
+  "948": {
+    "inputs": {
+      "global_prompt": "a cartoon figure ",
+      "max_frames": 674,
+      "timeline_data": "{\"segments\":[{\"prompt\":\"a cartoon figure dances\\na cartoon figure dances\\na cartoon figure dances\\na cartoon figure dances\",\"length\":192,\"color\":\"#4f8edc\"},{\"prompt\":\"The woman walks into the kitchen from the right side of the frame, sees him standing in the disaster, and stops with an amused knowing smile. She holds up a small slim black BrewBar sachet between her thumb and finger, label \\\"BrewBar\\\" clearly facing camera. She raises one eyebrow playfully and says in a warm teasing voice, \\\"Or... you could just try this.\\\" He looks up at her, then at the sachet, slightly embarrassed, with a small reluctant smile forming. Cinematic two-shot, she stands on the right holding the sachet up, he stands on the left beside the coffee mess, soft morning light catching them both.\",\"length\":192,\"color\":\"#e07b3a\"},{\"prompt\":\"Close-up at the counter: she tears open the BrewBar sachet with a crisp clean snap-tear, then pours the rich dark cold brew concentrate from the sachet in a smooth stream into a tall clear glass of ice water. The dark coffee swirls beautifully through the clear water, transforming it. He stands beside her watching, his face shifting from skeptical to amazed, eyes widening slightly. He says softly, almost to himself, \\\"...that's it?\\\" She nods with a small proud smile, no words. Close-up cinematic shot, the glass and the pour in sharp focus, both their faces softly visible behind, premium DTC ad aesthetic.\",\"length\":168,\"color\":\"#5cb85c\"},{\"prompt\":\"Cinematic two-shot at the kitchen counter, both standing side by side now each holding a tall clear glass of finished iced cold brew. They turn toward each other with warm smiles and gently clink their glasses together in the center of the frame — a soft satisfying clink. He takes a sip, his eyes widen with genuine surprise and delight, and he laughs softly. He says with a grin, \\\"Okay, you win.\\\" She laughs back warmly. The empty BrewBar sachet sits on the counter between them, label facing camera. Soft morning daylight catches both their smiles and the rich dark cold brew, the perfect couple morning moment, premium DTC ad payoff.\",\"length\":121,\"color\":\"#d9534f\"}]}",
+      "local_prompts": "a cartoon figure dances\na cartoon figure dances\na cartoon figure dances\na cartoon figure dances | The woman walks into the kitchen from the right side of the frame, sees him standing in the disaster, and stops with an amused knowing smile. She holds up a small slim black BrewBar sachet between her thumb and finger, label \"BrewBar\" clearly facing camera. She raises one eyebrow playfully and says in a warm teasing voice, \"Or... you could just try this.\" He looks up at her, then at the sachet, slightly embarrassed, with a small reluctant smile forming. Cinematic two-shot, she stands on the right holding the sachet up, he stands on the left beside the coffee mess, soft morning light catching them both. | Close-up at the counter: she tears open the BrewBar sachet with a crisp clean snap-tear, then pours the rich dark cold brew concentrate from the sachet in a smooth stream into a tall clear glass of ice water. The dark coffee swirls beautifully through the clear water, transforming it. He stands beside her watching, his face shifting from skeptical to amazed, eyes widening slightly. He says softly, almost to himself, \"...that's it?\" She nods with a small proud smile, no words. Close-up cinematic shot, the glass and the pour in sharp focus, both their faces softly visible behind, premium DTC ad aesthetic. | Cinematic two-shot at the kitchen counter, both standing side by side now each holding a tall clear glass of finished iced cold brew. They turn toward each other with warm smiles and gently clink their glasses together in the center of the frame — a soft satisfying clink. He takes a sip, his eyes widen with genuine surprise and delight, and he laughs softly. He says with a grin, \"Okay, you win.\" She laughs back warmly. The empty BrewBar sachet sits on the counter between them, label facing camera. Soft morning daylight catches both their smiles and the rich dark cold brew, the perfect couple morning moment, premium DTC ad payoff.",
+      "segment_lengths": "192, 192, 168, 121",
+      "epsilon": 0.001,
+      "fps": 24,
+      "time_units": "frames",
+      "model": [
+        "899",
+        0
+      ],
+      "clip": [
+        "681",
+        0
+      ],
+      "latent": [
+        "1136",
+        0
+      ]
+    },
+    "class_type": "PromptRelayEncodeTimeline",
+    "_meta": {
+      "title": "Prompt Relay Encode (Timeline)"
+    }
+  },
+  "950": {
+    "inputs": {
+      "value": 192
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "SEGMENT 1 - FRAMES"
+    }
+  },
+  "1072": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "SEGMENT 2"
+    }
+  },
+  "1074": {
+    "inputs": {
+      "value": 192
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "SEGMENT 2 - FRAMES"
+    }
+  },
+  "1082": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "SEGMENT 3"
+    }
+  },
+  "1084": {
+    "inputs": {
+      "value": 168
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "SEGMENT 3 - FRAMES"
+    }
+  },
+  "1092": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "SEGMENT 4"
+    }
+  },
+  "1094": {
+    "inputs": {
+      "value": 121
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "SEGMENT 4 - FRAMES"
+    }
+  },
+  "1118": {
+    "inputs": {
+      "value": 0.7
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "IMAGE STRENGTH"
+    }
+  },
+  "1136": {
+    "inputs": {
+      "width": [
+        "1142",
+        1
+      ],
+      "height": [
+        "1141",
+        1
+      ],
+      "length": [
+        "1146",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLTXVLatentVideo",
+    "_meta": {
+      "title": "EmptyLTXVLatentVideo"
+    }
+  },
+  "1137": {
+    "inputs": {
+      "frames_number": [
+        "1146",
+        1
+      ],
+      "frame_rate": [
+        "1144",
+        1
+      ],
+      "batch_size": 1,
+      "audio_vae": [
+        "676",
+        0
+      ]
+    },
+    "class_type": "LTXVEmptyLatentAudio",
+    "_meta": {
+      "title": "LTXV Empty Latent Audio"
+    }
+  },
+  "1138": {
+    "inputs": {
+      "video_latent": [
+        "1059:1057",
+        2
+      ],
+      "audio_latent": [
+        "1137",
+        0
+      ]
+    },
+    "class_type": "LTXVConcatAVLatent",
+    "_meta": {
+      "title": "LTXVConcatAVLatent"
+    }
+  },
+  "1141": {
+    "inputs": {
+      "expression": "a/2",
+      "values.a": [
+        "701",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "1142": {
+    "inputs": {
+      "expression": "a/2",
+      "values.a": [
+        "699",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "1144": {
+    "inputs": {
+      "expression": "a",
+      "values.a": [
+        "697",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "1146": {
+    "inputs": {
+      "expression": "a + b + c + d",
+      "variables.a": [
+        "950",
+        0
+      ],
+      "variables.b": [
+        "1074",
+        0
+      ],
+      "variables.c": [
+        "1084",
+        0
+      ],
+      "variables.d": [
+        "1094",
+        0
+      ]
+    },
+    "class_type": "SimpleCalculatorKJ",
+    "_meta": {
+      "title": "SimpleCalculatorKJ"
+    }
+  },
+  "1153": {
+    "inputs": {
+      "conditioning": [
+        "948",
+        1
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "ConditioningZeroOut"
+    }
+  },
+  "954:829": {
+    "inputs": {
+      "longer_edge": 1536,
+      "images": [
+        "954:834",
+        0
+      ]
+    },
+    "class_type": "ResizeImagesByLongerEdge",
+    "_meta": {
+      "title": "Resize Images by Longer Edge"
+    }
+  },
+  "954:834": {
+    "inputs": {
+      "resize_type": "scale dimensions",
+      "resize_type.width": [
+        "699",
+        0
+      ],
+      "resize_type.height": [
+        "701",
+        0
+      ],
+      "resize_type.crop": "center",
+      "scale_method": "lanczos",
+      "input": [
+        "820",
+        0
+      ]
+    },
+    "class_type": "ResizeImageMaskNode",
+    "_meta": {
+      "title": "Resize Image/Mask"
+    }
+  },
+  "954:830": {
+    "inputs": {
+      "img_compression": 18,
+      "image": [
+        "954:829",
+        0
+      ]
+    },
+    "class_type": "LTXVPreprocess",
+    "_meta": {
+      "title": "LTXVPreprocess"
+    }
+  },
+  "1071:1065": {
+    "inputs": {
+      "longer_edge": 1536,
+      "images": [
+        "1071:1066",
+        0
+      ]
+    },
+    "class_type": "ResizeImagesByLongerEdge",
+    "_meta": {
+      "title": "Resize Images by Longer Edge"
+    }
+  },
+  "1071:1066": {
+    "inputs": {
+      "resize_type": "scale dimensions",
+      "resize_type.width": [
+        "699",
+        0
+      ],
+      "resize_type.height": [
+        "701",
+        0
+      ],
+      "resize_type.crop": "center",
+      "scale_method": "lanczos",
+      "input": [
+        "1072",
+        0
+      ]
+    },
+    "class_type": "ResizeImageMaskNode",
+    "_meta": {
+      "title": "Resize Image/Mask"
+    }
+  },
+  "1071:1067": {
+    "inputs": {
+      "img_compression": 18,
+      "image": [
+        "1071:1065",
+        0
+      ]
+    },
+    "class_type": "LTXVPreprocess",
+    "_meta": {
+      "title": "LTXVPreprocess"
+    }
+  },
+  "1081:1075": {
+    "inputs": {
+      "longer_edge": 1536,
+      "images": [
+        "1081:1076",
+        0
+      ]
+    },
+    "class_type": "ResizeImagesByLongerEdge",
+    "_meta": {
+      "title": "Resize Images by Longer Edge"
+    }
+  },
+  "1081:1076": {
+    "inputs": {
+      "resize_type": "scale dimensions",
+      "resize_type.width": [
+        "699",
+        0
+      ],
+      "resize_type.height": [
+        "701",
+        0
+      ],
+      "resize_type.crop": "center",
+      "scale_method": "lanczos",
+      "input": [
+        "1082",
+        0
+      ]
+    },
+    "class_type": "ResizeImageMaskNode",
+    "_meta": {
+      "title": "Resize Image/Mask"
+    }
+  },
+  "1081:1077": {
+    "inputs": {
+      "img_compression": 18,
+      "image": [
+        "1081:1075",
+        0
+      ]
+    },
+    "class_type": "LTXVPreprocess",
+    "_meta": {
+      "title": "LTXVPreprocess"
+    }
+  },
+  "1091:1085": {
+    "inputs": {
+      "longer_edge": 1536,
+      "images": [
+        "1091:1086",
+        0
+      ]
+    },
+    "class_type": "ResizeImagesByLongerEdge",
+    "_meta": {
+      "title": "Resize Images by Longer Edge"
+    }
+  },
+  "1091:1086": {
+    "inputs": {
+      "resize_type": "scale dimensions",
+      "resize_type.width": [
+        "699",
+        0
+      ],
+      "resize_type.height": [
+        "701",
+        0
+      ],
+      "resize_type.crop": "center",
+      "scale_method": "lanczos",
+      "input": [
+        "1092",
+        0
+      ]
+    },
+    "class_type": "ResizeImageMaskNode",
+    "_meta": {
+      "title": "Resize Image/Mask"
+    }
+  },
+  "1091:1087": {
+    "inputs": {
+      "img_compression": 18,
+      "image": [
+        "1091:1085",
+        0
+      ]
+    },
+    "class_type": "LTXVPreprocess",
+    "_meta": {
+      "title": "LTXVPreprocess"
+    }
+  },
+  "1059:1117": {
+    "inputs": {
+      "value": [
+        "1118",
+        0
+      ]
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Float"
+    }
+  },
+  "1059:1046": {
+    "inputs": {
+      "expression": "a + b",
+      "values.a": [
+        "950",
+        0
+      ],
+      "values.b": [
+        "1074",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "1059:1047": {
+    "inputs": {
+      "expression": "a + b",
+      "values.a": [
+        "1059:1046",
+        1
+      ],
+      "values.b": [
+        "1084",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "1059:1054": {
+    "inputs": {
+      "frame_rate": [
+        "697",
+        0
+      ],
+      "positive": [
+        "948",
+        1
+      ],
+      "negative": [
+        "1153",
+        0
+      ]
+    },
+    "class_type": "LTXVConditioning",
+    "_meta": {
+      "title": "LTXVConditioning"
+    }
+  },
+  "1059:1057": {
+    "inputs": {
+      "num_guides": "4",
+      "num_guides.frame_idx_1": 0,
+      "num_guides.strength_1": [
+        "1059:1117",
+        0
+      ],
+      "num_guides.frame_idx_2": [
+        "950",
+        0
+      ],
+      "num_guides.strength_2": [
+        "1059:1117",
+        0
+      ],
+      "num_guides.frame_idx_3": [
+        "1059:1046",
+        1
+      ],
+      "num_guides.strength_3": [
+        "1059:1117",
+        0
+      ],
+      "num_guides.frame_idx_4": [
+        "1059:1047",
+        1
+      ],
+      "num_guides.strength_4": [
+        "1059:1117",
+        0
+      ],
+      "positive": [
+        "1059:1054",
+        0
+      ],
+      "negative": [
+        "1059:1054",
+        1
+      ],
+      "vae": [
+        "679",
+        0
+      ],
+      "latent": [
+        "1136",
+        0
+      ],
+      "num_guides.image_1": [
+        "954:830",
+        0
+      ],
+      "num_guides.image_2": [
+        "1071:1067",
+        0
+      ],
+      "num_guides.image_3": [
+        "1081:1077",
+        0
+      ],
+      "num_guides.image_4": [
+        "1091:1087",
+        0
+      ]
+    },
+    "class_type": "LTXVAddGuideMulti",
+    "_meta": {
+      "title": "LTXVAddGuideMulti"
+    }
+  }
+}

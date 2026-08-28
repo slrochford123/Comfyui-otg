@@ -1,0 +1,72 @@
+﻿{
+  "2": {
+    "inputs": {
+      "video": "__OTG_UPLOAD_VIDEO__",
+      "force_rate": 0,
+      "custom_width": 0,
+      "custom_height": 0,
+      "frame_load_cap": 0,
+      "skip_first_frames": 0,
+      "select_every_nth": 1,
+      "format": "LTXV"
+    },
+    "class_type": "VHS_LoadVideo",
+    "_meta": {
+      "title": "Load Source Video"
+    }
+  },
+  "1": {
+    "inputs": {
+      "images": [
+        "2",
+        0
+      ],
+      "resize_type": "target dimensions",
+      "resize_type.width": 3840,
+      "resize_type.height": 2160,
+      "quality": "ULTRA"
+    },
+    "class_type": "RTXVideoSuperResolution",
+    "_meta": {
+      "title": "RTX Video Super Resolution"
+    }
+  },
+  "3": {
+    "inputs": {
+      "images": [
+        "1",
+        0
+      ],
+      "audio": [
+        "2",
+        2
+      ],
+      "frame_rate": 50,
+      "loop_count": 0,
+      "filename_prefix": "Upscale/RTX SR",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Save Upscaled Video"
+    }
+  },
+  "__otg": {
+    "label": "RTX SR Video Upscaler",
+    "description": "Video-to-video upscaler using VHS_LoadVideo, RTXVideoSuperResolution, and VHS_VideoCombine. Upload source video as videoA.",
+    "mode": "video-upscale",
+    "video2video": true,
+    "videoNodeId": "2",
+    "upscaleNodeId": "1",
+    "outputNodeId": "3",
+    "targetWidth": 3840,
+    "targetHeight": 2160,
+    "quality": "ULTRA"
+  }
+}

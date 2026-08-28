@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ComfyUI OTG Workflows Index",
+  "type": "object",
+  "required": [
+    "version",
+    "workflows"
+  ],
+  "properties": {
+    "version": {
+      "type": "number"
+    },
+    "workflows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "file"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "img2img": {
+            "type": "boolean"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "thumbnail": {
+            "type": "string"
+          },
+          "requirements": {
+            "type": "object",
+            "properties": {
+              "models": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "pathHint": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "nodes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "notes": {
+                "type": "string"
+              }
+            }
+          },
+          "videoCompatibility": {
+            "type": "object",
+            "required": ["mode"],
+            "properties": {
+              "mode": { "enum": ["compatible", "3090_only", "reduced"] },
+              "notes": { "type": "string" },
+              "reductions": {
+                "type": "object",
+                "properties": {
+                  "maxWidth": { "type": "number" },
+                  "maxHeight": { "type": "number" },
+                  "maxFrames": { "type": "number" },
+                  "maxBatchSize": { "type": "number" },
+                  "nodeOverrides": { "type": "object" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

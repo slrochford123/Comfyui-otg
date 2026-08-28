@@ -1,0 +1,14 @@
+{
+  "openLocalUrl": "http://127.0.0.1:3000",
+  "openPublicUrl": "https://comf-otg.comfyui-otg.win",
+  "logsFolder": "logs",
+  "startBat": "Start OTG server (PROD).bat",
+  "stopBat": "",
+  "updateScript": "OTG_Update.ps1",
+  "tunnel": {
+    "enabled": true,
+    "tunnelId": "f682f4d2-bdbc-42fa-a429-a7600fd031b7",
+    "cloudflaredExe": "cloudflared",
+    "configRelPath": ".cloudflared\\config.yml"
+  }
+}

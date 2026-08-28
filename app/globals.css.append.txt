@@ -1,0 +1,228 @@
+
+/* --- Auth v2 UI (matches mobile screenshots) --- */
+.otg-authPage{ min-height: 100dvh; display:flex; align-items:center; justify-content:center; padding: 18px 16px; }
+.otg-authBg{
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(1200px 700px at 70% 85%, rgba(168,85,247,.18), rgba(0,0,0,0) 60%),
+    radial-gradient(900px 560px at 30% 30%, rgba(124,58,237,.22), rgba(0,0,0,0) 55%),
+    linear-gradient(180deg, #04040a 0%, #0a0714 35%, #130a22 100%);
+}
+
+.otg-authCard2{
+  width: 100%;
+  max-width: 520px;
+  border-radius: 26px;
+  padding: 22px 20px 18px;
+  background: rgba(12, 12, 20, 0.68);
+  border: 1px solid rgba(255,255,255,.10);
+  box-shadow: 0 25px 80px rgba(0,0,0,.55);
+  backdrop-filter: blur(10px);
+}
+
+.otg-authLogoWrap{
+  width: 86px;
+  height: 86px;
+  border-radius: 24px;
+  margin: 0 auto 10px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.08);
+}
+.otg-authLogo{ width: 54px; height: 54px; border-radius: 14px; }
+
+.otg-authHeaderMini{
+  text-align:center;
+  font-size: 12px;
+  letter-spacing: .18em;
+  color: rgba(244,244,247,.70);
+  margin-bottom: 4px;
+}
+
+.otg-authTitle{
+  margin: 6px 0 0;
+  text-align:center;
+  font-weight: 800;
+  font-size: 40px;
+  letter-spacing: -0.02em;
+}
+
+.otg-authSub{
+  margin: 6px 0 18px;
+  text-align:center;
+  color: rgba(244,244,247,.70);
+}
+
+.otg-authForm{ display:flex; flex-direction:column; gap: 14px; margin-top: 8px; }
+.otg-authLabel{ display:flex; flex-direction:column; gap: 8px; color: rgba(244,244,247,.85); font-size: 14px; }
+.otg-authInput{
+  width: 100%;
+  border-radius: 18px;
+  padding: 14px 14px;
+  background: rgba(0,0,0,.35);
+  border: 1px solid rgba(255,255,255,.12);
+  outline: none;
+  color: rgba(244,244,247,.96);
+}
+.otg-authInput::placeholder{ color: rgba(244,244,247,.40); }
+
+.otg-authPwRow{ position: relative; display:flex; align-items:center; gap: 10px; }
+.otg-authShowBtn{
+  white-space: nowrap;
+  border-radius: 18px;
+  padding: 12px 14px;
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.10);
+  color: rgba(244,244,247,.88);
+}
+.otg-authShowBtn:active{ transform: translateY(1px); }
+
+.otg-authRemember{ display:flex; align-items:center; gap: 10px; color: rgba(244,244,247,.85); }
+.otg-authRemember input{ width: 18px; height: 18px; accent-color: rgb(168,85,247); }
+
+.otg-authErr{
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(239,68,68,.14);
+  border: 1px solid rgba(239,68,68,.22);
+  color: rgba(255, 210, 210, .95);
+  font-size: 13px;
+}
+
+.otg-authPrimaryBtn{
+  width: 100%;
+  border-radius: 18px;
+  padding: 14px 14px;
+  font-weight: 700;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.08);
+  color: rgba(244,244,247,.95);
+}
+.otg-authPrimaryBtn:disabled{ opacity: .6; }
+
+.otg-authGradientBtn{
+  background: linear-gradient(90deg, rgba(168,85,247,.95), rgba(236,72,153,.92));
+  border: 0;
+}
+
+.otg-authLinks{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap: 10px;
+  margin-top: 8px;
+  color: rgba(244,244,247,.65);
+}
+.otg-authLink{ color: rgba(195,104,255,.95); text-decoration: none; }
+.otg-authLink:hover{ text-decoration: underline; }
+
+.otg-adminTable{
+  margin-top: 10px;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.25);
+}
+.otg-adminRow{
+  display:grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid rgba(255,255,255,.08);
+  color: rgba(244,244,247,.90);
+  font-size: 13px;
+}
+.otg-adminHead{
+  border-top: 0;
+  font-weight: 700;
+  color: rgba(244,244,247,.95);
+  background: rgba(255,255,255,.04);
+}
+@media (max-width: 560px){
+  .otg-authTitle{ font-size: 34px; }
+  .otg-adminRow{ grid-template-columns: 1fr; }
+  .otg-adminHead{ display:none; }
+}
+
+/* ===== Admin Users: mobile readable ===== */
+
+.otg-adminGrid {
+  display: block;
+}
+
+.otg-adminRow {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr 1fr 120px;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 18px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 10px;
+}
+
+.otg-adminHead {
+  background: rgba(255, 255, 255, 0.06);
+  font-weight: 700;
+}
+
+.otg-adminCell {
+  min-width: 0; /* critical so text can wrap instead of forcing overflow */
+}
+
+.otg-adminValue {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: 1.25;
+}
+
+/* Hide per-cell labels on desktop */
+.otg-adminLabel {
+  display: none;
+  font-size: 12px;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+
+.otg-adminActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.otg-adminDeleteBtn {
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.35);
+  color: white;
+}
+
+/* ===== Mobile: stack rows into cards ===== */
+@media (max-width: 640px) {
+  .otg-adminHead {
+    display: none; /* table header wastes space on mobile */
+  }
+
+  .otg-adminRow {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .otg-adminLabel {
+    display: block; /* show labels inside the card */
+  }
+
+  .otg-adminActions {
+    justify-content: flex-start;
+  }
+
+  .otg-adminDeleteBtn {
+    width: 100%;
+  }
+}

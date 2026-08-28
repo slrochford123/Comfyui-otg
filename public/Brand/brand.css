@@ -1,0 +1,19 @@
+:root {
+  --bg0: #070812;
+  --bg1: #0b0d18;
+  --fg0: #ffffff;
+  --fg1: rgba(255,255,255,0.72);
+  --purple: #7b4dff;
+  --purple-soft: #a78bfa;
+  --accent: #5ee1ff;
+  --border: rgba(255,255,255,0.12);
+}
+
+body {
+  background: radial-gradient(
+    900px 500px at 50% 10%,
+    rgba(123,77,255,0.25),
+    #05050b
+  );
+  color: var(--fg0);
+}

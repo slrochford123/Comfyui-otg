@@ -1,0 +1,62 @@
+{
+  "70": {
+    "inputs": {
+      "filename_prefix": "audio/OTG_Voices",
+      "audioUI": "",
+      "audio": [
+        "115",
+        0
+      ]
+    },
+    "class_type": "SaveAudio",
+    "_meta": {
+      "title": "Save Audio (FLAC)"
+    }
+  },
+  "76": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Text to Synthesize"
+    }
+  },
+  "77": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Voice Description"
+    }
+  },
+  "115": {
+    "inputs": {
+      "text": [
+        "76",
+        0
+      ],
+      "instruct": [
+        "77",
+        0
+      ],
+      "model_choice": "1.7B",
+      "device": "auto",
+      "precision": "bf16",
+      "language": "Auto",
+      "seed": 728207965619048,
+      "max_new_tokens": 2048,
+      "top_p": 0.8,
+      "top_k": 20,
+      "temperature": 1,
+      "repetition_penalty": 1.05,
+      "attention": "auto",
+      "unload_model_after_generate": false
+    },
+    "class_type": "FB_Qwen3TTSVoiceDesign",
+    "_meta": {
+      "title": "🎨 Qwen3-TTS VoiceDesign"
+    }
+  }
+}

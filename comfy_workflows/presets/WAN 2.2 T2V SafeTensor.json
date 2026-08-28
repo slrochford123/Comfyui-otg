@@ -1,0 +1,327 @@
+{
+  "__otg": {
+    "label": "WAN 2.2 - Create Video - SafeTensor",
+    "description": "WAN 2.2 text-to-video using the active FP8 SafeTensor high/low model pair.",
+    "video": true,
+    "img2img": false,
+    "videoGenerate": {
+      "modelId": "wan22",
+      "operation": "text_to_video",
+      "format": "safetensor",
+      "outputNodeIds": ["114"],
+      "sizeNodeIds": ["121"],
+      "frameNodeIds": ["121"],
+      "fpsNodeIds": ["114"]
+    }
+  },
+  "101": {
+    "inputs": {
+      "sage_attention": "auto",
+      "allow_compile": false,
+      "model": [
+        "108",
+        0
+      ]
+    },
+    "class_type": "PathchSageAttentionKJ",
+    "_meta": {
+      "title": "Patch Sage Attention KJ"
+    }
+  },
+  "102": {
+    "inputs": {
+      "unet_name": "wan22T2VA14BGGUF_lowQ50.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "103": {
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "104": {
+    "inputs": {
+      "unet_name": "wan22T2VA14BGGUF_highQ50.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "108": {
+    "inputs": {
+      "lora_name": "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+      "strength_model": 1.0000000000000002,
+      "model": [
+        "135",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "109": {
+    "inputs": {
+      "shift": 8.000000000000002,
+      "model": [
+        "101",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "110": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "113": {
+    "inputs": {
+      "lora_name": "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+      "strength_model": 1.03,
+      "model": [
+        "134",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "114": {
+    "inputs": {
+      "frame_rate": 24,
+      "loop_count": 0,
+      "filename_prefix": "WANT2V/wan22",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "124",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "116": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": 336720974949878,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 0,
+      "end_at_step": 2,
+      "return_with_leftover_noise": "enable",
+      "model": [
+        "123",
+        0
+      ],
+      "positive": [
+        "118",
+        0
+      ],
+      "negative": [
+        "119",
+        0
+      ],
+      "latent_image": [
+        "121",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Advanced)"
+    }
+  },
+  "118": {
+    "inputs": {
+      "text": "A graceful and masterful warrior \n\n\n\n",
+      "clip": [
+        "110",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "119": {
+    "inputs": {
+      "text": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走,",
+      "clip": [
+        "110",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "120": {
+    "inputs": {
+      "add_noise": "disable",
+      "noise_seed": 593338427784099,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 2,
+      "end_at_step": 10000,
+      "return_with_leftover_noise": "disable",
+      "model": [
+        "109",
+        0
+      ],
+      "positive": [
+        "118",
+        0
+      ],
+      "negative": [
+        "119",
+        0
+      ],
+      "latent_image": [
+        "116",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Advanced)"
+    }
+  },
+  "121": {
+    "inputs": {
+      "width": 720,
+      "height": 1280,
+      "length": 81,
+      "batch_size": 1
+    },
+    "class_type": "EmptyHunyuanLatentVideo",
+    "_meta": {
+      "title": "Empty HunyuanVideo 1.0 Latent"
+    }
+  },
+  "122": {
+    "inputs": {
+      "sage_attention": "auto",
+      "allow_compile": false,
+      "model": [
+        "113",
+        0
+      ]
+    },
+    "class_type": "PathchSageAttentionKJ",
+    "_meta": {
+      "title": "Patch Sage Attention KJ"
+    }
+  },
+  "123": {
+    "inputs": {
+      "shift": 8.000000000000002,
+      "model": [
+        "122",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "124": {
+    "inputs": {
+      "samples": [
+        "120",
+        0
+      ],
+      "vae": [
+        "103",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "125": {
+    "inputs": {
+      "indexes": "-1",
+      "err_if_missing": true,
+      "err_if_empty": true,
+      "image": [
+        "124",
+        0
+      ]
+    },
+    "class_type": "VHS_SelectImages",
+    "_meta": {
+      "title": "Select Images 🎥🅥🅗🅢"
+    }
+  },
+  "126": {
+    "inputs": {
+      "filename_prefix": "Images/Wan Frames/wan22",
+      "images": [
+        "125",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "134": {
+    "inputs": {
+      "unet_name": "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "135": {
+    "inputs": {
+      "unet_name": "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  }
+}

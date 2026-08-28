@@ -1,0 +1,78 @@
+import { NextRequest, NextResponse } from "next/server";
+
+import { readJsonBody, sessionErrorResponse, withNoStore } from "@/lib/http/routeHelpers";
+import { getOwnerContext } from "@/lib/ownerKey";
+import { claimRemoteWorkerJob, claimRemoteWorkerJobAcrossOwners } from "@/lib/jobs/voicePipelineJobs";
+import { requireWorkerToken } from "@/lib/jobs/workerAuth";
+import {
+  getOtgWorkerJobRoute,
+  normalizeOtgWorkerAction,
+  normalizeOtgWorkerJobType,
+} from "@/lib/jobs/workerJobContract";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function jsonError(error: string, status = 400) {
+  return NextResponse.json({ ok: false, error }, { status, headers: withNoStore() });
+}
+
+function workerOwnerKey(req: NextRequest, fallbackOwnerKey: string): string {
+  const headerOwnerKey = String(req.headers.get("x-otg-owner-key") || "").trim();
+  return headerOwnerKey || fallbackOwnerKey;
+}
+
+function claimProviders(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean);
+  const single = String(value || "").trim().toLowerCase();
+  return single ? [single] : [];
+}
+
+function isUniversalCharacterVoiceClaim(jobType: string, action: string, workerId: string): boolean {
+  if (jobType !== "character_voice_pipeline") return false;
+  if (action === "test_trained_voice") {
+    return workerId === "linux-applio-inference-worker";
+  }
+  return (
+    action === "generate_training_dataset" ||
+    action === "create_voice_sample" ||
+    action === "start_applio_training" ||
+    action === "generate_character_preview"
+  );
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await readJsonBody<Record<string, unknown>>(req.clone());
+    if (!body.ok) return jsonError(body.error, body.status);
+
+    const jobType = normalizeOtgWorkerJobType(body.value.jobType || "character_voice_pipeline");
+    if (!jobType) return jsonError("Invalid or missing jobType.", 400);
+
+    const action = normalizeOtgWorkerAction(jobType, body.value.action);
+    if (!action) return jsonError("Invalid or missing worker action for jobType.", 400);
+
+    const route = getOtgWorkerJobRoute(jobType, action);
+    if (!route) return jsonError("This job/action is not registered as a Windows worker route.", 400);
+
+    const workerId = String(body.value.workerId || req.headers.get("x-otg-worker-id") || "windows-otg-worker").trim();
+    const providers = claimProviders(body.value.provider || body.value.providers || body.value.claimProvider || body.value.claimProviders);
+    const claimOptions = providers.length ? { providers } : undefined;
+    if (body.value.claimScope === "all_owners") {
+      const token = requireWorkerToken(req);
+      if (!token.ok) return jsonError(token.error, token.status);
+      if (!isUniversalCharacterVoiceClaim(jobType, action, workerId)) {
+        return jsonError("Universal claim is not permitted for this worker and registered job route.", 400);
+      }
+      const job = claimRemoteWorkerJobAcrossOwners(workerId, jobType, action, claimOptions);
+      return NextResponse.json({ ok: true, route, job }, { headers: withNoStore() });
+    }
+
+    const owner = await getOwnerContext(req);
+    const job = claimRemoteWorkerJob(workerOwnerKey(req, owner.ownerKey), workerId, jobType, action, claimOptions);
+
+    return NextResponse.json({ ok: true, route, job }, { headers: withNoStore() });
+  } catch (error) {
+    return sessionErrorResponse(error) || jsonError("Could not claim worker job.", 500);
+  }
+}

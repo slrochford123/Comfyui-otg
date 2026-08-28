@@ -1,0 +1,5111 @@
+{
+  "schemaVersion": 1,
+  "manifestVersion": "dual-gpu-20260810031003-workflow-matrix",
+  "generatedAt": "2026-08-10T03:10:03.740513Z",
+  "allowedSupportStates": [
+    "verified",
+    "installed-not-tested",
+    "unsupported-vram",
+    "missing-model",
+    "missing-node",
+    "unhealthy",
+    "disabled"
+  ],
+  "workflows": [
+    {
+      "id": "internal/LTX-2.3 Image Audio 2 Video GGUF 12GB",
+      "workflowFile": "internal/LTX-2.3 Image Audio 2 Video GGUF 12GB.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CFGGuider",
+        "CLIPTextEncode",
+        "CreateVideo",
+        "DualCLIPLoader",
+        "EmptyLTXVLatentVideo",
+        "Float",
+        "ImageResizeKJv2",
+        "KSamplerSelect",
+        "LTXVAudioVAEEncode",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVImgToVideoInplace",
+        "LTXVPreprocess",
+        "LTXVSeparateAVLatent",
+        "LoadAudio",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ManualSigmas",
+        "PreviewImage",
+        "RandomNoise",
+        "SamplerCustomAdvanced",
+        "SaveVideo",
+        "SetLatentNoiseMask",
+        "SolidMask",
+        "UnetLoaderGGUF",
+        "VAEDecodeTiled",
+        "VAELoaderKJ"
+      ],
+      "requiredModels": [
+        "LTX Lora/LTX-2 - Better Female Nudity.safetensors",
+        "LTX-2/ltx-2.3-22b-distilled-lora-dynamic_fro09_avg_rank_105_bf16.safetensors",
+        "LTX23_audio_vae_bf16.safetensors",
+        "LTX23_video_vae_bf16.safetensors",
+        "gemma_3_12B_it_fp4_mixed.safetensors",
+        "ltx-2-3-22b-dev-Q4_K_M.gguf",
+        "ltx-2.3_text_projection_bf16.safetensors"
+      ],
+      "requiredLoras": [
+        "LTX Lora/LTX-2 - Better Female Nudity.safetensors",
+        "LTX-2/ltx-2.3-22b-distilled-lora-dynamic_fro09_avg_rank_105_bf16.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "audio"
+      ],
+      "expectedInputCount": 2,
+      "expectedOutputTypes": [
+        "image",
+        "video"
+      ],
+      "graphDefaults": {
+        "EmptyLTXVLatentVideo.length": 121,
+        "ImageResizeKJv2.width": 960,
+        "ImageResizeKJv2.height": 960
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: LTX Lora/LTX-2 - Better Female Nudity.safetensors, LTX-2/ltx-2.3-22b-distilled-lora-dynamic_fro09_avg_rank_105_bf16.safetensors, ltx-2-3-22b-dev-Q4_K_M.gguf",
+          "missingNodes": [],
+          "missingModels": [
+            "LTX Lora/LTX-2 - Better Female Nudity.safetensors",
+            "LTX-2/ltx-2.3-22b-distilled-lora-dynamic_fro09_avg_rank_105_bf16.safetensors",
+            "ltx-2-3-22b-dev-Q4_K_M.gguf"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: Float, UnetLoaderGGUF",
+          "missingNodes": [
+            "Float",
+            "UnetLoaderGGUF"
+          ],
+          "missingModels": [
+            "LTX Lora/LTX-2 - Better Female Nudity.safetensors",
+            "LTX-2/ltx-2.3-22b-distilled-lora-dynamic_fro09_avg_rank_105_bf16.safetensors",
+            "ltx-2-3-22b-dev-Q4_K_M.gguf"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/angles_3d_mesh_hunyuan_v21",
+      "workflowFile": "internal/angles_3d_mesh_hunyuan_v21.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CLIPVisionEncode",
+        "EmptyLatentHunyuan3Dv2",
+        "Hunyuan3Dv2Conditioning",
+        "ImageOnlyCheckpointLoader",
+        "KSampler",
+        "LoadImage",
+        "ModelSamplingAuraFlow",
+        "SaveGLB",
+        "VAEDecodeHunyuan3D",
+        "VoxelToMesh"
+      ],
+      "requiredModels": [
+        "hunyuan_3d_v2.1.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "3d"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: hunyuan_3d_v2.1.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "hunyuan_3d_v2.1.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: hunyuan_3d_v2.1.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "hunyuan_3d_v2.1.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/angles_3d_preview",
+      "workflowFile": "internal/angles_3d_preview.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CLIPVisionEncode",
+        "EmptyLatentHunyuan3Dv2",
+        "Hunyuan3Dv2Conditioning",
+        "ImageOnlyCheckpointLoader",
+        "KSampler",
+        "LoadImage",
+        "ModelSamplingAuraFlow",
+        "SaveGLB",
+        "VAEDecodeHunyuan3D",
+        "VoxelToMesh"
+      ],
+      "requiredModels": [
+        "hunyuan_3d_v2.1.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "3d"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: hunyuan_3d_v2.1.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "hunyuan_3d_v2.1.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: hunyuan_3d_v2.1.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "hunyuan_3d_v2.1.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/angles_3d_trellis2_character_mv_textured_glb",
+      "workflowFile": "internal/angles_3d_trellis2_character_mv_textured_glb.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "ImageBatch",
+        "Trellis2ExportMesh",
+        "Trellis2FillHolesWithMeshlib",
+        "Trellis2LoadImageWithTransparency",
+        "Trellis2LoadModel",
+        "Trellis2MeshWithVoxelGenerator",
+        "Trellis2MeshWithVoxelToTrimesh",
+        "Trellis2SimplifyMesh"
+      ],
+      "requiredModels": [],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "image",
+        "image",
+        "image",
+        "image"
+      ],
+      "expectedInputCount": 4,
+      "expectedOutputTypes": [
+        "3d"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: Trellis2ExportMesh, Trellis2FillHolesWithMeshlib, Trellis2LoadImageWithTransparency, Trellis2LoadModel, Trellis2MeshWithVoxelGenerator, Trellis2MeshWithVoxelToTrimesh, Trellis2SimplifyMesh",
+          "missingNodes": [
+            "Trellis2ExportMesh",
+            "Trellis2FillHolesWithMeshlib",
+            "Trellis2LoadImageWithTransparency",
+            "Trellis2LoadModel",
+            "Trellis2MeshWithVoxelGenerator",
+            "Trellis2MeshWithVoxelToTrimesh",
+            "Trellis2SimplifyMesh"
+          ],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: Trellis2ExportMesh, Trellis2FillHolesWithMeshlib, Trellis2LoadImageWithTransparency, Trellis2LoadModel, Trellis2MeshWithVoxelGenerator, Trellis2MeshWithVoxelToTrimesh, Trellis2SimplifyMesh",
+          "missingNodes": [
+            "Trellis2ExportMesh",
+            "Trellis2FillHolesWithMeshlib",
+            "Trellis2LoadImageWithTransparency",
+            "Trellis2LoadModel",
+            "Trellis2MeshWithVoxelGenerator",
+            "Trellis2MeshWithVoxelToTrimesh",
+            "Trellis2SimplifyMesh"
+          ],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/angles_3d_trellis2_textured_glb",
+      "workflowFile": "internal/angles_3d_trellis2_textured_glb.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "InvertMask",
+        "LoadImage",
+        "LoadTrellis2Models",
+        "Preview3D",
+        "Trellis2ExportGLB",
+        "Trellis2GetConditioning",
+        "Trellis2ImageToShape",
+        "Trellis2ShapeToTexturedMesh"
+      ],
+      "requiredModels": [],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "3d"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: LoadTrellis2Models, Trellis2ExportGLB, Trellis2GetConditioning, Trellis2ImageToShape, Trellis2ShapeToTexturedMesh",
+          "missingNodes": [
+            "LoadTrellis2Models",
+            "Trellis2ExportGLB",
+            "Trellis2GetConditioning",
+            "Trellis2ImageToShape",
+            "Trellis2ShapeToTexturedMesh"
+          ],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: LoadTrellis2Models, Trellis2ExportGLB, Trellis2GetConditioning, Trellis2ImageToShape, Trellis2ShapeToTexturedMesh",
+          "missingNodes": [
+            "LoadTrellis2Models",
+            "Trellis2ExportGLB",
+            "Trellis2GetConditioning",
+            "Trellis2ImageToShape",
+            "Trellis2ShapeToTexturedMesh"
+          ],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/angles_multiview_texture_turntable_v11",
+      "workflowFile": "internal/angles_multiview_texture_turntable_v11.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "ImageScaleToTotalPixels",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "PreviewImage",
+        "PrimitiveStringMultiline",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEEncode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "Qwen-Edit-2509-Multiple-angles.safetensors",
+        "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors",
+        "Qwen/qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Edit-2509-Multiple-angles.safetensors",
+        "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/angles_multiview_texture_turntable_v12_hotfix",
+      "workflowFile": "internal/angles_multiview_texture_turntable_v12_hotfix.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "FluxKontextImageScale",
+        "FluxKontextMultiReferenceLatentMethod",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "PreviewImage",
+        "QwenMultiangleCameraNode",
+        "TextEncodeQwenImageEditPlus",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEEncode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+        "qwen-image-edit-2511-multiple-angles-lora.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "qwen-image-edit-2511-multiple-angles-lora.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: QwenMultiangleCameraNode",
+          "missingNodes": [
+            "QwenMultiangleCameraNode"
+          ],
+          "missingModels": [
+            "Qwen/qwen_image_edit_2511_fp8mixed.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/characters/character_intro_video_ltx23",
+      "workflowFile": "internal/characters/character_intro_video_ltx23.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "Any Switch (rgthree)",
+        "CFGGuider",
+        "CLIPTextEncode",
+        "CM_FloatToInt",
+        "CM_IntToFloat",
+        "DualCLIPLoader",
+        "EmptyImage",
+        "EmptyLTXVLatentVideo",
+        "FinalFrameSelector",
+        "GetImageSize",
+        "INTConstant",
+        "ImageScaleBy",
+        "KSamplerSelect",
+        "LTX2SamplingPreviewOverride",
+        "LTXICLoRALoaderModelOnly",
+        "LTXVAudioVAEDecode",
+        "LTXVChunkFeedForward",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVCropGuides",
+        "LTXVEmptyLatentAudio",
+        "LTXVImgToVideoInplace",
+        "LTXVLatentUpsampler",
+        "LTXVPreprocess",
+        "LTXVSeparateAVLatent",
+        "LatentUpscaleModelLoader",
+        "LoadImage",
+        "ManualSigmas",
+        "MathExpression|pysssss",
+        "Power Lora Loader (rgthree)",
+        "PrimitiveFloat",
+        "RandomNoise",
+        "ResizeImageMaskNode",
+        "ResizeImagesByLongerEdge",
+        "SamplerCustomAdvanced",
+        "UNETLoader",
+        "VAEDecodeTiled",
+        "VAELoader",
+        "VAELoaderKJ",
+        "VHS_VideoCombine"
+      ],
+      "requiredModels": [
+        "LTX2.3-IC-LORA-Dual-Character.safetensors",
+        "LTX23_audio_vae_bf16.safetensors",
+        "LTX23_video_vae_bf16.safetensors",
+        "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "gemma_3_12B_it_fp4_mixed.safetensors",
+        "ltx-2-19b-distilled-lora-384.safetensors",
+        "ltx-2.3-22b-dev_transformer_only_fp8_scaled.safetensors",
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "ltx-2.3_text_projection_bf16.safetensors",
+        "taeltx2_3.safetensors"
+      ],
+      "requiredLoras": [
+        "LTX2.3-IC-LORA-Dual-Character.safetensors",
+        "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "ltx-2-19b-distilled-lora-384.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: FinalFrameSelector, MathExpression|pysssss",
+          "missingNodes": [
+            "FinalFrameSelector",
+            "MathExpression|pysssss"
+          ],
+          "missingModels": [
+            "ltx-2-19b-distilled-lora-384.safetensors",
+            "ltx-2.3-22b-dev_transformer_only_fp8_scaled.safetensors",
+            "taeltx2_3.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: CM_FloatToInt, CM_IntToFloat, FinalFrameSelector, MathExpression|pysssss",
+          "missingNodes": [
+            "CM_FloatToInt",
+            "CM_IntToFloat",
+            "FinalFrameSelector",
+            "MathExpression|pysssss"
+          ],
+          "missingModels": [
+            "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+            "ltx-2-19b-distilled-lora-384.safetensors",
+            "ltx-2.3-22b-dev_transformer_only_fp8_scaled.safetensors",
+            "taeltx2_3.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/edit-video/ace_step1_5_xl_base",
+      "workflowFile": "internal/edit-video/ace_step1_5_xl_base.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "ConditioningZeroOut",
+        "DualCLIPLoader",
+        "EmptyAceStep1.5LatentAudio",
+        "KSampler",
+        "ModelSamplingAuraFlow",
+        "PrimitiveInt",
+        "SaveAudioMP3",
+        "TextEncodeAceStepAudio1.5",
+        "UNETLoader",
+        "VAEDecodeAudio",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "ace_1.5_vae.safetensors",
+        "acestep_v1.5_xl_base_bf16.safetensors",
+        "qwen_0.6b_ace15.safetensors",
+        "qwen_4b_ace15.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "audio"
+      ],
+      "graphDefaults": {
+        "TextEncodeAceStepAudio1.5.duration": 120
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: ace_1.5_vae.safetensors, acestep_v1.5_xl_base_bf16.safetensors, qwen_0.6b_ace15.safetensors, qwen_4b_ace15.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "ace_1.5_vae.safetensors",
+            "acestep_v1.5_xl_base_bf16.safetensors",
+            "qwen_0.6b_ace15.safetensors",
+            "qwen_4b_ace15.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/edit-video/ace_step1_5_xl_sft",
+      "workflowFile": "internal/edit-video/ace_step1_5_xl_sft.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "ConditioningZeroOut",
+        "DualCLIPLoader",
+        "EmptyAceStep1.5LatentAudio",
+        "KSampler",
+        "ModelSamplingAuraFlow",
+        "PrimitiveInt",
+        "SaveAudioMP3",
+        "TextEncodeAceStepAudio1.5",
+        "UNETLoader",
+        "VAEDecodeAudio",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "ace_1.5_vae.safetensors",
+        "acestep_v1.5_xl_sft_bf16.safetensors",
+        "qwen_0.6b_ace15.safetensors",
+        "qwen_4b_ace15.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "audio"
+      ],
+      "graphDefaults": {
+        "TextEncodeAceStepAudio1.5.duration": 120
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: acestep_v1.5_xl_sft_bf16.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "acestep_v1.5_xl_sft_bf16.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: ace_1.5_vae.safetensors, acestep_v1.5_xl_sft_bf16.safetensors, qwen_0.6b_ace15.safetensors, qwen_4b_ace15.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "ace_1.5_vae.safetensors",
+            "acestep_v1.5_xl_sft_bf16.safetensors",
+            "qwen_0.6b_ace15.safetensors",
+            "qwen_4b_ace15.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/edit-video/ace_step1_5_xl_turbo",
+      "workflowFile": "internal/edit-video/ace_step1_5_xl_turbo.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "ConditioningZeroOut",
+        "DualCLIPLoader",
+        "EmptyAceStep1.5LatentAudio",
+        "KSampler",
+        "ModelSamplingAuraFlow",
+        "PrimitiveInt",
+        "SaveAudioMP3",
+        "TextEncodeAceStepAudio1.5",
+        "UNETLoader",
+        "VAEDecodeAudio",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "ace_1.5_vae.safetensors",
+        "acestep_v1.5_xl_turbo_bf16.safetensors",
+        "qwen_0.6b_ace15.safetensors",
+        "qwen_4b_ace15.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "audio"
+      ],
+      "graphDefaults": {
+        "TextEncodeAceStepAudio1.5.duration": 120
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: acestep_v1.5_xl_turbo_bf16.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "acestep_v1.5_xl_turbo_bf16.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: ace_1.5_vae.safetensors, acestep_v1.5_xl_turbo_bf16.safetensors, qwen_0.6b_ace15.safetensors, qwen_4b_ace15.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "ace_1.5_vae.safetensors",
+            "acestep_v1.5_xl_turbo_bf16.safetensors",
+            "qwen_0.6b_ace15.safetensors",
+            "qwen_4b_ace15.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/edit-video/ltx23_edit_anything",
+      "workflowFile": "internal/edit-video/ltx23_edit_anything.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "APGGuider",
+        "BasicScheduler",
+        "CFGGuider",
+        "CLIPTextEncode",
+        "CreateVideo",
+        "DualCLIPLoader",
+        "EmptyAudio",
+        "GetImageRangeFromBatch",
+        "GetImageSize",
+        "ImageConcanate",
+        "ImageScaleBy",
+        "KSamplerSelect",
+        "LTXVAddGuideMulti",
+        "LTXVAudioVAEEncode",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVCropGuides",
+        "LTXVEmptyLatentAudio",
+        "LTXVPreprocess",
+        "LTXVSeparateAVLatent",
+        "LatentUpscaleModelLoader",
+        "LoraLoaderModelOnly",
+        "ManualSigmas",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "RandomNoise",
+        "ResizeImageMaskNode",
+        "SamplerCustomAdvanced",
+        "SaveVideo",
+        "SetLatentNoiseMask",
+        "SimpleCalculatorKJ",
+        "SolidMask",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEEncode",
+        "VAELoaderKJ",
+        "VHS_LoadVideo",
+        "easy cleanGpuUsed"
+      ],
+      "requiredModels": [
+        "LTX23_audio_vae_bf16.safetensors",
+        "LTX23_video_vae_bf16.safetensors",
+        "gemma_3_12B_it_fp4_mixed.safetensors",
+        "ltx-2.3-22b-distilled-1.1_transformer_only_mxfp8_block32.safetensors",
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "ltx-2.3_text_projection_bf16.safetensors",
+        "ltxx/ltx23_edit_anything_global_rank128_v1_9000steps_adamw.safetensors"
+      ],
+      "requiredLoras": [
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors"
+      ],
+      "requiredInputAssets": [
+        "video"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "LTXVEmptyLatentAudio.frame_rate": 24,
+        "EmptyAudio.duration": 60,
+        "GetImageRangeFromBatch.num_frames": 1
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: easy cleanGpuUsed",
+          "missingNodes": [
+            "easy cleanGpuUsed"
+          ],
+          "missingModels": [
+            "ltxx/ltx23_edit_anything_global_rank128_v1_9000steps_adamw.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/edit-video/sony_woosh_v2a",
+      "workflowFile": "internal/edit-video/sony_woosh_v2a.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "AILab_QwenVL",
+        "PreviewAudio",
+        "ShowText|pysssss",
+        "VHS_LoadVideo",
+        "VHS_VideoCombine",
+        "WooshLoadFlow",
+        "WooshLoadVideo",
+        "WooshSample",
+        "WooshTextEncode"
+      ],
+      "requiredModels": [],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "video",
+        "video"
+      ],
+      "expectedInputCount": 2,
+      "expectedOutputTypes": [
+        "audio",
+        "video"
+      ],
+      "graphDefaults": {
+        "VHS_VideoCombine.frame_rate": 25
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: AILab_QwenVL, ShowText|pysssss, WooshLoadFlow, WooshLoadVideo, WooshSample, WooshTextEncode",
+          "missingNodes": [
+            "AILab_QwenVL",
+            "ShowText|pysssss",
+            "WooshLoadFlow",
+            "WooshLoadVideo",
+            "WooshSample",
+            "WooshTextEncode"
+          ],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: AILab_QwenVL, ShowText|pysssss, WooshLoadFlow, WooshLoadVideo, WooshSample, WooshTextEncode",
+          "missingNodes": [
+            "AILab_QwenVL",
+            "ShowText|pysssss",
+            "WooshLoadFlow",
+            "WooshLoadVideo",
+            "WooshSample",
+            "WooshTextEncode"
+          ],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/production/production_ltx23_ia2v_lipsync_api_template",
+      "workflowFile": "internal/production/production_ltx23_ia2v_lipsync_api_template.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CFGGuider",
+        "CLIPTextEncode",
+        "ComfyMathExpression",
+        "DualCLIPLoader",
+        "EmptyLTXVLatentVideo",
+        "GetImageSizeAndCount",
+        "INTConstant",
+        "ImageResizeKJv2",
+        "KSamplerSelect",
+        "LTXVAudioVAEDecode",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVCropGuides",
+        "LTXVEmptyLatentAudio",
+        "LTXVImgToVideoInplace",
+        "LTXVLatentUpsampler",
+        "LTXVPreprocess",
+        "LTXVReferenceAudio",
+        "LTXVSeparateAVLatent",
+        "LatentUpscaleModelLoader",
+        "LoadAudio",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ManualSigmas",
+        "MelBandRoFormerModelLoader",
+        "MelBandRoFormerSampler",
+        "PrimitiveFloat",
+        "PrimitiveStringMultiline",
+        "RandomNoise",
+        "ResizeImageMaskNode",
+        "ResizeImagesByLongerEdge",
+        "SamplerCustomAdvanced",
+        "SimpleCalculatorKJ",
+        "TrimAudioDuration",
+        "UNETLoader",
+        "VAEDecodeTiled",
+        "VAELoader",
+        "VAELoaderKJ",
+        "VHS_VideoCombine"
+      ],
+      "requiredModels": [
+        "LTX23_audio_vae_bf16.safetensors",
+        "LTX23_video_vae_bf16.safetensors",
+        "MelBandRoformer_fp16.safetensors",
+        "gemma_3_12B_it_fp4_mixed.safetensors",
+        "ltx-2.3-22b-dev_transformer_only_fp8_scaled.safetensors",
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+        "ltx-2.3-id-lora-talkvid-3k.safetensors",
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "ltx-2.3_text_projection_bf16.safetensors"
+      ],
+      "requiredLoras": [
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+        "ltx-2.3-id-lora-talkvid-3k.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "audio"
+      ],
+      "expectedInputCount": 2,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "TrimAudioDuration.duration": 5
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: MelBandRoFormerModelLoader, MelBandRoFormerSampler",
+          "missingNodes": [
+            "MelBandRoFormerModelLoader",
+            "MelBandRoFormerSampler"
+          ],
+          "missingModels": [
+            "MelBandRoformer_fp16.safetensors",
+            "ltx-2.3-22b-dev_transformer_only_fp8_scaled.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: MelBandRoFormerModelLoader, MelBandRoFormerSampler",
+          "missingNodes": [
+            "MelBandRoFormerModelLoader",
+            "MelBandRoFormerSampler"
+          ],
+          "missingModels": [
+            "ltx-2.3-22b-dev_transformer_only_fp8_scaled.safetensors",
+            "ltx-2.3-id-lora-talkvid-3k.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/production/production_ltx23_prompt_relay_timeline",
+      "workflowFile": "internal/production/production_ltx23_prompt_relay_timeline.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "BasicScheduler",
+        "CR Float To Integer",
+        "CheckpointLoaderSimple",
+        "ConditioningZeroOut",
+        "DualCLIPLoader",
+        "EmptyLTXVLatentVideo",
+        "GetImageSize",
+        "KSamplerSelect",
+        "LTX2SamplingPreviewOverride",
+        "LTXVAudioVAEDecode",
+        "LTXVAudioVAELoader",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVEmptyLatentAudio",
+        "LTXVImgToVideoInplaceKJ",
+        "LTXVPreprocess",
+        "LTXVSeparateAVLatent",
+        "LoadImageFromPath",
+        "LoraLoaderModelOnly",
+        "MathExpression|pysssss",
+        "PreviewImage",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "PromptRelayEncodeTimeline",
+        "ResizeImageMaskNode",
+        "SamplerCustom",
+        "VAEDecode",
+        "VAELoader",
+        "VHS_VideoCombine",
+        "VisualizeSigmasKJ",
+        "easy cleanGpuUsed",
+        "easy clearCacheAll"
+      ],
+      "requiredModels": [
+        "LTX23_video_vae_bf16.safetensors",
+        "LTX2_audio_vae_bf16.safetensors",
+        "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "gemma_3_12B_it_fp4_mixed.safetensors",
+        "ltx-2.3-22b-distilled-1.1.safetensors",
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+        "ltx-2.3_text_projection_bf16.safetensors",
+        "ltxx/LTX2.3_Crisp_Enhance.safetensors"
+      ],
+      "requiredLoras": [
+        "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "image",
+        "image"
+      ],
+      "expectedInputCount": 3,
+      "expectedOutputTypes": [
+        "image",
+        "video"
+      ],
+      "graphDefaults": {
+        "VHS_VideoCombine.frame_rate": 24,
+        "PromptRelayEncodeTimeline.fps": 16
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: CR Float To Integer, LoadImageFromPath, MathExpression|pysssss, PromptRelayEncodeTimeline",
+          "missingNodes": [
+            "CR Float To Integer",
+            "LoadImageFromPath",
+            "MathExpression|pysssss",
+            "PromptRelayEncodeTimeline"
+          ],
+          "missingModels": [
+            "LTX2_audio_vae_bf16.safetensors",
+            "ltx-2.3-22b-distilled-1.1.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: CR Float To Integer, LoadImageFromPath, MathExpression|pysssss, PromptRelayEncodeTimeline, easy cleanGpuUsed, easy clearCacheAll",
+          "missingNodes": [
+            "CR Float To Integer",
+            "LoadImageFromPath",
+            "MathExpression|pysssss",
+            "PromptRelayEncodeTimeline",
+            "easy cleanGpuUsed",
+            "easy clearCacheAll"
+          ],
+          "missingModels": [
+            "LTX2_audio_vae_bf16.safetensors",
+            "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+            "ltx-2.3-22b-distilled-1.1.safetensors",
+            "ltxx/LTX2.3_Crisp_Enhance.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/production/qwen_image_edit_2511_storyboard",
+      "workflowFile": "internal/production/qwen_image_edit_2511_storyboard.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "EmptySD3LatentImage",
+        "FluxKontextMultiReferenceLatentMethod",
+        "ImageScaleToTotalPixels",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "PreviewImage",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus5_OTG",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEDecodeTiled",
+        "VAEEncode",
+        "VAELoader",
+        "easy promptLine"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+        "consistence_edit_v2.safetensors",
+        "next-scene_lora-v2-3000.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "consistence_edit_v2.safetensors",
+        "next-scene_lora-v2-3000.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "image",
+        "image",
+        "image",
+        "image"
+      ],
+      "expectedInputCount": 5,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {
+        "EmptySD3LatentImage.width": 1920,
+        "EmptySD3LatentImage.height": 1088
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: Qwen/qwen_image_edit_2511_fp8mixed.safetensors, consistence_edit_v2.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+            "consistence_edit_v2.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: TextEncodeQwenImageEditPlus5_OTG, easy promptLine",
+          "missingNodes": [
+            "TextEncodeQwenImageEditPlus5_OTG",
+            "easy promptLine"
+          ],
+          "missingModels": [
+            "consistence_edit_v2.safetensors",
+            "next-scene_lora-v2-3000.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/utility_birefnet_remove_background",
+      "workflowFile": "internal/utility_birefnet_remove_background.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "InvertMask",
+        "JoinImageWithAlpha",
+        "LoadBackgroundRemovalModel",
+        "LoadImage",
+        "MaskPreview",
+        "PreviewImage",
+        "RemoveBackground"
+      ],
+      "requiredModels": [
+        "birefnet.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/voices/group_voice_max8",
+      "workflowFile": "internal/voices/group_voice_max8.json",
+      "kind": "audio",
+      "requiredNodeTypes": [
+        "FB_Qwen3TTSDialogueInference",
+        "FB_Qwen3TTSRoleBank",
+        "FB_Qwen3TTSVoiceClonePrompt",
+        "LoadAudio",
+        "PrimitiveStringMultiline",
+        "SaveAudio"
+      ],
+      "requiredModels": [],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "audio",
+        "audio",
+        "audio",
+        "audio",
+        "audio",
+        "audio",
+        "audio",
+        "audio"
+      ],
+      "expectedInputCount": 8,
+      "expectedOutputTypes": [
+        "audio"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: FB_Qwen3TTSDialogueInference, FB_Qwen3TTSRoleBank, FB_Qwen3TTSVoiceClonePrompt",
+          "missingNodes": [
+            "FB_Qwen3TTSDialogueInference",
+            "FB_Qwen3TTSRoleBank",
+            "FB_Qwen3TTSVoiceClonePrompt"
+          ],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: FB_Qwen3TTSDialogueInference, FB_Qwen3TTSRoleBank, FB_Qwen3TTSVoiceClonePrompt",
+          "missingNodes": [
+            "FB_Qwen3TTSDialogueInference",
+            "FB_Qwen3TTSRoleBank",
+            "FB_Qwen3TTSVoiceClonePrompt"
+          ],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/voices/voice_clone",
+      "workflowFile": "internal/voices/voice_clone.json",
+      "kind": "audio",
+      "requiredNodeTypes": [
+        "FB_Qwen3TTSVoiceClone",
+        "LoadAudio",
+        "PrimitiveStringMultiline",
+        "SaveAudio"
+      ],
+      "requiredModels": [],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "audio"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "audio"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: FB_Qwen3TTSVoiceClone",
+          "missingNodes": [
+            "FB_Qwen3TTSVoiceClone"
+          ],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: FB_Qwen3TTSVoiceClone",
+          "missingNodes": [
+            "FB_Qwen3TTSVoiceClone"
+          ],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/voices/voice_creation",
+      "workflowFile": "internal/voices/voice_creation.json",
+      "kind": "audio",
+      "requiredNodeTypes": [
+        "FB_Qwen3TTSVoiceDesign",
+        "PrimitiveStringMultiline",
+        "SaveAudio"
+      ],
+      "requiredModels": [],
+      "requiredLoras": [],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "audio"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: FB_Qwen3TTSVoiceDesign",
+          "missingNodes": [
+            "FB_Qwen3TTSVoiceDesign"
+          ],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: FB_Qwen3TTSVoiceDesign",
+          "missingNodes": [
+            "FB_Qwen3TTSVoiceDesign"
+          ],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/1_click_multiple_character_angles",
+      "workflowFile": "presets/1_click_multiple_character_angles.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "ComfySwitchNode",
+        "FluxKontextImageScale",
+        "FluxKontextMultiReferenceLatentMethod",
+        "ImageStitch",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "ResizeImageMaskNode",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEEncode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+        "qwen-image-edit-2511-multiple-angles-lora.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "qwen-image-edit-2511-multiple-angles-lora.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Qwen/qwen_image_edit_2511_fp8mixed.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/3D Model",
+      "workflowFile": "presets/3D Model.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CLIPVisionLoader",
+        "ComfySwitchNode",
+        "CreateVideo",
+        "InvertMask",
+        "JoinImageWithAlpha",
+        "KSampler",
+        "LoadBackgroundRemovalModel",
+        "LoadImage",
+        "RemoveBackground",
+        "SaveGLB",
+        "SplatToFile3D",
+        "TripoSplatConditioning",
+        "TripoSplatPreprocessImage",
+        "TripoSplatSamplingPreview",
+        "UNETLoader",
+        "VAEDecodeTripoSplat",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "birefnet.safetensors",
+        "dino_v3_vit_h.safetensors",
+        "flux2-vae.safetensors",
+        "triposplat_fp16.safetensors",
+        "triposplat_vae_decoder_fp16.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "video",
+        "3d"
+      ],
+      "graphDefaults": {
+        "CreateVideo.fps": 25
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: dino_v3_vit_h.safetensors, triposplat_fp16.safetensors, triposplat_vae_decoder_fp16.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "dino_v3_vit_h.safetensors",
+            "triposplat_fp16.safetensors",
+            "triposplat_vae_decoder_fp16.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/Anime to Realism",
+      "workflowFile": "presets/Anime to Realism.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEEncode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2509-Anything2RealAlpha.safetensors",
+        "Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors",
+        "Qwen/qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2509-Anything2RealAlpha.safetensors",
+        "Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/Create Anime Images",
+      "workflowFile": "presets/Create Anime Images.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "EmptyLatentImage",
+        "KSampler",
+        "SaveImage",
+        "UNETLoader",
+        "VAEDecode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "anima-preview3-base.safetensors",
+        "qwen_3_06b_base.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {
+        "EmptyLatentImage.width": 1280,
+        "EmptyLatentImage.height": 720
+      },
+      "estimatedOrMeasuredVramGb": 19.77,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": null,
+            "fps": null,
+            "durationSeconds": null,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 8.055,
+                "peakVramBytes": 6327192118,
+                "promptId": "fce79daf-c1bc-4ca3-85a7-a5d9059196cf",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-Create-Anime-Images-cold-1784421035936_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 9.049,
+                "peakVramBytes": 21224778224,
+                "promptId": "f8cdaf0d-cb5a-4c31-8f35-66d0525359ac",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-Create-Anime-Images-warm-1784421827016_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 19.77,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        },
+        "rtx5060ti": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": null,
+            "fps": null,
+            "durationSeconds": null,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 13.075,
+                "peakVramBytes": 5991254518,
+                "promptId": "0198dd22-5d6b-4888-857f-2b06af23c0b5",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx5060ti-presets-Create-Anime-Images-cold-1784421727572_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 16.34,
+                "peakVramBytes": 15516592560,
+                "promptId": "6bd65f10-1507-49b5-b9d4-aacea26669e5",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx5060ti-presets-Create-Anime-Images-warm-1784421648967_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 14.45,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        }
+      }
+    },
+    {
+      "id": "presets/Create First Image to Last Image Video",
+      "workflowFile": "presets/Create First Image to Last Image Video.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "Any Switch (rgthree)",
+        "BasicScheduler",
+        "CFGGuider",
+        "CLIPTextEncode",
+        "ComfyMathExpression",
+        "ComfySwitchNode",
+        "DualCLIPLoader",
+        "EmptyImage",
+        "EmptyLTXVLatentVideo",
+        "FloatConstant",
+        "GetImageSize",
+        "INTConstant",
+        "ImageResizeKJv2",
+        "ImageScaleBy",
+        "KSamplerSelect",
+        "LTXVAudioVAEDecode",
+        "LTXVChunkFeedForward",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVCropGuides",
+        "LTXVEmptyLatentAudio",
+        "LTXVImgToVideoInplace",
+        "LTXVImgToVideoInplaceKJ",
+        "LTXVLatentUpsampler",
+        "LTXVNormalizingSampler",
+        "LTXVPreprocess",
+        "LTXVScheduler",
+        "LTXVSeparateAVLatent",
+        "LTXVSpatioTemporalTiledVAEDecode",
+        "LatentUpscaleModelLoader",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ManualSigmas",
+        "Power Lora Loader (rgthree)",
+        "PreviewAny",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveString",
+        "PrimitiveStringMultiline",
+        "RandomNoise",
+        "ResizeImagesByLongerEdge",
+        "SamplerCustomAdvanced",
+        "Seed (rgthree)",
+        "UNETLoader",
+        "VAEEncode",
+        "VAEEncodeTiled",
+        "VAELoader",
+        "VAELoaderKJ",
+        "VHS_VideoCombine"
+      ],
+      "requiredModels": [
+        "LTX2.3-IC-LORA-Dual-Character.safetensors",
+        "LTX23_audio_vae_bf16.safetensors",
+        "LTX23_video_vae_bf16.safetensors",
+        "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "gemma_3_12B_it_fp4_mixed.safetensors",
+        "ltx-2.3-22b-distilled-1.1_transformer_only_mxfp8_block32.safetensors",
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "ltx-2.3_text_projection_bf16.safetensors"
+      ],
+      "requiredLoras": [
+        "LTX2.3-IC-LORA-Dual-Character.safetensors",
+        "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "image"
+      ],
+      "expectedInputCount": 2,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/Create Prompt Relay Image Video",
+      "workflowFile": "presets/Create Prompt Relay Image Video.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CFGGuider",
+        "CLIPTextEncode",
+        "DiffusionModelLoaderKJ",
+        "DualCLIPLoaderGGUF",
+        "EmptyImage",
+        "EmptyLTXVLatentVideo",
+        "GetImageSize",
+        "ImageResizeKJv2",
+        "ImageScaleBy",
+        "KSamplerSelect",
+        "LTXVAudioVAEDecode",
+        "LTXVAudioVAELoader",
+        "LTXVChunkFeedForward",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVCropGuides",
+        "LTXVEmptyLatentAudio",
+        "LTXVImgToVideoInplace",
+        "LTXVLatentUpsampler",
+        "LTXVPreprocess",
+        "LTXVScheduler",
+        "LTXVSeparateAVLatent",
+        "LatentUpscaleModelLoader",
+        "LoadImage",
+        "ManualSigmas",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "PromptRelayEncode",
+        "RandomNoise",
+        "SamplerCustomAdvanced",
+        "VAEDecodeTiled",
+        "VAELoaderKJ",
+        "VHS_VideoCombine"
+      ],
+      "requiredModels": [
+        "LTX23_audio_vae_bf16.safetensors",
+        "LTX23_video_vae_bf16.safetensors",
+        "gemma-3-12b-it-IQ4_XS.gguf",
+        "ltx-2.3-22b-distilled-1.1_transformer_only_mxfp8_block32.safetensors",
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "ltx-2.3_text_projection_bf16.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "EmptyImage.width": 1280,
+        "EmptyImage.height": 720,
+        "ImageResizeKJv2.width": 1280,
+        "ImageResizeKJv2.height": 720
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: PromptRelayEncode",
+          "missingNodes": [
+            "PromptRelayEncode"
+          ],
+          "missingModels": [
+            "gemma-3-12b-it-IQ4_XS.gguf"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: DualCLIPLoaderGGUF, PromptRelayEncode",
+          "missingNodes": [
+            "DualCLIPLoaderGGUF",
+            "PromptRelayEncode"
+          ],
+          "missingModels": [
+            "gemma-3-12b-it-IQ4_XS.gguf"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/Create Video with Custom Audio",
+      "workflowFile": "presets/Create Video with Custom Audio.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "Any Switch (rgthree)",
+        "BasicScheduler",
+        "CFGGuider",
+        "CLIPTextEncode",
+        "ComfyMathExpression",
+        "ComfySwitchNode",
+        "DualCLIPLoader",
+        "EmptyImage",
+        "EmptyLTXVLatentVideo",
+        "FloatConstant",
+        "GetImageSize",
+        "INTConstant",
+        "ImageResizeKJv2",
+        "ImageScaleBy",
+        "KSamplerSelect",
+        "LTXVAudioVAEDecode",
+        "LTXVAudioVAEEncode",
+        "LTXVChunkFeedForward",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVCropGuides",
+        "LTXVEmptyLatentAudio",
+        "LTXVImgToVideoInplace",
+        "LTXVLatentUpsampler",
+        "LTXVNormalizingSampler",
+        "LTXVPreprocess",
+        "LTXVScheduler",
+        "LTXVSeparateAVLatent",
+        "LTXVSpatioTemporalTiledVAEDecode",
+        "LatentUpscaleModelLoader",
+        "LoadAudio",
+        "LoadImage",
+        "LoraLoader",
+        "LoraLoaderModelOnly",
+        "ManualSigmas",
+        "Power Lora Loader (rgthree)",
+        "PreviewAny",
+        "PreviewImage",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveString",
+        "PrimitiveStringMultiline",
+        "RandomNoise",
+        "ResizeImagesByLongerEdge",
+        "SamplerCustomAdvanced",
+        "Seed (rgthree)",
+        "SetLatentNoiseMask",
+        "SolidMask",
+        "UNETLoader",
+        "VAEEncode",
+        "VAEEncodeTiled",
+        "VAELoader",
+        "VAELoaderKJ",
+        "VHS_VideoCombine"
+      ],
+      "requiredModels": [
+        "LTX-2.3-22b-AV-LoRA-talking-head-v1.safetensors",
+        "LTX23_audio_vae_bf16.safetensors",
+        "LTX23_video_vae_bf16.safetensors",
+        "gemma-3-12b-it-abliterated_heretic_lora_rank64_bf16.safetensors",
+        "gemma_3_12B_it_fp4_mixed.safetensors",
+        "ltx-2.3-22b-distilled-1.1_transformer_only_mxfp8_block32.safetensors",
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "ltx-2.3-temporal-upscaler-x2-1.0.safetensors",
+        "ltx-2.3_text_projection_bf16.safetensors"
+      ],
+      "requiredLoras": [
+        "LTX-2.3-22b-AV-LoRA-talking-head-v1.safetensors",
+        "gemma-3-12b-it-abliterated_heretic_lora_rank64_bf16.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "audio",
+        "image"
+      ],
+      "expectedInputCount": 3,
+      "expectedOutputTypes": [
+        "video",
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: gemma-3-12b-it-abliterated_heretic_lora_rank64_bf16.safetensors, ltx-2.3-temporal-upscaler-x2-1.0.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "gemma-3-12b-it-abliterated_heretic_lora_rank64_bf16.safetensors",
+            "ltx-2.3-temporal-upscaler-x2-1.0.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: LTX-2.3-22b-AV-LoRA-talking-head-v1.safetensors, gemma-3-12b-it-abliterated_heretic_lora_rank64_bf16.safetensors, ltx-2.3-temporal-upscaler-x2-1.0.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "LTX-2.3-22b-AV-LoRA-talking-head-v1.safetensors",
+            "gemma-3-12b-it-abliterated_heretic_lora_rank64_bf16.safetensors",
+            "ltx-2.3-temporal-upscaler-x2-1.0.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/Create a Picture",
+      "workflowFile": "presets/Create a Picture.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "CheckpointLoaderSimple",
+        "EmptyLatentImage",
+        "KSampler",
+        "SaveImage",
+        "VAEDecode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_2512_fp8_e4m3fn.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {
+        "EmptyLatentImage.height": 512,
+        "EmptyLatentImage.width": 512
+      },
+      "estimatedOrMeasuredVramGb": 14.95,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: qwen_image_2512_fp8_e4m3fn.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "qwen_image_2512_fp8_e4m3fn.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": null,
+            "fps": null,
+            "durationSeconds": null,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 44.423,
+                "peakVramBytes": 16016428164,
+                "promptId": "17d10671-d716-4e26-9c7a-bb9867c7874f",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx5060ti-presets-Create-a-Picture-cold-1784421742119_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 52.12,
+                "peakVramBytes": 16054903210,
+                "promptId": "5a2decb0-dd24-46f8-a07b-837c9927be7a",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx5060ti-presets-Create-a-Picture-warm-1784421665368_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 14.95,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        }
+      }
+    },
+    {
+      "id": "presets/Create a Video from Images",
+      "workflowFile": "presets/Create a Video from Images.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "Any Switch (rgthree)",
+        "BasicScheduler",
+        "CFGGuider",
+        "CLIPTextEncode",
+        "ComfyMathExpression",
+        "ComfySwitchNode",
+        "DualCLIPLoader",
+        "EmptyImage",
+        "EmptyLTXVLatentVideo",
+        "FloatConstant",
+        "GetImageSize",
+        "INTConstant",
+        "ImageResizeKJv2",
+        "ImageScaleBy",
+        "KSamplerSelect",
+        "LTXVAudioVAEDecode",
+        "LTXVChunkFeedForward",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVCropGuides",
+        "LTXVEmptyLatentAudio",
+        "LTXVImgToVideoInplace",
+        "LTXVLatentUpsampler",
+        "LTXVNormalizingSampler",
+        "LTXVPreprocess",
+        "LTXVScheduler",
+        "LTXVSeparateAVLatent",
+        "LTXVSpatioTemporalTiledVAEDecode",
+        "LatentUpscaleModelLoader",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ManualSigmas",
+        "Power Lora Loader (rgthree)",
+        "PreviewAny",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveString",
+        "PrimitiveStringMultiline",
+        "RandomNoise",
+        "ResizeImagesByLongerEdge",
+        "SamplerCustomAdvanced",
+        "Seed (rgthree)",
+        "UNETLoader",
+        "VAEEncode",
+        "VAEEncodeTiled",
+        "VAELoader",
+        "VAELoaderKJ",
+        "VHS_VideoCombine"
+      ],
+      "requiredModels": [
+        "LTX2.3-IC-LORA-Dual-Character.safetensors",
+        "LTX23_audio_vae_bf16.safetensors",
+        "LTX23_video_vae_bf16.safetensors",
+        "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "gemma_3_12B_it_fp4_mixed.safetensors",
+        "ltx-2.3-22b-distilled-1.1_transformer_only_mxfp8_block32.safetensors",
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "ltx-2.3_text_projection_bf16.safetensors"
+      ],
+      "requiredLoras": [
+        "LTX2.3-IC-LORA-Dual-Character.safetensors",
+        "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "image"
+      ],
+      "expectedInputCount": 2,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/Create a Video from Pictures",
+      "workflowFile": "presets/Create a Video from Pictures.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "Any Switch (rgthree)",
+        "BasicScheduler",
+        "CFGGuider",
+        "CLIPTextEncode",
+        "ComfyMathExpression",
+        "ComfySwitchNode",
+        "DualCLIPLoader",
+        "EmptyImage",
+        "EmptyLTXVLatentVideo",
+        "FloatConstant",
+        "GetImageSize",
+        "INTConstant",
+        "ImageResizeKJv2",
+        "ImageScaleBy",
+        "KSamplerSelect",
+        "LTXVAudioVAEDecode",
+        "LTXVChunkFeedForward",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVCropGuides",
+        "LTXVEmptyLatentAudio",
+        "LTXVImgToVideoInplace",
+        "LTXVLatentUpsampler",
+        "LTXVNormalizingSampler",
+        "LTXVPreprocess",
+        "LTXVScheduler",
+        "LTXVSeparateAVLatent",
+        "LTXVSpatioTemporalTiledVAEDecode",
+        "LatentUpscaleModelLoader",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ManualSigmas",
+        "Power Lora Loader (rgthree)",
+        "PreviewAny",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveString",
+        "PrimitiveStringMultiline",
+        "RandomNoise",
+        "ResizeImagesByLongerEdge",
+        "SamplerCustomAdvanced",
+        "Seed (rgthree)",
+        "UNETLoader",
+        "VAEEncode",
+        "VAEEncodeTiled",
+        "VAELoader",
+        "VAELoaderKJ",
+        "VHS_VideoCombine"
+      ],
+      "requiredModels": [
+        "LTX2.3-IC-LORA-Dual-Character.safetensors",
+        "LTX23_audio_vae_bf16.safetensors",
+        "LTX23_video_vae_bf16.safetensors",
+        "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "gemma_3_12B_it_fp4_mixed.safetensors",
+        "ltx-2.3-22b-distilled-1.1_transformer_only_mxfp8_block32.safetensors",
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "ltx-2.3_text_projection_bf16.safetensors"
+      ],
+      "requiredLoras": [
+        "LTX2.3-IC-LORA-Dual-Character.safetensors",
+        "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "image"
+      ],
+      "expectedInputCount": 2,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/Create a Video",
+      "workflowFile": "presets/Create a Video.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "Any Switch (rgthree)",
+        "BasicScheduler",
+        "CFGGuider",
+        "CLIPTextEncode",
+        "ComfyMathExpression",
+        "ComfySwitchNode",
+        "DualCLIPLoader",
+        "EmptyImage",
+        "EmptyLTXVLatentVideo",
+        "FloatConstant",
+        "GetImageSize",
+        "INTConstant",
+        "ImageResizeKJv2",
+        "ImageScaleBy",
+        "KSamplerSelect",
+        "LTXVAudioVAEDecode",
+        "LTXVChunkFeedForward",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVCropGuides",
+        "LTXVEmptyLatentAudio",
+        "LTXVLatentUpsampler",
+        "LTXVNormalizingSampler",
+        "LTXVScheduler",
+        "LTXVSeparateAVLatent",
+        "LTXVSpatioTemporalTiledVAEDecode",
+        "LatentUpscaleModelLoader",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ManualSigmas",
+        "Power Lora Loader (rgthree)",
+        "PreviewAny",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveString",
+        "PrimitiveStringMultiline",
+        "RandomNoise",
+        "SamplerCustomAdvanced",
+        "Seed (rgthree)",
+        "UNETLoader",
+        "VAEEncode",
+        "VAEEncodeTiled",
+        "VAELoader",
+        "VAELoaderKJ",
+        "VHS_VideoCombine"
+      ],
+      "requiredModels": [
+        "LTX2.3-IC-LORA-Dual-Character.safetensors",
+        "LTX23_audio_vae_bf16.safetensors",
+        "LTX23_video_vae_bf16.safetensors",
+        "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "gemma_3_12B_it_fp4_mixed.safetensors",
+        "ltx-2.3-22b-distilled-1.1_transformer_only_mxfp8_block32.safetensors",
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "ltx-2.3_text_projection_bf16.safetensors"
+      ],
+      "requiredLoras": [
+        "LTX2.3-IC-LORA-Dual-Character.safetensors",
+        "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "image"
+      ],
+      "expectedInputCount": 2,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/Create an Anime",
+      "workflowFile": "presets/Create an Anime.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "EmptyLatentImage",
+        "KSampler",
+        "SaveImage",
+        "UNETLoader",
+        "VAEDecode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "anima-preview.safetensors",
+        "qwen_3_06b_base.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {
+        "EmptyLatentImage.width": 1024,
+        "EmptyLatentImage.height": 1024
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: anima-preview.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "anima-preview.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: anima-preview.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "anima-preview.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/Edit Image",
+      "workflowFile": "presets/Edit Image.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "ComfySwitchNode",
+        "FluxKontextImageScale",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "PrimitiveStringMultiline",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEEncode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors",
+        "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": 13.01,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed on the RTX 3090. The stale Qwen/ folder prefix was removed from the UNETLoader selection; complete full-body output verification is pending.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null,
+          "lastCheckedAt": "2026-08-03T11:38:23.322860+00:00"
+        },
+        "rtx5060ti": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs on the RTX 5060 Ti.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 70.568,
+                "peakVramBytes": 13914275840,
+                "promptId": "ccea6bfd-ad99-44d8-97da-a8aaf83480f8",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Character-Rework-backups/edit-image-5060-20260810/test-outputs/rtx5060ti-presets-Edit-Image-cold-1786329905353_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 44.738,
+                "peakVramBytes": 13968754688,
+                "promptId": "40fbead8-1abf-4ae9-9845-5d7302b5444b",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Character-Rework-backups/edit-image-5060-20260810/test-outputs/rtx5060ti-presets-Edit-Image-warm-1786329976964_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 13.01
+        }
+      }
+    },
+    {
+      "id": "presets/Edit Pictures",
+      "workflowFile": "presets/Edit Pictures.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "ComfySwitchNode",
+        "FluxKontextImageScale",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "PrimitiveStringMultiline",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEEncode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors",
+        "Qwen/qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Live prompt validation rejected the workflow model selection: Qwen/qwen_image_edit_2509_fp8_e4m3fn.safetensors.",
+          "missingNodes": [],
+          "missingModels": [
+            "Qwen/qwen_image_edit_2509_fp8_e4m3fn.safetensors"
+          ],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "submissionStatus": 400
+          },
+          "estimatedOrMeasuredVramGb": null,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        },
+        "rtx5060ti": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/GGUF",
+      "workflowFile": "presets/GGUF.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "Any Switch (rgthree)",
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "GetImageSizeAndCount",
+        "JWFloatToInteger",
+        "JWImageResizeByLongerSide",
+        "JWIntegerDiv",
+        "KSamplerAdvanced",
+        "LoadImage",
+        "MathExpression|pysssss",
+        "ModelPatchTorchSettings",
+        "ModelSamplingSD3",
+        "PathchSageAttentionKJ",
+        "Power Lora Loader (rgthree)",
+        "UnetLoaderGGUF",
+        "VAEDecode",
+        "VAELoader",
+        "VHS_VideoCombine",
+        "WanImageToVideo",
+        "mxSlider",
+        "wanBlockSwap"
+      ],
+      "requiredModels": [
+        "SaggyTits_wan22_e20_high.safetensors",
+        "SaggyTits_wan22_e25_low.safetensors",
+        "lightx2v_I2V_14B_480p_cfg_step_distill_rank16_bf16.safetensors",
+        "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "wan22-i2v-a14b-high-q4-k-s.gguf",
+        "wan22-i2v-a14b-low-q4-k-s.gguf",
+        "wan_2.1_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "SaggyTits_wan22_e20_high.safetensors",
+        "SaggyTits_wan22_e25_low.safetensors",
+        "lightx2v_I2V_14B_480p_cfg_step_distill_rank16_bf16.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "VHS_VideoCombine.frame_rate": 16
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: JWFloatToInteger, JWImageResizeByLongerSide, JWIntegerDiv, MathExpression|pysssss",
+          "missingNodes": [
+            "JWFloatToInteger",
+            "JWImageResizeByLongerSide",
+            "JWIntegerDiv",
+            "MathExpression|pysssss"
+          ],
+          "missingModels": [
+            "SaggyTits_wan22_e20_high.safetensors",
+            "SaggyTits_wan22_e25_low.safetensors",
+            "lightx2v_I2V_14B_480p_cfg_step_distill_rank16_bf16.safetensors",
+            "wan22-i2v-a14b-high-q4-k-s.gguf",
+            "wan22-i2v-a14b-low-q4-k-s.gguf"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: JWFloatToInteger, JWImageResizeByLongerSide, JWIntegerDiv, MathExpression|pysssss, UnetLoaderGGUF, mxSlider",
+          "missingNodes": [
+            "JWFloatToInteger",
+            "JWImageResizeByLongerSide",
+            "JWIntegerDiv",
+            "MathExpression|pysssss",
+            "UnetLoaderGGUF",
+            "mxSlider"
+          ],
+          "missingModels": [
+            "SaggyTits_wan22_e20_high.safetensors",
+            "SaggyTits_wan22_e25_low.safetensors",
+            "lightx2v_I2V_14B_480p_cfg_step_distill_rank16_bf16.safetensors",
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "wan22-i2v-a14b-high-q4-k-s.gguf",
+            "wan22-i2v-a14b-low-q4-k-s.gguf",
+            "wan_2.1_vae.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/LTX Voice Sample",
+      "workflowFile": "presets/LTX Voice Sample.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CFGGuider",
+        "CLIPTextEncode",
+        "CheckpointLoaderSimple",
+        "ComfyMathExpression",
+        "EmptyImage",
+        "EmptyLTXVLatentVideo",
+        "KSamplerSelect",
+        "LTXAVTextEncoderLoader",
+        "LTXVAudioVAEDecode",
+        "LTXVAudioVAELoader",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVCropGuides",
+        "LTXVEmptyLatentAudio",
+        "LTXVImgToVideoInplace",
+        "LTXVLatentUpsampler",
+        "LTXVPreprocess",
+        "LTXVSeparateAVLatent",
+        "LatentUpscaleModelLoader",
+        "LoraLoaderModelOnly",
+        "ManualSigmas",
+        "PrimitiveBoolean",
+        "PrimitiveInt",
+        "RandomNoise",
+        "ResizeImageMaskNode",
+        "ResizeImagesByLongerEdge",
+        "SamplerCustomAdvanced",
+        "SaveAudioMP3"
+      ],
+      "requiredModels": [
+        "gemma_3_12B_it_fp4_mixed.safetensors",
+        "ltx-2.3-22b-distilled-1.1.safetensors",
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+      ],
+      "requiredLoras": [
+        "ltx-2.3-22b-distilled-lora-384-1.1.safetensors"
+      ],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "audio"
+      ],
+      "graphDefaults": {
+        "EmptyImage.width": 512,
+        "EmptyImage.height": 512
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: ltx-2.3-22b-distilled-1.1.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "ltx-2.3-22b-distilled-1.1.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: ltx-2.3-22b-distilled-1.1.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "ltx-2.3-22b-distilled-1.1.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/RTX SR Upscaler Video",
+      "workflowFile": "presets/RTX SR Upscaler Video.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "RTXVideoSuperResolution",
+        "VHS_LoadVideo",
+        "VHS_VideoCombine"
+      ],
+      "requiredModels": [],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "video"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "VHS_VideoCombine.frame_rate": 50
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: RTXVideoSuperResolution",
+          "missingNodes": [
+            "RTXVideoSuperResolution"
+          ],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: RTXVideoSuperResolution",
+          "missingNodes": [
+            "RTXVideoSuperResolution"
+          ],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/TripoSplat Model Spin",
+      "workflowFile": "presets/TripoSplat Model Spin.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CLIPVisionLoader",
+        "ComfySwitchNode",
+        "CreateCameraInfo",
+        "CreateVideo",
+        "InvertMask",
+        "JoinImageWithAlpha",
+        "KSampler",
+        "LoadBackgroundRemovalModel",
+        "LoadImage",
+        "RemoveBackground",
+        "RenderSplat",
+        "SaveGLB",
+        "SaveVideo",
+        "SplatToFile3D",
+        "TripoSplatConditioning",
+        "TripoSplatPreprocessImage",
+        "TripoSplatSamplingPreview",
+        "UNETLoader",
+        "VAEDecodeTripoSplat",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "birefnet.safetensors",
+        "dino_v3_vit_h.safetensors",
+        "flux2-vae.safetensors",
+        "triposplat_fp16.safetensors",
+        "triposplat_vae_decoder_fp16.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "video",
+        "3d"
+      ],
+      "graphDefaults": {
+        "CreateVideo.fps": 25,
+        "RenderSplat.width": 768,
+        "RenderSplat.height": 768,
+        "RenderSplat.frames": 150
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: dino_v3_vit_h.safetensors, triposplat_fp16.safetensors, triposplat_vae_decoder_fp16.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "dino_v3_vit_h.safetensors",
+            "triposplat_fp16.safetensors",
+            "triposplat_vae_decoder_fp16.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/WAN 2.2 FLF GGUF",
+      "workflowFile": "presets/WAN 2.2 FLF GGUF.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "ImageResizeKJv2",
+        "KSamplerAdvanced",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingSD3",
+        "PathchSageAttentionKJ",
+        "UnetLoaderGGUF",
+        "VAEDecode",
+        "VAELoader",
+        "VHS_VideoCombine",
+        "WanFirstLastFrameToVideo"
+      ],
+      "requiredModels": [
+        "DasiwaWAN22I2V14BBoundbiteV10_q8High.gguf",
+        "DasiwaWAN22I2V14BBoundbiteV10_q8Low.gguf",
+        "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+        "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+        "wan_2.1_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+        "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "image"
+      ],
+      "expectedInputCount": 2,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "ImageResizeKJv2.width": 720,
+        "ImageResizeKJv2.height": 1280,
+        "VHS_VideoCombine.frame_rate": 24,
+        "WanFirstLastFrameToVideo.length": 81
+      },
+      "estimatedOrMeasuredVramGb": 17.24,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": 121,
+            "fps": 24,
+            "durationSeconds": 5,
+            "nativeFrames": 81,
+            "nativeFps": 16,
+            "sageAttention": "auto",
+            "rifeInterpolationApplied": true,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 108.732,
+                "peakVramBytes": 18515805594,
+                "promptId": "c1c8c0c7-332e-4fd0-a2b7-191415f16935",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-WAN-2-2-FLF-GGUF-cold-1784423328306_00001.mp4"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 91.561,
+                "peakVramBytes": 18460296602,
+                "promptId": "fe9991b8-3dbc-468d-873e-3773d10be134",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-WAN-2-2-FLF-GGUF-warm-1784423438091_00001.mp4"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 17.24
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: UnetLoaderGGUF",
+          "missingNodes": [
+            "UnetLoaderGGUF"
+          ],
+          "missingModels": [
+            "DasiwaWAN22I2V14BBoundbiteV10_q8High.gguf",
+            "DasiwaWAN22I2V14BBoundbiteV10_q8Low.gguf",
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+            "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+            "wan_2.1_vae.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/WAN 2.2 FLF SafeTensor",
+      "workflowFile": "presets/WAN 2.2 FLF SafeTensor.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "ImageResizeKJv2",
+        "KSamplerAdvanced",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingSD3",
+        "PathchSageAttentionKJ",
+        "UNETLoader",
+        "UnetLoaderGGUF",
+        "VAEDecode",
+        "VAELoader",
+        "VHS_VideoCombine",
+        "WanFirstLastFrameToVideo"
+      ],
+      "requiredModels": [
+        "DasiwaWAN22I2V14BBoundbiteV10_q8High.gguf",
+        "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+        "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+        "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+        "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+        "wan_2.1_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+        "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "image"
+      ],
+      "expectedInputCount": 2,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "ImageResizeKJv2.width": 720,
+        "ImageResizeKJv2.height": 1280,
+        "VHS_VideoCombine.frame_rate": 24,
+        "WanFirstLastFrameToVideo.length": 81
+      },
+      "estimatedOrMeasuredVramGb": 21.13,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": 121,
+            "fps": 24,
+            "durationSeconds": 5,
+            "nativeFrames": 81,
+            "nativeFps": 16,
+            "sageAttention": "auto",
+            "rifeInterpolationApplied": true,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 80.743,
+                "peakVramBytes": 21919784154,
+                "promptId": "c4073a08-8b7c-467b-8670-cc52111d8499",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-WAN-2-2-FLF-SafeTensor-cold-1784423960380_00001.mp4"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 70.435,
+                "peakVramBytes": 22683147476,
+                "promptId": "83f093a2-a79d-49bd-8cc0-ac4766ae3612",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-WAN-2-2-FLF-SafeTensor-warm-1784424042167_00001.mp4"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 21.13
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: UnetLoaderGGUF",
+          "missingNodes": [
+            "UnetLoaderGGUF"
+          ],
+          "missingModels": [
+            "DasiwaWAN22I2V14BBoundbiteV10_q8High.gguf",
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+            "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+            "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+            "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+            "wan_2.1_vae.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/WAN 2.2 I2V GGUF",
+      "workflowFile": "presets/WAN 2.2 I2V GGUF.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "ColorMatch",
+        "ImageResizeKJv2",
+        "KSamplerAdvanced",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingSD3",
+        "PathchSageAttentionKJ",
+        "UnetLoaderGGUF",
+        "VAEDecode",
+        "VAELoader",
+        "VHS_VideoCombine",
+        "WanImageToVideo"
+      ],
+      "requiredModels": [
+        "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+        "wan22T2VA14BGGUF_highQ50.gguf",
+        "wan22T2VA14BGGUF_lowQ50.gguf",
+        "wan_2.1_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "WanImageToVideo.length": 81,
+        "ImageResizeKJv2.width": 720,
+        "ImageResizeKJv2.height": 1280,
+        "VHS_VideoCombine.frame_rate": 24
+      },
+      "estimatedOrMeasuredVramGb": 16.58,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": 121,
+            "fps": 24,
+            "durationSeconds": 5,
+            "nativeFrames": 81,
+            "nativeFps": 16,
+            "sageAttention": "auto",
+            "rifeInterpolationApplied": true,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 87.002,
+                "peakVramBytes": 17079052586,
+                "promptId": "f86d51cd-807b-4906-8561-68a580429c13",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-WAN-2-2-I2V-GGUF-cold-1784422796845_00001.mp4"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 72.303,
+                "peakVramBytes": 17799703866,
+                "promptId": "f5950976-4de0-43c0-9a0c-a44beff177bc",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-WAN-2-2-I2V-GGUF-warm-1784422884894_00001.mp4"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 16.58
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: UnetLoaderGGUF",
+          "missingNodes": [
+            "UnetLoaderGGUF"
+          ],
+          "missingModels": [
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+            "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+            "wan22T2VA14BGGUF_highQ50.gguf",
+            "wan22T2VA14BGGUF_lowQ50.gguf",
+            "wan_2.1_vae.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/WAN 2.2 I2V SafeTensor",
+      "workflowFile": "presets/WAN 2.2 I2V SafeTensor.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "ColorMatch",
+        "ImageResizeKJv2",
+        "KSamplerAdvanced",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingSD3",
+        "PathchSageAttentionKJ",
+        "UNETLoader",
+        "UnetLoaderGGUF",
+        "VAEDecode",
+        "VAELoader",
+        "VHS_VideoCombine",
+        "WanImageToVideo"
+      ],
+      "requiredModels": [
+        "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+        "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+        "wan22T2VA14BGGUF_highQ50.gguf",
+        "wan22T2VA14BGGUF_lowQ50.gguf",
+        "wan_2.1_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "WanImageToVideo.length": 81,
+        "ImageResizeKJv2.width": 720,
+        "ImageResizeKJv2.height": 1280,
+        "VHS_VideoCombine.frame_rate": 24
+      },
+      "estimatedOrMeasuredVramGb": 21.7,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": 121,
+            "fps": 24,
+            "durationSeconds": 5,
+            "nativeFrames": 81,
+            "nativeFps": 16,
+            "sageAttention": "auto",
+            "rifeInterpolationApplied": true,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 82.316,
+                "peakVramBytes": 23297744082,
+                "promptId": "e83612f2-d86f-472e-bb1e-dbc41b148920",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-WAN-2-2-I2V-SafeTensor-cold-1784423086059_00001.mp4"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 71.425,
+                "peakVramBytes": 22835322066,
+                "promptId": "c435e9a4-93de-4be2-8012-1f4232d0c68c",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-WAN-2-2-I2V-SafeTensor-warm-1784423169421_00001.mp4"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 21.7
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: UnetLoaderGGUF",
+          "missingNodes": [
+            "UnetLoaderGGUF"
+          ],
+          "missingModels": [
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+            "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+            "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+            "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+            "wan22T2VA14BGGUF_highQ50.gguf",
+            "wan22T2VA14BGGUF_lowQ50.gguf",
+            "wan_2.1_vae.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/WAN 2.2 T2V GGUF",
+      "workflowFile": "presets/WAN 2.2 T2V GGUF.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "EmptyHunyuanLatentVideo",
+        "KSamplerAdvanced",
+        "LoraLoaderModelOnly",
+        "ModelSamplingSD3",
+        "PathchSageAttentionKJ",
+        "UnetLoaderGGUF",
+        "VAEDecode",
+        "VAELoader",
+        "VHS_VideoCombine"
+      ],
+      "requiredModels": [
+        "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+        "wan22T2VA14BGGUF_highQ50.gguf",
+        "wan22T2VA14BGGUF_lowQ50.gguf",
+        "wan_2.1_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors"
+      ],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "VHS_VideoCombine.frame_rate": 24,
+        "EmptyHunyuanLatentVideo.width": 720,
+        "EmptyHunyuanLatentVideo.height": 1280,
+        "EmptyHunyuanLatentVideo.length": 81
+      },
+      "estimatedOrMeasuredVramGb": 16.42,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": 121,
+            "fps": 24,
+            "durationSeconds": 5,
+            "nativeFrames": 81,
+            "nativeFps": 16,
+            "sageAttention": "auto",
+            "rifeInterpolationApplied": true,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 83.927,
+                "peakVramBytes": 17417191738,
+                "promptId": "4963998f-7bea-41a0-8fad-db48179fc6a7",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-WAN-2-2-T2V-GGUF-cold-1784422395872_00001.mp4"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 70.999,
+                "peakVramBytes": 17635812825,
+                "promptId": "13474642-9868-474f-9fe3-98cfd12db32b",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-WAN-2-2-T2V-GGUF-warm-1784422480835_00001.mp4"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 16.42
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: UnetLoaderGGUF",
+          "missingNodes": [
+            "UnetLoaderGGUF"
+          ],
+          "missingModels": [
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+            "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+            "wan22T2VA14BGGUF_highQ50.gguf",
+            "wan22T2VA14BGGUF_lowQ50.gguf",
+            "wan_2.1_vae.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/WAN 2.2 T2V SafeTensor",
+      "workflowFile": "presets/WAN 2.2 T2V SafeTensor.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "EmptyHunyuanLatentVideo",
+        "KSamplerAdvanced",
+        "LoraLoaderModelOnly",
+        "ModelSamplingSD3",
+        "PathchSageAttentionKJ",
+        "SaveImage",
+        "UNETLoader",
+        "UnetLoaderGGUF",
+        "VAEDecode",
+        "VAELoader",
+        "VHS_SelectImages",
+        "VHS_VideoCombine"
+      ],
+      "requiredModels": [
+        "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+        "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+        "wan22T2VA14BGGUF_highQ50.gguf",
+        "wan22T2VA14BGGUF_lowQ50.gguf",
+        "wan_2.1_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+        "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors"
+      ],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "video",
+        "image"
+      ],
+      "graphDefaults": {
+        "VHS_VideoCombine.frame_rate": 24,
+        "EmptyHunyuanLatentVideo.width": 720,
+        "EmptyHunyuanLatentVideo.height": 1280,
+        "EmptyHunyuanLatentVideo.length": 81
+      },
+      "estimatedOrMeasuredVramGb": 21.24,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": 121,
+            "fps": 24,
+            "durationSeconds": 5,
+            "nativeFrames": 81,
+            "nativeFps": 16,
+            "sageAttention": "auto",
+            "rifeInterpolationApplied": true,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 78.965,
+                "peakVramBytes": 22106236840,
+                "promptId": "21fd7f1b-6fef-4f70-9b3f-3e0e1135d677",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-WAN-2-2-T2V-SafeTensor-cold-1784422563246_00002.mp4",
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-WAN-2-2-T2V-SafeTensor-cold-1784422563246_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 71.297,
+                "peakVramBytes": 22802291922,
+                "promptId": "d6f27cf9-6ef9-4e17-848d-66f303c5b84a",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-WAN-2-2-T2V-SafeTensor-warm-1784422643264_00002.mp4",
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-WAN-2-2-T2V-SafeTensor-warm-1784422643264_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 21.24
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: UnetLoaderGGUF",
+          "missingNodes": [
+            "UnetLoaderGGUF"
+          ],
+          "missingModels": [
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+            "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+            "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+            "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+            "wan22T2VA14BGGUF_highQ50.gguf",
+            "wan22T2VA14BGGUF_lowQ50.gguf",
+            "wan_2.1_vae.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/Wan I2V Base",
+      "workflowFile": "presets/Wan I2V Base.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "CreateVideo",
+        "KSamplerAdvanced",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingSD3",
+        "SaveVideo",
+        "UNETLoader",
+        "VAEDecode",
+        "VAELoader",
+        "WanImageToVideo"
+      ],
+      "requiredModels": [
+        "Wan/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+        "Wan/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+        "Wan/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+        "Wan/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+        "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "wan_2.1_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "Wan/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+        "Wan/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "CreateVideo.fps": 24,
+        "WanImageToVideo.width": 640,
+        "WanImageToVideo.height": 640,
+        "WanImageToVideo.length": 81
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: Wan/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors, Wan/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors, Wan/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors, Wan/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors, umt5_xxl_fp8_e4m3fn_scaled.safetensors, wan_2.1_vae.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Wan/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+            "Wan/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+            "Wan/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+            "Wan/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "wan_2.1_vae.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/Wan T2V",
+      "workflowFile": "presets/Wan T2V.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "CreateVideo",
+        "EmptyHunyuanLatentVideo",
+        "KSamplerAdvanced",
+        "LoraLoaderModelOnly",
+        "ModelSamplingSD3",
+        "SaveVideo",
+        "UNETLoader",
+        "VAEDecode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "Wan/Anaja_Low.safetensors",
+        "Wan/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+        "Wan/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+        "Wan/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+        "Wan/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+        "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "wan_2.1_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "Wan/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+        "Wan/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors"
+      ],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "EmptyHunyuanLatentVideo.width": 640,
+        "EmptyHunyuanLatentVideo.height": 640,
+        "EmptyHunyuanLatentVideo.length": 181,
+        "CreateVideo.fps": 24
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: Wan/Anaja_Low.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Wan/Anaja_Low.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: Wan/Anaja_Low.safetensors, Wan/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors, Wan/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors, Wan/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors, Wan/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors, umt5_xxl_fp8_e4m3fn_scaled.safetensors, wan_2.1_vae.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Wan/Anaja_Low.safetensors",
+            "Wan/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+            "Wan/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+            "Wan/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+            "Wan/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "wan_2.1_vae.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/angles",
+      "workflowFile": "presets/angles.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "FluxKontextImageScale",
+        "FluxKontextMultiReferenceLatentMethod",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "QwenMultiangleCameraNode",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEEncode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+        "qwen-image-edit-2511-multiple-angles-lora.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "qwen-image-edit-2511-multiple-angles-lora.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: QwenMultiangleCameraNode",
+          "missingNodes": [
+            "QwenMultiangleCameraNode"
+          ],
+          "missingModels": [
+            "Qwen/qwen_image_edit_2511_fp8mixed.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "installed-not-tested",
+          "reason": "Required nodes and advertised model filenames are installed, but no complete output has been verified for this backend and workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/character_card_8_angles_low_angle",
+      "workflowFile": "presets/character_card_8_angles_low_angle.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "AILab_ImageStitch",
+        "CFGNorm",
+        "CLIPLoader",
+        "ComfySwitchNode",
+        "FluxKontextImageScale",
+        "FluxKontextMultiReferenceLatentMethod",
+        "ImageStitch",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEEncode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+        "qwen-image-edit-2511-multiple-angles-lora.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "qwen-image-edit-2511-multiple-angles-lora.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": 13.17,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: AILab_ImageStitch",
+          "missingNodes": [
+            "AILab_ImageStitch"
+          ],
+          "missingModels": [
+            "Qwen/qwen_image_edit_2511_fp8mixed.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": null,
+            "fps": null,
+            "durationSeconds": null,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 583.487,
+                "peakVramBytes": 14143905280,
+                "promptId": "2b73572f-264f-49dd-a7d1-0d071f2aaab4",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Character-Rework-backups/character-card-5060-20260810-021231/test-outputs/rtx5060ti-presets-character-card-8-angles-low-angle-cold-1786318726046_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 482.826,
+                "peakVramBytes": 14144091136,
+                "promptId": "9bc9cb5c-78bd-4423-84d2-0adde410358f",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Character-Rework-backups/character-card-5060-20260810-021231/test-outputs/rtx5060ti-presets-character-card-8-angles-low-angle-warm-1786319310690_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 13.17
+        }
+      }
+    },
+    {
+      "id": "presets/image_anima_base_v1",
+      "workflowFile": "presets/image_anima_base_v1.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "EmptyLatentImage",
+        "KSampler",
+        "SaveImage",
+        "UNETLoader",
+        "VAEDecode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "anima-base-v1.0.safetensors",
+        "qwen_3_06b_base.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {
+        "EmptyLatentImage.width": 1024,
+        "EmptyLatentImage.height": 1024
+      },
+      "estimatedOrMeasuredVramGb": 5.99,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": null,
+            "fps": null,
+            "durationSeconds": null,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 8.051,
+                "peakVramBytes": 6327192118,
+                "promptId": "3c56f3b8-839c-4818-893f-4efbfdf5c4fb",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-image-anima-base-v1-cold-1784421048058_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 7.044,
+                "peakVramBytes": 6435689918,
+                "promptId": "fb56e533-b0b4-49e3-91b3-ede27f18c5ed",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-image-anima-base-v1-warm-1784421836070_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 5.99,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: anima-base-v1.0.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "anima-base-v1.0.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/image_boogu_image_0_1_turbo_t2i",
+      "workflowFile": "presets/image_boogu_image_0_1_turbo_t2i.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "ConditioningZeroOut",
+        "EmptyLatentImage",
+        "KSampler",
+        "SaveImage",
+        "UNETLoader",
+        "VAEDecode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "ae.safetensors",
+        "boogu_image_turbo_fp8_scaled.safetensors",
+        "qwen3vl_8b_fp8_scaled.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {
+        "EmptyLatentImage.width": 1024,
+        "EmptyLatentImage.height": 1024
+      },
+      "estimatedOrMeasuredVramGb": 20.02,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": null,
+            "fps": null,
+            "durationSeconds": null,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 10.378,
+                "peakVramBytes": 19244164792,
+                "promptId": "99b4af01-584e-4373-962c-d80d181f463f",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-image-boogu-image-0-1-turbo-t2i-cold-1784420728127_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 9.058,
+                "peakVramBytes": 21492258570,
+                "promptId": "aa04c466-3df5-4f9d-8bf8-58cf0856a3aa",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-image-boogu-image-0-1-turbo-t2i-warm-1784421796793_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 20.02,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        },
+        "rtx5060ti": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": null,
+            "fps": null,
+            "durationSeconds": null,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 4.092,
+                "peakVramBytes": 16010589590,
+                "promptId": "ba1f77b5-e2f1-474b-9de9-26760ad6aaf3",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx5060ti-presets-image-boogu-image-0-1-turbo-t2i-cold-1784420652301_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 7.122,
+                "peakVramBytes": 16023521956,
+                "promptId": "b1481f67-627a-4318-bc30-e17c64f28233",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx5060ti-presets-image-boogu-image-0-1-turbo-t2i-warm-1784421572931_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 14.92,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        }
+      }
+    },
+    {
+      "id": "presets/image_ernie_image_turbo",
+      "workflowFile": "presets/image_ernie_image_turbo.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "ConditioningZeroOut",
+        "EmptyFlux2LatentImage",
+        "KSampler",
+        "SaveImage",
+        "UNETLoader",
+        "VAEDecode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "ernie-image-turbo.safetensors",
+        "flux2-vae.safetensors",
+        "ministral-3-3b.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {
+        "EmptyFlux2LatentImage.width": 1024,
+        "EmptyFlux2LatentImage.height": 1024
+      },
+      "estimatedOrMeasuredVramGb": 15.08,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Live prompt validation rejected the workflow model selection: ministral-3-3b.safetensors.",
+          "missingNodes": [],
+          "missingModels": [
+            "ministral-3-3b.safetensors"
+          ],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "submissionStatus": 400
+          },
+          "estimatedOrMeasuredVramGb": null,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        },
+        "rtx5060ti": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": null,
+            "fps": null,
+            "durationSeconds": null,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 19.821,
+                "peakVramBytes": 16146239452,
+                "promptId": "57e4689f-5350-406c-b99c-c2b7983a61ea",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx5060ti-presets-image-ernie-image-turbo-cold-1784420658580_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 23.661,
+                "peakVramBytes": 16194211800,
+                "promptId": "90552aaa-1d08-4fc0-a76f-1757edb9ee9d",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx5060ti-presets-image-ernie-image-turbo-warm-1784421580147_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 15.08,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        }
+      }
+    },
+    {
+      "id": "presets/image_firered_image_edit1_1",
+      "workflowFile": "presets/image_firered_image_edit1_1.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "ComfySwitchNode",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "ResizeImageMaskNode",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEEncode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "FireRed-Image-Edit-1.0-Lightning-8steps-v1.0.safetensors",
+        "FireRed-Image-Edit-1.1-transformer.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "FireRed-Image-Edit-1.0-Lightning-8steps-v1.0.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: FireRed-Image-Edit-1.0-Lightning-8steps-v1.0.safetensors, FireRed-Image-Edit-1.1-transformer.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "FireRed-Image-Edit-1.0-Lightning-8steps-v1.0.safetensors",
+            "FireRed-Image-Edit-1.1-transformer.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: FireRed-Image-Edit-1.0-Lightning-8steps-v1.0.safetensors, FireRed-Image-Edit-1.1-transformer.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "FireRed-Image-Edit-1.0-Lightning-8steps-v1.0.safetensors",
+            "FireRed-Image-Edit-1.1-transformer.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/image_krea2_turbo_t2i",
+      "workflowFile": "presets/image_krea2_turbo_t2i.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "ComfySwitchNode",
+        "ConditioningZeroOut",
+        "EmptyLatentImage",
+        "KSampler",
+        "LoraLoaderModelOnly",
+        "SaveImage",
+        "UNETLoader",
+        "VAEDecode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "krea2_darkbrush.safetensors",
+        "krea2_turbo_fp8_scaled.safetensors",
+        "qwen3vl_4b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "krea2_darkbrush.safetensors"
+      ],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {
+        "EmptyLatentImage.width": 1024,
+        "EmptyLatentImage.height": 1024
+      },
+      "estimatedOrMeasuredVramGb": 17.92,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": null,
+            "fps": null,
+            "durationSeconds": null,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 12.06,
+                "peakVramBytes": 18761638402,
+                "promptId": "e3450751-84af-4ea1-a797-7bf8e4537761",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-image-krea2-turbo-t2i-cold-1784420741567_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 12.067,
+                "peakVramBytes": 19246196408,
+                "promptId": "14ee182c-5790-4059-bcb1-86ba6ee5f6a4",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-image-krea2-turbo-t2i-warm-1784421805877_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 17.92,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        },
+        "rtx5060ti": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": null,
+            "fps": null,
+            "durationSeconds": null,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 16.331,
+                "peakVramBytes": 15743030908,
+                "promptId": "e67e1010-2399-425f-a049-bbc2ca101749",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx5060ti-presets-image-krea2-turbo-t2i-cold-1784420680615_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 18.392,
+                "peakVramBytes": 15683828792,
+                "promptId": "9b9b06ce-e697-4fd3-9502-9f6b87fc19c4",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx5060ti-presets-image-krea2-turbo-t2i-warm-1784421603887_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 14.66,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        }
+      }
+    },
+    {
+      "id": "presets/image_qwen_image_edit",
+      "workflowFile": "presets/image_qwen_image_edit.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "ComfySwitchNode",
+        "ImageScaleToTotalPixels",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "SaveImage",
+        "TextEncodeQwenImageEdit",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEEncode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_edit_fp8_e4m3fn.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": 22.58,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": null,
+            "fps": null,
+            "durationSeconds": null,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 116.542,
+                "peakVramBytes": 24244455790,
+                "promptId": "5ff0ddb7-f82f-4541-9354-e29ff04868e7",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-image-qwen-image-edit-cold-1784421058353_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 117.518,
+                "peakVramBytes": 24093663598,
+                "promptId": "6981fa23-7293-415d-b9a5-3045d580aae6",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-image-qwen-image-edit-warm-1784421843119_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 22.58,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors, qwen_image_edit_fp8_e4m3fn.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors",
+            "qwen_image_edit_fp8_e4m3fn.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/image_qwen_image_edit_2511_int8",
+      "workflowFile": "presets/image_qwen_image_edit_2511_int8.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "ComfySwitchNode",
+        "FluxKontextImageScale",
+        "FluxKontextMultiReferenceLatentMethod",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "SaveImageAdvanced",
+        "TextEncodeQwenImageEditPlus",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEEncode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_edit_2511_int8_convrot.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": 21.67,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": null,
+            "fps": null,
+            "durationSeconds": null,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 363.504,
+                "peakVramBytes": 22439970762,
+                "promptId": "70deb006-4bf4-47f9-ad90-0a1290d2dd39",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-image-qwen-image-edit-2511-int8-cold-1784421176935_00001.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 361.78,
+                "peakVramBytes": 23270609162,
+                "promptId": "a24ad974-33f5-444a-8b03-69363a2c0dbc",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-image-qwen-image-edit-2511-int8-warm-1784421960642_00001.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 21.67,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        },
+        "rtx5060ti": {
+          "state": "missing-model",
+          "reason": "Missing model files: qwen_image_edit_2511_int8_convrot.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "qwen_image_edit_2511_int8_convrot.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/image_z_image_turbo",
+      "workflowFile": "presets/image_z_image_turbo.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "CLIPTextEncode",
+        "ConditioningZeroOut",
+        "EmptySD3LatentImage",
+        "KSampler",
+        "ModelSamplingAuraFlow",
+        "SaveImage",
+        "UNETLoader",
+        "VAEDecode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "ae.safetensors",
+        "qwen_3_4b.safetensors",
+        "z_image_turbo_bf16.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {
+        "EmptySD3LatentImage.width": 1024,
+        "EmptySD3LatentImage.height": 1024
+      },
+      "estimatedOrMeasuredVramGb": 19.77,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": null,
+            "fps": null,
+            "durationSeconds": null,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 9.056,
+                "peakVramBytes": 21224647152,
+                "promptId": "6b07c71e-a8ec-47e4-8ece-04fe8853f345",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-image-z-image-turbo-cold-1784420755658_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 9.055,
+                "peakVramBytes": 21224778224,
+                "promptId": "55aa86b5-b89f-4dda-a34c-e24bb0866ce3",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx3090-presets-image-z-image-turbo-warm-1784421817956_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 19.77,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        },
+        "rtx5060ti": {
+          "state": "verified",
+          "reason": "Verified by complete cold and warm executions with downloaded outputs.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": {
+            "resolution": "512x512",
+            "frames": null,
+            "fps": null,
+            "durationSeconds": null,
+            "runs": [
+              {
+                "temperature": "cold",
+                "seed": 424242,
+                "runtimeSeconds": 22.312,
+                "peakVramBytes": 16153644036,
+                "promptId": "8f87d016-5a4f-4268-b9f7-52b98b966c75",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx5060ti-presets-image-z-image-turbo-cold-1784420699120_00001_.png"
+                ]
+              },
+              {
+                "temperature": "warm",
+                "seed": 424243,
+                "runtimeSeconds": 26.555,
+                "peakVramBytes": 16057788848,
+                "promptId": "0dc0abee-6e5c-4364-8b4f-0ce228cbad24",
+                "outputPaths": [
+                  "/home/shawn-rochford/AI/work/OTG-Test2-backups/dual-gpu-sync-20260718-200159/test-outputs/rtx5060ti-presets-image-z-image-turbo-warm-1784421622346_00001_.png"
+                ]
+              }
+            ]
+          },
+          "estimatedOrMeasuredVramGb": 15.04,
+          "lastVerifiedAt": "2026-07-18T20:39:00-04:00"
+        }
+      }
+    },
+    {
+      "id": "production/ltx_23_animate_official",
+      "workflowFile": "production/ltx_23_animate_official.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "CFGGuider",
+        "CM_IntToFloat",
+        "ComfyMathExpression",
+        "ComfySwitchNode",
+        "ConditioningZeroOut",
+        "DualCLIPLoader",
+        "EmptyLTXVLatentVideo",
+        "ImageResizeKJv2",
+        "KSamplerSelect",
+        "LTXVAddGuide",
+        "LTXVAudioVAEDecode",
+        "LTXVAudioVAEEncode",
+        "LTXVConcatAVLatent",
+        "LTXVConditioning",
+        "LTXVCropGuides",
+        "LTXVEmptyLatentAudio",
+        "LTXVImgToVideoConditionOnly",
+        "LTXVLatentUpsampler",
+        "LTXVSeparateAVLatent",
+        "LatentUpscaleModelLoader",
+        "LoadAudioUI",
+        "LoadImage",
+        "ManualSigmas",
+        "Power Lora Loader (rgthree)",
+        "PreviewAny",
+        "PreviewAudio",
+        "PreviewImage",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "PrimitiveStringMultiline",
+        "PromptRelayEncode",
+        "RandomNoise",
+        "ResizeImagesByLongerEdge",
+        "SamplerCustomAdvanced",
+        "SetLatentNoiseMask",
+        "SolidMask",
+        "TrimVideoLatent",
+        "UNETLoader",
+        "VAEDecodeTiled",
+        "VAELoader",
+        "VAELoaderKJ",
+        "VHS_LoadVideoPath",
+        "VHS_SelectFilename",
+        "VHS_VideoCombine"
+      ],
+      "requiredModels": [
+        "LTX2.3-IC-LORA-Dual-Character.safetensors",
+        "LTX23_audio_vae_bf16.safetensors",
+        "LTX23_video_vae_bf16.safetensors",
+        "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "consistence_edit_v2.safetensors",
+        "gemma_3_12B_it_fp4_mixed.safetensors",
+        "ltx-2.3-22b-distilled-1.1_transformer_only_mxfp8_block32.safetensors",
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "ltx-2.3_text_projection_bf16.safetensors",
+        "ltxx/AmateurHour_01_rank16.safetensors"
+      ],
+      "requiredLoras": [
+        "LTX2.3-IC-LORA-Dual-Character.safetensors",
+        "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+        "consistence_edit_v2.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "image",
+        "video",
+        "audio",
+        "video",
+        "video"
+      ],
+      "expectedInputCount": 6,
+      "expectedOutputTypes": [
+        "video",
+        "image",
+        "audio"
+      ],
+      "graphDefaults": {
+        "ImageResizeKJv2.width": 1536,
+        "ImageResizeKJv2.height": 864,
+        "LoadAudioUI.duration": 32.64
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-node",
+          "reason": "Missing node classes: LoadAudioUI, PromptRelayEncode",
+          "missingNodes": [
+            "LoadAudioUI",
+            "PromptRelayEncode"
+          ],
+          "missingModels": [
+            "consistence_edit_v2.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: CM_IntToFloat, LoadAudioUI, PromptRelayEncode",
+          "missingNodes": [
+            "CM_IntToFloat",
+            "LoadAudioUI",
+            "PromptRelayEncode"
+          ],
+          "missingModels": [
+            "Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors",
+            "consistence_edit_v2.safetensors",
+            "ltxx/AmateurHour_01_rank16.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "storyboard/StoryBoard 1",
+      "workflowFile": "storyboard/StoryBoard 1.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "EmptySD3LatentImage",
+        "FluxKontextMultiReferenceLatentMethod",
+        "ImageScaleToTotalPixels",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEDecodeTiled",
+        "VAEEncode",
+        "VAELoader",
+        "easy promptLine"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+        "next-scene_lora-v2-3000.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors",
+        "zit/block_11.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "next-scene_lora-v2-3000.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {
+        "EmptySD3LatentImage.width": 1920,
+        "EmptySD3LatentImage.height": 1088
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Qwen/qwen_image_edit_2511_fp8mixed.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: easy promptLine",
+          "missingNodes": [
+            "easy promptLine"
+          ],
+          "missingModels": [
+            "next-scene_lora-v2-3000.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "storyboard/Storyboard 2",
+      "workflowFile": "storyboard/Storyboard 2.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "EmptySD3LatentImage",
+        "FluxKontextMultiReferenceLatentMethod",
+        "ImageScaleToTotalPixels",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEDecodeTiled",
+        "VAEEncode",
+        "VAELoader",
+        "easy promptLine"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+        "next-scene_lora-v2-3000.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors",
+        "zit/block_11.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "next-scene_lora-v2-3000.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "image"
+      ],
+      "expectedInputCount": 2,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {
+        "EmptySD3LatentImage.width": 1920,
+        "EmptySD3LatentImage.height": 1088
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Qwen/qwen_image_edit_2511_fp8mixed.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: easy promptLine",
+          "missingNodes": [
+            "easy promptLine"
+          ],
+          "missingModels": [
+            "next-scene_lora-v2-3000.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "storyboard/Storyboard 3",
+      "workflowFile": "storyboard/Storyboard 3.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "EmptySD3LatentImage",
+        "FluxKontextMultiReferenceLatentMethod",
+        "ImageScaleToTotalPixels",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEDecodeTiled",
+        "VAEEncode",
+        "VAELoader",
+        "easy promptLine"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+        "next-scene_lora-v2-3000.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors",
+        "zit/block_11.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "next-scene_lora-v2-3000.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "image",
+        "image"
+      ],
+      "expectedInputCount": 3,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {
+        "EmptySD3LatentImage.width": 1920,
+        "EmptySD3LatentImage.height": 1088
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Qwen/qwen_image_edit_2511_fp8mixed.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: easy promptLine",
+          "missingNodes": [
+            "easy promptLine"
+          ],
+          "missingModels": [
+            "next-scene_lora-v2-3000.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "storyboard/Storyboard 4",
+      "workflowFile": "storyboard/Storyboard 4.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "EmptySD3LatentImage",
+        "FluxKontextMultiReferenceLatentMethod",
+        "ImageScaleToTotalPixels",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus_lrzjason",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEDecodeTiled",
+        "VAEEncode",
+        "VAELoader",
+        "easy promptLine"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+        "next-scene_lora-v2-3000.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors",
+        "zit/block_11.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "next-scene_lora-v2-3000.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "image",
+        "image",
+        "image"
+      ],
+      "expectedInputCount": 4,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {
+        "EmptySD3LatentImage.width": 1920,
+        "EmptySD3LatentImage.height": 1088
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Qwen/qwen_image_edit_2511_fp8mixed.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: TextEncodeQwenImageEditPlus_lrzjason, easy promptLine",
+          "missingNodes": [
+            "TextEncodeQwenImageEditPlus_lrzjason",
+            "easy promptLine"
+          ],
+          "missingModels": [
+            "next-scene_lora-v2-3000.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "storyboard/Storyboard 5",
+      "workflowFile": "storyboard/Storyboard 5.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "EmptySD3LatentImage",
+        "FluxKontextMultiReferenceLatentMethod",
+        "ImageScaleToTotalPixels",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus_lrzjason",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEDecodeTiled",
+        "VAEEncode",
+        "VAELoader",
+        "easy promptLine"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+        "next-scene_lora-v2-3000.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors",
+        "zit/block_11.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "next-scene_lora-v2-3000.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image",
+        "image",
+        "image",
+        "image",
+        "image"
+      ],
+      "expectedInputCount": 5,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {
+        "EmptySD3LatentImage.width": 1920,
+        "EmptySD3LatentImage.height": 1088
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "missing-model",
+          "reason": "Missing model files: Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+          "missingNodes": [],
+          "missingModels": [
+            "Qwen/qwen_image_edit_2511_fp8mixed.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "missing-node",
+          "reason": "Missing node classes: TextEncodeQwenImageEditPlus_lrzjason, easy promptLine",
+          "missingNodes": [
+            "TextEncodeQwenImageEditPlus_lrzjason",
+            "easy promptLine"
+          ],
+          "missingModels": [
+            "next-scene_lora-v2-3000.safetensors"
+          ],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "internal/character-reference/qwen_character_4angle_lowres",
+      "workflowFile": "comfy_workflows/internal/character-reference/qwen_character_4angle_lowres.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CFGNorm",
+        "CLIPLoader",
+        "ComfySwitchNode",
+        "FluxKontextMultiReferenceLatentMethod",
+        "ImageScaleToTotalPixels",
+        "KSampler",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ModelSamplingAuraFlow",
+        "PrimitiveBoolean",
+        "PrimitiveFloat",
+        "PrimitiveInt",
+        "SaveImage",
+        "TextEncodeQwenImageEditPlus",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEEncode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+        "qwen-image-edit-2511-multiple-angles-lora.safetensors",
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "qwen_image_vae.safetensors"
+      ],
+      "requiredLoras": [
+        "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "qwen-image-edit-2511-multiple-angles-lora.safetensors"
+      ],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified on RTX 3090 with successful four-angle execution and visible front/back/left/right outputs; backend-specific model filenames are applied at submission."
+        },
+        "rtx5060ti": {
+          "state": "verified",
+          "reason": "Verified on RTX 5060 Ti with successful four-angle execution and visible front/back/left/right outputs."
+        }
+      }
+    },
+    {
+      "id": "internal/character-reference/seedvr2_character_reference_1080p",
+      "workflowFile": "comfy_workflows/internal/character-reference/seedvr2_character_reference_1080p.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "JoinImageWithAlpha",
+        "KSampler",
+        "LoadImage",
+        "ResizeImageMaskNode",
+        "SaveImage",
+        "SeedVR2Conditioning",
+        "SeedVR2PostProcessing",
+        "SeedVR2Preprocess",
+        "UNETLoader",
+        "VAEDecodeTiled",
+        "VAEEncodeTiled",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "seedvr2_3b_int8_convrot.safetensors",
+        "seedvr2_ema_vae_fp16.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "verified",
+          "reason": "Verified SeedVR2 3B image upscale execution on RTX 3090."
+        },
+        "rtx5060ti": {
+          "state": "verified",
+          "reason": "Verified SeedVR2 3B image upscale execution on RTX 5060 Ti, including exact 1080x1920 character reference output."
+        }
+      }
+    }
+  ]
+}

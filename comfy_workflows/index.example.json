@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "workflows": [
+    {
+      "id": "WAN_LANDSCAPE_LOCKED",
+      "label": "WAN Landscape Locked Example",
+      "description": "Example preset locked to landscape, medium default.",
+      "file": "presets/T2V_wan.json",
+      "img2img": false,
+      "tags": [
+        "t2v",
+        "wan"
+      ],
+      "profile": {
+        "allowedRatios": [
+          "landscape",
+          "cinematic"
+        ],
+        "allowedSizes": [
+          "small",
+          "medium",
+          "large"
+        ],
+        "defaultRatio": "landscape",
+        "defaultSize": "medium",
+        "lockRatio": "landscape"
+      }
+    }
+  ]
+}

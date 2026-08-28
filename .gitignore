@@ -1,0 +1,64 @@
+# Dependencies
+node_modules
+node_modules/
+
+# Next.js and build output
+.next/
+out/
+.vercel/
+server.js
+*.tsbuildinfo
+
+# Runtime state, local databases, and generated job output
+data/
+.otg-state/
+.otg-backups/
+.qualification-tmp/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.crt
+*.cert
+
+# Logs, dumps, and caches
+*.log
+logs/
+core
+core.*
+.cache/
+tmp/
+.tmp/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Release/build provenance generated outside source control
+.release_id
+.build.*
+PREVIOUS_RELEASE.txt
+ROLLBACK_RELEASE.txt
+RELEASE_CHANGE.txt
+RELEASE_VERIFICATION.json
+RELEASE_MANIFEST.sha256
+
+# One-off patch and backup artifacts
+apply-*.py
+*.before-*
+*.pre-*
+*.bak
+*.bak-*
+*.backup
+*.orig
+*.old
+*.tmp
