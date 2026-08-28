@@ -29,9 +29,9 @@ export default function AdminQuickPanel() {
               </div>
             </a>
             <a href="/app/admin/gallery" style={tileStyle}>
-              <div className="otg-cardTitle" style={{ margin: 0 }}>Admin Gallery</div>
+              <div className="otg-cardTitle" style={{ margin: 0 }}>Full Gallery</div>
               <div className="otg-help" style={{ marginTop: 8 }}>
-                Browse every image and video under the configured Comfy output root, including subfolders.
+                Browse all supported images and videos from both TEST ComfyUI output filesystems.
               </div>
             </a>
           </div>

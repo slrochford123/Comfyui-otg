@@ -1,4 +1,4 @@
-{
+﻿{
   "60": {
     "inputs": {
       "filename_prefix": "ComfyUI",
@@ -347,3 +347,4 @@
     "description": "Qwen Image Edit workflow for prompt-guided image editing in the Generate tab."
   }
 }
+

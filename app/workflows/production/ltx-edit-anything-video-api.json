@@ -708,7 +708,7 @@
   },
   "192": {
     "inputs": {
-      "lora_name": "ltxx\\ltx23_edit_anything_global_rank128_v1_9000steps_adamw.safetensors",
+      "lora_name": "ltxx/ltx23_edit_anything_global_rank128_v1_9000steps_adamw.safetensors",
       "strength_model": 1,
       "model": [
         "196",

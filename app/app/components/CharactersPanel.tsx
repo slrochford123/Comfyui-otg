@@ -4,16 +4,28 @@ function otgDisplayImageUrlV36BP6(value: unknown) {
   const raw = String(value || "").trim();
   if (!raw) return "";
   if (/^(data:image\/|blob:|https?:\/\/)/i.test(raw)) return raw;
-  if (raw.startsWith("/api/otg/local-image")) return raw;
+
+  // OTG_CHARACTER_LINUX_THUMBNAIL_URL_V36BP9
+  // Browser image elements cannot load Linux filesystem paths such as /home/... directly.
+  // Route OTG data assets through the guarded /api/file endpoint while preserving real app URLs.
+  if (raw.startsWith("/api/") || raw.startsWith("/_next/")) return raw;
 
   if (/^\/[A-Za-z]:[\\/]/.test(raw)) {
     return `/api/otg/local-image?path=${encodeURIComponent(raw.slice(1))}`;
   }
 
+  if (/^\/(?:home|opt|var|mnt|srv|tmp|run|data)(?:\/|$)/.test(raw)) {
+    return `/api/file?path=${encodeURIComponent(raw)}`;
+  }
+
   if (raw.startsWith("/")) return raw;
 
-  if (/^[A-Za-z]:[\\/]/.test(raw) || raw.startsWith("\\\\") || raw.includes("\\data\\") || raw.includes("/data/")) {
+  if (/^[A-Za-z]:[\\/]/.test(raw) || raw.startsWith("\\\\") || raw.includes("\\data\\")) {
     return `/api/otg/local-image?path=${encodeURIComponent(raw)}`;
+  }
+
+  if (raw.includes("/data/")) {
+    return `/api/file?path=${encodeURIComponent(raw)}`;
   }
 
   return raw.replace(/\\/g, "/");
@@ -35,6 +47,12 @@ function characterDisplayImagePathV36BP6(character: any) {
 
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  appendGeneratedBackgroundCandidateFifo,
+  replaceBackgroundCandidate,
+  upsertUploadedBackgroundCandidate,
+} from "../../../lib/backgrounds/candidateQueue";
+import { canonicalBackgroundPersistenceFields } from "../../../lib/backgrounds/canonicalCardPersistence";
 import {
   QWEN_PREVIEW_LINES,
   defaultQwenVoiceDesignInput,
@@ -119,13 +137,14 @@ import {
 import type { CharacterVoicePipelineAction, QueuedContractJob } from "../../../lib/jobs/voicePipelineJobs";
 
 
-// OTG_CHARACTER_GENERATOR_OPTIONS_ZTURBO_V1
-type CharacterGeneratorOptionId = "ernie" | "zturbo" | "krea2";
+// OTG_CHARACTER_GENERATOR_OPTIONS_BOOGU_V1
+type CharacterGeneratorOptionId = "ernie" | "zturbo" | "krea2" | "boogu";
 
 const CHARACTER_GENERATOR_OPTIONS: Array<{
   id: CharacterGeneratorOptionId;
   title: string;
   subtitle: string;
+  workflowId?: string;
   workflowFile?: string;
   workflowPath?: string;
   workflowJsonPath?: string;
@@ -154,7 +173,35 @@ const CHARACTER_GENERATOR_OPTIONS: Array<{
     workflowJsonPath: "workflows/characters/krea2-turbo.json",
     workflowLabel: "characters/krea2-turbo",
   },
+  {
+    id: "boogu",
+    title: "Generator Option 4",
+    subtitle: "Boogu Image 0.1 Turbo",
+    workflowId: "presets/image_boogu_image_0_1_turbo_t2i",
+    workflowFile: "workflows/presets/image_boogu_image_0_1_turbo_t2i.json",
+    workflowPath: "workflows/presets/image_boogu_image_0_1_turbo_t2i.json",
+    workflowJsonPath: "workflows/presets/image_boogu_image_0_1_turbo_t2i.json",
+    workflowLabel: "characters/boogu-image-0.1-turbo",
+  },
 ];
+
+type CharacterGeneratorOutputSelector = {
+  nodeId?: string;
+  filenamePrefix?: string;
+};
+
+function characterGeneratorOutputSelector(optionId: CharacterGeneratorOptionId): CharacterGeneratorOutputSelector {
+  if (optionId === "zturbo") {
+    return { nodeId: "9", filenamePrefix: "z-image-turbo" };
+  }
+  if (optionId === "krea2") {
+    return { nodeId: "29", filenamePrefix: "Krea2_turbo" };
+  }
+  if (optionId === "boogu") {
+    return { nodeId: "33", filenamePrefix: "Boogu" };
+  }
+  return {};
+}
 
 function characterGeneratorPayload(optionId: CharacterGeneratorOptionId) {
   const option = CHARACTER_GENERATOR_OPTIONS.find((item) => item.id === optionId) || CHARACTER_GENERATOR_OPTIONS[0];
@@ -167,6 +214,7 @@ function characterGeneratorPayload(optionId: CharacterGeneratorOptionId) {
   }
 
   const payload: Record<string, string | undefined> = {
+    workflowId: option.workflowId,
     characterGeneratorOption: option.id,
     characterGeneratorLabel: option.subtitle,
     workflowFile: option.workflowPath || option.workflowFile,
@@ -187,6 +235,17 @@ function characterGeneratorPayload(optionId: CharacterGeneratorOptionId) {
     payload.seedNodeInput = "seed";
   }
 
+  if (option.id === "boogu") {
+    payload.promptNodeId = "43";
+    payload.promptNodeInput = "text";
+    payload.positivePromptNodeId = "43";
+    payload.positivePromptNodeInput = "text";
+    payload.saveImageNodeId = "33";
+    payload.saveImageInput = "filename_prefix";
+    payload.seedNodeId = "44";
+    payload.seedNodeInput = "seed";
+  }
+
   return payload;
 }
 
@@ -198,8 +257,8 @@ function CharacterGeneratorOptionsControl({
   onSelect: (id: CharacterGeneratorOptionId) => void;
 }) {
   return (
-    <div className="mb-4 rounded-2xl border border-white/10 bg-black/25 p-3" data-otg="OTG_CHARACTER_GENERATOR_OPTIONS_ZTURBO_V1">
-      <div className="grid gap-3 sm:grid-cols-3">
+    <div className="mb-4 rounded-2xl border border-white/10 bg-black/25 p-3" data-otg="OTG_CHARACTER_GENERATOR_OPTIONS_BOOGU_V1">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {CHARACTER_GENERATOR_OPTIONS.map((option) => {
           const active = selected === option.id;
           return (
@@ -262,6 +321,26 @@ type CandidateImage = {
 };
 
 
+type CharacterBackgroundImageAssetV36A = {
+  displayImage: string;
+  workflowImage: string;
+  imagePath?: string;
+  imageUrl?: string;
+};
+
+type CharacterBackgroundAngleKeyV36A =
+  | "front"
+  | "left45"
+  | "right45"
+  | "left90"
+  | "right90"
+  | "back"
+  | "up"
+  | "down"
+  | "low"
+  | "high"
+  | "close";
+
 type CharacterBackgroundReferenceV36A = {
   type?: "background";
   id: string;
@@ -272,6 +351,9 @@ type CharacterBackgroundReferenceV36A = {
   masterPrompt?: string;
   continuityBlock?: string;
   doNotChange?: string[];
+  establishingImage?: CharacterBackgroundImageAssetV36A;
+  panoramaImage?: CharacterBackgroundImageAssetV36A;
+  angleImages?: Partial<Record<CharacterBackgroundAngleKeyV36A, CharacterBackgroundImageAssetV36A>>;
   imagePath?: string;
   imageUrl?: string;
   displayImage?: string;
@@ -282,6 +364,15 @@ type CharacterBackgroundReferenceV36A = {
 };
 
 const CHARACTER_BACKGROUND_LIBRARY_KEY_V36A = "otg:character-background-library:v36a";
+
+function backgroundLibraryRequestHeadersV36AO(json = false): Record<string, string> {
+  return json ? { "Content-Type": "application/json" } : {};
+}
+
+function characterBackgroundLibraryKeyV36A(ownerKey: string) {
+  const normalized = String(ownerKey || "").trim().toLowerCase();
+  return normalized ? `${CHARACTER_BACKGROUND_LIBRARY_KEY_V36A}:${encodeURIComponent(normalized)}` : "";
+}
 
 function safeCharacterBackgroundIdV36A(value: unknown, fallback = "background") {
   const cleaned = String(value || "")
@@ -294,11 +385,110 @@ function safeCharacterBackgroundIdV36A(value: unknown, fallback = "background") 
   return cleaned || fallback;
 }
 
+function normalizeCharacterBackgroundImageAssetV36A(
+  input: any,
+): CharacterBackgroundImageAssetV36A | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+
+  const imagePath = String(
+    input.imagePath ||
+      input.path ||
+      input.serverPath ||
+      "",
+  ).trim();
+
+  const imageUrl = String(
+    input.imageUrl ||
+      input.url ||
+      input.fileUrl ||
+      input.displayImage ||
+      "",
+  ).trim();
+
+  const workflowImage = String(
+    input.workflowImage ||
+      imagePath ||
+      imageUrl ||
+      "",
+  ).trim();
+
+  const displayImage = String(
+    input.displayImage ||
+      imageUrl ||
+      imagePath ||
+      workflowImage ||
+      "",
+  ).trim();
+
+  if (!displayImage && !workflowImage) return undefined;
+
+  return {
+    displayImage: displayImage || workflowImage,
+    workflowImage: workflowImage || displayImage,
+    imagePath: imagePath || undefined,
+    imageUrl: imageUrl || undefined,
+  };
+}
+
 function normalizeCharacterBackgroundReferenceV36B(input: any): CharacterBackgroundReferenceV36A | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
 
-  const imagePath = String(input.workflowImage || input.imagePath || input.establishingImage?.workflowImage || "").trim();
-  const imageUrl = String(input.displayImage || input.imageUrl || input.establishingImage?.displayImage || "").trim();
+  const establishingImage =
+    normalizeCharacterBackgroundImageAssetV36A(input.establishingImage);
+
+  const panoramaImage =
+    normalizeCharacterBackgroundImageAssetV36A(input.panoramaImage);
+
+  const angleImages: CharacterBackgroundReferenceV36A["angleImages"] = {};
+  const allowedAngleKeys: CharacterBackgroundAngleKeyV36A[] = [
+    "front",
+    "left45",
+    "right45",
+    "left90",
+    "right90",
+    "back",
+    "up",
+    "down",
+    "low",
+    "high",
+    "close",
+  ];
+
+  if (
+    input.angleImages &&
+    typeof input.angleImages === "object" &&
+    !Array.isArray(input.angleImages)
+  ) {
+    for (const key of allowedAngleKeys) {
+      const asset = normalizeCharacterBackgroundImageAssetV36A(
+        input.angleImages[key],
+      );
+
+      if (asset) angleImages[key] = asset;
+    }
+  }
+
+  const firstAngleAsset = Object.values(angleImages)[0];
+
+  const imagePath = String(
+    input.workflowImage ||
+      input.imagePath ||
+      establishingImage?.workflowImage ||
+      panoramaImage?.workflowImage ||
+      firstAngleAsset?.workflowImage ||
+      "",
+  ).trim();
+
+  const imageUrl = String(
+    establishingImage?.displayImage ||
+      input.displayImage ||
+      establishingImage?.imageUrl ||
+      input.imageUrl ||
+      firstAngleAsset?.displayImage ||
+      panoramaImage?.displayImage ||
+      "",
+  ).trim();
+
   const usableImage = imagePath || imageUrl;
 
   if (!usableImage) return null;
@@ -315,22 +505,39 @@ function normalizeCharacterBackgroundReferenceV36B(input: any): CharacterBackgro
     prompt: String(input.prompt || input.masterPrompt || "").trim(),
     masterPrompt: String(input.masterPrompt || input.prompt || "").trim(),
     continuityBlock: String(input.continuityBlock || "").trim(),
-    doNotChange: Array.isArray(input.doNotChange) ? input.doNotChange.map(String).filter(Boolean) : [],
+    doNotChange: Array.isArray(input.doNotChange)
+      ? input.doNotChange.map(String).filter(Boolean)
+      : [],
+    establishingImage: establishingImage,
+    panoramaImage: panoramaImage,
+    angleImages: angleImages,
     imagePath: imagePath || undefined,
     imageUrl: imageUrl || undefined,
     displayImage: imageUrl || imagePath || undefined,
     workflowImage: imagePath || imageUrl || undefined,
-    source: input.source === "created" || input.source === "uploaded" || input.source === "manual" ? input.source : "manual",
+    source:
+      input.source === "created" ||
+      input.source === "uploaded" ||
+      input.source === "manual"
+        ? input.source
+        : "manual",
     createdAt: String(input.createdAt || new Date().toISOString()),
-    updatedAt: String(input.updatedAt || input.createdAt || new Date().toISOString()),
+    updatedAt: String(
+      input.updatedAt ||
+        input.createdAt ||
+        new Date().toISOString(),
+    ),
   };
 }
 
-function readCharacterBackgroundLibraryV36A(): CharacterBackgroundReferenceV36A[] {
+function readCharacterBackgroundLibraryV36A(ownerKey: string): CharacterBackgroundReferenceV36A[] {
   if (typeof window === "undefined") return [];
+  const storageKey = characterBackgroundLibraryKeyV36A(ownerKey);
+  if (!storageKey) return [];
 
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(CHARACTER_BACKGROUND_LIBRARY_KEY_V36A) || "[]");
+    window.localStorage.removeItem(CHARACTER_BACKGROUND_LIBRARY_KEY_V36A);
+    const parsed = JSON.parse(window.localStorage.getItem(storageKey) || "[]");
     if (!Array.isArray(parsed)) return [];
 
     return parsed
@@ -342,15 +549,18 @@ function readCharacterBackgroundLibraryV36A(): CharacterBackgroundReferenceV36A[
   }
 }
 
-function writeCharacterBackgroundLibraryV36A(items: CharacterBackgroundReferenceV36A[]) {
+function writeCharacterBackgroundLibraryV36A(ownerKey: string, items: CharacterBackgroundReferenceV36A[]) {
   if (typeof window === "undefined") return;
+  const storageKey = characterBackgroundLibraryKeyV36A(ownerKey);
+  if (!storageKey) return;
 
   const cleaned = items
     .map(normalizeCharacterBackgroundReferenceV36B)
     .filter((item): item is CharacterBackgroundReferenceV36A => Boolean(item))
     .slice(0, 60);
 
-  window.localStorage.setItem(CHARACTER_BACKGROUND_LIBRARY_KEY_V36A, JSON.stringify(cleaned));
+  window.localStorage.removeItem(CHARACTER_BACKGROUND_LIBRARY_KEY_V36A);
+  window.localStorage.setItem(storageKey, JSON.stringify(cleaned));
 }
 
 function upsertCharacterBackgroundReferenceV36A(
@@ -371,6 +581,7 @@ async function fetchCharacterBackgroundLibraryFromServerV36B(): Promise<Characte
     method: "GET",
     credentials: "include",
     cache: "no-store",
+    headers: backgroundLibraryRequestHeadersV36AO(false),
   });
 
   const json = await response.json().catch(() => null);
@@ -384,38 +595,71 @@ async function fetchCharacterBackgroundLibraryFromServerV36B(): Promise<Characte
 }
 
 async function persistCharacterBackgroundReferenceToServerV36B(background: CharacterBackgroundReferenceV36A) {
+  const persistenceFields = canonicalBackgroundPersistenceFields(background);
+  const displayImage = persistenceFields.displayImage;
+  const workflowImage = persistenceFields.workflowImage;
+
+  if (!displayImage && !workflowImage) {
+    throw new Error("Background save blocked: the selected background has no display image or workflow image.");
+  }
+
+  const establishingImage =
+    background.establishingImage ||
+    persistenceFields.establishingImage ||
+    normalizeCharacterBackgroundImageAssetV36A({
+      displayImage: displayImage || workflowImage,
+      workflowImage: displayImage || workflowImage,
+      imagePath: background.imagePath,
+      imageUrl: background.imageUrl || displayImage,
+    });
+
+  const panoramaImage =
+    background.panoramaImage ||
+    (
+      workflowImage && workflowImage !== displayImage
+        ? normalizeCharacterBackgroundImageAssetV36A({
+            displayImage: workflowImage,
+            workflowImage,
+            imagePath: workflowImage,
+            imageUrl: workflowImage,
+          })
+        : undefined
+    );
+
+  const angleImages = background.angleImages || {};
+
   const response = await fetch("/api/backgrounds", {
     method: "POST",
     credentials: "include",
     cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: backgroundLibraryRequestHeadersV36AO(true),
     body: JSON.stringify({
       action: "save",
       background: {
         ...background,
         type: "background",
         masterPrompt: background.masterPrompt || background.prompt || "",
-        establishingImage: {
-          displayImage: background.displayImage || background.imageUrl || background.imagePath || "",
-          workflowImage: background.workflowImage || background.imagePath || background.imageUrl || "",
-          imagePath: background.imagePath || background.workflowImage || "",
-          imageUrl: background.imageUrl || background.displayImage || "",
-        },
-        angleImages: {},
+        displayImage: displayImage || workflowImage,
+        workflowImage: workflowImage || displayImage,
+        establishingImage,
+        panoramaImage,
+        angleImages,
       },
     }),
   });
 
   const json = await response.json().catch(() => null);
   if (!response.ok || !json?.ok) {
-    throw new Error(json?.error || `Background library save failed (${response.status}).`);
+    throw new Error(
+      json?.error ||
+        `Background library save failed (${response.status}).`,
+    );
   }
 
   return normalizeCharacterBackgroundReferenceV36B(json.background);
 }
 
+// OTG_BACKGROUND_OWNER_SCOPED_PERSISTENCE_V36AO
 
 type CharacterBackgroundPreviewCandidateV36C = {
   id: string;
@@ -505,6 +749,8 @@ function clampCharacterBackgroundPreviewCountV36C(value: unknown) {
 
 type CharacterBackgroundPreviewCandidateV36E = {
   id: string;
+  sourceType?: "generated" | "uploaded";
+  removePeoplePromptId?: string;
   name: string;
   imagePath?: string;
   imageUrl?: string;
@@ -524,18 +770,98 @@ const CHARACTER_BACKGROUND_STYLE_PRESETS_V36E = [
   "Cinematic",
 ] as const;
 
+const CHARACTER_BACKGROUND_STYLE_DIRECTIVES_V36E = {
+  "Anime": "anime background illustration, cel-shaded rendering, clean illustrated linework, stylized painted lighting and shading, hand-drawn animation aesthetic, clearly non-photographic",
+  "Unreal Engine": "cinematic Unreal Engine environment render, physically based 3D materials, detailed game-environment geometry, ray-traced cinematic lighting, volumetric atmosphere, polished real-time 3D rendering",
+  "Comic Book": "comic-book environment illustration, bold inked linework, graphic shapes, deliberate comic shading, illustrated color treatment, clearly drawn rather than photographed",
+  "Photorealistic": "photorealistic environmental photography, physically accurate natural materials, realistic surface texture, natural lens response, believable atmospheric depth and lighting, no cartoon or illustration treatment",
+  "3D Picture": "high-end cinematic 3D render, physically based materials, detailed modeled geometry, realistic CGI lighting, volumetric atmosphere, polished computer-generated imagery, clearly rendered rather than photographed",
+  "Cinematic": "cinematic environment image, production-design composition, dramatic controlled lighting, filmic color and contrast, strong depth and atmosphere, polished feature-film visual treatment",
+} as const;
+
+function buildCharacterBackgroundStyleDirectiveV36E(
+  style: string,
+) {
+  const selectedStyle =
+    String(style || "").trim() || "Cinematic";
+
+  const directive =
+    CHARACTER_BACKGROUND_STYLE_DIRECTIVES_V36E[
+      selectedStyle as keyof typeof CHARACTER_BACKGROUND_STYLE_DIRECTIVES_V36E
+    ] ||
+    `${selectedStyle} visual rendering style`;
+
+  return [
+    `Selected Art Style: ${selectedStyle}.`,
+    `Render the entire image strictly as ${directive}.`,
+    "The selected Art Style is authoritative and overrides any conflicting rendering-style words in the scene description.",
+    "Do not switch to another visual medium because the scene description mentions one.",
+    `Keep the environment subject matter from the scene description, but render that subject matter using the selected ${selectedStyle} Art Style.`,
+  ].join(" ");
+}
+
+// OTG_BACKGROUND_STUDIO_FIVE_MODEL_CLIENT_V1
+type CharacterBackgroundProvider =
+  | "ernie-image"
+  | "z-image"
+  | "krea-2"
+  | "boogu"
+  | "mage-flow";
+
 const CHARACTER_BACKGROUND_PROVIDER_PRESETS_V36E = [
   {
     id: "ernie-image" as const,
     label: "Ernie Image",
-    description: "Create one 1280x720 landscape preview with the existing Ernie image path.",
+    description: "Create one 1280x720 landscape preview with the same Ernie Image workflow used by Character Creator.",
   },
   {
-    id: "z-turbo" as const,
-    label: "Z Turbo",
-    description: "Create one 1280x720 landscape preview with the Z Turbo workflow.",
+    id: "z-image" as const,
+    label: "Z Image",
+    description: "Create one 1280x720 landscape preview with the same Z Image workflow used by Character Creator.",
+  },
+  {
+    id: "krea-2" as const,
+    label: "Krea 2",
+    description: "Create one 1280x720 landscape preview with the same Krea 2 workflow used by Character Creator.",
+  },
+  {
+    id: "boogu" as const,
+    label: "Boogu",
+    description: "Create one 1280x720 landscape preview with the same Boogu workflow used by Character Creator.",
+  },
+  {
+    id: "mage-flow" as const,
+    label: "Mage Flow",
+    description: "Create one 1280x720 landscape preview with the same Mage Flow workflow used by Character Creator.",
   },
 ] as const;
+
+function normalizeCharacterBackgroundProviderV1(
+  provider: unknown,
+): CharacterBackgroundProvider {
+  if (
+    provider === "ernie-image" ||
+    provider === "z-image" ||
+    provider === "krea-2" ||
+    provider === "boogu" ||
+    provider === "mage-flow"
+  ) {
+    return provider;
+  }
+
+  // Compatibility for Background candidates/saved records created before
+  // the five-model Character Creator catalog became canonical.
+  if (provider === "z-turbo") {
+    return "z-image";
+  }
+
+  if (provider === "krea2-turbo") {
+    return "krea-2";
+  }
+
+  return "ernie-image";
+}
+
 
 function buildCharacterBackgroundPromptV36E(args: {
   name: string;
@@ -546,9 +872,18 @@ function buildCharacterBackgroundPromptV36E(args: {
 }) {
   const landscapeLock = "Landscape 16:9 composition, 1280x720 resolution, horizontal frame, wide cinematic background plate, no vertical portrait framing, no characters, no text.";
   const manualPrompt = String(args.promptOverride || "").trim();
+  const styleDirective =
+    buildCharacterBackgroundStyleDirectiveV36E(args.style);
 
   if (manualPrompt) {
-    return `${manualPrompt} ${landscapeLock}`.trim();
+    return [
+      styleDirective,
+      manualPrompt,
+      landscapeLock,
+      "The selected Art Style remains authoritative for the final render.",
+    ]
+      .filter(Boolean)
+      .join(" ");
   }
 
   return [
@@ -556,9 +891,10 @@ function buildCharacterBackgroundPromptV36E(args: {
     landscapeLock,
     args.name ? `Background name: ${args.name}.` : "",
     args.locationType ? `Location type: ${args.locationType}.` : "",
-    args.style ? `Visual style: ${args.style}.` : "",
+    styleDirective,
     args.describeScene ? `Scene description: ${args.describeScene}.` : "",
-    "Clean stable environment reference, detailed but not cluttered, suitable for later 360 panorama and angle-plate generation.",
+    "The selected Art Style remains authoritative for the final render.",
+    "Clean stable environment reference, detailed but not cluttered, suitable for the fixed Front, Back, Left, Right, Up, and Down reference set.",
   ]
     .filter(Boolean)
     .join(" ");
@@ -568,76 +904,6 @@ function clampCharacterBackgroundPreviewCountV36E(value: unknown) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 5;
   return Math.max(1, Math.min(5, Math.floor(parsed)));
-}
-
-function randomCharacterBackgroundSeedV36E() {
-  return String(Math.floor(Math.random() * 999_999_999_999_999));
-}
-
-function appendBackgroundComfyRoutingFieldsV36E(
-  body: FormData,
-  provider: "ernie-image" | "z-turbo" | "krea2-turbo" | "krea2-turbo",
-) {
-  body.set("orientation", "landscape");
-  body.set("width", "1280");
-  body.set("height", "720");
-  body.set("imageWidth", "1280");
-  body.set("imageHeight", "720");
-  body.set("resolution", "1280x720");
-  body.set("aspectRatio", "16:9");
-  body.set("seed", randomCharacterBackgroundSeedV36E());
-  body.set("batchSize", "1");
-  body.set("numImages", "1");
-  body.set("imageCount", "1");
-  body.set("requestKind", "characters-background-studio-preview");
-  body.set("sourceType", "characters-background-studio");
-  body.set("saveToGallery", "false");
-  body.set("save_to_gallery", "false");
-  body.set("persistToGallery", "false");
-  body.set("addToGallery", "false");
-  body.set("copyToGallery", "false");
-  body.set("gallery", "false");
-  body.set("assetLibraryOnly", "true");
-  body.set("outputLibrary", "backgrounds");
-  body.set("galleryExclusionPolicy", "background-candidate-only");
-  body.set("outputFormat", "png");
-
-  if (provider === "z-turbo") {
-    body.set("workflowId", "workflows/characters/character-z-image-turbo.json");
-    body.set("workflowFile", "workflows/characters/character-z-image-turbo.json");
-    body.set("workflowPath", "workflows/characters/character-z-image-turbo.json");
-    body.set("workflowJsonPath", "workflows/characters/character-z-image-turbo.json");
-    body.set("workflowPresetPath", "workflows/characters/character-z-image-turbo.json");
-    body.set("workflowLabel", "characters/z-image-turbo");
-    body.set("characterGeneratorOption", "z-turbo");
-    body.set("characterGeneratorLabel", "Z Turbo");
-    return;
-  }
-
-  if (provider === "krea2-turbo") {
-    body.set("workflowId", "workflows/backgrounds/krea2-turbo.json");
-    body.set("workflowFile", "workflows/backgrounds/krea2-turbo.json");
-    body.set("workflowPath", "workflows/backgrounds/krea2-turbo.json");
-    body.set("workflowJsonPath", "workflows/backgrounds/krea2-turbo.json");
-    body.set("workflowPresetPath", "workflows/backgrounds/krea2-turbo.json");
-    body.set("workflowLabel", "backgrounds/krea2-turbo");
-    body.set("characterGeneratorOption", "krea2-turbo");
-    body.set("characterGeneratorLabel", "Krea2 Turbo");
-    body.set("promptNodeId", "51");
-    body.set("promptNodeInput", "text");
-    body.set("positivePromptNodeId", "51");
-    body.set("positivePromptNodeInput", "text");
-    body.set("saveImageNodeId", "29");
-    body.set("saveImageInput", "filename_prefix");
-    body.set("seedNodeId", "53");
-    body.set("seedNodeInput", "seed");
-    return;
-  }
-
-  body.set("workflowId", "presets/Create a Picture");
-  body.set("workflowLabel", "Ernie Images");
-  body.set("characterGeneratorOption", "ernie");
-  body.set("characterGeneratorLabel", "Ernie Images");
 }
 
 function firstStringV36E(...values: unknown[]) {
@@ -974,7 +1240,7 @@ function collectBackgroundImageStringsV36I(value: any, output: string[] = [], de
 }
 
 async function findAnyRecentBackgroundPreviewCandidateV36I(args: {
-  provider: "ernie-image" | "z-turbo" | "krea2-turbo" | "krea2-turbo" | "krea2-turbo";
+  provider: CharacterBackgroundProvider;
   prompt: string;
   index: number;
   name: string;
@@ -1128,7 +1394,7 @@ function safeBackgroundPreviewSlugV36J(value: string) {
 
 function makeBackgroundCandidateFromImageValueV36J(args: {
   value: string;
-  provider: "ernie-image" | "z-turbo" | "krea2-turbo" | "krea2-turbo" | "krea2-turbo";
+  provider: CharacterBackgroundProvider;
   prompt: string;
   index: number;
   name: string;
@@ -1156,7 +1422,7 @@ function makeBackgroundCandidateFromImageValueV36J(args: {
 }
 
 async function recoverBackgroundPreviewBatchV36J(args: {
-  provider: "ernie-image" | "z-turbo" | "krea2-turbo" | "krea2-turbo" | "krea2-turbo";
+  provider: CharacterBackgroundProvider;
   prompt: string;
   previewCount: number;
   name: string;
@@ -1328,7 +1594,7 @@ function collectBackgroundPreviewImageStringsV36R(value: any, output: string[] =
 
 function makeExactBackgroundPreviewCandidateV36R(args: {
   value: string;
-  provider: "ernie-image" | "z-turbo" | "krea2-turbo" | "krea2-turbo" | "krea2-turbo";
+  provider: CharacterBackgroundProvider;
   prompt: string;
   index: number;
   name: string;
@@ -1356,7 +1622,7 @@ function makeExactBackgroundPreviewCandidateV36R(args: {
 }
 
 async function findExactBackgroundPreviewCandidateV36R(args: {
-  provider: "ernie-image" | "z-turbo" | "krea2-turbo" | "krea2-turbo" | "krea2-turbo";
+  provider: CharacterBackgroundProvider;
   prompt: string;
   index: number;
   name: string;
@@ -1378,7 +1644,7 @@ async function findExactBackgroundPreviewCandidateV36R(args: {
   for (const filename of exactOutputFilenamesV36BPV4) {
     try {
       const response = await fetch(
-        `/api/preview/file?name=${encodeURIComponent(filename)}&t=${Date.now().toString(36)}`,
+        `/api/comfy-image?filename=${encodeURIComponent(filename)}&type=output&debug=1&t=${Date.now().toString(36)}`,
         {
           method: "GET",
           credentials: "include",
@@ -1388,13 +1654,16 @@ async function findExactBackgroundPreviewCandidateV36R(args: {
 
       if (!response.ok) continue;
 
-      return makeExactBackgroundPreviewCandidateV36R({
+      const json = await response.json().catch(() => null);
+      if (json?.ok && (json?.resolvedPath || json?.exists || json?.url)) {
+        return makeExactBackgroundPreviewCandidateV36R({
           value: filename,
           provider: args.provider,
           prompt: args.prompt,
           index: args.index,
           name: args.name,
-      });
+        });
+      }
     } catch {
       // Keep polling fallback endpoints.
     }
@@ -1585,7 +1854,8 @@ function backgroundPreviewFallbackToProxyV36V(event: React.SyntheticEvent<HTMLIm
 // OTG_BACKGROUND_NATIVE_COMFY_PREVIEW_V36V
 
 async function waitForBackgroundRemovePeopleOutputCandidateV36AE(args: {
-  provider: "ernie-image" | "z-turbo" | "krea2-turbo" | "krea2-turbo" | "krea2-turbo";
+  promptId: string;
+  provider: CharacterBackgroundProvider;
   prompt: string;
   index: number;
   name: string;
@@ -1606,10 +1876,24 @@ async function waitForBackgroundRemovePeopleOutputCandidateV36AE(args: {
   ];
 
   while (Date.now() - started < timeoutMs) {
+    const exactHistoryImage = await fetchComfyHistoryImageForPromptV36BP9(args.promptId, {
+      nodeId: "60",
+      filenamePrefix: cleanPrefix,
+    });
+    if (exactHistoryImage?.url) {
+      return makeExactBackgroundPreviewCandidateV36R({
+        value: exactHistoryImage.url,
+        provider: args.provider,
+        prompt: args.prompt,
+        index: args.index,
+        name: args.name,
+      });
+    }
+
     for (const filename of candidateFilenames) {
       try {
         const response = await fetch(
-          `/api/preview/file?name=${encodeURIComponent(filename)}&t=${Date.now().toString(36)}`,
+          `/api/comfy-image?filename=${encodeURIComponent(filename)}&type=output&debug=1&t=${Date.now().toString(36)}`,
           {
             method: "GET",
             credentials: "include",
@@ -1643,63 +1927,273 @@ async function waitForBackgroundRemovePeopleOutputCandidateV36AE(args: {
 
 // OTG_BACKGROUND_REMOVE_PEOPLE_REPLACE_PREVIEW_V36AE
 
-async function waitForBackgroundAnglePlateOutputCandidateV36AF(args: {
-  provider: "ernie-image" | "z-turbo" | "krea2-turbo" | "krea2-turbo" | "krea2-turbo";
+async function waitForBackgroundAnglePlateOutputCandidateV36AK(args: {
+  promptId: string;
+  provider: CharacterBackgroundProvider;
   prompt: string;
   index: number;
   name: string;
-  prefix: string;
+  prefix?: string;
+  nodeId?: string;
   timeoutMs?: number;
 }) {
+  const promptId = String(args.promptId || "").trim();
   const cleanPrefix = String(args.prefix || "").trim();
+  const nodeId = String(args.nodeId || "").trim();
 
-  if (!cleanPrefix) return null;
+  if (!promptId || (!cleanPrefix && !nodeId)) return null;
 
   const timeoutMs = args.timeoutMs || 900000;
   const started = Date.now();
 
-  const candidateFilenames = [
-    `${cleanPrefix}_00001_.png`,
-    `${cleanPrefix}_00001.png`,
-    `${cleanPrefix}.png`,
-  ];
-
   while (Date.now() - started < timeoutMs) {
-    for (const filename of candidateFilenames) {
-      try {
-        const response = await fetch(
-          `/api/preview/file?name=${encodeURIComponent(filename)}&t=${Date.now().toString(36)}`,
-          {
-            method: "GET",
-            credentials: "include",
-            cache: "no-store",
-          },
-        );
+    const exactHistoryImageV36AK =
+      await fetchComfyHistoryImageForPromptV36BP9(
+        promptId,
+        {
+          nodeId: nodeId || undefined,
+          filenamePrefix: cleanPrefix || undefined,
+        },
+      );
 
-        if (!response.ok) continue;
-
-        const json = await response.json().catch(() => null);
-
-        if (json?.ok && (json?.resolvedPath || json?.exists)) {
-          return makeExactBackgroundPreviewCandidateV36R({
-            value: filename,
-            provider: args.provider,
-            prompt: args.prompt,
-            index: args.index,
-            name: args.name,
-          });
-        }
-      } catch {
-        // Keep polling.
-      }
+    if (exactHistoryImageV36AK?.url) {
+      return makeExactBackgroundPreviewCandidateV36R({
+        value: exactHistoryImageV36AK.url,
+        provider: args.provider,
+        prompt: args.prompt,
+        index: args.index,
+        name: args.name,
+      });
     }
 
-    await new Promise((resolve) => window.setTimeout(resolve, 5000));
+    await new Promise((resolve) =>
+      window.setTimeout(resolve, 5000)
+    );
   }
 
   return null;
 }
 
+// OTG_BACKGROUND_ANGLE_PLATE_PROMPT_HISTORY_V36AK
+
+
+const BACKGROUND_MASTER_OUTPUT_WIDTH_V36B = 1920;
+const BACKGROUND_MASTER_OUTPUT_HEIGHT_V36B = 1080;
+
+// OTG_BACKGROUND_CANONICAL_DIRECTIONALS_CLIENT_V36B
+const CANONICAL_BACKGROUND_DIRECTION_TO_ANGLE_KEY_V36B = {
+  left: "left90",
+  right: "right90",
+  rear: "back",
+  up: "up",
+  down: "down",
+} as const;
+
+// OTG_BACKGROUND_SIX_ANGLE_PLATE_V36C
+const CANONICAL_BACKGROUND_CARD_PRESENTATION_V36C = [
+  { key: "front", label: "Front" },
+  { key: "back", label: "Back" },
+  { key: "left90", label: "Left" },
+  { key: "right90", label: "Right" },
+  { key: "up", label: "Up" },
+  { key: "down", label: "Down" },
+] as const;
+
+const CANONICAL_BACKGROUND_CARD_KEYS_V36B: CharacterBackgroundAngleKeyV36A[] =
+  CANONICAL_BACKGROUND_CARD_PRESENTATION_V36C.map((entry) => entry.key);
+
+type CanonicalBackgroundCardDirectionV36C = {
+  key: CharacterBackgroundAngleKeyV36A;
+  label: (typeof CANONICAL_BACKGROUND_CARD_PRESENTATION_V36C)[number]["label"];
+  asset: CharacterBackgroundImageAssetV36A;
+};
+
+function canonicalBackgroundCardDirectionsV36C(
+  angleImages: CharacterBackgroundReferenceV36A["angleImages"] | null | undefined,
+): CanonicalBackgroundCardDirectionV36C[] {
+  if (!angleImages || typeof angleImages !== "object") return [];
+
+  const directions: CanonicalBackgroundCardDirectionV36C[] = [];
+
+  for (const direction of CANONICAL_BACKGROUND_CARD_PRESENTATION_V36C) {
+    const asset = normalizeCharacterBackgroundImageAssetV36A(
+      angleImages[direction.key],
+    );
+
+    if (asset) {
+      directions.push({
+        key: direction.key,
+        label: direction.label,
+        asset,
+      });
+    }
+  }
+
+  return directions;
+}
+
+function BackgroundAnglePlateV36C({
+  angleImages,
+  title,
+}: {
+  angleImages: CharacterBackgroundReferenceV36A["angleImages"] | null | undefined;
+  title: string;
+}) {
+  const directions = canonicalBackgroundCardDirectionsV36C(angleImages);
+
+  if (
+    directions.length !==
+    CANONICAL_BACKGROUND_CARD_PRESENTATION_V36C.length
+  ) {
+    return null;
+  }
+
+  return (
+    <section
+      className="mt-4 rounded-2xl border border-cyan-300/25 bg-cyan-950/15 p-3 sm:p-4"
+      data-otg="OTG_BACKGROUND_SIX_ANGLE_PLATE_V36C"
+      aria-label={`${title} six-direction angle plate`}
+    >
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-cyan-200">
+            Directional Angle Plate
+          </p>
+          <p className="mt-1 text-xs leading-5 text-zinc-400">
+            Six fixed scene references. This is not a 3D or rotatable view.
+          </p>
+        </div>
+        <span className="rounded-full border border-cyan-300/25 bg-black/30 px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-cyan-100">
+          6 directions
+        </span>
+      </div>
+
+      <div
+        className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3"
+        data-otg="background-card-six-direction-grid"
+      >
+        {directions.map(({ key, label, asset }) => {
+          const imageSource =
+            asset.displayImage ||
+            asset.imageUrl ||
+            asset.workflowImage ||
+            asset.imagePath ||
+            "";
+
+          return (
+            <figure
+              key={key}
+              className="relative overflow-hidden rounded-xl border border-white/10 bg-black"
+              data-otg="background-card-direction-tile"
+              data-direction={label}
+            >
+              <img
+                src={otgDisplayImageUrlV36BP6(imageSource)}
+                alt={`${title} ${label} directional view`}
+                width={640}
+                height={360}
+                decoding="async"
+                className="aspect-video w-full object-contain"
+              />
+              <figcaption
+                className="absolute bottom-2 left-2 rounded-md border border-white/25 bg-black/85 px-2.5 py-1 text-xs font-black text-white shadow-lg backdrop-blur-sm"
+                data-otg="background-card-direction-label"
+              >
+                {label}
+              </figcaption>
+            </figure>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function hasCompleteCanonicalBackgroundCardV36B(
+  angleImages: CharacterBackgroundReferenceV36A["angleImages"] | null | undefined,
+) {
+  if (!angleImages || typeof angleImages !== "object") {
+    return false;
+  }
+
+  return CANONICAL_BACKGROUND_CARD_KEYS_V36B.every((key) => {
+    const asset = normalizeCharacterBackgroundImageAssetV36A(
+      angleImages[key],
+    );
+
+    return Boolean(
+      asset?.workflowImage ||
+      asset?.displayImage,
+    );
+  });
+}
+
+function backgroundCandidateActionLabelV1(candidate: CharacterBackgroundPreviewCandidateV36E) {
+  const value = candidate as any;
+  const hasCompletePlate = hasCompleteCanonicalBackgroundCardV36B(value.angleImages);
+
+  if (
+    value.isCanonicalBackgroundCardV36B ||
+    value.isCompleteBackgroundPlateV36AF ||
+    hasCompletePlate
+  ) {
+    return "Save Background";
+  }
+
+  if (value.isBackgroundMasterV36B) {
+    return "Finish Plate";
+  }
+
+  return "Use This Background";
+}
+
+async function validateCharacterBackgroundMasterDimensionsV36B(
+  imageUrl: string,
+) {
+  const value = String(imageUrl || "").trim();
+
+  if (!value) {
+    throw new Error(
+      "Background Master validation failed: no SeedVR output image was returned.",
+    );
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const image = new Image();
+
+    image.onload = () => {
+      const width = Number(image.naturalWidth || image.width || 0);
+      const height = Number(image.naturalHeight || image.height || 0);
+
+      if (
+        width !== BACKGROUND_MASTER_OUTPUT_WIDTH_V36B ||
+        height !== BACKGROUND_MASTER_OUTPUT_HEIGHT_V36B
+      ) {
+        reject(
+          new Error(
+            `Background Master size contract failed: expected ${BACKGROUND_MASTER_OUTPUT_WIDTH_V36B}x${BACKGROUND_MASTER_OUTPUT_HEIGHT_V36B}, received ${width}x${height}.`,
+          ),
+        );
+        return;
+      }
+
+      resolve();
+    };
+
+    image.onerror = () => {
+      reject(
+        new Error(
+          "Background Master validation failed: SeedVR output could not be loaded.",
+        ),
+      );
+    };
+
+    image.src =
+      value +
+      (value.includes("?") ? "&" : "?") +
+      `masterValidation=${Date.now().toString(36)}`;
+  });
+}
 
 function normalizeCompleteBackgroundPlateCandidateForSaveV36AG(candidate: CharacterBackgroundPreviewCandidateV36E) {
   const item: any = candidate || {};
@@ -1798,9 +2292,35 @@ function savedBackgroundDisplaySrcV36AH3(background: any) {
 
 function normalizeSavedBackgroundCandidateForSaveV36AH3(candidate: any) {
   const item: any = candidate || {};
+  const isCanonicalBackgroundCard = Boolean(
+    item?.isCanonicalBackgroundCardV36B ||
+      hasCompleteCanonicalBackgroundCardV36B(item?.angleImages),
+  );
 
-  if (!item?.isCompleteBackgroundPlateV36AF) {
+  if (!item?.isCompleteBackgroundPlateV36AF && !isCanonicalBackgroundCard) {
     return candidate;
+  }
+
+  if (isCanonicalBackgroundCard) {
+    const persistenceFields = canonicalBackgroundPersistenceFields(item);
+
+    return {
+      ...candidate,
+      displayImage: persistenceFields.displayImage || undefined,
+      imageUrl: persistenceFields.imageUrl || persistenceFields.displayImage || undefined,
+      imagePath: persistenceFields.imagePath || persistenceFields.workflowImage || undefined,
+      workflowImage: persistenceFields.workflowImage || persistenceFields.displayImage || undefined,
+      establishingImage:
+        persistenceFields.establishingImage ||
+        item.establishingImage,
+      sourceDisplayImageV36AF:
+        persistenceFields.displayImage ||
+        item.sourceDisplayImageV36AF,
+      sourceWorkflowImageV36AF:
+        persistenceFields.workflowImage ||
+        item.sourceWorkflowImageV36AF,
+      isCanonicalBackgroundCardV36B: true,
+    };
   }
 
   const sourceDisplay = String(
@@ -1834,6 +2354,7 @@ function normalizeSavedBackgroundCandidateForSaveV36AH3(candidate: any) {
   };
 }
 
+// OTG_BACKGROUND_STABLE_ASSET_VIEWER_V36BPI1
 // OTG_SAVED_BACKGROUND_DISPLAY_FIX_V36AH3
 // OTG_BACKGROUND_CARD_DISPLAY_VS_PLATE_V36AG
 // OTG_BACKGROUND_ANGLE_PLATE_UI_V36AF
@@ -2945,7 +3466,10 @@ function characterGeneratedImageFromProgressV36BP9(progressJson: any): Character
   };
 }
 
-async function waitForCharacterImage(promptId: string) {
+async function waitForCharacterImage(
+  promptId: string,
+  outputSelector: CharacterGeneratorOutputSelector = {},
+) {
   const started = Date.now();
   const maxMs = 8 * 60 * 1000;
   let lastStatus = "queued";
@@ -2988,9 +3512,23 @@ async function waitForCharacterImage(promptId: string) {
     throw new Error(`Timed out waiting for character image generation. Last status: ${lastStatus}.`);
   }
 
-  const historyImage = await fetchComfyHistoryImageForPromptV36BP9(promptId);
-  if (historyImage?.url) {
-    return historyImage;
+  const historyStarted = Date.now();
+  const historyTimeoutMs = 90 * 1000;
+
+  while (Date.now() - historyStarted < historyTimeoutMs) {
+    const exactHistoryImage = await fetchComfyHistoryImageForPromptV36BP9(promptId, outputSelector);
+    if (exactHistoryImage?.url) {
+      return exactHistoryImage;
+    }
+
+    if (outputSelector.nodeId || outputSelector.filenamePrefix) {
+      const genericHistoryImage = await fetchComfyHistoryImageForPromptV36BP9(promptId);
+      if (genericHistoryImage?.url) {
+        return genericHistoryImage;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 
   if (completedFileName) {
@@ -3365,17 +3903,37 @@ function characterHasCustomVoice(character: CharacterRecord) {
       profile?.baseSamplePath
   );
 }
-export default function CharactersPanel() {
+type CharactersPanelProps = {
+  initialBackgroundStudioOpen?: boolean;
+  onBackgroundStudioClose?: () => void;
+  authenticatedOwnerKey?: string;
+};
 
-  return <CharacterBuilder />;
+// OTG_BACKGROUND_GALLERY_STUDIO_BRIDGE_V36B
+export default function CharactersPanel({
+  initialBackgroundStudioOpen = false,
+  onBackgroundStudioClose,
+  authenticatedOwnerKey = "",
+}: CharactersPanelProps) {
+  return (
+    <CharacterBuilder
+      initialBackgroundStudioOpen={initialBackgroundStudioOpen}
+      onBackgroundStudioClose={onBackgroundStudioClose}
+      authenticatedOwnerKey={authenticatedOwnerKey}
+    />
+  );
 }
 
-function CharacterBuilder() {
+function CharacterBuilder({
+  initialBackgroundStudioOpen = false,
+  onBackgroundStudioClose,
+  authenticatedOwnerKey = "",
+}: CharactersPanelProps) {
   const [characters, setCharacters] = useState<CharacterRecord[]>([]);
   const [selectedCharacterGeneratorOption, setSelectedCharacterGeneratorOption] = useState<CharacterGeneratorOptionId>(() => {
     if (typeof window === "undefined") return "ernie";
     const stored = window.localStorage.getItem("otg-character-generator-option");
-    return stored === "zturbo" || stored === "krea2" ? (stored as CharacterGeneratorOptionId) : "ernie";
+    return stored === "zturbo" || stored === "krea2" || stored === "boogu" ? (stored as CharacterGeneratorOptionId) : "ernie";
   });
 
   useEffect(() => {
@@ -3392,11 +3950,36 @@ function CharacterBuilder() {
         const loweredUrl = String(url || "").toLowerCase();
         const isCharacterCreatePost =
           selectedCharacterGeneratorOption !== "ernie" &&
-          loweredUrl.includes("/api/") &&
-          (loweredUrl.includes("character") || loweredUrl.includes("comfy")) &&
+          loweredUrl.includes("/api/comfy") &&
           String(init?.method || "GET").toUpperCase() === "POST";
   
         if (isCharacterCreatePost && init?.body) {
+          let requestContext = "";
+          if (init.body instanceof FormData) {
+            requestContext = [
+              init.body.get("requestKind"),
+              init.body.get("sourceType"),
+              init.body.get("workflowId"),
+            ].map((value) => String(value || "").toLowerCase()).join(" ");
+          } else if (typeof init.body === "string") {
+            const parsed = JSON.parse(init.body);
+            requestContext = [
+              parsed?.requestKind,
+              parsed?.sourceType,
+              parsed?.workflowId,
+            ].map((value) => String(value || "").toLowerCase()).join(" ");
+          }
+
+          const shouldApplyCharacterGeneratorPayload =
+            requestContext.includes("character-builder-image") ||
+            (
+              requestContext.includes("anime-image") &&
+              requestContext.includes("characters-tab-builder")
+            );
+          if (!shouldApplyCharacterGeneratorPayload) {
+            return originalFetch(input as any, init);
+          }
+
           const isCharacterCardRequest =
             init.body instanceof FormData
               ? String(init.body.get("requestKind") || init.body.get("sourceType") || init.body.get("workflowId") || "")
@@ -3447,6 +4030,7 @@ function CharacterBuilder() {
   const [selectedCandidateId, setSelectedCandidateId] = useState("");
   const [savedForLaterCandidateIdsV36BPS3, setSavedForLaterCandidateIdsV36BPS3] = useState<Record<string, boolean>>({});
   const [saveForLaterProgressByIdV36BPS6B, setSaveForLaterProgressByIdV36BPS6B] = useState<Record<string, "idle" | "saving" | "saved" | "error">>({});
+  const [characterCompletionByIdV1, setCharacterCompletionByIdV1] = useState<Record<string, { jobId: string; status: string; progress: number; message: string }>>({});
   const [uploadedImage, setUploadedImage] = useState<CandidateImage | null>(null);
   const [imageCompleteness, setImageCompleteness] = useState<ImageCompleteness>("full_body");
   const [characterAnatomyMode, setCharacterAnatomyMode] = useState<CharacterAnatomyMode>("standard");
@@ -3462,18 +4046,21 @@ function CharacterBuilder() {
   const [characterBackgroundPrompt, setCharacterBackgroundPrompt] = useState("");
   const [characterBackgroundName, setCharacterBackgroundName] = useState("Scene Background");
   const [characterBackgroundBusy, setCharacterBackgroundBusy] = useState(false);
-  const [characterBackgroundStatus, setCharacterBackgroundStatus] = useState("");
+
+  const characterBackgroundLifecycleBusyRefV36B = useRef(false);
+const [characterBackgroundStatus, setCharacterBackgroundStatus] = useState("");
   const [characterBackgroundRefs, setCharacterBackgroundRefs] = useState<CharacterBackgroundReferenceV36A[]>([]);
   const [characterBackgroundLocationType, setCharacterBackgroundLocationType] = useState("");
   const [characterBackgroundStyle, setCharacterBackgroundStyle] = useState("cinematic realistic");
   const [characterBackgroundContinuityBlock, setCharacterBackgroundContinuityBlock] = useState("");
   const [characterBackgroundDoNotChange, setCharacterBackgroundDoNotChange] = useState("");
-  const [characterBackgroundStudioOpen, setCharacterBackgroundStudioOpen] = useState(false);
-  const [characterBackgroundProvider, setCharacterBackgroundProvider] = useState<"ernie-image" | "z-turbo" | "krea2-turbo">("ernie-image");
-  const [characterBackgroundPreviewCount, setCharacterBackgroundPreviewCount] = useState(5);
+  const [characterBackgroundStudioOpen, setCharacterBackgroundStudioOpen] = useState(initialBackgroundStudioOpen);
+  const [characterBackgroundProvider, setCharacterBackgroundProvider] = useState<CharacterBackgroundProvider>("ernie-image");
   const [characterBackgroundPreviewCandidates, setCharacterBackgroundPreviewCandidates] = useState<CharacterBackgroundPreviewCandidateV36E[]>([]);
   const [selectedCharacterBackgroundCandidateId, setSelectedCharacterBackgroundCandidateId] = useState("");
   const [expandedCharacterBackgroundCandidateId, setExpandedCharacterBackgroundCandidateId] = useState("");
+  const [expandedSavedCharacterBackgroundIdV36AN, setExpandedSavedCharacterBackgroundIdV36AN] = useState("");
+  const [savedBackgroundImageFailuresV36BPI1, setSavedBackgroundImageFailuresV36BPI1] = useState<Record<string, boolean>>({});
 
 
   const [selectedFullBody, setSelectedFullBody] = useState<CandidateImage | null>(null);
@@ -3772,17 +4359,16 @@ function CharacterBuilder() {
     let cancelled = false;
     const restore = async () => {
       try {
-        const response = await characterFetch(`/api/characters/builder-draft?ownerId=${encodeURIComponent(getCharacterDeviceId())}`, {
+        const response = await characterFetch("/api/characters/builder-draft", {
           cache: "no-store",
-          credentials: "omit",
-          headers: { "x-otg-device-id": getCharacterDeviceId() },
+          credentials: "include",
         });
         const json = await response.json().catch(() => null);
         const serverState = json?.draft?.state;
         if (!cancelled && response.ok && serverState && typeof serverState === "object") {
           restoreCharacterBuilderDraftState(serverState);
           window.localStorage.setItem(
-            getCharacterBuilderDraftKey(),
+            getCharacterBuilderDraftKey(authenticatedOwnerKey),
             JSON.stringify({
               version: CHARACTER_BUILDER_DRAFT_VERSION,
               savedAt: json?.draft?.updatedAt || new Date().toISOString(),
@@ -3793,10 +4379,10 @@ function CharacterBuilder() {
           return;
         }
 
-        const raw = window.localStorage.getItem(getCharacterBuilderDraftKey());
+        const raw = window.localStorage.getItem(getCharacterBuilderDraftKey(authenticatedOwnerKey));
         if (raw) {
           const draft = JSON.parse(raw);
-          if (!cancelled && isRealCharacterOwnerKey(getCharacterDeviceId()) && draft?.version === CHARACTER_BUILDER_DRAFT_VERSION && draft.state && !characterBuilderDraftHasForeignOwner(draft, getCharacterDeviceId())) {
+          if (!cancelled && authenticatedOwnerKey && draft?.version === CHARACTER_BUILDER_DRAFT_VERSION && draft.state && !characterBuilderDraftHasForeignOwner(draft, authenticatedOwnerKey)) {
             restoreCharacterBuilderDraftState(draft.state);
             setMessage("Restored local character creation cache.");
           }
@@ -3817,7 +4403,7 @@ function CharacterBuilder() {
     return () => {
       cancelled = true;
     };
-  }, [restoreCharacterBuilderDraftState]);
+  }, [authenticatedOwnerKey, restoreCharacterBuilderDraftState]);
 
   const buildCharacterBuilderDraftState = useCallback((overrides: Record<string, unknown> = {}) => {
     const nextStep = typeof overrides.step === "string" ? overrides.step : step;
@@ -3968,14 +4554,14 @@ function CharacterBuilder() {
       state,
     };
     try {
-      window.localStorage.setItem(getCharacterBuilderDraftKey(), JSON.stringify(draft));
+      window.localStorage.setItem(getCharacterBuilderDraftKey(authenticatedOwnerKey), JSON.stringify(draft));
     } catch {
       // Local cache is best effort; server draft is authoritative.
     }
-    void characterFetch(`/api/characters/builder-draft?ownerId=${encodeURIComponent(getCharacterDeviceId())}`, {
+    void characterFetch("/api/characters/builder-draft", {
       method: "PUT",
       headers: CHARACTER_JSON_HEADERS,
-      credentials: "omit",
+      credentials: "include",
       body: JSON.stringify({
         mode: "new_character",
         characterId,
@@ -3985,7 +4571,7 @@ function CharacterBuilder() {
     }).catch(() => {
       // Local cache remains available if the immediate server write fails.
     });
-  }, [buildCharacterBuilderDraftState, details.name, step]);
+  }, [authenticatedOwnerKey, buildCharacterBuilderDraftState, details.name, step]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -3999,15 +4585,15 @@ function CharacterBuilder() {
     };
 
     try {
-      window.localStorage.setItem(getCharacterBuilderDraftKey(), JSON.stringify(draft));
+      window.localStorage.setItem(getCharacterBuilderDraftKey(authenticatedOwnerKey), JSON.stringify(draft));
       if (characterDraftSaveTimeoutRef.current !== null) {
         window.clearTimeout(characterDraftSaveTimeoutRef.current);
       }
       characterDraftSaveTimeoutRef.current = window.setTimeout(() => {
-        void characterFetch(`/api/characters/builder-draft?ownerId=${encodeURIComponent(getCharacterDeviceId())}`, {
+        void characterFetch("/api/characters/builder-draft", {
           method: "PUT",
           headers: CHARACTER_JSON_HEADERS,
-          credentials: "omit",
+          credentials: "include",
           body: JSON.stringify({
             mode: "new_character",
             characterId: safeId(details.name),
@@ -4422,48 +5008,78 @@ function CharacterBuilder() {
   const fullBodyDownstreamGateMessage = getFullBodyGateError();
   const characterPreviewDisabled = characterPreviewSubmitting || Boolean(fullBodyDownstreamGateMessage) || !trainedVoiceReady || !characterPreviewSourceImagePath;
   useEffect(() => {
-    setCharacterBackgroundRefs(readCharacterBackgroundLibraryV36A());
+    if (!expandedSavedCharacterBackgroundIdV36AN) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const closeViewer = () => setExpandedSavedCharacterBackgroundIdV36AN("");
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeViewer();
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [expandedSavedCharacterBackgroundIdV36AN]);
+
+  useEffect(() => {
+    setCharacterBackgroundRefs(readCharacterBackgroundLibraryV36A(authenticatedOwnerKey));
     void loadCharacterBackgroundLibraryV36B();
-  }, []);
+  }, [authenticatedOwnerKey]);
 
   async function loadCharacterBackgroundLibraryV36B() {
     try {
       const serverItems = await fetchCharacterBackgroundLibraryFromServerV36B();
-      setCharacterBackgroundRefs((current) => {
-        const merged = serverItems.reduce(
-          (items, item) => upsertCharacterBackgroundReferenceV36A(items, item),
-          current,
-        );
-        writeCharacterBackgroundLibraryV36A(merged);
-        return merged;
-      });
+      setSavedBackgroundImageFailuresV36BPI1({});
+      setCharacterBackgroundRefs(serverItems);
+      writeCharacterBackgroundLibraryV36A(authenticatedOwnerKey, serverItems);
     } catch (error: any) {
-      const cached = readCharacterBackgroundLibraryV36A();
+      const cached = readCharacterBackgroundLibraryV36A(authenticatedOwnerKey);
       if (cached.length) setCharacterBackgroundRefs(cached);
       setCharacterBackgroundStatus(error?.message || "Background library loaded from local cache.");
     }
   }
 
-  function saveCharacterBackgroundReferenceV36A(next: CharacterBackgroundReferenceV36A) {
+  async function saveCharacterBackgroundReferenceV36A(next: CharacterBackgroundReferenceV36A) {
+    const saved = await persistCharacterBackgroundReferenceToServerV36B(next);
+
+    if (!saved?.id) {
+      throw new Error("Background library save returned no saved background record.");
+    }
+
+    const serverItems = await fetchCharacterBackgroundLibraryFromServerV36B();
+    const verified = serverItems.find((item) => item.id === saved.id || item.id === next.id) || null;
+
+    if (!verified) {
+      throw new Error(`Background save could not be verified after POST: ${saved.id || next.id}`);
+    }
+
+    if (!String(verified.workflowImage || verified.imagePath || verified.imageUrl || "").trim()) {
+      throw new Error(`Background save verification found no usable workflow image: ${verified.id}`);
+    }
+
+    if (
+      hasCompleteCanonicalBackgroundCardV36B(next.angleImages) &&
+      !hasCompleteCanonicalBackgroundCardV36B(verified.angleImages)
+    ) {
+      throw new Error(
+        `Background Card save verification did not return all six canonical references: ${verified.id}`,
+      );
+    }
+
     setCharacterBackgroundRefs((current) => {
-      const updated = upsertCharacterBackgroundReferenceV36A(current, next);
-      writeCharacterBackgroundLibraryV36A(updated);
+      const updated = upsertCharacterBackgroundReferenceV36A(current, verified);
+      writeCharacterBackgroundLibraryV36A(authenticatedOwnerKey, updated);
       return updated;
     });
 
-    void persistCharacterBackgroundReferenceToServerV36B(next)
-      .then((saved) => {
-        if (!saved) return;
-        setCharacterBackgroundRefs((current) => {
-          const updated = upsertCharacterBackgroundReferenceV36A(current, saved);
-          writeCharacterBackgroundLibraryV36A(updated);
-          return updated;
-        });
-      })
-      .catch((error: any) => {
-        setCharacterBackgroundStatus(error?.message || "Background saved locally, but server library save failed.");
-      });
+    return verified;
   }
+
+  // OTG_BACKGROUND_TRANSACTIONAL_SAVE_V36AM
 
   async function deleteCharacterBackgroundReferenceV36C(id: string, name: string) {
     if (!id) return;
@@ -4479,9 +5095,7 @@ function CharacterBuilder() {
         method: "POST",
         credentials: "include",
         cache: "no-store",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: backgroundLibraryRequestHeadersV36AO(true),
         body: JSON.stringify({
           action: "delete",
           id,
@@ -4496,19 +5110,67 @@ function CharacterBuilder() {
 
       setCharacterBackgroundRefs((current) => {
         const updated = current.filter((item) => item.id !== id);
-        writeCharacterBackgroundLibraryV36A(updated);
+        writeCharacterBackgroundLibraryV36A(authenticatedOwnerKey, updated);
         return updated;
       });
 
       setCharacterBackgroundPreviewCandidates((current) => current.filter((item) => item.id !== id));
       setSelectedCharacterBackgroundCandidateId((current) => (current === id ? "" : current));
-      setCharacterBackgroundStatus("Background deleted.");
+      setExpandedSavedCharacterBackgroundIdV36AN((current) => (current === id ? "" : current));
+      setSavedBackgroundImageFailuresV36BPI1((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
+      setCharacterBackgroundStatus(`Background deleted: ${name || id}`);
     } catch (error: any) {
       setCharacterBackgroundStatus(error?.message || "Delete background failed.");
     } finally {
       setCharacterBackgroundBusy(false);
     }
   }
+
+  async function renameCharacterBackgroundReferenceV36AN(background: CharacterBackgroundReferenceV36A) {
+    const currentName = String(background?.name || "Scene Background").trim() || "Scene Background";
+    const requestedName = window.prompt(`Rename background "${currentName}"`, currentName);
+
+    if (requestedName === null) return;
+
+    const nextName = requestedName.trim();
+
+    if (!nextName) {
+      setCharacterBackgroundStatus("Background name cannot be empty.");
+      return;
+    }
+
+    if (nextName === currentName) {
+      setCharacterBackgroundStatus(`Background name unchanged: ${currentName}`);
+      return;
+    }
+
+    setCharacterBackgroundBusy(true);
+    setCharacterBackgroundStatus(`Renaming background to ${nextName}...`);
+
+    try {
+      const saved = await saveCharacterBackgroundReferenceV36A({
+        ...background,
+        name: nextName,
+        updatedAt: new Date().toISOString(),
+      });
+
+      if (saved.name !== nextName) {
+        throw new Error(`Background rename verification returned "${saved.name}" instead of "${nextName}".`);
+      }
+
+      setCharacterBackgroundStatus(`Background renamed and verified: ${nextName}`);
+    } catch (error: any) {
+      setCharacterBackgroundStatus(error?.message || "Rename background failed.");
+    } finally {
+      setCharacterBackgroundBusy(false);
+    }
+  }
+
+  // OTG_BACKGROUND_SAVED_LIBRARY_MANAGER_V36AN
 
   async function saveSelectedCharacterBackgroundCandidateV36C() {
     const selected =
@@ -4542,8 +5204,17 @@ function CharacterBuilder() {
       updatedAt: now,
     };
 
-    saveCharacterBackgroundReferenceV36A(next);
-    setCharacterBackgroundStatus("Selected background saved to the Background Library.");
+    setCharacterBackgroundBusy(true);
+    setCharacterBackgroundStatus("Saving selected background to the server library...");
+
+    try {
+      await saveCharacterBackgroundReferenceV36A(next);
+      setCharacterBackgroundStatus("Selected background saved and verified in the Background Library.");
+    } catch (error: any) {
+      setCharacterBackgroundStatus(error?.message || "Selected background save failed.");
+    } finally {
+      setCharacterBackgroundBusy(false);
+    }
   }
 
   async function createCharacterBackgroundV36A() {
@@ -4560,7 +5231,7 @@ function CharacterBuilder() {
       return;
     }
 
-    const previewCount = clampCharacterBackgroundPreviewCountV36C(characterBackgroundPreviewCount);
+    const previewCount = 1;
 
     setCharacterBackgroundBusy(true);
     setCharacterBackgroundStatus(`Creating ${previewCount} background preview${previewCount === 1 ? "" : "s"}...`);
@@ -4712,6 +5383,10 @@ function CharacterBuilder() {
       window.setTimeout(resetBackgroundStudioPageScrollV36Q, 50);
       window.setTimeout(resetBackgroundStudioPageScrollV36Q, 250);
     }
+
+    if (initialBackgroundStudioOpen) {
+      onBackgroundStudioClose?.();
+    }
   }
 
   useEffect(() => {
@@ -4745,9 +5420,7 @@ function CharacterBuilder() {
         method: "POST",
         credentials: "include",
         cache: "no-store",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: backgroundLibraryRequestHeadersV36AO(true),
         body: JSON.stringify({
           action: "delete",
           id,
@@ -4762,7 +5435,7 @@ function CharacterBuilder() {
 
       setCharacterBackgroundRefs((current) => {
         const updated = current.filter((item) => item.id !== id);
-        writeCharacterBackgroundLibraryV36A(updated);
+        writeCharacterBackgroundLibraryV36A(authenticatedOwnerKey, updated);
         return updated;
       });
 
@@ -4777,118 +5450,80 @@ function CharacterBuilder() {
   async function createCharacterBackgroundPreviewsV36E() {
     const finalPrompt = buildCharacterBackgroundPromptV36E({
       name: characterBackgroundName.trim(),
-      locationType: characterBackgroundLocationType.trim(),
+      locationType: "",
       style: characterBackgroundStyle.trim() || "Cinematic",
-      describeScene: characterBackgroundContinuityBlock.trim(),
+      describeScene: characterBackgroundPrompt.trim(),
       promptOverride: characterBackgroundPrompt.trim(),
     });
 
-    if (!finalPrompt.trim()) {
-      setCharacterBackgroundStatus("Describe the scene or build a prompt first.");
+    if (!characterBackgroundPrompt.trim()) {
+      setCharacterBackgroundStatus("Enter a Background Prompt first.");
       return;
     }
 
-    const previewCount = clampCharacterBackgroundPreviewCountV36E(characterBackgroundPreviewCount);
-    const provider = characterBackgroundProvider === "krea2-turbo" ? "krea2-turbo" : characterBackgroundProvider === "z-turbo" ? "z-turbo" : "ernie-image";
-    const backgroundPreviewBatchIdV36R = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const provider: CharacterBackgroundProvider = characterBackgroundProvider;
     const backgroundPreviewRunIdV36R = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const backgroundPreviewTitleV36G = `${(characterBackgroundName.trim() || "background").replace(/[^a-zA-Z0-9_-]+/g, "-")}-preview-${backgroundPreviewRunIdV36R}`;
 
     setCharacterBackgroundBusy(true);
-    setCharacterBackgroundStatus(`Creating ${previewCount} landscape background preview${previewCount === 1 ? "" : "s"}...`);
-    setCharacterBackgroundPreviewCandidates([]);
-    setSelectedCharacterBackgroundCandidateId("");
+    setCharacterBackgroundStatus("Creating one landscape Background candidate...");
 
     try {
-      const candidates: CharacterBackgroundPreviewCandidateV36E[] = [];
-
-      for (let index = 0; index < previewCount; index += 1) {
-        const body = new FormData();
-        body.set("prompt", finalPrompt);
-        body.set("positivePrompt", finalPrompt);
-        body.set("negativePrompt", "characters, people, person, face, body, portrait, text, captions, watermark, logo, blurry, low quality, vertical frame");
-        const backgroundPreviewTitleV36G = `${(characterBackgroundName.trim() || "background").replace(/[^a-zA-Z0-9_-]+/g, "-")}-preview-${backgroundPreviewRunIdV36R}-${index + 1}`;
-        body.set("title", backgroundPreviewTitleV36G);
-        body.set("filenamePrefix", backgroundPreviewTitleV36G);
-        body.set("filename_prefix", backgroundPreviewTitleV36G);
-        body.set("previewRunId", backgroundPreviewRunIdV36R);
-        body.set("previewIndex", String(index + 1));
-        body.set("previewCount", String(previewCount));
-        body.set("expectedWidth", "1280");
-        body.set("expectedHeight", "720");
-        body.set("expectedAspectRatio", "16:9");
-        body.set("name", characterBackgroundName.trim() || "Scene Background");
-        appendBackgroundComfyRoutingFieldsV36E(body, provider);
-
-        const response = await fetch("/api/comfy", {
-          method: "POST",
-          credentials: "include",
-          cache: "no-store",
-          headers: {
-            "x-otg-device-id": getCharacterDeviceId(),
-          },
-          body,
-        });
-
-        const json = await response.json().catch(() => null);
-
-        if (!response.ok) {
-          throw new Error(json?.error || `Background preview ${index + 1} failed (${response.status}).`);
-        }
-
-        if (json?.ok === false && json?.error) {
-          throw new Error(json.error);
-        }
-
-        let candidate: CharacterBackgroundPreviewCandidateV36E | null = null;
-
-        try {
-          candidate = extractBackgroundPreviewCandidateV36H({
-            json,
-            provider,
-            prompt: finalPrompt,
-            index,
-            name: characterBackgroundName.trim() || "Scene Background",
-          });
-        } catch {
-          const maxAttempts = 36;
-          for (let attempt = 0; attempt < maxAttempts && !candidate; attempt += 1) {
-            await waitForBackgroundPreviewV36G(attempt === 0 ? 4000 : 3000);
-            candidate = await findExactBackgroundPreviewCandidateV36R({
-              provider,
-              prompt: finalPrompt,
-              index,
-              name: characterBackgroundName.trim() || "Scene Background",
-              title: backgroundPreviewTitleV36G,
-            });
-          }
-        }
-
-        if (!candidate) {
-          throw new Error(`Background preview ${index + 1} was queued, but the app could not find a matching current-run output named ${backgroundPreviewTitleV36G}. It will not sync a random recent image.`);
-        }
-
-        candidates.push(candidate);
-        setCharacterBackgroundPreviewCandidates([...candidates]);
-        setSelectedCharacterBackgroundCandidateId((current) => current || candidate.id);
-      }
-
-      const uniqueCandidatesV36R = candidates.filter((candidate, index, array) => {
-        const key = String(candidate.workflowImage || candidate.displayImage || candidate.imagePath || candidate.imageUrl || candidate.id).toLowerCase();
-        return key && array.findIndex((item) => String(item.workflowImage || item.displayImage || item.imagePath || item.imageUrl || item.id).toLowerCase() === key) === index;
-      }).slice(0, previewCount);
-
-      setCharacterBackgroundPreviewCandidates(uniqueCandidatesV36R);
-      setSelectedCharacterBackgroundCandidateId((current) => {
-        if (current && uniqueCandidatesV36R.some((candidate) => candidate.id === current)) {
-          return current;
-        }
-
-        return uniqueCandidatesV36R[0]?.id || "";
+      const response = await fetch("/api/backgrounds/create-image", {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: provider,
+          prompt: finalPrompt,
+          negativePrompt: "characters, people, person, face, body, portrait, text, captions, watermark, logo, blurry, low quality, vertical frame",
+          filenamePrefix: backgroundPreviewTitleV36G,
+          name: characterBackgroundName.trim() || "Scene Background",
+          previewIndex: 1,
+          previewCount: 1,
+        }),
       });
 
-      setCharacterBackgroundStatus(`${uniqueCandidatesV36R.length} preview${uniqueCandidatesV36R.length === 1 ? "" : "s"} created at 1280x720. Select exactly one preview and click Use Image to create the complete background image plate.`);
+      const json = await response.json().catch(() => null);
+      if (!response.ok || json?.ok === false) {
+        throw new Error(json?.error || `Background candidate failed (${response.status}).`);
+      }
+
+      const promptId = String(json?.prompt_id || json?.promptId || "").trim();
+      const outputNodeId = String(json?.outputNodeId || "").trim();
+      if (!promptId) throw new Error("Background generation returned no prompt ID.");
+      setCharacterBackgroundStatus(`Background candidate queued. Prompt ${promptId}. Waiting for its exact output...`);
+
+      let candidate: CharacterBackgroundPreviewCandidateV36E | null = null;
+      for (let attempt = 0; attempt < 120 && !candidate; attempt += 1) {
+        await waitForBackgroundPreviewV36G(1500);
+        const exact = await fetchComfyHistoryImageForPromptV36BP9(promptId, {
+          nodeId: outputNodeId || undefined,
+          filenamePrefix: outputNodeId ? undefined : backgroundPreviewTitleV36G,
+        });
+        if (exact?.url) {
+          candidate = makeExactBackgroundPreviewCandidateV36R({
+            value: exact.url,
+            provider,
+            prompt: finalPrompt,
+            index: 0,
+            name: characterBackgroundName.trim() || "Scene Background",
+          });
+        }
+      }
+      if (!candidate) {
+        throw new Error(`Background prompt ${promptId} did not return its exact output. Existing candidates were preserved.`);
+      }
+
+      const generatedCandidate = { ...candidate, sourceType: "generated" as const };
+      setCharacterBackgroundPreviewCandidates((current) =>
+        appendGeneratedBackgroundCandidateFifo(current, generatedCandidate, 5),
+      );
+      setSelectedCharacterBackgroundCandidateId(generatedCandidate.id);
+      setCharacterBackgroundStatus(`One 1280x720 Background candidate created. Prompt ${promptId}. The generated FIFO keeps the newest five.`);
     } catch (error: any) {
-      setCharacterBackgroundStatus(error?.message || "Create background previews failed.");
+      setCharacterBackgroundStatus(error?.message || "Create Background failed. Existing candidates were preserved.");
     } finally {
       setCharacterBackgroundBusy(false);
     }
@@ -4903,17 +5538,15 @@ function CharacterBuilder() {
     }
 
     const sourceValue = backgroundPreviewBestImageValueV36S(candidate);
-    const loadImageValue = backgroundPreviewComfyLoadImageValueV36S(sourceValue);
-
-    if (!loadImageValue) {
+    if (!sourceValue) {
       setCharacterBackgroundStatus("Remove People failed: selected preview has no usable image path.");
       return;
     }
 
-    const originalProvider = candidate.provider === "krea2-turbo" ? "krea2-turbo" : candidate.provider === "z-turbo" ? "z-turbo" : "ernie-image";
+    const originalProvider = normalizeCharacterBackgroundProviderV1(candidate.provider);
     const editRunId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const editTitle = `${(characterBackgroundName.trim() || "background").replace(/[^a-zA-Z0-9_-]+/g, "-")}-remove-people-${editRunId}`;
-    const removePeoplePrompt = "remove all people from the image, remove every human figure, fill the removed areas naturally with matching background details, preserve the same room, lighting, architecture, materials, camera angle, perspective, color palette, and cinematic style, no people, no faces, no bodies";
+    const removePeoplePrompt = "Remove all people, humans, persons, crowds, faces, bodies, and human figures. Fill removed areas naturally. Preserve the exact environment, architecture, furniture, lighting, scene composition, camera position, camera angle, background design, materials, color palette, perspective, and overall art style.";
 
     setCharacterBackgroundBusy(true);
     setCharacterBackgroundStatus("Removing people from selected preview with Qwen Image Edit...");
@@ -4936,13 +5569,13 @@ function CharacterBuilder() {
       body.set("mode", "remove-people");
       body.set("operation", "remove-people");
 
-      body.set("inputImage", loadImageValue);
-      body.set("sourceImage", loadImageValue);
-      body.set("sourceImagePath", loadImageValue);
-      body.set("image", loadImageValue);
-      body.set("imagePath", loadImageValue);
-      body.set("loadImage", loadImageValue);
-      body.set("loadImageValue", loadImageValue);
+      body.set("inputImage", sourceValue);
+      body.set("sourceImage", sourceValue);
+      body.set("sourceImagePath", sourceValue);
+      body.set("image", sourceValue);
+      body.set("imagePath", sourceValue);
+      body.set("loadImage", sourceValue);
+      body.set("loadImageValue", sourceValue);
 
       body.set("loadImageNodeId", "78");
       body.set("loadImageInput", "image");
@@ -4955,7 +5588,7 @@ function CharacterBuilder() {
       body.set("seedNodeId", "433:3");
       body.set("seedNodeInput", "seed");
 
-      body.set("nodeOverride.78.inputs.image", loadImageValue);
+      body.set("nodeOverride.78.inputs.image", sourceValue);
       body.set("nodeOverride.433:111.inputs.prompt", removePeoplePrompt);
       body.set("nodeOverride.433:110.inputs.prompt", "");
       body.set("nodeOverride.60.inputs.filename_prefix", editTitle);
@@ -4973,10 +5606,15 @@ function CharacterBuilder() {
         throw new Error(json?.error || `Remove People failed (${response.status}).`);
       }
 
+      const removePeoplePromptId = String(json?.prompt_id || json?.promptId || "").trim();
+      if (!removePeoplePromptId) {
+        throw new Error("Qwen Image Edit returned no prompt ID; the selected candidate was not replaced.");
+      }
       const removePeopleRoutePrefixV36AE = String(json?.expectedOutputPrefix || json?.filenamePrefix || editTitle);
-      setCharacterBackgroundStatus("Remove People queued. Waiting for cleaned output to replace the selected preview...");
+      setCharacterBackgroundStatus(`Qwen Image Edit prompt ${removePeoplePromptId} queued. Waiting for the exact cleaned output...`);
 
       let cleaned: CharacterBackgroundPreviewCandidateV36E | null = await waitForBackgroundRemovePeopleOutputCandidateV36AE({
+        promptId: removePeoplePromptId,
         provider: originalProvider,
         prompt: candidate.prompt || removePeoplePrompt,
         index: 0,
@@ -5030,23 +5668,725 @@ function CharacterBuilder() {
         name: `${candidate.name || "Background Preview"} - People Removed`,
         prompt: candidate.prompt || removePeoplePrompt,
         provider: originalProvider,
+        sourceType: candidate.sourceType,
+        removePeoplePromptId,
         createdAt: new Date().toISOString(),
       };
 
       setCharacterBackgroundPreviewCandidates((current) =>
-        current.map((item) => (item.id === candidate.id ? updatedCandidate : item)),
+        replaceBackgroundCandidate(current, candidate.id, updatedCandidate),
       );
       setSelectedCharacterBackgroundCandidateId(updatedCandidate.id);
       setExpandedCharacterBackgroundCandidateId(updatedCandidate.id);
-      setCharacterBackgroundStatus("People removed. The selected preview slot was replaced with the cleaned image.");
+      setCharacterBackgroundStatus(`People removed by Qwen Image Edit prompt ${removePeoplePromptId}. The same candidate slot was replaced.`);
     } catch (error: any) {
-      setCharacterBackgroundStatus(error?.message || "Remove People failed.");
+      setCharacterBackgroundStatus(`${error?.message || "Remove People failed."} The original candidate was preserved.`);
     } finally {
       setCharacterBackgroundBusy(false);
     }
   }
 
-  async function createCharacterBackgroundAnglePlateFromCandidateV36AF(candidate: CharacterBackgroundPreviewCandidateV36E | null | undefined) {
+  async function createCharacterBackgroundMasterFromCandidateV36B(
+  candidate: CharacterBackgroundPreviewCandidateV36E | null | undefined,
+  options: {
+    commitIntermediate?: boolean;
+    keepBusyOnSuccess?: boolean;
+  } = {},
+) {
+  if (!candidate) {
+    setCharacterBackgroundStatus(
+      "Select a background preview before creating the high-resolution Master.",
+    );
+    return null;
+  }
+
+  const existingMaster = candidate as any;
+
+  if (existingMaster?.isBackgroundMasterV36B) {
+    return candidate;
+  }
+
+  const sourceValue = backgroundPreviewBestImageValueV36S(candidate);
+  const originalDisplayValue = String(
+    candidate.displayImage ||
+      candidate.imageUrl ||
+      candidate.imagePath ||
+      candidate.workflowImage ||
+      sourceValue ||
+      "",
+  ).trim();
+
+  if (!sourceValue) {
+    setCharacterBackgroundStatus(
+      "Background Master failed: selected preview has no usable image.",
+    );
+    return null;
+  }
+
+  const originalProvider =
+    normalizeCharacterBackgroundProviderV1(candidate.provider);
+
+  const runId =
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const safeName = (
+    characterBackgroundName.trim() ||
+    candidate.name ||
+    "background"
+  )
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "background";
+
+  const outputPrefix =
+    `${safeName}-background-master-${runId}`;
+
+  setCharacterBackgroundBusy(true);
+  setCharacterBackgroundStatus(
+    "Preparing the selected background for the 1920x1080 SeedVR Master...",
+  );
+
+  let masterCreatedV36BB = false;
+
+  try {
+    const sourceResponse = await fetch(sourceValue, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+    });
+
+    if (!sourceResponse.ok) {
+      throw new Error(
+        `Background Master source fetch failed (${sourceResponse.status}).`,
+      );
+    }
+
+    const sourceContentType =
+      String(sourceResponse.headers.get("content-type") || "")
+        .split(";")[0]
+        .trim();
+
+    if (
+      sourceContentType &&
+      !sourceContentType.toLowerCase().startsWith("image/")
+    ) {
+      throw new Error(
+        `Background Master source returned non-image content: ${sourceContentType}.`,
+      );
+    }
+
+    const sourceBlob = await sourceResponse.blob();
+
+    if (!sourceBlob.size) {
+      throw new Error(
+        "Background Master source image was empty.",
+      );
+    }
+
+    const preprocessBody = new FormData();
+    preprocessBody.set(
+      "image",
+      new File(
+        [sourceBlob],
+        `${safeName}-background-master-source.png`,
+        {
+          type:
+            sourceContentType ||
+            sourceBlob.type ||
+            "image/png",
+        },
+      ),
+    );
+
+    const preprocessResponse = await fetch(
+      "/api/background-master-upscale",
+      {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        body: preprocessBody,
+      },
+    );
+
+    if (!preprocessResponse.ok) {
+      const failureJson =
+        await preprocessResponse.json().catch(() => null);
+
+      throw new Error(
+        failureJson?.error ||
+        `Background Master preprocessing failed (${preprocessResponse.status}).`,
+      );
+    }
+
+    const preparedBlob = await preprocessResponse.blob();
+
+    if (!preparedBlob.size) {
+      throw new Error(
+        "Background Master preprocessing returned an empty image.",
+      );
+    }
+
+    setCharacterBackgroundStatus(
+      "Submitting the 480x270 Master input to SeedVR on the RTX 3090...",
+    );
+
+    const body = new FormData();
+
+    body.set(
+      "workflowId",
+      "internal/character-reference/seedvr2_character_reference_1080p",
+    );
+    body.set(
+      "workflowFile",
+      "comfy_workflows/internal/character-reference/seedvr2_character_reference_1080p.json",
+    );
+    body.set("workflowLabel", "Background Master SeedVR2 1080p");
+    body.set("requestKind", "background-master-seedvr");
+    body.set("sourceType", "background-master-seedvr");
+    body.set("gpuTarget", "rtx3090");
+    body.set("loadImageNodeId", "1");
+    body.set("saveImageNodeId", "9");
+    body.set("filenamePrefix", outputPrefix);
+    body.set("filename_prefix", outputPrefix);
+    body.set("title", outputPrefix);
+    body.set("saveToGallery", "false");
+    body.set("save_to_gallery", "false");
+    body.set("persistToGallery", "false");
+    body.set("addToGallery", "false");
+    body.set("copyToGallery", "false");
+    body.set("writeToGallery", "false");
+    body.set("gallery", "false");
+    body.set("skipGallery", "true");
+    body.set("skipGeneralGallery", "true");
+    body.set("assetLibraryOnly", "true");
+    body.set("outputLibrary", "backgrounds");
+    body.set(
+      "galleryExclusionPolicy",
+      "background-master-only",
+    );
+    body.set(
+      "imageA",
+      new File(
+        [preparedBlob],
+        `${safeName}-background-master-seedvr-input.png`,
+        { type: "image/png" },
+      ),
+    );
+
+    const response = await fetch("/api/comfy", {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      body,
+    });
+
+    const json = await response.json().catch(() => null);
+
+    if (!response.ok || json?.ok === false) {
+      throw new Error(
+        json?.error ||
+        `Background Master SeedVR submission failed (${response.status}).`,
+      );
+    }
+
+    const backgroundMasterPromptIdV36B =
+      String(
+        json?.prompt_id ||
+        json?.promptId ||
+        "",
+      ).trim();
+
+    if (!backgroundMasterPromptIdV36B) {
+      throw new Error(
+        "Background Master SeedVR workflow was accepted, but no ComfyUI prompt id was returned.",
+      );
+    }
+
+    setCharacterBackgroundStatus(
+      `SeedVR Master queued. Prompt ${backgroundMasterPromptIdV36B}. Waiting for exact output node 9...`,
+    );
+
+    const masterCandidateBase =
+      await waitForBackgroundAnglePlateOutputCandidateV36AK({
+        promptId: backgroundMasterPromptIdV36B,
+        provider: originalProvider,
+        prompt:
+          candidate.prompt ||
+          characterBackgroundPrompt ||
+          "",
+        index: 0,
+        name: "Background Master",
+        nodeId: "9",
+        prefix: "",
+        timeoutMs: 900000,
+      });
+
+    if (!masterCandidateBase) {
+      throw new Error(
+        `Background Master SeedVR output was not found for prompt ${backgroundMasterPromptIdV36B}, node 9.`,
+      );
+    }
+
+    const masterWorkflowValue = String(
+      masterCandidateBase.workflowImage ||
+      masterCandidateBase.imagePath ||
+      masterCandidateBase.displayImage ||
+      masterCandidateBase.imageUrl ||
+      "",
+    ).trim();
+
+    if (!masterWorkflowValue) {
+      throw new Error(
+        "Background Master SeedVR output contained no usable image reference.",
+      );
+    }
+
+    setCharacterBackgroundStatus(
+      "Validating the SeedVR Master as exactly 1920x1080...",
+    );
+
+    await validateCharacterBackgroundMasterDimensionsV36B(
+      masterWorkflowValue,
+    );
+
+    const masterAsset = {
+      displayImage: masterWorkflowValue,
+      workflowImage: masterWorkflowValue,
+      imagePath: masterWorkflowValue,
+      imageUrl: masterWorkflowValue,
+    };
+
+    const existingAngleImages =
+      existingMaster?.angleImages &&
+      typeof existingMaster.angleImages === "object"
+        ? existingMaster.angleImages
+        : {};
+
+    const masterCandidate = {
+      ...candidate,
+      ...masterCandidateBase,
+      id:
+        `background-master-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: "Background Master",
+      prompt:
+        candidate.prompt ||
+        characterBackgroundPrompt ||
+        "",
+      provider: originalProvider,
+      displayImage: masterWorkflowValue,
+      imageUrl: masterWorkflowValue,
+      imagePath: masterWorkflowValue,
+      workflowImage: masterWorkflowValue,
+      createdAt: new Date().toISOString(),
+
+      // Canonical Background Card Master.
+      isBackgroundMasterV36B: true,
+      establishingImage: masterAsset,
+      angleImages: {
+        ...existingAngleImages,
+        front: masterAsset,
+      },
+
+      // Preserve the original accepted low-resolution candidate only as
+      // provenance. It is no longer the canonical workflow reference.
+      backgroundMasterSourceV36B: sourceValue,
+      originalSelectedBackgroundSourceV36B: sourceValue,
+      originalSelectedBackgroundDisplayV36B:
+        originalDisplayValue || sourceValue,
+      backgroundMasterPromptIdV36B,
+      backgroundMasterOutputNodeIdV36B: "9",
+      backgroundMasterWidthV36B:
+        BACKGROUND_MASTER_OUTPUT_WIDTH_V36B,
+      backgroundMasterHeightV36B:
+        BACKGROUND_MASTER_OUTPUT_HEIGHT_V36B,
+
+      // Keep the legacy fields pointed at the Master so existing consumers
+      // remain usable while directional Background Card support is added.
+      sourceDisplayImageV36AF: masterWorkflowValue,
+      sourceWorkflowImageV36AF: masterWorkflowValue,
+    } as CharacterBackgroundPreviewCandidateV36E;
+
+    if (options.commitIntermediate !== false) {
+      setCharacterBackgroundPreviewCandidates([
+        masterCandidate,
+      ]);
+      setSelectedCharacterBackgroundCandidateId(
+        masterCandidate.id,
+      );
+      setExpandedCharacterBackgroundCandidateId(
+        masterCandidate.id,
+      );
+    }
+
+    setCharacterBackgroundStatus(
+      "1920x1080 Background Master created. Front is now the canonical Master. Back, Left, Right, Up, and Down are the next Background Card stage.",
+    );
+
+    masterCreatedV36BB = true;
+    return masterCandidate;
+  } catch (error: any) {
+    setCharacterBackgroundStatus(
+      error?.message ||
+      "Background Master creation failed.",
+    );
+    return null;
+  } finally {
+    if (!options.keepBusyOnSuccess || !masterCreatedV36BB) {
+      setCharacterBackgroundBusy(false);
+    }
+  }
+}
+
+async function createCharacterBackgroundCanonicalDirectionalsV36B(
+  candidate: CharacterBackgroundPreviewCandidateV36E | null | undefined,
+  options: {
+    commitOnSuccess?: boolean;
+  } = {},
+) {
+  if (!candidate) {
+    setCharacterBackgroundStatus(
+      "Canonical Background Card generation requires an accepted Background Master.",
+    );
+    return null;
+  }
+
+  const existingMaster: any = candidate;
+
+  if (!existingMaster?.isBackgroundMasterV36B) {
+    setCharacterBackgroundStatus(
+      "Create the 1920x1080 Background Master before generating canonical directionals.",
+    );
+    return null;
+  }
+
+  const masterWorkflowValue = String(
+    existingMaster?.establishingImage?.workflowImage ||
+      existingMaster?.angleImages?.front?.workflowImage ||
+      candidate.workflowImage ||
+      candidate.imagePath ||
+      candidate.imageUrl ||
+      candidate.displayImage ||
+      "",
+  ).trim();
+
+  if (!masterWorkflowValue) {
+    setCharacterBackgroundStatus(
+      "Canonical directional generation failed: Background Master has no usable workflow image.",
+    );
+    return null;
+  }
+
+  const masterAsset =
+    normalizeCharacterBackgroundImageAssetV36A(
+      existingMaster?.establishingImage,
+    ) ||
+    normalizeCharacterBackgroundImageAssetV36A(
+      existingMaster?.angleImages?.front,
+    ) || {
+      displayImage: masterWorkflowValue,
+      workflowImage: masterWorkflowValue,
+      imagePath: masterWorkflowValue,
+      imageUrl: masterWorkflowValue,
+    };
+
+  const originalProvider =
+    normalizeCharacterBackgroundProviderV1(candidate.provider);
+
+  const runId =
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const safeName = (
+    characterBackgroundName.trim() ||
+    candidate.name ||
+    "background"
+  )
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "background";
+
+  const directionalPrefix =
+    `${safeName}-canonical-background-card-${runId}`;
+
+  setCharacterBackgroundBusy(true);
+  setCharacterBackgroundStatus(
+    "Creating Background Image Plate: generating Back, Left, Right, Up, and Down from the 1920x1080 Master...",
+  );
+
+  try {
+    const body = new FormData();
+
+    body.set(
+      "title",
+      characterBackgroundName.trim() ||
+        candidate.name ||
+        "Scene Background",
+    );
+    body.set(
+      "name",
+      characterBackgroundName.trim() ||
+        candidate.name ||
+        "Scene Background",
+    );
+    body.set("filenamePrefix", directionalPrefix);
+    body.set("filename_prefix", directionalPrefix);
+    body.set("loadImageValue", masterWorkflowValue);
+    body.set("sourceImage", masterWorkflowValue);
+    body.set("inputImage", masterWorkflowValue);
+    body.set("sourceImagePath", masterWorkflowValue);
+    body.set("imagePath", masterWorkflowValue);
+    body.set("image", masterWorkflowValue);
+
+    const response = await fetch("/api/background-angle-plate", {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      body,
+    });
+
+    const json = await response.json().catch(() => null);
+
+    if (!response.ok || json?.ok === false) {
+      throw new Error(
+        json?.error ||
+          `Canonical directional submission failed (${response.status}).`,
+      );
+    }
+
+    if (
+      String(json?.marker || "") !==
+      "OTG_BACKGROUND_CANONICAL_DIRECTIONALS_V36B"
+    ) {
+      throw new Error(
+        "Canonical directional route returned an unexpected response contract.",
+      );
+    }
+
+    if (json?.frontUsesMaster !== true) {
+      throw new Error(
+        "Canonical directional route did not confirm that Front remains the accepted Master.",
+      );
+    }
+
+    if (
+      Number(json?.generatedDirectionalOutputCount) !==
+        CANONICAL_BACKGROUND_CARD_PRESENTATION_V36C.length - 1 ||
+      Number(json?.finalDirectionalReferenceCount) !==
+        CANONICAL_BACKGROUND_CARD_PRESENTATION_V36C.length
+    ) {
+      throw new Error(
+        "Canonical directional route did not return the exact five-generated/six-final Background Card contract.",
+      );
+    }
+
+    const canonicalDirectionalPromptIdV36B = String(
+      json?.prompt_id ||
+        json?.promptId ||
+        "",
+    ).trim();
+
+    if (!canonicalDirectionalPromptIdV36B) {
+      throw new Error(
+        "Canonical directional workflow was accepted, but no ComfyUI prompt id was returned.",
+      );
+    }
+
+    const canonicalDirections =
+      json?.canonicalDirections &&
+      typeof json.canonicalDirections === "object"
+        ? json.canonicalDirections
+        : null;
+
+    if (!canonicalDirections) {
+      throw new Error(
+        "Canonical directional workflow returned no directional output selectors.",
+      );
+    }
+
+    const generatedAssets: Partial<
+      Record<
+        CharacterBackgroundAngleKeyV36A,
+        CharacterBackgroundImageAssetV36A
+      >
+    > = {};
+
+    for (
+      const direction of [
+        "left",
+        "right",
+        "rear",
+        "up",
+        "down",
+      ] as const
+    ) {
+      const angleKey =
+        CANONICAL_BACKGROUND_DIRECTION_TO_ANGLE_KEY_V36B[
+          direction
+        ];
+
+      const canonicalDirection: any =
+        canonicalDirections[direction];
+
+      if (
+        !canonicalDirection ||
+        !String(canonicalDirection.nodeId || "").trim() ||
+        !String(canonicalDirection.filenamePrefix || "").trim()
+      ) {
+        throw new Error(
+          `Canonical ${direction} output selector is incomplete.`,
+        );
+      }
+
+      const responsePromptId = String(
+        canonicalDirection.promptId || "",
+      ).trim();
+
+      if (
+        responsePromptId &&
+        responsePromptId !==
+          canonicalDirectionalPromptIdV36B
+      ) {
+        throw new Error(
+          `Canonical ${direction} output returned a mismatched prompt id.`,
+        );
+      }
+
+      setCharacterBackgroundStatus(
+        `Prompt ${canonicalDirectionalPromptIdV36B}: waiting for exact ${direction} output node ${canonicalDirection.nodeId}...`,
+      );
+
+      const directionalCandidate =
+        await waitForBackgroundAnglePlateOutputCandidateV36AK({
+          promptId: canonicalDirectionalPromptIdV36B,
+          provider: originalProvider,
+          prompt:
+            candidate.prompt ||
+            characterBackgroundPrompt ||
+            "",
+          index: 0,
+          name: `Background ${direction}`,
+          nodeId: canonicalDirection.nodeId,
+          prefix: canonicalDirection.filenamePrefix,
+          timeoutMs: 900000,
+        });
+
+      if (!directionalCandidate) {
+        throw new Error(
+          `Canonical ${direction} output was not found for prompt ${canonicalDirectionalPromptIdV36B}, node ${canonicalDirection.nodeId}, prefix ${canonicalDirection.filenamePrefix}.`,
+        );
+      }
+
+      const directionalWorkflowValue = String(
+        directionalCandidate.workflowImage ||
+          directionalCandidate.imagePath ||
+          directionalCandidate.displayImage ||
+          directionalCandidate.imageUrl ||
+          "",
+      ).trim();
+
+      if (!directionalWorkflowValue) {
+        throw new Error(
+          `Canonical ${direction} output contained no usable image reference.`,
+        );
+      }
+
+      generatedAssets[angleKey] = {
+        displayImage: directionalWorkflowValue,
+        workflowImage: directionalWorkflowValue,
+        imagePath: directionalWorkflowValue,
+        imageUrl: directionalWorkflowValue,
+      };
+    }
+
+    const angleImages: CharacterBackgroundReferenceV36A["angleImages"] = {
+      front: masterAsset,
+      left90: generatedAssets.left90,
+      right90: generatedAssets.right90,
+      back: generatedAssets.back,
+      up: generatedAssets.up,
+      down: generatedAssets.down,
+    };
+
+    if (!hasCompleteCanonicalBackgroundCardV36B(angleImages)) {
+      throw new Error(
+        "Canonical Background Card was not marked complete because one or more of Front, Back, Left, Right, Up, or Down is missing.",
+      );
+    }
+
+    const completeCardCandidate = {
+      ...candidate,
+      id:
+        `background-canonical-card-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name:
+        characterBackgroundName.trim() ||
+        candidate.name ||
+        "Background Card",
+      displayImage: masterAsset.displayImage,
+      imageUrl:
+        masterAsset.imageUrl ||
+        masterAsset.displayImage,
+      imagePath:
+        masterAsset.imagePath ||
+        masterAsset.workflowImage,
+      workflowImage: masterAsset.workflowImage,
+      establishingImage: masterAsset,
+      angleImages: {
+        front: masterAsset,
+        left90: generatedAssets.left90,
+        right90: generatedAssets.right90,
+        back: generatedAssets.back,
+        up: generatedAssets.up,
+        down: generatedAssets.down,
+      },
+      sourceDisplayImageV36AF:
+        masterAsset.displayImage,
+      sourceWorkflowImageV36AF:
+        masterAsset.workflowImage,
+      canonicalDirectionalPromptIdV36B,
+      canonicalDirectionsV36B:
+        json?.canonicalDirections,
+      isBackgroundMasterV36B: true,
+      isCanonicalBackgroundCardV36B: true,
+      backgroundMasterSourceV36B:
+        existingMaster.backgroundMasterSourceV36B ||
+        existingMaster.originalSelectedBackgroundSourceV36B,
+      originalSelectedBackgroundSourceV36B:
+        existingMaster.originalSelectedBackgroundSourceV36B ||
+        existingMaster.backgroundMasterSourceV36B,
+      originalSelectedBackgroundDisplayV36B:
+        existingMaster.originalSelectedBackgroundDisplayV36B ||
+        existingMaster.backgroundMasterSourceV36B,
+      createdAt: new Date().toISOString(),
+    } as CharacterBackgroundPreviewCandidateV36E;
+
+    if (options.commitOnSuccess !== false) {
+      setCharacterBackgroundPreviewCandidates([
+        completeCardCandidate,
+      ]);
+      setSelectedCharacterBackgroundCandidateId(
+        completeCardCandidate.id,
+      );
+      setExpandedCharacterBackgroundCandidateId(
+        completeCardCandidate.id,
+      );
+    }
+
+    setCharacterBackgroundStatus(
+      "Background Image Plate complete: Front, Back, Left, Right, Up, and Down are resolved. Review it, then Save Background when ready.",
+    );
+
+    return completeCardCandidate;
+  } catch (error: any) {
+    setCharacterBackgroundStatus(
+      error?.message ||
+        "Canonical Background Card generation failed.",
+    );
+    return null;
+  } finally {
+    setCharacterBackgroundBusy(false);
+  }
+}
+
+async function createCharacterBackgroundAnglePlateFromCandidateV36AF(candidate: CharacterBackgroundPreviewCandidateV36E | null | undefined) {
     if (!candidate) {
       setCharacterBackgroundStatus("Select a background preview before creating the complete background image.");
       return;
@@ -5055,7 +6395,7 @@ function CharacterBuilder() {
     const existingPlate = candidate as any;
 
     if (existingPlate?.isCompleteBackgroundPlateV36AF) {
-      useCharacterBackgroundCandidateV36J(normalizeCompleteBackgroundPlateCandidateForSaveV36AG(candidate));
+      await useCharacterBackgroundCandidateV36J(normalizeCompleteBackgroundPlateCandidateForSaveV36AG(candidate));
       return;
     }
 
@@ -5068,7 +6408,7 @@ function CharacterBuilder() {
       return;
     }
 
-    const originalProvider = candidate.provider === "krea2-turbo" ? "krea2-turbo" : candidate.provider === "z-turbo" ? "z-turbo" : "ernie-image";
+    const originalProvider = normalizeCharacterBackgroundProviderV1(candidate.provider);
     const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const safeName = (characterBackgroundName.trim() || candidate.name || "background").replace(/[^a-zA-Z0-9_-]+/g, "-");
     const platePrefix = `${safeName}-complete-background-plate-${runId}`;
@@ -5106,9 +6446,16 @@ function CharacterBuilder() {
       }
 
       const outputPrefix = String(json?.expectedOutputPrefix || json?.filenamePrefix || platePrefix);
-      setCharacterBackgroundStatus("Angle workflow queued. Waiting for stitched complete background image...");
+      const anglePlatePromptIdV36AK = String(json?.prompt_id || json?.promptId || "").trim();
 
-      const plateCandidateBase = await waitForBackgroundAnglePlateOutputCandidateV36AF({
+      if (!anglePlatePromptIdV36AK) {
+        throw new Error("Angle workflow was accepted, but no ComfyUI prompt id was returned.");
+      }
+
+      setCharacterBackgroundStatus(`Angle workflow queued. Prompt ${anglePlatePromptIdV36AK}. Waiting for the exact stitched output...`);
+
+      const plateCandidateBase = await waitForBackgroundAnglePlateOutputCandidateV36AK({
+        promptId: anglePlatePromptIdV36AK,
         provider: originalProvider,
         prompt: candidate.prompt || characterBackgroundPrompt || "",
         index: 0,
@@ -5129,9 +6476,9 @@ function CharacterBuilder() {
         name: "Complete Background Image",
         prompt: candidate.prompt || characterBackgroundPrompt || "",
         provider: originalProvider,
-        displayImage: originalDisplayValue || originalWorkflowValue || sourceValue,
-        imageUrl: originalDisplayValue || originalWorkflowValue || sourceValue,
-        imagePath: originalWorkflowValue || originalDisplayValue || sourceValue,
+        displayImage: plateWorkflowValue,
+        imageUrl: plateWorkflowValue,
+        imagePath: plateWorkflowValue,
         workflowImage: plateWorkflowValue,
         createdAt: new Date().toISOString(),
         sourceDisplayImageV36AF: originalDisplayValue || sourceValue,
@@ -5151,24 +6498,213 @@ function CharacterBuilder() {
     }
   }
 
-  function handleCharacterBackgroundUseImageV36AF(candidate: CharacterBackgroundPreviewCandidateV36E | null | undefined) {
+  // OTG_BACKGROUND_ONE_CLICK_PLATE_CHAIN_V36BB
+  async function createCharacterBackgroundImagePlateFromSourceV36BB(
+    candidate: CharacterBackgroundPreviewCandidateV36E | null | undefined,
+    options: {
+      commitIntermediate?: boolean;
+      commitOnSuccess?: boolean;
+    } = {},
+  ) {
     if (!candidate) {
-      setCharacterBackgroundStatus("Select a preview first.");
-      return;
+      setCharacterBackgroundStatus("Select a background candidate first.");
+      return null;
     }
 
-    if ((candidate as any)?.isCompleteBackgroundPlateV36AF) {
-      useCharacterBackgroundCandidateV36J(normalizeCompleteBackgroundPlateCandidateForSaveV36AG(candidate));
-      return;
+    if (characterBackgroundLifecycleBusyRefV36B.current || characterBackgroundBusy) {
+      setCharacterBackgroundStatus("Background Image Plate creation is already running.");
+      return null;
     }
 
-    void createCharacterBackgroundAnglePlateFromCandidateV36AF(candidate);
+    characterBackgroundLifecycleBusyRefV36B.current = true;
+    let completeCard: CharacterBackgroundPreviewCandidateV36E | null = null;
+
+    try {
+      const master = (candidate as any).isBackgroundMasterV36B
+        ? candidate
+        : await createCharacterBackgroundMasterFromCandidateV36B(candidate, {
+            commitIntermediate: options.commitIntermediate !== false,
+            keepBusyOnSuccess: true,
+          });
+
+      if (!master) {
+        return null;
+      }
+
+      completeCard = await createCharacterBackgroundCanonicalDirectionalsV36B(
+        master,
+        {
+          commitOnSuccess: options.commitOnSuccess !== false,
+        },
+      );
+
+      return completeCard;
+    } finally {
+      if (!completeCard) {
+        setCharacterBackgroundBusy(false);
+      }
+
+      characterBackgroundLifecycleBusyRefV36B.current = false;
+    }
   }
-  function useCharacterBackgroundCandidateV36J(candidate: CharacterBackgroundPreviewCandidateV36E | null | undefined) {
+
+  function makeCharacterBackgroundRetrySourceCandidateV36B(
+    candidate: CharacterBackgroundPreviewCandidateV36E | null | undefined,
+  ) {
+    const item: any = candidate || {};
+    const originalSourceValue = String(
+      item.backgroundMasterSourceV36B ||
+        item.originalSelectedBackgroundSourceV36B ||
+        "",
+    ).trim();
+
+    if (!originalSourceValue) {
+      return null;
+    }
+
+    const originalDisplayValue = String(
+      item.originalSelectedBackgroundDisplayV36B ||
+        originalSourceValue ||
+        "",
+    ).trim();
+
+    return {
+      ...candidate,
+      id: `background-retry-source-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: item.name || "Scene Background",
+      imagePath: originalSourceValue,
+      imageUrl: originalDisplayValue,
+      displayImage: originalDisplayValue,
+      workflowImage: originalSourceValue,
+      establishingImage: undefined,
+      angleImages: undefined,
+      isBackgroundMasterV36B: false,
+      isCanonicalBackgroundCardV36B: false,
+      isCompleteBackgroundPlateV36AF: false,
+      backgroundMasterSourceV36B: originalSourceValue,
+      originalSelectedBackgroundSourceV36B: originalSourceValue,
+      originalSelectedBackgroundDisplayV36B: originalDisplayValue,
+      sourceKindV36B: "retry-source",
+      createdAt: new Date().toISOString(),
+    } as CharacterBackgroundPreviewCandidateV36E;
+  }
+
+  async function retryCharacterBackgroundPlateV36B(
+    candidate: CharacterBackgroundPreviewCandidateV36E | null | undefined,
+  ) {
+    const retrySource = makeCharacterBackgroundRetrySourceCandidateV36B(candidate);
+
+    if (!retrySource) {
+      setCharacterBackgroundStatus("Retry Plate cannot start because the original selected background source is missing.");
+      return;
+    }
+
+    setCharacterBackgroundStatus("Retrying Background Image Plate from the original selected background...");
+
+    const retryCard = await createCharacterBackgroundImagePlateFromSourceV36BB(
+      retrySource,
+      {
+        commitIntermediate: false,
+        commitOnSuccess: false,
+      },
+    );
+
+    if (!retryCard) {
+      setCharacterBackgroundStatus((current) => {
+        const detail = String(current || "").trim();
+        const suffix =
+          "The previous completed Background Image Plate remains available.";
+
+        if (detail && !detail.startsWith("Retrying Background Image Plate")) {
+          return `${detail} ${suffix}`;
+        }
+
+        return `Retry Plate failed. ${suffix}`;
+      });
+      return;
+    }
+
+    setCharacterBackgroundPreviewCandidates((current) => {
+      const replacement = current.map((item) =>
+        item.id === candidate?.id ? retryCard : item,
+      );
+
+      if (replacement.some((item) => item.id === retryCard.id)) {
+        return replacement;
+      }
+
+      return [retryCard];
+    });
+    setSelectedCharacterBackgroundCandidateId(retryCard.id);
+    setExpandedCharacterBackgroundCandidateId(retryCard.id);
+    setCharacterBackgroundStatus("Retry Plate complete. Review it, then Save Background when ready.");
+  }
+
+  async function handleCharacterBackgroundUseImageV36AF(
+  candidate: CharacterBackgroundPreviewCandidateV36E | null | undefined,
+) {
+  if (!candidate) {
+    setCharacterBackgroundStatus(
+      "Select a preview first.",
+    );
+    return;
+  }
+
+  const candidateAngleImages = (candidate as any).angleImages;
+  const candidateHasCompleteCanonicalCard =
+    hasCompleteCanonicalBackgroundCardV36B(candidateAngleImages);
+
+  if ((candidate as any).isCanonicalBackgroundCardV36B || candidateHasCompleteCanonicalCard) {
+    if (!candidateHasCompleteCanonicalCard) {
+      setCharacterBackgroundStatus(
+        "Canonical Background Card cannot be saved because one or more required directional references is missing.",
+      );
+      return;
+    }
+
+    await useCharacterBackgroundCandidateV36J(
+      candidate,
+    );
+    return;
+  }
+
+  // Preserve already-created legacy complete plates so existing saved
+  // backgrounds remain backward compatible.
+  if ((candidate as any).isCompleteBackgroundPlateV36AF) {
+    await useCharacterBackgroundCandidateV36J(
+      normalizeCompleteBackgroundPlateCandidateForSaveV36AG(
+        candidate,
+      ),
+    );
+    return;
+  }
+
+  // New Background Card pipeline:
+  // accepted candidate -> 1920x1080 Master -> five canonical
+  // directionals -> six-reference Background Image Plate.
+  await createCharacterBackgroundImagePlateFromSourceV36BB(
+    candidate,
+  );
+}
+
+async function useCharacterBackgroundCandidateV36J(candidate: CharacterBackgroundPreviewCandidateV36E | null | undefined) {
     candidate = normalizeSavedBackgroundCandidateForSaveV36AH3(candidate);
 
     if (!candidate) {
       setCharacterBackgroundStatus("Select or create a background preview first.");
+      return;
+    }
+
+    const candidateAngleImages = (candidate as any).angleImages;
+    const hasCanonicalBackgroundImagePlate =
+      hasCompleteCanonicalBackgroundCardV36B(candidateAngleImages);
+    const isLegacyCompletePlate = Boolean((candidate as any).isCompleteBackgroundPlateV36AF);
+    const persistenceFields = canonicalBackgroundPersistenceFields(candidate as any);
+
+    if (!hasCanonicalBackgroundImagePlate && !isLegacyCompletePlate) {
+      setCharacterBackgroundStatus(
+        "Save Background requires a completed Background Image Plate with Front, Back, Left, Right, Up, and Down.",
+      );
       return;
     }
 
@@ -5185,20 +6721,45 @@ function CharacterBuilder() {
       masterPrompt: candidate.prompt,
       continuityBlock: characterBackgroundContinuityBlock.trim() || undefined,
       doNotChange: [],
-      imagePath: candidate.imagePath || undefined,
-      imageUrl: candidate.imageUrl || undefined,
-      displayImage: candidate.displayImage || candidate.imageUrl || candidate.imagePath || undefined,
-      workflowImage: candidate.workflowImage || candidate.imagePath || candidate.imageUrl || undefined,
-      source: "created",
+      establishingImage:
+        persistenceFields.establishingImage ||
+        normalizeCharacterBackgroundImageAssetV36A(
+          (candidate as any).establishingImage,
+        ),
+      panoramaImage:
+        normalizeCharacterBackgroundImageAssetV36A(
+          (candidate as any).panoramaImage,
+        ),
+      angleImages:
+        (candidate as any).angleImages &&
+        typeof (candidate as any).angleImages === "object"
+          ? (candidate as any).angleImages
+          : undefined,
+      imagePath: persistenceFields.imagePath || undefined,
+      imageUrl: persistenceFields.imageUrl || undefined,
+      displayImage: persistenceFields.displayImage || undefined,
+      workflowImage: persistenceFields.workflowImage || undefined,
+      source: ((candidate as any).sourceType === "uploaded" || (candidate as any).sourceKindV36B === "uploaded") ? "uploaded" : "created",
       createdAt: now,
       updatedAt: now,
     };
 
-    saveCharacterBackgroundReferenceV36A(next);
-    setExpandedCharacterBackgroundCandidateId("");
-    setCharacterBackgroundStatus("Preview image saved. Next phase will create the 10-image background angle plate.");
+    setCharacterBackgroundBusy(true);
+    setCharacterBackgroundStatus("Saving Background Image Plate to the server library...");
+
+    try {
+      const saved = await saveCharacterBackgroundReferenceV36A(next);
+      setExpandedCharacterBackgroundCandidateId("");
+      setSelectedCharacterBackgroundCandidateId(candidate.id);
+      setCharacterBackgroundStatus(`Background Image Plate saved and verified: ${saved.name}`);
+    } catch (error: any) {
+      setCharacterBackgroundStatus(error?.message || "Complete background image save failed. The generated plate remains available for retry.");
+    } finally {
+      setCharacterBackgroundBusy(false);
+    }
   }
-  function useSelectedCharacterBackgroundImageV36E() {
+
+  async function useSelectedCharacterBackgroundImageV36E() {
     const selected =
       characterBackgroundPreviewCandidates.find((candidate) => candidate.id === selectedCharacterBackgroundCandidateId) || null;
 
@@ -5207,30 +6768,7 @@ function CharacterBuilder() {
       return;
     }
 
-    const label = characterBackgroundName.trim() || selected.name || "Scene Background";
-    const now = new Date().toISOString();
-
-    const next: CharacterBackgroundReferenceV36A = {
-      id: `background-${safeCharacterBackgroundIdV36A(label)}-${Date.now()}`,
-      name: label,
-      type: "background",
-      locationType: characterBackgroundLocationType.trim() || undefined,
-      style: characterBackgroundStyle.trim() || "Cinematic",
-      prompt: selected.prompt,
-      masterPrompt: selected.prompt,
-      continuityBlock: characterBackgroundContinuityBlock.trim() || undefined,
-      doNotChange: [],
-      imagePath: selected.imagePath || undefined,
-      imageUrl: selected.imageUrl || undefined,
-      displayImage: selected.displayImage || selected.imageUrl || selected.imagePath || undefined,
-      workflowImage: selected.workflowImage || selected.imagePath || selected.imageUrl || undefined,
-      source: "created",
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    saveCharacterBackgroundReferenceV36A(next);
-    setCharacterBackgroundStatus("Preview image saved. Next phase will create the 10-image background angle plate.");
+    await useCharacterBackgroundCandidateV36J(selected);
   }
   async function uploadCharacterBackgroundV36A(file: File | null | undefined) {
     if (!file) return;
@@ -5239,33 +6777,45 @@ function CharacterBuilder() {
     setCharacterBackgroundStatus("Uploading background...");
 
     try {
-      const uploaded = await uploadBlob(file, file.name || `background-${Date.now()}.png`);
-      const imagePath = String(uploaded.serverPath || "").trim();
-      const imageUrl = String(uploaded.fileUrl || "").trim();
+      const form = new FormData();
+      form.set("file", file, file.name || `background-${Date.now()}.png`);
+      form.set("temporary", "1");
+      const response = await fetch("/api/backgrounds/upload", {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        body: form,
+      });
+      const uploaded = await response.json().catch(() => null);
+      if (!response.ok || !uploaded?.ok || uploaded?.temporaryCandidate !== true) {
+        throw new Error(uploaded?.error || `Background upload failed (${response.status}).`);
+      }
+      const imagePath = String(uploaded.imagePath || "").trim();
+      const imageUrl = String(uploaded.imageUrl || "").trim();
 
       if (!imagePath && !imageUrl) {
         throw new Error("Background upload did not return an image path or URL.");
       }
 
       const label = characterBackgroundName.trim() || file.name.replace(/\.[a-z0-9]+$/i, "") || "Uploaded Background";
-      const next: CharacterBackgroundReferenceV36A = {
-        id: `background-${safeCharacterBackgroundIdV36A(label)}-${Date.now()}`,
+      const next: CharacterBackgroundPreviewCandidateV36E = {
+        id: `background-upload-${safeCharacterBackgroundIdV36A(label)}-${Date.now()}`,
         name: label,
-        type: "background",
-        locationType: characterBackgroundLocationType.trim() || undefined,
-        style: characterBackgroundStyle.trim() || "cinematic realistic",
-        masterPrompt: characterBackgroundPrompt.trim(),
-        continuityBlock: characterBackgroundContinuityBlock.trim() || undefined,
+        prompt: characterBackgroundPrompt.trim(),
+        provider: characterBackgroundProvider,
         imagePath: imagePath || undefined,
         imageUrl: imageUrl || undefined,
         displayImage: imageUrl || imagePath || undefined,
         workflowImage: imagePath || imageUrl || undefined,
-        source: "uploaded",
+        sourceType: "uploaded",
         createdAt: new Date().toISOString(),
       };
 
-      saveCharacterBackgroundReferenceV36A(next);
-      setCharacterBackgroundStatus("Background uploaded and saved for Production Storyboard.");
+      setCharacterBackgroundPreviewCandidates((current) =>
+        upsertUploadedBackgroundCandidate(current, next),
+      );
+      setSelectedCharacterBackgroundCandidateId(next.id);
+      setCharacterBackgroundStatus("Uploaded Background is ready as an independent temporary candidate. Use This Background to create its Background Image Plate; it is not saved yet.");
     } catch (error: any) {
       setCharacterBackgroundStatus(error?.message || "Upload background failed.");
     } finally {
@@ -5510,9 +7060,9 @@ function CharacterBuilder() {
           let latest: QueuedContractJob;
 
           if (action === "create_voice_sample" || action === "generate_character_preview") {
-            // Do not auto-advance jobs that require dedicated Windows workers through the dev no-op worker.
-            // create_voice_sample requires the persistent Qwen3/Cosy voice worker.
-            // generate_character_preview requires the persistent character preview dub worker so LTX/ffmpeg/Applio run on Windows.
+            // Do not auto-advance jobs that require dedicated external workers through the dev no-op worker.
+            // create_voice_sample requires the persistent Linux Qwen3 voice worker.
+            // generate_character_preview requires its dedicated character preview/dub worker.
             latest = await getCharacterVoiceJob(job.jobId);
           } else {
             const ticked = await tickVoicePipelineWorker(1, job.jobId);
@@ -6091,14 +7641,13 @@ async function loadCharacters() {
 
   function resetBuilder() {
     if (typeof window !== "undefined") {
-      window.localStorage.removeItem(getCharacterBuilderDraftKey());
+      window.localStorage.removeItem(getCharacterBuilderDraftKey(authenticatedOwnerKey));
       if (characterDraftSaveTimeoutRef.current !== null) {
         window.clearTimeout(characterDraftSaveTimeoutRef.current);
       }
-      void characterFetch(`/api/characters/builder-draft?ownerId=${encodeURIComponent(getCharacterDeviceId())}`, {
+      void characterFetch("/api/characters/builder-draft", {
         method: "DELETE",
-        credentials: "omit",
-        headers: { "x-otg-device-id": getCharacterDeviceId() },
+        credentials: "include",
       }).catch(() => {
         // Local reset should still complete if server draft cleanup fails.
       });
@@ -6262,7 +7811,10 @@ async function loadCharacters() {
       setMessage(`Character image job queued (${createOrientation}). Waiting for ComfyUI output...`);
       const job = await submitCharacterImageJob(internalPrompt, stylePreset, createOrientation);
       setMessage(`Character image job submitted. Prompt ID: ${job.promptId}. Waiting for output...`);
-      const generated = await waitForCharacterImage(job.promptId);
+      const generated = await waitForCharacterImage(
+        job.promptId,
+        characterGeneratorOutputSelector(selectedCharacterGeneratorOption),
+      );
       const upload = await copyGeneratedImageToCharacterUpload(generated.url, `${id}.png`);
       pushCandidate({
         id,
@@ -6515,7 +8067,11 @@ async function loadCharacters() {
       setMessage("Full-body character generated. Review the candidate, select it, then click Use This Character to approve it.");
     } catch (err: any) {
       console.error(err);
-      setError("Full-body generation failed. Check ComfyUI/edit-image workflow and try again.");
+      const message = err instanceof Error
+        ? err.message
+        : "Full-body generation failed.";
+      setError(message);
+      setMessage("");
     } finally {
       setLoading(false);
     }
@@ -8070,7 +9626,7 @@ function removeLtxBackgroundSoundEffects(job: QueuedContractJob, result: Record<
       create_voice_sample: {
         title: "Base voice",
         idle: "No voice creation job yet.",
-        queued: "Waiting for Windows voice worker...",
+        queued: "Waiting for Linux voice worker...",
         running: "Voice creating...",
         completed: isMockResult ? "Voice creation failed - real worker required" : "Voice ready",
         failed: "Voice creation failed",
@@ -8088,7 +9644,7 @@ function removeLtxBackgroundSoundEffects(job: QueuedContractJob, result: Record<
       generate_training_dataset: {
         title: "Training dataset",
         idle: "No dataset job yet.",
-        queued: "Queued / waiting for Windows worker",
+        queued: "Queued / waiting for worker",
         running: "Dataset running",
         interrupted: "Dataset interrupted - resume available",
         ready_for_review: "Dataset ready for review",
@@ -8807,7 +10363,7 @@ function removeLtxBackgroundSoundEffects(job: QueuedContractJob, result: Record<
     setError("");
     window.setTimeout(() => {
       setVoiceFxStatus("Ready");
-      setMessage(`FX preview hook is ready for the Windows worker. No audio was rendered yet. Settings: ${String(settings.mode || "voice_fx")}.`);
+      setMessage(`FX preview hook is ready for the dedicated voice worker. No audio was rendered yet. Settings: ${String(settings.mode || "voice_fx")}.`);
     }, 250);
   }
 
@@ -9232,7 +10788,117 @@ function removeLtxBackgroundSoundEffects(job: QueuedContractJob, result: Record<
     }
   }
 
-  function completeSavedForLaterCharacterV36BPS2(character: CharacterRecord) {
+  async function pollCharacterCompletionJobV1(characterId: string, jobId: string) {
+    const startedAt = Date.now();
+    const timeoutMs = 45 * 60 * 1000;
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const response = await characterFetch(`/api/characters/completion/${encodeURIComponent(jobId)}`, {
+        cache: "no-store",
+        credentials: "omit",
+        headers: { "x-otg-device-id": getCharacterDeviceId() },
+      });
+      const json = await response.json().catch(() => null);
+      if (!response.ok || !json?.ok || !json?.job) {
+        throw new Error(json?.error || `Character completion status failed (${response.status}).`);
+      }
+
+      const status = String(json.job.status || "queued").trim().toLowerCase();
+      const progress = Math.max(0, Math.min(100, Number(json.job.progress || 0)));
+      const message = String(json.job.message || "Worker Manager is processing the character.").trim();
+      setCharacterCompletionByIdV1((current) => ({
+        ...current,
+        [characterId]: { jobId, status, progress, message },
+      }));
+
+      if (status === "completed") {
+        await loadCharacters();
+        setMessage("Worker Manager completed the character card and saved the character.");
+        return;
+      }
+      if (status === "failed" || status === "canceled") {
+        throw new Error(String(json.job.error || message || "Character completion failed."));
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, 2500));
+    }
+
+    setMessage("Character completion is still running in Worker Manager. It will continue after this page closes.");
+  }
+
+  async function queueSavedForLaterCharacterCompletionV1(character: CharacterRecord) {
+    const characterId = safeId(String(character.id || character.name || ""));
+    const sourceImagePath = savedForLaterSourcePathV36BPS2(character);
+    const characterName = String(character.name || characterId).trim();
+
+    if (!characterId || !characterName) {
+      setError("Cannot complete character: saved-for-later character is missing an id/name.");
+      return;
+    }
+    if (!sourceImagePath) {
+      setError("Cannot complete character: saved-for-later character is missing a background-free source image.");
+      return;
+    }
+
+    setError("");
+    setMessage("Queueing character completion in Worker Manager...");
+    setCharacterCompletionByIdV1((current) => ({
+      ...current,
+      [characterId]: { jobId: "", status: "queued", progress: 0, message: "Queueing..." },
+    }));
+
+    try {
+      const response = await characterFetch("/api/characters/completion", {
+        method: "POST",
+        headers: CHARACTER_JSON_HEADERS,
+        credentials: "omit",
+        body: JSON.stringify({
+          characterId,
+          characterName,
+          sourceImagePath,
+          fullBodyImagePath: sourceImagePath,
+          defaultCharacterSourceImagePath: sourceImagePath,
+          originalSourceImagePath: String((character as any).originalSourceImagePath || sourceImagePath),
+          description: String(character.description || character.globalPromptIdentityBlock || ""),
+          globalPromptIdentityBlock: String(character.globalPromptIdentityBlock || character.description || ""),
+          metadata: {
+            ...(((character as any).metadata && typeof (character as any).metadata === "object") ? (character as any).metadata : {}),
+            savedForLater: true,
+            needsCharacterCard: true,
+            needsFinalSave: true,
+          },
+          voiceSettings: ((character as any).voiceSettings && typeof (character as any).voiceSettings === "object") ? (character as any).voiceSettings : {},
+        }),
+      });
+      const json = await response.json().catch(() => null);
+      if (!response.ok || !json?.ok || !json?.job?.jobId) {
+        throw new Error(json?.error || `Could not queue character completion (${response.status}).`);
+      }
+
+      const jobId = String(json.job.jobId);
+      setCharacterCompletionByIdV1((current) => ({
+        ...current,
+        [characterId]: {
+          jobId,
+          status: String(json.job.status || "queued"),
+          progress: Number(json.job.progress || 0),
+          message: String(json.job.message || "Queued for Worker Manager."),
+        },
+      }));
+      setMessage(`Character completion queued. Job ID: ${jobId}. Worker Manager will continue even if this page closes.`);
+      void pollCharacterCompletionJobV1(characterId, jobId).catch((error: any) => {
+        setError(error?.message || String(error));
+      });
+    } catch (error: any) {
+      setCharacterCompletionByIdV1((current) => ({
+        ...current,
+        [characterId]: { jobId: "", status: "failed", progress: 100, message: error?.message || String(error) },
+      }));
+      setError(error?.message || String(error));
+    }
+  }
+
+  function openSavedForLaterCharacterInBuilderV1(character: CharacterRecord) {
     const characterId = safeId(String(character.id || character.name || ""));
     const imagePath = savedForLaterSourcePathV36BPS2(character);
 
@@ -9614,22 +11280,7 @@ type CharacterDefaultProfileResultV36BP4B = {
 
 
 function otgDisplayImageUrlV36BP8(value: unknown) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  if (/^(data:image\/|blob:|https?:\/\/)/i.test(raw)) return raw;
-  if (raw.startsWith("/api/otg/local-image")) return raw;
-
-  if (/^\/[A-Za-z]:[\\/]/.test(raw)) {
-    return `/api/otg/local-image?path=${encodeURIComponent(raw.slice(1))}`;
-  }
-
-  if (raw.startsWith("/")) return raw;
-
-  if (/^[A-Za-z]:[\\/]/.test(raw) || raw.startsWith("\\\\") || raw.includes("\\data\\") || raw.includes("/data/")) {
-    return `/api/otg/local-image?path=${encodeURIComponent(raw)}`;
-  }
-
-  return raw.replace(/\\/g, "/");
+  return otgDisplayImageUrlV36BP6(value);
 }
 
 function characterDisplayImagePathV36BP8(character: any) {
@@ -10322,22 +11973,23 @@ async function saveCharacter() {
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   type="button"
-                  onClick={saveCharacterCardOnly}
+                  data-otg="complete-character-without-voice"
+                  onClick={completeCharacterCardOnly}
                   disabled={saving || !details.name.trim() || !selectedFullBody?.serverPath || !characterCard?.serverPath}
                   className="rounded-xl border border-emerald-300 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-100 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-emerald-300/20"
                 >
-                  {saving ? "Saving..." : "Save Character Card Only"}
+                  {saving ? "Completing..." : "Complete Character Without Voice"}
                 </button>
                 <button
                   type="button"
                   onClick={continueNewCharacterToVoiceLab}
                   className="rounded-xl bg-amber-300 px-4 py-2 text-sm font-semibold text-zinc-950"
                 >
-                  Continue to Voice Lab
+                  Continue to Audio Studios
                 </button>
               </div>
               <p className="mt-2 text-xs text-zinc-500">
-                Save Character Card Only creates a completed saved character without a custom voice. You can add a voice later from Saved Characters.
+                Complete Character Without Voice finalizes this character with no custom voice. You can add a voice later from Saved Characters or continue into Audio Studios now.
               </p>
             </Panel>
           ) : null}
@@ -10745,7 +12397,7 @@ async function saveCharacter() {
                     <div>
                       <p className="text-sm font-semibold text-cyan-100">Voice Effects</p>
                       <p className="mt-1 max-w-2xl text-xs text-zinc-400">
-                        Shape the locked base voice with simple controls, or open Advanced FX for model-ready preset chains. Rendering remains queued through the Windows worker.
+                        Shape the locked base voice with simple controls, or open Advanced FX for model-ready preset chains. Rendering remains queued through Worker Manager.
                       </p>
                     </div>
                     <div className={classNames(
@@ -11756,7 +13408,7 @@ async function saveCharacter() {
                 <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-200">Background Library</p>
                 <h3 className="mt-2 text-2xl font-black text-zinc-50">Background Studio</h3>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-300">
-                  Create or upload reusable background cards. The preview image starts the Background Studio flow; 360 panorama and angle plates come next.
+                  Create or upload reusable background cards. Each completed card keeps the main scene image plus a fixed six-direction angle plate.
                 </p>
               </div>
               <div className="rounded-full border border-cyan-300/30 bg-cyan-950/40 px-3 py-1 text-xs font-black text-cyan-100">
@@ -11768,32 +13420,170 @@ async function saveCharacter() {
             </div>
           </button>
 
-          {characterBackgroundStudioOpen && ["source", "generate", "upload"].includes(step) ? (
+          {characterBackgroundStudioOpen && (initialBackgroundStudioOpen || ["source", "generate", "upload"].includes(step)) ? (
             <div className="fixed inset-0 z-[9999] overflow-y-auto bg-[#05070d] p-2 text-zinc-50 md:p-3">
               <div className="mx-auto max-w-5xl pb-24">
-                  {expandedCharacterBackgroundCandidateId ? (() => {
-                    const candidate = characterBackgroundPreviewCandidates.find((item) => item.id === expandedCharacterBackgroundCandidateId);
-                    if (!candidate) return null;
+                  {expandedSavedCharacterBackgroundIdV36AN ? (() => {
+                    const background = characterBackgroundRefs.find((item) => item.id === expandedSavedCharacterBackgroundIdV36AN);
+                    if (!background) return null;
 
-                    return (
+                    const displaySrc = savedBackgroundDisplaySrcV36AH3(background);
+return (
+                      /* OTG_BACKGROUND_SAVED_VIEWER_V36BB */
                       <div
-                        className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/85 p-4"
-                        data-otg="OTG_BACKGROUND_PREVIEW_EXPAND_MODAL_V36J"
+                        className="fixed inset-0 z-[10001] overflow-y-auto bg-black/90 p-2 sm:p-4"
+                        data-otg="OTG_BACKGROUND_SAVED_VIEW_MODAL_V36AN"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label={`View ${background.name}`}
+                        onMouseDown={(event) => {
+                          if (event.target === event.currentTarget) {
+                            setExpandedSavedCharacterBackgroundIdV36AN("");
+                          }
+                        }}
                       >
-                        <div className="w-full max-w-7xl rounded-2xl border border-violet-300/30 bg-zinc-950 p-4 shadow-2xl shadow-black">
-                          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                        <div
+                          className="mx-auto w-full max-w-7xl rounded-2xl border border-cyan-300/30 bg-zinc-950 p-3 pb-28 shadow-2xl shadow-black sm:p-4 sm:pb-28"
+                          onMouseDown={(event) => event.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setExpandedSavedCharacterBackgroundIdV36AN("")}
+                            className="sticky top-0 z-20 mb-3 w-full rounded-xl border border-cyan-300/50 bg-cyan-950/95 px-4 py-3 text-sm font-black text-cyan-50 shadow-lg backdrop-blur transition hover:bg-cyan-900"
+                          >
+                            Close Image Viewer ✕
+                          </button>
+
+                          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
                             <div>
-                              <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">Preview Image</p>
-                              <h3 className="mt-1 text-lg font-black text-zinc-50">{candidate.name}</h3>
+                              <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200">Saved Background</p>
+                              <h3 className="mt-1 text-xl font-black text-zinc-50">{background.name}</h3>
+                              <p className="mt-1 text-xs text-zinc-400">
+                                {[background.locationType, background.style].filter(Boolean).join(" - ") || "Background Library item"}
+                              </p>
                             </div>
                             <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
-                                onClick={() => handleCharacterBackgroundUseImageV36AF(candidate)}
-                                className="rounded-xl border border-emerald-300/40 bg-emerald-500/15 px-4 py-2 text-sm font-black text-emerald-50 transition hover:bg-emerald-500/25"
+                                onClick={() => void renameCharacterBackgroundReferenceV36AN(background)}
+                                disabled={characterBackgroundBusy}
+                                className="rounded-xl border border-amber-300/40 bg-amber-500/15 px-4 py-2 text-sm font-black text-amber-50 transition hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-50"
                               >
-                                Use This Photo
-                              </button>                              <button
+                                Rename
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void deleteCharacterBackgroundReferenceV36C(background.id, background.name)}
+                                disabled={characterBackgroundBusy}
+                                className="rounded-xl border border-red-400/40 bg-red-500/15 px-4 py-2 text-sm font-black text-red-50 transition hover:bg-red-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Delete
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setExpandedSavedCharacterBackgroundIdV36AN("")}
+                                className="rounded-xl border border-zinc-700 bg-black/40 px-4 py-2 text-sm font-black text-zinc-100 transition hover:border-cyan-300/50"
+                              >
+                                Close
+                              </button>
+                            </div>
+                          </div>
+
+                          <section
+                            data-otg="OTG_BACKGROUND_MAIN_SCENE_IMAGE_V36C"
+                            aria-label={`${background.name} main scene background`}
+                          >
+                            <p className="mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-200">
+                              Main Scene Background
+                            </p>
+                            {displaySrc && !savedBackgroundImageFailuresV36BPI1[background.id] ? (
+                              <img
+                                src={otgDisplayImageUrlV36BP6(displaySrc)}
+                                alt={`${background.name} main scene background`}
+                                width={1280}
+                                height={720}
+                                decoding="async"
+                                onError={() => {
+                                  setSavedBackgroundImageFailuresV36BPI1((current) => ({ ...current, [background.id]: true }));
+                                }}
+                                className="mx-auto max-h-[45vh] w-full max-w-[1280px] rounded-xl bg-black object-contain sm:max-h-[65vh] lg:max-h-[72vh]"
+                              />
+                            ) : (
+                              <div className="rounded-xl border border-dashed border-amber-500/40 bg-amber-950/20 p-10 text-center text-sm text-amber-100">
+                                The saved preview could not be loaded. Press Refresh Library after the server repairs this background image.
+                              </div>
+                            )}
+                          </section>
+
+                          {hasCompleteCanonicalBackgroundCardV36B(background.angleImages) ? (
+                            <BackgroundAnglePlateV36C
+                              angleImages={background.angleImages}
+                              title={background.name}
+                            />
+                          ) : null}
+
+                          {background.prompt ? (
+                            <div className="mt-4 rounded-xl border border-zinc-800 bg-black/30 p-3">
+                              <p className="text-[11px] font-black uppercase tracking-[0.14em] text-zinc-400">Prompt</p>
+                              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-zinc-200">{background.prompt}</p>
+                            </div>
+                          ) : null}
+
+
+                          <button
+                            type="button"
+                            onClick={() => setExpandedSavedCharacterBackgroundIdV36AN("")}
+                            className="mt-4 w-full rounded-xl border border-zinc-700 bg-black/50 px-4 py-3 text-sm font-black text-zinc-100 transition hover:border-cyan-300/50"
+                          >
+                            Close
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })() : null}
+
+                  {expandedCharacterBackgroundCandidateId ? (() => {
+                    const candidate = characterBackgroundPreviewCandidates.find((item) => item.id === expandedCharacterBackgroundCandidateId);
+                    if (!candidate) return null;
+                    const candidateAngleImages =
+                      (candidate as any).angleImages as
+                        CharacterBackgroundReferenceV36A["angleImages"];
+                    const candidateHasCanonicalBackgroundCard =
+                      hasCompleteCanonicalBackgroundCardV36B(
+                        candidateAngleImages,
+                      );
+
+                    return (
+                      <div
+                        className="fixed inset-0 z-[10000] overflow-y-auto overflow-x-hidden bg-black/85 p-2 pb-28 sm:p-4 sm:pb-28"
+                        data-otg="OTG_BACKGROUND_PREVIEW_EXPAND_MODAL_V36J"
+                      >
+                        <div className="mx-auto w-full max-w-7xl overflow-hidden rounded-2xl border border-violet-300/30 bg-zinc-950 p-3 shadow-2xl shadow-black sm:p-4">
+                          <div className="mb-3 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-200">Preview Image</p>
+                              <h3 className="mt-1 text-lg font-black text-zinc-50">{candidate.name}</h3>
+                            </div>
+                            <div className="grid w-full min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:w-auto lg:flex-wrap lg:justify-end">
+                              <button
+                                type="button"
+                                onClick={() => void handleCharacterBackgroundUseImageV36AF(candidate)}
+                                disabled={characterBackgroundBusy}
+                                className="min-h-11 w-full rounded-xl border border-emerald-300/40 bg-emerald-500/15 px-4 py-2 text-sm font-black text-emerald-50 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-900 disabled:text-zinc-400 lg:w-auto"
+                              >
+                                {backgroundCandidateActionLabelV1(candidate)}
+                              </button>
+                              {candidateHasCanonicalBackgroundCard ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void retryCharacterBackgroundPlateV36B(candidate)}
+                                  disabled={characterBackgroundBusy}
+                                  className="min-h-11 w-full rounded-xl border border-amber-300/40 bg-amber-500/15 px-4 py-2 text-sm font-black text-amber-50 transition hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-900 disabled:text-zinc-400 lg:w-auto"
+                                >
+                                  Retry Plate
+                                </button>
+                              ) : null}                              {!candidateHasCanonicalBackgroundCard && !(candidate as any).isBackgroundMasterV36B && !(candidate as any).isCompleteBackgroundPlateV36AF ? (
+<button
                                 type="button"
                                 onClick={() => void removePeopleFromCharacterBackgroundCandidateV36S(candidate)}
                                 disabled={characterBackgroundBusy}
@@ -11801,35 +13591,31 @@ async function saveCharacter() {
                                 className="rounded-xl border border-amber-300/40 bg-amber-500/15 px-4 py-2 text-sm font-black text-amber-50 transition hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-900 disabled:text-zinc-400"
                               >
                                 Remove People
-                              </button>                              <a
-                                href={backgroundPreviewNativeComfySrcV36V(candidate) || backgroundPreviewProxySrcV36V(candidate)}
-                                target="_blank"
-                                rel="noreferrer"
-                                data-otg="OTG_BACKGROUND_OPEN_NATIVE_COMFY_IMAGE_V36V"
-                                className="rounded-xl border border-cyan-300/40 bg-cyan-500/15 px-4 py-2 text-sm font-black text-cyan-50 transition hover:bg-cyan-500/25"
-                              >
-                                Open Native Comfy Image
-                              </a>
-                              <a
-                                href={backgroundPreviewProxySrcV36V(candidate)}
-                                target="_blank"
-                                rel="noreferrer"
-                                data-otg="OTG_BACKGROUND_OPEN_APP_PROXY_IMAGE_V36V"
-                                className="rounded-xl border border-violet-300/40 bg-violet-500/15 px-4 py-2 text-sm font-black text-violet-50 transition hover:bg-violet-500/25"
-                              >
-                                Open App Proxy Image
-                              </a>
-                              <button
-                                type="button"
-                                onClick={() => setExpandedCharacterBackgroundCandidateId("")}
-                                className="rounded-xl border border-zinc-700 bg-black/40 px-4 py-2 text-sm font-black text-zinc-100 transition hover:border-violet-300/50"
-                              >
-                                Close
                               </button>
+                              ) : null}
                             </div>
                           </div>
 
-                          {backgroundPreviewProxySrcV36V(candidate) ? (
+                          {candidateHasCanonicalBackgroundCard &&
+                          backgroundPreviewProxySrcV36V(candidate) ? (
+                            <section
+                              data-otg="OTG_BACKGROUND_MAIN_SCENE_IMAGE_V36C"
+                              aria-label={`${candidate.name} main scene background`}
+                            >
+                              <p className="mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-cyan-200">
+                                Main Scene Background
+                              </p>
+                              <img
+                                src={otgDisplayImageUrlV36BP6(backgroundPreviewProxySrcV36V(candidate))}
+                                alt={`${candidate.name} main scene background`}
+                                width={1280}
+                                height={720}
+                                decoding="async"
+                                data-otg="OTG_BACKGROUND_MODAL_IMAGE_V36U"
+                                className="mx-auto aspect-video max-h-[45vh] w-full max-w-[1280px] rounded-xl bg-black object-contain sm:max-h-[65vh] lg:max-h-[72vh]"
+                              />
+                            </section>
+                          ) : backgroundPreviewProxySrcV36V(candidate) ? (
                             <img
                               src={otgDisplayImageUrlV36BP6(backgroundPreviewProxySrcV36V(candidate))}
                               alt={candidate.name}
@@ -11837,211 +13623,157 @@ async function saveCharacter() {
                               height={720}
                               decoding="async"
                               data-otg="OTG_BACKGROUND_MODAL_IMAGE_V36U"
-                              className="mx-auto aspect-video w-full max-w-[1280px] max-h-[72vh] rounded-xl bg-black object-contain"
+                              className="mx-auto aspect-video max-h-[45vh] w-full max-w-[1280px] rounded-xl bg-black object-contain sm:max-h-[65vh] lg:max-h-[72vh]"
                             />
                           ) : null}
 
-                          <p className="mt-3 text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500">Full source used by Background Studio</p>
-                          <p className="mt-1 break-all text-xs text-zinc-400">
-                            {candidate.workflowImage || candidate.displayImage || candidate.imageUrl || candidate.imagePath}
-                          </p>
-                          <p className="mt-2 break-all text-[11px] text-zinc-500">
-                            Native Comfy preview base: {backgroundPreviewNativeComfyBaseV36V()}
-                          </p>
-                          <p className="mt-1 text-[11px] text-zinc-500">
-                            Embedded preview uses app proxy; native link is diagnostic.
-                          </p>
+                          {candidateHasCanonicalBackgroundCard ? (
+                            <BackgroundAnglePlateV36C
+                              angleImages={candidateAngleImages}
+                              title={candidate.name}
+                            />
+                          ) : null}
+
+                          <footer
+                            className="mt-4 border-t border-zinc-800 pt-4"
+                            data-otg="OTG_BACKGROUND_PREVIEW_CLOSE_FOOTER_V36B"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setExpandedCharacterBackgroundCandidateId("")}
+                              className="min-h-12 w-full rounded-xl border border-zinc-700 bg-black/50 px-4 py-3 text-sm font-black text-zinc-100 transition hover:border-violet-300/50"
+                            >
+                              Close
+                            </button>
+                          </footer>
                         </div>
                       </div>
                     );
                   })() : null}
 
-                <div className="mb-3 flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-cyan-400/20 bg-zinc-950/90 p-3">
-                  <div>
-                    <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-200">Background Studio</p>
-                    <h2 className="mt-1 text-xl font-black text-zinc-50">Create Background Preview</h2>
-                    <p className="mt-1 max-w-4xl text-xs leading-5 text-zinc-300">
-                      Step 1 creates the main preview image. Generated previews are always landscape 1280x720. Use Remove People when a generated background contains unwanted people. After choosing a preview, the next Background Studio phase will create the 10-image angle plate.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => closeCharacterBackgroundStudioV36Q()}
-                    className="rounded-xl border border-zinc-700 bg-black/40 px-4 py-2 text-sm font-black text-zinc-100 transition hover:border-cyan-300/50"
-                  >
-                    Back to Characters
-                  </button>
-                </div>
+                {/* OTG_BACKGROUND_STUDIO_CHARACTER_CREATOR_UI_V1 */}
+                <section
+                  className="mb-4 rounded-[30px] border border-sky-300/20 bg-gradient-to-br from-sky-400/[0.08] via-slate-950/80 to-cyan-400/[0.04] p-5 sm:p-7"
+                  data-otg="background-create-header"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-5">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.22em] text-sky-200/70">
+                        BACKGROUND GALLERY
+                      </p>
+                      <h2 className="mt-2 text-3xl font-black text-white">
+                        Create Background
+                      </h2>
+                      <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">
+                        Choose an image model and art style, then describe the environment you want to create.
+                        Generated backgrounds begin as landscape 1280 x 720 candidates. After you choose one,
+                        Use This Background creates the 1920 x 1080 Master and then the five directional references required
+                        for the six-reference Background Card.
+                      </p>
+                    </div>
 
-                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_300px]">
-                  <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-3">
-                    <div className="grid gap-4 md:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => closeCharacterBackgroundStudioV36Q()}
+                      className="min-h-11 rounded-2xl border border-sky-300/30 bg-sky-400/10 px-5 text-sm font-black text-sky-50 transition hover:bg-sky-400/20"
+                    >
+                      Back to Background Gallery
+                    </button>
+                  </div>
+                </section>
+
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.42fr)]">
+                  <div className="rounded-[28px] border border-sky-300/15 bg-sky-400/[0.055] p-5 sm:p-7">
+                    <div>
                       <label className="block">
-                        <span className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-200">Background name</span>
+                        <span className="text-xs font-black uppercase tracking-[0.2em] text-sky-200/75">
+                          Background Name
+                        </span>
                         <input
                           value={characterBackgroundName}
                           onChange={(event) => setCharacterBackgroundName(event.target.value)}
                           placeholder="Scene Background"
-                          className="mt-2 w-full rounded-xl border border-zinc-700 bg-black/40 px-3 py-2 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-cyan-300 focus:outline-none"
+                          className="mt-3 min-h-12 w-full rounded-2xl border border-sky-300/20 bg-black/35 px-4 text-base font-bold text-white outline-none transition placeholder:text-white/30 focus:border-sky-200/60"
+                          data-otg="background-name-input"
                         />
                       </label>
 
-                      <label className="block">
-                        <span className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-200">Location type</span>
-                        <input
-                          value={characterBackgroundLocationType}
-                          onChange={(event) => setCharacterBackgroundLocationType(event.target.value)}
-                          placeholder="Library, bedroom, city street, spaceship bridge"
-                          className="mt-2 w-full rounded-xl border border-zinc-700 bg-black/40 px-3 py-2 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-cyan-300 focus:outline-none"
-                        />
-                      </label>
                     </div>
 
-                    <div className="mt-4" data-otg="OTG_CHARACTER_BACKGROUND_PROVIDER_KREA2_V36BPV2">
-                      <span className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-200">Image model</span>
-                      <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                        {([
-                          ["ernie-image", "Ernie Images"],
-                          ["z-turbo", "ZTurbo Image"],
-                          ["krea2-turbo", "Krea2 Turbo"],
-                        ] as const).map(([providerOption, label]) => {
-                          const active = characterBackgroundProvider === providerOption;
-                          return (
-                            <button
-                              key={providerOption}
-                              type="button"
-                              onClick={() => setCharacterBackgroundProvider(providerOption)}
-                              className={active
-                                ? "rounded-xl border border-cyan-300 bg-cyan-400/15 px-3 py-2 text-left text-xs font-black text-cyan-50"
-                                : "rounded-xl border border-zinc-700 bg-black/30 px-3 py-2 text-left text-xs font-bold text-zinc-300 transition hover:border-cyan-300/60 hover:text-cyan-100"}
-                              aria-pressed={active}
-                            >
-                              {label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="mt-4">
-                      <span className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-200">Style preset</span>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {CHARACTER_BACKGROUND_STYLE_PRESETS_V36E.map((style) => {
-                          const active = characterBackgroundStyle.toLowerCase() === style.toLowerCase();
-                          return (
-                            <button
-                              key={style}
-                              type="button"
-                              onClick={() => setCharacterBackgroundStyle(style)}
-                              className={classNames(
-                                "rounded-full border px-3 py-1.5 text-xs font-black transition",
-                                active
-                                  ? "border-cyan-300 bg-cyan-400/20 text-cyan-50"
-                                  : "border-zinc-700 bg-black/30 text-zinc-200 hover:border-cyan-300/50 hover:text-cyan-100",
-                              )}
-                            >
-                              {style}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="mt-4">
-                      <span className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-200">Image creator</span>
-                      <div className="mt-2 grid gap-3 md:grid-cols-2">
-                        {CHARACTER_BACKGROUND_PROVIDER_PRESETS_V36E.map((provider) => {
-                          const active = characterBackgroundProvider === provider.id;
-                          return (
-                            <button
-                              key={provider.id}
-                              type="button"
-                              onClick={() => setCharacterBackgroundProvider(provider.id)}
-                              className={classNames(
-                                "rounded-xl border p-3 text-left transition",
-                                active
-                                  ? "border-violet-300 bg-violet-500/20 text-violet-50"
-                                  : "border-zinc-800 bg-black/30 text-zinc-200 hover:border-violet-300/50",
-                              )}
-                            >
-                              <span className="block text-sm font-black">{provider.label}</span>
-                              <span className="mt-1 block text-[11px] leading-4 text-zinc-300">{provider.description}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <label className="mt-4 block">
-                      <span className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-200">Describe scene</span>
-                      <textarea
-                        value={characterBackgroundContinuityBlock}
-                        onChange={(event) => setCharacterBackgroundContinuityBlock(event.target.value)}
-                        placeholder="Example: young girl's bedroom, pink bed, posters on the wall, white desk, stuffed animals, warm afternoon sunlight"
-                        rows={3}
-                        className="mt-2 w-full rounded-xl border border-zinc-700 bg-black/40 px-3 py-2 text-sm leading-6 text-zinc-50 placeholder:text-zinc-500 focus:border-cyan-300 focus:outline-none"
-                      />
+                    <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                    <div>
+                    <label
+                      htmlFor="background-image-model"
+                      className="block text-xs font-black uppercase tracking-[0.2em] text-sky-200/75"
+                    >
+                      Image Model
                     </label>
 
-                    <label className="mt-4 block">
-                      <span className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-200">Prompt sent to ComfyUI</span>
-                      <textarea
-                        value={characterBackgroundPrompt}
-                        onChange={(event) => setCharacterBackgroundPrompt(event.target.value)}
-                        placeholder="Click Build Prompt, or enter the exact prompt to send to ComfyUI."
-                        rows={3}
-                        className="mt-2 w-full rounded-xl border border-zinc-700 bg-black/40 px-3 py-2 text-sm leading-6 text-zinc-50 placeholder:text-zinc-500 focus:border-cyan-300 focus:outline-none"
-                      />
-                    </label>
-
-                    <div className="mt-4 flex flex-wrap items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCharacterBackgroundPrompt(buildCharacterBackgroundPromptV36E({
-                            name: characterBackgroundName.trim(),
-                            locationType: characterBackgroundLocationType.trim(),
-                            style: characterBackgroundStyle.trim() || "Cinematic",
-                            describeScene: characterBackgroundContinuityBlock.trim(),
-                            promptOverride: "",
-                          }));
-                        }}
-                        className="rounded-xl border border-zinc-700 bg-black/30 px-4 py-2 text-sm font-black text-zinc-100 transition hover:border-cyan-300/50"
-                      >
-                        Build Prompt
-                      </button>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-300">Previews</span>
-                        {[1, 2, 3, 4, 5].map((count) => (
-                          <button
-                            key={count}
-                            type="button"
-                            onClick={() => setCharacterBackgroundPreviewCount(count)}
-                            className={classNames(
-                              "h-8 w-8 rounded-full border text-xs font-black transition",
-                              characterBackgroundPreviewCount === count
-                                ? "border-cyan-300 bg-cyan-400/20 text-cyan-50"
-                                : "border-zinc-700 bg-black/30 text-zinc-200 hover:border-cyan-300/50",
-                            )}
-                          >
-                            {count}
-                          </button>
-                        ))}
-                      </div>
+                    <select
+                      id="background-image-model"
+                      value={characterBackgroundProvider}
+                      onChange={(event) =>
+                        setCharacterBackgroundProvider(
+                          event.target.value as CharacterBackgroundProvider,
+                        )
+                      }
+                      className="mt-3 min-h-12 w-full rounded-2xl border border-sky-300/20 bg-black/35 px-4 text-base font-bold text-white outline-none transition focus:border-sky-200/60"
+                      data-otg="background-image-model-select"
+                    >
+                      {CHARACTER_BACKGROUND_PROVIDER_PRESETS_V36E.map((provider) => (
+                        <option key={provider.id} value={provider.id}>
+                          {provider.label}
+                        </option>
+                      ))}
+                    </select>
                     </div>
 
-                    <div className="mt-4 flex flex-wrap gap-3">
-                      <button
-                        type="button"
-                        onClick={() => void createCharacterBackgroundPreviewsV36E()}
-                        disabled={characterBackgroundBusy || (!characterBackgroundPrompt.trim() && !characterBackgroundContinuityBlock.trim())}
-                        className="rounded-xl border border-cyan-300/40 bg-cyan-500/15 px-4 py-2 text-sm font-black text-cyan-50 transition hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-900 disabled:text-zinc-300"
-                      >
-                        {characterBackgroundBusy ? "Working..." : `Create ${characterBackgroundPreviewCount} Preview${characterBackgroundPreviewCount === 1 ? "" : "s"}`}
-                      </button>
+                    <div>
+                    <label
+                      htmlFor="background-style-preset"
+                      className="block text-xs font-black uppercase tracking-[0.2em] text-sky-200/75"
+                    >
+                      Art Style Preset
+                    </label>
 
-                      <label className="cursor-pointer rounded-xl border border-violet-300/40 bg-violet-500/15 px-4 py-2 text-sm font-black text-violet-50 transition hover:bg-violet-500/25">
+                    <select
+                      id="background-style-preset"
+                      value={characterBackgroundStyle}
+                      onChange={(event) => setCharacterBackgroundStyle(event.target.value)}
+                      className="mt-3 min-h-12 w-full rounded-2xl border border-sky-300/20 bg-black/35 px-4 text-base font-bold text-white outline-none transition focus:border-sky-200/60"
+                      data-otg="background-style-preset-select"
+                    >
+                      {CHARACTER_BACKGROUND_STYLE_PRESETS_V36E.map((style) => (
+                        <option key={style} value={style}>
+                          {style}
+                        </option>
+                      ))}
+                    </select>
+                    </div>
+                    </div>
+
+                    <label
+                      htmlFor="background-prompt"
+                      className="mt-6 block text-xs font-black uppercase tracking-[0.2em] text-sky-200/75"
+                    >
+                      Prompt
+                    </label>
+
+                    <textarea
+                      id="background-prompt"
+                      value={characterBackgroundPrompt}
+                      onChange={(event) => setCharacterBackgroundPrompt(event.target.value)}
+                      rows={8}
+                      placeholder="Describe the environment, architecture, permanent objects, materials, colors, lighting, geography, and spatial relationships..."
+                      className="mt-3 w-full resize-y rounded-2xl border border-sky-300/20 bg-black/35 p-4 text-base leading-7 text-white outline-none placeholder:text-white/30 focus:border-sky-200/60"
+                      data-otg="background-prompt-input"
+                    />
+
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                      <label
+                        className="flex min-h-12 w-full cursor-pointer items-center justify-center rounded-2xl border border-violet-300/30 bg-violet-400/10 px-4 text-sm font-black text-violet-50 transition hover:bg-violet-400/20"
+                        data-otg="background-create-upload"
+                      >
                         Upload Background
                         <input
                           type="file"
@@ -12055,70 +13787,404 @@ async function saveCharacter() {
                           }}
                         />
                       </label>
-                    </div>
 
-                    {characterBackgroundStatus ? (
-                      <p className="mt-4 text-sm font-semibold text-cyan-100">{characterBackgroundStatus}</p>
-                    ) : null}
-                  </div>
-
-                  <aside className="rounded-2xl border border-zinc-800 bg-zinc-950/80 p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-black uppercase tracking-[0.16em] text-zinc-300">Preview images</p>
-                        <p className="mt-1 text-[11px] text-zinc-500">Click a preview to enlarge it. Use Image creates the complete background image plate. The final plate is what gets sent to ComfyUI. Sync accepts exact current-run matches only.</p>
-                      </div>
                       <button
                         type="button"
-                        onClick={() => useSelectedCharacterBackgroundImageV36E()}
-                        disabled={!selectedCharacterBackgroundCandidateId || !characterBackgroundPreviewCandidates.length}
-                        className="rounded-xl border border-emerald-300/40 bg-emerald-500/15 px-4 py-2 text-sm font-black text-emerald-50 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-900 disabled:text-zinc-300"
+                        onClick={() => void createCharacterBackgroundPreviewsV36E()}
+                        disabled={characterBackgroundBusy || !characterBackgroundPrompt.trim()}
+                        className="min-h-12 w-full rounded-2xl border border-sky-300/30 bg-sky-400/20 px-5 text-base font-black text-sky-50 transition hover:bg-sky-400/30 disabled:cursor-not-allowed disabled:opacity-40"
+                        data-otg="background-create-generate"
                       >
-                        Use Image
+                        {characterBackgroundBusy ? "Generating..." : "Generate Background"}
                       </button>
                     </div>
 
-                    {characterBackgroundPreviewCandidates.length ? (
-                      <div className="mt-4 grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
-                        {characterBackgroundPreviewCandidates.slice(0, 5).map((candidate) => {
-                          const selected = selectedCharacterBackgroundCandidateId === candidate.id;
-                          return (
+                    <p className="mt-3 text-xs leading-5 text-white/40">
+                      Each Generate click creates exactly one 1280 x 720 candidate. The newest five generated
+                      candidates are kept; uploads remain independent. Nothing is saved until you choose it.
+                    </p>
+
+                    {(() => {
+                      const candidate = characterBackgroundPreviewCandidates.find(
+                        (item) => item.id === selectedCharacterBackgroundCandidateId,
+                      ) || characterBackgroundPreviewCandidates.at(-1);
+                      if (!candidate) return null;
+                      const candidateAny = candidate as any;
+                      return (
+                        <div className="mt-4 overflow-hidden rounded-2xl border border-sky-300/20 bg-black/30" data-otg="background-current-preview">
+                          {backgroundPreviewProxySrcV36V(candidate) ? (
+                            <img
+                              src={otgDisplayImageUrlV36BP6(backgroundPreviewProxySrcV36V(candidate))}
+                              alt={candidate.name}
+                              width={640}
+                              height={360}
+                              className="aspect-video w-full bg-black object-contain"
+                            />
+                          ) : null}
+                          <div className="grid gap-2 p-3 sm:grid-cols-2">
                             <button
-                              key={candidate.id}
+                              type="button"
+                              disabled={characterBackgroundBusy}
+                              onClick={() => void handleCharacterBackgroundUseImageV36AF(candidate)}
+                              className="rounded-xl border border-emerald-300/35 bg-emerald-400/15 px-3 py-2 text-sm font-black text-emerald-50 disabled:opacity-40"
+                              data-otg="background-current-preview-choose"
+                            >
+                              {backgroundCandidateActionLabelV1(candidate)}
+                            </button>
+                            {!candidateAny.isCanonicalBackgroundCardV36B && !candidateAny.isBackgroundMasterV36B ? (
+                              <button
+                                type="button"
+                                disabled={characterBackgroundBusy}
+                                onClick={() => void removePeopleFromCharacterBackgroundCandidateV36S(candidate)}
+                                className="rounded-xl border border-amber-300/35 bg-amber-400/10 px-3 py-2 text-sm font-black text-amber-50 disabled:opacity-40"
+                              >
+                                Remove People
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setExpandedCharacterBackgroundCandidateId(candidate.id)}
+                                className="rounded-xl border border-violet-300/30 bg-violet-400/10 px-3 py-2 text-sm font-black text-violet-50"
+                              >
+                                Expand
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {characterBackgroundStatus ? (
+                      <div className="mt-4 rounded-2xl border border-sky-300/15 bg-sky-300/[0.07] p-3 text-sm leading-6 text-sky-100/80">
+                        {characterBackgroundStatus}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-2" data-otg="background-selected-model-style">
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-3">
+                      <div className="text-xs font-black uppercase tracking-[0.2em] text-white/45">
+                        Selected Model
+                      </div>
+
+                      <div className="mt-2 text-sm font-black text-white">
+                        {CHARACTER_BACKGROUND_PROVIDER_PRESETS_V36E.find(
+                          (provider) => provider.id === characterBackgroundProvider,
+                        )?.label || characterBackgroundProvider}
+                      </div>
+
+                    </div>
+
+                    <div className="rounded-2xl border border-sky-300/15 bg-sky-400/[0.05] p-3">
+                      <div className="text-xs font-black uppercase tracking-[0.2em] text-sky-200/70">
+                        Selected Style
+                      </div>
+
+                      <div className="mt-2 text-sm font-black text-white">
+                        {characterBackgroundStyle}
+                      </div>
+                    </div>
+                    </div>
+
+                    <div className="rounded-[26px] border border-white/10 bg-white/[0.035] p-4">
+                      <div className="text-xs font-black uppercase tracking-[0.2em] text-white/45">
+                        Fixed Output
+                      </div>
+
+                      <div className="mt-4 space-y-2 text-sm leading-6 text-white/60">
+                        <p>
+                          Resolution: <span className="font-bold text-white">1280 x 720</span>
+                        </p>
+                        <p>
+                          Orientation: <span className="font-bold text-white">Landscape</span>
+                        </p>
+                        <p>
+                          Aspect Ratio: <span className="font-bold text-white">16:9</span>
+                        </p>
+                        <p>
+                          Final Card: <span className="font-bold text-white">6 canonical references</span>
+                        </p>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+
+                <section
+                  className="mt-4 rounded-[28px] border border-sky-300/15 bg-sky-400/[0.04] p-5 sm:p-7"
+                  data-otg="background-generated-candidates"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-200/70">
+                        Generated Backgrounds
+                      </p>
+                      <h3 className="mt-2 text-2xl font-black text-white">
+                        Choose a Background
+                      </h3>
+                      <p className="mt-2 max-w-3xl text-sm leading-6 text-white/50">
+                        Expand any candidate for a larger view. Choose Background advances only that exact
+                        candidate through the Background Card lifecycle.
+                      </p>
+                    </div>
+
+                    <div className="rounded-full border border-sky-300/20 bg-black/25 px-4 py-2 text-xs font-black text-sky-100">
+                      {characterBackgroundPreviewCandidates.length} available
+                    </div>
+                  </div>
+
+                  {characterBackgroundPreviewCandidates.length ? (
+                    <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                      {characterBackgroundPreviewCandidates.map((candidate) => {
+                        const selected =
+                          selectedCharacterBackgroundCandidateId === candidate.id;
+
+                        const candidateAny = candidate as any;
+
+                        const stageLabel = candidateAny.isCanonicalBackgroundCardV36B
+                          ? "Six-reference Background Card"
+                          : candidateAny.isBackgroundMasterV36B
+                            ? "1920 x 1080 Master"
+                            : candidateAny.isCompleteBackgroundPlateV36AF
+                              ? "Legacy complete background"
+                              : "1280 x 720 candidate";
+
+                        return (
+                          <article
+                            key={candidate.id}
+                            className={classNames(
+                              "overflow-hidden rounded-2xl border bg-black/20 transition",
+                              selected
+                                ? "border-sky-200/80 bg-sky-300/10"
+                                : "border-white/10",
+                            )}
+                          >
+                            <button
                               type="button"
                               onClick={() => {
                                 setSelectedCharacterBackgroundCandidateId(candidate.id);
                                 setExpandedCharacterBackgroundCandidateId(candidate.id);
                               }}
-                              className={classNames(
-                                "rounded-xl border bg-black/30 p-2 text-left transition",
-                                selected ? "border-emerald-300" : "border-zinc-800 hover:border-cyan-300/50",
-                              )}
+                              className="group relative block w-full overflow-hidden bg-black"
+                              data-otg="background-candidate-expand"
                             >
                               {backgroundPreviewProxySrcV36V(candidate) ? (
                                 <img
-                                  src={otgDisplayImageUrlV36BP6(backgroundPreviewProxySrcV36V(candidate))}
+                                  src={otgDisplayImageUrlV36BP6(
+                                    backgroundPreviewProxySrcV36V(candidate),
+                                  )}
                                   alt={candidate.name}
-                                  width={320}
-                                  height={180}
+                                  width={640}
+                                  height={360}
                                   decoding="async"
                                   data-otg="OTG_BACKGROUND_PREVIEW_CARD_IMAGE_V36U"
-                                  className="aspect-video w-full rounded-lg bg-black object-contain"
+                                  className="aspect-video w-full object-contain transition duration-200 group-hover:scale-[1.01]"
                                 />
-                              ) : null}
-                              <p className="mt-2 truncate text-xs font-bold text-zinc-100">{candidate.name}</p>
-                              <p className="text-[10px] uppercase tracking-[0.12em] text-zinc-500">{candidate.provider}</p>
+                              ) : (
+                                <div className="flex aspect-video w-full items-center justify-center text-sm text-white/40">
+                                  Preview unavailable
+                                </div>
+                              )}
                             </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="mt-4 rounded-xl border border-dashed border-zinc-700 bg-black/20 p-6 text-sm leading-6 text-zinc-400">
-                        No previews yet. Build a prompt, choose Ernie Image, Z Turbo, or Krea2 Turbo, then create 1-5 previews.
-                      </div>
-                    )}
-                  </aside>
-                </div>
+
+                            <div className="p-3">
+                              <div className="truncate text-sm font-black text-white">
+                                {candidate.name}
+                              </div>
+
+                              <div className="mt-1 text-xs text-white/40">
+                                {stageLabel}
+                              </div>
+
+                              <div className="mt-1 text-[10px] font-black uppercase tracking-[0.14em] text-sky-200/55">
+                                {candidate.provider}
+                              </div>
+
+                              {selected ? (
+                                <div className="mt-3 rounded-lg bg-sky-300/15 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-sky-100">
+                                  Selected
+                                </div>
+                              ) : null}
+
+                              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                <button
+                                  type="button"
+                                  data-otg="background-candidate-use-image"
+                                  onClick={() => {
+                                    setSelectedCharacterBackgroundCandidateId(candidate.id);
+                                    void handleCharacterBackgroundUseImageV36AF(candidate);
+                                  }}
+                                  disabled={characterBackgroundBusy}
+                                  className="rounded-xl border border-emerald-300/30 bg-emerald-400/10 px-3 py-2 text-xs font-black text-emerald-100 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  {backgroundCandidateActionLabelV1(candidate)}
+                                </button>
+
+                                {!candidateAny.isCanonicalBackgroundCardV36B &&
+                                !candidateAny.isBackgroundMasterV36B ? (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void removePeopleFromCharacterBackgroundCandidateV36S(candidate)
+                                    }
+                                    disabled={characterBackgroundBusy}
+                                    data-otg="OTG_BACKGROUND_REMOVE_PEOPLE_BUTTON_V36T"
+                                    className="rounded-xl border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-xs font-black text-amber-100 transition hover:bg-amber-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    Remove People
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setExpandedCharacterBackgroundCandidateId(candidate.id)
+                                    }
+                                    className="rounded-xl border border-violet-300/25 bg-violet-400/10 px-3 py-2 text-xs font-black text-violet-100 transition hover:bg-violet-400/20"
+                                  >
+                                    Expand
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="mt-5 rounded-2xl border border-dashed border-white/10 bg-black/20 p-8 text-center text-sm leading-6 text-white/40">
+                      No generated backgrounds yet. Choose a model and style, describe the environment,
+                      then press Generate Background.
+                    </div>
+                  )}
+                </section>
+
+                <section
+                  className="mt-4 rounded-[28px] border border-white/10 bg-white/[0.025] p-5 sm:p-7"
+                  data-otg="OTG_BACKGROUND_SAVED_LIBRARY_MANAGER_V36AN"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.2em] text-white/45">
+                        Saved Backgrounds
+                      </p>
+                      <h3 className="mt-2 text-2xl font-black text-white">
+                        Background Gallery
+                      </h3>
+                      <p className="mt-2 text-sm leading-6 text-white/45">
+                        View, rename, or delete completed backgrounds already saved to your library.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => void loadCharacterBackgroundLibraryV36B()}
+                      disabled={characterBackgroundBusy}
+                      className="min-h-11 rounded-2xl border border-white/15 bg-black/25 px-4 text-sm font-black text-white/75 transition hover:border-sky-300/40 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Refresh Library
+                    </button>
+                  </div>
+
+                  {characterBackgroundRefs.length ? (
+                    <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      {characterBackgroundRefs.map((background) => {
+                        const displaySrc = savedBackgroundDisplaySrcV36AH3(background);
+
+                        return (
+                          <article
+                            key={background.id}
+                            className="overflow-hidden rounded-2xl border border-white/10 bg-black/20"
+                          >
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedSavedCharacterBackgroundIdV36AN(background.id)
+                              }
+                              className="block w-full bg-black text-left"
+                            >
+                              {displaySrc &&
+                              !savedBackgroundImageFailuresV36BPI1[background.id] ? (
+                                <img
+                                  src={otgDisplayImageUrlV36BP6(displaySrc)}
+                                  alt={background.name}
+                                  width={640}
+                                  height={360}
+                                  decoding="async"
+                                  onError={() => {
+                                    setSavedBackgroundImageFailuresV36BPI1((current) => ({
+                                      ...current,
+                                      [background.id]: true,
+                                    }));
+                                  }}
+                                  className="aspect-video w-full object-contain"
+                                />
+                              ) : (
+                                <div className="flex aspect-video w-full items-center justify-center border-b border-white/10 px-4 text-center text-xs text-amber-100/70">
+                                  Saved preview unavailable. Refresh the library to retry.
+                                </div>
+                              )}
+                            </button>
+
+                            <div className="p-3">
+                              <div className="truncate text-sm font-black text-white">
+                                {background.name}
+                              </div>
+
+                              <div className="mt-1 truncate text-xs text-white/40">
+                                {[background.locationType, background.style]
+                                  .filter(Boolean)
+                                  .join(" - ") || "Saved background"}
+                              </div>
+
+                              <div className="mt-3 grid grid-cols-3 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setExpandedSavedCharacterBackgroundIdV36AN(background.id)
+                                  }
+                                  className="rounded-lg border border-sky-300/20 bg-sky-400/10 px-2 py-2 text-[11px] font-bold text-sky-100"
+                                >
+                                  View
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void renameCharacterBackgroundReferenceV36AN(background)
+                                  }
+                                  disabled={characterBackgroundBusy}
+                                  className="rounded-lg border border-amber-300/20 bg-amber-400/10 px-2 py-2 text-[11px] font-bold text-amber-100 disabled:opacity-40"
+                                >
+                                  Rename
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void deleteCharacterBackgroundReferenceV36C(
+                                      background.id,
+                                      background.name,
+                                    )
+                                  }
+                                  disabled={characterBackgroundBusy}
+                                  className="rounded-lg border border-red-300/20 bg-red-400/10 px-2 py-2 text-[11px] font-bold text-red-100 disabled:opacity-40"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="mt-5 rounded-2xl border border-dashed border-white/10 bg-black/20 p-8 text-center text-sm text-white/40">
+                      No saved backgrounds yet.
+                    </div>
+                  )}
+                </section>
+
               </div>
             </div>
           ) : null}
@@ -12126,7 +14192,7 @@ async function saveCharacter() {
         <aside className={classNames(!characterBackgroundStudioOpen && showSavedCharactersStrip ? "block lg:col-span-1" : "hidden", "rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4")}>
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-zinc-50">Saved Characters</h3>
-            <p className="text-[11px] text-zinc-500">Create-character drafts auto-save. Long voice jobs continue in the worker.</p>
+            <p className="text-[11px] text-zinc-500">Create-character drafts auto-save. Character completion and long voice jobs continue in Worker Manager.</p>
             <button type="button" onClick={() => void loadCharacters()} className="text-xs text-zinc-400 hover:text-amber-200">
               Refresh
             </button>
@@ -12137,12 +14203,14 @@ async function saveCharacter() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h4 className="text-xs font-black uppercase tracking-[0.18em] text-amber-200">Save for Later</h4>
-                  <p className="mt-1 text-xs text-zinc-500">Incomplete background-free character sources. Click Complete Character to create the card and finish the character.</p>
+                  <p className="mt-1 text-xs text-zinc-500">Incomplete background-free character sources. Complete Character queues a durable Worker Manager job that creates the card and saves the character even after this page closes.</p>
                 </div>
               </div>
               <div className="mt-3 grid gap-3 sm:grid-cols-3 xl:grid-cols-3">
                 {characters.filter((character) => isSavedForLaterCharacterV36BPS2(character)).map((character) => {
                   const characterKey = safeId(String(character.id || character.name || ""));
+                  const completionState = characterCompletionByIdV1[characterKey];
+                  const completionActive = completionState?.status === "queued" || completionState?.status === "running" || completionState?.status === "interrupted";
                   return (
                     <div key={character.id || characterKey} className="rounded-xl border border-amber-300/30 bg-zinc-900/70 p-3">
                       {characterDisplayImagePathV36BP8(character) ? (
@@ -12150,13 +14218,27 @@ async function saveCharacter() {
                       ) : null}
                       <p className="text-base font-semibold leading-snug text-zinc-100">{character.name}</p>
                       <p className="mt-1 text-xs text-amber-100">Saved for later. Character card still required.</p>
+                      {completionState ? (
+                        <p className={classNames("mt-2 text-[11px]", completionState.status === "failed" ? "text-red-300" : completionState.status === "completed" ? "text-emerald-300" : "text-cyan-200")}>
+                          Worker Manager: {completionState.message} {completionActive ? `(${Math.round(completionState.progress)}%)` : ""}
+                        </p>
+                      ) : null}
                       <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
                         <button
                           type="button"
-                          onClick={() => completeSavedForLaterCharacterV36BPS2(character)}
-                          className="rounded-full border border-amber-300/70 bg-amber-300/10 px-2 py-1 text-[11px] font-semibold text-amber-100 transition hover:bg-amber-300/20"
+                          onClick={() => void queueSavedForLaterCharacterCompletionV1(character)}
+                          disabled={completionActive}
+                          className="rounded-full border border-amber-300/70 bg-amber-300/10 px-2 py-1 text-[11px] font-semibold text-amber-100 transition hover:bg-amber-300/20 disabled:cursor-wait disabled:opacity-50"
                         >
-                          Complete Character
+                          {completionActive ? `Completing ${Math.round(completionState?.progress || 0)}%` : completionState?.status === "failed" ? "Retry Complete" : "Complete Character"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openSavedForLaterCharacterInBuilderV1(character)}
+                          disabled={completionActive}
+                          className="rounded-full border border-zinc-600 bg-zinc-800/40 px-2 py-1 text-[11px] text-zinc-200 transition hover:bg-zinc-700/60 disabled:opacity-40"
+                        >
+                          Open in Builder
                         </button>
                         <button
                           type="button"

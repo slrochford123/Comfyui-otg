@@ -73,7 +73,6 @@ export default function CharacterTextToSpeechPanel({
   const [speed, setSpeed] = React.useState(1);
   const [emotionStrength, setEmotionStrength] = React.useState(0.8);
   const [styleStrength, setStyleStrength] = React.useState(0.8);
-  const [seed, setSeed] = React.useState("");
   const [title, setTitle] = React.useState("character_tts");
   const [busy, setBusy] = React.useState(false);
   const [saveBusy, setSaveBusy] = React.useState(false);
@@ -135,7 +134,6 @@ export default function CharacterTextToSpeechPanel({
     form.append("speed", String(speed));
     form.append("emotion_strength", String(emotionStrength));
     form.append("style_strength", String(styleStrength));
-    form.append("seed", seed.trim());
     form.append("title", cleanName(title));
     if (voiceSampleFile) form.append("voice_upload", voiceSampleFile, voiceSampleFile.name);
     if (selectedModel) {
@@ -318,10 +316,6 @@ export default function CharacterTextToSpeechPanel({
           <div>
             <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Style</label>
             <input type="number" min="0" max="1.5" step="0.05" value={styleStrength} onChange={(event) => setStyleStrength(Number(event.target.value) || 0)} className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none" />
-          </div>
-          <div>
-            <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Seed</label>
-            <input value={seed} onChange={(event) => setSeed(event.target.value.replace(/[^0-9-]/g, ""))} placeholder="random" className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none" />
           </div>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">

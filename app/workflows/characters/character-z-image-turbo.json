@@ -62,7 +62,7 @@
   },
   "57:28": {
     "inputs": {
-      "unet_name": "Zturbo/z_image_turbo_bf16.safetensors",
+      "unet_name": "z_image_turbo_bf16.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -85,7 +85,8 @@
   },
   "57:13": {
     "inputs": {
-      "width": 832, "height": 1216,
+      "width": 832,
+      "height": 1216,
       "batch_size": 1
     },
     "class_type": "EmptySD3LatentImage",

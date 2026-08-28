@@ -1,80 +1,47 @@
 # Dependencies
 node_modules
 node_modules/
-.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
 
 # Next.js and build output
 .next/
 out/
-build/
 .vercel/
 server.js
 *.tsbuildinfo
-next-env.d.ts
 
 # Runtime state, local databases, and generated job output
 data/
 .otg-state/
 .otg-backups/
 .qualification-tmp/
-device_galleries/
-gallery/
-!app/api/gallery/
-!app/api/gallery/**
-galleries/
-uploads/
 *.db
-*.db-*
+*.db-shm
+*.db-wal
 *.sqlite
-*.sqlite-*
-*.jsonl
+*.sqlite3
 
 # Environment files and local secrets
 .env
 .env.*
 !.env.example
-keys/
-*.keystore
 *.pem
 *.key
 *.p12
 *.crt
 *.cert
 
-# Logs, dumps, coverage, and caches
+# Logs, dumps, and caches
 *.log
 logs/
 core
 core.*
-coverage/
 .cache/
 tmp/
 .tmp/
-.temp/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
-
-# Capacitor / mobile local output
-android/.gradle/
-android/.idea/
-android/build/
-android/app/build/
-android/app/release/
-android/release/
-android/keystore.properties
-android/local.properties
-keystore.properties
-ios/build/
-ios/Pods/
-ios/DerivedData/
 
 # Release/build provenance generated outside source control
 .release_id
@@ -84,35 +51,14 @@ ROLLBACK_RELEASE.txt
 RELEASE_CHANGE.txt
 RELEASE_VERIFICATION.json
 RELEASE_MANIFEST.sha256
-SOURCE_TEST_RELEASE.txt
-SOURCE_TEST_BUILD_ID.txt
 
-# One-off patch, backup, and archive artifacts
-files/
-patch_full_feature_batch/
+# One-off patch and backup artifacts
 apply-*.py
+*.before-*
+*.pre-*
 *.bak
-*.bak*
+*.bak-*
 *.backup
 *.orig
 *.old
 *.tmp
-*.before-*
-*.pre-*
-*.20[0-9][0-9][0-9][0-9][0-9][0-9]*
-*.zip
-*.tar
-*.tar.gz
-*.7z
-backups/
-_patch_backups/
-_local_patches_hold/
-.codex-backups/
-.otg_backups/
-_backups/
-
-# OS / editor junk
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/

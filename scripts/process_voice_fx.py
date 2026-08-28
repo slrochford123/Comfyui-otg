@@ -42,6 +42,9 @@ def base_filters(params):
     speed = clamp_float(params.get("speed"), 1.0, 0.5, 2.0)
     pitch_semitones = clamp_float(params.get("pitchSemitones"), 0, -12, 12)
     grit_amount = clamp_float(params.get("gritAmount"), 0, 0, 100)
+    saturation_amount = clamp_float(params.get("saturationAmount"), 0, 0, 100)
+    overdrive_amount = clamp_float(params.get("overdriveAmount"), 0, 0, 100)
+    fuzz_amount = clamp_float(params.get("fuzzAmount"), 0, 0, 100)
     normalize = bool(params.get("normalize", True))
 
     echo = clean_choice(params.get("echo"), "off", {"off", "subtle", "room", "cave"})
@@ -76,11 +79,40 @@ def base_filters(params):
 
     if abs(pitch_semitones) > 0.01:
         ratio = math.pow(2.0, pitch_semitones / 12.0)
+        # Normalize the decoded source to the processing rate first.
+        # Then shift pitch and compensate its duration change so that
+        # pitch remains independent from the explicit speed control.
+        filters.append("aresample=24000")
         filters.append(f"asetrate=24000*{ratio}")
         filters.append("aresample=24000")
+        filters.append(f"atempo={1.0 / ratio}")
 
     if abs(speed - 1.0) > 0.01:
         filters.append(f"atempo={speed}")
+
+    if saturation_amount > 0.01:
+        drive_db = 1.5 + (saturation_amount / 100.0) * 8.5
+        threshold = 0.96 - (saturation_amount / 100.0) * 0.38
+        filters.append(f"volume={drive_db:.2f}dB")
+        filters.append(
+            f"asoftclip=type=tanh:threshold={threshold:.4f}:output=0.92"
+        )
+
+    if overdrive_amount > 0.01:
+        drive_db = 3.0 + (overdrive_amount / 100.0) * 12.0
+        threshold = 0.82 - (overdrive_amount / 100.0) * 0.42
+        filters.append(f"volume={drive_db:.2f}dB")
+        filters.append(
+            f"asoftclip=type=atan:threshold={threshold:.4f}:output=0.86"
+        )
+
+    if fuzz_amount > 0.01:
+        drive_db = 6.0 + (fuzz_amount / 100.0) * 14.0
+        threshold = 0.62 - (fuzz_amount / 100.0) * 0.36
+        filters.append(f"volume={drive_db:.2f}dB")
+        filters.append(
+            f"asoftclip=type=hard:threshold={threshold:.4f}:output=0.72"
+        )
 
     if grit_amount > 0.01:
         bits = int(round(16 - (grit_amount / 100.0) * 8))
@@ -122,15 +154,26 @@ def layer_filter(params):
     volume = max(0.01, min(0.85, layer_mix))
 
     if layer_mode == "octave_down":
-        return f"asetrate=24000*0.5,aresample=24000,adelay=18|18,volume={volume}"
+        return f"aresample=24000,asetrate=24000*0.5,aresample=24000,atempo=2.0,adelay=18|18,volume={volume}"
     if layer_mode == "octave_up":
-        return f"asetrate=24000*2.0,aresample=24000,adelay=12|12,volume={volume}"
+        return f"aresample=24000,asetrate=24000*2.0,aresample=24000,atempo=0.5,adelay=12|12,volume={volume}"
     if layer_mode == "monster_double":
-        return f"asetrate=24000*0.5,aresample=24000,lowpass=f=4200,aecho=0.8:0.3:35:0.18,volume={volume}"
+        return f"aresample=24000,asetrate=24000*0.5,aresample=24000,atempo=2.0,lowpass=f=4200,aecho=0.8:0.3:35:0.18,volume={volume}"
     if layer_mode == "ghost_double":
-        return f"asetrate=24000*1.08,aresample=24000,highpass=f=220,aecho=0.8:0.45:130:0.32,volume={volume}"
+        return f"aresample=24000,asetrate=24000*1.08,aresample=24000,atempo={1.0 / 1.08},highpass=f=220,aecho=0.8:0.45:130:0.32,volume={volume}"
     if layer_mode == "robot_double":
-        return f"acrusher=bits=8:mix=0.35,aecho=0.8:0.25:28:0.25,volume={volume}"
+        # Robot-vox chain: amplitude modulation at 50 Hz produces the
+        # characteristic robotic wobble, shaped through a metallic
+        # bandpass for tone texture. Controlled bitcrush adds grit
+        # without destroying intelligibility. Short delay rounds out
+        # the synthetic shimmer while preserving source duration.
+        return (
+            f"tremolo=f=50:d=0.5,"
+            f"highpass=f=300,lowpass=f=3500,"
+            f"acrusher=bits=9:mix=0.2,"
+            f"aecho=0.8:0.2:25:0.2,"
+            f"volume={volume}"
+        )
 
     return None
 

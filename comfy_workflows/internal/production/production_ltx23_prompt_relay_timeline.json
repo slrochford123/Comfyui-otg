@@ -330,7 +330,7 @@
   },
   "608": {
     "inputs": {
-      "image": "C:\\AI\\OTG-Test2\\data\\uploads\\storyboard\\sb_b1fd3b5f-392a-43eb-b99f-fe2ec1632891.png"
+      "image": ""
     },
     "class_type": "LoadImageFromPath",
     "_meta": {
@@ -519,7 +519,7 @@
   },
   "5827": {
     "inputs": {
-      "image": "C:\\AI\\OTG-Test2\\data\\uploads\\storyboard\\sb_b1fd3b5f-392a-43eb-b99f-fe2ec1632891.png"
+      "image": ""
     },
     "class_type": "LoadImageFromPath",
     "_meta": {
@@ -558,7 +558,7 @@
   },
   "5831": {
     "inputs": {
-      "image": "C:\\AI\\OTG-Test2\\data\\uploads\\storyboard\\sb_b1fd3b5f-392a-43eb-b99f-fe2ec1632891.png"
+      "image": ""
     },
     "class_type": "LoadImageFromPath",
     "_meta": {

@@ -54,13 +54,14 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, showProductio
   return (
     <nav
       className={classNames(
-        "fixed inset-x-0 bottom-0 z-40 border-t px-1 backdrop-blur-md sm:px-2",
-        uiMode === "clean" ? "border-white/8 bg-[#08090d]/95 py-1.5 sm:py-2" : "border-white/10 bg-black/75 py-2 sm:py-3"
+        "fixed inset-x-0 bottom-0 z-40 border-t px-2 backdrop-blur-md",
+        uiMode === "clean" ? "border-white/8 bg-[#08090d]/95 py-2" : "border-white/10 bg-black/75 py-3"
       )}
     >
-      <div className={classNames("mx-auto flex max-w-full overflow-x-auto overscroll-x-contain px-1 pb-1", uiMode === "clean" ? "max-w-[1480px] gap-1.5" : "max-w-[1400px] gap-2")}>
+      <div className={classNames("mx-auto flex overflow-x-auto pb-1", uiMode === "clean" ? "max-w-[1480px] gap-1.5" : "max-w-[1400px] gap-2")}>
         {items.map((item) => {
           const active = tab === item.id;
+          const isCharacterTab = item.id === "characters";
           return (
             <button
               key={item.id}
@@ -68,8 +69,8 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, showProductio
               onClick={() => !item.disabled && onTab(item.id)}
               disabled={item.disabled}
               className={classNames(
-                "inline-flex shrink-0 min-w-[72px] max-w-[88px] items-center justify-center rounded-full border px-2 py-2 text-center text-[11px] font-semibold leading-tight whitespace-normal transition sm:min-w-[120px] sm:max-w-none sm:px-4 sm:py-3 sm:text-base sm:whitespace-nowrap",
-                uiMode === "clean" ? "rounded-[10px] sm:min-w-[104px] sm:px-3 sm:py-2 sm:text-sm" : "",
+                "inline-flex min-w-[120px] items-center justify-center rounded-full border px-4 py-3 text-base font-semibold whitespace-nowrap transition",
+                uiMode === "clean" ? "min-w-[104px] rounded-[10px] px-3 py-2 text-sm" : "",
                 active && uiMode === "clean"
                   ? "border-cyan-300/45 bg-cyan-400 text-slate-950 shadow-none"
                   : active
@@ -77,6 +78,11 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, showProductio
                     : uiMode === "clean"
                       ? "border-white/8 bg-white/[0.035] text-white/68 hover:bg-white/[0.07] hover:text-white"
                       : "border-white/10 bg-white/5 text-white/88 hover:bg-white/10",
+                isCharacterTab
+                  ? active
+                    ? "!border-sky-200/70 !bg-sky-300 !text-slate-950 shadow-[0_0_28px_rgba(125,211,252,0.25)]"
+                    : "!border-sky-300/30 !bg-sky-400/10 !text-sky-100 hover:!bg-sky-300/20"
+                  : "",
                 item.disabled ? "cursor-not-allowed opacity-45" : ""
               )}
             >
@@ -88,5 +94,3 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, showProductio
     </nav>
   );
 }
-
-/* OTG_SPIN_DIAL_NAV_MOBILE_COMPACT_PATCH_V1 */

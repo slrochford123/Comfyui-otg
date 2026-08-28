@@ -208,7 +208,6 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
   const [musicGeneratorDuration, setMusicGeneratorDuration] = React.useState(30);
   const [musicGeneratorBpm, setMusicGeneratorBpm] = React.useState(95);
   const [musicGeneratorKey, setMusicGeneratorKey] = React.useState("E minor");
-  const [musicGeneratorSeed, setMusicGeneratorSeed] = React.useState(-1);
   const [musicGenerateBusy, setMusicGenerateBusy] = React.useState(false);
   const [musicLibraryBusy, setMusicLibraryBusy] = React.useState(false);
   const [musicGeneratorStatus, setMusicGeneratorStatus] = React.useState("");
@@ -645,7 +644,6 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
         form.append("durationSeconds", String(durationSeconds));
         form.append("bpm", String(bpm));
         form.append("keyscale", musicGeneratorKey || "E minor");
-        form.append("seed", String(Number(musicGeneratorSeed)));
         form.append("referenceVideoFile", audioVideo.file, audioVideo.file.name);
         response = await fetch("/api/edit-video/ace-music", {
           method: "POST",
@@ -662,7 +660,6 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
             durationSeconds,
             bpm,
             keyscale: musicGeneratorKey || "E minor",
-            seed: Number(musicGeneratorSeed),
             referenceVideo: musicGeneratorMode === "reference" && audioVideo?.source === "gallery"
               ? {
                   fileName: audioVideo.fileName || "",
@@ -1314,10 +1311,6 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
                   <div>
                     <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Key</label>
                     <input value={musicGeneratorKey} onChange={(event) => setMusicGeneratorKey(event.target.value)} className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none" />
-                  </div>
-                  <div>
-                    <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Seed</label>
-                    <input type="number" value={musicGeneratorSeed} onChange={(event) => setMusicGeneratorSeed(Number(event.target.value))} className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none" />
                   </div>
                 </div>
               </div>

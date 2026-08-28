@@ -44,33 +44,4 @@ const nextConfig = {
   // and you should browse: https://comf-otg.comfyui-otg.win/login
 };
 
-
-// OTG_SECURITY_BUILD_FIX_BEGIN
-// Keep compiler and trace collection isolated from the main build process.
-nextConfig.experimental = {
-  ...(nextConfig.experimental ?? {}),
-  webpackBuildWorker: true,
-  parallelServerBuildTraces: true,
-};
-
-// Force the audited WebSocket runtime into standalone artifacts.
-const otgExistingTracingIncludes =
-  nextConfig.outputFileTracingIncludes ?? {};
-
-const otgExistingGlobalTracingIncludes =
-  Array.isArray(otgExistingTracingIncludes["/*"])
-    ? otgExistingTracingIncludes["/*"]
-    : [];
-
-nextConfig.outputFileTracingIncludes = {
-  ...otgExistingTracingIncludes,
-  "/*": Array.from(
-    new Set([
-      ...otgExistingGlobalTracingIncludes,
-      "./node_modules/ws/**/*",
-    ])
-  ),
-};
-// OTG_SECURITY_BUILD_FIX_END
-
 export default nextConfig;

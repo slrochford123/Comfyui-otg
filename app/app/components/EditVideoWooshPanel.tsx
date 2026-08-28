@@ -79,7 +79,6 @@ export default function EditVideoWooshPanel({ audioVideo }: { audioVideo: Select
   const selectedDurationSeconds = Number(audioVideo?.durationSeconds || 0);
   const effectiveDurationSeconds =
     Number.isFinite(selectedDurationSeconds) && selectedDurationSeconds > 0 ? selectedDurationSeconds : 8;
-  const [seed, setSeed] = React.useState(-1);
   const [keepOriginalAudio, setKeepOriginalAudio] = React.useState(true);
   const [originalVolume, setOriginalVolume] = React.useState(100);
   const [sfxVolume, setSfxVolume] = React.useState(70);
@@ -109,7 +108,6 @@ export default function EditVideoWooshPanel({ audioVideo }: { audioVideo: Select
       form.append("prompt", prompt.trim());
       form.append("model", model);
       form.append("durationSeconds", String(Math.max(1, Number(effectiveDurationSeconds) || 8)));
-      form.append("seed", String(Number(seed)));
       form.append("keepOriginalAudio", keepOriginalAudio ? "1" : "0");
       form.append("originalVolume", String(Math.max(0, Math.min(150, originalVolume)) / 100));
       form.append("sfxVolume", String(Math.max(0, Math.min(150, sfxVolume)) / 100));
@@ -246,10 +244,6 @@ export default function EditVideoWooshPanel({ audioVideo }: { audioVideo: Select
               <div className="text-xs font-black uppercase tracking-[0.18em] text-white/45">SFX length</div>
               <div className="mt-2 text-sm font-semibold text-white">{formatDuration(effectiveDurationSeconds)}</div>
               <div className="mt-1 text-[11px] leading-4 text-white/45">Auto-matches selected video length.</div>
-            </div>
-            <div>
-              <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Seed</label>
-              <input type="number" value={seed} onChange={(event) => setSeed(Number(event.target.value))} className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none" />
             </div>
           </div>
         </div>

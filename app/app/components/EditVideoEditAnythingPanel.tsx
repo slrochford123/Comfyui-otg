@@ -123,7 +123,6 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
   const [durationSeconds, setDurationSeconds] = React.useState(5);
   const [fps, setFps] = React.useState(24);
   const [longerSide, setLongerSide] = React.useState(1024);
-  const [seed, setSeed] = React.useState(-1);
   const [useVideoReasoning, setUseVideoReasoning] = React.useState(false);
   const [obscuraStrength, setObscuraStrength] = React.useState(2.3);
 
@@ -241,7 +240,6 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
       form.set("durationSeconds", String(seconds));
       form.set("fps", String(rate));
       form.set("longerSide", String(side));
-      form.set("seed", String(seed));
       form.set("useVideoReasoning", useVideoReasoning ? "true" : "false");
       form.set("obscuraStrength", String(obscuraStrength));
 
@@ -370,15 +368,6 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
                   <option key={key} value={key}>{label}</option>
                 ))}
               </select>
-            </div>
-            <div>
-              <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Seed</label>
-              <input
-                type="number"
-                value={seed}
-                onChange={(event) => setSeed(Number(event.target.value))}
-                className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none focus:border-cyan-300/40"
-              />
             </div>
           </div>
 

@@ -7,14 +7,15 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import OtgMultiAngleControl from "./OtgMultiAngleControl";
 import AnglesDirectorCameraControl from "./AnglesDirectorCameraControl";
 import SplatViewer from "./SplatViewer";
+import { serializeAnglesCamera } from "@/lib/anglesCamera";
 
 type AnglesTab = "camera" | "model" | "textures";
 const ANGLES_VERTICAL_MIN = -30;
 const ANGLES_VERTICAL_MAX = 60;
 const ANGLES_HORIZONTAL_MIN = -180;
 const ANGLES_HORIZONTAL_MAX = 180;
-const ANGLES_ZOOM_MIN = -4;
-const ANGLES_ZOOM_MAX = 6;
+const ANGLES_ZOOM_MIN = -5;
+const ANGLES_ZOOM_MAX = 5;
 
 function clampAnglesNumber(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return 0;
@@ -700,13 +701,15 @@ const res = await fetch("/api/angles/model-3d", {
       const fd = new FormData();
         fd.append("image", file, file.name);
 
-        const angleHorizontal = ((Math.round(horizontalRef.current) % 360) + 360) % 360;
-        const angleVertical = ((Math.round(verticalRef.current) % 360) + 360) % 360;
-        const angleZoom = Math.max(1, Math.min(10, 5 + Number(zoomRef.current || 0)));
+        const camera = serializeAnglesCamera(
+          horizontalRef.current,
+          verticalRef.current,
+          zoomRef.current
+        );
 
-        fd.append("angleHorizontal", String(angleHorizontal));
-        fd.append("angleVertical", String(angleVertical));
-        fd.append("angleZoom", String(angleZoom));
+        fd.append("angleHorizontal", String(camera.horizontal));
+        fd.append("angleVertical", String(camera.vertical));
+        fd.append("angleZoom", String(camera.zoom));
         fd.append("angleDefaultPrompts", "true");
         fd.append("angleCameraView", "true");
 
@@ -748,9 +751,6 @@ const res = await fetch("/api/angles/model-3d", {
     }
 
     const deviceId = getOrCreateDeviceId();
-    const normalizedHorizontal = ((horizontal % 360) + 360) % 360;
-    const normalizedZoom = Math.max(1, Math.min(10, 5 + zoom));
-
     setAnglesBusy(true);
     setAnglesMsg("Submitting current camera angle to ComfyUI...");
     setAnglesImages([]);
@@ -759,13 +759,15 @@ const res = await fetch("/api/angles/model-3d", {
       const fd = new FormData();
         fd.append("image", file, file.name);
 
-        const angleHorizontal = ((Math.round(horizontalRef.current) % 360) + 360) % 360;
-        const angleVertical = ((Math.round(verticalRef.current) % 360) + 360) % 360;
-        const angleZoom = Math.max(1, Math.min(10, 5 + Number(zoomRef.current || 0)));
+        const camera = serializeAnglesCamera(
+          horizontalRef.current,
+          verticalRef.current,
+          zoomRef.current
+        );
 
-        fd.append("angleHorizontal", String(angleHorizontal));
-        fd.append("angleVertical", String(angleVertical));
-        fd.append("angleZoom", String(angleZoom));
+        fd.append("angleHorizontal", String(camera.horizontal));
+        fd.append("angleVertical", String(camera.vertical));
+        fd.append("angleZoom", String(camera.zoom));
         fd.append("angleDefaultPrompts", "true");
         fd.append("angleCameraView", "true");
 

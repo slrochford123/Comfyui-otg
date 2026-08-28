@@ -10,11 +10,11 @@
       "tags": [
         "image",
         "text-to-image",
-        "ernie-image-turbo",
-        "apache-2.0"
+        "qwen-image",
+        "linux-comfyui"
       ],
       "enabled": true,
-      "description": "Main TEST text-to-image preset now uses ERNIE-Image-Turbo. Prompt-enhancer nodes are included in the workflow file but disabled by default."
+      "description": "Main TEST text-to-image preset uses the Linux-verified Qwen Image workflow. The Ernie/Flux2 default path is disabled because ministral-3-3b with CLIP type flux2 fails with a Llama2 size mismatch on Linux ComfyUI."
     },
     {
       "id": "presets/Edit Image",

@@ -2708,9 +2708,21 @@ function openStoryboardBackgroundGalleryV36AK(promptKeyRaw = "") {
   });
 }
 
+// OTG_QWEN_LEGACY_BACKGROUND_INTERCEPTOR_DISABLE_V2_START
 useEffect(() => {
+  const qwenBuilderSelector = '[data-otg-qwen-scene-builder="true"]';
+
+  // Qwen owns its own Character, Background, and Object gallery state. The old
+  // document-level text matcher must not exist while Qwen is mounted because it
+  // runs in capture phase and can open the obsolete Storyboard background modal.
+  if (document.querySelector(qwenBuilderSelector)) {
+    return;
+  }
+
   function retitleBackgroundButtons() {
     document.querySelectorAll("button").forEach((button) => {
+      if (button.closest('[data-otg-qwen-scene-builder="true"]')) return;
+
       const text = (button.textContent || "").replace(/\s+/g, " ").trim();
 
       if (text === "Background Gallery" || text === "Add Background") {
@@ -2720,10 +2732,14 @@ useEffect(() => {
   }
 
   function handleClick(event: MouseEvent) {
+    // Belt-and-suspenders runtime guard in case Qwen mounts after this effect.
+    if (document.querySelector(qwenBuilderSelector)) return;
+
     const target = event.target as HTMLElement | null;
     const button = target?.closest("button");
 
     if (!button) return;
+    if (button.closest('[data-otg-qwen-scene-builder="true"]')) return;
 
     const text = (button.textContent || "").replace(/\s+/g, " ").trim();
 
@@ -2753,6 +2769,7 @@ useEffect(() => {
     window.removeEventListener("otg-storyboard-background-selected-v36ak", handleSelected as EventListener);
   };
 }, [storyboardPromptReferenceSelectionsV30, storyboardBackgroundReferenceV30, storyboardBackgroundReferencesV36AK]);
+// OTG_QWEN_LEGACY_BACKGROUND_INTERCEPTOR_DISABLE_V2_END
 
 
 
@@ -5570,7 +5587,6 @@ function buildCompiledScenePrompt(lines: string[]) {
     body.set("orientation", aspectToOrientation(scene.aspectRatio));
     body.set("width", String(width));
     body.set("height", String(height));
-    body.set("seedMode", "random");
     body.set("sceneImageCount", String(clampStoryboardImageCount(scene.imageCount)));
 
     const sourceImagePath = String(options.sourceImagePath || "").trim();
@@ -9649,7 +9665,7 @@ function renderDefaultAnimateStage() {
                         </div>
 
                         <div className="mt-3 rounded-[12px] border border-emerald-300/25 bg-emerald-950/25 px-3 py-3 text-xs leading-5 text-emerald-50/85">
-                          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                          <div className="flex flex-col gap-2">
                             <div>
                               <p className="font-black uppercase tracking-[0.14em] text-emerald-100">Reference-to-video GGUF</p>
                               <p className="text-emerald-50/70">Uses this scene image as the background and the first selected character as reference slot 1.</p>
@@ -12297,7 +12313,7 @@ const renderedManifest = normalizeProductionEditManifest(row, {
             <div className="space-y-4">
               <div className="grid gap-5 xl:grid-cols-[minmax(360px,1fr)_minmax(320px,420px)]">
                 <div data-otg-animate-restored="Render Plan" data-marker="OTG_PRODUCTION_ANIMATE_RESTORE_UI_V1" className="rounded-[18px] border border-white/10 bg-white/[0.04] p-4">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="mb-3 flex flex-col gap-3">
                     <div>
                       <p className="text-[11px] font-black uppercase tracking-[0.22em] text-white/45">Preview</p>
                       <h3 className="text-lg font-black text-white">{activeRow?.title || "Clip"}</h3>
@@ -14117,7 +14133,7 @@ const renderedManifest = normalizeProductionEditManifest(row, {
                   return (
                     <div className="space-y-4">
                       <section className="rounded-[18px] border border-cyan-300/20 bg-cyan-300/[0.06] p-5 shadow-[0_0_26px_rgba(103,232,249,0.08)]">
-                        <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div className="flex flex-col gap-4">
                           <div>
                             <p className="text-[11px] font-black uppercase tracking-[0.24em] text-cyan-200/80">
                               Voice Dubbing
@@ -15737,45 +15753,47 @@ function renderProductionStageNavigation() {
     return (
       <nav
         aria-label="Production stage navigation"
+        data-otg-production-stage-bottom-compact="true"
         className="mt-6 rounded-[18px] border border-slate-200 bg-white p-4 shadow-sm"
       >
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="grid gap-3">
           <button
             type="button"
             disabled={!previousStage}
             onClick={() => {
               if (previousStage) transitionProductionStage(previousStage.id);
             }}
-            className="rounded-[12px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+            className="w-full rounded-[12px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Previous{previousStage ? `: ${previousStage.label}` : ""}
           </button>
 
-          <div className="flex flex-wrap items-center justify-center gap-2">
+          <div className="grid grid-cols-5 gap-2" data-otg-production-stage-square-row="true">
             {stages.map((stage, index) => (
               <button
                 key={stage.id}
                 type="button"
                 onClick={() => transitionProductionStage(stage.id)}
                 className={[
-                  "h-9 min-w-9 rounded-full border px-3 text-xs font-black transition",
+                  "aspect-square min-w-0 rounded-[10px] border px-1 py-2 text-center transition",
                   stage.id === activeStage
                     ? "border-violet-300 bg-violet-600 text-white"
-                    : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50",
+                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
                 ].join(" ")}
                 aria-current={stage.id === activeStage ? "page" : undefined}
                 title={stage.label}
               >
-                {index + 1}
+                <span className="block text-sm font-black leading-none">{index + 1}</span>
+                <span className="mt-1 block break-words text-[9px] font-black leading-[1.05]">{stage.label}</span>
               </button>
             ))}
           </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="grid gap-2">
             <button
               type="button"
               onClick={saveDraft}
-              className="rounded-[12px] bg-emerald-500 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-600"
+              className="w-full rounded-[12px] bg-emerald-500 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-600"
             >
               Save Project
             </button>
@@ -15785,7 +15803,7 @@ function renderProductionStageNavigation() {
               onClick={() => {
                 if (nextStage) transitionProductionStage(nextStage.id);
               }}
-              className="rounded-[12px] bg-violet-600 px-4 py-3 text-sm font-black text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-40"
+              className="w-full rounded-[12px] bg-violet-600 px-4 py-3 text-sm font-black text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Next{nextStage ? `: ${nextStage.label}` : ""}
             </button>
@@ -15799,6 +15817,8 @@ function renderProductionStageNavigation() {
     );
   }
 // OTG_PRODUCTION_STAGE_BOTTOM_NAV_V1_END
+// OTG_PRODUCTION_VERTICAL_STACK_V1
+// OTG_PRODUCTION_COMPACT_ROTATING_STAGE_NAV_V1
   function openProductionPipeline(options: { startAtStoryboard?: boolean } = {}) {
     if (options.startAtStoryboard) transitionProductionStage("storyboard");
     setProductionHomeMode("pipeline");
@@ -15912,7 +15932,7 @@ function renderProductionStageNavigation() {
   }
 
   return (
-  <div data-theme={theme} className="production-board min-h-[calc(100vh-160px)] rounded-[8px] border border-slate-200 bg-slate-50 text-slate-950 shadow-[0_20px_70px_rgba(15,23,42,0.12)]">
+  <div data-theme={theme} data-otg-production-pipeline-vertical="true" className="production-board w-full max-w-full overflow-x-hidden min-h-[calc(100vh-160px)] rounded-[8px] border border-slate-200 bg-slate-50 text-slate-950 shadow-[0_20px_70px_rgba(15,23,42,0.12)]">
       <style jsx global>{`
         .production-board {
           transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
@@ -16019,7 +16039,7 @@ function renderProductionStageNavigation() {
         }
       `}</style>
       <header className="border-b border-white/10 bg-slate-950 px-4 py-4 md:px-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-col gap-4">
           <div className="min-w-0">
             <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200/90">Production Workflow</p>
             <h1 className="mt-1 max-w-xl truncate text-2xl font-black tracking-tight text-white" title={projectTitle.trim() || "Untitled Production"}>
@@ -16029,18 +16049,18 @@ function renderProductionStageNavigation() {
               {manualSaveStatusLabel}
             </div>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="grid w-full gap-2">
             <button
               type="button"
               onClick={saveDraft}
-              className="rounded-[10px] border border-emerald-300 bg-emerald-500 px-4 py-2 text-sm font-black text-white shadow-[0_10px_30px_rgba(16,185,129,0.28)] transition hover:bg-emerald-600"
+              className="w-full rounded-[10px] border border-emerald-300 bg-emerald-500 px-4 py-3 text-sm font-black text-white shadow-[0_10px_30px_rgba(16,185,129,0.28)] transition hover:bg-emerald-600"
             >
               Save Project
             </button>
             <button
               type="button"
               onClick={handleBackToProductionHome}
-              className="rounded-[8px] border border-violet-300/30 bg-violet-500/20 px-3 py-2 text-sm font-black text-violet-100 transition hover:bg-violet-500/30"
+              className="w-full rounded-[10px] border border-violet-300/30 bg-violet-500/20 px-4 py-3 text-sm font-black text-violet-100 transition hover:bg-violet-500/30"
             >
               Back to Production Home
             </button>
@@ -16055,7 +16075,7 @@ function renderProductionStageNavigation() {
           )}
           aria-live="polite"
         >
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-2">
             <div>
               <div className={classNames("flex items-center gap-2 text-sm font-black", saveState === "error" ? "text-rose-100" : "text-cyan-100")}>
                 <span className={classNames("h-3 w-3 rounded-full", saveState === "error" ? "bg-rose-500" : "bg-cyan-500")} />
@@ -16074,52 +16094,54 @@ function renderProductionStageNavigation() {
         </div>
         {notice ? <p className="mt-3 text-sm font-semibold text-white/80">{notice}</p> : null}
 
-        <nav className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,2.2fr)_minmax(280px,1fr)]">
+        <nav
+          className="mt-5 rounded-[16px] border border-white/10 bg-white/[0.035] p-3"
+          data-otg-production-stage-rotating-rail="true"
+          aria-label="Production workflow steps"
+        >
           {stages.filter((stage) => stage.id === activeStage).map((stage) => {
             const activeIndex = stages.findIndex((item) => item.id === stage.id);
-            return (
-              <button
-                key={stage.id}
-                type="button"
-                onClick={() => transitionProductionStage(stage.id)}
-                className="flex min-h-[132px] items-center gap-4 rounded-[16px] border border-violet-400 bg-violet-600 p-5 text-left text-white shadow-[0_18px_45px_rgba(124,58,237,0.28)] transition"
-                aria-current="page"
-              >
-                <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-white/18 text-xl font-black text-white">{activeIndex + 1}</span>
-                <span className="min-w-0">
-                  <span className="block text-3xl font-black tracking-tight">{stage.label}</span>
-                  <span className="mt-2 block text-sm font-bold text-white/78">{stage.description}</span>
-                  <span className="mt-3 inline-flex rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-white/80">
-                    Current production step
-                  </span>
-                </span>
-              </button>
-            );
-          })}
+            const rotatedStages = [
+              ...stages.slice(activeIndex + 1),
+              ...stages.slice(0, activeIndex),
+            ];
 
-          <div className="grid gap-2 sm:grid-cols-2">
-            {stages.filter((stage) => stage.id !== activeStage).map((stage) => {
-              const stageIndex = stages.findIndex((item) => item.id === stage.id);
-              return (
+            return (
+              <div key={stage.id}>
                 <button
-                  key={stage.id}
                   type="button"
                   onClick={() => transitionProductionStage(stage.id)}
-                  className="flex items-center gap-2 rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2 text-left text-slate-700 transition hover:bg-white"
+                  className="flex w-full items-center gap-3 rounded-[12px] border border-violet-400 bg-violet-600 px-4 py-3 text-left text-white shadow-[0_14px_36px_rgba(124,58,237,0.24)]"
+                  aria-current="page"
                 >
-                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-white text-xs font-black text-slate-500">{stageIndex + 1}</span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-xs font-black">{stage.label}</span>
-                    <span className="block truncate text-[11px] text-slate-500">{stage.description}</span>
-                  </span>
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[10px] bg-white/18 text-base font-black text-white">{activeIndex + 1}</span>
+                  <span className="min-w-0 truncate text-lg font-black tracking-tight">{stage.label}</span>
                 </button>
-              );
-            })}
-          </div>
+
+                <div className="mt-3 grid grid-cols-4 gap-2" data-otg-production-rotating-stage-squares="true">
+                  {rotatedStages.map((otherStage) => {
+                    const stageIndex = stages.findIndex((item) => item.id === otherStage.id);
+                    return (
+                      <button
+                        key={otherStage.id}
+                        type="button"
+                        onClick={() => transitionProductionStage(otherStage.id)}
+                        className="aspect-square min-w-0 rounded-[10px] border border-slate-200 bg-slate-50 px-1 py-2 text-center text-slate-700 transition hover:border-violet-300 hover:bg-white"
+                        title={otherStage.label}
+                      >
+                        <span className="block text-sm font-black leading-none">{stageIndex + 1}</span>
+                        <span className="mt-1 block break-words text-[10px] font-black leading-[1.05]">{otherStage.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </nav>
 
         <section className="mt-5 rounded-[14px] border border-slate-200 bg-slate-50 p-3">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="mb-3 flex flex-col gap-3">
             <div>
               <h2 className="text-sm font-black uppercase tracking-[0.14em] text-slate-500">Scenes</h2>
               <p className="mt-1 text-xs text-slate-500">
@@ -16133,15 +16155,15 @@ function renderProductionStageNavigation() {
                 type="button"
                 onClick={addSceneLimited}
                 disabled={scenes.length >= MAX_PRODUCTION_SCENES}
-                className="rounded-[8px] border border-violet-200 bg-white px-3 py-2 text-xs font-black text-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="w-full rounded-[10px] border border-violet-200 bg-white px-4 py-3 text-sm font-black text-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                
+                {scenes.length >= MAX_PRODUCTION_SCENES ? `Maximum ${MAX_PRODUCTION_SCENES} scenes reached` : `+ Add Scene (${scenes.length}/${MAX_PRODUCTION_SCENES})`}
               </button>
             ) : null}
           </div>
 
           {activeStage === "animate" && selectedScene && (selectedScene as any).qwenAnimateHandoffSourceV36BPU3 ? (
-            <div className="flex gap-2 overflow-x-auto pb-1">
+            <div className="grid gap-3">
               {storyboardFramesForAnimate(selectedScene).map((frame) => {
                 const draft = animateFrameDrafts(selectedScene)[frame.index];
                 const clip = animateFrameClips(selectedScene)[frame.index];
@@ -16160,7 +16182,7 @@ function renderProductionStageNavigation() {
                         : "Pending image";
 
                 return (
-                  <div key={`animate-scene-strip-${frame.index}`} className={classNames("shrink-0", selected ? "w-56" : "w-40")}>
+                  <div key={`animate-scene-strip-${frame.index}`} className="w-full min-w-0">
                     <button
                       type="button"
                       onClick={() => focusAnimateSceneEditorV36BPU6(frame.index)}
@@ -16202,13 +16224,13 @@ function renderProductionStageNavigation() {
               })}
             </div>
           ) : (
-            <div className="flex gap-2 overflow-x-auto pb-1">
+            <div className="grid gap-3">
               {scenes.map((scene, index) => {
                 const meta = statusMeta(scene.status);
                 const selected = scene.id === selectedScene?.id;
                 const readyImages = sceneReadyStoryboardImages(scene);
                 return (
-                  <div key={scene.id} className={classNames("shrink-0", selected ? "w-56" : "w-36")}>
+                  <div key={scene.id} className="w-full min-w-0">
                     <button
                       type="button"
                       onClick={() => setSelectedSceneId(scene.id)}
@@ -16249,8 +16271,8 @@ function renderProductionStageNavigation() {
 
       {renderScenePreviewModal()}
 
-      <div className="grid min-h-[720px] grid-cols-1">
-        <main className="min-w-0 bg-slate-50 p-4 pb-32 md:p-6 md:pb-36">
+      <div className="grid min-h-[720px] w-full max-w-full grid-cols-1 overflow-x-hidden">
+        <main className="min-w-0 w-full max-w-full overflow-x-hidden bg-slate-50 p-4 pb-32 md:p-6 md:pb-36">
           {activeStage === "storyboard" && selectedScene ? (
             <section className="space-y-5">
               <QwenSceneBuilderPanel

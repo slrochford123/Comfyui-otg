@@ -1,0 +1,965 @@
+{
+  "25": {
+    "inputs": {
+      "image": "1787069648549_character_be8b986b-fe5b-49d3-be93-9b7730e82f1c_birefnet.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Character Image"
+    }
+  },
+  "439": {
+    "inputs": {
+      "filename_prefix": "otg-character-reference/front",
+      "images": [
+        "428:158",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  },
+  "428:146": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "428:154": {
+    "inputs": {
+      "value": 4.0
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "428:155": {
+    "inputs": {
+      "value": 1.0
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "428:161": {
+    "inputs": {
+      "unet_name": "Qwen/qwen_image_edit_2511_fp8mixed.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "428:162": {
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "428:165": {
+    "inputs": {
+      "value": 4
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "428:166": {
+    "inputs": {
+      "value": 40
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "428:168": {
+    "inputs": {
+      "value": true
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Enable 4steps LoRA?"
+    }
+  },
+  "429:231": {
+    "inputs": {
+      "value": 4.0
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "429:232": {
+    "inputs": {
+      "value": 1.0
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "429:237": {
+    "inputs": {
+      "value": 4
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "429:238": {
+    "inputs": {
+      "value": 40
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "429:239": {
+    "inputs": {
+      "value": true
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Enable 4steps LoRA?"
+    }
+  },
+  "430:256": {
+    "inputs": {
+      "value": 4.0
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "430:257": {
+    "inputs": {
+      "value": 1.0
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "430:262": {
+    "inputs": {
+      "value": 4
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "430:263": {
+    "inputs": {
+      "value": 40
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "430:264": {
+    "inputs": {
+      "value": true
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Enable 4steps LoRA?"
+    }
+  },
+  "431:281": {
+    "inputs": {
+      "value": 4.0
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "431:282": {
+    "inputs": {
+      "value": 1.0
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "431:287": {
+    "inputs": {
+      "value": 4
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "431:288": {
+    "inputs": {
+      "value": 40
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "431:289": {
+    "inputs": {
+      "value": true
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Enable 4steps LoRA?"
+    }
+  },
+  "428:160": {
+    "inputs": {
+      "image": [
+        "25",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "megapixels": 0.16,
+      "resolution_steps": 1
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "OTG Fast Character Card Scale (0.32 MP)"
+    }
+  },
+  "428:220": {
+    "inputs": {
+      "lora_name": "qwen-image-edit-2511-multiple-angles-lora.safetensors",
+      "strength_model": 1.0,
+      "model": [
+        "428:161",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "428:164": {
+    "inputs": {
+      "switch": [
+        "428:168",
+        0
+      ],
+      "on_false": [
+        "428:154",
+        0
+      ],
+      "on_true": [
+        "428:155",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (CFG)"
+    }
+  },
+  "428:167": {
+    "inputs": {
+      "switch": [
+        "428:168",
+        0
+      ],
+      "on_false": [
+        "428:166",
+        0
+      ],
+      "on_true": [
+        "428:165",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (Steps)"
+    }
+  },
+  "429:240": {
+    "inputs": {
+      "switch": [
+        "429:239",
+        0
+      ],
+      "on_false": [
+        "429:231",
+        0
+      ],
+      "on_true": [
+        "429:232",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (CFG)"
+    }
+  },
+  "429:241": {
+    "inputs": {
+      "switch": [
+        "429:239",
+        0
+      ],
+      "on_false": [
+        "429:238",
+        0
+      ],
+      "on_true": [
+        "429:237",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (Steps)"
+    }
+  },
+  "430:265": {
+    "inputs": {
+      "switch": [
+        "430:264",
+        0
+      ],
+      "on_false": [
+        "430:256",
+        0
+      ],
+      "on_true": [
+        "430:257",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (CFG)"
+    }
+  },
+  "430:266": {
+    "inputs": {
+      "switch": [
+        "430:264",
+        0
+      ],
+      "on_false": [
+        "430:263",
+        0
+      ],
+      "on_true": [
+        "430:262",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (Steps)"
+    }
+  },
+  "431:290": {
+    "inputs": {
+      "switch": [
+        "431:289",
+        0
+      ],
+      "on_false": [
+        "431:281",
+        0
+      ],
+      "on_true": [
+        "431:282",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (CFG)"
+    }
+  },
+  "431:291": {
+    "inputs": {
+      "switch": [
+        "431:289",
+        0
+      ],
+      "on_false": [
+        "431:288",
+        0
+      ],
+      "on_true": [
+        "431:287",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (Steps)"
+    }
+  },
+  "428:149": {
+    "inputs": {
+      "prompt": "different character, changed face, changed hairstyle, changed colors, costume redesign, changed clothing, missing accessory, duplicated accessory, extra character, text, label, watermark, dramatic expression, dramatic pose, inconsistent lighting, scenery, cropped head, cropped feet",
+      "clip": [
+        "428:162",
+        0
+      ],
+      "vae": [
+        "428:146",
+        0
+      ],
+      "image1": [
+        "428:160",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus"
+    }
+  },
+  "428:151": {
+    "inputs": {
+      "prompt": "<sks> front view eye-level shot wide shot. Preserve the same character identity, facial features, hairstyle, colors, clothing, accessories, materials, and proportions. Neutral pose where applicable. Plain consistent background, neutral consistent lighting, one character only, no text labels.",
+      "clip": [
+        "428:162",
+        0
+      ],
+      "vae": [
+        "428:146",
+        0
+      ],
+      "image1": [
+        "428:160",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus (Positive)"
+    }
+  },
+  "428:156": {
+    "inputs": {
+      "pixels": [
+        "428:160",
+        0
+      ],
+      "vae": [
+        "428:146",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "429:228": {
+    "inputs": {
+      "prompt": "<sks> back view eye-level shot wide shot. Preserve the same character identity, facial features, hairstyle, colors, clothing, accessories, materials, and proportions. Neutral pose where applicable. Plain consistent background, neutral consistent lighting, one character only, no text labels.",
+      "clip": [
+        "428:162",
+        0
+      ],
+      "vae": [
+        "428:146",
+        0
+      ],
+      "image1": [
+        "428:160",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus (Positive)"
+    }
+  },
+  "430:253": {
+    "inputs": {
+      "prompt": "<sks> left side view eye-level shot wide shot. Preserve the same character identity, facial features, hairstyle, colors, clothing, accessories, materials, and proportions. Neutral pose where applicable. Plain consistent background, neutral consistent lighting, one character only, no text labels.",
+      "clip": [
+        "428:162",
+        0
+      ],
+      "vae": [
+        "428:146",
+        0
+      ],
+      "image1": [
+        "428:160",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus (Positive)"
+    }
+  },
+  "431:278": {
+    "inputs": {
+      "prompt": "<sks> right side view eye-level shot wide shot. Preserve the same character identity, facial features, hairstyle, colors, clothing, accessories, materials, and proportions. Neutral pose where applicable. Plain consistent background, neutral consistent lighting, one character only, no text labels.",
+      "clip": [
+        "428:162",
+        0
+      ],
+      "vae": [
+        "428:146",
+        0
+      ],
+      "image1": [
+        "428:160",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus (Positive)"
+    }
+  },
+  "428:145": {
+    "inputs": {
+      "shift": 3.1,
+      "model": [
+        "428:220",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "428:147": {
+    "inputs": {
+      "reference_latents_method": "index_timestep_zero",
+      "conditioning": [
+        "428:149",
+        0
+      ]
+    },
+    "class_type": "FluxKontextMultiReferenceLatentMethod",
+    "_meta": {
+      "title": "Edit Model Reference Method"
+    }
+  },
+  "428:148": {
+    "inputs": {
+      "reference_latents_method": "index_timestep_zero",
+      "conditioning": [
+        "428:151",
+        0
+      ]
+    },
+    "class_type": "FluxKontextMultiReferenceLatentMethod",
+    "_meta": {
+      "title": "Edit Model Reference Method"
+    }
+  },
+  "429:225": {
+    "inputs": {
+      "reference_latents_method": "index_timestep_zero",
+      "conditioning": [
+        "429:228",
+        0
+      ]
+    },
+    "class_type": "FluxKontextMultiReferenceLatentMethod",
+    "_meta": {
+      "title": "Edit Model Reference Method"
+    }
+  },
+  "430:250": {
+    "inputs": {
+      "reference_latents_method": "index_timestep_zero",
+      "conditioning": [
+        "430:253",
+        0
+      ]
+    },
+    "class_type": "FluxKontextMultiReferenceLatentMethod",
+    "_meta": {
+      "title": "Edit Model Reference Method"
+    }
+  },
+  "431:275": {
+    "inputs": {
+      "reference_latents_method": "index_timestep_zero",
+      "conditioning": [
+        "431:278",
+        0
+      ]
+    },
+    "class_type": "FluxKontextMultiReferenceLatentMethod",
+    "_meta": {
+      "title": "Edit Model Reference Method"
+    }
+  },
+  "428:152": {
+    "inputs": {
+      "strength": 1.0,
+      "pre_cfg": false,
+      "model": [
+        "428:145",
+        0
+      ]
+    },
+    "class_type": "CFGNorm",
+    "_meta": {
+      "title": "CFGNorm"
+    }
+  },
+  "428:153": {
+    "inputs": {
+      "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+      "strength_model": 1.0,
+      "model": [
+        "428:152",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "428:163": {
+    "inputs": {
+      "switch": [
+        "428:168",
+        0
+      ],
+      "on_false": [
+        "428:152",
+        0
+      ],
+      "on_true": [
+        "428:153",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (Model)"
+    }
+  },
+  "429:236": {
+    "inputs": {
+      "switch": [
+        "429:239",
+        0
+      ],
+      "on_false": [
+        "428:152",
+        0
+      ],
+      "on_true": [
+        "428:153",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (Model)"
+    }
+  },
+  "430:261": {
+    "inputs": {
+      "switch": [
+        "430:264",
+        0
+      ],
+      "on_false": [
+        "428:152",
+        0
+      ],
+      "on_true": [
+        "428:153",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (Model)"
+    }
+  },
+  "431:286": {
+    "inputs": {
+      "switch": [
+        "431:289",
+        0
+      ],
+      "on_false": [
+        "428:152",
+        0
+      ],
+      "on_true": [
+        "428:153",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (Model)"
+    }
+  },
+  "428:169": {
+    "inputs": {
+      "seed": 1211736596,
+      "steps": [
+        "428:167",
+        0
+      ],
+      "cfg": [
+        "428:164",
+        0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model": [
+        "428:163",
+        0
+      ],
+      "positive": [
+        "428:148",
+        0
+      ],
+      "negative": [
+        "428:147",
+        0
+      ],
+      "latent_image": [
+        "428:156",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "429:242": {
+    "inputs": {
+      "seed": 1211856272,
+      "steps": [
+        "429:241",
+        0
+      ],
+      "cfg": [
+        "429:240",
+        0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model": [
+        "429:236",
+        0
+      ],
+      "positive": [
+        "429:225",
+        0
+      ],
+      "negative": [
+        "428:147",
+        0
+      ],
+      "latent_image": [
+        "428:156",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "430:267": {
+    "inputs": {
+      "seed": 1211975948,
+      "steps": [
+        "430:266",
+        0
+      ],
+      "cfg": [
+        "430:265",
+        0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model": [
+        "430:261",
+        0
+      ],
+      "positive": [
+        "430:250",
+        0
+      ],
+      "negative": [
+        "428:147",
+        0
+      ],
+      "latent_image": [
+        "428:156",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "431:292": {
+    "inputs": {
+      "seed": 1212095624,
+      "steps": [
+        "431:291",
+        0
+      ],
+      "cfg": [
+        "431:290",
+        0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model": [
+        "431:286",
+        0
+      ],
+      "positive": [
+        "431:275",
+        0
+      ],
+      "negative": [
+        "428:147",
+        0
+      ],
+      "latent_image": [
+        "428:156",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "428:158": {
+    "inputs": {
+      "samples": [
+        "428:169",
+        0
+      ],
+      "vae": [
+        "428:146",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "429:243": {
+    "inputs": {
+      "samples": [
+        "429:242",
+        0
+      ],
+      "vae": [
+        "428:146",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "430:268": {
+    "inputs": {
+      "samples": [
+        "430:267",
+        0
+      ],
+      "vae": [
+        "428:146",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "431:293": {
+    "inputs": {
+      "samples": [
+        "431:292",
+        0
+      ],
+      "vae": [
+        "428:146",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "9001": {
+    "inputs": {
+      "filename_prefix": "otg-character-reference/back",
+      "images": [
+        "429:243",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  },
+  "9002": {
+    "inputs": {
+      "filename_prefix": "otg-character-reference/left",
+      "images": [
+        "430:268",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  },
+  "9003": {
+    "inputs": {
+      "filename_prefix": "otg-character-reference/right",
+      "images": [
+        "431:293",
+        0
+      ]
+    },
+    "class_type": "SaveImage"
+  }
+}

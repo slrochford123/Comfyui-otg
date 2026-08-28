@@ -773,41 +773,6 @@
                               "title":  "Any Switch (rgthree)"
                           }
             },
-    "411":  {
-                "inputs":  {
-                               "image":  "11177.webp"
-                           },
-                "class_type":  "LoadImage",
-                "_meta":  {
-                              "title":  "Load Image"
-                          }
-            },
-    "417":  {
-                "inputs":  {
-                               "width":  [
-                                             "199",
-                                             0
-                                         ],
-                               "height":  [
-                                              "200",
-                                              0
-                                          ],
-                               "upscale_method":  "lanczos",
-                               "keep_proportion":  "resize",
-                               "pad_color":  "32,32,32",
-                               "crop_position":  "center",
-                               "divisible_by":  32,
-                               "device":  "cpu",
-                               "image":  [
-                                             "411",
-                                             0
-                                         ]
-                           },
-                "class_type":  "ImageResizeKJv2",
-                "_meta":  {
-                              "title":  "Image Resize KJ v2 (Swwan)"
-                          }
-            },
     "453":  {
                 "inputs":  {
                                "lora_name":  "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",

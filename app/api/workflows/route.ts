@@ -1,0 +1,105 @@
+﻿import { NextResponse } from "next/server";
+import { getWorkflowList } from "@/lib/workflows";
+
+export const runtime = "nodejs";
+
+function parseAllowlist() {
+  // Optional: comma-separated workflow IDs to show on the Generate dropdown.
+  // If unset, defaults to "show all" minus hard-hidden entries.
+  const raw = (process.env.OTG_GENERATE_WORKFLOW_ALLOWLIST || "").trim();
+  if (!raw) return null;
+  const ids = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return ids.length ? new Set(ids) : null;
+}
+
+const DEFAULT_VISIBLE_WORKFLOW_IDS = new Set([
+  "presets/create a picture",
+  "presets/edit image",
+
+  "presets/create anime images","presets/create a video",
+  "presets/create a video from images",
+  "presets/create video with custom audio",
+  "presets/create first image to last image video",
+  "presets/create prompt relay image video",
+  "presets/rtx sr upscaler video",
+  "presets/wan 2.2 t2v safetensor",
+  "presets/wan 2.2 t2v gguf",
+  "presets/wan 2.2 i2v safetensor",
+  "presets/wan 2.2 i2v gguf",
+  "presets/wan 2.2 flf safetensor",
+  "presets/wan 2.2 flf gguf",
+]);
+
+function isHiddenByDefault(id: string) {
+  const v = (id || "").toLowerCase();
+  if (v === "presets/edit image" || v === "edit image") return false;
+
+  if (DEFAULT_VISIBLE_WORKFLOW_IDS.has(v)) return false;
+
+  // Hide retired Generate workflows that should no longer appear in TEST.
+  if (v === "wan2gp-i2v") return true;
+  if (v === "presets/extend a video" || v === "extend a video") return true;
+
+  // Keep gallery-only edit/legacy helper workflows out of Generate.
+  if (v === "presets/edit pictures" || v === "edit pictures") return true;
+  if (v === "presets/create a video from pictures" || v === "create a video from pictures") return true;
+
+  // Hide Generate options the user no longer wants exposed.
+  if (v === "presets/production workflow" || v === "production workflow") return true;
+
+  // Hide index/example/schema helper files that may exist in comfy_workflows root.
+  // These are not runnable workflows and should never appear in the dropdown.
+  const base = v.split("/").pop() || v;
+  if (base === "index" || base === "index.example" || base === "schema") return true;
+
+  // Hide Storyboard + Angles workflows from the Generate dropdown.
+  // (Storyboard/Angles remain available via their dedicated tabs.)
+  if (v.startsWith("storyboard/")) return true;
+  if (v === "presets/angles" || v === "angles") return true;
+
+  // Hide internal helper workflows from the Generate dropdown.
+  if (v.startsWith("internal/")) return true;
+
+  // Hide any other preset from Generate unless explicitly allowlisted.
+  if (v.startsWith("presets/")) return true;
+
+  return false;
+}
+
+export async function GET() {
+  const lst = getWorkflowList();
+  if (!lst.ok) {
+    return NextResponse.json(
+      { ok: false, error: lst.error },
+      { status: 500, headers: { "cache-control": "no-store" } }
+    );
+  }
+
+  const allow = parseAllowlist();
+
+  const workflows = lst.list
+    .filter((w) => {
+      const id = String(w.id || "");
+      if (!id) return false;
+      if (allow) return allow.has(id);
+      return !isHiddenByDefault(id);
+    })
+    .map((w) => ({
+      id: w.id,
+      label: w.label ?? w.id,
+      description: w.description ?? "",
+      img2img: !!w.img2img,
+      format: w.format,
+      canRun: !!(w as any).canRun,
+      needsImages: Number((w as any).needsImages || 0),
+      parseOk: !!w.parseOk,
+      exists: !!w.exists,
+      file: w.file,
+      error: w.error ?? "",
+    }));
+
+  return NextResponse.json({ ok: true, workflows }, { headers: { "cache-control": "no-store" } });
+}

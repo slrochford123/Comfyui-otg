@@ -610,7 +610,8 @@ def main() -> None:
     if args.output:
         output_path = Path(args.output).resolve()
     else:
-        output_path = Path(r"C:\AI\OTG-Test2\data\characters\web_characters_builder") / character_id / "models" / "hy3d_preview.glb"
+        output_root = Path(os.environ.get("OTG_DATA_DIR", "data")) / "characters" / "web_characters_builder"
+        output_path = output_root / character_id / "models" / "hy3d_preview.glb"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
