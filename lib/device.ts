@@ -1,1 +1,0 @@
-// shared deviceId resolver

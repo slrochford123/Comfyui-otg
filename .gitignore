@@ -1,12 +1,5 @@
-# =========================================================
-# OTG / Next.js / Capacitor / ComfyUI .gitignore
-# =========================================================
-# See https://help.github.com/articles/ignoring-files/
-# =========================================================
-
-# -------------------------
 # Dependencies
-# -------------------------
+node_modules
 node_modules/
 .pnp
 .pnp.*
@@ -16,21 +9,60 @@ node_modules/
 !.yarn/releases
 !.yarn/versions
 
-# -------------------------
-# Testing / Coverage
-# -------------------------
-coverage/
-
-# -------------------------
-# Next.js
-# -------------------------
+# Next.js and build output
 .next/
 out/
 build/
+.vercel/
+server.js
+*.tsbuildinfo
+next-env.d.ts
 
-# -------------------------
-# Capacitor / Mobile
-# -------------------------
+# Runtime state, local databases, and generated job output
+data/
+.otg-state/
+.otg-backups/
+.qualification-tmp/
+device_galleries/
+gallery/
+!app/api/gallery/
+!app/api/gallery/**
+galleries/
+uploads/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.jsonl
+
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+keys/
+*.keystore
+*.pem
+*.key
+*.p12
+*.crt
+*.cert
+
+# Logs, dumps, coverage, and caches
+*.log
+logs/
+core
+core.*
+coverage/
+.cache/
+tmp/
+.tmp/
+.temp/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Capacitor / mobile local output
 android/.gradle/
 android/.idea/
 android/build/
@@ -44,133 +76,43 @@ ios/build/
 ios/Pods/
 ios/DerivedData/
 
-# -------------------------
-# Runtime / App Data (CRITICAL)
-# -------------------------
-data/
-device_galleries/
-gallery/
-galleries/
-*.db
-*.db-*
-*.sqlite
-*.sqlite-*
-*.jsonl
+# Release/build provenance generated outside source control
+.release_id
+.build.*
+PREVIOUS_RELEASE.txt
+ROLLBACK_RELEASE.txt
+RELEASE_CHANGE.txt
+RELEASE_VERIFICATION.json
+RELEASE_MANIFEST.sha256
+SOURCE_TEST_RELEASE.txt
+SOURCE_TEST_BUILD_ID.txt
 
-# -------------------------
-# Secrets / Keys / Certs (CRITICAL)
-# -------------------------
-keys/
-*.keystore
-*.pem
-*.p12
-*.crt
-*.key
-
-# -------------------------
-# Environment files
-# -------------------------
-.env.local
-.env.*.local
-.env.production
-.env.production.local
-.env.test
-.env.test.local
-
-# Allow example template only
-!.env.example
-
-# -------------------------
-# Logs / Debug
-# -------------------------
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-*.log
-
-# -------------------------
-# Archives / Temp
-# -------------------------
+# One-off patch, backup, and archive artifacts
+files/
+patch_full_feature_batch/
+apply-*.py
+*.bak
+*.bak*
+*.backup
+*.orig
+*.old
+*.tmp
+*.before-*
+*.pre-*
+*.20[0-9][0-9][0-9][0-9][0-9][0-9]*
 *.zip
 *.tar
 *.tar.gz
 *.7z
-
-# -------------------------
-# OS / Editor junk
-# -------------------------
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
-
-# -------------------------
-# Vercel
-# -------------------------
-.vercel
-
-# -------------------------
-# TypeScript
-# -------------------------
-*.tsbuildinfo
-next-env.d.ts
-
-# -------------------------
-# PM2 / Process
-# -------------------------
-pm2.log
-ecosystem*.log
-
-# -------------------------
-# Python
-# -------------------------
-.venv/
-venv/
-**/.venv/
-**/venv/
-__pycache__/
-*.pyc
-*.safetensors
-*.safetensors.hash
-
-# -------------------------
-# Misc safety
-# -------------------------
-.cache/
-.tmp/
-.temp/
-_backups/
-loras/
-uploads/
-tmp/
-pids/
-
-OTG/
-OTG/
-
-
-# local patch artifacts / backups (never commit)
 backups/
 _patch_backups/
 _local_patches_hold/
 .codex-backups/
 .otg_backups/
-_otg_patch_backups/
-otg-clean-reapply-kit/
-otg-improvements-kit/
-patch_full_feature_batch/
-playwright-report/
-test-results/
-.bak/
-ssh/
-*.bak.*
-*.bak
-*.lnk
-.env
-.aider*
-Java/
-dev-*.log
-repo folder test app.zip
-comfy-history-latest.json
-baseline-i2v-5s-audio-*.json
+_backups/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

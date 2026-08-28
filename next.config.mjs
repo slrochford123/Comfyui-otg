@@ -1,4 +1,4 @@
-﻿import path from "node:path";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -6,6 +6,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+
+  // Allow test-dev access over Tailscale without Next dev asset origin warnings.
+  allowedDevOrigins: ["100.76.179.83", "*.ts.net"],
 
   // Create a self-contained production artifact under .next/standalone.
   // This enables build-once / promote-the-same-artifact deployments.
@@ -40,5 +43,34 @@ const nextConfig = {
   // Your Cloudflare Tunnel should route the hostname to http://127.0.0.1:3000
   // and you should browse: https://comf-otg.comfyui-otg.win/login
 };
+
+
+// OTG_SECURITY_BUILD_FIX_BEGIN
+// Keep compiler and trace collection isolated from the main build process.
+nextConfig.experimental = {
+  ...(nextConfig.experimental ?? {}),
+  webpackBuildWorker: true,
+  parallelServerBuildTraces: true,
+};
+
+// Force the audited WebSocket runtime into standalone artifacts.
+const otgExistingTracingIncludes =
+  nextConfig.outputFileTracingIncludes ?? {};
+
+const otgExistingGlobalTracingIncludes =
+  Array.isArray(otgExistingTracingIncludes["/*"])
+    ? otgExistingTracingIncludes["/*"]
+    : [];
+
+nextConfig.outputFileTracingIncludes = {
+  ...otgExistingTracingIncludes,
+  "/*": Array.from(
+    new Set([
+      ...otgExistingGlobalTracingIncludes,
+      "./node_modules/ws/**/*",
+    ])
+  ),
+};
+// OTG_SECURITY_BUILD_FIX_END
 
 export default nextConfig;

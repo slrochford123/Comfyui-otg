@@ -1,0 +1,237 @@
+{
+  "333": {
+    "inputs": {
+      "noise_seed": 42
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "336": {
+    "inputs": {
+      "ckpt_name": "LTX23_audio_vae_bf16.safetensors"
+    },
+    "class_type": "LTXVAudioVAELoader",
+    "_meta": {
+      "title": "LTXV Audio VAE Loader"
+    }
+  },
+  "337": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "338": {
+    "inputs": {
+      "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    },
+    "class_type": "ManualSigmas",
+    "_meta": {
+      "title": "ManualSigmas"
+    }
+  },
+  "339": {
+    "inputs": {
+      "cfg": 1,
+      "model": [
+        "373",
+        0
+      ],
+      "positive": [
+        "361",
+        0
+      ],
+      "negative": [
+        "361",
+        1
+      ]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFGGuider"
+    }
+  },
+  "340": {
+    "inputs": {
+      "noise": [
+        "333",
+        0
+      ],
+      "guider": [
+        "339",
+        0
+      ],
+      "sampler": [
+        "337",
+        0
+      ],
+      "sigmas": [
+        "338",
+        0
+      ],
+      "latent_image": [
+        "376",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "352": {
+    "inputs": {
+      "width": 512,
+      "height": 288,
+      "length": 17,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLTXVLatentVideo",
+    "_meta": {
+      "title": "Low-resolution placeholder video latent"
+    }
+  },
+  "354": {
+    "inputs": {
+      "samples": [
+        "364",
+        1
+      ],
+      "audio_vae": [
+        "336",
+        0
+      ]
+    },
+    "class_type": "LTXVAudioVAEDecode",
+    "_meta": {
+      "title": "LTXV Audio VAE Decode"
+    }
+  },
+  "360": {
+    "inputs": {
+      "text": "A short clean spoken character voice audition. Clear dialogue only. No music. No background sound effects. No crowd noise. No environmental ambience. No singing. No overlapping voices.",
+      "clip": [
+        "374",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive)"
+    }
+  },
+  "361": {
+    "inputs": {
+      "frame_rate": 1,
+      "positive": [
+        "360",
+        0
+      ],
+      "negative": [
+        "370",
+        0
+      ]
+    },
+    "class_type": "LTXVConditioning",
+    "_meta": {
+      "title": "LTXVConditioning"
+    }
+  },
+  "362": {
+    "inputs": {
+      "frames_number": 17,
+      "frame_rate": 1,
+      "batch_size": 1,
+      "audio_vae": [
+        "336",
+        0
+      ]
+    },
+    "class_type": "LTXVEmptyLatentAudio",
+    "_meta": {
+      "title": "LTXV Empty Latent Audio"
+    }
+  },
+  "364": {
+    "inputs": {
+      "av_latent": [
+        "340",
+        0
+      ]
+    },
+    "class_type": "LTXVSeparateAVLatent",
+    "_meta": {
+      "title": "LTXVSeparateAVLatent"
+    }
+  },
+  "370": {
+    "inputs": {
+      "text": "singing, music, background noise, background noises, sound effects, sound effect, ambience, crowd noise, overlapping voices, multiple speakers, choir, instrumental, soundtrack, reverb, echo, muffled speech, distorted speech, whispering, mumbling",
+      "clip": [
+        "374",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative)"
+    }
+  },
+  "373": {
+    "inputs": {
+      "unet_name": "ltx-2.3-22b-distilled-1.1.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load LTX 2.3 diffusion model"
+    }
+  },
+  "374": {
+    "inputs": {
+      "clip_name1": "gemma_3_12B_it_fp4_mixed.safetensors",
+      "clip_name2": "ltx-2.3_text_projection_bf16.safetensors",
+      "type": "ltxv",
+      "device": "default"
+    },
+    "class_type": "DualCLIPLoader",
+    "_meta": {
+      "title": "Load LTXV text encoders"
+    }
+  },
+  "376": {
+    "inputs": {
+      "video_latent": [
+        "352",
+        0
+      ],
+      "audio_latent": [
+        "362",
+        0
+      ]
+    },
+    "class_type": "LTXVConcatAVLatent",
+    "_meta": {
+      "title": "LTXVConcatAVLatent"
+    }
+  },
+  "384": {
+    "inputs": {
+      "filename_prefix": "audio/ComfyUI",
+      "quality": "320k",
+      "audio": [
+        "354",
+        0
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "Save Audio (MP3)"
+    }
+  }
+}

@@ -1,9 +1,0 @@
-﻿{
-  "appId": "com.slr.otg",
-  "appName": "SLR OTG",
-  "webDir": "public",
-  "server": {
-    "url": "https://comf-otg.comfyui-otg.win",
-    "cleartext": false
-  }
-}
