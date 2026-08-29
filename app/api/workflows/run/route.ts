@@ -29,14 +29,6 @@ export async function POST(req: Request) {
   const workflowPath = path.join(process.cwd(), "workflows", "comfy", config.file);
   const workflow = JSON.parse(fs.readFileSync(workflowPath, "utf-8"));
   // ---- Patch logic (minimal scaffold) ----
-  if (workflowId === "angles") {
-    workflow["41"].inputs.image = inputs.image;
-    workflow["93"].inputs.horizontal_angle = inputs.horizontal;
-    workflow["93"].inputs.vertical_angle = inputs.vertical;
-    workflow["93"].inputs.zoom = inputs.zoom;
-    workflow["93"].inputs.default_prompts = inputs.defaultPrompts ?? false;
-    workflow["93"].inputs.camera_view = inputs.cameraView ?? false;
-  }
 
   if (workflowId.startsWith("storyboard")) {
     workflow["30"].inputs.prompt = inputs.prompt;

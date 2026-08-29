@@ -1251,7 +1251,6 @@ async function findAnyRecentBackgroundPreviewCandidateV36I(args: {
     "/api/production/recent-images",
     "/api/gallery?limit=100",
     "/api/content/last",
-    "/api/preview",
   ];
 
   const searchTerms = [
@@ -1432,7 +1431,6 @@ async function recoverBackgroundPreviewBatchV36J(args: {
     "/api/production/recent-images",
     "/api/gallery?limit=120",
     "/api/content/last",
-    "/api/preview",
   ];
 
   const entries: Array<{ value: string; haystack: string; order: number }> = [];
@@ -1674,7 +1672,6 @@ async function findExactBackgroundPreviewCandidateV36R(args: {
     "/api/production/recent-images",
     "/api/gallery?limit=150",
     "/api/content/last",
-    "/api/preview",
   ];
 
   for (const endpoint of endpoints) {
@@ -2372,9 +2369,9 @@ type SourceFraming = "face" | "half_body" | "full_body";
 type FullBodyStatus = "not_required" | "required" | "generated" | "approved";
 type BuilderStep = "source" | "generate" | "upload" | "card" | "details" | "voice" | "review";
 
-const FULL_BODY_REQUIRED_MESSAGE = "Full-body character image required before Character Card and Angles. Use the full-body generator or upload a complete full-body image.";
+const FULL_BODY_REQUIRED_MESSAGE = "Full-body character image required before Character Card generation. Use the full-body generator or upload a complete full-body image.";
 const FREEFORM_FULL_BODY_CONFIRM_MESSAGE = "Confirm the Freeform character is full-body/full-form before continuing.";
-const FREEFORM_FULL_BODY_NOTICE = "Freeform characters must show the complete body or full form. No face-only, half-body, or cropped final images are allowed for Character Card or Angles.";
+const FREEFORM_FULL_BODY_NOTICE = "Freeform characters must show the complete body or full form. No face-only, half-body, or cropped final images are allowed for Character Card reference generation.";
 
 type CharacterDetails = {
   name: string;
@@ -7731,7 +7728,7 @@ async function loadCharacters() {
     setError("");
     setMessage(
       nextAnatomyMode === "freeform"
-        ? "Freeform characters must end with a complete body or full form before Character Card or Angles."
+        ? "Freeform characters must end with a complete body or full form before Character Card generation."
         : "Standard character mode selected.",
     );
     setStep(nextStep);
@@ -8017,7 +8014,7 @@ async function loadCharacters() {
     setFullBodyStatus("required");
     setCandidates([]);
     setSelectedCandidateId("");
-    setMessage("Generate and approve a full-body/full-form character before Character Card or Angles.");
+    setMessage("Generate and approve a full-body/full-form character before Character Card generation.");
   }
 
   async function completePartialImage() {
@@ -11694,7 +11691,7 @@ async function saveCharacter() {
               <button type="button" onClick={() => chooseCharacterBuilderEntry("freeform", "upload")} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-6 text-left hover:border-cyan-300">
                 <h3 className="text-xl font-semibold text-zinc-50">Upload Freeform Character Image</h3>
                 <p className="mt-2 text-sm text-zinc-400">Upload a creature, animal, object, robot, plant, or non-standard character reference.</p>
-                <p className="mt-3 text-xs text-cyan-200">Final Character Card and Angles source must be a complete full body or full form.</p>
+                <p className="mt-3 text-xs text-cyan-200">Final Character Card source must be a complete full body or full form.</p>
               </button>
             </div>
           ) : null}
@@ -11809,7 +11806,7 @@ async function saveCharacter() {
                       {fullBodyStatus === "generated" ? (
                         <p className="text-sm text-emerald-200">Generated full-body/full-form candidate ready. Select the candidate and approve it to continue.</p>
                       ) : (
-                        <p className="text-sm text-amber-200">Generate and approve a full-body/full-form character before Character Card or Angles.</p>
+                        <p className="text-sm text-amber-200">Generate and approve a full-body/full-form character before Character Card generation.</p>
                       )}
                       <p className="text-sm text-zinc-400">{FULL_BODY_REQUIRED_MESSAGE}</p>
                       <ImageChooser candidates={candidates} selectedId={selectedCandidateId} onSelect={setSelectedCandidateId} onDelete={(id) => setCandidates((items) => items.filter((item) => item.id !== id))} onSaveForLater={(candidate) => void saveCandidateForLaterV36BPS2(candidate)} saveForLaterStatusById={savedForLaterCandidateIdsV36BPS3} saveForLaterProgressById={saveForLaterProgressByIdV36BPS6B} />

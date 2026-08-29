@@ -1,4 +1,5 @@
+import { redirect } from "next/navigation";
 
-export default function AnglesPage() {
-  return <div>Angles Tab Ready</div>;
+export default function LegacyAnglesRedirectPage() {
+  redirect("/app?tab=machine");
 }

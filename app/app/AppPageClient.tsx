@@ -40,7 +40,6 @@ const PanelLoading = () => (
   </div>
 );
 
-const AnglesPanel = dynamic(() => import("./components/AnglesPanel"), { loading: PanelLoading });
 const ProductionV2Panel = dynamic(() => import("./components/ProductionV2Panel"), { loading: PanelLoading });
 const CharactersPanel = dynamic(() => import("./components/CharacterHubPanel"), { loading: PanelLoading });
 const VoicesPanel = dynamic(() => import("./components/VoicesPanel"), { loading: PanelLoading });
@@ -336,7 +335,7 @@ const APP_UI_MODE_OPTIONS: { id: AppUiMode; label: string; description: string }
 const APP_TAB_LABELS: Record<SpinTabId, string> = {
   gethelp: "AI Assistance",
   generate: "Generate",
-  angles: "Angles",
+  machine: "Machine",
   storyboard: "Production",
   characters: "Characters",
   gallery: "Gallery",
@@ -2323,7 +2322,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   useEffect(() => {
     const persisted = readPersistedState();
     if (persisted) {
-      if (persisted.tab) setTab(!PRODUCTION_FEATURE_ENABLED && persisted.tab === "storyboard" ? "generate" : persisted.tab);
+      if (persisted.tab && Object.prototype.hasOwnProperty.call(APP_TAB_LABELS, persisted.tab)) {
+        setTab(!PRODUCTION_FEATURE_ENABLED && persisted.tab === "storyboard" ? "generate" : persisted.tab);
+      }
       if (
         persisted.assistanceTab === "describe" ||
         persisted.assistanceTab === "ask"
@@ -2403,7 +2404,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       if (
         tabParam === "gethelp" ||
         tabParam === "generate" ||
-        tabParam === "angles" ||
+        tabParam === "machine" ||
         tabParam === "storyboard" ||
         tabParam === "characters" ||
         tabParam === "gallery" ||
@@ -7354,7 +7355,18 @@ async function handleAskAi() {
           </div>
         ) : null}
 
-        {tab === "angles" ? <AnglesPanel /> : null}
+        {tab === "machine" ? (
+          <div
+            data-otg="machine-placeholder"
+            className="rounded-[28px] border border-white/10 bg-black/45 p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm"
+          >
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-200/70">Machine</p>
+            <h1 className="mt-2 text-4xl font-black tracking-tight text-white">The Machine</h1>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-white/62">
+              This workspace is reserved for the upcoming conversational project-building workflow.
+            </p>
+          </div>
+        ) : null}
         {tab === "storyboard" ? <ProductionV2Panel /> : null}
         {tab === "characters" ? (
           <CharactersPanel

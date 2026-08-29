@@ -71,4 +71,30 @@ This file is the source of truth for the TEST-site tab rework.
 ## Next Tab
 
 - [x] Generate was selected only after AI Assistance live acceptance and closure.
-- [ ] Select the next tab only after Generate rework is committed and closed.
+- [x] Select the next tab only after Generate rework is committed and closed.
+
+## Angles Removal / Machine Placeholder
+
+- [x] Select Angles as the next TEST rework target after Generate closure.
+- [x] Establish a RED regression contract for complete Angles removal and the temporary Machine placeholder.
+- [x] Remove Angles-only user UI, routes, APIs, helpers, scripts, and workflows.
+- [x] Replace the Angles navigation entry with a temporary Machine placeholder.
+- [x] Redirect the legacy `/angles` route to the Machine placeholder.
+- [x] Preserve shared Character, Background, Production, multiview, reference-card, and background-angle-plate functionality.
+- [x] Preserve TripoSplat Model Spin and shared character multiview workflows.
+- [x] Remove obsolete Angles job kinds only after proving there are no surviving callers.
+- [x] Retire legacy `OTG_ANGLES_*` compatibility environment aliases from surviving shared routes only after confirming the active TEST service environment.
+- [x] Run focused regression tests, TypeScript validation, production build, and git diff --check.
+- [x] Live-accept the TEST Machine placeholder and verify no Angles UI remains.
+- [x] Commit and close Angles removal before selecting the next tab.
+
+## Canonical Remaining Rework Order
+
+The remaining TEST rework order is fixed unless explicitly changed:
+
+1. Favorites removal
+2. Gallery cleanup
+3. Characters rework
+4. Production rework
+5. Edit Video rework
+6. Machine implementation

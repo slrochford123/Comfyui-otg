@@ -162,16 +162,7 @@
       "promptNodeId": "30",
       "characterReferenceMax": 5
     },
-    {
-      "id": "presets/angles",
-      "label": "angles",
-      "type": "preset",
-      "path": "presets/angles.json",
-      "file": "presets/angles.json",
-      "tags": [],
-      "enabled": true
-    },
-    {
+        {
       "id": "internal/characters/character_intro_video_ltx23",
       "label": "Characters Intro Video LTX 2.3",
       "type": "internal",

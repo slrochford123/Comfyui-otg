@@ -106,9 +106,7 @@ function comfyBaseUrl() {
   const value =
     process.env.BACKGROUND_ANGLE_PLATE_COMFYUI_BASE_URL ||
     process.env.OTG_BACKGROUND_COMFYUI_BASE_URL ||
-    process.env.OTG_ANGLES_MULTIVIEW_COMFY_URL ||
-    process.env.OTG_ANGLES_IMAGE_COMFY_URL ||
-    process.env.OTG_ANGLES_3D_MODEL_COMFY_URL ||
+    process.env.COMFYUI_IMAGE_URL ||
     process.env.NEXT_PUBLIC_BACKGROUND_COMFYUI_URL ||
     "http://127.0.0.1:8188";
 

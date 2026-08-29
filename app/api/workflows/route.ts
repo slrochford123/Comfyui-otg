@@ -61,10 +61,8 @@ function isHiddenByDefault(id: string) {
   const base = v.split("/").pop() || v;
   if (base === "index" || base === "index.example" || base === "schema") return true;
 
-  // Hide Storyboard + Angles workflows from the Generate dropdown.
-  // (Storyboard/Angles remain available via their dedicated tabs.)
+  // Hide Storyboard workflows from the Generate dropdown.
   if (v.startsWith("storyboard/")) return true;
-  if (v === "presets/angles" || v === "angles") return true;
 
   // Hide internal helper workflows from the Generate dropdown.
   if (v.startsWith("internal/")) return true;

@@ -378,7 +378,6 @@ function getComfyUrl() {
     process.env.OTG_IMAGE_COMFY_BASE_URL ||
     process.env.OTG_IMAGE_COMFY_URL ||
     process.env.COMFYUI_IMAGE_URL ||
-    process.env.OTG_ANGLES_IMAGE_COMFY_URL ||
     process.env.COMFYUI_URL ||
     process.env.COMFY_URL ||
     process.env.COMFY_BASE_URL ||

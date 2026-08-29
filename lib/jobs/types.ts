@@ -14,7 +14,6 @@ export type JobKind =
   | "voice-dubbing"
   | "audio-extraction"
   | "music-generation"
-  | "angles-3d"
   | "production-stitch";
 
 export type JobRecord = {

@@ -144,7 +144,7 @@ export default function SupportPanel() {
       "Login / Account",
       "AI Assistance",
       "Generate",
-      "Angles",
+      "Machine",
       "Characters",
       "Production",
       "Gallery",
@@ -376,7 +376,7 @@ export default function SupportPanel() {
               <ul className="list-disc pl-5 space-y-1">
                 <li><b>AI Assistance</b>: describe images, enhance prompts, and build scene text.</li>
                 <li><b>Generate</b>: submit direct ComfyUI image/video jobs.</li>
-                <li><b>Angles</b>: create and review 3D model/texture outputs when the Hunyuan service is available.</li>
+                <li><b>Machine</b>: reserved for the upcoming guided project-building workspace.</li>
                 <li><b>Characters</b>: save reusable character images, descriptions, intro videos, and reference audio.</li>
               </ul>
             </InfoCard>

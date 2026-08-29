@@ -14,7 +14,6 @@ const JOB_KINDS = new Set<JobKind>([
   'voice-dubbing',
   'audio-extraction',
   'music-generation',
-  'angles-3d',
   'production-stitch',
 ]);
 
