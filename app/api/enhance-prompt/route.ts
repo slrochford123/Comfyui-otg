@@ -1,128 +1,315 @@
 import { NextRequest } from "next/server";
-import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
+import {
+  QWEN_CLUSTER_MODEL,
+  qwenClusterFetch,
+} from "@/lib/workers/qwenClusterRouter";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type EnhanceLevel = "short" | "medium" | "cinematic";
+type EnhanceLevel = "short" | "medium" | "long";
 type EnhanceMode = "image" | "video";
 
+type GenerateEnhanceContext = {
+  mediaMode: EnhanceMode;
+  imageOperation: string;
+  videoGenerationType: string;
+  workflowId: string;
+  workflowLabel: string;
+  selectedStyleId: string;
+  styleLabel: string;
+  stylePrompt: string;
+};
+
 function cleanText(value: unknown) {
-  return String(value || "").replace(/\s+/g, " ").trim();
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeTrailingPunctuation(value: string) {
+  return value
+    .replace(/\s+([,;:.!?])$/u, "$1")
+    // remove accidental duplicated trailing punctuation; a prompt ending in a comma will not become ',,' when context is added
+    .replace(/([,;:])(?:\s*\1)+$/u, "$1")
+    .trim();
+}
+
+function normalizePromptInput(value: unknown) {
+  return normalizeTrailingPunctuation(cleanText(value));
+}
+
+function normalizeGeneratedPrompt(value: unknown) {
+  return normalizeTrailingPunctuation(
+    cleanText(value).replace(/^["'`]+|["'`]+$/g, ""),
+  );
 }
 
 function normalizeLevel(value: unknown): EnhanceLevel {
   const raw = cleanText(value).toLowerCase();
   if (["small", "short", "light", "quick"].includes(raw)) return "short";
-  if (["large", "long", "cinematic", "dramatic", "intense"].includes(raw)) return "cinematic";
+  if (
+    ["large", "long", "cinematic", "dramatic", "intense"].includes(raw)
+  ) {
+    return "long";
+  }
   return "medium";
 }
 
-function normalizeMode(value: unknown, workflowId?: string): EnhanceMode {
+function normalizeMode(value: unknown, workflowId: string): EnhanceMode {
   const raw = cleanText(value).toLowerCase();
-  if (raw === "video" || raw === "animate") return "video";
-  const wf = cleanText(workflowId).toLowerCase();
-  if (wf.includes("video") || wf.includes("ltx") || wf.includes("animate")) return "video";
+  if (raw === "image" || raw === "photo" || raw === "picture") return "image";
+  if (raw === "video" || raw === "movie" || raw === "animate") return "video";
+
+  const wf = workflowId.toLowerCase();
+  if (
+    wf.includes("video") ||
+    wf.includes("ltx") ||
+    wf.includes("animate")
+  ) {
+    return "video";
+  }
+
   return "image";
 }
 
-function shouldUseOllama() {
-  return cleanText(process.env.OLLAMA_PROMPT_ENHANCE_PROVIDER).toLowerCase() === "ollama";
+function buildGenerateContext(body: any): GenerateEnhanceContext {
+  const workflowId = cleanText(
+    body.workflowId || body.preset || body.workflow || "",
+  );
+  const styleLabel = cleanText(
+    body.styleLabel || body.style || body.presetLabel || body.stylePreset || "",
+  );
+  const stylePrompt = cleanText(
+    body.stylePrompt || body.styleDescription || body.styleText || "",
+  );
+
+  return {
+    mediaMode: normalizeMode(
+      body.mediaMode || body.generateMediaMode || body.mode || body.mediaType,
+      workflowId,
+    ),
+    imageOperation: cleanText(body.imageOperation || body.operation || ""),
+    videoGenerationType: cleanText(
+      body.videoGenerationType || body.videoMode || "",
+    ),
+    workflowId,
+    workflowLabel: cleanText(
+      body.workflowLabel || body.presetLabel || body.workflowName || "",
+    ),
+    selectedStyleId: cleanText(body.selectedStyleId || body.styleId || ""),
+    styleLabel,
+    stylePrompt,
+  };
 }
 
-function modelForLevel(level: EnhanceLevel) {
-  const fastDefault = "qwen2.5:0.5b";
+function instructionForLevel(level: EnhanceLevel, mode: EnhanceMode) {
   if (level === "short") {
-    return process.env.OLLAMA_PROMPT_ENHANCE_MODEL_SHORT || process.env.OLLAMA_PROMPT_ENHANCE_MODEL || fastDefault;
+    return [
+      "SHORT purpose: clean and lightly improve the user's idea.",
+      "Use one or two concise sentences, or equivalent compact prompt phrasing.",
+      "Preserve intent and add only a few useful scene-specific details.",
+      "Short must not be a keyword dump or a generic suffix.",
+    ].join("\n");
   }
+
   if (level === "medium") {
-    return process.env.OLLAMA_PROMPT_ENHANCE_MODEL_MEDIUM || process.env.OLLAMA_PROMPT_ENHANCE_MODEL || fastDefault;
+    return [
+      "MEDIUM purpose: create a strong production-ready generation prompt.",
+      "Cover the subject, action, environment, lighting, composition, and mood.",
+      "Mention camera or framing only when it naturally helps the scene.",
+      "Medium must be materially richer than Short.",
+    ].join("\n");
   }
-  return process.env.OLLAMA_PROMPT_ENHANCE_MODEL_CINEMATIC || process.env.OLLAMA_PROMPT_ENHANCE_MODEL || fastDefault;
-}
 
-function numPredictForLevel(level: EnhanceLevel) {
-  if (level === "short") return 50;
-  if (level === "cinematic") return 120;
-  return 85;
-}
-
-function stylePhrase(styleLabel: string, stylePrompt: string) {
-  const raw = cleanText(styleLabel || stylePrompt);
-  if (!raw) return "polished cinematic visual style";
-  return raw.toLowerCase().includes("style") ? raw : `${raw} style`;
-}
-
-function instructionForLevel(level: EnhanceLevel, mode: EnhanceMode, styleLabel: string, stylePrompt: string) {
-  const target = mode === "video" ? "AI video generation" : "AI image generation";
-  const styleLine = styleLabel || stylePrompt
-    ? `Selected visual style: ${styleLabel || "custom"}. Style details: ${stylePrompt || "match the selected style."}`
-    : "No specific style was provided; infer a polished cinematic visual style.";
-
-  const lengthRule =
-    level === "short"
-      ? "SHORT enhancement: one sentence, 25 to 45 words. Add only essential visual details."
-      : level === "medium"
-        ? "MEDIUM enhancement: one or two sentences, 55 to 90 words. Add environment, lighting, camera, mood, and style details."
-        : "CINEMATIC enhancement: one detailed paragraph, 100 to 150 words. Add dramatic composition, lighting, atmosphere, materials, camera language, emotion, and production-quality detail.";
+  if (mode === "video") {
+    return [
+      "LONG purpose: create a detailed cinematic generation prompt while staying faithful to the original idea.",
+      "Develop the subject, action, environment, atmosphere, lighting, composition, depth, textures, camera, framing, video motion, and temporal direction.",
+      "Long must be substantially richer than Medium without meaningless padding.",
+    ].join("\n");
+  }
 
   return [
-    `You are a fast visual prompt enhancer for ${target}.`,
-    "Rewrite the user's prompt into one improved generation prompt.",
-    "Keep the original subject, action, identity, and intent.",
-    "Do not add unrelated characters or story events.",
-    "Match the selected style exactly.",
-    "Do not explain, do not add bullets, do not quote the prompt, and do not include labels.",
-    styleLine,
-    lengthRule,
-    mode === "video"
-      ? "For video, include motion, timing, camera movement, and continuity-friendly visual detail."
-      : "For image, include composition, lighting, material, atmosphere, and image-quality detail.",
+    "LONG purpose: create a detailed cinematic generation prompt while staying faithful to the original idea.",
+    "Develop the subject, action, environment, atmosphere, lighting, composition, depth, textures, camera, and framing.",
+    "Do not add motion language unless the user explicitly asks for motion.",
+    "Long must be substantially richer than Medium without meaningless padding.",
   ].join("\n");
 }
 
-function buildUserPrompt(prompt: string, level: EnhanceLevel, mode: EnhanceMode, styleLabel: string, stylePrompt: string, workflowId: string) {
-  return `${instructionForLevel(level, mode, styleLabel, stylePrompt)}
-
-Original prompt:
-${prompt}
-
-Workflow/context:
-${workflowId || "not specified"}
-
-Enhanced prompt only:`;
-}
-
-function heuristicEnhancePrompt(prompt: string, level: EnhanceLevel, mode: EnhanceMode, styleLabel: string, stylePrompt: string) {
-  const base = cleanText(prompt).replace(/[. ]+$/, "");
-  const style = stylePhrase(styleLabel, stylePrompt);
-  const modeDetails = mode === "video"
-    ? "smooth motion, coherent character movement, controlled camera movement, temporal consistency"
-    : "strong composition, sharp focal clarity, polished render quality";
-
-  if (level === "short") {
-    return `${base}, ${style}, clear subject focus, expressive action, refined lighting, vivid atmosphere, ${modeDetails}.`;
+function instructionForMode(mode: EnhanceMode) {
+  if (mode === "image") {
+    return [
+      "IMAGE context:",
+      "Focus on composition, subject appearance, environment, lighting, framing, depth, material detail, and mood.",
+      "Do not add video-only language to image prompts unless the user explicitly asks for motion.",
+    ].join("\n");
   }
 
-  if (level === "medium") {
-    return `${base}, reimagined in ${style}, with stronger visual storytelling, expressive character action, clear silhouette, cinematic framing, atmospheric depth, refined lighting, detailed textures, believable environment design, vivid color harmony, and ${modeDetails}.`;
-  }
-
-  return `${base}, transformed into a dramatic ${style} scene with a clear focal subject, expressive pose and emotion, rich environmental storytelling, layered atmosphere, cinematic depth, carefully shaped lighting, detailed materials and textures, dynamic composition, premium production design, vivid color harmony, immersive scale, and ${modeDetails}.`;
+  return [
+    "VIDEO context:",
+    "Include motion, camera movement, action progression, and temporal behavior when those details support the user's request.",
+    "Keep continuity practical and avoid inventing major new story facts.",
+  ].join("\n");
 }
 
-async function ollamaGenerate(payload: Record<string, unknown>, timeoutMs: number) {
-  const response = await qwenClusterFetch("/api/generate", payload, { timeoutMs });
-    const text = await response.text();
-    let json: any = null;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      throw new Error(`Ollama returned non-JSON: ${text.slice(0, 180)}`);
-    }
-    if (!response.ok) {
-      throw new Error(json?.error || `Ollama failed with ${response.status}`);
-    }
-  return cleanText(json?.response || "");
+function contextLines(context: GenerateEnhanceContext) {
+  const operation =
+    context.mediaMode === "video"
+      ? context.videoGenerationType || "create"
+      : context.imageOperation || "create";
+
+  return [
+    `mediaMode: ${context.mediaMode}`,
+    `operation: ${operation}`,
+    `imageOperation: ${context.imageOperation || "none"}`,
+    `videoGenerationType: ${context.videoGenerationType || "none"}`,
+    `workflowId: ${context.workflowId || "not specified"}`,
+    `workflowLabel: ${context.workflowLabel || "not specified"}`,
+    `selectedStyleId: ${context.selectedStyleId || "none"}`,
+    `styleLabel: ${context.styleLabel || "none"}`,
+    `stylePrompt: ${context.stylePrompt || "none"}`,
+  ].join("\n");
+}
+
+function buildQwenEnhancePrompt(
+  prompt: string,
+  level: EnhanceLevel,
+  context: GenerateEnhanceContext,
+) {
+  return [
+    "/no_think",
+    "",
+    "You enhance prompts for the Generate screen.",
+    "Return exactly one JSON object with a single string field named \"enhancedPrompt\".",
+    "The value must be the finished prompt only: no markdown, no labels, no notes, no analysis.",
+    "Preserve the user's subject, action, identity, dialogue, and core intent.",
+    "Do not add unrelated characters, locations, lore, or major story facts.",
+    "Use the selected style only when one is present in the Generate context.",
+    "Avoid generic filler phrases and do not append canned quality tags.",
+    "",
+    instructionForLevel(level, context.mediaMode),
+    "",
+    instructionForMode(context.mediaMode),
+    "",
+    "Original user prompt:",
+    prompt,
+    "",
+    "Requested enhancement level:",
+    level,
+    "",
+    "Generate context:",
+    contextLines(context),
+    "",
+    "Enhanced prompt JSON only:",
+  ].join("\n");
+}
+
+function numPredictForLevel(level: EnhanceLevel) {
+  if (level === "short") return 90;
+  if (level === "medium") return 180;
+  return 320;
+}
+
+function temperatureForLevel(level: EnhanceLevel) {
+  if (level === "short") return 0.25;
+  if (level === "medium") return 0.35;
+  return 0.42;
+}
+
+function parseJsonObject(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractEnhancedPrompt(value: unknown) {
+  const raw = cleanText(value);
+  if (!raw) return "";
+
+  const parsed = parseJsonObject(raw);
+  if (parsed) {
+    return normalizeGeneratedPrompt(
+      parsed.enhancedPrompt || parsed.prompt || parsed.result || "",
+    );
+  }
+
+  return normalizeGeneratedPrompt(
+    raw.replace(/^(?:enhanced\s+prompt|prompt)\s*:\s*/i, ""),
+  );
+}
+
+async function qwenGenerateEnhancement(
+  prompt: string,
+  level: EnhanceLevel,
+  context: GenerateEnhanceContext,
+) {
+  const response = await qwenClusterFetch(
+    "/api/generate",
+    {
+      stream: false,
+      think: false,
+      prompt: buildQwenEnhancePrompt(prompt, level, context),
+      format: {
+        type: "object",
+        properties: {
+          enhancedPrompt: {
+            type: "string",
+            description:
+              "A finished Generate prompt matching the requested enhancement level.",
+          },
+        },
+        required: ["enhancedPrompt"],
+        additionalProperties: false,
+      },
+      options: {
+        temperature: temperatureForLevel(level),
+        top_p: 0.85,
+        repeat_penalty: 1.08,
+        num_predict: numPredictForLevel(level),
+        num_ctx: 4096,
+      },
+    },
+    {
+      model: QWEN_CLUSTER_MODEL,
+      keepAlive: process.env.PROMPT_ENHANCE_KEEP_ALIVE || 0,
+      timeoutMs: Math.max(
+        5_000,
+        Number(process.env.PROMPT_ENHANCE_TIMEOUT_MS || 45_000),
+      ),
+      waitMs: 5_000,
+      leaseTtlSeconds: 90,
+    },
+  );
+
+  const raw = await response.text();
+  let payload: any = null;
+  try {
+    payload = raw ? JSON.parse(raw) : {};
+  } catch {
+    throw new Error(`Prompt enhancer returned invalid JSON: ${raw.slice(0, 160)}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      payload?.error || `Prompt enhancer failed with status ${response.status}.`,
+    );
+  }
+
+  const enhancedPrompt = extractEnhancedPrompt(payload?.response);
+  if (!enhancedPrompt) {
+    throw new Error(
+      "Prompt enhancer returned no text. The original prompt was preserved.",
+    );
+  }
+
+  return enhancedPrompt;
 }
 
 async function parseIncoming(req: NextRequest) {
@@ -141,86 +328,72 @@ async function parseIncoming(req: NextRequest) {
   return { prompt: text };
 }
 
+function errorStatus(error: unknown) {
+  const status = Number((error as { status?: unknown })?.status || 502);
+  return Number.isFinite(status) && status >= 400 && status <= 599
+    ? status
+    : 502;
+}
+
 export async function POST(req: NextRequest): Promise<Response> {
+  let originalPrompt = "";
+
   try {
     const body: any = await parseIncoming(req);
-    const prompt = cleanText(body.prompt || body.userPrompt || body.input || body.text);
-    if (!prompt) {
-      return Response.json({ ok: false, error: "Missing prompt." }, { status: 400 });
+    originalPrompt = normalizePromptInput(
+      body.prompt || body.userPrompt || body.input || body.text,
+    );
+    if (!originalPrompt) {
+      return Response.json(
+        { ok: false, error: "Missing prompt.", originalPrompt },
+        { status: 400 },
+      );
     }
 
-    const workflowId = cleanText(body.workflowId || body.preset || body.workflow || "");
-    const styleLabel = cleanText(body.styleLabel || body.style || body.presetLabel || body.stylePreset || "");
-    const stylePrompt = cleanText(body.stylePrompt || body.styleDescription || body.styleText || "");
-    const level = normalizeLevel(body.enhanceLevel || body.level || body.size || body.amount);
-    const mode = normalizeMode(body.mode || body.mediaType, workflowId);
-    const model = QWEN_CLUSTER_MODEL;
-    const timeoutMs = Math.max(800, Math.min(5000, Number(process.env.OLLAMA_PROMPT_ENHANCE_TIMEOUT_MS || 2500)));
-    const numPredict = numPredictForLevel(level);
-
-    const enhancedPromptFromFallback = heuristicEnhancePrompt(prompt, level, mode, styleLabel, stylePrompt);
-
-    let enhancedPrompt = enhancedPromptFromFallback;
-    let provider = "heuristic";
-    let warning = "";
-
-    if (shouldUseOllama()) {
-      try {
-        const ollamaPrompt = await ollamaGenerate(
-          {
-            model,
-            prompt: buildUserPrompt(prompt, level, mode, styleLabel, stylePrompt, workflowId),
-            stream: false,
-            keep_alive: process.env.OLLAMA_PROMPT_ENHANCE_KEEP_ALIVE || "30m",
-            options: {
-              temperature: level === "cinematic" ? 0.62 : level === "medium" ? 0.5 : 0.35,
-              top_p: 0.86,
-              repeat_penalty: 1.08,
-              num_predict: numPredict,
-              num_ctx: 1024,
-            },
-          },
-          timeoutMs
-        );
-
-        const cleaned = cleanText(ollamaPrompt).replace(/^["'`]+|["'`]+$/g, "").trim();
-        if (cleaned && cleaned.length >= Math.max(16, prompt.length * 0.75) && /^[\x09\x0A\x0D\x20-\x7E\u00A0-\uFFFF]+$/.test(cleaned)) {
-          enhancedPrompt = cleaned;
-          provider = `ollama:${model}`;
-        } else {
-          provider = `ollama:${model}+fallback`;
-          warning = "Ollama returned unusable prompt text; used fast enhancer fallback.";
-        }
-      } catch (error) {
-        warning = error instanceof Error ? error.message : "Ollama enhancement failed.";
-        provider = "heuristic";
-        enhancedPrompt = enhancedPromptFromFallback;
-      }
-    }
+    const level = normalizeLevel(
+      body.enhanceLevel || body.level || body.size || body.amount,
+    );
+    const context = buildGenerateContext(body);
+    const enhancedPrompt = await qwenGenerateEnhancement(
+      originalPrompt,
+      level,
+      context,
+    );
 
     return Response.json({
       ok: true,
       enhancedPrompt,
       prompt: enhancedPrompt,
-      originalPrompt: prompt,
+      originalPrompt,
       level,
       size: level,
-      mode,
-      styleLabel,
-      stylePrompt,
-      workflowId,
-      provider,
-      model: provider.startsWith("ollama:") ? model : null,
-      warning,
+      mode: context.mediaMode,
+      mediaMode: context.mediaMode,
+      imageOperation: context.imageOperation,
+      videoGenerationType: context.videoGenerationType,
+      workflowId: context.workflowId,
+      workflowLabel: context.workflowLabel,
+      selectedStyleId: context.selectedStyleId,
+      styleLabel: context.styleLabel,
+      stylePrompt: context.stylePrompt,
+      provider: "qwenCluster",
+      model: QWEN_CLUSTER_MODEL,
     });
   } catch (error) {
+    const baseMessage =
+      error instanceof Error ? error.message : "Prompt enhancement failed.";
+    const message = baseMessage.includes("The original prompt was preserved.")
+      ? baseMessage
+      : `${baseMessage} The original prompt was preserved.`;
+
     return Response.json(
       {
         ok: false,
-        error: error instanceof Error ? error.message : "Prompt enhancement failed.",
+        error: message,
+        originalPrompt,
+        prompt: originalPrompt,
       },
-      { status: 500 }
+      { status: errorStatus(error) },
     );
   }
 }
-

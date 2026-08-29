@@ -4010,7 +4010,10 @@ export async function POST(req: NextRequest) {
       return Response.json(videoSelection, { status: videoSelection.status });
     }
     route = { kind: "video", baseUrl: videoSelection.backend.baseUrl };
-  } else {
+  } else if (route.kind === "default") {
+    // Image jobs stay pinned to configuredImageComfyBaseUrl().
+    // Do not let generic manifest selection reroute image uploads or
+    // prompt submission to the RTX 3090 video lane.
     manifestSelection = await selectManifestBackend(descriptor as Record<string, unknown>);
     if (!manifestSelection.ok) {
       console.info("[comfy-backend]", {

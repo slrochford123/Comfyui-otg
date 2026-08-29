@@ -113,6 +113,54 @@ describe("Generate tab rework contract", () => {
     ).toBe(true);
   });
 
+  it("keeps the Create Image Krea 2 Turbo workflow free of obsolete image LoRA dependencies", () => {
+    const graph = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          repoRoot,
+          "comfy_workflows/presets/image_krea2_turbo_t2i.json",
+        ),
+        "utf8",
+      ),
+    );
+
+    expect(graph["55"]?.class_type).toBe("UNETLoader");
+    expect(graph["55"]?.inputs?.unet_name).toBe(
+      "krea2_turbo_fp8_scaled.safetensors",
+    );
+    expect(graph["56"]?.class_type).toBe("CLIPLoader");
+    expect(graph["56"]?.inputs?.type).toBe("krea2");
+    expect(graph["57"]?.class_type).toBe("VAELoader");
+    expect(graph["53"]?.class_type).toBe("KSampler");
+    expect(graph["53"]?.inputs?.model).toEqual([
+      "55",
+      0,
+    ]);
+
+    const classTypes = Object.values(
+      graph as Record<string, any>,
+    ).map((node: any) =>
+      String(node?.class_type || ""),
+    );
+    expect(classTypes).not.toContain(
+      "LoraLoaderModelOnly",
+    );
+    expect(classTypes).not.toContain(
+      "ComfySwitchNode",
+    );
+
+    const serializedGraph = JSON.stringify(graph);
+    expect(serializedGraph).not.toContain(
+      "krea2_darkbrush.safetensors",
+    );
+    expect(serializedGraph).not.toContain(
+      "lora_name",
+    );
+
+    const extracted = extractPromptGraph(graph);
+    expect(extracted.ok).toBe(true);
+  });
+
   it("routes all Generate video modes through LTX 2.5 SafeTensor workflows", () => {
     expect(VIDEO_GENERATE_FPS).toBe(24);
 

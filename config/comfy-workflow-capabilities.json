@@ -4126,25 +4126,20 @@
       "requiredNodeTypes": [
         "CLIPLoader",
         "CLIPTextEncode",
-        "ComfySwitchNode",
         "ConditioningZeroOut",
         "EmptyLatentImage",
         "KSampler",
-        "LoraLoaderModelOnly",
         "SaveImage",
         "UNETLoader",
         "VAEDecode",
         "VAELoader"
       ],
       "requiredModels": [
-        "krea2_darkbrush.safetensors",
         "krea2_turbo_fp8_scaled.safetensors",
         "qwen3vl_4b_fp8_scaled.safetensors",
         "qwen_image_vae.safetensors"
       ],
-      "requiredLoras": [
-        "krea2_darkbrush.safetensors"
-      ],
+      "requiredLoras": [],
       "requiredInputAssets": [],
       "expectedInputCount": 0,
       "expectedOutputTypes": [

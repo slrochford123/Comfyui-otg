@@ -59,6 +59,10 @@ This file is the source of truth for the TEST-site tab rework.
 - [x] Live-prove Generate microphone capture, transcription, and insertion into the Prompt field through localhost secure-context testing.
 - [x] Complete live TEST Generate UI acceptance.
 - [x] Focused Generate regression suite passes.
+- [x] Replace Generate Enhance Prompt canned/template expansion with local Qwen semantic enhancement; Short, Medium, and Long are context-aware and fail closed without overwriting the original prompt.
+- [x] Remove the Create an Image Krea 2 Turbo Darkbrush LoRA/switch dependency; route the sampler directly from the Krea base UNET.
+- [x] Keep canonical Krea 2 Turbo Generate image requests pinned to the image lane so generic manifest routing cannot replace the RTX 5060 Ti image backend with the RTX 3090 video lane.
+- [x] Live-prove Create an Image after the Krea/routing repairs and confirm Generate video still works.
 - [x] TypeScript validation passes.
 - [x] Production build passes in TEST source.
 - [x] git diff --check passes.

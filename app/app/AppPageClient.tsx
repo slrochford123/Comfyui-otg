@@ -1315,7 +1315,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
       document.body.classList.remove("otg-force-dark-production");
     };
   }, [tab]);
-  const [enhancePromptLevel, setEnhancePromptLevel] = useState<"short" | "medium" | "cinematic">("medium");
+  const [enhancePromptLevel, setEnhancePromptLevel] = useState<"short" | "medium" | "long">("medium");
   const [assistanceTab, setAssistanceTab] = useState<AssistanceTab>("describe");
   const [username, setUsername] = useState(() => initialUser?.username || initialUser?.email || readCachedUsername());
   const [connected, setConnected] = useState(false);
@@ -2946,7 +2946,16 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   const enhancePromptText = useCallback(async (
     inputText: string,
     workflowHint?: string,
-    options?: { styleLabel?: string; stylePrompt?: string; mode?: "image" | "video" }
+    options?: {
+      styleLabel?: string;
+      stylePrompt?: string;
+      mode?: "image" | "video";
+      mediaMode?: GenerateMediaMode;
+      imageOperation?: ImageOperation;
+      videoGenerationType?: VideoGenerationType;
+      workflowLabel?: string;
+      selectedStyleId?: string;
+    }
   ) => {
     const cleaned = String(inputText || "").trim();
     if (!cleaned) {
@@ -2963,15 +2972,19 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         size: enhancePromptLevel,
         prompt: cleaned,
         workflowId: workflowHint || selectedWorkflow.id,
+        workflowLabel: options?.workflowLabel || selectedWorkflow.label,
+        mediaMode: options?.mediaMode || generateMediaMode,
+        imageOperation: options?.imageOperation || imageOperation,
+        videoGenerationType: options?.videoGenerationType || videoGenerationType,
         styleLabel: options?.styleLabel || "",
         stylePrompt: options?.stylePrompt || "",
+        selectedStyleId: options?.selectedStyleId || "",
         mode: options?.mode || (looksLikeVideoWorkflow(workflowHint || selectedWorkflow.id) ? "video" : "image"),
       }),
     });
 
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-
+    if (!res.ok || data?.ok === false) {
       throw new Error(typeof data?.error === "string" ? data.error : "Enhance Prompt failed");
     }
 
@@ -2981,7 +2994,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     }
 
     return nextPrompt;
-  }, [selectedWorkflow.id, enhancePromptLevel]);
+  }, [enhancePromptLevel, generateMediaMode, imageOperation, selectedWorkflow.id, selectedWorkflow.label, videoGenerationType]);
 
   const submitToComfy = useCallback(
     async (
@@ -4443,6 +4456,11 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       const nextPrompt = await enhancePromptText(prompt, selectedWorkflow.id, {
         styleLabel: activeGenerateStylePreset?.label || "",
         stylePrompt: activeGenerateStyleGuidance,
+        selectedStyleId: activeGenerateStylePreset?.id || "",
+        mediaMode: generateMediaMode,
+        imageOperation,
+        videoGenerationType,
+        workflowLabel: selectedWorkflow.label,
         mode: isVideoWorkflowSelected ? "video" : "image",
       });
       pushPromptUndoSnapshot(prompt);
@@ -6202,7 +6220,7 @@ async function handleAskAi() {
                   {enhancing ? "Enhancing..." : "Enhance Prompt"}
                 </ActionButton>
                 <div className="flex flex-wrap items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-950/60 p-1" data-otg="OTG_ENHANCE_LEVEL_UI_V4">
-                  {(["short", "medium", "cinematic"] as const).map((level) => (
+                  {(["short", "medium", "long"] as const).map((level) => (
                     <button
                       key={level}
                       type="button"
@@ -6214,7 +6232,7 @@ async function handleAskAi() {
                       }
                       aria-pressed={enhancePromptLevel === level}
                     >
-                      {level === "cinematic" ? "Long" : level}
+                      {level}
                     </button>
                   ))}
                 </div>

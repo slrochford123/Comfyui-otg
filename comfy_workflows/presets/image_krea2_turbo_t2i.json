@@ -45,7 +45,7 @@
       "scheduler": "simple",
       "denoise": 1,
       "model": [
-        "66",
+        "55",
         0
       ],
       "positive": [
@@ -122,37 +122,6 @@
     "class_type": "ConditioningZeroOut",
     "_meta": {
       "title": "ConditioningZeroOut"
-    }
-  },
-  "59": {
-    "inputs": {
-      "lora_name": "krea2_darkbrush.safetensors",
-      "strength_model": 0.8,
-      "model": [
-        "55",
-        0
-      ]
-    },
-    "class_type": "LoraLoaderModelOnly",
-    "_meta": {
-      "title": "Load LoRA"
-    }
-  },
-  "66": {
-    "inputs": {
-      "switch": false,
-      "on_false": [
-        "55",
-        0
-      ],
-      "on_true": [
-        "59",
-        0
-      ]
-    },
-    "class_type": "ComfySwitchNode",
-    "_meta": {
-      "title": "Switch (Model)"
     }
   }
 }
