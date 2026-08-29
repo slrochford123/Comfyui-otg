@@ -29,7 +29,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     () => [
       { href: "/app", label: "Generate" },
       { href: "/app/gallery", label: "Gallery" },
-      { href: "/app/favorites", label: "Favorites" },
       { href: "/app/settings", label: "Settings" },
     ],
     []

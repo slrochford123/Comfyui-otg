@@ -13,12 +13,11 @@ export async function POST(req: NextRequest) {
     const owner = await getOwnerContext(req);
     const body = await req.json().catch(() => ({} as any));
     const name = String(body?.name || "");
-    const source = String(body?.source || "gallery");
 
     if (!name) return NextResponse.json({ ok: false, error: "missing_name" }, { status: 400 });
 
-    const { userGalleryDir, userFavoritesDir } = getOwnerDirs(owner.ownerKey);
-    const base = source === "favorites" ? userFavoritesDir : userGalleryDir;
+    const { userGalleryDir } = getOwnerDirs(owner.ownerKey);
+    const base = userGalleryDir;
 
     const full = safeJoin(base, name);
     if (!full || !fs.existsSync(full)) {

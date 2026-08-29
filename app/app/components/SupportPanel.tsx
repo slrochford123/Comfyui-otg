@@ -148,7 +148,6 @@ export default function SupportPanel() {
       "Characters",
       "Production",
       "Gallery",
-      "Favorites",
       "Settings",
       "Support",
       "Other",
@@ -166,7 +165,7 @@ export default function SupportPanel() {
           <div className="space-y-2">
             <p>
               Use <b>Generate</b> for direct ComfyUI image/video jobs, <b>Characters</b> for saved character assets,
-              <b>Production</b> for scene-based projects, and <b>Gallery/Favorites</b> for reviewing saved output.
+              <b>Production</b> for scene-based projects, and <b>Gallery</b> for reviewing saved output.
             </p>
             <p>
               Use <b>Settings</b> for account, appearance, connection checks, and safe recovery controls.
@@ -210,13 +209,12 @@ export default function SupportPanel() {
         ),
       },
       {
-        q: "Why is my Gallery or Favorites list missing recent content?",
+        q: "Why is my Gallery missing recent content?",
         a: (
           <div className="space-y-2">
             <ul className="list-disc pl-5 space-y-1">
               <li>Open Gallery and use <b>Update Content</b> if the item was created outside the normal UI flow.</li>
               <li>Confirm the output is in the expected Comfy output folder and has not been moved or deleted.</li>
-              <li>Favorites only shows items whose favorite metadata is currently saved.</li>
             </ul>
           </div>
         ),
@@ -385,7 +383,6 @@ export default function SupportPanel() {
               <ul className="list-disc pl-5 space-y-1">
                 <li><b>Production</b>: build scene-based projects with locked scene persistence.</li>
                 <li><b>Gallery</b>: review generated images/videos and pull in new output with Update Content.</li>
-                <li><b>Favorites</b>: review only favorited Gallery items.</li>
               </ul>
             </InfoCard>
 
@@ -556,11 +553,10 @@ export default function SupportPanel() {
               </ul>
             </InfoCard>
 
-            <InfoCard title="Gallery or Favorites stale">
+            <InfoCard title="Gallery stale">
               <ul className="list-disc pl-5 space-y-1">
                 <li>Use Gallery Update Content.</li>
                 <li>Confirm the file still exists in the output folder.</li>
-                <li>Favorites depends on saved favorite metadata; unfavoriting removes it from Favorites immediately.</li>
               </ul>
             </InfoCard>
 

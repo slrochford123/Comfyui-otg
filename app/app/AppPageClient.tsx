@@ -248,7 +248,6 @@ type PersistedGenerateState = {
   assistanceTab?: AssistanceTab;
   galleryViewMode?: GalleryViewMode;
   galleryItemsPerPage?: number;
-  favoritesItemsPerPage?: number;
 };
 
 type GenerateStylePreset = {
@@ -278,7 +277,7 @@ type PromptAssessment = {
   summary: string;
 };
 
-type ViewerCollection = "gallery" | "favorites";
+type ViewerCollection = "gallery";
 
 type ViewerState = {
   collection: ViewerCollection;
@@ -340,7 +339,6 @@ const APP_TAB_LABELS: Record<SpinTabId, string> = {
   characters: "Characters",
   gallery: "Gallery",
   voices: "Voices",
-  favorites: "Favorites",
   editvideo: "Edit Video",
   settings: "Settings",
   support: "Support",
@@ -1434,23 +1432,13 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const selectedFontScale = APP_FONT_SCALE_OPTIONS.find((option) => option.id === appFontScale) || APP_FONT_SCALE_OPTIONS[1];
 
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
-  const [favoriteItems, setFavoriteItems] = useState<GalleryItem[]>([]);
   const [galleryBusy, setGalleryBusy] = useState(false);
   const [galleryForcePullBusy, setGalleryForcePullBusy] = useState(false);
-  const [favoritesBusy, setFavoritesBusy] = useState(false);
   const [galleryFilter, setGalleryFilter] = useState<"all" | "images" | "videos">("all");
   const [gallerySort, setGallerySort] = useState<"newest" | "oldest" | "name">("newest");
   const [galleryViewMode, setGalleryViewMode] = useState<GalleryViewMode>("default");
-  const [favoritesFilter, setFavoritesFilter] = useState<"all" | "images" | "videos">("all");
-  const [favoritesSort, setFavoritesSort] = useState<"newest" | "oldest" | "name">("newest");
-  const [favoritesViewMode, setFavoritesViewMode] = useState<GalleryViewMode>("default");
-  const [favoritesSearch, setFavoritesSearch] = useState("");
-  const deferredFavoritesSearch = useDeferredValue(favoritesSearch);
-  const favoritesSearchQuery = useMemo(() => deferredFavoritesSearch.trim().toLowerCase(), [deferredFavoritesSearch]);
   const [galleryItemsPerPage, setGalleryItemsPerPage] = useState<number>(25);
-  const [favoritesItemsPerPage, setFavoritesItemsPerPage] = useState<number>(25);
   const [galleryPage, setGalleryPage] = useState(1);
-  const [favoritesPage, setFavoritesPage] = useState(1);
   const [gallerySearch, setGallerySearch] = useState("");
   const deferredGallerySearch = useDeferredValue(gallerySearch);
   const gallerySearchQuery = useMemo(() => deferredGallerySearch.trim(), [deferredGallerySearch]);
@@ -1462,9 +1450,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [animateModal, setAnimateModal] = useState<AnimateModalState | null>(null);
   const [extendModal, setExtendModal] = useState<ExtendModalState | null>(null);
   const galleryAbortRef = useRef<AbortController | null>(null);
-  const favoritesAbortRef = useRef<AbortController | null>(null);
   const galleryRequestSeqRef = useRef(0);
-  const favoritesRequestSeqRef = useRef(0);
 
   const whoamiQuery = useQuery({
     queryKey: ["otg", "whoami"],
@@ -2356,9 +2342,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       if (ITEMS_PER_PAGE_OPTIONS.includes(Number(persisted.galleryItemsPerPage) as (typeof ITEMS_PER_PAGE_OPTIONS)[number])) {
         setGalleryItemsPerPage(Number(persisted.galleryItemsPerPage));
       }
-      if (ITEMS_PER_PAGE_OPTIONS.includes(Number(persisted.favoritesItemsPerPage) as (typeof ITEMS_PER_PAGE_OPTIONS)[number])) {
-        setFavoritesItemsPerPage(Number(persisted.favoritesItemsPerPage));
-      }
     }
 
     try {
@@ -2409,7 +2392,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         tabParam === "characters" ||
         tabParam === "gallery" ||
         tabParam === "voices" ||
-        tabParam === "favorites" ||
         tabParam === "editvideo" ||
         tabParam === "settings" ||
         tabParam === "support"
@@ -2438,7 +2420,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         recentGenerateStyleIds,
         galleryViewMode,
         galleryItemsPerPage,
-        favoritesItemsPerPage,
       };
       window.localStorage.setItem(APP_STATE_KEY, JSON.stringify(nextState));
     } catch {
@@ -2459,7 +2440,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     recentGenerateStyleIds,
     galleryViewMode,
     galleryItemsPerPage,
-    favoritesItemsPerPage,
   ]);
 
   useEffect(() => {
@@ -2541,50 +2521,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     }
   }, [galleryFilter, gallerySearchQuery, gallerySort, queryClient]);
 
-  const loadFavorites = useCallback(async () => {
-    const requestSeq = ++favoritesRequestSeqRef.current;
-    favoritesAbortRef.current?.abort();
-    const controller = new AbortController();
-    favoritesAbortRef.current = controller;
-    const queryKey = ["otg", "favorites"] as const;
-    const cached = queryClient.getQueryData<GalleryItem[]>(queryKey);
-    if (cached) {
-      setFavoriteItems(cached);
-    }
-
-    setFavoritesBusy(!cached);
-    try {
-      const res = await fetch("/api/favorites", {
-        cache: "no-store",
-        credentials: "include",
-        signal: controller.signal,
-      });
-
-      const data = await res.json().catch(() => ({}));
-      const items = Array.isArray(data?.items) ? data.items : Array.isArray(data?.files) ? data.files : [];
-      const normalized = items.map(normalizeGalleryItem);
-      queryClient.setQueryData(queryKey, normalized);
-      if (favoritesRequestSeqRef.current === requestSeq && !controller.signal.aborted) {
-        setFavoriteItems(normalized);
-      }
-    } catch (error) {
-      if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
-        return;
-      }
-      if (favoritesRequestSeqRef.current === requestSeq) {
-        setFavoriteItems([]);
-      }
-    } finally {
-      if (favoritesRequestSeqRef.current === requestSeq) {
-        setFavoritesBusy(false);
-      }
-    }
-  }, [queryClient]);
-
   useEffect(() => {
     return () => {
       galleryAbortRef.current?.abort();
-      favoritesAbortRef.current?.abort();
     };
   }, []);
 
@@ -2629,13 +2568,12 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       setStatusMessage(summaryParts.join(" "));
       await loadGallery();
-      await loadFavorites();
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Update Content failed.");
     } finally {
       setGalleryForcePullBusy(false);
     }
-  }, [loadFavorites, loadGallery]);
+  }, [loadGallery]);
 
 
   useEffect(() => {
@@ -2743,10 +2681,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     if (tab === "gallery") {
       void loadGallery();
     }
-    if (tab === "favorites") {
-      void loadFavorites();
-    }
-  }, [tab, viewerState, loadGallery, loadFavorites]);
+  }, [tab, viewerState, loadGallery]);
 
   const refreshLatestContent = useCallback(async (force = false) => {
     try {
@@ -2914,20 +2849,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }, [progressStatus, refreshProgress]);
 
   useEffect(() => {
-    if (tab !== "gallery" && tab !== "favorites") return;
+    if (tab !== "gallery") return;
     if (viewerState) return;
 
     let cancelled = false;
 
     const tick = async () => {
       if (cancelled) return;
-
-      if (tab === "gallery") {
-        await loadGallery().catch(() => null);
-        return;
-      }
-
-      await loadFavorites().catch(() => null);
+      await loadGallery().catch(() => null);
     };
 
     void tick();
@@ -2940,7 +2869,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [tab, viewerState, loadGallery, loadFavorites]);
+  }, [tab, viewerState, loadGallery]);
   // Auto gallery sync disabled for mobile startup performance.
   // Manual gallery/content refresh still works from explicit user actions.
 
@@ -3075,11 +3004,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         await loadGallery();
       }
 
-      if (tab === "favorites") {
-        await loadFavorites();
-      }
     },
-    [loadFavorites, loadGallery, refreshProgress, tab]
+    [loadGallery, refreshProgress, tab]
   );
 
   const fetchGalleryItemAsFile = useCallback(async (item: GalleryItem, fallbackBaseName: string) => {
@@ -3248,53 +3174,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     setGalleryPage(1);
   }, [deferredGallerySearch, galleryFilter, gallerySort, galleryItemsPerPage]);
 
-  useEffect(() => {
-    setFavoritesPage(1);
-  }, [deferredFavoritesSearch, favoritesFilter, favoritesSort, favoritesItemsPerPage]);
-
   const galleryTotalPages = useMemo(() => {
     if (galleryItemsPerPage <= 0) return 1;
     return Math.max(1, Math.ceil(galleryItems.length / galleryItemsPerPage));
   }, [galleryItems.length, galleryItemsPerPage]);
 
-  const filteredFavoriteItems = useMemo(() => {
-    const items = favoriteItems.filter((item) => {
-      const itemKind = item.kind || (item.video ? "video" : "image");
-      if (favoritesFilter === "images" && itemKind !== "image") return false;
-      if (favoritesFilter === "videos" && itemKind !== "video") return false;
-      if (!favoritesSearchQuery) return true;
-
-      const label = String(item.meta?.renamedName || item.name || item.fileName || item.sourceName || "").toLowerCase();
-      const original = String(item.meta?.originalName || "").toLowerCase();
-      const workflow = String(item.meta?.workflowTitle || item.meta?.workflowId || "").toLowerCase();
-      return (label + " " + original + " " + workflow).includes(favoritesSearchQuery);
-    });
-
-    return [...items].sort((a, b) => {
-      if (favoritesSort === "name") {
-        const aName = String(a.meta?.renamedName || a.name || a.fileName || a.sourceName || "").toLowerCase();
-        const bName = String(b.meta?.renamedName || b.name || b.fileName || b.sourceName || "").toLowerCase();
-        return aName.localeCompare(bName);
-      }
-
-      const aTime = Number(a.updatedAt || a.createdAt || 0);
-      const bTime = Number(b.updatedAt || b.createdAt || 0);
-      return favoritesSort === "oldest" ? aTime - bTime : bTime - aTime;
-    });
-  }, [favoriteItems, favoritesFilter, favoritesSearchQuery, favoritesSort]);
-
-  const favoritesTotalPages = useMemo(() => {
-    if (favoritesItemsPerPage <= 0) return 1;
-    return Math.max(1, Math.ceil(filteredFavoriteItems.length / favoritesItemsPerPage));
-  }, [filteredFavoriteItems.length, favoritesItemsPerPage]);
-
   useEffect(() => {
     setGalleryPage((current) => Math.min(Math.max(1, current), galleryTotalPages));
   }, [galleryTotalPages]);
-
-  useEffect(() => {
-    setFavoritesPage((current) => Math.min(Math.max(1, current), favoritesTotalPages));
-  }, [favoritesTotalPages]);
 
   const visibleGalleryItems = useMemo(() => {
     if (galleryItemsPerPage <= 0) return galleryItems;
@@ -3302,19 +3189,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     return galleryItems.slice(start, start + galleryItemsPerPage);
   }, [galleryItems, galleryItemsPerPage, galleryPage]);
 
-  const visibleFavoriteItems = useMemo(() => {
-    if (favoritesItemsPerPage <= 0) return filteredFavoriteItems;
-    const start = (favoritesPage - 1) * favoritesItemsPerPage;
-    return filteredFavoriteItems.slice(start, start + favoritesItemsPerPage);
-  }, [filteredFavoriteItems, favoritesItemsPerPage, favoritesPage]);
-
   const galleryItemKeySet = useMemo(() => {
     return new Set(galleryItems.map((item) => getGalleryItemKey(item)).filter(Boolean));
   }, [galleryItems]);
-
-  const favoriteItemKeySet = useMemo(() => {
-    return new Set(favoriteItems.map((item) => getGalleryItemKey(item)).filter(Boolean));
-  }, [favoriteItems]);
 
   const openViewer = useCallback(
     (item: GalleryItem) => {
@@ -3323,18 +3200,18 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       if (!url || !itemKey) return;
 
       setViewerState({
-        collection: tab === "favorites" ? "favorites" : "gallery",
+        collection: "gallery",
         itemKey,
         item,
       });
     },
-    [tab]
+    []
   );
 
   const viewerItems = useMemo(() => {
     if (!viewerState) return [] as GalleryItem[];
-    return viewerState.collection === "favorites" ? favoriteItems : galleryItems;
-  }, [viewerState, favoriteItems, galleryItems]);
+    return galleryItems;
+  }, [viewerState, galleryItems]);
 
   const viewerIndex = useMemo(() => {
     if (!viewerState) return -1;
@@ -3355,11 +3232,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
   useEffect(() => {
     if (!viewerState?.itemKey) return;
-    const keySet = viewerState.collection === "favorites" ? favoriteItemKeySet : galleryItemKeySet;
-    if (!keySet.has(viewerState.itemKey)) {
+    if (!galleryItemKeySet.has(viewerState.itemKey)) {
       setViewerState(null);
     }
-  }, [favoriteItemKeySet, galleryItemKeySet, viewerState]);
+  }, [galleryItemKeySet, viewerState]);
 
   useEffect(() => {
     if (editModal && !galleryItemKeySet.has(getGalleryItemKey(editModal.item))) {
@@ -3672,7 +3548,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   ]);
 
 
-  const galleryActionsLocked = galleryBusy || galleryForcePullBusy || favoritesBusy || !!galleryActionBusyName;
+  const galleryActionsLocked = galleryBusy || galleryForcePullBusy || !!galleryActionBusyName;
 
   function beginGalleryAction(name: string, kind: GalleryActionKind) {
     setGalleryActionBusyName(name);
@@ -3747,11 +3623,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         throw new Error(typeof data?.error === "string" ? data.error : "Favorite toggle failed");
       }
 
-      setStatusMessage(data?.favorite ? "Saved to favorites." : "Removed from favorites.");
-      if (!data?.favorite && viewerState?.collection === "favorites" && viewerState.itemKey === name) {
-        setViewerState(null);
-      }
-      await Promise.all([loadGallery(), loadFavorites()]);
+      setStatusMessage(data?.favorite ? "Saved." : "Removed from saved items.");
+      await loadGallery();
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Favorite toggle failed.");
     } finally {
@@ -3795,7 +3668,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       setStatusMessage("Gallery item renamed.");
       clearGalleryUiForItem(fileName);
-      await Promise.all([loadGallery(), loadFavorites()]);
+      await loadGallery();
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Rename failed.");
     } finally {
@@ -3836,7 +3709,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       setStatusMessage("Gallery item deleted.");
       clearGalleryUiForItem(name);
-      await Promise.all([loadGallery(), loadFavorites()]);
+      await loadGallery();
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Delete failed.");
     } finally {
@@ -4716,7 +4589,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setLatestPreviewName("");
       setLatestPreviewKind("");
       setLatestPreviewMeta(null);
-      setSettingsPipelineMessage("Pipeline state cleared. Gallery and Favorites were not deleted.");
+      setSettingsPipelineMessage("Pipeline state cleared. Gallery files were not deleted.");
       setStatusMessage("Pipeline state cleared.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Pipeline clear failed.";
@@ -4730,7 +4603,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   function handleSettingsClearLocalState() {
     try {
       window.localStorage.removeItem(APP_STATE_KEY);
-      setSettingsLocalMessage("Local UI state cleared. Server files, Gallery, and Favorites were not deleted.");
+      setSettingsLocalMessage("Local UI state cleared. Server files and Gallery were not deleted.");
       setStatusMessage("Local UI state cleared.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Local UI state clear failed.";
@@ -7384,7 +7257,7 @@ async function handleAskAi() {
             <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm">
               <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-200/70">App controls</p>
               <h1 className="mt-2 text-4xl font-black tracking-tight text-white">Settings</h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">Check your account, verify the active Comfy connection, and recover stuck local pipeline state without deleting Gallery or Favorites.</p>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">Check your account, verify the active Comfy connection, and recover stuck local pipeline state without deleting Gallery.</p>
             </div>
 
             {isAdmin ? <AdminQuickPanel /> : null}
@@ -7707,7 +7580,7 @@ async function handleAskAi() {
               </Card>
 
               <Card title="Pipeline recovery">
-                <p className="text-sm leading-6 text-white/65">Use this only when the current generation/progress state is stuck. It unlocks the OTG pipeline state and clears the current preview pointer. It does not delete Gallery or Favorites.</p>
+                <p className="text-sm leading-6 text-white/65">Use this only when the current generation/progress state is stuck. It unlocks the OTG pipeline state and clears the current preview pointer. It does not delete Gallery.</p>
                 <div className="flex flex-wrap gap-3">
                   <ActionButton onClick={() => void handleSettingsClearPipeline()} disabled={settingsPipelineBusy}>
                     {settingsPipelineBusy ? "Clearing..." : "Clear Current Pipeline"}
@@ -7719,7 +7592,7 @@ async function handleAskAi() {
               </Card>
 
               <Card title="Local app state">
-                <p className="text-sm leading-6 text-white/65">Clears saved browser UI state for this app on this device, including remembered tab/view preferences. Server files, Gallery, and Favorites are not touched.</p>
+                <p className="text-sm leading-6 text-white/65">Clears saved browser UI state for this app on this device, including remembered tab/view preferences. Server files and Gallery are not touched.</p>
                 <div className="flex flex-wrap gap-3">
                   <GhostButton onClick={handleSettingsClearLocalState}>Clear Local UI State</GhostButton>
                 </div>
@@ -7792,24 +7665,6 @@ async function handleAskAi() {
         galleryTotalPages={galleryTotalPages}
         onRefreshGallery={() => void loadGallery()}
         onForcePullGallery={() => void handleGalleryForcePull()}
-        favoriteItems={filteredFavoriteItems}
-        favoritesRawCount={favoriteItems.length}
-        favoritesBusy={favoritesBusy}
-        favoritesFilter={favoritesFilter}
-        onFavoritesFilterChange={setFavoritesFilter}
-        favoritesSort={favoritesSort}
-        onFavoritesSortChange={setFavoritesSort}
-        favoritesViewMode={favoritesViewMode}
-        onFavoritesViewModeChange={setFavoritesViewMode}
-        favoritesSearch={favoritesSearch}
-        onFavoritesSearchChange={setFavoritesSearch}
-        favoritesItemsPerPage={favoritesItemsPerPage}
-        onFavoritesItemsPerPageChange={setFavoritesItemsPerPage}
-        favoritesPage={favoritesPage}
-        onFavoritesPageChange={setFavoritesPage}
-        favoritesTotalPages={favoritesTotalPages}
-        visibleFavoriteItems={visibleFavoriteItems}
-        onRefreshFavorites={() => void loadFavorites()}
         onDownload={handleGalleryDownload}
         onFavorite={handleGalleryFavorite}
         onRename={handleGalleryRename}

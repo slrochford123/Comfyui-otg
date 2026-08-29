@@ -125,7 +125,6 @@ function configuredBackgroundImportRoots(ownerKey: string) {
     backgroundUploadDir(ownerKey),
     ownerDirs.gallery,
     ownerDirs.inbox,
-    ownerDirs.favorites,
     ownerDirs.preview,
     process.env.COMFY_OUTPUT_DIR,
     process.env.OTG_COMFY_OUTPUT_DIR,

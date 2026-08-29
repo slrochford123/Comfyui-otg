@@ -10,7 +10,6 @@ export type SpinTabId =
   | "characters"
   | "gallery"
   | "voices"
-  | "favorites"
   | "editvideo"
   | "settings"
   | "support";
@@ -43,7 +42,6 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, showProductio
       { id: "characters", label: "Characters" },
       { id: "gallery", label: "Gallery" },
       ...(isAdmin ? [{ id: "voices", label: "Voices" } as Item] : []),
-      { id: "favorites", label: "Favorites" },
       { id: "editvideo", label: "Edit Video" },
       { id: "settings", label: "Settings" },
       { id: "support", label: "Support" },

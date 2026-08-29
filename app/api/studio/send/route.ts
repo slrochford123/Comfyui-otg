@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 type StudioPayload = {
   name: string; // image filename (as stored in user gallery)
   workflowId: string; // workflow id to open in Studio tab
-  source?: "gallery" | "favorites";
+  source?: "gallery";
 };
 
 export async function POST(req: NextRequest) {
@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
 
     const name = body?.name || "";
     const workflowId = body?.workflowId || "";
-    const source = body?.source || "gallery";
+    const source = "gallery" as const;
 
     if (!name || !workflowId) {
       return NextResponse.json({ ok: false, error: "missing_fields" }, { status: 400 });

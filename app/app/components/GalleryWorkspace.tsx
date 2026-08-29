@@ -28,7 +28,7 @@ export type GalleryItem = {
 
 export type GalleryViewMode = "default" | "grid" | "list";
 export type GalleryActionKind = "" | "favorite" | "rename" | "redo" | "delete" | "extend-prepare" | "edit-submit" | "animate-submit" | "extend-submit" | "character-import";
-export type ViewerCollection = "gallery" | "favorites";
+export type ViewerCollection = "gallery";
 
 export type ViewerState = {
   collection: ViewerCollection;
@@ -509,20 +509,18 @@ function preloadVideoUrl(url: string) {
 function useGalleryMediaWarmup(args: {
   activeTab: string | null;
   visibleGalleryItems: GalleryItem[];
-  visibleFavoriteItems: GalleryItem[];
   viewerItem: GalleryItem | null;
   viewerItems: GalleryItem[];
   viewerIndex: number;
 }) {
-  const { activeTab, visibleGalleryItems, visibleFavoriteItems, viewerItem, viewerItems, viewerIndex } = args;
+  const { activeTab, visibleGalleryItems, viewerItem, viewerItems, viewerIndex } = args;
 
   React.useEffect(() => {
-    if (activeTab !== "gallery" && activeTab !== "favorites") return;
-    const items = activeTab === "favorites" ? visibleFavoriteItems : visibleGalleryItems;
-    for (const item of items.slice(0, 12)) {
+    if (activeTab !== "gallery") return;
+    for (const item of visibleGalleryItems.slice(0, 12)) {
       preloadImageUrl(buildGalleryThumbUrl(item, 768));
     }
-  }, [activeTab, visibleFavoriteItems, visibleGalleryItems]);
+  }, [activeTab, visibleGalleryItems]);
 
   React.useEffect(() => {
     if (!viewerItem) return;
@@ -640,24 +638,6 @@ type GalleryWorkspaceProps = {
   galleryTotalPages: number;
   onRefreshGallery: () => void;
   onForcePullGallery: () => void;
-  favoriteItems: GalleryItem[];
-  favoritesRawCount: number;
-  favoritesBusy: boolean;
-  favoritesFilter?: "all" | "images" | "videos";
-  onFavoritesFilterChange?: (value: "all" | "images" | "videos") => void;
-  favoritesSort?: "newest" | "oldest" | "name";
-  onFavoritesSortChange?: (value: "newest" | "oldest" | "name") => void;
-  favoritesViewMode?: GalleryViewMode;
-  onFavoritesViewModeChange?: (value: GalleryViewMode) => void;
-  favoritesSearch?: string;
-  onFavoritesSearchChange?: (value: string) => void;
-  favoritesItemsPerPage: number;
-  onFavoritesItemsPerPageChange: (value: number) => void;
-  favoritesPage: number;
-  onFavoritesPageChange: (value: number) => void;
-  favoritesTotalPages: number;
-  visibleFavoriteItems: GalleryItem[];
-  onRefreshFavorites: () => void;
   onDownload: (item: GalleryItem) => void;
   onFavorite: (item: GalleryItem) => void;
   onRename: (item: GalleryItem) => void;
@@ -729,24 +709,6 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
     galleryTotalPages,
     onRefreshGallery,
     onForcePullGallery,
-    favoriteItems,
-    favoritesRawCount,
-    favoritesBusy,
-    favoritesFilter,
-    onFavoritesFilterChange,
-    favoritesSort,
-    onFavoritesSortChange,
-    favoritesViewMode,
-    onFavoritesViewModeChange,
-    favoritesSearch,
-    onFavoritesSearchChange,
-    favoritesItemsPerPage,
-    onFavoritesItemsPerPageChange,
-    favoritesPage,
-    onFavoritesPageChange,
-    favoritesTotalPages,
-    visibleFavoriteItems,
-    onRefreshFavorites,
     onDownload,
     onFavorite,
     onRename,
@@ -794,19 +756,9 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
   } = props;
 
   const safeGallerySearch = typeof gallerySearch === "string" ? gallerySearch : "";
-  const safeFavoritesSearch = typeof favoritesSearch === "string" ? favoritesSearch : "";
-  const safeFavoritesFilter = favoritesFilter ?? "all";
-  const safeFavoritesSort = favoritesSort ?? "newest";
-  const safeFavoritesViewMode = favoritesViewMode ?? galleryViewMode ?? "default";
-  const handleFavoritesSearchChange = onFavoritesSearchChange ?? (() => undefined);
-  const handleFavoritesFilterChange = onFavoritesFilterChange ?? (() => undefined);
-  const handleFavoritesSortChange = onFavoritesSortChange ?? (() => undefined);
-  const handleFavoritesViewModeChange = onFavoritesViewModeChange ?? (() => undefined);
-
   useGalleryMediaWarmup({
     activeTab,
     visibleGalleryItems,
-    visibleFavoriteItems,
     viewerItem,
     viewerItems,
     viewerIndex,
@@ -816,11 +768,6 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
   const gallerySummary = galleryHasRefinements
     ? `${galleryItems.length} matching item${galleryItems.length === 1 ? "" : "s"}`
     : `${galleryItems.length} gallery item${galleryItems.length === 1 ? "" : "s"}`;
-  const favoritesHasRefinements = safeFavoritesSearch.trim().length > 0 || safeFavoritesFilter !== "all" || safeFavoritesSort !== "newest";
-  const favoritesSummary = favoritesHasRefinements
-    ? `${favoriteItems.length} matching favorite${favoriteItems.length === 1 ? "" : "s"}`
-    : `${favoriteItems.length} favorite${favoriteItems.length === 1 ? "" : "s"}`;
-
   return (
     <>
       {activeTab === "gallery" ? (
@@ -931,124 +878,6 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
                 pageSize={galleryItemsPerPage}
                 onPageChange={onGalleryPageChange}
                 onPageSizeChange={onGalleryItemsPerPageChange}
-              />
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {activeTab === "favorites" ? (
-        <div className="space-y-4">
-          <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm">
-            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-              <div className="space-y-2">
-                <h1 className="text-4xl font-black tracking-tight text-white">Favorites</h1>
-                <p className="text-sm text-white/60">Saved gallery items only. Use filters here without changing the Gallery tab view.</p>
-              </div>
-              <button
-                type="button"
-                onClick={onRefreshFavorites}
-                disabled={favoritesBusy || galleryActionsLocked}
-                className="inline-flex min-h-12 items-center justify-center rounded-full border border-white/10 bg-white/5 px-5 py-3 text-base font-semibold text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {favoritesBusy ? "Refreshing..." : "Refresh"}
-              </button>
-            </div>
-
-            <div className="mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
-              <input
-                value={safeFavoritesSearch}
-                onChange={(e) => handleFavoritesSearchChange(e.target.value)}
-                placeholder="Search favorites by name"
-                className="w-full rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-              />
-              <select
-                value={safeFavoritesFilter}
-                onChange={(e) => handleFavoritesFilterChange(e.target.value as "all" | "images" | "videos")}
-                className="rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
-              >
-                <option value="all">All</option>
-                <option value="images">Images</option>
-                <option value="videos">Videos</option>
-              </select>
-              <select
-                value={safeFavoritesSort}
-                onChange={(e) => handleFavoritesSortChange(e.target.value as "newest" | "oldest" | "name")}
-                className="rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
-              >
-                <option value="newest">Newest first</option>
-                <option value="oldest">Oldest first</option>
-                <option value="name">Name</option>
-              </select>
-              <select
-                value={safeFavoritesViewMode}
-                onChange={(e) => handleFavoritesViewModeChange(e.target.value as GalleryViewMode)}
-                className="rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
-              >
-                <option value="default">Default cards</option>
-                <option value="grid">Grid view</option>
-                <option value="list">List view</option>
-              </select>
-            </div>
-
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-white/10 bg-black/25 px-4 py-3 text-sm text-white/60" style={MEDIA_CARD_STYLE}>
-              <div>{favoritesSummary}{favoritesRawCount !== favoriteItems.length ? ` from ${favoritesRawCount} total` : ""}</div>
-              <div className="flex flex-wrap items-center gap-3">
-                <span>{favoritesHasRefinements ? "Filtered favorites are active." : "Heart items in Gallery to keep them here."}</span>
-                {favoritesHasRefinements ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handleFavoritesSearchChange("");
-                      handleFavoritesFilterChange("all");
-                      handleFavoritesSortChange("newest");
-                    }}
-                    className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/80 hover:bg-white/10"
-                  >
-                    Clear filters
-                  </button>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="mb-4">
-              <PaginationBar
-                totalItems={favoriteItems.length}
-                page={favoritesPage}
-                totalPages={favoritesTotalPages}
-                pageSize={favoritesItemsPerPage}
-                onPageChange={onFavoritesPageChange}
-                onPageSizeChange={onFavoritesItemsPerPageChange}
-              />
-            </div>
-
-            <MediaGrid
-              items={visibleFavoriteItems}
-              viewMode={safeFavoritesViewMode}
-              busyName={galleryActionBusyName}
-              busyKind={galleryActionBusyKind}
-              actionsLocked={galleryActionsLocked}
-              emptyStateTitle="No favorites yet."
-              emptyStateDetail="Use Heart on any Gallery item to save it here for quick access."
-              onDownload={onDownload}
-              onFavorite={onFavorite}
-              onRename={onRename}
-              onRedo={onRedo}
-              onEdit={onEdit}
-              onAnimate={onAnimate}
-              onExtend={onExtend}
-              onDelete={onDelete}
-              onOpenViewer={onOpenViewer}
-            />
-
-            <div className="mt-4">
-              <PaginationBar
-                totalItems={favoriteItems.length}
-                page={favoritesPage}
-                totalPages={favoritesTotalPages}
-                pageSize={favoritesItemsPerPage}
-                onPageChange={onFavoritesPageChange}
-                onPageSizeChange={onFavoritesItemsPerPageChange}
               />
             </div>
           </div>

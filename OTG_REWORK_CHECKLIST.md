@@ -88,6 +88,22 @@ This file is the source of truth for the TEST-site tab rework.
 - [x] Live-accept the TEST Machine placeholder and verify no Angles UI remains.
 - [x] Commit and close Angles removal before selecting the next tab.
 
+## Favorites Removal
+
+- [x] Select Favorites removal as the next TEST rework target after Angles closure.
+- [x] Audit dedicated Favorites UI, APIs, Gallery favorite metadata, legacy physical-copy storage, Studio compatibility paths, thumbnails, and shared routes.
+- [x] Establish a RED regression contract before Favorites source removal.
+- [x] Remove the dedicated Favorites navigation tab and Favorites workspace UI/state.
+- [x] Remove dedicated `/api/favorites/*`, obsolete `/app/api/favorites/*`, and unused `/api/content/favorite` routes.
+- [x] Decouple active shared Thumbnail, Background, and Studio routes from the removed physical Favorites collection.
+- [x] Remove obsolete current-content `favorited` state while preserving Gallery metadata.
+- [x] Preserve Gallery Heart/favorite metadata and `/api/gallery/favorite` behavior for the upcoming Gallery rework.
+- [x] Leave historical Favorites data directories untouched; retain only backward cleanup code where harmless.
+- [x] Run focused Favorites, Angles, Generate, TypeScript, production-build, and diff validation.
+- [x] Deploy TEST and live-accept that Favorites is gone while Gallery still works.
+- [x] Commit and close Favorites removal before Gallery cleanup.
+
+
 ## Canonical Remaining Rework Order
 
 The remaining TEST rework order is fixed unless explicitly changed:
