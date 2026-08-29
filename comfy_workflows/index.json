@@ -230,6 +230,59 @@
       "description": "Final LTX 2.3 v1.1 first-frame/last-frame API graph. First image node 187, last image node 411, prompt node 767, negative node 109, frame node 1175, FPS node 126, audio preserved, output node 180."
     },
     {
+      "id": "presets/LTX 2.5 Text To Video",
+      "label": "Create a Video",
+      "type": "preset",
+      "path": "presets/LTX 2.5 Text To Video.json",
+      "file": "presets/LTX 2.5 Text To Video.json",
+      "tags": [
+        "video",
+        "text-to-video",
+        "ltx25",
+        "generate"
+      ],
+      "enabled": true,
+      "description": "LTX 2.5 API create a video Generate preset. Runtime binds prompt, orientation, duration, seed, and uploaded frame inputs."
+    },
+    {
+      "id": "presets/LTX 2.5 Image To Video",
+      "label": "Create a Video with a Starter Image",
+      "type": "preset",
+      "path": "presets/LTX 2.5 Image To Video.json",
+      "file": "presets/LTX 2.5 Image To Video.json",
+      "tags": [
+        "video",
+        "image-to-video",
+        "starter-image",
+        "ltx25",
+        "generate"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "requiresInputImage": true,
+      "description": "LTX 2.5 API create a video with a starter image Generate preset. Runtime binds prompt, orientation, duration, seed, and uploaded frame inputs."
+    },
+    {
+      "id": "presets/LTX 2.5 First Last Frame Video",
+      "label": "First Frame + Last Frame Video",
+      "type": "preset",
+      "path": "presets/LTX 2.5 First Last Frame Video.json",
+      "file": "presets/LTX 2.5 First Last Frame Video.json",
+      "tags": [
+        "video",
+        "first-last-image",
+        "image-to-video",
+        "flf2v",
+        "ltx25",
+        "generate"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "requiresInputImage": true,
+      "needsImages": 2,
+      "description": "LTX 2.5 API first frame + last frame video Generate preset. Runtime binds prompt, orientation, duration, seed, and uploaded frame inputs."
+    },
+    {
       "id": "presets/Create Prompt Relay Image Video",
       "label": "Create Prompt Relay Image Video",
       "type": "preset",

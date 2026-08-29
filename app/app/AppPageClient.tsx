@@ -20,8 +20,6 @@ import {
 import "./components/ProductionAnimateModeSwitch";
 import "./components/ProductionDirectorModeUI";
 import {
-  IMAGE_LORA_ADULT_ACK_VERSION,
-  IMAGE_LORA_MAX_SELECTIONS,
   IMAGE_MODELS,
   IMAGE_OPERATION_LABELS,
   imageModelById,
@@ -30,13 +28,9 @@ import {
   type ImageOperation,
 } from "@/lib/imageGenerateWorkflows";
 import {
-  VIDEO_FORMAT_OPTIONS,
   VIDEO_GENERATION_OPTIONS,
-  VIDEO_MODEL_OPTIONS,
   resolveVideoGenerateWorkflow,
   type VideoGenerationType,
-  type VideoModelFamily,
-  type VideoModelFormat,
 } from "@/lib/videoGenerateWorkflows";
 import VideoLoraPanel, { shouldShowVideoLoraPanel, type VideoLoraSelectionValue } from "./components/VideoLoraPanel";
 
@@ -246,8 +240,6 @@ type PersistedGenerateState = {
   negativePrompt?: string;
   workflowId?: string;
   videoGenerationType?: VideoGenerationType;
-  videoModelFamily?: VideoModelFamily;
-  videoModelFormat?: VideoModelFormat;
   orientation?: "portrait" | "landscape";
   durationSeconds?: number;
   uploadedFileName?: string;
@@ -1341,14 +1333,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [generateMediaMode, setGenerateMediaMode] = useState<GenerateMediaMode>("image");
   const [imageOperation, setImageOperation] = useState<ImageOperation>("create");
   const [videoGenerationType, setVideoGenerationType] = useState<VideoGenerationType>("create");
-  const [videoModelFamily, setVideoModelFamily] = useState<VideoModelFamily>("ltx23");
-  const [videoModelFormat, setVideoModelFormat] = useState<VideoModelFormat>("safetensors");
-  const [selectedImageLoras, setSelectedImageLoras] = useState<Record<string, number>>({});
   const [selectedVideoLoras, setSelectedVideoLoras] = useState<VideoLoraSelectionValue[]>([]);
-  const [imageLoraAccessEnabled, setImageLoraAccessEnabled] = useState(false);
-  const [imageLoraDisclaimerOpen, setImageLoraDisclaimerOpen] = useState(false);
-  const [imageLoraAgeConfirmed, setImageLoraAgeConfirmed] = useState(false);
-  const [imageLoraCatalog, setImageLoraCatalog] = useState<ImageLoraCatalogEntry[]>([]);
   const [adminImageLoras, setAdminImageLoras] = useState<ImageLoraCatalogEntry[]>([]);
   const [adminLoraBusy, setAdminLoraBusy] = useState(false);
   const [adminLoraMessage, setAdminLoraMessage] = useState("");
@@ -1368,8 +1353,6 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [durationSeconds, setDurationSeconds] = useState(10);
   const [activeGenerateStyleId, setActiveGenerateStyleId] = useState("");
   const [recentGenerateStyleIds, setRecentGenerateStyleIds] = useState<string[]>([]);
-  const [promptGuideOpen, setPromptGuideOpen] = useState(false);
-  const [promptGuideMode, setPromptGuideMode] = useState<PromptGuideMode>("image");
   const [uploadedFileName, setUploadedFileName] = useState("");
   // OTG_CUSTOM_AUDIO_GENERATE: audio file state for Generate custom-audio I2V.
   const [customAudioFileName, setCustomAudioFileName] = useState("");
@@ -1390,7 +1373,6 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [generateGallerySelecting, setGenerateGallerySelecting] = useState("");
   const [gpuTarget, setGpuTarget] = useState(GPU_OPTIONS[0].value);
   const [enhancing, setEnhancing] = useState(false);
-  const [formattingPrompt, setFormattingPrompt] = useState(false);
   const [promptAssessmentOpen, setPromptAssessmentOpen] = useState(false);
   const [promptAssessment, setPromptAssessment] = useState<PromptAssessment | null>(null);
   const [recordingTarget, setRecordingTarget] = useState<MicTarget | "">("");
@@ -1743,8 +1725,8 @@ useEffect(() => {
 }, []);
 
   const selectedVideoConfiguration = useMemo(
-    () => resolveVideoGenerateWorkflow(videoGenerationType, videoModelFamily, videoModelFormat),
-    [videoGenerationType, videoModelFamily, videoModelFormat]
+    () => resolveVideoGenerateWorkflow(videoGenerationType),
+    [videoGenerationType]
   );
   const selectedVideoWorkflowItem = useMemo(
     () =>
@@ -1757,28 +1739,19 @@ useEffect(() => {
   const selectedWorkflow = useMemo(() => {
     if (generateMediaMode === "video") {
       if (selectedVideoWorkflowItem) return selectedVideoWorkflowItem;
-      const modelLabel = VIDEO_MODEL_OPTIONS.find((option) => option.id === videoModelFamily)?.label || videoModelFamily;
-      const formatLabel = VIDEO_FORMAT_OPTIONS.find((option) => option.id === videoModelFormat)?.label || videoModelFormat;
       return {
         id: selectedVideoConfiguration?.workflowId || "pending-video-workflow",
-        label: `${modelLabel} ${formatLabel}`,
+        label: selectedVideoConfiguration?.label || "LTX 2.5",
         runtime: selectedVideoConfiguration?.workflowId
           ? "The configured workflow was not found in TEST."
           : "Workflow JSON pending verification.",
       };
     }
     return workflows.find((workflow) => workflow.id === workflowId) || workflows[0] || WORKFLOW_FALLBACKS[0];
-  }, [generateMediaMode, selectedVideoConfiguration, selectedVideoWorkflowItem, videoModelFamily, videoModelFormat, workflowId, workflows]);
-  const isWanWorkflowSelected =
-    generateMediaMode === "video" &&
-    String(selectedVideoConfiguration?.workflowId || workflowId || "").trim().toLowerCase().includes("wan");
-  const selectedVideoLoraFamily: "wan" | "ltx" = videoModelFamily === "wan22" ? "wan" : "ltx";
+  }, [generateMediaMode, selectedVideoConfiguration, selectedVideoWorkflowItem, workflowId, workflows]);
+  const selectedVideoLoraFamily: "wan" | "ltx" = "ltx";
 
   const selectedImageModel = useMemo(() => imageModelById(workflowId), [workflowId]);
-  const activeImageLoras = useMemo(
-    () => imageLoraCatalog.filter((lora) => lora.enabled && lora.modelId === selectedImageModel?.id),
-    [imageLoraCatalog, selectedImageModel]
-  );
   const operationImageModels = useMemo(() => imageModelsForOperation(imageOperation), [imageOperation]);
   const videoNeedsStarterImage = generateMediaMode === "video" && videoGenerationType !== "create";
   const videoNeedsLastFrameImage = generateMediaMode === "video" && videoGenerationType === "first_last";
@@ -1796,19 +1769,12 @@ useEffect(() => {
   }, [generateMediaMode, selectedVideoConfiguration]);
 
   useEffect(() => {
-    setSelectedImageLoras({});
     setEditInputCount(1);
     secondImageFileRef.current = null;
     thirdImageFileRef.current = null;
     setSecondImageFileName("");
     setThirdImageFileName("");
   }, [workflowId]);
-
-  const loadImageLoraCatalog = useCallback(async () => {
-    const response = await fetch("/api/image-loras", { cache: "no-store", credentials: "include" });
-    const data = await response.json().catch(() => ({}));
-    if (response.ok && Array.isArray(data?.entries)) setImageLoraCatalog(data.entries);
-  }, []);
 
   const loadAdminImageLoras = useCallback(async () => {
     if (!isAdmin) return;
@@ -1817,35 +1783,9 @@ useEffect(() => {
     if (response.ok && Array.isArray(data?.entries)) setAdminImageLoras(data.entries);
   }, [isAdmin]);
 
-  useEffect(() => { void loadImageLoraCatalog(); }, [loadImageLoraCatalog]);
   useEffect(() => {
     if (tab === "settings" && isAdmin) void loadAdminImageLoras();
   }, [isAdmin, loadAdminImageLoras, tab]);
-
-  useEffect(() => {
-    try {
-      setImageLoraAccessEnabled(window.localStorage.getItem("otg-image-lora-adult-ack") === IMAGE_LORA_ADULT_ACK_VERSION);
-    } catch {
-      setImageLoraAccessEnabled(false);
-    }
-  }, []);
-
-  const currentPromptGuideMode = useMemo(() => inferPromptGuideMode(selectedWorkflow), [selectedWorkflow]);
-  const activePromptGuide = PROMPT_GUIDES[promptGuideMode];
-
-  useEffect(() => {
-    setPromptGuideMode(currentPromptGuideMode);
-  }, [currentPromptGuideMode]);
-
-  const showPromptBuilderAssistant = currentPromptGuideMode !== "image";
-  const promptBuilderNeedsStarterImage = currentPromptGuideMode === "image_to_video";
-
-  useEffect(() => {
-    if (!showPromptBuilderAssistant) {
-      setPromptAssessmentOpen(false);
-      setPromptAssessment(null);
-    }
-  }, [showPromptBuilderAssistant]);
 
   const updateDescribePreview = useCallback((file: File | null) => {
     if (describePreviewUrlRef.current) {
@@ -1911,11 +1851,11 @@ useEffect(() => {
     const label = String(selectedWorkflow?.label || "").toLowerCase();
     return id.includes("edit image") || id.includes("edit picture") || label.includes("edit image") || label.includes("edit picture");
   }, [generateMediaMode, imageOperation, selectedWorkflow]);
-const isAnimeImagesWorkflowSelected = useMemo(() => {
-    if (generateMediaMode === "image" && imageOperation === "anime") return true;
+const isAnimateImageWorkflowSelected = useMemo(() => {
+    if (generateMediaMode === "image" && imageOperation === "animate") return true;
     const id = String(selectedWorkflow?.id || "").toLowerCase();
     const label = String(selectedWorkflow?.label || "").toLowerCase();
-    return id.includes("create anime images") || label.includes("create anime images");
+    return id.includes("anima") || label.includes("anima");
   }, [generateMediaMode, imageOperation, selectedWorkflow]);
   const isCustomAudioVideoWorkflowSelected = useMemo(() => {
     if (generateMediaMode === "video") return false;
@@ -2396,12 +2336,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       if (VIDEO_GENERATION_OPTIONS.some((option) => option.id === persisted.videoGenerationType)) {
         setVideoGenerationType(persisted.videoGenerationType as VideoGenerationType);
       }
-      if (VIDEO_MODEL_OPTIONS.some((option) => option.id === persisted.videoModelFamily)) {
-        setVideoModelFamily(persisted.videoModelFamily as VideoModelFamily);
-      }
-      if (VIDEO_FORMAT_OPTIONS.some((option) => option.id === persisted.videoModelFormat)) {
-        setVideoModelFormat(persisted.videoModelFormat as VideoModelFormat);
-      }
       if (persisted.orientation === "portrait" || persisted.orientation === "landscape") setOrientation(persisted.orientation);
       if (typeof persisted.durationSeconds === "number") setDurationSeconds(clampGenerateDuration(persisted.durationSeconds));
       if (typeof persisted.uploadedFileName === "string") setUploadedFileName(persisted.uploadedFileName);
@@ -2495,8 +2429,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         negativePrompt,
         workflowId,
         videoGenerationType,
-        videoModelFamily,
-        videoModelFormat,
         orientation,
         durationSeconds: clampGenerateDuration(durationSeconds),
         uploadedFileName,
@@ -2518,8 +2450,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     negativePrompt,
     workflowId,
     videoGenerationType,
-    videoModelFamily,
-    videoModelFormat,
     orientation,
     durationSeconds,
     uploadedFileName,
@@ -3596,7 +3526,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         generateMediaMode === "video"
           ? String(selectedVideoConfiguration?.workflowId || "")
           : workflowId;
-      const submittedDurationSeconds = isWanWorkflowSelected ? 5 : durationSeconds;
+      const submittedDurationSeconds = durationSeconds;
       body.set("workflowId", submitWorkflowId);
       body.set("prompt", finalPrompt);
       body.set("negativePrompt", negativePrompt);
@@ -3627,8 +3557,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("seed", String(randomSeed()));
       if (generateMediaMode === "video") {
         body.set("requestKind", "video");
-        body.set("width", orientation === "portrait" ? "720" : "1280");
-        body.set("height", orientation === "portrait" ? "1280" : "720");
+        body.set("width", orientation === "portrait" ? "704" : "1280");
+        body.set("height", orientation === "portrait" ? "1280" : "704");
         body.set("frameRate", "24");
         body.set("frameCount", String(submittedDurationSeconds * 24 + 1));
         if (selectedVideoLoras.length) {
@@ -3641,14 +3571,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         body.delete("durationSeconds");
         body.set("requestKind", "image");
       }
-      if (isAnimeImagesWorkflowSelected) {
+      if (isAnimateImageWorkflowSelected) {
         body.set("width", orientation === "portrait" ? "720" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "720");
         body.delete("durationSeconds");
-        body.set("requestKind", "anime-image");
+        body.set("requestKind", "animate-image");
       }
 
-      if (!isAnimeImagesWorkflowSelected && shouldSendSizeOverride(selectedWorkflow)) {
+      if (!isAnimateImageWorkflowSelected && shouldSendSizeOverride(selectedWorkflow)) {
         body.set("width", orientation === "portrait" ? "720" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "720");
       }
@@ -3666,17 +3596,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       }
       if (isEditImageWorkflowSelected && editInputCount >= 3 && thirdImageFileRef.current) {
         body.set("imageC", thirdImageFileRef.current);
-      }
-      if (Object.keys(selectedImageLoras).length && selectedImageModel) {
-        const choices = activeImageLoras
-          .filter((lora) => Object.prototype.hasOwnProperty.call(selectedImageLoras, lora.name))
-          .slice(0, IMAGE_LORA_MAX_SELECTIONS)
-          .map((lora) => ({ name: lora.name, strength: selectedImageLoras[lora.name] }));
-        if (choices.length) {
-          body.set("loras", JSON.stringify(choices));
-          body.set("loraAdultAcknowledged", imageLoraAccessEnabled ? "true" : "false");
-          body.set("loraAdultAcknowledgementVersion", IMAGE_LORA_ADULT_ACK_VERSION);
-        }
       }
 
       if (isCustomAudioVideoWorkflowSelected && customAudioFileRef.current) {
@@ -3725,21 +3644,16 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     orientation,
     prompt,
     selectedWorkflow,
-    selectedImageLoras,
-    activeImageLoras,
-    imageLoraAccessEnabled,
-    selectedImageModel,
     selectedSceneCharacterIdentities,
     missingLockedSceneCharacterDescriptions,
     submitToComfy,
     workflowId,
-    isAnimeImagesWorkflowSelected,
+    isAnimateImageWorkflowSelected,
 
     isPromptRelayWorkflowSelected,
     isEditImageWorkflowSelected,
     isCustomAudioVideoWorkflowSelected,
     isFirstLastImageVideoWorkflowSelected,
-    isWanWorkflowSelected,
     promptRelayLocalPrompts,
   ]);
 
@@ -3982,7 +3896,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("durationSeconds", String(nextDuration));
       body.set("gpuTarget", nextGpuTarget);
       body.set("seed", String(randomSeed()));
-      if (isAnimeImagesWorkflowSelected) {
+      if (isAnimateImageWorkflowSelected) {
         body.set("width", orientation === "portrait" ? "720" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "720");
         body.delete("durationSeconds");
@@ -4203,7 +4117,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("durationSeconds", String(durationSeconds));
       body.set("gpuTarget", gpuTarget);
       body.set("seed", String(randomSeed()));
-      if (isAnimeImagesWorkflowSelected) {
+      if (isAnimateImageWorkflowSelected) {
         body.set("width", orientation === "portrait" ? "720" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "720");
         body.delete("durationSeconds");
@@ -4316,7 +4230,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("durationSeconds", String(clampDuration(animateModal.durationSeconds)));
       body.set("gpuTarget", gpuTarget);
       body.set("seed", String(randomSeed()));
-      if (isAnimeImagesWorkflowSelected) {
+      if (isAnimateImageWorkflowSelected) {
         body.set("width", orientation === "portrait" ? "720" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "720");
         body.delete("durationSeconds");
@@ -4462,7 +4376,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("orientation", extendModal.orientation);
       body.set("durationSeconds", String(clampDuration(extendModal.durationSeconds)));
       body.set("seed", String(randomSeed()));
-      if (isAnimeImagesWorkflowSelected) {
+      if (isAnimateImageWorkflowSelected) {
         body.set("width", orientation === "portrait" ? "720" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "720");
         body.delete("durationSeconds");
@@ -4540,29 +4454,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setStatusMessage(error instanceof Error ? error.message : "Enhance Prompt failed");
     } finally {
       setEnhancing(false);
-    }
-  }
-
-  async function handlePromptBuilderAssistant() {
-    if (!prompt.trim() || formattingPrompt || !showPromptBuilderAssistant) return;
-
-    setFormattingPrompt(true);
-    setStatusMessage("");
-    try {
-      const assessment = buildPromptAssessment({
-        prompt: prompt.trim(),
-        mode: currentPromptGuideMode,
-        hasStarterImage: Boolean(uploadedFileRef.current),
-        starterImageMeta: uploadedImageMeta,
-        styleLabel: activeGenerateStylePreset?.label || "",
-      });
-      setPromptAssessment(assessment);
-      setPromptAssessmentOpen(true);
-      setStatusMessage("Prompt Builder Assistant reviewed the prompt.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Prompt Builder Assistant failed");
-    } finally {
-      setFormattingPrompt(false);
     }
   }
 
@@ -4689,7 +4580,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data?.ok) throw new Error(String(data?.error || `LoRA admin request failed (${response.status}).`));
       if (Array.isArray(data.entries)) setAdminImageLoras(data.entries);
-      await loadImageLoraCatalog();
       return data;
     } finally {
       setAdminLoraBusy(false);
@@ -6235,7 +6125,7 @@ async function handleAskAi() {
               ))}
             </div>
 
-            <Card title="Workflow">
+            <Card title="Mode">
               {generateMediaMode === "image" ? (
                 <div className="space-y-4">
                   <select
@@ -6249,24 +6139,7 @@ async function handleAskAi() {
                       </option>
                     ))}
                   </select>
-                  <div className={cn("grid gap-2", operationImageModels.length > 1 ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-1")}>
-                    {operationImageModels.map((model) => (
-                      <button
-                        key={model.id}
-                        type="button"
-                        aria-pressed={workflowId === model.id}
-                        onClick={() => setWorkflowId(model.id)}
-                        className={cn(
-                          "min-h-14 rounded-[18px] border px-3 py-3 text-sm font-black transition",
-                          workflowId === model.id
-                            ? "border-purple-300/60 bg-purple-500/25 text-white"
-                            : "border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]"
-                        )}
-                      >
-                        {model.label}
-                      </button>
-                    ))}
-                  </div>
+                  <p className="text-sm text-white/60">{IMAGE_OPERATION_LABELS[imageOperation]}</p>
                 </div>
               ) : (
                 <div className="space-y-5">
@@ -6293,50 +6166,6 @@ async function handleAskAi() {
                     </div>
                   </div>
 
-                  <div>
-                    <div className="mb-2 text-xs font-black uppercase tracking-[0.2em] text-white/50">Video model</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {VIDEO_MODEL_OPTIONS.map((option) => (
-                        <button
-                          key={option.id}
-                          type="button"
-                          aria-pressed={videoModelFamily === option.id}
-                          onClick={() => setVideoModelFamily(option.id)}
-                          className={cn(
-                            "min-h-14 rounded-[18px] border px-4 py-3 text-sm font-black transition",
-                            videoModelFamily === option.id
-                              ? "border-cyan-300/55 bg-cyan-400/15 text-white"
-                              : "border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]"
-                          )}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="mb-2 text-xs font-black uppercase tracking-[0.2em] text-white/50">Model format</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {VIDEO_FORMAT_OPTIONS.map((option) => (
-                        <button
-                          key={option.id}
-                          type="button"
-                          aria-pressed={videoModelFormat === option.id}
-                          onClick={() => setVideoModelFormat(option.id)}
-                          className={cn(
-                            "min-h-14 rounded-[18px] border px-4 py-3 text-sm font-black transition",
-                            videoModelFormat === option.id
-                              ? "border-emerald-300/55 bg-emerald-400/15 text-white"
-                              : "border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]"
-                          )}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
                   <div className={cn(
                     "rounded-[18px] border px-4 py-3 text-sm",
                     videoWorkflowReady
@@ -6347,185 +6176,76 @@ async function handleAskAi() {
                       ? `Ready: ${selectedVideoWorkflowItem?.label || selectedVideoConfiguration?.workflowId}`
                       : selectedVideoConfiguration?.workflowId
                         ? `TEST workflow not found: ${selectedVideoConfiguration.workflowId}`
-                        : "Workflow JSON pending. This combination cannot be submitted until its verified workflow is installed."}
+                        : "Workflow JSON pending. This mode cannot be submitted until its workflow is installed."}
                   </div>
                 </div>
               )}
               <p className="text-sm text-white/72">{selectedWorkflow.runtime}</p>
             </Card>
 
-            {generateMediaMode === "image" ? (
-              <Card title="LoRA">
-                {selectedImageModel?.defaultLora ? (
-                  <div className="rounded-[18px] border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-50">
-                    Workflow default: {selectedImageModel.defaultLora}
-                  </div>
-                ) : null}
-                {activeImageLoras.length ? (
-                  <div className="space-y-4">
+            <Card title="Prompt">
+              <textarea
+                value={prompt}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  if (next !== prompt) pushPromptUndoSnapshot(prompt);
+                  setPrompt(next);
+                  setPromptAssessmentOpen(false);
+                  setPromptAssessment(null);
+                }}
+                rows={6}
+                placeholder="Describe the image or video you want to generate."
+                className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
+              />
+              <div className="flex flex-wrap items-center gap-3">
+                <ActionButton onClick={handleEnhancePrompt} disabled={enhancing || !prompt.trim()}>
+                  {enhancing ? "Enhancing..." : "Enhance Prompt"}
+                </ActionButton>
+                <div className="flex flex-wrap items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-950/60 p-1" data-otg="OTG_ENHANCE_LEVEL_UI_V4">
+                  {(["short", "medium", "cinematic"] as const).map((level) => (
                     <button
+                      key={level}
                       type="button"
-                      onClick={() => {
-                        if (imageLoraAccessEnabled) return;
-                        setImageLoraAgeConfirmed(false);
-                        setImageLoraDisclaimerOpen(true);
-                      }}
-                      className={cn(
-                        "w-full rounded-[20px] border px-5 py-4 text-sm font-black transition",
-                        imageLoraAccessEnabled
-                          ? "border-emerald-400/35 bg-emerald-500/15 text-emerald-100"
-                          : "border-red-400/50 bg-red-600/25 text-red-100 hover:bg-red-600/35"
-                      )}
+                      onClick={() => setEnhancePromptLevel(level)}
+                      className={
+                        enhancePromptLevel === level
+                          ? "rounded-lg border border-purple-300 bg-purple-500 px-3 py-2 text-xs font-black capitalize text-white"
+                          : "rounded-lg border border-zinc-700 bg-zinc-900/70 px-3 py-2 text-xs font-black capitalize text-zinc-300 hover:border-purple-300 hover:text-white"
+                      }
+                      aria-pressed={enhancePromptLevel === level}
                     >
-                      {imageLoraAccessEnabled ? "LoRAs Enabled - 18+ Confirmed" : "Enable LoRAs (18+)"}
+                      {level === "cinematic" ? "Long" : level}
                     </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void handleMicClick("generate", (text) => {
+                      pushPromptUndoSnapshot(prompt);
+                      setPrompt((prev) => appendPromptText(prev, text));
+                    })
+                  }
+                  className={cn(
+                    "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
+                    recordingTarget === "generate"
+                      ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
+                      : "border-white/10 bg-white/5 hover:bg-white/10"
+                  )}
+                  disabled={transcribingTarget === "generate"}
+                >
+                  <IconMic />
+                </button>
+                <GhostButton onClick={handleClearPrompt} disabled={!prompt}>
+                  Clear
+                </GhostButton>
+                <GhostButton onClick={handleUndoPrompt} disabled={!promptUndoStack.length}>
+                  Undo
+                </GhostButton>
+              </div>
+            </Card>
 
-                    <div className="text-sm text-white/60">
-                      Select up to {IMAGE_LORA_MAX_SELECTIONS}. Only LoRAs compatible with {selectedImageModel?.label || "this model"} are shown.
-                    </div>
-
-                    <div className="space-y-3">
-                      {activeImageLoras.map((lora) => {
-                        const selected = Object.prototype.hasOwnProperty.call(selectedImageLoras, lora.name);
-                        const selectedCount = Object.keys(selectedImageLoras).length;
-                        const atLimit = selectedCount >= IMAGE_LORA_MAX_SELECTIONS;
-                        return (
-                          <div
-                            key={lora.name}
-                            className={cn(
-                              "w-full rounded-[20px] border p-4 text-left transition",
-                              selected
-                                ? "border-purple-300/55 bg-purple-500/20"
-                                : "border-white/10 bg-white/[0.035] hover:bg-white/[0.07]"
-                            )}
-                          >
-                            <button
-                              type="button"
-                              aria-pressed={selected}
-                              disabled={imageLoraAccessEnabled && atLimit && !selected}
-                              onClick={() => {
-                                if (!imageLoraAccessEnabled) {
-                                  setImageLoraAgeConfirmed(false);
-                                  setImageLoraDisclaimerOpen(true);
-                                  return;
-                                }
-                                setSelectedImageLoras((current) => {
-                                  if (Object.prototype.hasOwnProperty.call(current, lora.name)) {
-                                    const next = { ...current };
-                                    delete next[lora.name];
-                                    return next;
-                                  }
-                                  return Object.keys(current).length < IMAGE_LORA_MAX_SELECTIONS
-                                    ? { ...current, [lora.name]: lora.strength }
-                                    : current;
-                                });
-                              }}
-                              className="w-full text-left disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="font-black text-white">{lora.label}</div>
-                                <div className="flex shrink-0 gap-2">
-                                  {lora.mature ? (
-                                    <span className="rounded-full border border-red-400/35 bg-red-500/15 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-red-100">Mature</span>
-                                  ) : null}
-                                  <span className="rounded-full border border-white/10 px-2 py-1 text-[10px] font-black text-white/65">{selected ? "Selected" : `Default ${lora.strength.toFixed(2)}`}</span>
-                                </div>
-                              </div>
-                              <p className="mt-2 text-sm leading-6 text-white/65">{lora.description}</p>
-                              <p className="mt-1 text-xs leading-5 text-cyan-100/65">{lora.usage}</p>
-                            </button>
-                            {selected ? (
-                              <label className="mt-4 block">
-                                <span className="flex items-center justify-between text-xs font-black uppercase tracking-wider text-white/55">
-                                  <span>Strength</span>
-                                  <span>{Number(selectedImageLoras[lora.name]).toFixed(2)}</span>
-                                </span>
-                                <input
-                                  type="range"
-                                  min="0"
-                                  max="2"
-                                  step="0.05"
-                                  value={selectedImageLoras[lora.name]}
-                                  onChange={(event) => {
-                                    const strength = Math.max(0, Math.min(2, Number(event.target.value)));
-                                    setSelectedImageLoras((current) => ({ ...current, [lora.name]: strength }));
-                                  }}
-                                  className="mt-2 w-full accent-purple-500"
-                                />
-                              </label>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {Object.keys(selectedImageLoras).length ? (
-                      <div className="rounded-[16px] border border-purple-300/20 bg-purple-500/10 px-4 py-3 text-sm text-purple-50">
-                        {Object.keys(selectedImageLoras).length} of {IMAGE_LORA_MAX_SELECTIONS} LoRAs selected.
-                      </div>
-                    ) : null}
-
-                    {imageLoraDisclaimerOpen ? (
-                      <div className="fixed inset-0 z-[180] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-                        <div role="dialog" aria-modal="true" aria-labelledby="image-lora-disclaimer-title" className="w-full max-w-xl rounded-[28px] border border-red-400/30 bg-[#0b1020] p-6 shadow-2xl">
-                          <h2 id="image-lora-disclaimer-title" className="text-2xl font-black text-white">LoRA Content Notice</h2>
-                          <p className="mt-4 leading-7 text-white/75">
-                            Some available LoRAs can generate mature content, including nudity, gore, or other material intended only for adults. You must be at least 18 years old to enable LoRAs.
-                          </p>
-                          <p className="mt-3 leading-7 text-white/75">
-                            By continuing, you agree that you are responsible for the prompts you submit, the content you generate, and how that content is used.
-                          </p>
-                          <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-[18px] border border-white/10 bg-white/[0.04] p-4 text-sm leading-6 text-white/80">
-                            <input
-                              type="checkbox"
-                              checked={imageLoraAgeConfirmed}
-                              onChange={(event) => setImageLoraAgeConfirmed(event.target.checked)}
-                              className="mt-1 h-5 w-5 accent-red-500"
-                            />
-                            <span>I confirm that I am at least 18 years old and accept responsibility for the content I generate.</span>
-                          </label>
-                          <div className="mt-6 grid grid-cols-2 gap-3">
-                            <button type="button" onClick={() => setImageLoraDisclaimerOpen(false)} className="rounded-[18px] border border-white/10 bg-white/[0.05] px-4 py-3 font-black text-white/75">Cancel</button>
-                            <button
-                              type="button"
-                              disabled={!imageLoraAgeConfirmed}
-                              onClick={() => {
-                                if (!imageLoraAgeConfirmed) return;
-                                try {
-                                  window.localStorage.setItem("otg-image-lora-adult-ack", IMAGE_LORA_ADULT_ACK_VERSION);
-                                } catch {}
-                                setImageLoraAccessEnabled(true);
-                                setImageLoraDisclaimerOpen(false);
-                              }}
-                              className="rounded-[18px] border border-red-300/45 bg-red-600 px-4 py-3 font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              Confirm and Enable
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : selectedImageModel?.defaultLora ? null : (
-                  <p className="text-sm text-white/45">No LoRAs are configured for this model.</p>
-                )}
-              </Card>
-            ) : selectedVideoConfiguration?.workflowId && shouldShowVideoLoraPanel(generateMediaMode, selectedVideoLoraFamily) ? (
-              <Card title="Video LoRAs">
-                <VideoLoraPanel
-                  workflowId={selectedVideoConfiguration.workflowId}
-                  family={selectedVideoLoraFamily}
-                  value={selectedVideoLoras}
-                  onChange={setSelectedVideoLoras}
-                  prompt={prompt}
-                  onPromptChange={setPrompt}
-                />
-              </Card>
-            ) : null}
-
-            <Card
-              title="Choose style of picture and video"
-              right={
+            <Card title="Choose a Style" right={
                 activeGenerateStylePreset ? (
                   <span className="rounded-full border border-emerald-400/25 bg-emerald-500/15 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-100">
                     {activeGenerateStylePreset.label}
@@ -6586,262 +6306,19 @@ async function handleAskAi() {
               </div>
             </Card>
 
-            <Card
-              title="Prompt Guide"
-              right={
-                <GhostButton onClick={() => setPromptGuideOpen((prev) => !prev)}>
-                  {promptGuideOpen ? "Hide" : "Show"}
-                </GhostButton>
-              }
-            >
-              {promptGuideOpen ? (
-                <div className="space-y-4">
-                  <p className="text-sm text-white/60">
-                    Use these guidelines to write better prompts for the current workflow without cluttering the page.
-                  </p>
+            {generateMediaMode === "video" && selectedVideoConfiguration?.workflowId && shouldShowVideoLoraPanel(generateMediaMode, selectedVideoLoraFamily) ? (
+              <Card title="LoRAs">
+                <VideoLoraPanel
+                  workflowId={selectedVideoConfiguration.workflowId}
+                  family={selectedVideoLoraFamily}
+                  value={selectedVideoLoras}
+                  onChange={setSelectedVideoLoras}
+                  prompt={prompt}
+                  onPromptChange={setPrompt}
+                />
+              </Card>
+            ) : null}
 
-                  <div className="flex flex-wrap gap-2">
-                    {(["image", "text_to_video", "image_to_video", "tutorial_video"] as PromptGuideMode[]).map((mode) => {
-                      const guide = PROMPT_GUIDES[mode];
-                      const active = promptGuideMode === mode;
-                      const isCurrent = currentPromptGuideMode === mode;
-                      return (
-                        <button
-                          key={mode}
-                          type="button"
-                          onClick={() => setPromptGuideMode(mode)}
-                          className={cn(
-                            "inline-flex min-h-11 items-center gap-2 rounded-full border px-4 py-2.5 text-sm font-semibold transition",
-                            active
-                              ? "border-cyan-400/35 bg-cyan-500/15 text-cyan-50 shadow-[0_0_20px_rgba(34,211,238,0.16)]"
-                              : "border-white/10 bg-white/5 text-white hover:bg-white/10"
-                          )}
-                        >
-                          <span>{guide.label}</span>
-                          {isCurrent ? (
-                            <span className="rounded-full border border-emerald-400/25 bg-emerald-500/15 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-emerald-100">
-                              Current
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {promptGuideMode === "tutorial_video" ? (
-                    <div className="space-y-4">
-                      <div className="rounded-[22px] border border-white/10 bg-black/45 p-3">
-                        <div className="aspect-video overflow-hidden rounded-[18px] border border-white/10 bg-black">
-                          <iframe
-                            src={PROMPT_TUTORIAL_VIDEO_EMBED_URL}
-                            title="LTX 2.3 prompt tutorial"
-                            className="h-full w-full"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                            allowFullScreen
-                          />
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-3">
-                        <GhostButton onClick={() => window.open(PROMPT_TUTORIAL_VIDEO_URL, "_blank", "noopener,noreferrer")}>
-                          Open on YouTube
-                        </GhostButton>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="grid gap-4 lg:grid-cols-2">
-                        <div className="rounded-[22px] border border-white/10 bg-black/40 px-4 py-4">
-                          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-200/80">What works</div>
-                          <ul className="space-y-2 text-sm text-white/80">
-                            {activePromptGuide.works.map((item) => (
-                              <li key={item} className="flex gap-2">
-                                <span className="mt-[2px] text-emerald-300">-</span>
-                                <span>{item}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                        <div className="rounded-[22px] border border-white/10 bg-black/40 px-4 py-4">
-                          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-rose-200/80">What to avoid</div>
-                          <ul className="space-y-2 text-sm text-white/80">
-                            {activePromptGuide.avoid.map((item) => (
-                              <li key={item} className="flex gap-2">
-                                <span className="mt-[2px] text-rose-300">-</span>
-                                <span>{item}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
-
-                      <div className="rounded-[22px] border border-white/10 bg-black/45 px-4 py-4">
-                        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">Example prompt</div>
-                            <div className="text-sm text-white/55">A stronger starting example for {activePromptGuide.label.toLowerCase()}.</div>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <GhostButton onClick={() => copyText(activePromptGuide.example)}>Copy Example</GhostButton>
-                            <GhostButton
-                              onClick={() => {
-                                if (activePromptGuide.example !== prompt) pushPromptUndoSnapshot(prompt);
-                                setPrompt(activePromptGuide.example);
-                              }}
-                            >
-                              Use Example
-                            </GhostButton>
-                          </div>
-                        </div>
-                        <div className="rounded-[18px] border border-white/10 bg-black/55 px-4 py-4 text-sm leading-7 text-white/85">
-                          {activePromptGuide.example}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              ) : (
-                <p className="text-sm text-white/55">
-                  Show quick guidance for Image, Text-to-Video, Image-to-Video, and a tutorial video.
-                </p>
-              )}
-            </Card>
-
-            <Card title="Prompt">
-              <textarea
-                value={prompt}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  if (next !== prompt) pushPromptUndoSnapshot(prompt);
-                  setPrompt(next);
-                  setPromptAssessmentOpen(false);
-                  setPromptAssessment(null);
-                }}
-                rows={6}
-                placeholder="Describe the image or video you want to generate."
-                className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-              />
-              {activeGenerateStylePreset ? (
-                <div className="rounded-[20px] border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100/95">
-                  Active style wrapper: <span className="font-semibold">{activeGenerateStylePreset.label}</span>. Generate applies a strong style wrapper before and after your prompt at enhance and submit time instead of silently burying it in the text box.
-                  {activeGenerateStyleGuidance ? (
-                    <div className="mt-2 text-xs leading-6 text-emerald-50/85">{activeGenerateStyleGuidance}</div>
-                  ) : null}
-                </div>
-              ) : null}
-              <div className="flex flex-wrap items-center gap-3">
-                <ActionButton onClick={handleEnhancePrompt} disabled={enhancing || !prompt.trim()}>
-                  {enhancing ? "Enhancing..." : "Enhance Prompt"}
-                </ActionButton>
-                <div className="flex flex-wrap items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-950/60 p-1" data-otg="OTG_ENHANCE_LEVEL_UI_V4">
-                  {(["short", "medium", "cinematic"] as const).map((level) => (
-                    <button
-                      key={level}
-                      type="button"
-                      onClick={() => setEnhancePromptLevel(level)}
-                      className={
-                        enhancePromptLevel === level
-                          ? "rounded-lg border border-purple-300 bg-purple-500 px-3 py-2 text-xs font-black capitalize text-white"
-                          : "rounded-lg border border-zinc-700 bg-zinc-900/70 px-3 py-2 text-xs font-black capitalize text-zinc-300 hover:border-purple-300 hover:text-white"
-                      }
-                      aria-pressed={enhancePromptLevel === level}
-                    >
-                      {level === "cinematic" ? "Long" : level}
-                    </button>
-                  ))}
-                </div>
-                {showPromptBuilderAssistant ? (
-                  <ActionButton onClick={handlePromptBuilderAssistant} disabled={formattingPrompt || !prompt.trim()}>
-                    {formattingPrompt ? "Checking Prompt..." : "Prompt Builder Assistant"}
-                  </ActionButton>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() =>
-                    void handleMicClick("generate", (text) => {
-                      pushPromptUndoSnapshot(prompt);
-                      setPrompt((prev) => appendPromptText(prev, text));
-                    })
-                  }
-                  className={cn(
-                    "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
-                    recordingTarget === "generate"
-                      ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
-                      : "border-white/10 bg-white/5 hover:bg-white/10"
-                  )}
-                  disabled={transcribingTarget === "generate"}
-                >
-                  <IconMic />
-                </button>
-                <GhostButton onClick={handleClearPrompt} disabled={!prompt}>
-                  Clear
-                </GhostButton>
-                <GhostButton onClick={handleUndoPrompt} disabled={!promptUndoStack.length}>
-                  Undo
-                </GhostButton>
-              </div>
-              {showPromptBuilderAssistant ? (
-                <>
-                  <p className="text-sm text-white/55">
-                    {promptBuilderNeedsStarterImage
-                      ? "Prompt Builder Assistant grades your current prompt and starter image for LTX 2.3. It does not rewrite your prompt."
-                      : "Prompt Builder Assistant grades your current prompt for LTX 2.3 and shows what is strong, weak, or missing. It does not rewrite your prompt."}
-                  </p>
-                  {promptAssessmentOpen && promptAssessment ? (
-                    <div className="rounded-[24px] border border-cyan-400/25 bg-black/55 p-4 shadow-[0_0_0_1px_rgba(34,211,238,0.08)]">
-                      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">Prompt Builder Assistant</div>
-                          <div className="mt-1 text-sm text-white/60">LTX 2.3 prompt readiness review. Your prompt text was not changed.</div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100">
-                            Grade {promptAssessment.grade} - {promptAssessment.score}/100
-                          </div>
-                          <GhostButton onClick={() => setPromptAssessmentOpen(false)}>Hide</GhostButton>
-                        </div>
-                      </div>
-
-                      <div className="grid gap-3 lg:grid-cols-3">
-                        <div className="rounded-[20px] border border-emerald-400/20 bg-emerald-500/10 p-4">
-                          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100/70">Correct</div>
-                          <ul className="space-y-2 text-sm leading-6 text-emerald-50/90">
-                            {promptAssessment.correct.length ? (
-                              promptAssessment.correct.map((item) => <li key={item}>- {item}</li>)
-                            ) : (
-                              <li>- No strong elements were detected yet.</li>
-                            )}
-                          </ul>
-                        </div>
-                        <div className="rounded-[20px] border border-amber-400/20 bg-amber-500/10 p-4">
-                          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-100/70">Weak</div>
-                          <ul className="space-y-2 text-sm leading-6 text-amber-50/90">
-                            {promptAssessment.weak.length ? (
-                              promptAssessment.weak.map((item) => <li key={item}>- {item}</li>)
-                            ) : (
-                              <li>- No weak areas were detected.</li>
-                            )}
-                          </ul>
-                        </div>
-                        <div className="rounded-[20px] border border-rose-400/20 bg-rose-500/10 p-4">
-                          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-rose-100/70">Missing</div>
-                          <ul className="space-y-2 text-sm leading-6 text-rose-50/90">
-                            {promptAssessment.missing.length ? (
-                              promptAssessment.missing.map((item) => <li key={item}>- {item}</li>)
-                            ) : (
-                              <li>- No critical missing elements were detected.</li>
-                            )}
-                          </ul>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 rounded-[20px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm leading-7 text-white/85">
-                        <span className="font-semibold text-white">Summary:</span> {promptAssessment.summary}
-                      </div>
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-            </Card>
             {isPromptRelayWorkflowSelected ? (
               <Card title="Need help?">
                 <div className="space-y-4 text-sm leading-6 text-white/68">
@@ -6967,7 +6444,7 @@ async function handleAskAi() {
                 </p>
               </Card>
 
-              {generateMediaMode === "video" && !isWanWorkflowSelected ? <Card title="Duration">
+              {generateMediaMode === "video" ? <Card title="Duration">
                 <select
                   value={String(durationSeconds)}
                   onChange={(e) => setDurationSeconds(clampGenerateDuration(Number(e.target.value)))}
@@ -7228,42 +6705,26 @@ async function handleAskAi() {
               ) : null}
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
-              <Card title="Preview">
-                <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/45">
-                  <div className="aspect-[16/9] bg-black/60">
-                    {latestPreviewUrl ? (
-                      latestPreviewKind === "video" ? (
-                        <video src={latestPreviewUrl} className="h-full w-full object-contain" controls playsInline muted />
-                      ) : (
-                        <img src={latestPreviewUrl} alt={latestPreviewName || "Latest generated content"} className="h-full w-full object-contain" />
-                      )
-                    ) : (
-                      <div className="flex h-full items-center justify-center px-6 text-center text-white/45">
-                        Preview will appear here after ComfyUI finishes creating content.
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-white/60">
-                  <div className="min-w-0 space-y-1">
-                    <div className="truncate">{latestPreviewName || "No completed output yet"}</div>
-                    <div className="text-xs text-white/45">
-                      {latestPreviewKind === "image" && latestPreviewMeta
-                        ? `Generated image: ${latestPreviewMeta.width} x ${latestPreviewMeta.height}${latestPreviewMeta.height > latestPreviewMeta.width ? " - portrait" : " - landscape"}`
-                        : latestPreviewKind === "video"
-                          ? "Latest generated video."
-                          : "Generate content to update this preview."}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <GhostButton onClick={() => void refreshLatestContent(true)} disabled={progressStatus === "running"}>
-                      Refresh preview
-                    </GhostButton>
-                  </div>
-                </div>
-              </Card>
+            <Card title="Generate">
+              <div className="flex flex-wrap items-center gap-3">
+                <ActionButton
+                  onClick={handleGenerate}
+                  disabled={
+                    generateBusy ||
+                    !prompt.trim() ||
+                    (generateMediaMode === "video" && !videoWorkflowReady) ||
+                    (videoNeedsStarterImage && !uploadedFileName) ||
+                    (videoNeedsLastFrameImage && !lastFrameFileName) ||
+                    (isPromptRelayWorkflowSelected && (!uploadedFileName || !promptRelayLocalPrompts.trim())) ||
+                    (isCustomAudioVideoWorkflowSelected && (!uploadedFileName || !customAudioFileName))
+                  }
+                >
+                  {generateBusy ? "Submitting..." : "Generate"}
+                </ActionButton>
+              </div>
+            </Card>
 
+            <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
               <Card title="Progress">
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-3 text-sm font-semibold text-white/80">
@@ -7304,28 +6765,43 @@ async function handleAskAi() {
                   </div>
                 </div>
               </Card>
+
+              <Card title="Preview">
+                <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/45">
+                  <div className="aspect-[16/9] bg-black/60">
+                    {latestPreviewUrl ? (
+                      latestPreviewKind === "video" ? (
+                        <video src={latestPreviewUrl} className="h-full w-full object-contain" controls playsInline muted />
+                      ) : (
+                        <img src={latestPreviewUrl} alt={latestPreviewName || "Latest generated content"} className="h-full w-full object-contain" />
+                      )
+                    ) : (
+                      <div className="flex h-full items-center justify-center px-6 text-center text-white/45">
+                        Preview will appear here after ComfyUI finishes creating content.
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-white/60">
+                  <div className="min-w-0 space-y-1">
+                    <div className="truncate">{latestPreviewName || "No completed output yet"}</div>
+                    <div className="text-xs text-white/45">
+                      {latestPreviewKind === "image" && latestPreviewMeta
+                        ? `Generated image: ${latestPreviewMeta.width} x ${latestPreviewMeta.height}${latestPreviewMeta.height > latestPreviewMeta.width ? " - portrait" : " - landscape"}`
+                        : latestPreviewKind === "video"
+                          ? "Latest generated video."
+                          : "Generate content to update this preview."}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <GhostButton onClick={() => void refreshLatestContent(true)} disabled={progressStatus === "running"}>
+                      Refresh preview
+                    </GhostButton>
+                  </div>
+                </div>
+              </Card>
             </div>
 
-            <Card title="Generate action">
-              <p className="text-sm text-white/60">The Generate button stays here as the last step.</p>
-              <div className="flex flex-wrap items-center gap-3">
-                <ActionButton
-                  onClick={handleGenerate}
-                  disabled={
-                    generateBusy ||
-                    !prompt.trim() ||
-                    (generateMediaMode === "video" && !videoWorkflowReady) ||
-                    (videoNeedsStarterImage && !uploadedFileName) ||
-                    (videoNeedsLastFrameImage && !lastFrameFileName) ||
-                    (isPromptRelayWorkflowSelected && (!uploadedFileName || !promptRelayLocalPrompts.trim())) ||
-                    (isCustomAudioVideoWorkflowSelected && (!uploadedFileName || !customAudioFileName))
-                  }
-                >
-                  {generateBusy ? "Submitting..." : "Generate"}
-                </ActionButton>
-                <span className="text-sm text-white/55">Sends the current prompt and controls to ComfyUI.</span>
-              </div>
-            </Card>
           </div>
         ) : null}
 

@@ -1,5 +1,5 @@
 export type GenerateMediaMode = "image" | "video";
-export type ImageOperation = "create" | "edit" | "anime";
+export type ImageOperation = "create" | "edit" | "animate";
 export type ImageOrientation = "portrait" | "landscape";
 
 export type ImageModelDefinition = {
@@ -33,113 +33,14 @@ export const LOCKED_IMAGE_SIZES: Record<ImageOrientation, { width: number; heigh
 export const IMAGE_OPERATION_LABELS: Record<ImageOperation, string> = {
   create: "Create an Image",
   edit: "Edit an Image",
-  anime: "Create an Anime Image",
+  animate: "Create an Animate Image",
 };
 
 export const IMAGE_MODELS: ImageModelDefinition[] = [
   {
-    id: "presets/image_ernie_image_turbo",
-    label: "Ernie Image Turbo",
-    operation: "create",
-    maxInputImages: 0,
-    defaultLora: null,
-    optionalLoras: [
-      {
-        name: "ernie-image-prompt-enhancer.safetensors",
-        label: "Ernie Prompt Enhancer",
-        strength: 1,
-        mature: false,
-        description: "Adds the installed Ernie prompt-enhancement adapter.",
-        usage: "Start at strength 1.0 and describe the subject, scene, lighting, and style clearly.",
-      },
-    ],
-  },
-  {
-    id: "presets/image_z_image_turbo",
-    label: "Z Image Turbo",
-    operation: "create",
-    maxInputImages: 0,
-    defaultLora: null,
-    optionalLoras: [
-      {
-        name: "Z-Turbo/Mystic-XXX-ZIT-V7.safetensors",
-        label: "Mystic XXX ZIT V7",
-        strength: 0.8,
-        mature: true,
-        description: "Mature-content style adapter for Z Image Turbo.",
-        usage: "Start at 0.8; reduce the strength if the style overwhelms the prompt.",
-      },
-      {
-        name: "Z-Turbo/ZITnsfwLoRAv3.safetensors",
-        label: "ZIT NSFW LoRA v3",
-        strength: 0.8,
-        mature: true,
-        description: "Mature-content adapter trained for Z Image Turbo.",
-        usage: "Start at 0.8 and use a direct, detailed positive prompt.",
-      },
-      {
-        name: "Z-Turbo/pornmasterZImage_turboV35Bf16.safetensors",
-        label: "Pornmaster Z Image Turbo v3.5",
-        strength: 0.75,
-        mature: true,
-        description: "Large mature-content adapter for Z Image Turbo.",
-        usage: "Start at 0.75. Use alone first before combining it with another LoRA.",
-      },
-      {
-        name: "zit/block_11.safetensors",
-        label: "ZIT Block 11",
-        strength: 1,
-        mature: false,
-        description: "Installed Z Image Turbo model adapter.",
-        usage: "Use at 1.0 unless testing shows the adapter is too strong.",
-      },
-    ],
-  },
-  {
     id: "presets/image_krea2_turbo_t2i",
     label: "Krea 2 Turbo",
     operation: "create",
-    maxInputImages: 0,
-    defaultLora: null,
-    optionalLoras: [
-      {
-        name: "krea2_darkbrush.safetensors",
-        label: "Darkbrush",
-        strength: 0.8,
-        mature: false,
-        description: "Dark, painterly brush style for Krea 2 Turbo.",
-        usage: "Start at 0.8 and include the desired medium, lighting, and color palette.",
-      },
-      {
-        name: "krea/KREA2turboNSFW.safetensors",
-        label: "Krea 2 Turbo NSFW",
-        strength: 0.8,
-        mature: true,
-        description: "Mature-content adapter for Krea 2 Turbo.",
-        usage: "Start at 0.8; lower the strength when combining it with another Krea LoRA.",
-      },
-      {
-        name: "krea/MysticXXX_KREA2_v2.safetensors",
-        label: "Mystic XXX Krea 2 v2",
-        strength: 0.8,
-        mature: true,
-        description: "Mature-content style adapter for Krea 2 Turbo.",
-        usage: "Start at 0.8 and use a specific positive prompt for composition and lighting.",
-      },
-    ],
-  },
-  {
-    id: "presets/image_boogu_image_0_1_turbo_t2i",
-    label: "Boogu Image 0.1 Turbo",
-    operation: "create",
-    maxInputImages: 0,
-    defaultLora: null,
-    optionalLoras: [],
-  },
-  {
-    id: "presets/image_anima_base_v1",
-    label: "Anima Base V1",
-    operation: "anime",
     maxInputImages: 0,
     defaultLora: null,
     optionalLoras: [],
@@ -153,19 +54,11 @@ export const IMAGE_MODELS: ImageModelDefinition[] = [
     optionalLoras: [],
   },
   {
-    id: "presets/image_firered_image_edit1_1",
-    label: "FireRed Image Edit 1.1",
-    operation: "edit",
-    maxInputImages: 3,
-    defaultLora: "FireRed-Image-Edit-1.0-Lightning-8steps-v1.0.safetensors",
-    optionalLoras: [],
-  },
-  {
-    id: "presets/image_qwen_image_edit",
-    label: "Qwen Image Edit",
-    operation: "edit",
-    maxInputImages: 1,
-    defaultLora: "Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors",
+    id: "presets/image_anima_base_v1",
+    label: "Anima Base V1",
+    operation: "animate",
+    maxInputImages: 0,
+    defaultLora: null,
     optionalLoras: [],
   },
 ];

@@ -24,6 +24,47 @@ This file is the source of truth for the TEST-site tab rework.
 - [x] TEST port 3001 live acceptance passes.
 - [x] AI Assistance rework committed and closed.
 
+## Generate
+
+- [x] Reduce image modes to Create an Image, Edit an Image, and Create an Animate Image.
+- [x] Keep image generation operation-first with no user-facing image model selector.
+- [x] Remove Generate image LoRA controls and image LoRA mappings.
+- [x] Remove Prompt Guide from Generate.
+- [x] Preserve Prompt, Enhance Prompt, microphone, Clear, Undo, Choose a Style, and Portrait/Landscape orientation.
+- [x] Preserve Generate, Progress, Preview, and Refresh Preview with Preview last in the Generate flow.
+- [x] Keep Generate image layout ordered as Prompt/Enhance Prompt, Style, Orientation, Generate, Progress, Preview.
+- [x] Provide meaningfully distinct Short, Medium, and Long Enhance Prompt expansion levels.
+- [x] Keep image output at exact 1280x720 landscape or 720x1280 portrait.
+- [x] Reduce video modes to Create a Video, Create a Video with a Starter Image, and First Frame + Last Frame Video.
+- [x] Route all three Generate video modes through canonical local default ComfyUI LTX 2.5 SafeTensor workflows.
+- [x] Remove LtxApi25/cloud API execution nodes from the Generate LTX 2.5 path.
+- [x] Do not manually inject a Turbo LoRA into the default LTX 2.5 workflows.
+- [x] Preserve the official LTX 2.5 default workflow state with no active workflow LoRA.
+- [x] Keep optional Video LoRAs collapsible and fail closed to explicitly verified compatible entries only.
+- [x] Do not assume or migrate LTX 2.3 LoRA compatibility into LTX 2.5.
+- [x] Keep video duration choices at 5, 10, and 15 seconds.
+- [x] Keep Generate LTX 2.5 video at 24 FPS.
+- [x] Use the native LTX 2.5 720-class output contract: 1280x704 landscape and 704x1280 portrait.
+- [x] Require a starter image for Create a Video with a Starter Image.
+- [x] Require distinct first and last frame inputs for First Frame + Last Frame Video.
+- [x] Live-prove 5-second landscape LTX 2.5 text-to-video on the RTX 3090.
+- [x] Live-prove 5-second landscape LTX 2.5 starter-image video with the correct image binding.
+- [x] Live-prove 5-second landscape LTX 2.5 first/last-frame video with both distinct frame bindings.
+- [x] Live-prove 10-second portrait LTX 2.5 text-to-video at 704x1280, 24 FPS, with audio.
+- [x] Prove a non-empty request title does not override the canonical SaveVideo prefix video/LTX-2.5_text_to_video.
+- [x] Prove response videoSettings.outputPrefix matches the actual submitted SaveVideo filename prefix.
+- [x] Prove Generate video routes to the RTX 3090 primary backend without activating fallback.
+- [x] Keep the three proven LTX 2.5 workflow graphs byte-identical after final route/UI corrections.
+- [x] Correct TEST microphone runtime to use the ComfyUI Python environment containing faster-whisper.
+- [x] Live-prove Generate microphone capture, transcription, and insertion into the Prompt field through localhost secure-context testing.
+- [x] Complete live TEST Generate UI acceptance.
+- [x] Focused Generate regression suite passes.
+- [x] TypeScript validation passes.
+- [x] Production build passes in TEST source.
+- [x] git diff --check passes.
+- [x] Generate rework committed and closed.
+
 ## Next Tab
 
-- [ ] Select the next tab only after AI Assistance live acceptance is complete.
+- [x] Generate was selected only after AI Assistance live acceptance and closure.
+- [ ] Select the next tab only after Generate rework is committed and closed.

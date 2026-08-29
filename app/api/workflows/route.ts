@@ -16,6 +16,9 @@ function parseAllowlist() {
 }
 
 const DEFAULT_VISIBLE_WORKFLOW_IDS = new Set([
+  "presets/image_krea2_turbo_t2i",
+  "presets/image_qwen_image_edit_2511_int8",
+  "presets/image_anima_base_v1",
   "presets/create a picture",
   "presets/edit image",
 
@@ -23,6 +26,9 @@ const DEFAULT_VISIBLE_WORKFLOW_IDS = new Set([
   "presets/create a video from images",
   "presets/create video with custom audio",
   "presets/create first image to last image video",
+  "presets/ltx 2.5 text to video",
+  "presets/ltx 2.5 image to video",
+  "presets/ltx 2.5 first last frame video",
   "presets/create prompt relay image video",
   "presets/rtx sr upscaler video",
   "presets/wan 2.2 t2v safetensor",

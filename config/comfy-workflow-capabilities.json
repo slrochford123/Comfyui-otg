@@ -5106,6 +5106,136 @@
           "reason": "Verified SeedVR2 3B image upscale execution on RTX 5060 Ti, including exact 1080x1920 character reference output."
         }
       }
+    },
+    {
+      "id": "presets/LTX 2.5 Text To Video",
+      "workflowFile": "presets/LTX 2.5 Text To Video.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "SaveVideo",
+        "LtxApi25TextToVideo"
+      ],
+      "requiredModels": [],
+      "requiredLoras": [],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "LTX 2.5.model": "LTX-2.5 (Fast)",
+        "LTX 2.5.duration": 5,
+        "LTX 2.5.resolution": "1280x720",
+        "LTX 2.5.fps": 25
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "LTX 2.5 API nodes are staged in TEST, but no complete output has been verified for this workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "disabled",
+          "reason": "LTX 2.5 API Generate workflow is not enabled on the RTX 5060 Ti fallback until separately verified.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/LTX 2.5 Image To Video",
+      "workflowFile": "presets/LTX 2.5 Image To Video.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "SaveVideo",
+        "LtxApi25ImageToVideo",
+        "LoadImage"
+      ],
+      "requiredModels": [],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "LTX 2.5.model": "LTX-2.5 (Fast)",
+        "LTX 2.5.duration": 5,
+        "LTX 2.5.resolution": "1280x720",
+        "LTX 2.5.fps": 25
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "LTX 2.5 API nodes are staged in TEST, but no complete output has been verified for this workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "disabled",
+          "reason": "LTX 2.5 API Generate workflow is not enabled on the RTX 5060 Ti fallback until separately verified.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/LTX 2.5 First Last Frame Video",
+      "workflowFile": "presets/LTX 2.5 First Last Frame Video.json",
+      "kind": "video",
+      "requiredNodeTypes": [
+        "SaveVideo",
+        "LtxApi25ImageToVideo",
+        "LoadImage"
+      ],
+      "requiredModels": [],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "image",
+        "image"
+      ],
+      "expectedInputCount": 2,
+      "expectedOutputTypes": [
+        "video"
+      ],
+      "graphDefaults": {
+        "LTX 2.5.model": "LTX-2.5 (Fast)",
+        "LTX 2.5.duration": 5,
+        "LTX 2.5.resolution": "1280x720",
+        "LTX 2.5.fps": 25
+      },
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "LTX 2.5 API nodes are staged in TEST, but no complete output has been verified for this workflow.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "disabled",
+          "reason": "LTX 2.5 API Generate workflow is not enabled on the RTX 5060 Ti fallback until separately verified.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
     }
   ]
 }

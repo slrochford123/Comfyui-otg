@@ -91,6 +91,30 @@
       "id": "production-animate",
       "mode": "3090_only",
       "notes": "Production Animate remains primary-only until verified on the fallback."
+    },
+    {
+      "id": "presets/LTX 2.5 Text To Video",
+      "aliases": [
+        "Create a Video"
+      ],
+      "mode": "3090_only",
+      "notes": "Default local ComfyUI LTX 2.5 text-to-video workflow is live-verified on the RTX 3090. RTX 5060 Ti fallback remains blocked until this exact workflow is live-verified within 16 GB VRAM."
+    },
+    {
+      "id": "presets/LTX 2.5 Image To Video",
+      "aliases": [
+        "Create a Video with a Starter Image"
+      ],
+      "mode": "3090_only",
+      "notes": "Default local ComfyUI LTX 2.5 starter-image workflow is live-verified on the RTX 3090. RTX 5060 Ti fallback remains blocked until this exact workflow is live-verified within 16 GB VRAM."
+    },
+    {
+      "id": "presets/LTX 2.5 First Last Frame Video",
+      "aliases": [
+        "First Frame + Last Frame Video"
+      ],
+      "mode": "3090_only",
+      "notes": "Default local ComfyUI LTX 2.5 first/last-frame workflow is live-verified on the RTX 3090. RTX 5060 Ti fallback remains blocked until this exact workflow is live-verified within 16 GB VRAM."
     }
   ]
 }

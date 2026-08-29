@@ -789,6 +789,8 @@
         "LowVRAMAudioVAELoader",
         "LowVRAMCheckpointLoader",
         "LowVRAMLatentUpscaleModelLoader",
+        "LtxApi25ImageToVideo",
+        "LtxApi25TextToVideo",
         "LtxvApiImageToVideo",
         "LtxvApiTextToVideo",
         "LumaConceptsNode",
@@ -1841,7 +1843,12 @@
         "zit/block_11.safetensors"
       ],
       "supportedWorkflowIds": [
+        "internal/character-reference/qwen_character_4angle_lowres",
+        "internal/character-reference/seedvr2_character_reference_1080p",
         "presets/Create Anime Images",
+        "presets/LTX 2.5 First Last Frame Video",
+        "presets/LTX 2.5 Image To Video",
+        "presets/LTX 2.5 Text To Video",
         "presets/WAN 2.2 FLF GGUF",
         "presets/WAN 2.2 FLF SafeTensor",
         "presets/WAN 2.2 I2V GGUF",
@@ -1853,9 +1860,7 @@
         "presets/image_krea2_turbo_t2i",
         "presets/image_qwen_image_edit",
         "presets/image_qwen_image_edit_2511_int8",
-        "presets/image_z_image_turbo",
-        "internal/character-reference/qwen_character_4angle_lowres",
-        "internal/character-reference/seedvr2_character_reference_1080p"
+        "presets/image_z_image_turbo"
       ],
       "testedMaximumResolutionFrames": {
         "image": {
