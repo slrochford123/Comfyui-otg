@@ -164,13 +164,16 @@ export async function detectShawnExternalOccupancy(deps: OccupancyDependencies =
       }
     }
 
+    let qwenResident = false;
+
     if (qwenResponse) {
       if (!qwenResponse.ok) {
         return { available: false, external: true, recoverable: false, reason: "probe-error" };
       }
-      if (hasResidentModel(await qwenResponse.json().catch(() => null))) {
-        return { available: false, external: true, recoverable: true, reason: "qwen-resident-stale" };
-      }
+
+      qwenResident = hasResidentModel(
+        await qwenResponse.json().catch(() => null),
+      );
     }
 
     // ComfyUI is authoritative for the generation lane. It must still be
@@ -193,6 +196,14 @@ export async function detectShawnExternalOccupancy(deps: OccupancyDependencies =
         clearTimeout(timer);
       }
     }
+
+    // A resident model occupies VRAM for general GPU workloads, but only
+    // classify it after proving that ComfyUI is reachable and idle. The Qwen
+    // router can then safely reuse this specific recoverable state.
+    if (qwenResident) {
+      return { available: false, external: true, recoverable: true, reason: "qwen-resident-stale" };
+    }
+
     return { available: true, external: false, recoverable: false, reason: "available" };
   } catch {
     return { available: false, external: true, recoverable: false, reason: "probe-error" };

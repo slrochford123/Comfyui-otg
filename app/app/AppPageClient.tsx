@@ -130,8 +130,32 @@ type GalleryViewMode = "default" | "grid" | "list";
 type AppFontScale = "small" | "normal" | "large" | "xl";
 type AppUiMode = "clean" | "classic";
 
-type AssistanceTab = "describe" | "enhance" | "scene" | "ask";
+type AssistanceTab = "describe" | "ask";
 type MicTarget = "generate" | "enhance" | "scene" | "ask";
+
+type StoryHelperMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: number;
+  imageName?: string;
+};
+
+type SavedStoryConversation = {
+  id: string;
+  name: string;
+  messages: StoryHelperMessage[];
+  updatedAt: number;
+};
+
+const STORY_CONVERSATIONS_STORAGE_PREFIX =
+  "otg:ai-assistance:story-conversations:v1";
+
+function createStoryHelperId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+}
 type SceneTransitionMode =
   | "auto"
   | "hard_cut"
@@ -1495,19 +1519,14 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
     staleTime: 5 * 60_000,
   });
 
-  const [describeMode, setDescribeMode] = useState<"background" | "identity">("background");
+  const [describeMode, setDescribeMode] = useState<
+  "general" | "background" | "identity"
+>("general");
   const [describeImageName, setDescribeImageName] = useState("");
   const [describePreviewUrl, setDescribePreviewUrl] = useState("");
   const [describeOutput, setDescribeOutput] = useState("");
   const [describeBusy, setDescribeBusy] = useState(false);
 
-  const [enhanceDraft, setEnhanceDraft] = useState("");
-  const [enhanceLength, setEnhanceLength] = useState<"short" | "normal" | "long">("normal");
-  const [enhanceImageFile, setEnhanceImageFile] = useState<File | null>(null);
-  const [enhanceImageName, setEnhanceImageName] = useState("");
-  const [enhanceImagePreviewUrl, setEnhanceImagePreviewUrl] = useState("");
-  const [enhanceImageInputKey, setEnhanceImageInputKey] = useState(0);
-  const [enhanceDraftBusy, setEnhanceDraftBusy] = useState(false);
   const [sceneDraft, setSceneDraft] = useState("");
   const [sceneOutput, setSceneOutput] = useState("");
   const [sceneCount, setSceneCount] = useState(5);
@@ -1582,13 +1601,43 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   );
   const [sceneTransitionMode, setSceneTransitionMode] = useState<SceneTransitionMode>("auto");
   const [sceneTransitionPickerOpen, setSceneTransitionPickerOpen] = useState(false);
-  const [askInput, setAskInput] = useState("");
-  const [askAnswer, setAskAnswer] = useState("");
-  const [askBusy, setAskBusy] = useState(false);
-  const [askImageName, setAskImageName] = useState("");
-  const [askImagePreviewUrl, setAskImagePreviewUrl] = useState("");
+  const storyConversationStorageKey = useMemo(
+  () =>
+    `${STORY_CONVERSATIONS_STORAGE_PREFIX}:${
+      authenticatedOwnerKey || "local"
+    }`,
+  [authenticatedOwnerKey]
+);
 
-  const imageInputRef = useRef<HTMLInputElement | null>(null);
+const [askInput, setAskInput] = useState("");
+const [askMessages, setAskMessages] =
+  useState<StoryHelperMessage[]>([]);
+const [askBusy, setAskBusy] = useState(false);
+const [askImageName, setAskImageName] = useState("");
+const [askImagePreviewUrl, setAskImagePreviewUrl] =
+  useState("");
+
+const [
+  savedStoryConversations,
+  setSavedStoryConversations,
+] = useState<SavedStoryConversation[]>([]);
+
+const [
+  activeStoryConversationId,
+  setActiveStoryConversationId,
+] = useState("");
+
+const [
+  storyConversationName,
+  setStoryConversationName,
+] = useState("");
+
+const [
+  speakingStoryMessageId,
+  setSpeakingStoryMessageId,
+] = useState("");
+
+const imageInputRef = useRef<HTMLInputElement | null>(null);
   const secondImageInputRef = useRef<HTMLInputElement | null>(null);
   const thirdImageInputRef = useRef<HTMLInputElement | null>(null);
   const customAudioInputRef = useRef<HTMLInputElement | null>(null);
@@ -1611,6 +1660,87 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
+
+useEffect(() => {
+  try {
+    const raw = window.localStorage.getItem(
+      storyConversationStorageKey
+    );
+
+    if (!raw) {
+      setSavedStoryConversations([]);
+      return;
+    }
+
+    const parsed = JSON.parse(raw);
+
+    if (!Array.isArray(parsed)) {
+      setSavedStoryConversations([]);
+      return;
+    }
+
+    const conversations: SavedStoryConversation[] = parsed
+      .filter(
+        (item) =>
+          item &&
+          typeof item === "object" &&
+          typeof item.id === "string" &&
+          typeof item.name === "string" &&
+          Array.isArray(item.messages)
+      )
+      .map((item) => ({
+        id: String(item.id),
+        name: String(item.name),
+        updatedAt: Number(
+          item.updatedAt || Date.now()
+        ),
+        messages: item.messages
+          .filter(
+            (message: any) =>
+              message &&
+              typeof message === "object" &&
+              (message.role === "user" ||
+                message.role === "assistant") &&
+              typeof message.content === "string"
+          )
+          .map((message: any) => ({
+            id:
+              typeof message.id === "string"
+                ? message.id
+                : createStoryHelperId("message"),
+            role: message.role as
+              | "user"
+              | "assistant",
+            content: String(message.content),
+            createdAt: Number(
+              message.createdAt || Date.now()
+            ),
+            imageName:
+              typeof message.imageName === "string"
+                ? message.imageName
+                : undefined,
+          })),
+      }))
+      .sort(
+        (a, b) => b.updatedAt - a.updatedAt
+      );
+
+    setSavedStoryConversations(conversations);
+  } catch {
+    setSavedStoryConversations([]);
+  }
+}, [storyConversationStorageKey]);
+
+useEffect(() => {
+  return () => {
+    if (
+      typeof window !== "undefined" &&
+      "speechSynthesis" in window
+    ) {
+      window.speechSynthesis.cancel();
+    }
+  };
+}, []);
 
   const selectedVideoConfiguration = useMemo(
     () => resolveVideoGenerateWorkflow(videoGenerationType, videoModelFamily, videoModelFormat),
@@ -2254,7 +2384,12 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     const persisted = readPersistedState();
     if (persisted) {
       if (persisted.tab) setTab(!PRODUCTION_FEATURE_ENABLED && persisted.tab === "storyboard" ? "generate" : persisted.tab);
-      if (persisted.assistanceTab) setAssistanceTab(persisted.assistanceTab);
+      if (
+        persisted.assistanceTab === "describe" ||
+        persisted.assistanceTab === "ask"
+      ) {
+        setAssistanceTab(persisted.assistanceTab);
+      }
       if (typeof persisted.prompt === "string") setPrompt(persisted.prompt);
       if (typeof persisted.negativePrompt === "string") setNegativePrompt(persisted.negativePrompt);
       if (typeof persisted.workflowId === "string") setWorkflowId(persisted.workflowId);
@@ -4858,11 +4993,26 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
     try {
       const instruction =
-        describeMode === "background"
-          ? "Describe only the background scene in direct visual detail for prompt writing."
-          : "Describe the person's identity, face, hair, clothing, and distinguishing features in direct visual detail for prompt writing.";
+      describeMode === "background"
+        ? [
+            "Describe the visible background, location, environment, architecture, objects, lighting, weather, depth, colors, and composition.",
+            "Focus on the scene rather than identifying people.",
+            "Be accurate and concrete. Do not invent details that are not visible.",
+          ].join(" ")
+        : describeMode === "identity"
+          ? [
+              "Describe the visible person or character in detail.",
+              "Cover visible facial features, hair, clothing, accessories, pose, expression, body presentation, and distinguishing visual traits.",
+              "Do not guess a real-world identity, name, ethnicity, medical condition, or other unsupported fact.",
+            ].join(" ")
+          : [
+              "Describe the entire image accurately and usefully.",
+              "Cover the main subjects, visible people or characters, actions, objects, relationships, environment, background, lighting, colors, artistic style, composition, and camera perspective.",
+              "Mention readable text only when it is clear.",
+              "Separate visible facts from uncertainty and do not invent details.",
+            ].join(" ");
 
-      const body = new FormData();
+  const body = new FormData();
       body.set(
         "messages",
         JSON.stringify([
@@ -4875,12 +5025,16 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("image", describeFileRef.current);
 
       const res = await fetch("/api/ollama-ai/chat", {
-        method: "POST",
-        body,
-        credentials: "include",
-      });
+      method: "POST",
+      headers: {
+        "X-OTG-AI-Assistance": "1",
+        "X-OTG-AI-Assistance-Profile": "describe",
+      },
+      body,
+      credentials: "include",
+    });
 
-      const data = await res.json().catch(() => ({}));
+  const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(typeof data?.error === "string" ? data.error : "Describe failed");
       }
@@ -4897,113 +5051,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }
 
 
-  function handleEnhanceImageSelect(file: File | null) {
-    if (enhanceImagePreviewUrl) {
-      try {
-        URL.revokeObjectURL(enhanceImagePreviewUrl);
-      } catch {
-        // ignore
-      }
-    }
-
-    if (!file) {
-      setEnhanceImageFile(null);
-      setEnhanceImageName("");
-      setEnhanceImagePreviewUrl("");
-      setEnhanceImageInputKey((prev) => prev + 1);
-      return;
-    }
-
-    const nextUrl = URL.createObjectURL(file);
-    setEnhanceImageFile(file);
-    setEnhanceImageName(file.name || "");
-    setEnhanceImagePreviewUrl(nextUrl);
-  }
-
-  function clearEnhanceImage() {
-    if (enhanceImagePreviewUrl) {
-      try {
-        URL.revokeObjectURL(enhanceImagePreviewUrl);
-      } catch {
-        // ignore
-      }
-    }
-
-    setEnhanceImageFile(null);
-    setEnhanceImageName("");
-    setEnhanceImagePreviewUrl("");
-    setEnhanceImageInputKey((prev) => prev + 1);
-  }
-
-  async function handleEnhanceDraft() {
-    if (!enhanceDraft.trim() || enhanceDraftBusy) return;
-
-    setEnhanceDraftBusy(true);
-    setStatusMessage("");
-
-    try {
-      const lengthInstruction =
-        enhanceLength === "short"
-          ? "Keep it short: 1 to 2 sentences, compact and direct."
-          : enhanceLength === "long"
-            ? "Make it long: 4 to 6 detailed sentences with richer cinematic detail."
-            : "Keep it normal length: about 2 to 3 sentences, balanced detail.";
-
-      const workflowHint = selectedWorkflow?.title || selectedWorkflow?.id || "generate";
-
-      const userMessage = [
-        "You are improving a text prompt for image or video generation.",
-        enhanceImageFile
-          ? "Use the attached image as visual context and strengthen the user's prompt to better match or build from that image."
-          : "No image is attached. Improve the prompt using text only.",
-        "Preserve the user's core intent.",
-        "Make the result more vivid, visually clear, and generation-ready.",
-        lengthInstruction,
-        "Return only the final enhanced prompt.",
-        "Do not return bullets, labels, quotes, explanations, or markdown.",
-        `Workflow hint: ${workflowHint}`,
-        `User draft: ${enhanceDraft.trim()}`
-      ].join("\n");
-
-      const body = new FormData();
-      body.set(
-        "messages",
-        JSON.stringify([
-          {
-            role: "user",
-            content: userMessage,
-          },
-        ])
-      );
-
-      if (enhanceImageFile) {
-        body.set("image", enhanceImageFile);
-      }
-
-      const res = await fetch("/api/ollama-ai/chat", {
-        method: "POST",
-        body,
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(typeof data?.error === "string" ? data.error : "Enhance Prompt failed");
-      }
-
-      const nextPrompt = typeof data?.message === "string" ? data.message.trim() : "";
-      if (!nextPrompt) {
-        throw new Error("Empty enhancement response");
-      }
-
-      setEnhanceDraft(nextPrompt);
-      setStatusMessage(enhanceImageFile ? "Prompt enhanced with image context." : "Prompt enhanced.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Enhance Prompt failed");
-    } finally {
-      setEnhanceDraftBusy(false);
-    }
-  }
 
   function revokeScenePreview(url: string) {
     if (!url) return;
@@ -5703,71 +5750,353 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   async function handleSceneBuild() {
     await handleBuildSceneCard();
   }
-  async function handleAskAi() {
-    if ((!askInput.trim() && !askImageRef.current) || askBusy) return;
+  function persistStoryConversations(
+  conversations: SavedStoryConversation[]
+) {
+  const ordered = [...conversations].sort(
+    (a, b) => b.updatedAt - a.updatedAt
+  );
 
-    setAskBusy(true);
-    setStatusMessage("");
+  setSavedStoryConversations(ordered);
 
-    try {
-      let res: Response;
-      if (askImageRef.current) {
-        const body = new FormData();
-        body.set(
-          "messages",
-          JSON.stringify([
-            {
-              role: "user",
-              content: askInput.trim() || "Answer using the attached image.",
-            },
-          ])
-        );
-        body.set("image", askImageRef.current);
+  try {
+    window.localStorage.setItem(
+      storyConversationStorageKey,
+      JSON.stringify(ordered)
+    );
+  } catch {
+    // Storage failure must not break Story Helper.
+  }
+}
 
-        res = await fetch("/api/ollama-ai/chat", {
+function clearStoryImage() {
+  askImageRef.current = null;
+  setAskImageName("");
+  updateAskPreview(null);
+
+  if (askImageInputRef.current) {
+    askImageInputRef.current.value = "";
+  }
+}
+
+function handleNewStoryConversation() {
+  if (
+    typeof window !== "undefined" &&
+    "speechSynthesis" in window
+  ) {
+    window.speechSynthesis.cancel();
+  }
+
+  setSpeakingStoryMessageId("");
+  setActiveStoryConversationId("");
+  setStoryConversationName("");
+  setAskMessages([]);
+  setAskInput("");
+  clearStoryImage();
+
+  setStatusMessage(
+    "Started a new Story Helper conversation."
+  );
+}
+
+function handleSaveStoryConversation() {
+  if (!askMessages.length) {
+    setStatusMessage(
+      "There is no conversation to save yet."
+    );
+    return;
+  }
+
+  const id =
+    activeStoryConversationId ||
+    createStoryHelperId("conversation");
+
+  const fallbackName =
+    askMessages
+      .find((message) => message.role === "user")
+      ?.content.trim()
+      .slice(0, 48) ||
+    "Story Conversation";
+
+  const name =
+    storyConversationName.trim() ||
+    fallbackName;
+
+  const saved: SavedStoryConversation = {
+    id,
+    name,
+    messages: askMessages,
+    updatedAt: Date.now(),
+  };
+
+  persistStoryConversations([
+    saved,
+    ...savedStoryConversations.filter(
+      (conversation) => conversation.id !== id
+    ),
+  ]);
+
+  setActiveStoryConversationId(id);
+  setStoryConversationName(name);
+
+  setStatusMessage(
+    `Saved conversation: ${name}`
+  );
+}
+
+function handleOpenStoryConversation(
+  conversation: SavedStoryConversation
+) {
+  if (
+    typeof window !== "undefined" &&
+    "speechSynthesis" in window
+  ) {
+    window.speechSynthesis.cancel();
+  }
+
+  setSpeakingStoryMessageId("");
+  setActiveStoryConversationId(
+    conversation.id
+  );
+  setStoryConversationName(
+    conversation.name
+  );
+  setAskMessages(conversation.messages);
+  setAskInput("");
+  clearStoryImage();
+
+  setStatusMessage(
+    `Opened conversation: ${conversation.name}`
+  );
+}
+
+function handleDeleteStoryConversation(
+  id: string
+) {
+  persistStoryConversations(
+    savedStoryConversations.filter(
+      (conversation) => conversation.id !== id
+    )
+  );
+
+  if (activeStoryConversationId === id) {
+    setActiveStoryConversationId("");
+    setStoryConversationName("");
+  }
+
+  setStatusMessage(
+    "Saved conversation deleted."
+  );
+}
+
+function handleReadStoryMessage(
+  message: StoryHelperMessage
+) {
+  if (
+    typeof window === "undefined" ||
+    !("speechSynthesis" in window)
+  ) {
+    setStatusMessage(
+      "Read aloud is not supported by this browser."
+    );
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+
+  const utterance =
+    new SpeechSynthesisUtterance(
+      message.content
+    );
+
+  utterance.onend = () =>
+    setSpeakingStoryMessageId("");
+
+  utterance.onerror = () =>
+    setSpeakingStoryMessageId("");
+
+  setSpeakingStoryMessageId(message.id);
+
+  window.speechSynthesis.speak(
+    utterance
+  );
+}
+
+function handleStopStorySpeech() {
+  if (
+    typeof window !== "undefined" &&
+    "speechSynthesis" in window
+  ) {
+    window.speechSynthesis.cancel();
+  }
+
+  setSpeakingStoryMessageId("");
+}
+
+async function handleAskAi() {
+  const cleanInput = askInput.trim();
+
+  if (
+    (!cleanInput && !askImageRef.current) ||
+    askBusy
+  ) {
+    return;
+  }
+
+  const imageFile = askImageRef.current;
+  const imageName = askImageName;
+
+  const userContent =
+    cleanInput ||
+    "Use the attached image as story-development context. Help me develop the story while preserving established story facts.";
+
+  const userMessage: StoryHelperMessage = {
+    id: createStoryHelperId("user"),
+    role: "user",
+    content: userContent,
+    createdAt: Date.now(),
+    imageName: imageName || undefined,
+  };
+
+  const requestMessages = [
+    ...askMessages.map((message) => ({
+      role: message.role,
+      content: message.content,
+    })),
+    {
+      role: "user" as const,
+      content: userContent,
+    },
+  ];
+
+  setAskBusy(true);
+  setStatusMessage("");
+
+  try {
+    let res: Response;
+
+    if (imageFile) {
+      const body = new FormData();
+
+      body.set(
+        "messages",
+        JSON.stringify(requestMessages)
+      );
+
+      body.set("image", imageFile);
+
+      res = await fetch(
+        "/api/ollama-ai/chat",
+        {
           method: "POST",
+          headers: {
+            "X-OTG-AI-Assistance": "1",
+            "X-OTG-AI-Assistance-Profile":
+              "story-helper",
+          },
           body,
           credentials: "include",
-        });
-      } else {
-        res = await fetch("/api/ollama-ai/chat", {
+        }
+      );
+    } else {
+      res = await fetch(
+        "/api/ollama-ai/chat",
+        {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type":
+              "application/json",
+            "X-OTG-AI-Assistance": "1",
+            "X-OTG-AI-Assistance-Profile":
+              "story-helper",
+          },
           credentials: "include",
           body: JSON.stringify({
-            messages: [
-              {
-                role: "user",
-                content: askInput,
-              },
-            ],
+            messages: requestMessages,
           }),
-        });
-      }
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(typeof data?.error === "string" ? data.error : "Ask AI failed");
-      }
-
-      const answer =
-        typeof data?.message === "string"
-          ? data.message
-          : typeof data?.answer === "string"
-            ? data.answer
-            : typeof data?.text === "string"
-              ? data.text
-              : "";
-
-      setAskAnswer(answer || "No answer returned.");
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "Ask AI failed";
-      setAskAnswer(msg);
-      setStatusMessage(msg);
-    } finally {
-      setAskBusy(false);
+        }
+      );
     }
+
+    const data = await res
+      .json()
+      .catch(() => ({}));
+
+    if (!res.ok) {
+      throw new Error(
+        typeof data?.error === "string"
+          ? data.error
+          : "Story Helper failed"
+      );
+    }
+
+    const answer =
+      typeof data?.message === "string"
+        ? data.message.trim()
+        : typeof data?.answer === "string"
+          ? data.answer.trim()
+          : typeof data?.text === "string"
+            ? data.text.trim()
+            : "";
+
+    if (!answer) {
+      throw new Error(
+        "Story Helper returned an empty answer."
+      );
+    }
+
+    const assistantMessage:
+      StoryHelperMessage = {
+        id: createStoryHelperId(
+          "assistant"
+        ),
+        role: "assistant",
+        content: answer,
+        createdAt: Date.now(),
+      };
+
+    const nextMessages = [
+      ...askMessages,
+      userMessage,
+      assistantMessage,
+    ];
+
+    setAskMessages(nextMessages);
+    setAskInput("");
+    clearStoryImage();
+
+    if (activeStoryConversationId) {
+      persistStoryConversations(
+        savedStoryConversations.map(
+          (conversation) =>
+            conversation.id ===
+            activeStoryConversationId
+              ? {
+                  ...conversation,
+                  name:
+                    storyConversationName.trim() ||
+                    conversation.name,
+                  messages: nextMessages,
+                  updatedAt: Date.now(),
+                }
+              : conversation
+        )
+      );
+    }
+
+    setStatusMessage(
+      "Story Helper answered."
+    );
+  } catch (error) {
+    setStatusMessage(
+      error instanceof Error
+        ? error.message
+        : "Story Helper failed"
+    );
+  } finally {
+    setAskBusy(false);
   }
+}
 
   const activeTabLabel = APP_TAB_LABELS[tab] || "OTG";
   const appShellBackground = selectedThemeTokens.background;
@@ -7003,39 +7332,68 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         {tab === "gethelp" ? (
           <div className="space-y-4">
             <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm">
-              <h1 className="text-4xl font-black tracking-tight text-white">AI Assistance</h1>
+              <h1 className="text-4xl font-black tracking-tight text-white">
+                AI Assistance
+              </h1>
+
               <div className="mt-4 overflow-x-auto">
                 <div className="flex min-w-max gap-2 pb-1">
-                  <PillButton active={assistanceTab === "describe"} onClick={() => setAssistanceTab("describe")}>
+                  <PillButton
+                    active={
+                      assistanceTab === "describe"
+                    }
+                    onClick={() =>
+                      setAssistanceTab("describe")
+                    }
+                  >
                     Describe Picture
                   </PillButton>
-                  <PillButton active={assistanceTab === "enhance"} onClick={() => setAssistanceTab("enhance")}>
-                    Enhance Prompt
-                  </PillButton>
-                  <PillButton active={assistanceTab === "scene"} onClick={() => setAssistanceTab("scene")}>
-                    Scene Creator
-                  </PillButton>
-                  <PillButton active={assistanceTab === "ask"} onClick={() => setAssistanceTab("ask")}>
-                    Ask AI
+
+                  <PillButton
+                    active={
+                      assistanceTab === "ask"
+                    }
+                    onClick={() =>
+                      setAssistanceTab("ask")
+                    }
+                  >
+                    Story Helper
                   </PillButton>
                 </div>
               </div>
             </div>
+
             {assistanceTab === "describe" ? (
               <Card title="Describe Picture">
-                <p className="text-white/70">Choose an image, preview it, select the mode, then generate a description you can copy, enhance, or send to Generate.</p>
+                <p className="text-white/70">
+                  Choose an image and describe the full image,
+                  the background scene, or a visible person or
+                  character.
+                </p>
+
                 <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
                   <div className="space-y-4">
                     <div className="flex flex-wrap gap-3">
-                      <ActionButton onClick={() => describeInputRef.current?.click()}>Choose image</ActionButton>
+                      <ActionButton
+                        onClick={() =>
+                          describeInputRef.current?.click()
+                        }
+                      >
+                        Choose image
+                      </ActionButton>
+
                       <GhostButton
                         onClick={() => {
                           describeFileRef.current = null;
                           setDescribeImageName("");
                           setDescribeOutput("");
                           updateDescribePreview(null);
-                          if (describeInputRef.current) {
-                            describeInputRef.current.value = "";
+
+                          if (
+                            describeInputRef.current
+                          ) {
+                            describeInputRef.current.value =
+                              "";
                           }
                         }}
                         disabled={!describeImageName}
@@ -7043,975 +7401,460 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                         Clear
                       </GhostButton>
                     </div>
+
                     <input
                       ref={describeInputRef}
                       type="file"
                       accept="image/*"
                       className="hidden"
                       onChange={(e) => {
-                        const file = e.target.files?.[0] || null;
-                        describeFileRef.current = file;
-                        setDescribeImageName(file?.name || "");
-                        updateDescribePreview(file);
+                        const file =
+                          e.target.files?.[0] ||
+                          null;
+
+                        describeFileRef.current =
+                          file;
+
+                        setDescribeImageName(
+                          file?.name || ""
+                        );
+
+                        updateDescribePreview(
+                          file
+                        );
                       }}
                     />
+
                     <div className="rounded-[22px] border border-white/10 bg-black/35 p-4 text-white/70">
-                      {describeImageName || "No image selected"}
+                      {describeImageName ||
+                        "No image selected"}
                     </div>
+
                     <div className="overflow-hidden rounded-[22px] border border-white/10 bg-black/45">
                       {describePreviewUrl ? (
-                        <img src={describePreviewUrl} alt={describeImageName || "Describe preview"} className="aspect-[4/3] w-full object-contain" />
+                        <img
+                          src={
+                            describePreviewUrl
+                          }
+                          alt={
+                            describeImageName ||
+                            "Describe preview"
+                          }
+                          className="aspect-[4/3] w-full object-contain"
+                        />
                       ) : (
-                        <div className="flex aspect-[4/3] items-center justify-center px-4 text-center text-sm text-white/40">Image preview will appear here.</div>
+                        <div className="flex aspect-[4/3] items-center justify-center px-4 text-center text-sm text-white/40">
+                          Image preview will
+                          appear here.
+                        </div>
                       )}
                     </div>
+
                     <select
                       value={describeMode}
-                      onChange={(e) => setDescribeMode(e.target.value as "background" | "identity")}
+                      onChange={(e) =>
+                        setDescribeMode(
+                          e.target.value as
+                            | "general"
+                            | "background"
+                            | "identity"
+                        )
+                      }
                       className="w-full rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
                     >
-                      <option value="background">Background Scene</option>
-                      <option value="identity">Person Identity</option>
+                      <option value="general">
+                        General Image
+                      </option>
+                      <option value="background">
+                        Background Scene
+                      </option>
+                      <option value="identity">
+                        Person / Character
+                      </option>
                     </select>
-                    <ActionButton onClick={handleDescribe} disabled={describeBusy || !describeImageName}>
-                      {describeBusy ? "Describing..." : "Describe"}
+
+                    <ActionButton
+                      onClick={handleDescribe}
+                      disabled={
+                        describeBusy ||
+                        !describeImageName
+                      }
+                    >
+                      {describeBusy
+                        ? "Describing..."
+                        : "Describe"}
                     </ActionButton>
                   </div>
 
                   <div className="space-y-4">
                     <textarea
                       value={describeOutput}
-                      onChange={(e) => setDescribeOutput(e.target.value)}
-                      rows={10}
+                      onChange={(e) =>
+                        setDescribeOutput(
+                          e.target.value
+                        )
+                      }
+                      rows={12}
                       placeholder="Description result will appear here."
                       className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
                     />
-                    <div className="flex flex-wrap gap-3">
-                      <GhostButton onClick={() => copyText(describeOutput)} disabled={!describeOutput.trim()}>
-                        Copy
-                      </GhostButton>
-                      <ActionButton
-                        onClick={async () => {
-                          try {
-                            if (!describeOutput.trim()) return;
-                            setDescribeBusy(true);
-                            const nextPrompt = await enhancePromptText(describeOutput, selectedWorkflow.id);
-                            setDescribeOutput(nextPrompt);
-                            setStatusMessage("Description enhanced.");
-                          } catch (error) {
-                            setStatusMessage(error instanceof Error ? error.message : "Enhance Prompt failed");
-                          } finally {
-                            setDescribeBusy(false);
-                          }
-                        }}
-                        disabled={describeBusy || !describeOutput.trim()}
-                      >
-                        {describeBusy ? "Working..." : "Enhance"}
-                      </ActionButton>
-                      <ActionButton onClick={() => sendTextToGenerate(describeOutput)} disabled={!describeOutput.trim()}>
-                        Send to Prompt
-                      </ActionButton>
-                    </div>
+
+                    <GhostButton
+                      onClick={() =>
+                        copyText(
+                          describeOutput
+                        )
+                      }
+                      disabled={
+                        !describeOutput.trim()
+                      }
+                    >
+                      Copy
+                    </GhostButton>
                   </div>
                 </div>
               </Card>
             ) : null}
-            {assistanceTab === "enhance" ? (
-              <Card title="Enhance Prompt">
-                <p className="text-white/70">Write or dictate a draft, optionally upload an image, then enhance it with Ollama. When an image is attached, Ollama Vision will use it as visual context.</p>
 
-                <div className="grid gap-4 lg:grid-cols-[0.92fr_1.08fr]">
+            {assistanceTab === "ask" ? (
+              <Card title="Story Helper">
+                <p className="text-white/70">
+                  Develop stories, characters, scenes,
+                  dialogue, plot progression, screenplay
+                  beats, and continuity. Story Helper
+                  preserves established story facts unless
+                  you ask to change them.
+                </p>
+
+                <div className="grid gap-4 xl:grid-cols-[0.72fr_1.28fr]">
                   <div className="space-y-4">
-                    <div className="flex flex-wrap gap-3">
-                      <label className="inline-flex cursor-pointer items-center justify-center rounded-[22px] border border-white/10 bg-white/5 px-5 py-3 text-sm font-medium text-white transition hover:bg-white/10">
-                        Upload image
-                        <input
-                          key={enhanceImageInputKey}
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => handleEnhanceImageSelect(e.target.files?.[0] || null)}
-                        />
-                      </label>
-
-                      <GhostButton onClick={clearEnhanceImage} disabled={!enhanceImageFile}>
-                        Remove image
-                      </GhostButton>
-                    </div>
-
-                    <div className="rounded-[22px] border border-white/10 bg-black/35 p-4 text-white/70">
-                      {enhanceImageName || "No image selected"}
-                    </div>
-
-                    {enhanceImagePreviewUrl ? (
-                      <div className="overflow-hidden rounded-[22px] border border-white/10 bg-black/35">
-                        <img
-                          src={enhanceImagePreviewUrl}
-                          alt="Enhance prompt reference"
-                          className="h-auto max-h-[260px] w-full object-contain"
-                        />
-                      </div>
-                    ) : null}
-
-                    <div className="space-y-2">
-                      <div className="text-xs font-semibold uppercase tracking-[0.24em] text-white/55">Length</div>
-                      <div className="flex flex-wrap gap-3">
-                        <PillButton active={enhanceLength === "short"} onClick={() => setEnhanceLength("short")}>
-                          Short
-                        </PillButton>
-                        <PillButton active={enhanceLength === "normal"} onClick={() => setEnhanceLength("normal")}>
-                          Normal
-                        </PillButton>
-                        <PillButton active={enhanceLength === "long"} onClick={() => setEnhanceLength("long")}>
-                          Long
-                        </PillButton>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <textarea
-                      value={enhanceDraft}
-                      onChange={(e) => setEnhanceDraft(e.target.value)}
-                      rows={10}
-                      placeholder="Write the draft prompt you want to improve."
-                      className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                    />
-
-                    <div className="flex flex-wrap items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => void handleMicClick("enhance", (text) => setEnhanceDraft((prev) => appendPromptText(prev, text)))}
-                        className={cn(
-                          "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
-                          recordingTarget === "enhance"
-                            ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
-                            : "border-white/10 bg-white/5 hover:bg-white/10"
-                        )}
-                        disabled={transcribingTarget === "enhance"}
-                      >
-                        <IconMic />
-                      </button>
-
-                      <ActionButton onClick={handleEnhanceDraft} disabled={enhanceDraftBusy || !enhanceDraft.trim()}>
-                        {enhanceDraftBusy ? "Enhancing..." : "Enhance"}
-                      </ActionButton>
-
-                      <GhostButton onClick={() => copyText(enhanceDraft)} disabled={!enhanceDraft.trim()}>
-                        Copy
-                      </GhostButton>
-
-                      <ActionButton onClick={() => sendTextToGenerate(enhanceDraft)} disabled={!enhanceDraft.trim()}>
-                        Send to Prompt
-                      </ActionButton>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            ) : null}
-            {assistanceTab === "scene" ? (
-              <Card title="Scene Creator">
-                <p className="text-white/70">Upload Character 1, optionally add Character 2, Character 3, and Background, then build a persistent Scene Card. After that, create the final LTX-ready scene prompt for Generate.</p>
-                <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <GhostButton onClick={() => setSceneTutorialOpen(true)}>
-                    Tutorial
-                  </GhostButton>
-                  <div className="text-xs text-white/45">
-                    Quick guide for building stronger LTX-style scene prompts.
-                  </div>
-                </div>
-                <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
-                  <div className="space-y-4">
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                      <div className="space-y-2">
-                        <label className="inline-flex w-full cursor-pointer items-center justify-center rounded-[18px] border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/10">
-                          Character 1
-                          <input
-                            key={sceneChar1InputKey}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => setSceneReference("char1", e.target.files?.[0] || null)}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => openSceneCharacterPicker("char1")}
-                          className="inline-flex w-full items-center justify-center rounded-[18px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/15"
-                        >
-                          From Characters
-                        </button>
-                        <div className="overflow-hidden rounded-[14px] border border-white/10 bg-black/35 p-2">
-                          {sceneChar1PreviewUrl ? (
-                            <img src={sceneChar1PreviewUrl} alt="Character 1 reference" className="h-20 w-full rounded-[10px] object-cover" />
-                          ) : (
-                            <div className="flex h-20 items-center justify-center text-xs text-white/35">Required</div>
-                          )}
-                        </div>
-                        <div className="truncate text-[11px] text-white/50">{sceneChar1Name || "Required"}</div>
-                        {sceneChar1Identity && (!sceneChar1Identity.promptReadyDescription || !sceneChar1Identity.lockedAt) ? (
-                          <div className="text-[11px] leading-4 text-amber-200">{MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP}</div>
-                        ) : null}
+                    <div className="rounded-[22px] border border-white/10 bg-black/35 p-4">
+                      <div className="mb-3 text-sm font-bold uppercase tracking-[0.16em] text-white/55">
+                        Conversation
                       </div>
 
-                      <div className="space-y-2">
-                        <label className="inline-flex w-full cursor-pointer items-center justify-center rounded-[18px] border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/10">
-                          Character 2
-                          <input
-                            key={sceneChar2InputKey}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => setSceneReference("char2", e.target.files?.[0] || null)}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => openSceneCharacterPicker("char2")}
-                          className="inline-flex w-full items-center justify-center rounded-[18px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/15"
-                        >
-                          From Characters
-                        </button>
-                        <div className="overflow-hidden rounded-[14px] border border-white/10 bg-black/35 p-2">
-                          {sceneChar2PreviewUrl ? (
-                            <img src={sceneChar2PreviewUrl} alt="Character 2 reference" className="h-20 w-full rounded-[10px] object-cover" />
-                          ) : (
-                            <div className="flex h-20 items-center justify-center text-xs text-white/35">Optional</div>
-                          )}
-                        </div>
-                        <div className="truncate text-[11px] text-white/50">{sceneChar2Name || "Optional"}</div>
-                        {sceneChar2Identity && (!sceneChar2Identity.promptReadyDescription || !sceneChar2Identity.lockedAt) ? (
-                          <div className="text-[11px] leading-4 text-amber-200">{MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP}</div>
-                        ) : null}
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="inline-flex w-full cursor-pointer items-center justify-center rounded-[18px] border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/10">
-                          Character 3
-                          <input
-                            key={sceneChar3InputKey}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => setSceneReference("char3", e.target.files?.[0] || null)}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => openSceneCharacterPicker("char3")}
-                          className="inline-flex w-full items-center justify-center rounded-[18px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/15"
-                        >
-                          From Characters
-                        </button>
-                        <div className="overflow-hidden rounded-[14px] border border-white/10 bg-black/35 p-2">
-                          {sceneChar3PreviewUrl ? (
-                            <img src={sceneChar3PreviewUrl} alt="Character 3 reference" className="h-20 w-full rounded-[10px] object-cover" />
-                          ) : (
-                            <div className="flex h-20 items-center justify-center text-xs text-white/35">Optional</div>
-                          )}
-                        </div>
-                        <div className="truncate text-[11px] text-white/50">{sceneChar3Name || "Optional"}</div>
-                        {sceneChar3Identity && (!sceneChar3Identity.promptReadyDescription || !sceneChar3Identity.lockedAt) ? (
-                          <div className="text-[11px] leading-4 text-amber-200">{MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP}</div>
-                        ) : null}
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="inline-flex w-full cursor-pointer items-center justify-center rounded-[18px] border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/10">
-                          Background
-                          <input
-                            key={sceneBgInputKey}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => setSceneReference("bg", e.target.files?.[0] || null)}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => openSceneCharacterPicker("bg")}
-                          className="inline-flex w-full items-center justify-center rounded-[18px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/15"
-                        >
-                          From Characters
-                        </button>
-                        <div className="overflow-hidden rounded-[14px] border border-white/10 bg-black/35 p-2">
-                          {sceneBgPreviewUrl ? (
-                            <img src={sceneBgPreviewUrl} alt="Background reference" className="h-20 w-full rounded-[10px] object-cover" />
-                          ) : (
-                            <div className="flex h-20 items-center justify-center text-xs text-white/35">Optional</div>
-                          )}
-                        </div>
-                        <div className="truncate text-[11px] text-white/50">{sceneBgName || "Optional"}</div>
-                      </div>
-                    </div>
-
-                    <label className="space-y-2 text-sm text-white/70">
-                      <span>Style</span>
                       <input
-                        type="text"
-                        value={sceneStyle}
-                        onChange={(e) => setSceneStyle(e.target.value)}
-                        className="w-full rounded-[18px] border border-white/10 bg-black/55 px-4 py-3 text-white outline-none focus:border-cyan-400/45"
+                        value={
+                          storyConversationName
+                        }
+                        onChange={(e) =>
+                          setStoryConversationName(
+                            e.target.value
+                          )
+                        }
+                        placeholder="Conversation name"
+                        className="w-full rounded-[18px] border border-white/10 bg-black/55 px-4 py-3 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
                       />
-                    </label>
 
-                    <textarea
-                      value={sceneDraft}
-                      onChange={(e) => setSceneDraft(e.target.value)}
-                      rows={10}
-                      placeholder="Describe what happens in this scene."
-                      className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                    />
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <ActionButton
+                          onClick={
+                            handleSaveStoryConversation
+                          }
+                        >
+                          Save Conversation
+                        </ActionButton>
 
-                    <div className="rounded-[20px] border border-white/10 bg-black/35 p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.22em] text-white/55">Transition helper</div>
-                          <div className="mt-2 text-sm text-white/70">
-                            Choose how this scene should connect to the previous beat. The transition mode is stored separately from the prompt box.
-                          </div>
-                        </div>
-                        <div className="rounded-full border border-cyan-400/25 bg-cyan-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100">
-                          Transition: {selectedTransitionOption.label}
-                          {sceneTransitionMode === "auto" ? " (detected)" : ""}
-                        </div>
-                      </div>
-
-                      <div className="mt-3 text-sm text-white/80">{selectedTransitionOption.helper}</div>
-                      {sceneTemporalSequenceHint ? <div className="mt-2 text-xs leading-5 text-cyan-100/85">{sceneTemporalSequenceHint}</div> : null}
-
-                      <div className="mt-4 flex flex-wrap items-center gap-3">
-                        <GhostButton onClick={() => setSceneTransitionPickerOpen((prev) => !prev)}>
-                          {sceneTransitionPickerOpen ? "Close Hard Cut Helper" : "Hard Cut Helper"}
+                        <GhostButton
+                          onClick={
+                            handleNewStoryConversation
+                          }
+                        >
+                          New Conversation
                         </GhostButton>
-                        <PillButton active={sceneTransitionMode === "auto"} onClick={() => setSceneTransitionMode("auto")}>
-                          Auto Detect
-                        </PillButton>
                       </div>
-
-                      {sceneTransitionPickerOpen ? (
-                        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                          {SCENE_TRANSITION_OPTIONS.map((option) => (
-                            <button
-                              key={option.mode}
-                              type="button"
-                              onClick={() => {
-                                setSceneTransitionMode(option.mode);
-                                setSceneTransitionPickerOpen(false);
-                              }}
-                              className={cn(
-                                "rounded-[18px] border px-4 py-3 text-left transition",
-                                sceneTransitionMode === option.mode
-                                  ? "border-cyan-400/35 bg-[linear-gradient(90deg,rgba(145,92,255,0.28),rgba(40,200,255,0.18))] text-white"
-                                  : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
-                              )}
-                            >
-                              <div className="text-sm font-semibold text-white">{option.label}</div>
-                              <div className="mt-2 text-xs leading-5 text-white/65">{option.helper}</div>
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
                     </div>
 
-                    <div className="rounded-[20px] border border-white/10 bg-black/35 p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.22em] text-white/55">Reference Image</div>
-                          <div className="mt-2 text-sm text-white/70">
-                            Run Ollama Vision one slot at a time. Completed slots turn green and lock until you clear them.
-                          </div>
-                        </div>
-                        <div className="rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-100">
-                          {completedSceneReferenceCount}/{SCENE_REFERENCE_SLOT_OPTIONS.length} complete
-                        </div>
+                    <div className="rounded-[22px] border border-white/10 bg-black/35 p-4">
+                      <div className="mb-3 text-sm font-bold uppercase tracking-[0.16em] text-white/55">
+                        Saved Conversations
                       </div>
 
-                      <div className="mt-4 flex flex-wrap items-center gap-3">
-                        <GhostButton onClick={() => setSceneReferencePickerOpen((prev) => !prev)}>
-                          {sceneReferencePickerOpen ? "Close Reference Image" : "Reference Image"}
-                        </GhostButton>
-                        <GhostButton onClick={clearAllSceneReferenceAnalyses} disabled={!sceneReferenceImageCard.trim() && !sceneReferenceBusySlot}>
-                          Clear All
-                        </GhostButton>
-                      </div>
-
-                      {sceneReferencePickerOpen ? (
-                        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                          {SCENE_REFERENCE_SLOT_OPTIONS.map((slot) => {
-                            const hasFile =
-                              slot.key === "char1"
-                                ? !!sceneChar1File
-                                : slot.key === "char2"
-                                  ? !!sceneChar2File
-                                  : slot.key === "char3"
-                                    ? !!sceneChar3File
-                                    : !!sceneBgFile;
-                            const status = sceneReferenceStatuses[slot.key];
-                            const isRunning = sceneReferenceBusySlot === slot.key || status === "running";
-                            const isDone = status === "done";
-                            return (
-                              <button
-                                key={slot.key}
-                                type="button"
-                                onClick={() => void handleReferenceImageSlot(slot.key)}
-                                disabled={!hasFile || !!sceneReferenceBusySlot || isDone}
-                                className={cn(
-                                  "rounded-[18px] border px-4 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60",
-                                  isDone
-                                    ? "border-emerald-400/35 bg-[linear-gradient(90deg,rgba(34,197,94,0.22),rgba(16,185,129,0.16))] text-white"
-                                    : isRunning
-                                      ? "border-cyan-400/35 bg-[linear-gradient(90deg,rgba(145,92,255,0.28),rgba(40,200,255,0.18))] text-white"
-                                      : hasFile
-                                        ? "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
-                                        : "border-white/10 bg-white/5 text-white/40"
-                                )}
+                      {savedStoryConversations.length ? (
+                        <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
+                          {savedStoryConversations.map(
+                            (conversation) => (
+                              <div
+                                key={
+                                  conversation.id
+                                }
+                                className="rounded-[18px] border border-white/10 bg-black/35 p-3"
                               >
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="text-sm font-semibold text-white">{slot.label}</div>
-                                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">
-                                    {isDone ? "Locked" : isRunning ? "Running" : hasFile ? "Ready" : "No image"}
-                                  </div>
+                                <div className="font-semibold text-white">
+                                  {
+                                    conversation.name
+                                  }
                                 </div>
-                                <div className="mt-2 text-xs leading-5 text-white/65">
-                                  {slot.kind === "background"
-                                    ? "Extract visible environment details and continuity anchors for the background image."
-                                    : "Extract visible identity, wardrobe, pose, and lighting details for this character image."}
+
+                                <div className="mt-1 text-xs text-white/45">
+                                  {
+                                    conversation
+                                      .messages
+                                      .length
+                                  }{" "}
+                                  messages
                                 </div>
-                              </button>
-                            );
-                          })}
+
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <GhostButton
+                                    onClick={() =>
+                                      handleOpenStoryConversation(
+                                        conversation
+                                      )
+                                    }
+                                  >
+                                    Open
+                                  </GhostButton>
+
+                                  <GhostButton
+                                    onClick={() =>
+                                      handleDeleteStoryConversation(
+                                        conversation.id
+                                      )
+                                    }
+                                  >
+                                    Delete
+                                  </GhostButton>
+                                </div>
+                              </div>
+                            )
+                          )}
                         </div>
-                      ) : null}
-                    </div>
-
-                    {(() => {
-                      const promptCheck = evaluateScenePromptStrength(sceneDraft);
-                      const toneClass =
-                        promptCheck.rating === "strong"
-                          ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-                          : promptCheck.rating === "usable"
-                            ? "border-amber-400/30 bg-amber-500/10 text-amber-200"
-                            : "border-red-400/30 bg-red-500/10 text-red-200";
-
-                      return (
-                        <div className="rounded-[20px] border border-white/10 bg-black/35 p-4">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div className="text-xs font-semibold uppercase tracking-[0.22em] text-white/55">Prompt strength</div>
-                            <div className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${toneClass}`}>
-                              {promptCheck.rating}
-                            </div>
-                          </div>
-                          <div className="mt-3 text-sm text-white/70">
-                            A strong scene prompt usually includes: subject, setting, action, tone/emotion, and shot/camera intent.
-                          </div>
-                          <div className="mt-3 text-sm text-white/80">
-                            <span className="font-semibold">Detected:</span> {promptCheck.present.length ? promptCheck.present.join(", ") : "none"}
-                          </div>
-                          <div className="mt-2 text-sm text-white/80">
-                            <span className="font-semibold">Missing:</span> {promptCheck.missing.length ? promptCheck.missing.join(", ") : "none"}
-                          </div>
-                          {!promptCheck.canGenerate ? (
-                            <div className="mt-3 rounded-[16px] border border-red-400/25 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-                              Prompt is too weak to generate reliably. Add more scene information before building or creating the scene.
-                            </div>
-                          ) : null}
+                      ) : (
+                        <div className="text-sm text-white/45">
+                          No saved
+                          conversations yet.
                         </div>
-                      );
-                    })()}
-
-                    <div className="flex flex-wrap items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => void handleMicClick("scene", (text) => setSceneDraft((prev) => appendPromptText(prev, text)))}
-                        className={cn(
-                          "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
-                          recordingTarget === "scene"
-                            ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
-                            : "border-white/10 bg-white/5 hover:bg-white/10"
-                        )}
-                        disabled={transcribingTarget === "scene"}
-                      >
-                        <IconMic />
-                      </button>
-
-                      <ActionButton onClick={handleBuildSceneCard} disabled={scenePlanBusy || !sceneDraft.trim() || !sceneReferenceImageCard.trim()}>
-                        {scenePlanBusy ? "Building..." : "Build Reference Card"}
-                      </ActionButton>
-
-                      <ActionButton onClick={handleCreateScene} disabled={sceneWriteBusy || !sceneReferenceCard.trim() || !sceneDraft.trim()}>
-                        {sceneWriteBusy ? "Creating..." : "Create Scene"}
-                      </ActionButton>
-
-                      <ActionButton onClick={() => sendTextToGenerate(sceneOutput)} disabled={!sceneOutput.trim() || missingLockedSceneCharacterDescriptions.length > 0}>
-                        Send to Generate
-                      </ActionButton>
+                      )}
                     </div>
-                    {missingLockedSceneCharacterDescriptions.length ? (
-                      <div className="rounded-[16px] border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
-                        {MISSING_LOCKED_CHARACTER_DESCRIPTION_MESSAGE}
-                      </div>
-                    ) : characterContinuityPrompt ? (
-                      <div className="rounded-[16px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100">
-                        Locked character continuity will be injected above the Generate prompt.
-                      </div>
-                    ) : null}
                   </div>
 
                   <div className="space-y-4">
-                    <div className="rounded-[24px] border border-white/10 bg-black/45 p-4">
-                      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                        <div className="text-xs font-semibold uppercase tracking-[0.24em] text-white/55">Reference Image Card</div>
-                        <div className="text-[11px] text-white/45">One slot at a time. Clear one slot or clear all to unlock reruns.</div>
-                      </div>
-
-                      <div className="mb-4 flex flex-wrap gap-2">
-                        {SCENE_REFERENCE_SLOT_OPTIONS.map((slot) => {
-                          const status = sceneReferenceStatuses[slot.key];
-                          const hasText = !!sceneReferenceAnalyses[slot.key].trim();
-                          return (
+                    <div className="max-h-[520px] min-h-[260px] space-y-3 overflow-y-auto rounded-[24px] border border-white/10 bg-black/45 p-4">
+                      {askMessages.length ? (
+                        askMessages.map(
+                          (message) => (
                             <div
-                              key={slot.key}
+                              key={
+                                message.id
+                              }
                               className={cn(
-                                "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em]",
-                                status === "done"
-                                  ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-100"
-                                  : status === "running"
-                                    ? "border-cyan-400/30 bg-cyan-500/10 text-cyan-100"
-                                    : "border-white/10 bg-white/5 text-white/55"
+                                "rounded-[20px] border p-4",
+                                message.role ===
+                                  "user"
+                                  ? "ml-6 border-cyan-400/20 bg-cyan-400/5"
+                                  : "mr-6 border-white/10 bg-white/5"
                               )}
                             >
-                              <span>{slot.label}</span>
-                              <span className="text-[10px] text-white/60">{status === "done" ? "Locked" : status === "running" ? "Running" : hasText ? "Ready" : "Idle"}</span>
-                              {hasText ? (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    clearSceneReferenceAnalysis(slot.key);
-                                    setStatusMessage(`${slot.label} reference cleared.`);
-                                  }}
-                                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/75 transition hover:bg-white/10"
-                                  aria-label={`Clear ${slot.label} reference`}
-                                >
-                                  <IconTrash />
-                                </button>
+                              <div className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-white/45">
+                                {message.role ===
+                                "user"
+                                  ? "You"
+                                  : "Story Helper"}
+                              </div>
+
+                              {message.imageName ? (
+                                <div className="mb-2 text-xs text-cyan-200/70">
+                                  Attached image:{" "}
+                                  {
+                                    message.imageName
+                                  }
+                                </div>
+                              ) : null}
+
+                              <div className="whitespace-pre-wrap text-sm leading-6 text-white/85">
+                                {
+                                  message.content
+                                }
+                              </div>
+
+                              {message.role ===
+                              "assistant" ? (
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <GhostButton
+                                    onClick={() =>
+                                      copyText(
+                                        message.content
+                                      )
+                                    }
+                                  >
+                                    Copy
+                                  </GhostButton>
+
+                                  {speakingStoryMessageId ===
+                                  message.id ? (
+                                    <GhostButton
+                                      onClick={
+                                        handleStopStorySpeech
+                                      }
+                                    >
+                                      Stop
+                                    </GhostButton>
+                                  ) : (
+                                    <GhostButton
+                                      onClick={() =>
+                                        handleReadStoryMessage(
+                                          message
+                                        )
+                                      }
+                                    >
+                                      Read aloud
+                                    </GhostButton>
+                                  )}
+                                </div>
                               ) : null}
                             </div>
-                          );
-                        })}
-                      </div>
-
-                      <textarea
-                        value={sceneVisionSummary}
-                        readOnly
-                        rows={12}
-                        placeholder="Click Reference Image, then run Character 1, Character 2, Character 3, and Background one at a time. Their descriptions will collect here."
-                        className="w-full rounded-[20px] border border-white/10 bg-black/55 px-4 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                      />
+                          )
+                        )
+                      ) : (
+                        <div className="flex min-h-[220px] items-center justify-center px-4 text-center text-sm text-white/40">
+                          Start with your
+                          story idea, ask how
+                          to develop a scene,
+                          or attach an image
+                          for visual story
+                          context.
+                        </div>
+                      )}
                     </div>
 
-                    <div className="rounded-[24px] border border-white/10 bg-black/45 p-4">
-                      <div className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-white/55">Reference Card</div>
-                      <textarea
-                        value={sceneReferenceCard}
-                        onChange={(e) => setSceneReferenceCard(e.target.value)}
-                        rows={12}
-                        placeholder="Build Reference Card to match your reference image card to the scene prompt, characters, background, style, and continuity rules."
-                        className="w-full rounded-[20px] border border-white/10 bg-black/55 px-4 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                      />
-                    </div>
+                    <textarea
+                      value={askInput}
+                      onChange={(e) =>
+                        setAskInput(
+                          e.target.value
+                        )
+                      }
+                      rows={6}
+                      placeholder="Example: My cartoon bunny eats a magical carrot and becomes a superhero. The villain is a nasty wolf doctor. Help me create a strong opening scene."
+                      className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
+                    />
 
-                    <div className="rounded-[24px] border border-white/10 bg-black/45 p-4">
-                      <div className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-white/55">Generated Scene</div>
-                      <textarea
-                        value={sceneOutput}
-                        onChange={(e) => setSceneOutput(e.target.value)}
-                        rows={12}
-                        placeholder="Create Scene to generate the final LTX-ready prompt for this shot."
-                        className="w-full rounded-[20px] border border-white/10 bg-black/55 px-4 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            ) : null}
-            {sceneCharacterPickerSlot ? (
-              <div
-                className="fixed inset-0 z-[135] overflow-y-auto bg-black/82 px-4 py-6 backdrop-blur-sm"
-                onClick={() => setSceneCharacterPickerSlot(null)}
-              >
-                <div
-                  className="mx-auto flex max-h-[86vh] max-w-5xl flex-col overflow-hidden rounded-[28px] border border-cyan-400/20 bg-[#070b16] shadow-[0_0_60px_rgba(0,0,0,0.55)]"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-4">
-                    <div>
-                      <h3 className="text-lg font-semibold text-white">
-                        Choose Character for {sceneReferenceSlotLabel(sceneCharacterPickerSlot)}
-                      </h3>
-                      <p className="text-sm text-white/55">
-                        Shows saved Characters tab thumbnails. Selecting a character applies its saved multi-angle character card to this Scene Creator reference slot.
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <ActionButton onClick={() => void loadSceneCharacterPickerItems()} disabled={sceneCharacterPickerLoading}>
-                        {sceneCharacterPickerLoading ? "Loading..." : "Refresh"}
-                      </ActionButton>
-                      <ActionButton onClick={() => setSceneCharacterPickerSlot(null)}>Close</ActionButton>
-                    </div>
-                  </div>
-
-                  <div className="min-h-[260px] overflow-y-auto p-5">
-                    {sceneCharacterPickerError ? (
-                      <div className="mb-4 rounded-2xl border border-red-400/20 bg-red-500/10 p-4 text-sm text-red-100">
-                        {sceneCharacterPickerError}
-                      </div>
-                    ) : null}
-
-                    {sceneCharacterPickerLoading ? (
-                      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/65">
-                        Loading saved characters...
-                      </div>
-                    ) : null}
-
-                    {!sceneCharacterPickerLoading && !sceneCharacterPickerError && sceneCharacterPickerItems.length === 0 ? (
-                      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/65">
-                        No saved characters found.
-                      </div>
-                    ) : null}
-
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                      {sceneCharacterPickerItems.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => void applySceneCharacterToReference(sceneCharacterPickerSlot, item)}
-                          disabled={Boolean(sceneCharacterPickerSelectingId) || !item.referenceImageUrl}
-                          className="group overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] text-left transition hover:border-cyan-300/40 hover:bg-white/[0.07] disabled:cursor-wait disabled:opacity-60"
-                        >
-                          <div className="aspect-square bg-black/45">
-                            <img
-                              src={item.imageUrl}
-                              alt={item.name}
-                              className="h-full w-full object-cover"
-                              loading="lazy"
-                            />
-                          </div>
-                          <div className="border-t border-white/10 px-3 py-2">
-                            <div className="truncate text-xs font-semibold text-white">{item.name}</div>
-                            {!item.referenceImageUrl ? (
-                              <div className="mt-1 text-[10px] font-semibold text-amber-300">Missing character card</div>
-                            ) : item.characterIdentity && (!item.characterIdentity.promptReadyDescription || !item.characterIdentity.lockedAt) ? (
-                              <div className="mt-1 text-[10px] font-semibold text-amber-300">Missing locked description</div>
-                            ) : (
-                              <div className="mt-1 text-[10px] font-semibold text-cyan-200">Uses character card</div>
-                            )}
-                            {sceneCharacterPickerSelectingId === item.id ? (
-                              <div className="mt-1 text-[11px] text-cyan-200">Selecting...</div>
-                            ) : null}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-            {sceneTutorialOpen ? (
-              <>
-                <div
-                  className="fixed inset-0 z-[140] bg-black/82 px-3 pt-24 pb-28 sm:px-4"
-                  onClick={() => {
-                    setSceneTutorialOpen(false);
-                    setSceneTutorialImageOpen("");
-                    setSceneTutorialImageLabel("");
-                  }}
-                >
-                  <div
-                    className="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-white/10 bg-[#0b1020] shadow-2xl"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-white/10 bg-[#0b1020]/95 px-4 py-4 backdrop-blur">
-                      <div>
-                        <div className="text-sm font-semibold uppercase tracking-[0.22em] text-white/70">Tutorial</div>
-                        <div className="mt-1 text-white/65">Key aspects to include when crafting a stronger LTX-style scene prompt.</div>
-                      </div>
-                      <GhostButton
-                        onClick={() => {
-                          setSceneTutorialOpen(false);
-                          setSceneTutorialImageOpen("");
-                          setSceneTutorialImageLabel("");
-                        }}
+                    <div className="flex flex-wrap gap-3">
+                      <ActionButton
+                        onClick={() =>
+                          askImageInputRef.current?.click()
+                        }
                       >
-                        Close
+                        Attach image
+                      </ActionButton>
+
+                      <input
+                        ref={
+                          askImageInputRef
+                        }
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file =
+                            e.target.files?.[0] ||
+                            null;
+
+                          askImageRef.current =
+                            file;
+
+                          setAskImageName(
+                            file?.name || ""
+                          );
+
+                          updateAskPreview(
+                            file
+                          );
+                        }}
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleMicClick(
+                            "ask",
+                            (text) =>
+                              setAskInput(
+                                (prev) =>
+                                  appendPromptText(
+                                    prev,
+                                    text
+                                  )
+                              )
+                          )
+                        }
+                        className={cn(
+                          "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
+                          recordingTarget ===
+                            "ask"
+                            ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
+                            : "border-white/10 bg-white/5 hover:bg-white/10"
+                        )}
+                        disabled={
+                          transcribingTarget ===
+                          "ask"
+                        }
+                      >
+                        <IconMic />
+                      </button>
+
+                      <GhostButton
+                        onClick={
+                          clearStoryImage
+                        }
+                        disabled={
+                          !askImageName
+                        }
+                      >
+                        Clear image
                       </GhostButton>
                     </div>
 
-                    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
-                      <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
-                        <div className="space-y-3 rounded-[22px] border border-white/10 bg-black/35 p-4 text-sm text-white/75">
-                          <div className="font-semibold text-white/85">Include enough detail to guide the scene:</div>
-                          <ul className="list-disc space-y-2 pl-5">
-                            <li><span className="font-semibold text-white/90">Establish the shot</span> - tell the model how the scene should be framed.</li>
-                            <li><span className="font-semibold text-white/90">Set the scene</span> - location, lighting, atmosphere, color, and surface feel.</li>
-                            <li><span className="font-semibold text-white/90">Describe the action</span> - what happens from start to finish.</li>
-                            <li><span className="font-semibold text-white/90">Define the characters</span> - appearance, identity, emotion, and visible traits.</li>
-                            <li><span className="font-semibold text-white/90">Identify camera movement</span> - pan, tilt, dolly, close-up, reverse angle, hard cut, reaction shot, and shot changes.</li>
-                            <li><span className="font-semibold text-white/90">Describe audio if relevant</span> - ambient sound, speech, and music cues.</li>
-                          </ul>
-                          <div className="rounded-[18px] border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-amber-200">
-                            Weak prompts should not be generated. Give at least a subject, action, setting, and some shot or tone guidance.
-
-                          {(() => {
-                            const tutorialPreview = evaluateTutorialPromptPreview(sceneTutorialDraft);
-                            const badgeClass =
-                              tutorialPreview.rating === "strong"
-                                ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-                                : tutorialPreview.rating === "usable"
-                                  ? "border-amber-400/30 bg-amber-500/10 text-amber-200"
-                                  : "border-red-400/30 bg-red-500/10 text-red-200";
-
-                            const chipClass = (isOn: boolean) =>
-                              isOn
-                                ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-                                : "border-white/10 bg-black/35 text-white/70";
-
-                            return (
-                              <div className="rounded-[18px] border border-white/10 bg-black/30 p-4">
-                                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/55">
-                                  Example Prompt Box
-                                </div>
-                                <textarea
-                                  value={sceneTutorialDraft}
-                                  onChange={(e) => setSceneTutorialDraft(e.target.value)}
-                                  rows={6}
-                                  placeholder="Type a sample scene prompt here and watch the checklist respond in real time."
-                                  className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                                />
-                                <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                                  <div className="text-sm text-white/70">Live tutorial prompt strength</div>
-                                  <div className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${badgeClass}`}>
-                                    {tutorialPreview.rating}
-                                  </div>
-                                </div>
-                                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                                  <div className={`rounded-[14px] border px-3 py-2 text-sm ${chipClass(tutorialPreview.checks.establishShot)}`}>
-                                    {tutorialPreview.checks.establishShot ? "Check" : "Missing"} - Establish shot
-                                  </div>
-                                  <div className={`rounded-[14px] border px-3 py-2 text-sm ${chipClass(tutorialPreview.checks.setScene)}`}>
-                                    {tutorialPreview.checks.setScene ? "Check" : "Missing"} - Set the scene
-                                  </div>
-                                  <div className={`rounded-[14px] border px-3 py-2 text-sm ${chipClass(tutorialPreview.checks.describeAction)}`}>
-                                    {tutorialPreview.checks.describeAction ? "Check" : "Missing"} - Describe the action
-                                  </div>
-                                  <div className={`rounded-[14px] border px-3 py-2 text-sm ${chipClass(tutorialPreview.checks.defineCharacter)}`}>
-                                    {tutorialPreview.checks.defineCharacter ? "Check" : "Missing"} - Define the character
-                                  </div>
-                                  <div className={`rounded-[14px] border px-3 py-2 text-sm ${chipClass(tutorialPreview.checks.cameraMovement)}`}>
-                                    {tutorialPreview.checks.cameraMovement ? "Check" : "Missing"} - Identify camera movement
-                                  </div>
-                                  <div className={`rounded-[14px] border px-3 py-2 text-sm ${chipClass(tutorialPreview.checks.describeAudio)}`}>
-                                    {tutorialPreview.checks.describeAudio ? "Check" : "Missing"} - Describe audio if relevant
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })()}
-                          </div>
-
-                        </div>
-
-                        <div className="space-y-4 pb-6">
-                          {(["example1", "example2"] as const).map((key) => {
-                            const example = SCENE_TUTORIAL_EXAMPLES[key];
-                            const isOpen = sceneTutorialExampleKey === key;
-                            return (
-                              <div key={key} className="rounded-[22px] border border-white/10 bg-black/35 p-4">
-                                <button
-                                  type="button"
-                                  className="block w-full overflow-hidden rounded-[18px] border border-white/10 bg-black/40"
-                                  onClick={() => {
-                                    setSceneTutorialImageOpen(example.imageSrc);
-                                    setSceneTutorialImageLabel(example.title);
-                                  }}
-                                >
-                                  <img
-                                    src={example.imageSrc}
-                                    alt={example.title}
-                                    className="h-40 w-full object-cover"
-                                  />
-                                </button>
-
-                                <GhostButton
-                                  onClick={() => setSceneTutorialExampleKey((prev) => (prev === key ? "" : key))}
-                                  className="mt-3"
-                                >
-                                  {key === "example1" ? "Example 1" : "Example 2"}
-                                </GhostButton>
-
-                                {isOpen ? (
-                                  <div className="mt-4 rounded-[18px] border border-white/10 bg-black/30 p-4">
-                                    <div className="text-sm font-semibold text-white/85">
-                                      {example.title}
-                                    </div>
-
-                                    <div className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-white/55">
-                                      Positive Prompt
-                                    </div>
-                                    <textarea
-                                      readOnly
-                                      value={example.positivePrompt}
-                                      rows={10}
-                                      className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none"
-                                    />
-
-                                    <div className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-white/55">
-                                      Negative Prompt
-                                    </div>
-                                    <textarea
-                                      readOnly
-                                      value={example.negativePrompt}
-                                      rows={7}
-                                      className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none"
-                                    />
-
-                                    <div className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-white/55">
-                                      Example Video
-                                    </div>
-                                    <div className="mt-2 overflow-hidden rounded-[18px] border border-white/10 bg-black/45 p-2">
-                                      <video
-                                        controls
-                                        playsInline
-                                        preload="metadata"
-                                        className="w-full rounded-[14px]"
-                                        src={example.videoSrc}
-                                      />
-                                    </div>
-                                  </div>
-                                ) : null}
-                              </div>
-                            );
-                          })}
-                        </div>
+                    {askImageName ? (
+                      <div className="rounded-[22px] border border-white/10 bg-black/35 p-4 text-white/70">
+                        {askImageName}
                       </div>
-                    </div>
-                  </div>
-                </div>
+                    ) : null}
 
-                {sceneTutorialImageOpen ? (
-                  <div
-                    className="fixed inset-0 z-[150] bg-black/92 px-3 pt-20 pb-24 sm:px-4"
-                    onClick={() => {
-                      setSceneTutorialImageOpen("");
-                      setSceneTutorialImageLabel("");
-                    }}
-                  >
-                    <div
-                      className="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-white/10 bg-[#0b1020] shadow-2xl"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-white/10 bg-[#0b1020]/95 px-4 py-4 backdrop-blur">
-                        <div className="text-sm font-semibold uppercase tracking-[0.22em] text-white/70">{sceneTutorialImageLabel || "Guide Preview"}</div>
+                    {askImagePreviewUrl ? (
+                      <div className="overflow-hidden rounded-[22px] border border-white/10 bg-black/45">
+                        <img
+                          src={
+                            askImagePreviewUrl
+                          }
+                          alt={
+                            askImageName ||
+                            "Story Helper preview"
+                          }
+                          className="aspect-[4/3] w-full object-contain"
+                        />
+                      </div>
+                    ) : null}
+
+                    <div className="flex flex-wrap gap-3">
+                      <ActionButton
+                        onClick={
+                          handleAskAi
+                        }
+                        disabled={
+                          askBusy ||
+                          (!askInput.trim() &&
+                            !askImageName)
+                        }
+                      >
+                        {askBusy
+                          ? "Story Helper is thinking..."
+                          : "Send"}
+                      </ActionButton>
+
+                      {speakingStoryMessageId ? (
                         <GhostButton
-                          onClick={() => {
-                            setSceneTutorialImageOpen("");
-                            setSceneTutorialImageLabel("");
-                          }}
+                          onClick={
+                            handleStopStorySpeech
+                          }
                         >
-                          Back
+                          Stop reading
                         </GhostButton>
-                      </div>
-                      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                        <div className="overflow-hidden rounded-[22px] border border-white/10 bg-black/40 p-2">
-                          <img
-                            src={sceneTutorialImageOpen}
-                            alt={sceneTutorialImageLabel || "Guide Preview"}
-                            className="w-full object-contain"
-                          />
-                        </div>
-                      </div>
+                      ) : null}
                     </div>
                   </div>
-                ) : null}
-              </>
-            ) : null}
-            {assistanceTab === "ask" ? (
-              <Card title="Ask AI">
-                <p className="text-white/70">Ask a direct question, optionally attach an image, or dictate the prompt before sending.</p>
-                <textarea
-                  value={askInput}
-                  onChange={(e) => setAskInput(e.target.value)}
-                  rows={7}
-                  placeholder="Ask for prompt help, workflow guidance, or a scene rewrite."
-                  className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                />
-                <div className="flex flex-wrap gap-3">
-                  <ActionButton onClick={() => askImageInputRef.current?.click()}>Attach image</ActionButton>
-                  <input
-                    ref={askImageInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0] || null;
-                      askImageRef.current = file;
-                      setAskImageName(file?.name || "");
-                      updateAskPreview(file);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void handleMicClick("ask", (text) => setAskInput((prev) => appendPromptText(prev, text)))}
-                    className={cn(
-                      "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
-                      recordingTarget === "ask"
-                        ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
-                        : "border-white/10 bg-white/5 hover:bg-white/10"
-                    )}
-                    disabled={transcribingTarget === "ask"}
-                  >
-                    <IconMic />
-                  </button>
-                  <GhostButton
-                    onClick={() => {
-                      askImageRef.current = null;
-                      setAskImageName("");
-                      updateAskPreview(null);
-                      if (askImageInputRef.current) {
-                        askImageInputRef.current.value = "";
-                      }
-                    }}
-                    disabled={!askImageName}
-                  >
-                    Clear image
-                  </GhostButton>
                 </div>
-                {askImageName ? (
-                  <div className="rounded-[22px] border border-white/10 bg-black/35 p-4 text-white/70">{askImageName}</div>
-                ) : null}
-                {askImagePreviewUrl ? (
-                  <div className="overflow-hidden rounded-[22px] border border-white/10 bg-black/45">
-                    <img src={askImagePreviewUrl} alt={askImageName || "Ask AI preview"} className="aspect-[4/3] w-full object-contain" />
-                  </div>
-                ) : null}
-                <div className="flex flex-wrap gap-3">
-                  <ActionButton onClick={handleAskAi} disabled={askBusy || (!askInput.trim() && !askImageName)}>
-                    {askBusy ? "Asking..." : "Ask AI"}
-                  </ActionButton>
-                  <GhostButton onClick={() => copyText(askAnswer)} disabled={!askAnswer.trim()}>
-                    Copy Answer
-                  </GhostButton>
-                  <ActionButton onClick={() => sendTextToGenerate(askAnswer)} disabled={!askAnswer.trim()}>
-                    Send to Prompt
-                  </ActionButton>
-                </div>
-                <textarea
-                  value={askAnswer}
-                  onChange={(e) => setAskAnswer(e.target.value)}
-                  rows={8}
-                  placeholder="AI answer will appear here."
-                  className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                />
               </Card>
             ) : null}
           </div>

@@ -52,7 +52,17 @@ function trySlr(owner: string, deps: RouterDependencies): QwenRoute | null {
 
 async function tryShawn(owner: string, deps: RouterDependencies): Promise<QwenRoute | null> {
   const occupancy = await (deps.shawnOccupancy || detectShawnExternalOccupancy)();
-  if (!occupancy.available) return null;
+
+  // A resident model on the dedicated OTG Qwen endpoint is external occupancy
+  // for Comfy/video work, but it is reusable state for another Qwen request.
+  // qwenCodeIsRunning() is checked separately by detectShawnExternalOccupancy(),
+  // so allowing this specific recoverable state does not bypass Qwen Code or
+  // active ComfyUI workload protection.
+  const qwenResidentIsReusable =
+    occupancy.reason === "qwen-resident-stale" && occupancy.recoverable;
+
+  if (!occupancy.available && !qwenResidentIsReusable) return null;
+
   const result = acquireClusterGpuLease({
     lockId: SHAWN_GPU_LOCK_ID,
     ownerId: owner,
@@ -94,6 +104,35 @@ function estimatedContext(payload: Record<string, unknown>): number {
   return Math.max(1, Math.ceil(JSON.stringify(payload.messages || payload.prompt || "").length / 3));
 }
 
+const DEFINITE_CONNECT_FAILURE_CODES = new Set([
+  "ECONNREFUSED",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+function transportFailureCode(error: unknown): string {
+  if (!error || typeof error !== "object") return "";
+
+  const directCode = (error as { code?: unknown }).code;
+  const cause = (error as { cause?: unknown }).cause;
+  const causeCode =
+    cause && typeof cause === "object"
+      ? (cause as { code?: unknown }).code
+      : undefined;
+
+  if (typeof causeCode === "string") return causeCode;
+  return typeof directCode === "string" ? directCode : "";
+}
+
+function leaseCanReleaseImmediatelyAfterTransportFailure(
+  error: unknown,
+): boolean {
+  return DEFINITE_CONNECT_FAILURE_CODES.has(transportFailureCode(error));
+}
+
 export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payload: Record<string, unknown>, options: {
   requiredContextTokens?: number;
   waitMs?: number;
@@ -108,10 +147,21 @@ export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payl
   const startedAt = Date.now();
   const totalTimeoutMs = Math.max(1, options.timeoutMs ?? 180_000);
   const requiredContext = options.requiredContextTokens || estimatedContext(payload);
+
+  // Do not let an ambiguous Qwen transport failure poison a GPU lane for the
+  // generic 15-minute resource-lock TTL. Keep the safety window slightly
+  // longer than the maximum request lifetime instead.
+  const inferredLeaseTtlSeconds =
+    Math.max(30, Math.ceil(totalTimeoutMs / 1000) + 30);
+  const leaseTtlSeconds =
+    options.leaseTtlSeconds
+    ?? options.routerDependencies?.leaseTtlSeconds
+    ?? inferredLeaseTtlSeconds;
+
   const route = await acquireQwenClusterRoute(requiredContext, Math.min(options.waitMs ?? 30_000, totalTimeoutMs), {
     ...options.routerDependencies,
     allowedNodes: options.allowedNodes || options.routerDependencies?.allowedNodes,
-    leaseTtlSeconds: options.leaseTtlSeconds ?? options.routerDependencies?.leaseTtlSeconds,
+    leaseTtlSeconds,
   });
   const controller = new AbortController();
   const remainingTimeoutMs = totalTimeoutMs - (Date.now() - startedAt);
@@ -121,6 +171,8 @@ export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payl
   }
   const timer = setTimeout(() => controller.abort(), remainingTimeoutMs);
   let responseCompleted = false;
+  let releaseLeaseAfterFailure = false;
+
   try {
     const routedModel = String(options.modelByNode?.[route.node] || options.model || QWEN_CLUSTER_MODEL).trim() || QWEN_CLUSTER_MODEL;
     const routedOptions: Record<string, unknown> = { ...(payload.options as Record<string, unknown> || {}), num_ctx: Math.min(requiredContext, route.contextCap) };
@@ -145,10 +197,18 @@ export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payl
     headers.set("x-otg-qwen-model", routedModel);
     headers.set("x-otg-qwen-node", route.node);
     return new Response(bytes, { status: response.status, statusText: response.statusText, headers });
+  } catch (error) {
+    // Connection-establishment failures prove the request did not reach the
+    // Ollama inference server, so retaining the GPU lease provides no safety.
+    // Abort/socket failures remain ambiguous and retain the bounded lease.
+    releaseLeaseAfterFailure =
+      leaseCanReleaseImmediatelyAfterTransportFailure(error);
+    throw error;
   } finally {
     clearTimeout(timer);
-    // A transport failure after POST is ambiguous. Retain the bounded lease to
-    // expiry so another GPU workload cannot overlap a still-running inference.
-    if (responseCompleted) releaseClusterGpuLease(route.lease);
+
+    if (responseCompleted || releaseLeaseAfterFailure) {
+      releaseClusterGpuLease(route.lease);
+    }
   }
 }
