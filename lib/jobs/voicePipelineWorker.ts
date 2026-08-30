@@ -633,17 +633,21 @@ if (job.status === "queued") {
           const progress =
             event.currentStage === "completed"
               ? 100
-              : event.currentStage === "artifact_copy"
-                ? 95
-                : event.currentStage === "train" && epochProgress !== null
-                  ? Math.max(70, Math.min(94, Math.round(70 + epochProgress * 0.24)))
-                  : event.currentStage === "train"
-                    ? 70
-                    : event.currentStage === "extract"
-                      ? 50
-                      : event.currentStage === "preprocess"
-                        ? 30
-                        : 10;
+              : event.currentStage === "finalizing"
+                ? 98
+                : event.currentStage === "testing_voice_model"
+                  ? 95
+                  : event.currentStage === "artifact_copy"
+                    ? 95
+                    : event.currentStage === "train" && epochProgress !== null
+                      ? Math.max(70, Math.min(94, Math.round(70 + epochProgress * 0.24)))
+                      : event.currentStage === "train"
+                        ? 70
+                        : event.currentStage === "extract"
+                          ? 50
+                          : event.currentStage === "preprocess"
+                            ? 30
+                            : 10;
           updateVoicePipelineJob(ownerKey, job.jobId, {
             status: event.currentStage === "failed" ? "failed" : "running",
             progress,

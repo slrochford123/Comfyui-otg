@@ -14,6 +14,9 @@ import {
 } from "@/lib/jobs/voicePipelineJobs";
 import { resolveTrainingDatasetManifestPath, trainingDatasetManifestUrl } from "@/lib/jobs/trainingDatasetManifest";
 import { hasValidWorkerToken } from "@/lib/jobs/workerAuth";
+import {
+  loadVoiceTrainingPolicy,
+} from "@/lib/jobs/voiceTrainingPolicy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,23 +46,88 @@ async function fileHasBytes(filePath: string): Promise<boolean> {
 }
 
 async function validateReadyTrainingDataset(ownerKey: string, characterId: string, jobId: string) {
+  const policy = loadVoiceTrainingPolicy();
   const manifestPath = resolveTrainingDatasetManifestPath(ownerKey, characterId, jobId);
   const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as Record<string, unknown>;
-  const clips = Array.isArray(manifest.clips) ? manifest.clips.filter((clip): clip is Record<string, unknown> => !!clip && typeof clip === "object" && !Array.isArray(clip)) : [];
-  const requestedClipCount = Math.max(1, Number(manifest.requestedClipCount || clips.length || 200));
-  const readyClips = clips.filter((clip) => cleanString(clip.status) === "ready");
+  const clips = Array.isArray(manifest.clips)
+    ? manifest.clips.filter(
+        (clip): clip is Record<string, unknown> =>
+          !!clip &&
+          typeof clip === "object" &&
+          !Array.isArray(clip),
+      )
+    : [];
+
+  const readyClips = clips.filter((clip) => {
+    const qc =
+      clip.qc &&
+      typeof clip.qc === "object" &&
+      !Array.isArray(clip.qc)
+        ? clip.qc as Record<string, unknown>
+        : {};
+
+    return cleanString(clip.status) === "ready" && qc.pass === true;
+  });
+
+  const acceptedDurationSeconds = Number(
+    manifest.acceptedDurationSeconds ||
+      readyClips.reduce(
+        (total, clip) => {
+          const duration = Number(clip.durationSeconds || 0);
+          return total + (Number.isFinite(duration) && duration > 0 ? duration : 0);
+        },
+        0,
+      ),
+  );
+
+  const minimumAcceptedDurationSeconds =
+    policy.acceptedMinutesMin * 60;
+
+  const maximumAcceptedDurationSeconds =
+    policy.acceptedMinutesMax * 60;
 
   if (manifest.generationMode !== "real" || manifest.provider !== "indextts2") {
     throw new Error("Dataset is not a real IndexTTS2 training dataset.");
   }
-  if (readyClips.length < requestedClipCount) {
-    throw new Error(`Dataset is not complete: ${readyClips.length} / ${requestedClipCount} clips are ready.`);
+
+  if (manifest.adaptiveComplete !== true || manifest.status !== "voice_pack_ready") {
+    throw new Error("Adaptive training dataset has not passed completion gating.");
   }
 
-  for (const clip of readyClips.slice(0, requestedClipCount)) {
+  if (
+    !Number.isFinite(acceptedDurationSeconds) ||
+    acceptedDurationSeconds < minimumAcceptedDurationSeconds ||
+    acceptedDurationSeconds > maximumAcceptedDurationSeconds
+  ) {
+    throw new Error(
+      `Adaptive training dataset duration is outside policy: ${acceptedDurationSeconds}s.`,
+    );
+  }
+
+  if (readyClips.length < 1) {
+    throw new Error("Adaptive training dataset has no QC-passing clips.");
+  }
+
+  for (const clip of readyClips) {
+    const qc =
+      clip.qc &&
+      typeof clip.qc === "object" &&
+      !Array.isArray(clip.qc)
+        ? clip.qc as Record<string, unknown>
+        : {};
+
+    if (qc.pass !== true) {
+      throw new Error(
+        `Ready clip did not pass QC: ${cleanString(clip.clipId)}`,
+      );
+    }
+
     const expectedAudioPath = cleanString(clip.expectedAudioPath);
+
     if (!expectedAudioPath || !(await fileHasBytes(expectedAudioPath))) {
-      throw new Error(`Ready clip is missing or empty: ${cleanString(clip.clipId) || expectedAudioPath}`);
+      throw new Error(
+        `Ready clip is missing or empty: ${cleanString(clip.clipId) || expectedAudioPath}`,
+      );
     }
   }
 
@@ -67,8 +135,11 @@ async function validateReadyTrainingDataset(ownerKey: string, characterId: strin
     manifest,
     manifestPath,
     manifestUrl: trainingDatasetManifestUrl(ownerKey, characterId, jobId),
-    requestedClipCount,
+    requestedClipCount: readyClips.length,
     generatedClipCount: readyClips.length,
+    acceptedDurationSeconds,
+    acceptedMinutes: acceptedDurationSeconds / 60,
+    adaptiveComplete: true,
   };
 }
 
@@ -225,6 +296,10 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ jobId: st
         clipCount: ready.requestedClipCount,
         requestedClipCount: ready.requestedClipCount,
         generatedClipCount: ready.generatedClipCount,
+        acceptedDurationSeconds: ready.acceptedDurationSeconds,
+        acceptedMinutes: ready.acceptedMinutes,
+        adaptiveComplete: ready.adaptiveComplete,
+        qualityControl: ready.manifest.qualityControl,
         manifestPath: ready.manifestPath,
         manifestUrl: ready.manifestUrl,
         datasetManifestPath: ready.manifestPath,

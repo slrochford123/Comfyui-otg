@@ -5,11 +5,10 @@ Claims only:
   jobType=character_voice_pipeline
   action=start_applio_training
 
-The worker validates a real 200-clip IndexTTS2 voice pack, serializes RTX 3090
-access through the shared voice GPU lock, waits for ComfyUI to become idle,
-requests cached-model release, runs the official Applio preprocess/extract/train
-pipeline, verifies the generated .pth and .index files, and completes the durable
-job without involving PROD.
+The worker validates a real adaptive/QC-passing IndexTTS2 voice pack, serializes
+RTX 3090 access through the shared voice GPU lock, runs RVC v2 at 48 kHz with
+RMVPE/pitch guidance, evaluates inference-ready checkpoint candidates on held-out
+conversions, and persists the verified winner without involving PROD.
 """
 
 from __future__ import annotations
@@ -19,6 +18,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -204,20 +204,67 @@ def resolve_manifest(job: Dict[str, Any]) -> Tuple[Path, Dict[str, Any], str]:
     return path, manifest, source_job_id
 
 
-def validate_real_manifest(manifest_path: Path, manifest: Dict[str, Any]) -> List[Dict[str, Any]]:
+
+def load_voice_training_policy() -> Tuple[Dict[str, Any], Path]:
+    policy_path = Path(
+        clean(os.environ.get("OTG_VOICE_TRAINING_POLICY"))
+        or (Path(__file__).resolve().parents[2] / "config" / "voice-training-policy.json")
+    ).resolve()
+    if not policy_path.is_file():
+        raise RuntimeError(f"Voice training policy missing: {policy_path}")
+    policy = read_json(policy_path)
+    rvc = policy.get("rvc") if isinstance(policy.get("rvc"), dict) else {}
+    if clean(rvc.get("version")).lower() != "v2":
+        raise RuntimeError("Voice training policy must require RVC v2.")
+    if int(rvc.get("sampleRate") or 0) != 48000:
+        raise RuntimeError("Voice training policy must require 48000 Hz RVC training.")
+    if clean(rvc.get("pitchExtractor")).lower() != "rmvpe":
+        raise RuntimeError("Voice training policy must require RMVPE pitch extraction.")
+    if rvc.get("pitchGuidance") is not True:
+        raise RuntimeError("Voice training policy must keep RVC pitch guidance enabled.")
+    if clean(policy.get("checkpointSelection")).lower() != "held-out-best":
+        raise RuntimeError("Voice training policy must require held-out-best checkpoint selection.")
+    return policy, policy_path
+
+
+def validate_real_manifest(
+    manifest_path: Path,
+    manifest: Dict[str, Any],
+    policy: Dict[str, Any],
+) -> List[Dict[str, Any]]:
     clips = manifest.get("clips") if isinstance(manifest.get("clips"), list) else []
-    ready = [clip for clip in clips if isinstance(clip, dict) and clean(clip.get("status")) == "ready"]
+    ready = [
+        clip
+        for clip in clips
+        if isinstance(clip, dict)
+        and clean(clip.get("status")) == "ready"
+        and isinstance(clip.get("qc"), dict)
+        and clip["qc"].get("pass") is True
+    ]
     if manifest.get("mock") is not False or clean(manifest.get("generationMode")) != "real":
         raise RuntimeError(f"Real Applio training requires a real IndexTTS2 voice pack: {manifest_path}")
     if clean(manifest.get("status")) != "voice_pack_ready":
         raise RuntimeError(f"Real Applio training requires manifest status voice_pack_ready: {manifest_path}")
-    if int(manifest.get("generatedClipCount") or 0) < 200 or len(ready) < 200:
-        raise RuntimeError(f"Real Applio training requires 200 ready clips. generated={manifest.get('generatedClipCount')} ready={len(ready)}")
-    for clip in ready[:200]:
+    if manifest.get("adaptiveComplete") is not True:
+        raise RuntimeError("Real Applio training requires adaptiveComplete:true after dataset QC.")
+
+    accepted_duration_seconds = float(manifest.get("acceptedDurationSeconds") or 0.0)
+    minimum_seconds = float(policy.get("acceptedMinutesMin") or 8.0) * 60.0
+    maximum_seconds = float(policy.get("acceptedMinutesMax") or 12.0) * 60.0
+    if accepted_duration_seconds < minimum_seconds or accepted_duration_seconds > maximum_seconds:
+        raise RuntimeError(
+            "Adaptive voice pack duration is outside policy: "
+            f"acceptedDurationSeconds={accepted_duration_seconds:.2f}; "
+            f"required={minimum_seconds:.0f}-{maximum_seconds:.0f}."
+        )
+    if not ready:
+        raise RuntimeError("Adaptive voice pack has no ready clips with qc.pass:true.")
+
+    for clip in ready:
         clip_path = Path(clean(clip.get("expectedAudioPath")))
         if not has_bytes(clip_path):
-            raise RuntimeError(f"Ready dataset clip is missing or empty: {clip.get('clipId')} {clip_path}")
-    return ready[:200]
+            raise RuntimeError(f"QC-passing dataset clip is missing or empty: {clip.get('clipId')} {clip_path}")
+    return ready
 
 
 def model_name_for(character_id: str, job_id: str) -> str:
@@ -443,7 +490,15 @@ def command_log_payload(plan: Dict[str, Any], commands: List[Dict[str, Any]], va
     }
 
 
-def build_plan(args: argparse.Namespace, owner_key: str, character_id: str, job_id: str, job_input: Dict[str, Any]) -> Dict[str, Any]:
+
+def build_plan(
+    args: argparse.Namespace,
+    owner_key: str,
+    character_id: str,
+    job_id: str,
+    job_input: Dict[str, Any],
+    policy: Dict[str, Any],
+) -> Dict[str, Any]:
     applio_root = Path(args.applio_root).resolve()
     python = Path(args.applio_python).expanduser().absolute()
     core_script = Path(args.applio_core).resolve()
@@ -454,6 +509,12 @@ def build_plan(args: argparse.Namespace, owner_key: str, character_id: str, job_
     if not core_script.exists():
         raise RuntimeError(f"Applio core.py not found: {core_script}")
 
+    rvc = policy.get("rvc") if isinstance(policy.get("rvc"), dict) else {}
+    sample_rate = int(rvc.get("sampleRate") or 48000)
+    f0_method = clean(rvc.get("pitchExtractor")) or "rmvpe"
+    if sample_rate != 48000 or f0_method.lower() != "rmvpe":
+        raise RuntimeError("Phase 1B-B requires RVC v2 48000 Hz with RMVPE.")
+
     model_name = model_name_for(character_id, job_id)
     output_dir = Path(args.data_root).resolve() / "characters" / safe_segment(owner_key) / "applio-models" / safe_segment(character_id) / safe_segment(job_id)
     logs_dir = output_dir / "logs"
@@ -461,6 +522,8 @@ def build_plan(args: argparse.Namespace, owner_key: str, character_id: str, job_
     preset = clean(job_input.get("trainingQualityPreset")) or "normal"
     epochs = int(job_input.get("epochs") or os.environ.get("APPLIO_EPOCHS") or 100)
     save_every_epoch = int(job_input.get("saveEveryEpoch") or os.environ.get("APPLIO_SAVE_EVERY_EPOCH") or 10)
+    if epochs > 1 and save_every_epoch >= epochs:
+        save_every_epoch = max(1, epochs // 4)
     master_addr = "127.0.0.1"
     master_port = derive_master_port(job_id)
     return {
@@ -476,19 +539,22 @@ def build_plan(args: argparse.Namespace, owner_key: str, character_id: str, job_
         "modelName": model_name,
         "modelPath": str(output_dir / f"{model_name}.pth"),
         "indexPath": str(output_dir / f"{model_name}.index"),
-        "sampleRate": int_env("APPLIO_SAMPLE_RATE", 40000),
+        "sampleRate": 48000,
+        "rvcVersion": "v2",
+        "pitchGuidance": True,
+        "checkpointSelection": "held-out-best",
         "trainingQualityPreset": preset,
         "epochs": epochs,
         "saveEveryEpoch": save_every_epoch,
         "estimatedDurationLabel": clean(job_input.get("estimatedDurationLabel")) or "45-90 minutes",
         "batchSize": int_env("APPLIO_BATCH_SIZE", 4),
         "gpu": clean(os.environ.get("APPLIO_GPU")) or "0",
-        "f0Method": clean(os.environ.get("APPLIO_F0_METHOD")) or "rmvpe",
+        "f0Method": "rmvpe",
         "indexAlgorithm": clean(os.environ.get("APPLIO_INDEX_ALGORITHM")) or "Auto",
         "vocoder": clean(os.environ.get("APPLIO_VOCODER")) or "HiFi-GAN",
         "cacheDataset": "True" if clean(os.environ.get("APPLIO_CACHE_DATASET")).lower() not in {"0", "false", "no"} else "False",
-        "saveEveryWeights": bool_env("APPLIO_SAVE_EVERY_WEIGHTS", "True"),
-        "saveOnlyLatest": bool_env("APPLIO_SAVE_ONLY_LATEST", "False"),
+        "saveEveryWeights": "True",
+        "saveOnlyLatest": "False",
         "pretrained": bool_env("APPLIO_PRETRAINED", "True"),
         "customPretrained": bool_env("APPLIO_CUSTOM_PRETRAINED", "False"),
         "cutPreprocess": clean(os.environ.get("APPLIO_CUT_PREPROCESS")) or "Skip",
@@ -499,6 +565,8 @@ def build_plan(args: argparse.Namespace, owner_key: str, character_id: str, job_
             "MASTER_ADDR": master_addr,
             "MASTER_PORT": master_port,
             "TORCH_DISTRIBUTED_DEBUG": clean(os.environ.get("TORCH_DISTRIBUTED_DEBUG")) or "DETAIL",
+            "APPLIO_SAMPLE_RATE": "48000",
+            "APPLIO_F0_METHOD": "rmvpe",
         },
     }
 
@@ -650,27 +718,204 @@ def run_command(
         raise RuntimeError(f"Applio {command['step']} reported traceback/error despite exit code 0. stdout: {stdout_path}; stderr: {stderr_path}")
 
 
-def find_outputs(plan: Dict[str, Any]) -> Tuple[Path, Path]:
-    roots = [
-        Path(plan["applioRoot"]) / "assets" / "weights",
-        Path(plan["applioRoot"]) / "logs" / plan["modelName"],
-        Path(plan["applioRoot"]) / "logs",
-        Path(plan["outputDir"]),
+
+def checkpoint_candidate_pattern(model_name: str) -> re.Pattern[str]:
+    return re.compile(rf"^{re.escape(model_name)}_(\d+)e_(\d+)s\.pth$")
+
+
+def discover_checkpoint_candidates(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
+    model_root = Path(plan["applioRoot"]) / "logs" / plan["modelName"]
+    pattern = checkpoint_candidate_pattern(plan["modelName"])
+    candidates: List[Dict[str, Any]] = []
+    if model_root.is_dir():
+        for path in model_root.iterdir():
+            if not path.is_file() or not has_bytes(path):
+                continue
+            match = pattern.fullmatch(path.name)
+            if not match:
+                continue
+            candidates.append({
+                "path": path,
+                "epoch": int(match.group(1)),
+                "step": int(match.group(2)),
+            })
+    candidates.sort(key=lambda item: (item["epoch"], item["step"], str(item["path"])))
+    if not candidates:
+        raise RuntimeError(
+            "Applio training produced no inference-ready checkpoint candidates matching "
+            f"{plan['modelName']}_<epoch>e_<step>s.pth in {model_root}."
+        )
+    return candidates
+
+
+def discover_trained_index(plan: Dict[str, Any]) -> Path:
+    model_root = Path(plan["applioRoot"]) / "logs" / plan["modelName"]
+    exact = model_root / f"{plan['modelName']}.index"
+    if has_bytes(exact):
+        return exact
+    found = [
+        path
+        for path in model_root.rglob("*.index")
+        if has_bytes(path) and plan["modelName"] in path.name
+    ] if model_root.is_dir() else []
+    found.sort(key=lambda path: (0 if path.name == f"{plan['modelName']}.index" else 1, str(path)))
+    if not found:
+        raise RuntimeError(f"Applio produced no trained index for {plan['modelName']} in {model_root}.")
+    return found[0]
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def resolve_original_reference(
+    args: argparse.Namespace,
+    owner_key: str,
+    manifest: Dict[str, Any],
+    job_input: Dict[str, Any],
+    output_dir: Path,
+) -> Tuple[Path, Dict[str, Any]]:
+    source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
+    path_values = [
+        source.get("originalSourcePath"),
+        job_input.get("originalSourcePath"),
+        job_input.get("referenceAudioPath"),
+        source.get("approvedSamplePath"),
+        job_input.get("approvedSamplePath"),
     ]
-    candidates_pth: List[Path] = []
-    candidates_index: List[Path] = []
-    for root in roots:
-        if not root.exists():
+    for value in path_values:
+        candidate_value = clean(value)
+        if not candidate_value:
             continue
-        candidates_pth.extend(path for path in root.rglob("*.pth") if plan["modelName"] in str(path) and has_bytes(path))
-        candidates_index.extend(path for path in root.rglob("*.index") if plan["modelName"] in str(path) and has_bytes(path))
-    if not candidates_pth and candidates_index:
-        raise RuntimeError("Applio produced index but no model checkpoint. Check --save_every_weights and train logs.")
-    if not candidates_pth or not candidates_index:
-        raise RuntimeError("Applio train produced index only; model training did not run.")
-    candidates_pth.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    candidates_index.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return candidates_pth[0], candidates_index[0]
+        candidate = Path(candidate_value).expanduser()
+        if has_bytes(candidate):
+            return candidate.resolve(), {
+                "referenceMode": "original-sample-only",
+                "path": str(candidate.resolve()),
+                "url": clean(source.get("originalSourceUrl") or source.get("approvedSampleUrl")),
+                "sha256": sha256_file(candidate),
+            }
+
+    url_values = [
+        source.get("originalSourceUrl"),
+        job_input.get("originalSourceUrl"),
+        job_input.get("referenceAudioUrl"),
+        source.get("approvedSampleUrl"),
+        job_input.get("approvedSampleUrl"),
+    ]
+    target = output_dir / "held-out" / "original-reference.wav"
+    for value in url_values:
+        url_value = clean(value)
+        if not url_value:
+            continue
+        url = build_url(args.base_url, url_value)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        request = urllib.request.Request(url, headers=auth_headers(args, owner_key), method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=600) as response, target.open("wb") as handle:
+                shutil.copyfileobj(response, handle)
+        except urllib.error.HTTPError as error:
+            raw = error.read().decode("utf-8", errors="replace")
+            log(f"[warn] Could not download original reference {url}: HTTP {error.code}: {raw}")
+            target.unlink(missing_ok=True)
+            continue
+        if has_bytes(target):
+            return target, {
+                "referenceMode": "original-sample-only",
+                "path": str(target),
+                "url": url_value,
+                "sha256": sha256_file(target),
+            }
+    raise RuntimeError("Held-out checkpoint evaluation requires the original saved Character Voice Sample.")
+
+
+def run_checkpoint_evaluation(
+    args: argparse.Namespace,
+    owner_key: str,
+    job_id: str,
+    plan: Dict[str, Any],
+    policy_path: Path,
+    candidates: List[Dict[str, Any]],
+    index_path: Path,
+    reference_audio: Path,
+) -> Dict[str, Any]:
+    evaluator = Path(__file__).resolve().with_name("otg-rvc-held-out-checkpoint-evaluator.py")
+    qc_python = Path(clean(os.environ.get("OTG_VOICE_QC_PYTHON")) or "/home/shawn-rochford/AI/runtime/test/voice-qc/speechbrain-ecapa/venv/bin/python")
+    speaker_model_dir = Path(clean(os.environ.get("OTG_VOICE_QC_SPEAKER_MODEL_DIR")) or "/home/shawn-rochford/AI/runtime/test/voice-qc/speechbrain-ecapa/models/spkrec-ecapa-voxceleb")
+    hf_home = Path(clean(os.environ.get("OTG_VOICE_QC_HF_HOME")) or "/home/shawn-rochford/AI/runtime/test/voice-qc/speechbrain-ecapa/hf-cache")
+    if not evaluator.is_file() or not qc_python.is_file() or not speaker_model_dir.is_dir() or not hf_home.is_dir():
+        raise RuntimeError(
+            f"Held-out evaluator runtime incomplete. evaluator={evaluator}; qcPython={qc_python}; "
+            f"speakerModel={speaker_model_dir}; hfHome={hf_home}"
+        )
+
+    evaluation_root = Path(plan["outputDir"]) / "held-out"
+    result_path = evaluation_root / "checkpoint-evaluation.json"
+    stdout_path = evaluation_root / "checkpoint-evaluation.stdout.log"
+    stderr_path = evaluation_root / "checkpoint-evaluation.stderr.log"
+    evaluation_root.mkdir(parents=True, exist_ok=True)
+
+    command = [
+        str(qc_python),
+        str(evaluator),
+        "--policy-path", str(policy_path),
+        "--applio-root", plan["applioRoot"],
+        "--applio-python", plan["python"],
+        "--core-script", plan["coreScript"],
+        "--model-name", plan["modelName"],
+        "--index-path", str(index_path),
+        "--reference-audio", str(reference_audio),
+        "--speaker-model-dir", str(speaker_model_dir),
+        "--hf-home", str(hf_home),
+        "--base-url", args.base_url,
+        "--work-dir", str(evaluation_root),
+        "--output-json", str(result_path),
+    ]
+    for candidate in candidates:
+        command.extend(["--candidate", str(candidate["path"])])
+
+    env = os.environ.copy()
+    env["OTG_OWNER_KEY"] = owner_key
+    env["OTG_WORKER_TOKEN"] = clean(args.worker_token)
+    env["HF_HOME"] = str(hf_home)
+    env["HF_HUB_OFFLINE"] = "1"
+    env["TRANSFORMERS_OFFLINE"] = "1"
+    env["APPLIO_SAMPLE_RATE"] = "48000"
+    env["APPLIO_F0_METHOD"] = "rmvpe"
+    timeout = int(clean(os.environ.get("OTG_APPLIO_CHECKPOINT_EVALUATION_TIMEOUT_SECONDS")) or "7200")
+
+    assert_job_active(args, owner_key, job_id)
+    with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open("w", encoding="utf-8") as stderr_file:
+        process = subprocess.run(
+            command,
+            cwd=plan["applioRoot"],
+            env=env,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            text=True,
+            timeout=timeout,
+        )
+    if process.returncode != 0 or not has_bytes(result_path):
+        stdout_tail = stdout_path.read_text(encoding="utf-8", errors="replace")[-4000:] if stdout_path.exists() else ""
+        stderr_tail = stderr_path.read_text(encoding="utf-8", errors="replace")[-4000:] if stderr_path.exists() else ""
+        raise RuntimeError(
+            f"Held-out checkpoint evaluation failed rc={process.returncode}. "
+            f"stdout={stdout_tail}; stderr={stderr_tail}"
+        )
+    evaluation = read_json(result_path)
+    selected = evaluation.get("selectedCheckpoint") if isinstance(evaluation.get("selectedCheckpoint"), dict) else {}
+    selected_path = Path(clean(selected.get("sourcePath")))
+    valid_paths = {str(item["path"].resolve()) for item in candidates}
+    if str(selected_path.resolve()) not in valid_paths or not has_bytes(selected_path):
+        raise RuntimeError(f"Evaluator returned invalid selectedCheckpoint: {selected}")
+    if not isinstance(evaluation.get("checkpointEvaluations"), list) or not evaluation["checkpointEvaluations"]:
+        raise RuntimeError("Evaluator returned no checkpointEvaluations.")
+    return evaluation
+
 
 
 def run_training_body(args: argparse.Namespace, job: Dict[str, Any]) -> None:
@@ -681,10 +926,12 @@ def run_training_body(args: argparse.Namespace, job: Dict[str, Any]) -> None:
         raise RuntimeError("Claimed Applio job is missing ownerKey, jobId, or characterId.")
     job_input = job.get("input") if isinstance(job.get("input"), dict) else {}
     manifest_path, manifest, source_dataset_job_id = resolve_manifest(job)
-    ready_clips = validate_real_manifest(manifest_path, manifest)
-    plan = build_plan(args, owner_key, character_id, job_id, job_input)
+    policy, policy_path = load_voice_training_policy()
+    ready_clips = validate_real_manifest(manifest_path, manifest, policy)
+    plan = build_plan(args, owner_key, character_id, job_id, job_input, policy)
     validate_applio_prerequisites(plan)
     start_time = time.time()
+    accepted_duration_seconds = float(manifest.get("acceptedDurationSeconds") or 0.0)
     base_result = {
         "mock": False,
         "adapter": "applio_real_training",
@@ -693,6 +940,8 @@ def run_training_body(args: argparse.Namespace, job: Dict[str, Any]) -> None:
         "manifestUrl": clean(job_input.get("manifestUrl")) or clean(manifest.get("manifestUrl")),
         "sourceDatasetJobId": source_dataset_job_id,
         "clipCount": len(ready_clips),
+        "acceptedDurationSeconds": accepted_duration_seconds,
+        "acceptedMinutes": accepted_duration_seconds / 60.0,
         "modelName": plan["modelName"],
         "trainingQualityPreset": plan["trainingQualityPreset"],
         "epochs": plan["epochs"],
@@ -703,40 +952,118 @@ def run_training_body(args: argparse.Namespace, job: Dict[str, Any]) -> None:
         "stderrPath": plan["stderrPath"],
         "commandPath": plan["commandPath"],
         "preparedDatasetPath": plan["preparedDatasetPath"],
+        "rvcVersion": "v2",
+        "sampleRate": 48000,
+        "pitchExtractor": "rmvpe",
+        "pitchGuidance": True,
+        "checkpointSelection": "held-out-best",
+        "trainingPolicy": {
+            "path": str(policy_path),
+            "thresholdStatus": clean(policy.get("thresholdStatus")),
+        },
     }
     Path(plan["logsDir"]).mkdir(parents=True, exist_ok=True)
     commands = build_commands(plan)
-    write_json(Path(plan["commandPath"]), command_log_payload(plan, commands))
+    write_json(Path(plan["commandPath"]), command_log_payload(plan, commands, {
+        "rvcVersion": "v2",
+        "sampleRate": 48000,
+        "pitchExtractor": "rmvpe",
+        "pitchGuidance": True,
+        "checkpointSelection": "held-out-best",
+    }))
 
-    checkpoint(args, owner_key, job_id, 10, "Applio training worker preparing dataset.", {**base_result, "currentStage": "queued"})
+    checkpoint(args, owner_key, job_id, 10, "Applio training worker preparing adaptive QC-passing dataset.", {**base_result, "currentStage": "queued"})
     assert_job_active(args, owner_key, job_id)
     prepare_dataset(ready_clips, Path(plan["preparedDatasetPath"]), manifest_path, source_dataset_job_id)
 
     stage_progress = {"preprocess": 30, "extract": 50, "train": 70}
     for command in commands:
-      stage = command["step"]
-      progress = stage_progress.get(stage, 20)
-      stage_result = {**base_result, "currentStage": stage}
-      checkpoint(args, owner_key, job_id, progress, f"Applio {stage} started.", stage_result)
-      run_command(args, owner_key, job_id, plan, command, progress, stage_result)
-      if stage == "extract":
-          config_path = Path(plan["applioRoot"]) / "logs" / plan["modelName"] / "config.json"
-          write_json(Path(plan["commandPath"]), command_log_payload(plan, commands, {"postExtractConfigPath": str(config_path), "postExtractConfigExists": has_bytes(config_path)}))
-          if not has_bytes(config_path):
-              raise RuntimeError(f"Config file missing after Applio extract: {config_path}")
-      checkpoint(args, owner_key, job_id, min(94, stage_progress.get(stage, 20) + 10), f"Applio {stage} completed.", {**base_result, "currentStage": stage})
+        stage = command["step"]
+        progress = stage_progress.get(stage, 20)
+        stage_result = {**base_result, "currentStage": stage}
+        checkpoint(args, owner_key, job_id, progress, f"Applio {stage} started.", stage_result)
+        run_command(args, owner_key, job_id, plan, command, progress, stage_result)
+        if stage == "extract":
+            config_path = Path(plan["applioRoot"]) / "logs" / plan["modelName"] / "config.json"
+            write_json(Path(plan["commandPath"]), command_log_payload(plan, commands, {
+                "postExtractConfigPath": str(config_path),
+                "postExtractConfigExists": has_bytes(config_path),
+                "rvcVersion": "v2",
+                "sampleRate": 48000,
+                "pitchExtractor": "rmvpe",
+                "pitchGuidance": True,
+            }))
+            if not has_bytes(config_path):
+                raise RuntimeError(f"Config file missing after Applio extract: {config_path}")
+        checkpoint(args, owner_key, job_id, min(94, stage_progress.get(stage, 20) + 10), f"Applio {stage} completed.", {**base_result, "currentStage": stage})
 
-    checkpoint(args, owner_key, job_id, 95, "Applio training worker packaging artifacts.", {**base_result, "currentStage": "artifact_copy"})
     assert_job_active(args, owner_key, job_id)
-    source_model, source_index = find_outputs(plan)
+    checkpoint_candidates = discover_checkpoint_candidates(plan)
+    source_index = discover_trained_index(plan)
     output_dir = Path(plan["outputDir"])
+    original_reference, source_reference = resolve_original_reference(
+        args,
+        owner_key,
+        manifest,
+        job_input,
+        output_dir,
+    )
+
+    checkpoint(args, owner_key, job_id, 95, "Testing RVC checkpoint candidates on independent held-out conversions.", {
+        **base_result,
+        "currentStage": "testing_voice_model",
+        "checkpointCandidates": [
+            {"path": str(item["path"]), "epoch": item["epoch"], "step": item["step"]}
+            for item in checkpoint_candidates
+        ],
+        "sourceReference": source_reference,
+    })
+    evaluation = run_checkpoint_evaluation(
+        args,
+        owner_key,
+        job_id,
+        plan,
+        policy_path,
+        checkpoint_candidates,
+        source_index,
+        original_reference,
+    )
+    selected_checkpoint = dict(evaluation["selectedCheckpoint"])
+    source_model = Path(clean(selected_checkpoint.get("sourcePath"))).resolve()
+    if not has_bytes(source_model):
+        raise RuntimeError(f"Selected checkpoint is missing after evaluation: {source_model}")
+
+    checkpoint(args, owner_key, job_id, 98, "Finalizing the verified held-out-best HQ Voice Model.", {
+        **base_result,
+        "currentStage": "finalizing",
+        "selectedCheckpoint": selected_checkpoint,
+        "checkpointEvaluations": evaluation["checkpointEvaluations"],
+        "speakerSimilarity": selected_checkpoint.get("speakerSimilarity"),
+        "transcriptIntelligibility": selected_checkpoint.get("transcriptIntelligibility"),
+        "audioQualityArtifact": selected_checkpoint.get("audioQualityArtifact"),
+        "performanceDuration": selected_checkpoint.get("performanceDuration"),
+        "qualityControl": evaluation.get("qualityControl"),
+    })
+
     output_dir.mkdir(parents=True, exist_ok=True)
     model_path = Path(plan["modelPath"])
     index_path = Path(plan["indexPath"])
     shutil.copyfile(source_model, model_path)
     shutil.copyfile(source_index, index_path)
     if not has_bytes(model_path) or not has_bytes(index_path):
-        raise RuntimeError("Copied Applio model artifacts are missing or empty.")
+        raise RuntimeError("Copied held-out-selected Applio model artifacts are missing or empty.")
+
+    selected_checkpoint.update({
+        "canonicalModelPath": str(model_path),
+        "canonicalIndexPath": str(index_path),
+        "sourceIndexPath": str(source_index),
+    })
+    evaluation["selectedCheckpoint"] = selected_checkpoint
+    evaluation["sourceReference"] = {
+        **(evaluation.get("sourceReference") if isinstance(evaluation.get("sourceReference"), dict) else {}),
+        **source_reference,
+    }
+
     completed_at = time.time()
     total_ms = int((completed_at - start_time) * 1000)
     result = {
@@ -751,6 +1078,17 @@ def run_training_body(args: argparse.Namespace, job: Dict[str, Any]) -> None:
         "sourceIndexPath": str(source_index),
         "expectedModelPath": str(model_path),
         "expectedIndexPath": str(index_path),
+        "selectedCheckpoint": selected_checkpoint,
+        "checkpointEvaluations": evaluation["checkpointEvaluations"],
+        "heldOutEvaluation": evaluation.get("heldOutEvaluation"),
+        "qualityControl": evaluation.get("qualityControl"),
+        "sourceReference": evaluation.get("sourceReference"),
+        "trainingPolicy": evaluation.get("trainingPolicy") or base_result["trainingPolicy"],
+        "rvcVersion": "v2",
+        "sampleRate": 48000,
+        "pitchExtractor": "rmvpe",
+        "pitchGuidance": True,
+        "checkpointSelection": "held-out-best",
         "trainingCompletedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(completed_at)),
         "totalTrainingMs": total_ms,
         "totalTrainingLabel": f"{round(total_ms / 1000)}s",
@@ -769,6 +1107,10 @@ def run_training_body(args: argparse.Namespace, job: Dict[str, Any]) -> None:
             "manifestUrl": result.get("manifestUrl", ""),
             "sourceDatasetJobId": source_dataset_job_id,
             "clipCount": len(ready_clips),
+            "acceptedDurationSeconds": accepted_duration_seconds,
+            "acceptedMinutes": accepted_duration_seconds / 60.0,
+            "adaptiveComplete": True,
+            "qualityControl": manifest.get("qualityControl"),
             "preparedDatasetPath": plan["preparedDatasetPath"],
             "generationMode": "real",
             "provider": "indextts2",
@@ -783,12 +1125,30 @@ def run_training_body(args: argparse.Namespace, job: Dict[str, Any]) -> None:
             "sourceModelPath": str(source_model),
             "sourceIndexPath": str(source_index),
             "status": "trained",
+            "rvcVersion": "v2",
+            "sampleRate": 48000,
+            "pitchExtractor": "rmvpe",
+            "pitchGuidance": True,
+            "checkpointSelection": "held-out-best",
+            "selectedCheckpoint": selected_checkpoint,
         },
+        "selectedCheckpoint": selected_checkpoint,
+        "checkpointEvaluations": evaluation["checkpointEvaluations"],
+        "heldOutEvaluation": evaluation.get("heldOutEvaluation"),
+        "qualityControl": evaluation.get("qualityControl"),
+        "sourceReference": evaluation.get("sourceReference"),
+        "trainingPolicy": evaluation.get("trainingPolicy") or base_result["trainingPolicy"],
+        "rvcVersion": "v2",
+        "sampleRate": 48000,
+        "pitchExtractor": "rmvpe",
+        "pitchGuidance": True,
+        "checkpointSelection": "held-out-best",
         "logs": {
             "logsDir": plan["logsDir"],
             "stdoutPath": plan["stdoutPath"],
             "stderrPath": plan["stderrPath"],
             "commandPath": plan["commandPath"],
+            "heldOutEvaluationPath": str(output_dir / "held-out" / "checkpoint-evaluation.json"),
         },
         "trainingQualityPreset": plan["trainingQualityPreset"],
         "epochs": plan["epochs"],
@@ -798,10 +1158,16 @@ def run_training_body(args: argparse.Namespace, job: Dict[str, Any]) -> None:
         "trainingCompletedAt": result["trainingCompletedAt"],
         "totalTrainingMs": result["totalTrainingMs"],
         "totalTrainingLabel": result["totalTrainingLabel"],
-        "note": "Real Applio model trained by the dedicated Linux RTX 3090 Applio worker.",
+        "note": "Real RVC v2 48 kHz model trained on Linux RTX 3090; held-out conversions selected the verified best checkpoint.",
     }
     write_json(output_dir / "training-artifact.json", artifact)
-    complete_job(args, owner_key, job_id, result, f"Real Applio training complete. modelPath: {model_path}; indexPath: {index_path}")
+    complete_job(
+        args,
+        owner_key,
+        job_id,
+        result,
+        f"Real Applio training complete. held-out-selected modelPath: {model_path}; indexPath: {index_path}",
+    )
 
 
 def run_training(args: argparse.Namespace, job: Dict[str, Any]) -> None:

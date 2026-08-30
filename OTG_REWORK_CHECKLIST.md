@@ -122,12 +122,49 @@ This file is the source of truth for the TEST-site tab rework.
 - [x] Commit and close Gallery cleanup before Characters rework.
 
 
+## Characters Rework
+
+- [x] Select Characters rework as the next TEST rework target after Gallery closure.
+- [x] Audit active Characters UI surfaces, API routes, persistence, image/reference flows, voice flows, and legacy/duplicate components.
+- [x] Classify Character source as DELETE / MODIFY / KEEP before implementation.
+- [x] Preserve Character Card as the model-facing character reference for generation workflows.
+- [x] Keep the clean default character image as selector/thumbnail presentation only, not a generation-reference fallback.
+- [x] Preserve existing accepted Character data and media; do not delete user character assets during source cleanup.
+- [x] Keep Character Gallery, Create Character, and Background Gallery behavior unchanged.
+- [x] Re-audit Asset Gallery, Character voice training, Audio Studio integration points, media storage, jobs, and Linux GPU routing after the corrected requirements.
+- [x] Mark the interim browse-only Asset Gallery and top-level Voice Gallery implementation as superseded; do not commit either as the final Characters design.
+- [x] Establish a corrected RED regression contract for Asset creation and Voice Characters before new source implementation.
+- [x] Replace the browse-only Asset Gallery with Create Asset, Upload Asset, and Asset Library workflows.
+- [x] Reuse Ernie Image, Z Image, Krea 2, Boogu, and Mage Flow for Asset generation with prompt and art-style controls.
+- [x] Give every Asset a user-defined name.
+- [x] Enforce exactly five Asset candidate slots; after five candidates exist, the sixth and every later generation replaces slot five while slots one through four remain.
+- [x] Add Asset Save for Later, Clear, Qwen Edit, and Use actions.
+- [x] Finalize Use as one canonical Asset image only; do not create multi-angle Asset references.
+- [x] Upscale the selected Asset to a dedicated 1080p-class Asset master before final persistence.
+- [x] Persist final Assets through the existing owner-scoped `/api/assets` store and preserve the existing Production V2 Asset reference pipeline.
+- [x] Replace Voice Gallery with Voice Characters.
+- [x] Show only characters with a valid original saved Voice Sample in Voice Characters.
+- [x] Preserve the original Voice Sample permanently and make the HQ Voice Model additive and optional.
+- [x] Reuse the existing durable Linux IndexTTS2 dataset and Applio training/inference pipeline rather than creating a parallel voice-training backend.
+- [x] Strengthen Voice Characters backend regression coverage so adaptive QC and held-out checkpoint selection must exist in the actual Linux workers, not only in policy metadata.
+- [x] Replace the fixed-count IndexTTS2 dataset workflow with adaptive generation targeting approximately 8-12 accepted high-quality minutes.
+- [x] Condition every synthetic training clip directly from the original saved Character Voice Sample; never recursively clone generated clips.
+- [x] Add automated speaker-similarity, transcript/ASR, and audio-quality QC with rejection and regeneration.
+- [x] Train the internal HQ model with RVC v2 at 48 kHz using RMVPE and pitch guidance, while keeping those technical controls out of the normal user UI.
+- [x] Save useful training checkpoints, run held-out conversion tests, and select the best verified checkpoint instead of assuming the final epoch is best.
+- [x] Persist the winning `.pth`, `.index`, source-reference provenance, QC results, training date, and model/version metadata on the Character voice profile.
+- [x] Show stage-based Voice Characters progress: Preparing Voice Reference, Generating Training Speech, Validating Dataset, Extracting Voice Features, Training HQ Voice Model, Testing Voice Model, and Finalizing.
+- [x] Run focused Characters, Asset, voice-pipeline, Gallery, Favorites, Angles, Generate, TypeScript, production-build, and diff validation.
+- [x] Deploy TEST and live-accept the corrected Characters rework.
+- [x] Commit and close Characters rework before Production rework.
+
+Audio Studio Voice Sample/HQ Voice Model replacement remains Phase 5 of the voice project and will be implemented during the Edit Video / Audio Studio rework after the Character voice-training foundation is accepted.
+
 ## Canonical Remaining Rework Order
 
 The remaining TEST rework order is fixed unless explicitly changed:
 
-1. Gallery cleanup
-2. Characters rework
-3. Production rework
-4. Edit Video rework
-5. Machine implementation
+1. Characters rework
+2. Production rework
+3. Edit Video rework
+4. Machine implementation

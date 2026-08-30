@@ -8,6 +8,9 @@ import { withNoStore, sessionErrorResponse } from "@/lib/http/routeHelpers";
 import { checkpointRemoteWorkerJob, getQueuedContractJob } from "@/lib/jobs/voicePipelineJobs";
 import { hasValidWorkerToken } from "@/lib/jobs/workerAuth";
 import {
+  loadVoiceTrainingPolicy,
+} from "@/lib/jobs/voiceTrainingPolicy";
+import {
   resolveTrainingDatasetCanonicalSourcePath,
   resolveTrainingDatasetClipPath,
   resolveTrainingDatasetManifestPath,
@@ -66,6 +69,22 @@ function parseManifest(value: FormDataEntryValue | null): Record<string, unknown
 function manifestClips(value: unknown): Array<Record<string, unknown>> {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item));
+}
+
+function clipQc(value: Record<string, unknown>): Record<string, unknown> {
+  return value.qc && typeof value.qc === "object" && !Array.isArray(value.qc)
+    ? value.qc as Record<string, unknown>
+    : {};
+}
+
+function clipPassesQc(value: Record<string, unknown>): boolean {
+  const qc = clipQc(value);
+  return qc.pass === true;
+}
+
+function clipDurationSeconds(value: Record<string, unknown>): number {
+  const duration = Number(value.durationSeconds || 0);
+  return Number.isFinite(duration) && duration > 0 ? duration : 0;
 }
 
 function uploadedClipEntries(form: FormData): Array<{ clipId: string; file: File }> {
@@ -151,9 +170,11 @@ export async function POST(req: NextRequest) {
       uploadedClipIds.add(upload.clipId);
     }
 
+    const policy = loadVoiceTrainingPolicy();
+
     const alreadyReadyClipIds = new Set(
       inputClips
-        .filter((clip) => cleanString(clip.status) === "ready")
+        .filter((clip) => cleanString(clip.status) === "ready" && clipPassesQc(clip))
         .map((clip) => cleanString(clip.clipId))
         .filter(isClipId),
     );
@@ -179,7 +200,13 @@ export async function POST(req: NextRequest) {
       const clipNumber = index + 1;
       const clipId = `clip_${String(clipNumber).padStart(3, "0")}`;
       const existing = inputClips.find((clip) => cleanString(clip.clipId) === clipId) || {};
-      const ready = uploadedClipIds.has(clipId) || alreadyReadyClipIds.has(clipId) || await clipFileExists(clipId);
+      const fileReady =
+        uploadedClipIds.has(clipId) ||
+        alreadyReadyClipIds.has(clipId) ||
+        await clipFileExists(clipId);
+
+      const qcPass = clipPassesQc(existing);
+      const ready = fileReady && qcPass;
 
       const clip = {
         ...existing,
@@ -197,12 +224,53 @@ export async function POST(req: NextRequest) {
       clips.push(clip);
     }
 
-    const generatedClipCount = clips.filter((clip) => clip.status === "ready").length;
-    const complete = generatedClipCount === requestedClipCount;
+    const passingClips = clips.filter(
+      (clip) => clip.status === "ready" && clipPassesQc(clip),
+    );
+
+    const generatedClipCount = passingClips.length;
+
+    const acceptedDurationSeconds = passingClips.reduce(
+      (total, clip) => total + clipDurationSeconds(clip),
+      0,
+    );
+
+    const acceptedMinutes = acceptedDurationSeconds / 60;
+
+    const minimumAcceptedDurationSeconds =
+      policy.acceptedMinutesMin * 60;
+
+    const targetAcceptedDurationSeconds =
+      policy.acceptedMinutesTarget * 60;
+
+    const maximumAcceptedDurationSeconds =
+      policy.acceptedMinutesMax * 60;
+
+    const adaptiveCompleteRequested =
+      manifestInput.adaptiveComplete === true;
+
+    const allReadyClipsPassQc =
+      generatedClipCount > 0 &&
+      passingClips.every((clip) => clipQc(clip).pass === true);
+
+    const adaptiveComplete =
+      adaptiveCompleteRequested &&
+      allReadyClipsPassQc &&
+      acceptedDurationSeconds >= minimumAcceptedDurationSeconds &&
+      acceptedDurationSeconds <= maximumAcceptedDurationSeconds;
+
+    const complete = adaptiveComplete;
 
     const sourceInput = manifestInput.source && typeof manifestInput.source === "object" && !Array.isArray(manifestInput.source)
       ? manifestInput.source as Record<string, unknown>
       : {};
+
+    const qualityControlInput =
+      manifestInput.qualityControl &&
+      typeof manifestInput.qualityControl === "object" &&
+      !Array.isArray(manifestInput.qualityControl)
+        ? manifestInput.qualityControl as Record<string, unknown>
+        : {};
 
     const finalManifest = {
       ...manifestInput,
@@ -231,6 +299,16 @@ export async function POST(req: NextRequest) {
       completedAt: complete ? now : null,
       requestedClipCount,
       generatedClipCount,
+      acceptedDurationSeconds,
+      acceptedMinutes,
+      adaptiveComplete,
+      qualityControl: {
+        ...qualityControlInput,
+        pass: adaptiveComplete,
+        acceptedClipCount: generatedClipCount,
+        acceptedDurationSeconds,
+        acceptedMinutes,
+      },
       clips,
       status: complete ? "voice_pack_ready" : "manifest_ready",
       mock: false,
@@ -250,15 +328,27 @@ export async function POST(req: NextRequest) {
       remoteWorker: true,
       manifestPath,
       manifestUrl: trainingDatasetManifestUrl(workerOwnerKey(req, owner.ownerKey), characterId, jobId),
-      clipCount: requestedClipCount,
+      clipCount: generatedClipCount,
       generatedClipCount,
+      acceptedDurationSeconds,
+      acceptedMinutes,
+      adaptiveComplete,
+      qualityControl: finalManifest.qualityControl,
       canonicalSourcePath,
       canonicalSourceUrl,
       generationMode: "real",
       status: complete ? "voice_pack_ready" : "manifest_ready",
     };
 
-    const progress = Math.max(5, Math.min(99, Math.round((generatedClipCount / requestedClipCount) * 100)));
+    const progress = Math.max(
+      5,
+      Math.min(
+        99,
+        Math.round(
+          (acceptedDurationSeconds / Math.max(1, targetAcceptedDurationSeconds)) * 100,
+        ),
+      ),
+    );
     checkpointRemoteWorkerJob(
       workerOwnerKey(req, owner.ownerKey),
       jobId,
@@ -269,7 +359,7 @@ export async function POST(req: NextRequest) {
         currentClipId: clips.findLast((clip) => clip.status === "ready")?.clipId ?? null,
       },
       complete ? 99 : progress,
-      `Generated ${generatedClipCount} / ${requestedClipCount} clips on the Linux IndexTTS2 dataset worker.`,
+      `Accepted ${generatedClipCount} QC-passing clips (${acceptedMinutes.toFixed(2)} minutes) on the Linux IndexTTS2 dataset worker.`,
     );
 
     return NextResponse.json(

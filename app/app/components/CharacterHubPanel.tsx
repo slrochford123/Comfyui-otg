@@ -26,6 +26,8 @@ import {
   type EditableCharacterCandidate,
 } from "@/lib/client/characterCandidateEditClient";
 import CharacterIdentityVoicePanel, { SavedCharacterLibrary } from "./CharacterIdentityVoicePanel";
+import AssetGalleryPanel from "./AssetGalleryPanel";
+import VoiceCharactersPanel from "./VoiceCharactersPanel";
 import {
   appendCharacterEditCandidate,
   type CharacterCandidateLineage,
@@ -51,7 +53,8 @@ type CharacterHubView =
   | "upload-character"
   | "upload-freeform"
   | "saved-for-later"
-  | "legacy";
+  | "legacy"
+  | "voice-characters";
 
 type CharacterModelId =
   | "ernie-image"
@@ -3238,9 +3241,15 @@ export default function CharacterHubPanel({
 
   if (view === "asset-gallery") {
     return (
-      <FutureGalleryPlaceholder
-        title="Asset Gallery"
-        description="Reusable production assets will be rebuilt after Character and Background galleries."
+      <AssetGalleryPanel
+        onBack={() => setView("home")}
+      />
+    );
+  }
+
+  if (view === "voice-characters") {
+    return (
+      <VoiceCharactersPanel
         onBack={() => setView("home")}
       />
     );
@@ -3401,6 +3410,15 @@ export default function CharacterHubPanel({
           onClick={() => setView("asset-gallery")}
           status="Preview section →"
         />
+
+          <GalleryCard
+            eyebrow="Character voice training"
+            title="Voice Characters"
+            description="Train, test, and manage optional HQ voice models for characters that already have a saved Voice Sample."
+            accent="bg-violet-300"
+            onClick={() => setView("voice-characters")}
+            status="Manage HQ voices →"
+          />
       </div>
     </div>
   );

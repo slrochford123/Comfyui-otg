@@ -6,6 +6,9 @@ import crypto from "node:crypto";
 import { ensureDir, OTG_DATA_ROOT, safeSegment } from "@/lib/paths";
 import { generateIndexTts2VoicePackBatch } from "@/lib/jobs/adapters/indexTts2VoicePackBatchAdapter";
 import type { QueuedContractJob } from "@/lib/jobs/voicePipelineJobs";
+import {
+  loadVoiceTrainingPolicy,
+} from "@/lib/jobs/voiceTrainingPolicy";
 
 export type TrainingDatasetManifestClip = {
   clipId: string;
@@ -20,6 +23,19 @@ export type TrainingDatasetManifestClip = {
   generatorProvider?: "qwen3" | "cosy" | "indextts2";
   retryCount?: number;
   lastError?: string;
+  coverage?: string;
+  durationSeconds?: number;
+  qc?: {
+    pass: boolean;
+    speakerSimilarity?: number;
+    speakerSimilarityMin?: number;
+    transcript?: string;
+    expectedTranscript?: string;
+    transcriptSimilarity?: number;
+    transcriptSimilarityMin?: number;
+    audioQuality?: Record<string, unknown>;
+    reasons?: string[];
+  };
   updatedAt?: string;
 };
 
@@ -57,6 +73,10 @@ export type TrainingDatasetManifest = {
   completedAt: string | null;
   requestedClipCount: number;
   generatedClipCount: number;
+  acceptedDurationSeconds?: number;
+  acceptedMinutes?: number;
+  adaptiveComplete?: boolean;
+  qualityControl?: Record<string, unknown>;
   clips: TrainingDatasetManifestClip[];
   status: "manifest_ready" | "voice_pack_ready";
   mock: boolean;
@@ -70,6 +90,10 @@ export type TrainingDatasetManifestResult = {
   manifestUrl: string;
   clipCount: number;
   generatedClipCount: number;
+  acceptedDurationSeconds?: number;
+  acceptedMinutes?: number;
+  adaptiveComplete?: boolean;
+  qualityControl?: Record<string, unknown>;
   approvedSampleUrl: string;
   sourceSamplePath: string;
   originalSourcePath: string;
@@ -144,9 +168,25 @@ function approvedSampleType(value: unknown): "tuned" | "base" | "unknown" {
 }
 
 function requestedClipCount(value: unknown): number {
+  const policy = loadVoiceTrainingPolicy();
+  const maximumAttempts = Math.max(
+    1,
+    Math.floor(policy.maxGeneratedAttempts),
+  );
+
   const numberValue = Number(value);
-  if (!Number.isFinite(numberValue)) return 200;
-  return Math.max(1, Math.min(200, Math.floor(numberValue)));
+
+  if (!Number.isFinite(numberValue)) {
+    return maximumAttempts;
+  }
+
+  return Math.max(
+    1,
+    Math.min(
+      maximumAttempts,
+      Math.floor(numberValue),
+    ),
+  );
 }
 
 function clipRetryLimit(): number {
@@ -210,6 +250,19 @@ function fileReady(filePath: string): boolean {
 
 function readyClipCount(clips: TrainingDatasetManifestClip[]): number {
   return clips.filter((clip) => clip.status === "ready" && fileReady(clip.expectedAudioPath)).length;
+}
+
+function clipQcPass(clip: TrainingDatasetManifestClip): boolean {
+  return clip.qc?.pass === true;
+}
+
+function acceptedClipDurationSeconds(clips: TrainingDatasetManifestClip[]): number {
+  return clips
+    .filter((clip) => clip.status === "ready" && clipQcPass(clip))
+    .reduce((total, clip) => {
+      const duration = Number(clip.durationSeconds || 0);
+      return total + (Number.isFinite(duration) && duration > 0 ? duration : 0);
+    }, 0);
 }
 
 function clipHash(filePath: string): string {
@@ -368,9 +421,7 @@ function resolveDatasetFfmpegPath(): string {
 }
 
 function resolveApplioSampleRate(): number {
-  const value = Number(process.env.APPLIO_SAMPLE_RATE);
-  if (Number.isFinite(value) && value >= 8000 && value <= 192000) return Math.floor(value);
-  return 40000;
+  return loadVoiceTrainingPolicy().rvc.sampleRate;
 }
 
 function requireFfmpeg(ffmpeg: string): void {
@@ -652,6 +703,7 @@ export async function createTrainingDatasetManifest(
   const approvedSampleUrl = cleanString(job.input.approvedSampleUrl);
   if (!approvedSampleUrl) throw new Error("Missing approvedSampleUrl for training dataset manifest.");
 
+  const policy = loadVoiceTrainingPolicy();
   const clipCount = requestedClipCount(job.input.requestedClipCount);
   const approvedSource = normalizeApprovedSourceSample(
     ownerKey,
@@ -727,6 +779,25 @@ export async function createTrainingDatasetManifest(
     completedAt,
     requestedClipCount: clipCount,
     generatedClipCount: readyClipCount(clips),
+    acceptedDurationSeconds: acceptedClipDurationSeconds(clips),
+    acceptedMinutes: acceptedClipDurationSeconds(clips) / 60,
+    adaptiveComplete:
+      acceptedClipDurationSeconds(clips) >= policy.acceptedMinutesMin * 60 &&
+      acceptedClipDurationSeconds(clips) <= policy.acceptedMinutesMax * 60 &&
+      clips.some((clip) => clip.status === "ready") &&
+      clips
+        .filter((clip) => clip.status === "ready")
+        .every((clip) => clipQcPass(clip)),
+    qualityControl: {
+      pass:
+        acceptedClipDurationSeconds(clips) >= policy.acceptedMinutesMin * 60 &&
+        clips
+          .filter((clip) => clip.status === "ready")
+          .every((clip) => clipQcPass(clip)),
+      speakerSimilarityRequired: policy.speakerSimilarityRequired,
+      transcriptVerificationRequired: policy.transcriptVerificationRequired,
+      audioQualityQcRequired: policy.audioQualityQcRequired,
+    },
     clips,
     status,
     mock: generationMode !== "real",
