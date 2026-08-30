@@ -1435,10 +1435,13 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [galleryBusy, setGalleryBusy] = useState(false);
   const [galleryForcePullBusy, setGalleryForcePullBusy] = useState(false);
   const [galleryFilter, setGalleryFilter] = useState<"all" | "images" | "videos">("all");
+  const [galleryFavoritesOnly, setGalleryFavoritesOnly] = useState(false);
   const [gallerySort, setGallerySort] = useState<"newest" | "oldest" | "name">("newest");
   const [galleryViewMode, setGalleryViewMode] = useState<GalleryViewMode>("default");
   const [galleryItemsPerPage, setGalleryItemsPerPage] = useState<number>(25);
   const [galleryPage, setGalleryPage] = useState(1);
+  const [galleryTotalItems, setGalleryTotalItems] = useState(0);
+  const [galleryTotalPages, setGalleryTotalPages] = useState(1);
   const [gallerySearch, setGallerySearch] = useState("");
   const deferredGallerySearch = useDeferredValue(gallerySearch);
   const gallerySearchQuery = useMemo(() => deferredGallerySearch.trim(), [deferredGallerySearch]);
@@ -2480,19 +2483,47 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     galleryAbortRef.current?.abort();
     const controller = new AbortController();
     galleryAbortRef.current = controller;
-    const queryKey = ["otg", "gallery", gallerySort, galleryFilter, gallerySearchQuery] as const;
-    const cached = queryClient.getQueryData<GalleryItem[]>(queryKey);
+
+    const requestPer = galleryItemsPerPage <= 0 ? 5000 : galleryItemsPerPage;
+    const queryKey = [
+      "otg",
+      "gallery",
+      gallerySort,
+      galleryFilter,
+      gallerySearchQuery,
+      galleryFavoritesOnly,
+      galleryPage,
+      requestPer,
+    ] as const;
+
+    const cached = queryClient.getQueryData<{
+      items: GalleryItem[];
+      total: number;
+      totalPages: number;
+    }>(queryKey);
+
     if (cached) {
-      setGalleryItems(cached);
+      setGalleryItems(cached.items);
+      setGalleryTotalItems(cached.total);
+      setGalleryTotalPages(cached.totalPages);
     }
 
     setGalleryBusy(!cached);
+
     try {
       const params = new URLSearchParams();
       params.set("sort", gallerySort);
       params.set("filter", galleryFilter);
-      params.set("per", "80");
-      if (gallerySearchQuery) params.set("search", gallerySearchQuery);
+      params.set("page", String(galleryPage));
+      params.set("per", String(requestPer));
+
+      if (gallerySearchQuery) {
+        params.set("search", gallerySearchQuery);
+      }
+
+      if (galleryFavoritesOnly) {
+        params.set("favorite", "1");
+      }
 
       const res = await fetch(`/api/gallery?${params.toString()}`, {
         cache: "no-store",
@@ -2501,25 +2532,68 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       });
 
       const data = await res.json().catch(() => ({}));
-      const items = Array.isArray(data?.items) ? data.items : Array.isArray(data?.files) ? data.files : [];
+
+      if (!res.ok || data?.ok === false) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : "Gallery request failed."
+        );
+      }
+
+      const items = Array.isArray(data?.items)
+        ? data.items
+        : Array.isArray(data?.files)
+          ? data.files
+          : [];
+
       const normalized = items.map(normalizeGalleryItem);
-      queryClient.setQueryData(queryKey, normalized);
+
+      const total = Math.max(
+        0,
+        Number(data?.total ?? normalized.length) || 0
+      );
+
+      const totalPages = Math.max(
+        1,
+        Number(data?.totalPages ?? 1) || 1
+      );
+
+      queryClient.setQueryData(queryKey, {
+        items: normalized,
+        total,
+        totalPages,
+      });
+
       if (galleryRequestSeqRef.current === requestSeq && !controller.signal.aborted) {
         setGalleryItems(normalized);
+        setGalleryTotalItems(total);
+        setGalleryTotalPages(totalPages);
       }
     } catch (error) {
       if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
         return;
       }
+
       if (galleryRequestSeqRef.current === requestSeq) {
         setGalleryItems([]);
+        setGalleryTotalItems(0);
+        setGalleryTotalPages(1);
       }
     } finally {
       if (galleryRequestSeqRef.current === requestSeq) {
         setGalleryBusy(false);
       }
     }
-  }, [galleryFilter, gallerySearchQuery, gallerySort, queryClient]);
+  }, [
+    galleryFavoritesOnly,
+    galleryFilter,
+    galleryItemsPerPage,
+    galleryPage,
+    gallerySearchQuery,
+    gallerySort,
+    queryClient,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -3172,22 +3246,19 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   );
   useEffect(() => {
     setGalleryPage(1);
-  }, [deferredGallerySearch, galleryFilter, gallerySort, galleryItemsPerPage]);
-
-  const galleryTotalPages = useMemo(() => {
-    if (galleryItemsPerPage <= 0) return 1;
-    return Math.max(1, Math.ceil(galleryItems.length / galleryItemsPerPage));
-  }, [galleryItems.length, galleryItemsPerPage]);
+  }, [
+    deferredGallerySearch,
+    galleryFavoritesOnly,
+    galleryFilter,
+    gallerySort,
+    galleryItemsPerPage,
+  ]);
 
   useEffect(() => {
     setGalleryPage((current) => Math.min(Math.max(1, current), galleryTotalPages));
   }, [galleryTotalPages]);
 
-  const visibleGalleryItems = useMemo(() => {
-    if (galleryItemsPerPage <= 0) return galleryItems;
-    const start = (galleryPage - 1) * galleryItemsPerPage;
-    return galleryItems.slice(start, start + galleryItemsPerPage);
-  }, [galleryItems, galleryItemsPerPage, galleryPage]);
+  const visibleGalleryItems = galleryItems;
 
   const galleryItemKeySet = useMemo(() => {
     return new Set(galleryItems.map((item) => getGalleryItemKey(item)).filter(Boolean));
@@ -7648,6 +7719,8 @@ async function handleAskAi() {
         galleryForcePullBusy={galleryForcePullBusy}
         galleryFilter={galleryFilter}
         onGalleryFilterChange={setGalleryFilter}
+        galleryFavoritesOnly={galleryFavoritesOnly}
+        onGalleryFavoritesOnlyChange={setGalleryFavoritesOnly}
         gallerySort={gallerySort}
         onGallerySortChange={setGallerySort}
         galleryViewMode={galleryViewMode}
@@ -7662,6 +7735,7 @@ async function handleAskAi() {
         galleryActionBusyKind={galleryActionBusyKind}
         galleryActionsLocked={galleryActionsLocked}
         visibleGalleryItems={visibleGalleryItems}
+        galleryTotalItems={galleryTotalItems}
         galleryTotalPages={galleryTotalPages}
         onRefreshGallery={() => void loadGallery()}
         onForcePullGallery={() => void handleGalleryForcePull()}

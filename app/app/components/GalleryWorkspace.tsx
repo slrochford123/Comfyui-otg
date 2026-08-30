@@ -621,6 +621,8 @@ type GalleryWorkspaceProps = {
   galleryForcePullBusy: boolean;
   galleryFilter: "all" | "images" | "videos";
   onGalleryFilterChange: (value: "all" | "images" | "videos") => void;
+  galleryFavoritesOnly: boolean;
+  onGalleryFavoritesOnlyChange: (value: boolean) => void;
   gallerySort: "newest" | "oldest" | "name";
   onGallerySortChange: (value: "newest" | "oldest" | "name") => void;
   galleryViewMode: GalleryViewMode;
@@ -635,6 +637,7 @@ type GalleryWorkspaceProps = {
   galleryActionBusyKind: GalleryActionKind;
   galleryActionsLocked: boolean;
   visibleGalleryItems: GalleryItem[];
+  galleryTotalItems: number;
   galleryTotalPages: number;
   onRefreshGallery: () => void;
   onForcePullGallery: () => void;
@@ -692,6 +695,8 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
     galleryForcePullBusy,
     galleryFilter,
     onGalleryFilterChange,
+    galleryFavoritesOnly,
+    onGalleryFavoritesOnlyChange,
     gallerySort,
     onGallerySortChange,
     galleryViewMode,
@@ -706,6 +711,7 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
     galleryActionBusyKind,
     galleryActionsLocked,
     visibleGalleryItems,
+    galleryTotalItems,
     galleryTotalPages,
     onRefreshGallery,
     onForcePullGallery,
@@ -764,10 +770,20 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
     viewerIndex,
   });
 
-  const galleryHasRefinements = safeGallerySearch.trim().length > 0 || galleryFilter !== "all" || gallerySort !== "newest";
+  const galleryHasRefinements =
+    safeGallerySearch.trim().length > 0 ||
+    galleryFilter !== "all" ||
+    galleryFavoritesOnly ||
+    gallerySort !== "newest";
+
+  const galleryCount = Math.max(
+    0,
+    Number(galleryTotalItems || 0)
+  );
+
   const gallerySummary = galleryHasRefinements
-    ? `${galleryItems.length} matching item${galleryItems.length === 1 ? "" : "s"}`
-    : `${galleryItems.length} gallery item${galleryItems.length === 1 ? "" : "s"}`;
+    ? `${galleryCount} matching item${galleryCount === 1 ? "" : "s"}`
+    : `${galleryCount} gallery item${galleryCount === 1 ? "" : "s"}`;
   return (
     <>
       {activeTab === "gallery" ? (
@@ -798,7 +814,7 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
               </div>
             </div>
 
-            <div className="mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
+            <div className="mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto]">
               <input
                 value={gallerySearch}
                 onChange={(e) => onGallerySearchChange(e.target.value)}
@@ -814,6 +830,23 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
                 <option value="images">Images</option>
                 <option value="videos">Videos</option>
               </select>
+
+              <button
+                type="button"
+                data-otg="gallery-favorites-filter"
+                aria-pressed={galleryFavoritesOnly}
+                onClick={() => onGalleryFavoritesOnlyChange(!galleryFavoritesOnly)}
+                className={cn(
+                  "inline-flex min-h-12 items-center justify-center gap-2 rounded-[22px] border px-5 py-3 font-semibold transition",
+                  galleryFavoritesOnly
+                    ? "border-pink-400/40 bg-pink-500/15 text-pink-100"
+                    : "border-white/10 bg-black/55 text-white/85 hover:bg-white/10"
+                )}
+              >
+                <IconHeart filled={galleryFavoritesOnly} />
+                <span>Favorites</span>
+              </button>
+
               <select
                 value={gallerySort}
                 onChange={(e) => onGallerySortChange(e.target.value as "newest" | "oldest" | "name")}
@@ -841,7 +874,7 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
 
             <div className="mb-4">
               <PaginationBar
-                totalItems={galleryItems.length}
+                totalItems={galleryTotalItems}
                 page={galleryPage}
                 totalPages={galleryTotalPages}
                 pageSize={galleryItemsPerPage}
@@ -872,7 +905,7 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
 
             <div className="mt-4">
               <PaginationBar
-                totalItems={galleryItems.length}
+                totalItems={galleryTotalItems}
                 page={galleryPage}
                 totalPages={galleryTotalPages}
                 pageSize={galleryItemsPerPage}

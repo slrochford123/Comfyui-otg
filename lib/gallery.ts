@@ -332,8 +332,9 @@ function listFilesFromSource(source: GallerySource): GalleryResolvedItem[] {
 
 export type ListGalleryOptions = {
   filter?: "all" | "pictures" | "videos" | "images";
-  sort?: "last_created" | "first_created" | "favorited" | "name" | "newest" | "oldest";
+  sort?: "last_created" | "first_created" | "name" | "newest" | "oldest";
   search?: string;
+  favoritesOnly?: boolean;
   page?: number;
   per?: number;
 };
@@ -363,16 +364,13 @@ export function listGalleryItemsFromSources(
     });
   }
 
+  if (opts.favoritesOnly) {
+    items = items.filter((item) => Boolean(item.meta?.favorite));
+  }
+
   const sort = String(opts.sort || "last_created").toLowerCase();
   if (sort === "first_created" || sort === "oldest") {
     items.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-  } else if (sort === "favorited") {
-    items.sort((a, b) => {
-      const af = a.meta.favorite ? 1 : 0;
-      const bf = b.meta.favorite ? 1 : 0;
-      if (bf !== af) return bf - af;
-      return (b.createdAt || 0) - (a.createdAt || 0);
-    });
   } else if (sort === "name") {
     items.sort((a, b) => a.name.localeCompare(b.name));
   } else {

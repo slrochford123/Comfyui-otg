@@ -103,14 +103,31 @@ This file is the source of truth for the TEST-site tab rework.
 - [x] Deploy TEST and live-accept that Favorites is gone while Gallery still works.
 - [x] Commit and close Favorites removal before Gallery cleanup.
 
+## Gallery Cleanup
+
+- [x] Select Gallery cleanup as the next TEST rework target.
+- [x] Keep Gallery Heart/favorite metadata but do not restore a separate Favorites tab or workspace.
+- [x] Define Favorites as an independent Gallery filter, not a sort mode.
+- [x] Audit Gallery search, media-type filtering, sorting, pagination, view modes, Heart mutation, and stale Gallery UI.
+- [x] Establish a RED regression contract for the Gallery Favorites-only filter.
+- [x] Add a visible `Favorites` Heart filter that shows only hearted Gallery items when active.
+- [x] Make Favorites filtering compose with All/Images/Videos, search, Newest/Oldest/Name, and pagination.
+- [x] Reset pagination safely when Gallery filters change.
+- [x] Preserve `/api/gallery/favorite` and `meta.favorite` as the Gallery saved-state mechanism.
+- [x] Ensure un-hearting an item while Favorites filtering is active removes it from the visible filtered results.
+- [x] Complete remaining Gallery cleanup discovered by the dependency/UI audit.
+- [x] Remove unreferenced legacy Gallery watcher, filesystem, index, and scan support modules after zero-caller proof.
+- [x] Run focused Gallery, Favorites, Angles, Generate, TypeScript, production-build, and diff validation.
+- [x] Deploy TEST and live-accept Gallery cleanup.
+- [x] Commit and close Gallery cleanup before Characters rework.
+
 
 ## Canonical Remaining Rework Order
 
 The remaining TEST rework order is fixed unless explicitly changed:
 
-1. Favorites removal
-2. Gallery cleanup
-3. Characters rework
-4. Production rework
-5. Edit Video rework
-6. Machine implementation
+1. Gallery cleanup
+2. Characters rework
+3. Production rework
+4. Edit Video rework
+5. Machine implementation

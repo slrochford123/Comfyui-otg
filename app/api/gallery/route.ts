@@ -19,6 +19,8 @@ export async function GET(req: NextRequest) {
     const media = safeText(req.nextUrl.searchParams.get("media") || req.nextUrl.searchParams.get("filter")) || "all";
     const sort = safeText(req.nextUrl.searchParams.get("sort")) || "newest";
     const search = String(req.nextUrl.searchParams.get("search") || "").trim();
+    const favoriteFlag = safeText(req.nextUrl.searchParams.get("favorite"));
+    const favoritesOnly = ["1", "true", "yes", "on"].includes(favoriteFlag);
     const page = Math.max(1, Number(req.nextUrl.searchParams.get("page") || "1") || 1);
     const per = Math.max(1, Math.min(5000, Number(req.nextUrl.searchParams.get("per") || "5000") || 5000));
 
@@ -27,6 +29,7 @@ export async function GET(req: NextRequest) {
       filter: media as ListGalleryOptions["filter"],
       sort: sort as ListGalleryOptions["sort"],
       search,
+      favoritesOnly,
       page,
       per,
     });
