@@ -7,7 +7,8 @@ import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { markRunning } from "@/lib/contentState";
 import { configuredImageComfyBaseUrl, logComfyRouting } from "@/app/api/_lib/comfyTarget";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
-import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
+import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
+import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
 
 type SceneInput = {
   id?: string;
@@ -140,7 +141,7 @@ function remainingOllamaTimeout(deadline: number): number {
 
 async function ollamaGenerate(prompt: string, deadline: number) {
   const timeoutMs = remainingOllamaTimeout(deadline);
-  const res = await qwenClusterFetch("/api/generate", { model: QWEN_CLUSTER_MODEL, stream: false, prompt }, { timeoutMs });
+  const res = await qwenDurableFetch("/api/generate", { model: QWEN_CLUSTER_MODEL, stream: false, prompt }, { timeoutMs });
   const text = await res.text();
   if (!res.ok) {
     return { ok: false as const, status: res.status, body: text };

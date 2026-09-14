@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import "tailwindcss" source("..");
 
 /* app/globals.css */
 /* Mobile-first dark UI with purple accent for ComfyUI OTG */
@@ -913,7 +913,7 @@ body{
   border: 0;
 }
 
-/* --- App shell (Generate / Gallery / Favorites / Settings) --- */
+/* --- App shell (Generate / Gallery / Settings) --- */
 .otg-appPage{
   min-height: 100dvh;
   position: relative;

@@ -32,6 +32,8 @@ export const REQUIRED_RESOURCE_LOCK_IDS = [
   "gpu:shawn-3090",
   "gpu:linux-3090",
   "gpu:linux-5060ti",
+  "comfy-submit:slr-5060",
+  "comfy-submit:shawn-3090",
   "service:qwen3-tts",
   "service:cozyvoice",
   "service:applio",

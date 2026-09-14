@@ -20,8 +20,6 @@ import {
 import "./components/ProductionAnimateModeSwitch";
 import "./components/ProductionDirectorModeUI";
 import {
-  IMAGE_LORA_ADULT_ACK_VERSION,
-  IMAGE_LORA_MAX_SELECTIONS,
   IMAGE_MODELS,
   IMAGE_OPERATION_LABELS,
   imageModelById,
@@ -30,13 +28,9 @@ import {
   type ImageOperation,
 } from "@/lib/imageGenerateWorkflows";
 import {
-  VIDEO_FORMAT_OPTIONS,
   VIDEO_GENERATION_OPTIONS,
-  VIDEO_MODEL_OPTIONS,
   resolveVideoGenerateWorkflow,
   type VideoGenerationType,
-  type VideoModelFamily,
-  type VideoModelFormat,
 } from "@/lib/videoGenerateWorkflows";
 import VideoLoraPanel, { shouldShowVideoLoraPanel, type VideoLoraSelectionValue } from "./components/VideoLoraPanel";
 
@@ -46,13 +40,13 @@ const PanelLoading = () => (
   </div>
 );
 
-const AnglesPanel = dynamic(() => import("./components/AnglesPanel"), { loading: PanelLoading });
 const ProductionV2Panel = dynamic(() => import("./components/ProductionV2Panel"), { loading: PanelLoading });
 const CharactersPanel = dynamic(() => import("./components/CharacterHubPanel"), { loading: PanelLoading });
 const VoicesPanel = dynamic(() => import("./components/VoicesPanel"), { loading: PanelLoading });
 const SupportPanel = dynamic(() => import("./components/SupportPanel"), { loading: PanelLoading });
 const EditVideoPanel = dynamic(() => import("./components/EditVideoPanel"), { loading: PanelLoading });
 const GalleryWorkspace = dynamic(() => import("./components/GalleryWorkspace"), { loading: PanelLoading });
+const H3Panel = dynamic(() => import("./components/H3Panel"), { loading: PanelLoading });
 const AdminQuickPanel = dynamic(() => import("./components/AdminQuickPanel"), { loading: PanelLoading });
 const ProductionCharacterReferencePickerBridge = dynamic(() => import("./components/ProductionCharacterReferencePickerBridge"), { ssr: false, loading: () => null });
 
@@ -130,8 +124,32 @@ type GalleryViewMode = "default" | "grid" | "list";
 type AppFontScale = "small" | "normal" | "large" | "xl";
 type AppUiMode = "clean" | "classic";
 
-type AssistanceTab = "describe" | "enhance" | "scene" | "ask";
+type AssistanceTab = "describe" | "ask";
 type MicTarget = "generate" | "enhance" | "scene" | "ask";
+
+type StoryHelperMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: number;
+  imageName?: string;
+};
+
+type SavedStoryConversation = {
+  id: string;
+  name: string;
+  messages: StoryHelperMessage[];
+  updatedAt: number;
+};
+
+const STORY_CONVERSATIONS_STORAGE_PREFIX =
+  "otg:ai-assistance:story-conversations:v1";
+
+function createStoryHelperId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+}
 type SceneTransitionMode =
   | "auto"
   | "hard_cut"
@@ -222,8 +240,6 @@ type PersistedGenerateState = {
   negativePrompt?: string;
   workflowId?: string;
   videoGenerationType?: VideoGenerationType;
-  videoModelFamily?: VideoModelFamily;
-  videoModelFormat?: VideoModelFormat;
   orientation?: "portrait" | "landscape";
   durationSeconds?: number;
   uploadedFileName?: string;
@@ -233,7 +249,6 @@ type PersistedGenerateState = {
   assistanceTab?: AssistanceTab;
   galleryViewMode?: GalleryViewMode;
   galleryItemsPerPage?: number;
-  favoritesItemsPerPage?: number;
 };
 
 type GenerateStylePreset = {
@@ -263,7 +278,7 @@ type PromptAssessment = {
   summary: string;
 };
 
-type ViewerCollection = "gallery" | "favorites";
+type ViewerCollection = "gallery";
 
 type ViewerState = {
   collection: ViewerCollection;
@@ -320,12 +335,12 @@ const APP_UI_MODE_OPTIONS: { id: AppUiMode; label: string; description: string }
 const APP_TAB_LABELS: Record<SpinTabId, string> = {
   gethelp: "AI Assistance",
   generate: "Generate",
-  angles: "Angles",
+  h3: "H3",
+  machine: "Machine",
   storyboard: "Production",
   characters: "Characters",
   gallery: "Gallery",
   voices: "Voices",
-  favorites: "Favorites",
   editvideo: "Edit Video",
   settings: "Settings",
   support: "Support",
@@ -1299,7 +1314,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
       document.body.classList.remove("otg-force-dark-production");
     };
   }, [tab]);
-  const [enhancePromptLevel, setEnhancePromptLevel] = useState<"short" | "medium" | "cinematic">("medium");
+  const [enhancePromptLevel, setEnhancePromptLevel] = useState<"short" | "medium" | "long">("medium");
   const [assistanceTab, setAssistanceTab] = useState<AssistanceTab>("describe");
   const [username, setUsername] = useState(() => initialUser?.username || initialUser?.email || readCachedUsername());
   const [connected, setConnected] = useState(false);
@@ -1317,14 +1332,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [generateMediaMode, setGenerateMediaMode] = useState<GenerateMediaMode>("image");
   const [imageOperation, setImageOperation] = useState<ImageOperation>("create");
   const [videoGenerationType, setVideoGenerationType] = useState<VideoGenerationType>("create");
-  const [videoModelFamily, setVideoModelFamily] = useState<VideoModelFamily>("ltx23");
-  const [videoModelFormat, setVideoModelFormat] = useState<VideoModelFormat>("safetensors");
-  const [selectedImageLoras, setSelectedImageLoras] = useState<Record<string, number>>({});
   const [selectedVideoLoras, setSelectedVideoLoras] = useState<VideoLoraSelectionValue[]>([]);
-  const [imageLoraAccessEnabled, setImageLoraAccessEnabled] = useState(false);
-  const [imageLoraDisclaimerOpen, setImageLoraDisclaimerOpen] = useState(false);
-  const [imageLoraAgeConfirmed, setImageLoraAgeConfirmed] = useState(false);
-  const [imageLoraCatalog, setImageLoraCatalog] = useState<ImageLoraCatalogEntry[]>([]);
   const [adminImageLoras, setAdminImageLoras] = useState<ImageLoraCatalogEntry[]>([]);
   const [adminLoraBusy, setAdminLoraBusy] = useState(false);
   const [adminLoraMessage, setAdminLoraMessage] = useState("");
@@ -1344,8 +1352,6 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [durationSeconds, setDurationSeconds] = useState(10);
   const [activeGenerateStyleId, setActiveGenerateStyleId] = useState("");
   const [recentGenerateStyleIds, setRecentGenerateStyleIds] = useState<string[]>([]);
-  const [promptGuideOpen, setPromptGuideOpen] = useState(false);
-  const [promptGuideMode, setPromptGuideMode] = useState<PromptGuideMode>("image");
   const [uploadedFileName, setUploadedFileName] = useState("");
   // OTG_CUSTOM_AUDIO_GENERATE: audio file state for Generate custom-audio I2V.
   const [customAudioFileName, setCustomAudioFileName] = useState("");
@@ -1366,7 +1372,6 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [generateGallerySelecting, setGenerateGallerySelecting] = useState("");
   const [gpuTarget, setGpuTarget] = useState(GPU_OPTIONS[0].value);
   const [enhancing, setEnhancing] = useState(false);
-  const [formattingPrompt, setFormattingPrompt] = useState(false);
   const [promptAssessmentOpen, setPromptAssessmentOpen] = useState(false);
   const [promptAssessment, setPromptAssessment] = useState<PromptAssessment | null>(null);
   const [recordingTarget, setRecordingTarget] = useState<MicTarget | "">("");
@@ -1429,23 +1434,16 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const selectedFontScale = APP_FONT_SCALE_OPTIONS.find((option) => option.id === appFontScale) || APP_FONT_SCALE_OPTIONS[1];
 
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
-  const [favoriteItems, setFavoriteItems] = useState<GalleryItem[]>([]);
   const [galleryBusy, setGalleryBusy] = useState(false);
   const [galleryForcePullBusy, setGalleryForcePullBusy] = useState(false);
-  const [favoritesBusy, setFavoritesBusy] = useState(false);
   const [galleryFilter, setGalleryFilter] = useState<"all" | "images" | "videos">("all");
+  const [galleryFavoritesOnly, setGalleryFavoritesOnly] = useState(false);
   const [gallerySort, setGallerySort] = useState<"newest" | "oldest" | "name">("newest");
   const [galleryViewMode, setGalleryViewMode] = useState<GalleryViewMode>("default");
-  const [favoritesFilter, setFavoritesFilter] = useState<"all" | "images" | "videos">("all");
-  const [favoritesSort, setFavoritesSort] = useState<"newest" | "oldest" | "name">("newest");
-  const [favoritesViewMode, setFavoritesViewMode] = useState<GalleryViewMode>("default");
-  const [favoritesSearch, setFavoritesSearch] = useState("");
-  const deferredFavoritesSearch = useDeferredValue(favoritesSearch);
-  const favoritesSearchQuery = useMemo(() => deferredFavoritesSearch.trim().toLowerCase(), [deferredFavoritesSearch]);
   const [galleryItemsPerPage, setGalleryItemsPerPage] = useState<number>(25);
-  const [favoritesItemsPerPage, setFavoritesItemsPerPage] = useState<number>(25);
   const [galleryPage, setGalleryPage] = useState(1);
-  const [favoritesPage, setFavoritesPage] = useState(1);
+  const [galleryTotalItems, setGalleryTotalItems] = useState(0);
+  const [galleryTotalPages, setGalleryTotalPages] = useState(1);
   const [gallerySearch, setGallerySearch] = useState("");
   const deferredGallerySearch = useDeferredValue(gallerySearch);
   const gallerySearchQuery = useMemo(() => deferredGallerySearch.trim(), [deferredGallerySearch]);
@@ -1457,9 +1455,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [animateModal, setAnimateModal] = useState<AnimateModalState | null>(null);
   const [extendModal, setExtendModal] = useState<ExtendModalState | null>(null);
   const galleryAbortRef = useRef<AbortController | null>(null);
-  const favoritesAbortRef = useRef<AbortController | null>(null);
   const galleryRequestSeqRef = useRef(0);
-  const favoritesRequestSeqRef = useRef(0);
 
   const whoamiQuery = useQuery({
     queryKey: ["otg", "whoami"],
@@ -1495,19 +1491,14 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
     staleTime: 5 * 60_000,
   });
 
-  const [describeMode, setDescribeMode] = useState<"background" | "identity">("background");
+  const [describeMode, setDescribeMode] = useState<
+  "general" | "background" | "identity"
+>("general");
   const [describeImageName, setDescribeImageName] = useState("");
   const [describePreviewUrl, setDescribePreviewUrl] = useState("");
   const [describeOutput, setDescribeOutput] = useState("");
   const [describeBusy, setDescribeBusy] = useState(false);
 
-  const [enhanceDraft, setEnhanceDraft] = useState("");
-  const [enhanceLength, setEnhanceLength] = useState<"short" | "normal" | "long">("normal");
-  const [enhanceImageFile, setEnhanceImageFile] = useState<File | null>(null);
-  const [enhanceImageName, setEnhanceImageName] = useState("");
-  const [enhanceImagePreviewUrl, setEnhanceImagePreviewUrl] = useState("");
-  const [enhanceImageInputKey, setEnhanceImageInputKey] = useState(0);
-  const [enhanceDraftBusy, setEnhanceDraftBusy] = useState(false);
   const [sceneDraft, setSceneDraft] = useState("");
   const [sceneOutput, setSceneOutput] = useState("");
   const [sceneCount, setSceneCount] = useState(5);
@@ -1582,13 +1573,43 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   );
   const [sceneTransitionMode, setSceneTransitionMode] = useState<SceneTransitionMode>("auto");
   const [sceneTransitionPickerOpen, setSceneTransitionPickerOpen] = useState(false);
-  const [askInput, setAskInput] = useState("");
-  const [askAnswer, setAskAnswer] = useState("");
-  const [askBusy, setAskBusy] = useState(false);
-  const [askImageName, setAskImageName] = useState("");
-  const [askImagePreviewUrl, setAskImagePreviewUrl] = useState("");
+  const storyConversationStorageKey = useMemo(
+  () =>
+    `${STORY_CONVERSATIONS_STORAGE_PREFIX}:${
+      authenticatedOwnerKey || "local"
+    }`,
+  [authenticatedOwnerKey]
+);
 
-  const imageInputRef = useRef<HTMLInputElement | null>(null);
+const [askInput, setAskInput] = useState("");
+const [askMessages, setAskMessages] =
+  useState<StoryHelperMessage[]>([]);
+const [askBusy, setAskBusy] = useState(false);
+const [askImageName, setAskImageName] = useState("");
+const [askImagePreviewUrl, setAskImagePreviewUrl] =
+  useState("");
+
+const [
+  savedStoryConversations,
+  setSavedStoryConversations,
+] = useState<SavedStoryConversation[]>([]);
+
+const [
+  activeStoryConversationId,
+  setActiveStoryConversationId,
+] = useState("");
+
+const [
+  storyConversationName,
+  setStoryConversationName,
+] = useState("");
+
+const [
+  speakingStoryMessageId,
+  setSpeakingStoryMessageId,
+] = useState("");
+
+const imageInputRef = useRef<HTMLInputElement | null>(null);
   const secondImageInputRef = useRef<HTMLInputElement | null>(null);
   const thirdImageInputRef = useRef<HTMLInputElement | null>(null);
   const customAudioInputRef = useRef<HTMLInputElement | null>(null);
@@ -1612,9 +1633,90 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
 
+useEffect(() => {
+  try {
+    const raw = window.localStorage.getItem(
+      storyConversationStorageKey
+    );
+
+    if (!raw) {
+      setSavedStoryConversations([]);
+      return;
+    }
+
+    const parsed = JSON.parse(raw);
+
+    if (!Array.isArray(parsed)) {
+      setSavedStoryConversations([]);
+      return;
+    }
+
+    const conversations: SavedStoryConversation[] = parsed
+      .filter(
+        (item) =>
+          item &&
+          typeof item === "object" &&
+          typeof item.id === "string" &&
+          typeof item.name === "string" &&
+          Array.isArray(item.messages)
+      )
+      .map((item) => ({
+        id: String(item.id),
+        name: String(item.name),
+        updatedAt: Number(
+          item.updatedAt || Date.now()
+        ),
+        messages: item.messages
+          .filter(
+            (message: any) =>
+              message &&
+              typeof message === "object" &&
+              (message.role === "user" ||
+                message.role === "assistant") &&
+              typeof message.content === "string"
+          )
+          .map((message: any) => ({
+            id:
+              typeof message.id === "string"
+                ? message.id
+                : createStoryHelperId("message"),
+            role: message.role as
+              | "user"
+              | "assistant",
+            content: String(message.content),
+            createdAt: Number(
+              message.createdAt || Date.now()
+            ),
+            imageName:
+              typeof message.imageName === "string"
+                ? message.imageName
+                : undefined,
+          })),
+      }))
+      .sort(
+        (a, b) => b.updatedAt - a.updatedAt
+      );
+
+    setSavedStoryConversations(conversations);
+  } catch {
+    setSavedStoryConversations([]);
+  }
+}, [storyConversationStorageKey]);
+
+useEffect(() => {
+  return () => {
+    if (
+      typeof window !== "undefined" &&
+      "speechSynthesis" in window
+    ) {
+      window.speechSynthesis.cancel();
+    }
+  };
+}, []);
+
   const selectedVideoConfiguration = useMemo(
-    () => resolveVideoGenerateWorkflow(videoGenerationType, videoModelFamily, videoModelFormat),
-    [videoGenerationType, videoModelFamily, videoModelFormat]
+    () => resolveVideoGenerateWorkflow(videoGenerationType),
+    [videoGenerationType]
   );
   const selectedVideoWorkflowItem = useMemo(
     () =>
@@ -1627,28 +1729,19 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const selectedWorkflow = useMemo(() => {
     if (generateMediaMode === "video") {
       if (selectedVideoWorkflowItem) return selectedVideoWorkflowItem;
-      const modelLabel = VIDEO_MODEL_OPTIONS.find((option) => option.id === videoModelFamily)?.label || videoModelFamily;
-      const formatLabel = VIDEO_FORMAT_OPTIONS.find((option) => option.id === videoModelFormat)?.label || videoModelFormat;
       return {
         id: selectedVideoConfiguration?.workflowId || "pending-video-workflow",
-        label: `${modelLabel} ${formatLabel}`,
+        label: selectedVideoConfiguration?.label || "LTX 2.5",
         runtime: selectedVideoConfiguration?.workflowId
           ? "The configured workflow was not found in TEST."
           : "Workflow JSON pending verification.",
       };
     }
     return workflows.find((workflow) => workflow.id === workflowId) || workflows[0] || WORKFLOW_FALLBACKS[0];
-  }, [generateMediaMode, selectedVideoConfiguration, selectedVideoWorkflowItem, videoModelFamily, videoModelFormat, workflowId, workflows]);
-  const isWanWorkflowSelected =
-    generateMediaMode === "video" &&
-    String(selectedVideoConfiguration?.workflowId || workflowId || "").trim().toLowerCase().includes("wan");
-  const selectedVideoLoraFamily: "wan" | "ltx" = videoModelFamily === "wan22" ? "wan" : "ltx";
+  }, [generateMediaMode, selectedVideoConfiguration, selectedVideoWorkflowItem, workflowId, workflows]);
+  const selectedVideoLoraFamily: "wan" | "ltx" = "ltx";
 
   const selectedImageModel = useMemo(() => imageModelById(workflowId), [workflowId]);
-  const activeImageLoras = useMemo(
-    () => imageLoraCatalog.filter((lora) => lora.enabled && lora.modelId === selectedImageModel?.id),
-    [imageLoraCatalog, selectedImageModel]
-  );
   const operationImageModels = useMemo(() => imageModelsForOperation(imageOperation), [imageOperation]);
   const videoNeedsStarterImage = generateMediaMode === "video" && videoGenerationType !== "create";
   const videoNeedsLastFrameImage = generateMediaMode === "video" && videoGenerationType === "first_last";
@@ -1666,19 +1759,12 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   }, [generateMediaMode, selectedVideoConfiguration]);
 
   useEffect(() => {
-    setSelectedImageLoras({});
     setEditInputCount(1);
     secondImageFileRef.current = null;
     thirdImageFileRef.current = null;
     setSecondImageFileName("");
     setThirdImageFileName("");
   }, [workflowId]);
-
-  const loadImageLoraCatalog = useCallback(async () => {
-    const response = await fetch("/api/image-loras", { cache: "no-store", credentials: "include" });
-    const data = await response.json().catch(() => ({}));
-    if (response.ok && Array.isArray(data?.entries)) setImageLoraCatalog(data.entries);
-  }, []);
 
   const loadAdminImageLoras = useCallback(async () => {
     if (!isAdmin) return;
@@ -1687,35 +1773,9 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
     if (response.ok && Array.isArray(data?.entries)) setAdminImageLoras(data.entries);
   }, [isAdmin]);
 
-  useEffect(() => { void loadImageLoraCatalog(); }, [loadImageLoraCatalog]);
   useEffect(() => {
     if (tab === "settings" && isAdmin) void loadAdminImageLoras();
   }, [isAdmin, loadAdminImageLoras, tab]);
-
-  useEffect(() => {
-    try {
-      setImageLoraAccessEnabled(window.localStorage.getItem("otg-image-lora-adult-ack") === IMAGE_LORA_ADULT_ACK_VERSION);
-    } catch {
-      setImageLoraAccessEnabled(false);
-    }
-  }, []);
-
-  const currentPromptGuideMode = useMemo(() => inferPromptGuideMode(selectedWorkflow), [selectedWorkflow]);
-  const activePromptGuide = PROMPT_GUIDES[promptGuideMode];
-
-  useEffect(() => {
-    setPromptGuideMode(currentPromptGuideMode);
-  }, [currentPromptGuideMode]);
-
-  const showPromptBuilderAssistant = currentPromptGuideMode !== "image";
-  const promptBuilderNeedsStarterImage = currentPromptGuideMode === "image_to_video";
-
-  useEffect(() => {
-    if (!showPromptBuilderAssistant) {
-      setPromptAssessmentOpen(false);
-      setPromptAssessment(null);
-    }
-  }, [showPromptBuilderAssistant]);
 
   const updateDescribePreview = useCallback((file: File | null) => {
     if (describePreviewUrlRef.current) {
@@ -1781,11 +1841,11 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
     const label = String(selectedWorkflow?.label || "").toLowerCase();
     return id.includes("edit image") || id.includes("edit picture") || label.includes("edit image") || label.includes("edit picture");
   }, [generateMediaMode, imageOperation, selectedWorkflow]);
-const isAnimeImagesWorkflowSelected = useMemo(() => {
-    if (generateMediaMode === "image" && imageOperation === "anime") return true;
+const isAnimateImageWorkflowSelected = useMemo(() => {
+    if (generateMediaMode === "image" && imageOperation === "animate") return true;
     const id = String(selectedWorkflow?.id || "").toLowerCase();
     const label = String(selectedWorkflow?.label || "").toLowerCase();
-    return id.includes("create anime images") || label.includes("create anime images");
+    return id.includes("anima") || label.includes("anima");
   }, [generateMediaMode, imageOperation, selectedWorkflow]);
   const isCustomAudioVideoWorkflowSelected = useMemo(() => {
     if (generateMediaMode === "video") return false;
@@ -2253,19 +2313,20 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   useEffect(() => {
     const persisted = readPersistedState();
     if (persisted) {
-      if (persisted.tab) setTab(!PRODUCTION_FEATURE_ENABLED && persisted.tab === "storyboard" ? "generate" : persisted.tab);
-      if (persisted.assistanceTab) setAssistanceTab(persisted.assistanceTab);
+      if (persisted.tab && Object.prototype.hasOwnProperty.call(APP_TAB_LABELS, persisted.tab)) {
+        setTab(!PRODUCTION_FEATURE_ENABLED && persisted.tab === "storyboard" ? "generate" : persisted.tab);
+      }
+      if (
+        persisted.assistanceTab === "describe" ||
+        persisted.assistanceTab === "ask"
+      ) {
+        setAssistanceTab(persisted.assistanceTab);
+      }
       if (typeof persisted.prompt === "string") setPrompt(persisted.prompt);
       if (typeof persisted.negativePrompt === "string") setNegativePrompt(persisted.negativePrompt);
       if (typeof persisted.workflowId === "string") setWorkflowId(persisted.workflowId);
       if (VIDEO_GENERATION_OPTIONS.some((option) => option.id === persisted.videoGenerationType)) {
         setVideoGenerationType(persisted.videoGenerationType as VideoGenerationType);
-      }
-      if (VIDEO_MODEL_OPTIONS.some((option) => option.id === persisted.videoModelFamily)) {
-        setVideoModelFamily(persisted.videoModelFamily as VideoModelFamily);
-      }
-      if (VIDEO_FORMAT_OPTIONS.some((option) => option.id === persisted.videoModelFormat)) {
-        setVideoModelFormat(persisted.videoModelFormat as VideoModelFormat);
       }
       if (persisted.orientation === "portrait" || persisted.orientation === "landscape") setOrientation(persisted.orientation);
       if (typeof persisted.durationSeconds === "number") setDurationSeconds(clampGenerateDuration(persisted.durationSeconds));
@@ -2285,9 +2346,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       }
       if (ITEMS_PER_PAGE_OPTIONS.includes(Number(persisted.galleryItemsPerPage) as (typeof ITEMS_PER_PAGE_OPTIONS)[number])) {
         setGalleryItemsPerPage(Number(persisted.galleryItemsPerPage));
-      }
-      if (ITEMS_PER_PAGE_OPTIONS.includes(Number(persisted.favoritesItemsPerPage) as (typeof ITEMS_PER_PAGE_OPTIONS)[number])) {
-        setFavoritesItemsPerPage(Number(persisted.favoritesItemsPerPage));
       }
     }
 
@@ -2334,12 +2392,11 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       if (
         tabParam === "gethelp" ||
         tabParam === "generate" ||
-        tabParam === "angles" ||
+        tabParam === "machine" ||
         tabParam === "storyboard" ||
         tabParam === "characters" ||
         tabParam === "gallery" ||
         tabParam === "voices" ||
-        tabParam === "favorites" ||
         tabParam === "editvideo" ||
         tabParam === "settings" ||
         tabParam === "support"
@@ -2360,8 +2417,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         negativePrompt,
         workflowId,
         videoGenerationType,
-        videoModelFamily,
-        videoModelFormat,
         orientation,
         durationSeconds: clampGenerateDuration(durationSeconds),
         uploadedFileName,
@@ -2370,7 +2425,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         recentGenerateStyleIds,
         galleryViewMode,
         galleryItemsPerPage,
-        favoritesItemsPerPage,
       };
       window.localStorage.setItem(APP_STATE_KEY, JSON.stringify(nextState));
     } catch {
@@ -2383,8 +2437,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     negativePrompt,
     workflowId,
     videoGenerationType,
-    videoModelFamily,
-    videoModelFormat,
     orientation,
     durationSeconds,
     uploadedFileName,
@@ -2393,7 +2445,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     recentGenerateStyleIds,
     galleryViewMode,
     galleryItemsPerPage,
-    favoritesItemsPerPage,
   ]);
 
   useEffect(() => {
@@ -2434,19 +2485,47 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     galleryAbortRef.current?.abort();
     const controller = new AbortController();
     galleryAbortRef.current = controller;
-    const queryKey = ["otg", "gallery", gallerySort, galleryFilter, gallerySearchQuery] as const;
-    const cached = queryClient.getQueryData<GalleryItem[]>(queryKey);
+
+    const requestPer = galleryItemsPerPage <= 0 ? 5000 : galleryItemsPerPage;
+    const queryKey = [
+      "otg",
+      "gallery",
+      gallerySort,
+      galleryFilter,
+      gallerySearchQuery,
+      galleryFavoritesOnly,
+      galleryPage,
+      requestPer,
+    ] as const;
+
+    const cached = queryClient.getQueryData<{
+      items: GalleryItem[];
+      total: number;
+      totalPages: number;
+    }>(queryKey);
+
     if (cached) {
-      setGalleryItems(cached);
+      setGalleryItems(cached.items);
+      setGalleryTotalItems(cached.total);
+      setGalleryTotalPages(cached.totalPages);
     }
 
     setGalleryBusy(!cached);
+
     try {
       const params = new URLSearchParams();
       params.set("sort", gallerySort);
       params.set("filter", galleryFilter);
-      params.set("per", "80");
-      if (gallerySearchQuery) params.set("search", gallerySearchQuery);
+      params.set("page", String(galleryPage));
+      params.set("per", String(requestPer));
+
+      if (gallerySearchQuery) {
+        params.set("search", gallerySearchQuery);
+      }
+
+      if (galleryFavoritesOnly) {
+        params.set("favorite", "1");
+      }
 
       const res = await fetch(`/api/gallery?${params.toString()}`, {
         cache: "no-store",
@@ -2455,70 +2534,72 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       });
 
       const data = await res.json().catch(() => ({}));
-      const items = Array.isArray(data?.items) ? data.items : Array.isArray(data?.files) ? data.files : [];
+
+      if (!res.ok || data?.ok === false) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : "Gallery request failed."
+        );
+      }
+
+      const items = Array.isArray(data?.items)
+        ? data.items
+        : Array.isArray(data?.files)
+          ? data.files
+          : [];
+
       const normalized = items.map(normalizeGalleryItem);
-      queryClient.setQueryData(queryKey, normalized);
+
+      const total = Math.max(
+        0,
+        Number(data?.total ?? normalized.length) || 0
+      );
+
+      const totalPages = Math.max(
+        1,
+        Number(data?.totalPages ?? 1) || 1
+      );
+
+      queryClient.setQueryData(queryKey, {
+        items: normalized,
+        total,
+        totalPages,
+      });
+
       if (galleryRequestSeqRef.current === requestSeq && !controller.signal.aborted) {
         setGalleryItems(normalized);
+        setGalleryTotalItems(total);
+        setGalleryTotalPages(totalPages);
       }
     } catch (error) {
       if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
         return;
       }
+
       if (galleryRequestSeqRef.current === requestSeq) {
         setGalleryItems([]);
+        setGalleryTotalItems(0);
+        setGalleryTotalPages(1);
       }
     } finally {
       if (galleryRequestSeqRef.current === requestSeq) {
         setGalleryBusy(false);
       }
     }
-  }, [galleryFilter, gallerySearchQuery, gallerySort, queryClient]);
-
-  const loadFavorites = useCallback(async () => {
-    const requestSeq = ++favoritesRequestSeqRef.current;
-    favoritesAbortRef.current?.abort();
-    const controller = new AbortController();
-    favoritesAbortRef.current = controller;
-    const queryKey = ["otg", "favorites"] as const;
-    const cached = queryClient.getQueryData<GalleryItem[]>(queryKey);
-    if (cached) {
-      setFavoriteItems(cached);
-    }
-
-    setFavoritesBusy(!cached);
-    try {
-      const res = await fetch("/api/favorites", {
-        cache: "no-store",
-        credentials: "include",
-        signal: controller.signal,
-      });
-
-      const data = await res.json().catch(() => ({}));
-      const items = Array.isArray(data?.items) ? data.items : Array.isArray(data?.files) ? data.files : [];
-      const normalized = items.map(normalizeGalleryItem);
-      queryClient.setQueryData(queryKey, normalized);
-      if (favoritesRequestSeqRef.current === requestSeq && !controller.signal.aborted) {
-        setFavoriteItems(normalized);
-      }
-    } catch (error) {
-      if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
-        return;
-      }
-      if (favoritesRequestSeqRef.current === requestSeq) {
-        setFavoriteItems([]);
-      }
-    } finally {
-      if (favoritesRequestSeqRef.current === requestSeq) {
-        setFavoritesBusy(false);
-      }
-    }
-  }, [queryClient]);
+  }, [
+    galleryFavoritesOnly,
+    galleryFilter,
+    galleryItemsPerPage,
+    galleryPage,
+    gallerySearchQuery,
+    gallerySort,
+    queryClient,
+  ]);
 
   useEffect(() => {
     return () => {
       galleryAbortRef.current?.abort();
-      favoritesAbortRef.current?.abort();
     };
   }, []);
 
@@ -2563,13 +2644,12 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       setStatusMessage(summaryParts.join(" "));
       await loadGallery();
-      await loadFavorites();
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Update Content failed.");
     } finally {
       setGalleryForcePullBusy(false);
     }
-  }, [loadFavorites, loadGallery]);
+  }, [loadGallery]);
 
 
   useEffect(() => {
@@ -2677,10 +2757,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     if (tab === "gallery") {
       void loadGallery();
     }
-    if (tab === "favorites") {
-      void loadFavorites();
-    }
-  }, [tab, viewerState, loadGallery, loadFavorites]);
+  }, [tab, viewerState, loadGallery]);
 
   const refreshLatestContent = useCallback(async (force = false) => {
     try {
@@ -2848,20 +2925,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }, [progressStatus, refreshProgress]);
 
   useEffect(() => {
-    if (tab !== "gallery" && tab !== "favorites") return;
+    if (tab !== "gallery") return;
     if (viewerState) return;
 
     let cancelled = false;
 
     const tick = async () => {
       if (cancelled) return;
-
-      if (tab === "gallery") {
-        await loadGallery().catch(() => null);
-        return;
-      }
-
-      await loadFavorites().catch(() => null);
+      await loadGallery().catch(() => null);
     };
 
     void tick();
@@ -2874,14 +2945,23 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [tab, viewerState, loadGallery, loadFavorites]);
+  }, [tab, viewerState, loadGallery]);
   // Auto gallery sync disabled for mobile startup performance.
   // Manual gallery/content refresh still works from explicit user actions.
 
   const enhancePromptText = useCallback(async (
     inputText: string,
     workflowHint?: string,
-    options?: { styleLabel?: string; stylePrompt?: string; mode?: "image" | "video" }
+    options?: {
+      styleLabel?: string;
+      stylePrompt?: string;
+      mode?: "image" | "video";
+      mediaMode?: GenerateMediaMode;
+      imageOperation?: ImageOperation;
+      videoGenerationType?: VideoGenerationType;
+      workflowLabel?: string;
+      selectedStyleId?: string;
+    }
   ) => {
     const cleaned = String(inputText || "").trim();
     if (!cleaned) {
@@ -2898,15 +2978,19 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         size: enhancePromptLevel,
         prompt: cleaned,
         workflowId: workflowHint || selectedWorkflow.id,
+        workflowLabel: options?.workflowLabel || selectedWorkflow.label,
+        mediaMode: options?.mediaMode || generateMediaMode,
+        imageOperation: options?.imageOperation || imageOperation,
+        videoGenerationType: options?.videoGenerationType || videoGenerationType,
         styleLabel: options?.styleLabel || "",
         stylePrompt: options?.stylePrompt || "",
+        selectedStyleId: options?.selectedStyleId || "",
         mode: options?.mode || (looksLikeVideoWorkflow(workflowHint || selectedWorkflow.id) ? "video" : "image"),
       }),
     });
 
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-
+    if (!res.ok || data?.ok === false) {
       throw new Error(typeof data?.error === "string" ? data.error : "Enhance Prompt failed");
     }
 
@@ -2916,7 +3000,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     }
 
     return nextPrompt;
-  }, [selectedWorkflow.id, enhancePromptLevel]);
+  }, [enhancePromptLevel, generateMediaMode, imageOperation, selectedWorkflow.id, selectedWorkflow.label, videoGenerationType]);
 
   const submitToComfy = useCallback(
     async (
@@ -2996,11 +3080,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         await loadGallery();
       }
 
-      if (tab === "favorites") {
-        await loadFavorites();
-      }
     },
-    [loadFavorites, loadGallery, refreshProgress, tab]
+    [loadGallery, refreshProgress, tab]
   );
 
   const fetchGalleryItemAsFile = useCallback(async (item: GalleryItem, fallbackBaseName: string) => {
@@ -3167,75 +3248,23 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   );
   useEffect(() => {
     setGalleryPage(1);
-  }, [deferredGallerySearch, galleryFilter, gallerySort, galleryItemsPerPage]);
-
-  useEffect(() => {
-    setFavoritesPage(1);
-  }, [deferredFavoritesSearch, favoritesFilter, favoritesSort, favoritesItemsPerPage]);
-
-  const galleryTotalPages = useMemo(() => {
-    if (galleryItemsPerPage <= 0) return 1;
-    return Math.max(1, Math.ceil(galleryItems.length / galleryItemsPerPage));
-  }, [galleryItems.length, galleryItemsPerPage]);
-
-  const filteredFavoriteItems = useMemo(() => {
-    const items = favoriteItems.filter((item) => {
-      const itemKind = item.kind || (item.video ? "video" : "image");
-      if (favoritesFilter === "images" && itemKind !== "image") return false;
-      if (favoritesFilter === "videos" && itemKind !== "video") return false;
-      if (!favoritesSearchQuery) return true;
-
-      const label = String(item.meta?.renamedName || item.name || item.fileName || item.sourceName || "").toLowerCase();
-      const original = String(item.meta?.originalName || "").toLowerCase();
-      const workflow = String(item.meta?.workflowTitle || item.meta?.workflowId || "").toLowerCase();
-      return (label + " " + original + " " + workflow).includes(favoritesSearchQuery);
-    });
-
-    return [...items].sort((a, b) => {
-      if (favoritesSort === "name") {
-        const aName = String(a.meta?.renamedName || a.name || a.fileName || a.sourceName || "").toLowerCase();
-        const bName = String(b.meta?.renamedName || b.name || b.fileName || b.sourceName || "").toLowerCase();
-        return aName.localeCompare(bName);
-      }
-
-      const aTime = Number(a.updatedAt || a.createdAt || 0);
-      const bTime = Number(b.updatedAt || b.createdAt || 0);
-      return favoritesSort === "oldest" ? aTime - bTime : bTime - aTime;
-    });
-  }, [favoriteItems, favoritesFilter, favoritesSearchQuery, favoritesSort]);
-
-  const favoritesTotalPages = useMemo(() => {
-    if (favoritesItemsPerPage <= 0) return 1;
-    return Math.max(1, Math.ceil(filteredFavoriteItems.length / favoritesItemsPerPage));
-  }, [filteredFavoriteItems.length, favoritesItemsPerPage]);
+  }, [
+    deferredGallerySearch,
+    galleryFavoritesOnly,
+    galleryFilter,
+    gallerySort,
+    galleryItemsPerPage,
+  ]);
 
   useEffect(() => {
     setGalleryPage((current) => Math.min(Math.max(1, current), galleryTotalPages));
   }, [galleryTotalPages]);
 
-  useEffect(() => {
-    setFavoritesPage((current) => Math.min(Math.max(1, current), favoritesTotalPages));
-  }, [favoritesTotalPages]);
-
-  const visibleGalleryItems = useMemo(() => {
-    if (galleryItemsPerPage <= 0) return galleryItems;
-    const start = (galleryPage - 1) * galleryItemsPerPage;
-    return galleryItems.slice(start, start + galleryItemsPerPage);
-  }, [galleryItems, galleryItemsPerPage, galleryPage]);
-
-  const visibleFavoriteItems = useMemo(() => {
-    if (favoritesItemsPerPage <= 0) return filteredFavoriteItems;
-    const start = (favoritesPage - 1) * favoritesItemsPerPage;
-    return filteredFavoriteItems.slice(start, start + favoritesItemsPerPage);
-  }, [filteredFavoriteItems, favoritesItemsPerPage, favoritesPage]);
+  const visibleGalleryItems = galleryItems;
 
   const galleryItemKeySet = useMemo(() => {
     return new Set(galleryItems.map((item) => getGalleryItemKey(item)).filter(Boolean));
   }, [galleryItems]);
-
-  const favoriteItemKeySet = useMemo(() => {
-    return new Set(favoriteItems.map((item) => getGalleryItemKey(item)).filter(Boolean));
-  }, [favoriteItems]);
 
   const openViewer = useCallback(
     (item: GalleryItem) => {
@@ -3244,18 +3273,18 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       if (!url || !itemKey) return;
 
       setViewerState({
-        collection: tab === "favorites" ? "favorites" : "gallery",
+        collection: "gallery",
         itemKey,
         item,
       });
     },
-    [tab]
+    []
   );
 
   const viewerItems = useMemo(() => {
     if (!viewerState) return [] as GalleryItem[];
-    return viewerState.collection === "favorites" ? favoriteItems : galleryItems;
-  }, [viewerState, favoriteItems, galleryItems]);
+    return galleryItems;
+  }, [viewerState, galleryItems]);
 
   const viewerIndex = useMemo(() => {
     if (!viewerState) return -1;
@@ -3276,11 +3305,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
   useEffect(() => {
     if (!viewerState?.itemKey) return;
-    const keySet = viewerState.collection === "favorites" ? favoriteItemKeySet : galleryItemKeySet;
-    if (!keySet.has(viewerState.itemKey)) {
+    if (!galleryItemKeySet.has(viewerState.itemKey)) {
       setViewerState(null);
     }
-  }, [favoriteItemKeySet, galleryItemKeySet, viewerState]);
+  }, [galleryItemKeySet, viewerState]);
 
   useEffect(() => {
     if (editModal && !galleryItemKeySet.has(getGalleryItemKey(editModal.item))) {
@@ -3461,7 +3489,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         generateMediaMode === "video"
           ? String(selectedVideoConfiguration?.workflowId || "")
           : workflowId;
-      const submittedDurationSeconds = isWanWorkflowSelected ? 5 : durationSeconds;
+      const submittedDurationSeconds = durationSeconds;
       body.set("workflowId", submitWorkflowId);
       body.set("prompt", finalPrompt);
       body.set("negativePrompt", negativePrompt);
@@ -3492,8 +3520,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("seed", String(randomSeed()));
       if (generateMediaMode === "video") {
         body.set("requestKind", "video");
-        body.set("width", orientation === "portrait" ? "720" : "1280");
-        body.set("height", orientation === "portrait" ? "1280" : "720");
+        body.set("width", orientation === "portrait" ? "704" : "1280");
+        body.set("height", orientation === "portrait" ? "1280" : "704");
         body.set("frameRate", "24");
         body.set("frameCount", String(submittedDurationSeconds * 24 + 1));
         if (selectedVideoLoras.length) {
@@ -3506,14 +3534,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         body.delete("durationSeconds");
         body.set("requestKind", "image");
       }
-      if (isAnimeImagesWorkflowSelected) {
+      if (isAnimateImageWorkflowSelected) {
         body.set("width", orientation === "portrait" ? "720" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "720");
         body.delete("durationSeconds");
-        body.set("requestKind", "anime-image");
+        body.set("requestKind", "animate-image");
       }
 
-      if (!isAnimeImagesWorkflowSelected && shouldSendSizeOverride(selectedWorkflow)) {
+      if (!isAnimateImageWorkflowSelected && shouldSendSizeOverride(selectedWorkflow)) {
         body.set("width", orientation === "portrait" ? "720" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "720");
       }
@@ -3531,17 +3559,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       }
       if (isEditImageWorkflowSelected && editInputCount >= 3 && thirdImageFileRef.current) {
         body.set("imageC", thirdImageFileRef.current);
-      }
-      if (Object.keys(selectedImageLoras).length && selectedImageModel) {
-        const choices = activeImageLoras
-          .filter((lora) => Object.prototype.hasOwnProperty.call(selectedImageLoras, lora.name))
-          .slice(0, IMAGE_LORA_MAX_SELECTIONS)
-          .map((lora) => ({ name: lora.name, strength: selectedImageLoras[lora.name] }));
-        if (choices.length) {
-          body.set("loras", JSON.stringify(choices));
-          body.set("loraAdultAcknowledged", imageLoraAccessEnabled ? "true" : "false");
-          body.set("loraAdultAcknowledgementVersion", IMAGE_LORA_ADULT_ACK_VERSION);
-        }
       }
 
       if (isCustomAudioVideoWorkflowSelected && customAudioFileRef.current) {
@@ -3590,26 +3607,21 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     orientation,
     prompt,
     selectedWorkflow,
-    selectedImageLoras,
-    activeImageLoras,
-    imageLoraAccessEnabled,
-    selectedImageModel,
     selectedSceneCharacterIdentities,
     missingLockedSceneCharacterDescriptions,
     submitToComfy,
     workflowId,
-    isAnimeImagesWorkflowSelected,
+    isAnimateImageWorkflowSelected,
 
     isPromptRelayWorkflowSelected,
     isEditImageWorkflowSelected,
     isCustomAudioVideoWorkflowSelected,
     isFirstLastImageVideoWorkflowSelected,
-    isWanWorkflowSelected,
     promptRelayLocalPrompts,
   ]);
 
 
-  const galleryActionsLocked = galleryBusy || galleryForcePullBusy || favoritesBusy || !!galleryActionBusyName;
+  const galleryActionsLocked = galleryBusy || galleryForcePullBusy || !!galleryActionBusyName;
 
   function beginGalleryAction(name: string, kind: GalleryActionKind) {
     setGalleryActionBusyName(name);
@@ -3684,11 +3696,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         throw new Error(typeof data?.error === "string" ? data.error : "Favorite toggle failed");
       }
 
-      setStatusMessage(data?.favorite ? "Saved to favorites." : "Removed from favorites.");
-      if (!data?.favorite && viewerState?.collection === "favorites" && viewerState.itemKey === name) {
-        setViewerState(null);
-      }
-      await Promise.all([loadGallery(), loadFavorites()]);
+      setStatusMessage(data?.favorite ? "Saved." : "Removed from saved items.");
+      await loadGallery();
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Favorite toggle failed.");
     } finally {
@@ -3732,7 +3741,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       setStatusMessage("Gallery item renamed.");
       clearGalleryUiForItem(fileName);
-      await Promise.all([loadGallery(), loadFavorites()]);
+      await loadGallery();
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Rename failed.");
     } finally {
@@ -3773,7 +3782,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       setStatusMessage("Gallery item deleted.");
       clearGalleryUiForItem(name);
-      await Promise.all([loadGallery(), loadFavorites()]);
+      await loadGallery();
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Delete failed.");
     } finally {
@@ -3847,7 +3856,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("durationSeconds", String(nextDuration));
       body.set("gpuTarget", nextGpuTarget);
       body.set("seed", String(randomSeed()));
-      if (isAnimeImagesWorkflowSelected) {
+      if (isAnimateImageWorkflowSelected) {
         body.set("width", orientation === "portrait" ? "720" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "720");
         body.delete("durationSeconds");
@@ -4068,7 +4077,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("durationSeconds", String(durationSeconds));
       body.set("gpuTarget", gpuTarget);
       body.set("seed", String(randomSeed()));
-      if (isAnimeImagesWorkflowSelected) {
+      if (isAnimateImageWorkflowSelected) {
         body.set("width", orientation === "portrait" ? "720" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "720");
         body.delete("durationSeconds");
@@ -4181,7 +4190,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("durationSeconds", String(clampDuration(animateModal.durationSeconds)));
       body.set("gpuTarget", gpuTarget);
       body.set("seed", String(randomSeed()));
-      if (isAnimeImagesWorkflowSelected) {
+      if (isAnimateImageWorkflowSelected) {
         body.set("width", orientation === "portrait" ? "720" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "720");
         body.delete("durationSeconds");
@@ -4327,7 +4336,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("orientation", extendModal.orientation);
       body.set("durationSeconds", String(clampDuration(extendModal.durationSeconds)));
       body.set("seed", String(randomSeed()));
-      if (isAnimeImagesWorkflowSelected) {
+      if (isAnimateImageWorkflowSelected) {
         body.set("width", orientation === "portrait" ? "720" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "720");
         body.delete("durationSeconds");
@@ -4394,6 +4403,11 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       const nextPrompt = await enhancePromptText(prompt, selectedWorkflow.id, {
         styleLabel: activeGenerateStylePreset?.label || "",
         stylePrompt: activeGenerateStyleGuidance,
+        selectedStyleId: activeGenerateStylePreset?.id || "",
+        mediaMode: generateMediaMode,
+        imageOperation,
+        videoGenerationType,
+        workflowLabel: selectedWorkflow.label,
         mode: isVideoWorkflowSelected ? "video" : "image",
       });
       pushPromptUndoSnapshot(prompt);
@@ -4405,29 +4419,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setStatusMessage(error instanceof Error ? error.message : "Enhance Prompt failed");
     } finally {
       setEnhancing(false);
-    }
-  }
-
-  async function handlePromptBuilderAssistant() {
-    if (!prompt.trim() || formattingPrompt || !showPromptBuilderAssistant) return;
-
-    setFormattingPrompt(true);
-    setStatusMessage("");
-    try {
-      const assessment = buildPromptAssessment({
-        prompt: prompt.trim(),
-        mode: currentPromptGuideMode,
-        hasStarterImage: Boolean(uploadedFileRef.current),
-        starterImageMeta: uploadedImageMeta,
-        styleLabel: activeGenerateStylePreset?.label || "",
-      });
-      setPromptAssessment(assessment);
-      setPromptAssessmentOpen(true);
-      setStatusMessage("Prompt Builder Assistant reviewed the prompt.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Prompt Builder Assistant failed");
-    } finally {
-      setFormattingPrompt(false);
     }
   }
 
@@ -4554,7 +4545,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data?.ok) throw new Error(String(data?.error || `LoRA admin request failed (${response.status}).`));
       if (Array.isArray(data.entries)) setAdminImageLoras(data.entries);
-      await loadImageLoraCatalog();
       return data;
     } finally {
       setAdminLoraBusy(false);
@@ -4672,7 +4662,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setLatestPreviewName("");
       setLatestPreviewKind("");
       setLatestPreviewMeta(null);
-      setSettingsPipelineMessage("Pipeline state cleared. Gallery and Favorites were not deleted.");
+      setSettingsPipelineMessage("Pipeline state cleared. Gallery files were not deleted.");
       setStatusMessage("Pipeline state cleared.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Pipeline clear failed.";
@@ -4686,7 +4676,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   function handleSettingsClearLocalState() {
     try {
       window.localStorage.removeItem(APP_STATE_KEY);
-      setSettingsLocalMessage("Local UI state cleared. Server files, Gallery, and Favorites were not deleted.");
+      setSettingsLocalMessage("Local UI state cleared. Server files and Gallery were not deleted.");
       setStatusMessage("Local UI state cleared.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Local UI state clear failed.";
@@ -4858,11 +4848,26 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
     try {
       const instruction =
-        describeMode === "background"
-          ? "Describe only the background scene in direct visual detail for prompt writing."
-          : "Describe the person's identity, face, hair, clothing, and distinguishing features in direct visual detail for prompt writing.";
+      describeMode === "background"
+        ? [
+            "Describe the visible background, location, environment, architecture, objects, lighting, weather, depth, colors, and composition.",
+            "Focus on the scene rather than identifying people.",
+            "Be accurate and concrete. Do not invent details that are not visible.",
+          ].join(" ")
+        : describeMode === "identity"
+          ? [
+              "Describe the visible person or character in detail.",
+              "Cover visible facial features, hair, clothing, accessories, pose, expression, body presentation, and distinguishing visual traits.",
+              "Do not guess a real-world identity, name, ethnicity, medical condition, or other unsupported fact.",
+            ].join(" ")
+          : [
+              "Describe the entire image accurately and usefully.",
+              "Cover the main subjects, visible people or characters, actions, objects, relationships, environment, background, lighting, colors, artistic style, composition, and camera perspective.",
+              "Mention readable text only when it is clear.",
+              "Separate visible facts from uncertainty and do not invent details.",
+            ].join(" ");
 
-      const body = new FormData();
+  const body = new FormData();
       body.set(
         "messages",
         JSON.stringify([
@@ -4875,12 +4880,16 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("image", describeFileRef.current);
 
       const res = await fetch("/api/ollama-ai/chat", {
-        method: "POST",
-        body,
-        credentials: "include",
-      });
+      method: "POST",
+      headers: {
+        "X-OTG-AI-Assistance": "1",
+        "X-OTG-AI-Assistance-Profile": "describe",
+      },
+      body,
+      credentials: "include",
+    });
 
-      const data = await res.json().catch(() => ({}));
+  const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(typeof data?.error === "string" ? data.error : "Describe failed");
       }
@@ -4897,113 +4906,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }
 
 
-  function handleEnhanceImageSelect(file: File | null) {
-    if (enhanceImagePreviewUrl) {
-      try {
-        URL.revokeObjectURL(enhanceImagePreviewUrl);
-      } catch {
-        // ignore
-      }
-    }
-
-    if (!file) {
-      setEnhanceImageFile(null);
-      setEnhanceImageName("");
-      setEnhanceImagePreviewUrl("");
-      setEnhanceImageInputKey((prev) => prev + 1);
-      return;
-    }
-
-    const nextUrl = URL.createObjectURL(file);
-    setEnhanceImageFile(file);
-    setEnhanceImageName(file.name || "");
-    setEnhanceImagePreviewUrl(nextUrl);
-  }
-
-  function clearEnhanceImage() {
-    if (enhanceImagePreviewUrl) {
-      try {
-        URL.revokeObjectURL(enhanceImagePreviewUrl);
-      } catch {
-        // ignore
-      }
-    }
-
-    setEnhanceImageFile(null);
-    setEnhanceImageName("");
-    setEnhanceImagePreviewUrl("");
-    setEnhanceImageInputKey((prev) => prev + 1);
-  }
-
-  async function handleEnhanceDraft() {
-    if (!enhanceDraft.trim() || enhanceDraftBusy) return;
-
-    setEnhanceDraftBusy(true);
-    setStatusMessage("");
-
-    try {
-      const lengthInstruction =
-        enhanceLength === "short"
-          ? "Keep it short: 1 to 2 sentences, compact and direct."
-          : enhanceLength === "long"
-            ? "Make it long: 4 to 6 detailed sentences with richer cinematic detail."
-            : "Keep it normal length: about 2 to 3 sentences, balanced detail.";
-
-      const workflowHint = selectedWorkflow?.title || selectedWorkflow?.id || "generate";
-
-      const userMessage = [
-        "You are improving a text prompt for image or video generation.",
-        enhanceImageFile
-          ? "Use the attached image as visual context and strengthen the user's prompt to better match or build from that image."
-          : "No image is attached. Improve the prompt using text only.",
-        "Preserve the user's core intent.",
-        "Make the result more vivid, visually clear, and generation-ready.",
-        lengthInstruction,
-        "Return only the final enhanced prompt.",
-        "Do not return bullets, labels, quotes, explanations, or markdown.",
-        `Workflow hint: ${workflowHint}`,
-        `User draft: ${enhanceDraft.trim()}`
-      ].join("\n");
-
-      const body = new FormData();
-      body.set(
-        "messages",
-        JSON.stringify([
-          {
-            role: "user",
-            content: userMessage,
-          },
-        ])
-      );
-
-      if (enhanceImageFile) {
-        body.set("image", enhanceImageFile);
-      }
-
-      const res = await fetch("/api/ollama-ai/chat", {
-        method: "POST",
-        body,
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(typeof data?.error === "string" ? data.error : "Enhance Prompt failed");
-      }
-
-      const nextPrompt = typeof data?.message === "string" ? data.message.trim() : "";
-      if (!nextPrompt) {
-        throw new Error("Empty enhancement response");
-      }
-
-      setEnhanceDraft(nextPrompt);
-      setStatusMessage(enhanceImageFile ? "Prompt enhanced with image context." : "Prompt enhanced.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Enhance Prompt failed");
-    } finally {
-      setEnhanceDraftBusy(false);
-    }
-  }
 
   function revokeScenePreview(url: string) {
     if (!url) return;
@@ -5703,71 +5605,353 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   async function handleSceneBuild() {
     await handleBuildSceneCard();
   }
-  async function handleAskAi() {
-    if ((!askInput.trim() && !askImageRef.current) || askBusy) return;
+  function persistStoryConversations(
+  conversations: SavedStoryConversation[]
+) {
+  const ordered = [...conversations].sort(
+    (a, b) => b.updatedAt - a.updatedAt
+  );
 
-    setAskBusy(true);
-    setStatusMessage("");
+  setSavedStoryConversations(ordered);
 
-    try {
-      let res: Response;
-      if (askImageRef.current) {
-        const body = new FormData();
-        body.set(
-          "messages",
-          JSON.stringify([
-            {
-              role: "user",
-              content: askInput.trim() || "Answer using the attached image.",
-            },
-          ])
-        );
-        body.set("image", askImageRef.current);
+  try {
+    window.localStorage.setItem(
+      storyConversationStorageKey,
+      JSON.stringify(ordered)
+    );
+  } catch {
+    // Storage failure must not break Story Helper.
+  }
+}
 
-        res = await fetch("/api/ollama-ai/chat", {
+function clearStoryImage() {
+  askImageRef.current = null;
+  setAskImageName("");
+  updateAskPreview(null);
+
+  if (askImageInputRef.current) {
+    askImageInputRef.current.value = "";
+  }
+}
+
+function handleNewStoryConversation() {
+  if (
+    typeof window !== "undefined" &&
+    "speechSynthesis" in window
+  ) {
+    window.speechSynthesis.cancel();
+  }
+
+  setSpeakingStoryMessageId("");
+  setActiveStoryConversationId("");
+  setStoryConversationName("");
+  setAskMessages([]);
+  setAskInput("");
+  clearStoryImage();
+
+  setStatusMessage(
+    "Started a new Story Helper conversation."
+  );
+}
+
+function handleSaveStoryConversation() {
+  if (!askMessages.length) {
+    setStatusMessage(
+      "There is no conversation to save yet."
+    );
+    return;
+  }
+
+  const id =
+    activeStoryConversationId ||
+    createStoryHelperId("conversation");
+
+  const fallbackName =
+    askMessages
+      .find((message) => message.role === "user")
+      ?.content.trim()
+      .slice(0, 48) ||
+    "Story Conversation";
+
+  const name =
+    storyConversationName.trim() ||
+    fallbackName;
+
+  const saved: SavedStoryConversation = {
+    id,
+    name,
+    messages: askMessages,
+    updatedAt: Date.now(),
+  };
+
+  persistStoryConversations([
+    saved,
+    ...savedStoryConversations.filter(
+      (conversation) => conversation.id !== id
+    ),
+  ]);
+
+  setActiveStoryConversationId(id);
+  setStoryConversationName(name);
+
+  setStatusMessage(
+    `Saved conversation: ${name}`
+  );
+}
+
+function handleOpenStoryConversation(
+  conversation: SavedStoryConversation
+) {
+  if (
+    typeof window !== "undefined" &&
+    "speechSynthesis" in window
+  ) {
+    window.speechSynthesis.cancel();
+  }
+
+  setSpeakingStoryMessageId("");
+  setActiveStoryConversationId(
+    conversation.id
+  );
+  setStoryConversationName(
+    conversation.name
+  );
+  setAskMessages(conversation.messages);
+  setAskInput("");
+  clearStoryImage();
+
+  setStatusMessage(
+    `Opened conversation: ${conversation.name}`
+  );
+}
+
+function handleDeleteStoryConversation(
+  id: string
+) {
+  persistStoryConversations(
+    savedStoryConversations.filter(
+      (conversation) => conversation.id !== id
+    )
+  );
+
+  if (activeStoryConversationId === id) {
+    setActiveStoryConversationId("");
+    setStoryConversationName("");
+  }
+
+  setStatusMessage(
+    "Saved conversation deleted."
+  );
+}
+
+function handleReadStoryMessage(
+  message: StoryHelperMessage
+) {
+  if (
+    typeof window === "undefined" ||
+    !("speechSynthesis" in window)
+  ) {
+    setStatusMessage(
+      "Read aloud is not supported by this browser."
+    );
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+
+  const utterance =
+    new SpeechSynthesisUtterance(
+      message.content
+    );
+
+  utterance.onend = () =>
+    setSpeakingStoryMessageId("");
+
+  utterance.onerror = () =>
+    setSpeakingStoryMessageId("");
+
+  setSpeakingStoryMessageId(message.id);
+
+  window.speechSynthesis.speak(
+    utterance
+  );
+}
+
+function handleStopStorySpeech() {
+  if (
+    typeof window !== "undefined" &&
+    "speechSynthesis" in window
+  ) {
+    window.speechSynthesis.cancel();
+  }
+
+  setSpeakingStoryMessageId("");
+}
+
+async function handleAskAi() {
+  const cleanInput = askInput.trim();
+
+  if (
+    (!cleanInput && !askImageRef.current) ||
+    askBusy
+  ) {
+    return;
+  }
+
+  const imageFile = askImageRef.current;
+  const imageName = askImageName;
+
+  const userContent =
+    cleanInput ||
+    "Use the attached image as story-development context. Help me develop the story while preserving established story facts.";
+
+  const userMessage: StoryHelperMessage = {
+    id: createStoryHelperId("user"),
+    role: "user",
+    content: userContent,
+    createdAt: Date.now(),
+    imageName: imageName || undefined,
+  };
+
+  const requestMessages = [
+    ...askMessages.map((message) => ({
+      role: message.role,
+      content: message.content,
+    })),
+    {
+      role: "user" as const,
+      content: userContent,
+    },
+  ];
+
+  setAskBusy(true);
+  setStatusMessage("");
+
+  try {
+    let res: Response;
+
+    if (imageFile) {
+      const body = new FormData();
+
+      body.set(
+        "messages",
+        JSON.stringify(requestMessages)
+      );
+
+      body.set("image", imageFile);
+
+      res = await fetch(
+        "/api/ollama-ai/chat",
+        {
           method: "POST",
+          headers: {
+            "X-OTG-AI-Assistance": "1",
+            "X-OTG-AI-Assistance-Profile":
+              "story-helper",
+          },
           body,
           credentials: "include",
-        });
-      } else {
-        res = await fetch("/api/ollama-ai/chat", {
+        }
+      );
+    } else {
+      res = await fetch(
+        "/api/ollama-ai/chat",
+        {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type":
+              "application/json",
+            "X-OTG-AI-Assistance": "1",
+            "X-OTG-AI-Assistance-Profile":
+              "story-helper",
+          },
           credentials: "include",
           body: JSON.stringify({
-            messages: [
-              {
-                role: "user",
-                content: askInput,
-              },
-            ],
+            messages: requestMessages,
           }),
-        });
-      }
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(typeof data?.error === "string" ? data.error : "Ask AI failed");
-      }
-
-      const answer =
-        typeof data?.message === "string"
-          ? data.message
-          : typeof data?.answer === "string"
-            ? data.answer
-            : typeof data?.text === "string"
-              ? data.text
-              : "";
-
-      setAskAnswer(answer || "No answer returned.");
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "Ask AI failed";
-      setAskAnswer(msg);
-      setStatusMessage(msg);
-    } finally {
-      setAskBusy(false);
+        }
+      );
     }
+
+    const data = await res
+      .json()
+      .catch(() => ({}));
+
+    if (!res.ok) {
+      throw new Error(
+        typeof data?.error === "string"
+          ? data.error
+          : "Story Helper failed"
+      );
+    }
+
+    const answer =
+      typeof data?.message === "string"
+        ? data.message.trim()
+        : typeof data?.answer === "string"
+          ? data.answer.trim()
+          : typeof data?.text === "string"
+            ? data.text.trim()
+            : "";
+
+    if (!answer) {
+      throw new Error(
+        "Story Helper returned an empty answer."
+      );
+    }
+
+    const assistantMessage:
+      StoryHelperMessage = {
+        id: createStoryHelperId(
+          "assistant"
+        ),
+        role: "assistant",
+        content: answer,
+        createdAt: Date.now(),
+      };
+
+    const nextMessages = [
+      ...askMessages,
+      userMessage,
+      assistantMessage,
+    ];
+
+    setAskMessages(nextMessages);
+    setAskInput("");
+    clearStoryImage();
+
+    if (activeStoryConversationId) {
+      persistStoryConversations(
+        savedStoryConversations.map(
+          (conversation) =>
+            conversation.id ===
+            activeStoryConversationId
+              ? {
+                  ...conversation,
+                  name:
+                    storyConversationName.trim() ||
+                    conversation.name,
+                  messages: nextMessages,
+                  updatedAt: Date.now(),
+                }
+              : conversation
+        )
+      );
+    }
+
+    setStatusMessage(
+      "Story Helper answered."
+    );
+  } catch (error) {
+    setStatusMessage(
+      error instanceof Error
+        ? error.message
+        : "Story Helper failed"
+    );
+  } finally {
+    setAskBusy(false);
   }
+}
 
   const activeTabLabel = APP_TAB_LABELS[tab] || "OTG";
   const appShellBackground = selectedThemeTokens.background;
@@ -5906,7 +6090,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               ))}
             </div>
 
-            <Card title="Workflow">
+            <Card title="Mode">
               {generateMediaMode === "image" ? (
                 <div className="space-y-4">
                   <select
@@ -5920,24 +6104,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                       </option>
                     ))}
                   </select>
-                  <div className={cn("grid gap-2", operationImageModels.length > 1 ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-1")}>
-                    {operationImageModels.map((model) => (
-                      <button
-                        key={model.id}
-                        type="button"
-                        aria-pressed={workflowId === model.id}
-                        onClick={() => setWorkflowId(model.id)}
-                        className={cn(
-                          "min-h-14 rounded-[18px] border px-3 py-3 text-sm font-black transition",
-                          workflowId === model.id
-                            ? "border-purple-300/60 bg-purple-500/25 text-white"
-                            : "border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]"
-                        )}
-                      >
-                        {model.label}
-                      </button>
-                    ))}
-                  </div>
+                  <p className="text-sm text-white/60">{IMAGE_OPERATION_LABELS[imageOperation]}</p>
                 </div>
               ) : (
                 <div className="space-y-5">
@@ -5964,50 +6131,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                     </div>
                   </div>
 
-                  <div>
-                    <div className="mb-2 text-xs font-black uppercase tracking-[0.2em] text-white/50">Video model</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {VIDEO_MODEL_OPTIONS.map((option) => (
-                        <button
-                          key={option.id}
-                          type="button"
-                          aria-pressed={videoModelFamily === option.id}
-                          onClick={() => setVideoModelFamily(option.id)}
-                          className={cn(
-                            "min-h-14 rounded-[18px] border px-4 py-3 text-sm font-black transition",
-                            videoModelFamily === option.id
-                              ? "border-cyan-300/55 bg-cyan-400/15 text-white"
-                              : "border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]"
-                          )}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="mb-2 text-xs font-black uppercase tracking-[0.2em] text-white/50">Model format</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {VIDEO_FORMAT_OPTIONS.map((option) => (
-                        <button
-                          key={option.id}
-                          type="button"
-                          aria-pressed={videoModelFormat === option.id}
-                          onClick={() => setVideoModelFormat(option.id)}
-                          className={cn(
-                            "min-h-14 rounded-[18px] border px-4 py-3 text-sm font-black transition",
-                            videoModelFormat === option.id
-                              ? "border-emerald-300/55 bg-emerald-400/15 text-white"
-                              : "border-white/10 bg-white/[0.04] text-white/60 hover:bg-white/[0.08]"
-                          )}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
                   <div className={cn(
                     "rounded-[18px] border px-4 py-3 text-sm",
                     videoWorkflowReady
@@ -6018,185 +6141,76 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                       ? `Ready: ${selectedVideoWorkflowItem?.label || selectedVideoConfiguration?.workflowId}`
                       : selectedVideoConfiguration?.workflowId
                         ? `TEST workflow not found: ${selectedVideoConfiguration.workflowId}`
-                        : "Workflow JSON pending. This combination cannot be submitted until its verified workflow is installed."}
+                        : "Workflow JSON pending. This mode cannot be submitted until its workflow is installed."}
                   </div>
                 </div>
               )}
               <p className="text-sm text-white/72">{selectedWorkflow.runtime}</p>
             </Card>
 
-            {generateMediaMode === "image" ? (
-              <Card title="LoRA">
-                {selectedImageModel?.defaultLora ? (
-                  <div className="rounded-[18px] border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-50">
-                    Workflow default: {selectedImageModel.defaultLora}
-                  </div>
-                ) : null}
-                {activeImageLoras.length ? (
-                  <div className="space-y-4">
+            <Card title="Prompt">
+              <textarea
+                value={prompt}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  if (next !== prompt) pushPromptUndoSnapshot(prompt);
+                  setPrompt(next);
+                  setPromptAssessmentOpen(false);
+                  setPromptAssessment(null);
+                }}
+                rows={6}
+                placeholder="Describe the image or video you want to generate."
+                className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
+              />
+              <div className="flex flex-wrap items-center gap-3">
+                <ActionButton onClick={handleEnhancePrompt} disabled={enhancing || !prompt.trim()}>
+                  {enhancing ? "Enhancing..." : "Enhance Prompt"}
+                </ActionButton>
+                <div className="flex flex-wrap items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-950/60 p-1" data-otg="OTG_ENHANCE_LEVEL_UI_V4">
+                  {(["short", "medium", "long"] as const).map((level) => (
                     <button
+                      key={level}
                       type="button"
-                      onClick={() => {
-                        if (imageLoraAccessEnabled) return;
-                        setImageLoraAgeConfirmed(false);
-                        setImageLoraDisclaimerOpen(true);
-                      }}
-                      className={cn(
-                        "w-full rounded-[20px] border px-5 py-4 text-sm font-black transition",
-                        imageLoraAccessEnabled
-                          ? "border-emerald-400/35 bg-emerald-500/15 text-emerald-100"
-                          : "border-red-400/50 bg-red-600/25 text-red-100 hover:bg-red-600/35"
-                      )}
+                      onClick={() => setEnhancePromptLevel(level)}
+                      className={
+                        enhancePromptLevel === level
+                          ? "rounded-lg border border-purple-300 bg-purple-500 px-3 py-2 text-xs font-black capitalize text-white"
+                          : "rounded-lg border border-zinc-700 bg-zinc-900/70 px-3 py-2 text-xs font-black capitalize text-zinc-300 hover:border-purple-300 hover:text-white"
+                      }
+                      aria-pressed={enhancePromptLevel === level}
                     >
-                      {imageLoraAccessEnabled ? "LoRAs Enabled - 18+ Confirmed" : "Enable LoRAs (18+)"}
+                      {level}
                     </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void handleMicClick("generate", (text) => {
+                      pushPromptUndoSnapshot(prompt);
+                      setPrompt((prev) => appendPromptText(prev, text));
+                    })
+                  }
+                  className={cn(
+                    "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
+                    recordingTarget === "generate"
+                      ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
+                      : "border-white/10 bg-white/5 hover:bg-white/10"
+                  )}
+                  disabled={transcribingTarget === "generate"}
+                >
+                  <IconMic />
+                </button>
+                <GhostButton onClick={handleClearPrompt} disabled={!prompt}>
+                  Clear
+                </GhostButton>
+                <GhostButton onClick={handleUndoPrompt} disabled={!promptUndoStack.length}>
+                  Undo
+                </GhostButton>
+              </div>
+            </Card>
 
-                    <div className="text-sm text-white/60">
-                      Select up to {IMAGE_LORA_MAX_SELECTIONS}. Only LoRAs compatible with {selectedImageModel?.label || "this model"} are shown.
-                    </div>
-
-                    <div className="space-y-3">
-                      {activeImageLoras.map((lora) => {
-                        const selected = Object.prototype.hasOwnProperty.call(selectedImageLoras, lora.name);
-                        const selectedCount = Object.keys(selectedImageLoras).length;
-                        const atLimit = selectedCount >= IMAGE_LORA_MAX_SELECTIONS;
-                        return (
-                          <div
-                            key={lora.name}
-                            className={cn(
-                              "w-full rounded-[20px] border p-4 text-left transition",
-                              selected
-                                ? "border-purple-300/55 bg-purple-500/20"
-                                : "border-white/10 bg-white/[0.035] hover:bg-white/[0.07]"
-                            )}
-                          >
-                            <button
-                              type="button"
-                              aria-pressed={selected}
-                              disabled={imageLoraAccessEnabled && atLimit && !selected}
-                              onClick={() => {
-                                if (!imageLoraAccessEnabled) {
-                                  setImageLoraAgeConfirmed(false);
-                                  setImageLoraDisclaimerOpen(true);
-                                  return;
-                                }
-                                setSelectedImageLoras((current) => {
-                                  if (Object.prototype.hasOwnProperty.call(current, lora.name)) {
-                                    const next = { ...current };
-                                    delete next[lora.name];
-                                    return next;
-                                  }
-                                  return Object.keys(current).length < IMAGE_LORA_MAX_SELECTIONS
-                                    ? { ...current, [lora.name]: lora.strength }
-                                    : current;
-                                });
-                              }}
-                              className="w-full text-left disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="font-black text-white">{lora.label}</div>
-                                <div className="flex shrink-0 gap-2">
-                                  {lora.mature ? (
-                                    <span className="rounded-full border border-red-400/35 bg-red-500/15 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-red-100">Mature</span>
-                                  ) : null}
-                                  <span className="rounded-full border border-white/10 px-2 py-1 text-[10px] font-black text-white/65">{selected ? "Selected" : `Default ${lora.strength.toFixed(2)}`}</span>
-                                </div>
-                              </div>
-                              <p className="mt-2 text-sm leading-6 text-white/65">{lora.description}</p>
-                              <p className="mt-1 text-xs leading-5 text-cyan-100/65">{lora.usage}</p>
-                            </button>
-                            {selected ? (
-                              <label className="mt-4 block">
-                                <span className="flex items-center justify-between text-xs font-black uppercase tracking-wider text-white/55">
-                                  <span>Strength</span>
-                                  <span>{Number(selectedImageLoras[lora.name]).toFixed(2)}</span>
-                                </span>
-                                <input
-                                  type="range"
-                                  min="0"
-                                  max="2"
-                                  step="0.05"
-                                  value={selectedImageLoras[lora.name]}
-                                  onChange={(event) => {
-                                    const strength = Math.max(0, Math.min(2, Number(event.target.value)));
-                                    setSelectedImageLoras((current) => ({ ...current, [lora.name]: strength }));
-                                  }}
-                                  className="mt-2 w-full accent-purple-500"
-                                />
-                              </label>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {Object.keys(selectedImageLoras).length ? (
-                      <div className="rounded-[16px] border border-purple-300/20 bg-purple-500/10 px-4 py-3 text-sm text-purple-50">
-                        {Object.keys(selectedImageLoras).length} of {IMAGE_LORA_MAX_SELECTIONS} LoRAs selected.
-                      </div>
-                    ) : null}
-
-                    {imageLoraDisclaimerOpen ? (
-                      <div className="fixed inset-0 z-[180] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-                        <div role="dialog" aria-modal="true" aria-labelledby="image-lora-disclaimer-title" className="w-full max-w-xl rounded-[28px] border border-red-400/30 bg-[#0b1020] p-6 shadow-2xl">
-                          <h2 id="image-lora-disclaimer-title" className="text-2xl font-black text-white">LoRA Content Notice</h2>
-                          <p className="mt-4 leading-7 text-white/75">
-                            Some available LoRAs can generate mature content, including nudity, gore, or other material intended only for adults. You must be at least 18 years old to enable LoRAs.
-                          </p>
-                          <p className="mt-3 leading-7 text-white/75">
-                            By continuing, you agree that you are responsible for the prompts you submit, the content you generate, and how that content is used.
-                          </p>
-                          <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-[18px] border border-white/10 bg-white/[0.04] p-4 text-sm leading-6 text-white/80">
-                            <input
-                              type="checkbox"
-                              checked={imageLoraAgeConfirmed}
-                              onChange={(event) => setImageLoraAgeConfirmed(event.target.checked)}
-                              className="mt-1 h-5 w-5 accent-red-500"
-                            />
-                            <span>I confirm that I am at least 18 years old and accept responsibility for the content I generate.</span>
-                          </label>
-                          <div className="mt-6 grid grid-cols-2 gap-3">
-                            <button type="button" onClick={() => setImageLoraDisclaimerOpen(false)} className="rounded-[18px] border border-white/10 bg-white/[0.05] px-4 py-3 font-black text-white/75">Cancel</button>
-                            <button
-                              type="button"
-                              disabled={!imageLoraAgeConfirmed}
-                              onClick={() => {
-                                if (!imageLoraAgeConfirmed) return;
-                                try {
-                                  window.localStorage.setItem("otg-image-lora-adult-ack", IMAGE_LORA_ADULT_ACK_VERSION);
-                                } catch {}
-                                setImageLoraAccessEnabled(true);
-                                setImageLoraDisclaimerOpen(false);
-                              }}
-                              className="rounded-[18px] border border-red-300/45 bg-red-600 px-4 py-3 font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              Confirm and Enable
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : selectedImageModel?.defaultLora ? null : (
-                  <p className="text-sm text-white/45">No LoRAs are configured for this model.</p>
-                )}
-              </Card>
-            ) : selectedVideoConfiguration?.workflowId && shouldShowVideoLoraPanel(generateMediaMode, selectedVideoLoraFamily) ? (
-              <Card title="Video LoRAs">
-                <VideoLoraPanel
-                  workflowId={selectedVideoConfiguration.workflowId}
-                  family={selectedVideoLoraFamily}
-                  value={selectedVideoLoras}
-                  onChange={setSelectedVideoLoras}
-                  prompt={prompt}
-                  onPromptChange={setPrompt}
-                />
-              </Card>
-            ) : null}
-
-            <Card
-              title="Choose style of picture and video"
-              right={
+            <Card title="Choose a Style" right={
                 activeGenerateStylePreset ? (
                   <span className="rounded-full border border-emerald-400/25 bg-emerald-500/15 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-100">
                     {activeGenerateStylePreset.label}
@@ -6257,262 +6271,19 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               </div>
             </Card>
 
-            <Card
-              title="Prompt Guide"
-              right={
-                <GhostButton onClick={() => setPromptGuideOpen((prev) => !prev)}>
-                  {promptGuideOpen ? "Hide" : "Show"}
-                </GhostButton>
-              }
-            >
-              {promptGuideOpen ? (
-                <div className="space-y-4">
-                  <p className="text-sm text-white/60">
-                    Use these guidelines to write better prompts for the current workflow without cluttering the page.
-                  </p>
+            {generateMediaMode === "video" && selectedVideoConfiguration?.workflowId && shouldShowVideoLoraPanel(generateMediaMode, selectedVideoLoraFamily) ? (
+              <Card title="LoRAs">
+                <VideoLoraPanel
+                  workflowId={selectedVideoConfiguration.workflowId}
+                  family={selectedVideoLoraFamily}
+                  value={selectedVideoLoras}
+                  onChange={setSelectedVideoLoras}
+                  prompt={prompt}
+                  onPromptChange={setPrompt}
+                />
+              </Card>
+            ) : null}
 
-                  <div className="flex flex-wrap gap-2">
-                    {(["image", "text_to_video", "image_to_video", "tutorial_video"] as PromptGuideMode[]).map((mode) => {
-                      const guide = PROMPT_GUIDES[mode];
-                      const active = promptGuideMode === mode;
-                      const isCurrent = currentPromptGuideMode === mode;
-                      return (
-                        <button
-                          key={mode}
-                          type="button"
-                          onClick={() => setPromptGuideMode(mode)}
-                          className={cn(
-                            "inline-flex min-h-11 items-center gap-2 rounded-full border px-4 py-2.5 text-sm font-semibold transition",
-                            active
-                              ? "border-cyan-400/35 bg-cyan-500/15 text-cyan-50 shadow-[0_0_20px_rgba(34,211,238,0.16)]"
-                              : "border-white/10 bg-white/5 text-white hover:bg-white/10"
-                          )}
-                        >
-                          <span>{guide.label}</span>
-                          {isCurrent ? (
-                            <span className="rounded-full border border-emerald-400/25 bg-emerald-500/15 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-emerald-100">
-                              Current
-                            </span>
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {promptGuideMode === "tutorial_video" ? (
-                    <div className="space-y-4">
-                      <div className="rounded-[22px] border border-white/10 bg-black/45 p-3">
-                        <div className="aspect-video overflow-hidden rounded-[18px] border border-white/10 bg-black">
-                          <iframe
-                            src={PROMPT_TUTORIAL_VIDEO_EMBED_URL}
-                            title="LTX 2.3 prompt tutorial"
-                            className="h-full w-full"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                            allowFullScreen
-                          />
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-3">
-                        <GhostButton onClick={() => window.open(PROMPT_TUTORIAL_VIDEO_URL, "_blank", "noopener,noreferrer")}>
-                          Open on YouTube
-                        </GhostButton>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="grid gap-4 lg:grid-cols-2">
-                        <div className="rounded-[22px] border border-white/10 bg-black/40 px-4 py-4">
-                          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-200/80">What works</div>
-                          <ul className="space-y-2 text-sm text-white/80">
-                            {activePromptGuide.works.map((item) => (
-                              <li key={item} className="flex gap-2">
-                                <span className="mt-[2px] text-emerald-300">-</span>
-                                <span>{item}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                        <div className="rounded-[22px] border border-white/10 bg-black/40 px-4 py-4">
-                          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-rose-200/80">What to avoid</div>
-                          <ul className="space-y-2 text-sm text-white/80">
-                            {activePromptGuide.avoid.map((item) => (
-                              <li key={item} className="flex gap-2">
-                                <span className="mt-[2px] text-rose-300">-</span>
-                                <span>{item}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
-
-                      <div className="rounded-[22px] border border-white/10 bg-black/45 px-4 py-4">
-                        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">Example prompt</div>
-                            <div className="text-sm text-white/55">A stronger starting example for {activePromptGuide.label.toLowerCase()}.</div>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <GhostButton onClick={() => copyText(activePromptGuide.example)}>Copy Example</GhostButton>
-                            <GhostButton
-                              onClick={() => {
-                                if (activePromptGuide.example !== prompt) pushPromptUndoSnapshot(prompt);
-                                setPrompt(activePromptGuide.example);
-                              }}
-                            >
-                              Use Example
-                            </GhostButton>
-                          </div>
-                        </div>
-                        <div className="rounded-[18px] border border-white/10 bg-black/55 px-4 py-4 text-sm leading-7 text-white/85">
-                          {activePromptGuide.example}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              ) : (
-                <p className="text-sm text-white/55">
-                  Show quick guidance for Image, Text-to-Video, Image-to-Video, and a tutorial video.
-                </p>
-              )}
-            </Card>
-
-            <Card title="Prompt">
-              <textarea
-                value={prompt}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  if (next !== prompt) pushPromptUndoSnapshot(prompt);
-                  setPrompt(next);
-                  setPromptAssessmentOpen(false);
-                  setPromptAssessment(null);
-                }}
-                rows={6}
-                placeholder="Describe the image or video you want to generate."
-                className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-              />
-              {activeGenerateStylePreset ? (
-                <div className="rounded-[20px] border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100/95">
-                  Active style wrapper: <span className="font-semibold">{activeGenerateStylePreset.label}</span>. Generate applies a strong style wrapper before and after your prompt at enhance and submit time instead of silently burying it in the text box.
-                  {activeGenerateStyleGuidance ? (
-                    <div className="mt-2 text-xs leading-6 text-emerald-50/85">{activeGenerateStyleGuidance}</div>
-                  ) : null}
-                </div>
-              ) : null}
-              <div className="flex flex-wrap items-center gap-3">
-                <ActionButton onClick={handleEnhancePrompt} disabled={enhancing || !prompt.trim()}>
-                  {enhancing ? "Enhancing..." : "Enhance Prompt"}
-                </ActionButton>
-                <div className="flex flex-wrap items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-950/60 p-1" data-otg="OTG_ENHANCE_LEVEL_UI_V4">
-                  {(["short", "medium", "cinematic"] as const).map((level) => (
-                    <button
-                      key={level}
-                      type="button"
-                      onClick={() => setEnhancePromptLevel(level)}
-                      className={
-                        enhancePromptLevel === level
-                          ? "rounded-lg border border-purple-300 bg-purple-500 px-3 py-2 text-xs font-black capitalize text-white"
-                          : "rounded-lg border border-zinc-700 bg-zinc-900/70 px-3 py-2 text-xs font-black capitalize text-zinc-300 hover:border-purple-300 hover:text-white"
-                      }
-                      aria-pressed={enhancePromptLevel === level}
-                    >
-                      {level === "cinematic" ? "Long" : level}
-                    </button>
-                  ))}
-                </div>
-                {showPromptBuilderAssistant ? (
-                  <ActionButton onClick={handlePromptBuilderAssistant} disabled={formattingPrompt || !prompt.trim()}>
-                    {formattingPrompt ? "Checking Prompt..." : "Prompt Builder Assistant"}
-                  </ActionButton>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() =>
-                    void handleMicClick("generate", (text) => {
-                      pushPromptUndoSnapshot(prompt);
-                      setPrompt((prev) => appendPromptText(prev, text));
-                    })
-                  }
-                  className={cn(
-                    "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
-                    recordingTarget === "generate"
-                      ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
-                      : "border-white/10 bg-white/5 hover:bg-white/10"
-                  )}
-                  disabled={transcribingTarget === "generate"}
-                >
-                  <IconMic />
-                </button>
-                <GhostButton onClick={handleClearPrompt} disabled={!prompt}>
-                  Clear
-                </GhostButton>
-                <GhostButton onClick={handleUndoPrompt} disabled={!promptUndoStack.length}>
-                  Undo
-                </GhostButton>
-              </div>
-              {showPromptBuilderAssistant ? (
-                <>
-                  <p className="text-sm text-white/55">
-                    {promptBuilderNeedsStarterImage
-                      ? "Prompt Builder Assistant grades your current prompt and starter image for LTX 2.3. It does not rewrite your prompt."
-                      : "Prompt Builder Assistant grades your current prompt for LTX 2.3 and shows what is strong, weak, or missing. It does not rewrite your prompt."}
-                  </p>
-                  {promptAssessmentOpen && promptAssessment ? (
-                    <div className="rounded-[24px] border border-cyan-400/25 bg-black/55 p-4 shadow-[0_0_0_1px_rgba(34,211,238,0.08)]">
-                      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">Prompt Builder Assistant</div>
-                          <div className="mt-1 text-sm text-white/60">LTX 2.3 prompt readiness review. Your prompt text was not changed.</div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100">
-                            Grade {promptAssessment.grade} - {promptAssessment.score}/100
-                          </div>
-                          <GhostButton onClick={() => setPromptAssessmentOpen(false)}>Hide</GhostButton>
-                        </div>
-                      </div>
-
-                      <div className="grid gap-3 lg:grid-cols-3">
-                        <div className="rounded-[20px] border border-emerald-400/20 bg-emerald-500/10 p-4">
-                          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100/70">Correct</div>
-                          <ul className="space-y-2 text-sm leading-6 text-emerald-50/90">
-                            {promptAssessment.correct.length ? (
-                              promptAssessment.correct.map((item) => <li key={item}>- {item}</li>)
-                            ) : (
-                              <li>- No strong elements were detected yet.</li>
-                            )}
-                          </ul>
-                        </div>
-                        <div className="rounded-[20px] border border-amber-400/20 bg-amber-500/10 p-4">
-                          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-100/70">Weak</div>
-                          <ul className="space-y-2 text-sm leading-6 text-amber-50/90">
-                            {promptAssessment.weak.length ? (
-                              promptAssessment.weak.map((item) => <li key={item}>- {item}</li>)
-                            ) : (
-                              <li>- No weak areas were detected.</li>
-                            )}
-                          </ul>
-                        </div>
-                        <div className="rounded-[20px] border border-rose-400/20 bg-rose-500/10 p-4">
-                          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-rose-100/70">Missing</div>
-                          <ul className="space-y-2 text-sm leading-6 text-rose-50/90">
-                            {promptAssessment.missing.length ? (
-                              promptAssessment.missing.map((item) => <li key={item}>- {item}</li>)
-                            ) : (
-                              <li>- No critical missing elements were detected.</li>
-                            )}
-                          </ul>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 rounded-[20px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm leading-7 text-white/85">
-                        <span className="font-semibold text-white">Summary:</span> {promptAssessment.summary}
-                      </div>
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-            </Card>
             {isPromptRelayWorkflowSelected ? (
               <Card title="Need help?">
                 <div className="space-y-4 text-sm leading-6 text-white/68">
@@ -6638,7 +6409,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                 </p>
               </Card>
 
-              {generateMediaMode === "video" && !isWanWorkflowSelected ? <Card title="Duration">
+              {generateMediaMode === "video" ? <Card title="Duration">
                 <select
                   value={String(durationSeconds)}
                   onChange={(e) => setDurationSeconds(clampGenerateDuration(Number(e.target.value)))}
@@ -6899,42 +6670,26 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               ) : null}
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
-              <Card title="Preview">
-                <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/45">
-                  <div className="aspect-[16/9] bg-black/60">
-                    {latestPreviewUrl ? (
-                      latestPreviewKind === "video" ? (
-                        <video src={latestPreviewUrl} className="h-full w-full object-contain" controls playsInline muted />
-                      ) : (
-                        <img src={latestPreviewUrl} alt={latestPreviewName || "Latest generated content"} className="h-full w-full object-contain" />
-                      )
-                    ) : (
-                      <div className="flex h-full items-center justify-center px-6 text-center text-white/45">
-                        Preview will appear here after ComfyUI finishes creating content.
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-white/60">
-                  <div className="min-w-0 space-y-1">
-                    <div className="truncate">{latestPreviewName || "No completed output yet"}</div>
-                    <div className="text-xs text-white/45">
-                      {latestPreviewKind === "image" && latestPreviewMeta
-                        ? `Generated image: ${latestPreviewMeta.width} x ${latestPreviewMeta.height}${latestPreviewMeta.height > latestPreviewMeta.width ? " - portrait" : " - landscape"}`
-                        : latestPreviewKind === "video"
-                          ? "Latest generated video."
-                          : "Generate content to update this preview."}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <GhostButton onClick={() => void refreshLatestContent(true)} disabled={progressStatus === "running"}>
-                      Refresh preview
-                    </GhostButton>
-                  </div>
-                </div>
-              </Card>
+            <Card title="Generate">
+              <div className="flex flex-wrap items-center gap-3">
+                <ActionButton
+                  onClick={handleGenerate}
+                  disabled={
+                    generateBusy ||
+                    !prompt.trim() ||
+                    (generateMediaMode === "video" && !videoWorkflowReady) ||
+                    (videoNeedsStarterImage && !uploadedFileName) ||
+                    (videoNeedsLastFrameImage && !lastFrameFileName) ||
+                    (isPromptRelayWorkflowSelected && (!uploadedFileName || !promptRelayLocalPrompts.trim())) ||
+                    (isCustomAudioVideoWorkflowSelected && (!uploadedFileName || !customAudioFileName))
+                  }
+                >
+                  {generateBusy ? "Submitting..." : "Generate"}
+                </ActionButton>
+              </div>
+            </Card>
 
+            <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
               <Card title="Progress">
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-3 text-sm font-semibold text-white/80">
@@ -6975,67 +6730,111 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                   </div>
                 </div>
               </Card>
+
+              <Card title="Preview">
+                <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/45">
+                  <div className="aspect-[16/9] bg-black/60">
+                    {latestPreviewUrl ? (
+                      latestPreviewKind === "video" ? (
+                        <video src={latestPreviewUrl} className="h-full w-full object-contain" controls playsInline muted />
+                      ) : (
+                        <img src={latestPreviewUrl} alt={latestPreviewName || "Latest generated content"} className="h-full w-full object-contain" />
+                      )
+                    ) : (
+                      <div className="flex h-full items-center justify-center px-6 text-center text-white/45">
+                        Preview will appear here after ComfyUI finishes creating content.
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-white/60">
+                  <div className="min-w-0 space-y-1">
+                    <div className="truncate">{latestPreviewName || "No completed output yet"}</div>
+                    <div className="text-xs text-white/45">
+                      {latestPreviewKind === "image" && latestPreviewMeta
+                        ? `Generated image: ${latestPreviewMeta.width} x ${latestPreviewMeta.height}${latestPreviewMeta.height > latestPreviewMeta.width ? " - portrait" : " - landscape"}`
+                        : latestPreviewKind === "video"
+                          ? "Latest generated video."
+                          : "Generate content to update this preview."}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <GhostButton onClick={() => void refreshLatestContent(true)} disabled={progressStatus === "running"}>
+                      Refresh preview
+                    </GhostButton>
+                  </div>
+                </div>
+              </Card>
             </div>
 
-            <Card title="Generate action">
-              <p className="text-sm text-white/60">The Generate button stays here as the last step.</p>
-              <div className="flex flex-wrap items-center gap-3">
-                <ActionButton
-                  onClick={handleGenerate}
-                  disabled={
-                    generateBusy ||
-                    !prompt.trim() ||
-                    (generateMediaMode === "video" && !videoWorkflowReady) ||
-                    (videoNeedsStarterImage && !uploadedFileName) ||
-                    (videoNeedsLastFrameImage && !lastFrameFileName) ||
-                    (isPromptRelayWorkflowSelected && (!uploadedFileName || !promptRelayLocalPrompts.trim())) ||
-                    (isCustomAudioVideoWorkflowSelected && (!uploadedFileName || !customAudioFileName))
-                  }
-                >
-                  {generateBusy ? "Submitting..." : "Generate"}
-                </ActionButton>
-                <span className="text-sm text-white/55">Sends the current prompt and controls to ComfyUI.</span>
-              </div>
-            </Card>
           </div>
         ) : null}
 
         {tab === "gethelp" ? (
           <div className="space-y-4">
             <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm">
-              <h1 className="text-4xl font-black tracking-tight text-white">AI Assistance</h1>
+              <h1 className="text-4xl font-black tracking-tight text-white">
+                AI Assistance
+              </h1>
+
               <div className="mt-4 overflow-x-auto">
                 <div className="flex min-w-max gap-2 pb-1">
-                  <PillButton active={assistanceTab === "describe"} onClick={() => setAssistanceTab("describe")}>
+                  <PillButton
+                    active={
+                      assistanceTab === "describe"
+                    }
+                    onClick={() =>
+                      setAssistanceTab("describe")
+                    }
+                  >
                     Describe Picture
                   </PillButton>
-                  <PillButton active={assistanceTab === "enhance"} onClick={() => setAssistanceTab("enhance")}>
-                    Enhance Prompt
-                  </PillButton>
-                  <PillButton active={assistanceTab === "scene"} onClick={() => setAssistanceTab("scene")}>
-                    Scene Creator
-                  </PillButton>
-                  <PillButton active={assistanceTab === "ask"} onClick={() => setAssistanceTab("ask")}>
-                    Ask AI
+
+                  <PillButton
+                    active={
+                      assistanceTab === "ask"
+                    }
+                    onClick={() =>
+                      setAssistanceTab("ask")
+                    }
+                  >
+                    Story Helper
                   </PillButton>
                 </div>
               </div>
             </div>
+
             {assistanceTab === "describe" ? (
               <Card title="Describe Picture">
-                <p className="text-white/70">Choose an image, preview it, select the mode, then generate a description you can copy, enhance, or send to Generate.</p>
+                <p className="text-white/70">
+                  Choose an image and describe the full image,
+                  the background scene, or a visible person or
+                  character.
+                </p>
+
                 <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
                   <div className="space-y-4">
                     <div className="flex flex-wrap gap-3">
-                      <ActionButton onClick={() => describeInputRef.current?.click()}>Choose image</ActionButton>
+                      <ActionButton
+                        onClick={() =>
+                          describeInputRef.current?.click()
+                        }
+                      >
+                        Choose image
+                      </ActionButton>
+
                       <GhostButton
                         onClick={() => {
                           describeFileRef.current = null;
                           setDescribeImageName("");
                           setDescribeOutput("");
                           updateDescribePreview(null);
-                          if (describeInputRef.current) {
-                            describeInputRef.current.value = "";
+
+                          if (
+                            describeInputRef.current
+                          ) {
+                            describeInputRef.current.value =
+                              "";
                           }
                         }}
                         disabled={!describeImageName}
@@ -7043,982 +6842,479 @@ ${sceneReferenceCard || ""}`.toLowerCase();
                         Clear
                       </GhostButton>
                     </div>
+
                     <input
                       ref={describeInputRef}
                       type="file"
                       accept="image/*"
                       className="hidden"
                       onChange={(e) => {
-                        const file = e.target.files?.[0] || null;
-                        describeFileRef.current = file;
-                        setDescribeImageName(file?.name || "");
-                        updateDescribePreview(file);
+                        const file =
+                          e.target.files?.[0] ||
+                          null;
+
+                        describeFileRef.current =
+                          file;
+
+                        setDescribeImageName(
+                          file?.name || ""
+                        );
+
+                        updateDescribePreview(
+                          file
+                        );
                       }}
                     />
+
                     <div className="rounded-[22px] border border-white/10 bg-black/35 p-4 text-white/70">
-                      {describeImageName || "No image selected"}
+                      {describeImageName ||
+                        "No image selected"}
                     </div>
+
                     <div className="overflow-hidden rounded-[22px] border border-white/10 bg-black/45">
                       {describePreviewUrl ? (
-                        <img src={describePreviewUrl} alt={describeImageName || "Describe preview"} className="aspect-[4/3] w-full object-contain" />
+                        <img
+                          src={
+                            describePreviewUrl
+                          }
+                          alt={
+                            describeImageName ||
+                            "Describe preview"
+                          }
+                          className="aspect-[4/3] w-full object-contain"
+                        />
                       ) : (
-                        <div className="flex aspect-[4/3] items-center justify-center px-4 text-center text-sm text-white/40">Image preview will appear here.</div>
+                        <div className="flex aspect-[4/3] items-center justify-center px-4 text-center text-sm text-white/40">
+                          Image preview will
+                          appear here.
+                        </div>
                       )}
                     </div>
+
                     <select
                       value={describeMode}
-                      onChange={(e) => setDescribeMode(e.target.value as "background" | "identity")}
+                      onChange={(e) =>
+                        setDescribeMode(
+                          e.target.value as
+                            | "general"
+                            | "background"
+                            | "identity"
+                        )
+                      }
                       className="w-full rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
                     >
-                      <option value="background">Background Scene</option>
-                      <option value="identity">Person Identity</option>
+                      <option value="general">
+                        General Image
+                      </option>
+                      <option value="background">
+                        Background Scene
+                      </option>
+                      <option value="identity">
+                        Person / Character
+                      </option>
                     </select>
-                    <ActionButton onClick={handleDescribe} disabled={describeBusy || !describeImageName}>
-                      {describeBusy ? "Describing..." : "Describe"}
+
+                    <ActionButton
+                      onClick={handleDescribe}
+                      disabled={
+                        describeBusy ||
+                        !describeImageName
+                      }
+                    >
+                      {describeBusy
+                        ? "Describing..."
+                        : "Describe"}
                     </ActionButton>
                   </div>
 
                   <div className="space-y-4">
                     <textarea
                       value={describeOutput}
-                      onChange={(e) => setDescribeOutput(e.target.value)}
-                      rows={10}
+                      onChange={(e) =>
+                        setDescribeOutput(
+                          e.target.value
+                        )
+                      }
+                      rows={12}
                       placeholder="Description result will appear here."
                       className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
                     />
-                    <div className="flex flex-wrap gap-3">
-                      <GhostButton onClick={() => copyText(describeOutput)} disabled={!describeOutput.trim()}>
-                        Copy
-                      </GhostButton>
-                      <ActionButton
-                        onClick={async () => {
-                          try {
-                            if (!describeOutput.trim()) return;
-                            setDescribeBusy(true);
-                            const nextPrompt = await enhancePromptText(describeOutput, selectedWorkflow.id);
-                            setDescribeOutput(nextPrompt);
-                            setStatusMessage("Description enhanced.");
-                          } catch (error) {
-                            setStatusMessage(error instanceof Error ? error.message : "Enhance Prompt failed");
-                          } finally {
-                            setDescribeBusy(false);
-                          }
-                        }}
-                        disabled={describeBusy || !describeOutput.trim()}
-                      >
-                        {describeBusy ? "Working..." : "Enhance"}
-                      </ActionButton>
-                      <ActionButton onClick={() => sendTextToGenerate(describeOutput)} disabled={!describeOutput.trim()}>
-                        Send to Prompt
-                      </ActionButton>
-                    </div>
+
+                    <GhostButton
+                      onClick={() =>
+                        copyText(
+                          describeOutput
+                        )
+                      }
+                      disabled={
+                        !describeOutput.trim()
+                      }
+                    >
+                      Copy
+                    </GhostButton>
                   </div>
                 </div>
               </Card>
             ) : null}
-            {assistanceTab === "enhance" ? (
-              <Card title="Enhance Prompt">
-                <p className="text-white/70">Write or dictate a draft, optionally upload an image, then enhance it with Ollama. When an image is attached, Ollama Vision will use it as visual context.</p>
 
-                <div className="grid gap-4 lg:grid-cols-[0.92fr_1.08fr]">
+            {assistanceTab === "ask" ? (
+              <Card title="Story Helper">
+                <p className="text-white/70">
+                  Develop stories, characters, scenes,
+                  dialogue, plot progression, screenplay
+                  beats, and continuity. Story Helper
+                  preserves established story facts unless
+                  you ask to change them.
+                </p>
+
+                <div className="grid gap-4 xl:grid-cols-[0.72fr_1.28fr]">
                   <div className="space-y-4">
-                    <div className="flex flex-wrap gap-3">
-                      <label className="inline-flex cursor-pointer items-center justify-center rounded-[22px] border border-white/10 bg-white/5 px-5 py-3 text-sm font-medium text-white transition hover:bg-white/10">
-                        Upload image
-                        <input
-                          key={enhanceImageInputKey}
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => handleEnhanceImageSelect(e.target.files?.[0] || null)}
-                        />
-                      </label>
-
-                      <GhostButton onClick={clearEnhanceImage} disabled={!enhanceImageFile}>
-                        Remove image
-                      </GhostButton>
-                    </div>
-
-                    <div className="rounded-[22px] border border-white/10 bg-black/35 p-4 text-white/70">
-                      {enhanceImageName || "No image selected"}
-                    </div>
-
-                    {enhanceImagePreviewUrl ? (
-                      <div className="overflow-hidden rounded-[22px] border border-white/10 bg-black/35">
-                        <img
-                          src={enhanceImagePreviewUrl}
-                          alt="Enhance prompt reference"
-                          className="h-auto max-h-[260px] w-full object-contain"
-                        />
-                      </div>
-                    ) : null}
-
-                    <div className="space-y-2">
-                      <div className="text-xs font-semibold uppercase tracking-[0.24em] text-white/55">Length</div>
-                      <div className="flex flex-wrap gap-3">
-                        <PillButton active={enhanceLength === "short"} onClick={() => setEnhanceLength("short")}>
-                          Short
-                        </PillButton>
-                        <PillButton active={enhanceLength === "normal"} onClick={() => setEnhanceLength("normal")}>
-                          Normal
-                        </PillButton>
-                        <PillButton active={enhanceLength === "long"} onClick={() => setEnhanceLength("long")}>
-                          Long
-                        </PillButton>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <textarea
-                      value={enhanceDraft}
-                      onChange={(e) => setEnhanceDraft(e.target.value)}
-                      rows={10}
-                      placeholder="Write the draft prompt you want to improve."
-                      className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                    />
-
-                    <div className="flex flex-wrap items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => void handleMicClick("enhance", (text) => setEnhanceDraft((prev) => appendPromptText(prev, text)))}
-                        className={cn(
-                          "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
-                          recordingTarget === "enhance"
-                            ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
-                            : "border-white/10 bg-white/5 hover:bg-white/10"
-                        )}
-                        disabled={transcribingTarget === "enhance"}
-                      >
-                        <IconMic />
-                      </button>
-
-                      <ActionButton onClick={handleEnhanceDraft} disabled={enhanceDraftBusy || !enhanceDraft.trim()}>
-                        {enhanceDraftBusy ? "Enhancing..." : "Enhance"}
-                      </ActionButton>
-
-                      <GhostButton onClick={() => copyText(enhanceDraft)} disabled={!enhanceDraft.trim()}>
-                        Copy
-                      </GhostButton>
-
-                      <ActionButton onClick={() => sendTextToGenerate(enhanceDraft)} disabled={!enhanceDraft.trim()}>
-                        Send to Prompt
-                      </ActionButton>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            ) : null}
-            {assistanceTab === "scene" ? (
-              <Card title="Scene Creator">
-                <p className="text-white/70">Upload Character 1, optionally add Character 2, Character 3, and Background, then build a persistent Scene Card. After that, create the final LTX-ready scene prompt for Generate.</p>
-                <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <GhostButton onClick={() => setSceneTutorialOpen(true)}>
-                    Tutorial
-                  </GhostButton>
-                  <div className="text-xs text-white/45">
-                    Quick guide for building stronger LTX-style scene prompts.
-                  </div>
-                </div>
-                <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
-                  <div className="space-y-4">
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                      <div className="space-y-2">
-                        <label className="inline-flex w-full cursor-pointer items-center justify-center rounded-[18px] border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/10">
-                          Character 1
-                          <input
-                            key={sceneChar1InputKey}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => setSceneReference("char1", e.target.files?.[0] || null)}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => openSceneCharacterPicker("char1")}
-                          className="inline-flex w-full items-center justify-center rounded-[18px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/15"
-                        >
-                          From Characters
-                        </button>
-                        <div className="overflow-hidden rounded-[14px] border border-white/10 bg-black/35 p-2">
-                          {sceneChar1PreviewUrl ? (
-                            <img src={sceneChar1PreviewUrl} alt="Character 1 reference" className="h-20 w-full rounded-[10px] object-cover" />
-                          ) : (
-                            <div className="flex h-20 items-center justify-center text-xs text-white/35">Required</div>
-                          )}
-                        </div>
-                        <div className="truncate text-[11px] text-white/50">{sceneChar1Name || "Required"}</div>
-                        {sceneChar1Identity && (!sceneChar1Identity.promptReadyDescription || !sceneChar1Identity.lockedAt) ? (
-                          <div className="text-[11px] leading-4 text-amber-200">{MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP}</div>
-                        ) : null}
+                    <div className="rounded-[22px] border border-white/10 bg-black/35 p-4">
+                      <div className="mb-3 text-sm font-bold uppercase tracking-[0.16em] text-white/55">
+                        Conversation
                       </div>
 
-                      <div className="space-y-2">
-                        <label className="inline-flex w-full cursor-pointer items-center justify-center rounded-[18px] border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/10">
-                          Character 2
-                          <input
-                            key={sceneChar2InputKey}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => setSceneReference("char2", e.target.files?.[0] || null)}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => openSceneCharacterPicker("char2")}
-                          className="inline-flex w-full items-center justify-center rounded-[18px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/15"
-                        >
-                          From Characters
-                        </button>
-                        <div className="overflow-hidden rounded-[14px] border border-white/10 bg-black/35 p-2">
-                          {sceneChar2PreviewUrl ? (
-                            <img src={sceneChar2PreviewUrl} alt="Character 2 reference" className="h-20 w-full rounded-[10px] object-cover" />
-                          ) : (
-                            <div className="flex h-20 items-center justify-center text-xs text-white/35">Optional</div>
-                          )}
-                        </div>
-                        <div className="truncate text-[11px] text-white/50">{sceneChar2Name || "Optional"}</div>
-                        {sceneChar2Identity && (!sceneChar2Identity.promptReadyDescription || !sceneChar2Identity.lockedAt) ? (
-                          <div className="text-[11px] leading-4 text-amber-200">{MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP}</div>
-                        ) : null}
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="inline-flex w-full cursor-pointer items-center justify-center rounded-[18px] border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/10">
-                          Character 3
-                          <input
-                            key={sceneChar3InputKey}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => setSceneReference("char3", e.target.files?.[0] || null)}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => openSceneCharacterPicker("char3")}
-                          className="inline-flex w-full items-center justify-center rounded-[18px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/15"
-                        >
-                          From Characters
-                        </button>
-                        <div className="overflow-hidden rounded-[14px] border border-white/10 bg-black/35 p-2">
-                          {sceneChar3PreviewUrl ? (
-                            <img src={sceneChar3PreviewUrl} alt="Character 3 reference" className="h-20 w-full rounded-[10px] object-cover" />
-                          ) : (
-                            <div className="flex h-20 items-center justify-center text-xs text-white/35">Optional</div>
-                          )}
-                        </div>
-                        <div className="truncate text-[11px] text-white/50">{sceneChar3Name || "Optional"}</div>
-                        {sceneChar3Identity && (!sceneChar3Identity.promptReadyDescription || !sceneChar3Identity.lockedAt) ? (
-                          <div className="text-[11px] leading-4 text-amber-200">{MISSING_LOCKED_CHARACTER_DESCRIPTION_HELP}</div>
-                        ) : null}
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="inline-flex w-full cursor-pointer items-center justify-center rounded-[18px] border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/10">
-                          Background
-                          <input
-                            key={sceneBgInputKey}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => setSceneReference("bg", e.target.files?.[0] || null)}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => openSceneCharacterPicker("bg")}
-                          className="inline-flex w-full items-center justify-center rounded-[18px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/15"
-                        >
-                          From Characters
-                        </button>
-                        <div className="overflow-hidden rounded-[14px] border border-white/10 bg-black/35 p-2">
-                          {sceneBgPreviewUrl ? (
-                            <img src={sceneBgPreviewUrl} alt="Background reference" className="h-20 w-full rounded-[10px] object-cover" />
-                          ) : (
-                            <div className="flex h-20 items-center justify-center text-xs text-white/35">Optional</div>
-                          )}
-                        </div>
-                        <div className="truncate text-[11px] text-white/50">{sceneBgName || "Optional"}</div>
-                      </div>
-                    </div>
-
-                    <label className="space-y-2 text-sm text-white/70">
-                      <span>Style</span>
                       <input
-                        type="text"
-                        value={sceneStyle}
-                        onChange={(e) => setSceneStyle(e.target.value)}
-                        className="w-full rounded-[18px] border border-white/10 bg-black/55 px-4 py-3 text-white outline-none focus:border-cyan-400/45"
+                        value={
+                          storyConversationName
+                        }
+                        onChange={(e) =>
+                          setStoryConversationName(
+                            e.target.value
+                          )
+                        }
+                        placeholder="Conversation name"
+                        className="w-full rounded-[18px] border border-white/10 bg-black/55 px-4 py-3 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
                       />
-                    </label>
 
-                    <textarea
-                      value={sceneDraft}
-                      onChange={(e) => setSceneDraft(e.target.value)}
-                      rows={10}
-                      placeholder="Describe what happens in this scene."
-                      className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                    />
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <ActionButton
+                          onClick={
+                            handleSaveStoryConversation
+                          }
+                        >
+                          Save Conversation
+                        </ActionButton>
 
-                    <div className="rounded-[20px] border border-white/10 bg-black/35 p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.22em] text-white/55">Transition helper</div>
-                          <div className="mt-2 text-sm text-white/70">
-                            Choose how this scene should connect to the previous beat. The transition mode is stored separately from the prompt box.
-                          </div>
-                        </div>
-                        <div className="rounded-full border border-cyan-400/25 bg-cyan-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100">
-                          Transition: {selectedTransitionOption.label}
-                          {sceneTransitionMode === "auto" ? " (detected)" : ""}
-                        </div>
-                      </div>
-
-                      <div className="mt-3 text-sm text-white/80">{selectedTransitionOption.helper}</div>
-                      {sceneTemporalSequenceHint ? <div className="mt-2 text-xs leading-5 text-cyan-100/85">{sceneTemporalSequenceHint}</div> : null}
-
-                      <div className="mt-4 flex flex-wrap items-center gap-3">
-                        <GhostButton onClick={() => setSceneTransitionPickerOpen((prev) => !prev)}>
-                          {sceneTransitionPickerOpen ? "Close Hard Cut Helper" : "Hard Cut Helper"}
+                        <GhostButton
+                          onClick={
+                            handleNewStoryConversation
+                          }
+                        >
+                          New Conversation
                         </GhostButton>
-                        <PillButton active={sceneTransitionMode === "auto"} onClick={() => setSceneTransitionMode("auto")}>
-                          Auto Detect
-                        </PillButton>
                       </div>
-
-                      {sceneTransitionPickerOpen ? (
-                        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                          {SCENE_TRANSITION_OPTIONS.map((option) => (
-                            <button
-                              key={option.mode}
-                              type="button"
-                              onClick={() => {
-                                setSceneTransitionMode(option.mode);
-                                setSceneTransitionPickerOpen(false);
-                              }}
-                              className={cn(
-                                "rounded-[18px] border px-4 py-3 text-left transition",
-                                sceneTransitionMode === option.mode
-                                  ? "border-cyan-400/35 bg-[linear-gradient(90deg,rgba(145,92,255,0.28),rgba(40,200,255,0.18))] text-white"
-                                  : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
-                              )}
-                            >
-                              <div className="text-sm font-semibold text-white">{option.label}</div>
-                              <div className="mt-2 text-xs leading-5 text-white/65">{option.helper}</div>
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
                     </div>
 
-                    <div className="rounded-[20px] border border-white/10 bg-black/35 p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.22em] text-white/55">Reference Image</div>
-                          <div className="mt-2 text-sm text-white/70">
-                            Run Ollama Vision one slot at a time. Completed slots turn green and lock until you clear them.
-                          </div>
-                        </div>
-                        <div className="rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-100">
-                          {completedSceneReferenceCount}/{SCENE_REFERENCE_SLOT_OPTIONS.length} complete
-                        </div>
+                    <div className="rounded-[22px] border border-white/10 bg-black/35 p-4">
+                      <div className="mb-3 text-sm font-bold uppercase tracking-[0.16em] text-white/55">
+                        Saved Conversations
                       </div>
 
-                      <div className="mt-4 flex flex-wrap items-center gap-3">
-                        <GhostButton onClick={() => setSceneReferencePickerOpen((prev) => !prev)}>
-                          {sceneReferencePickerOpen ? "Close Reference Image" : "Reference Image"}
-                        </GhostButton>
-                        <GhostButton onClick={clearAllSceneReferenceAnalyses} disabled={!sceneReferenceImageCard.trim() && !sceneReferenceBusySlot}>
-                          Clear All
-                        </GhostButton>
-                      </div>
-
-                      {sceneReferencePickerOpen ? (
-                        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                          {SCENE_REFERENCE_SLOT_OPTIONS.map((slot) => {
-                            const hasFile =
-                              slot.key === "char1"
-                                ? !!sceneChar1File
-                                : slot.key === "char2"
-                                  ? !!sceneChar2File
-                                  : slot.key === "char3"
-                                    ? !!sceneChar3File
-                                    : !!sceneBgFile;
-                            const status = sceneReferenceStatuses[slot.key];
-                            const isRunning = sceneReferenceBusySlot === slot.key || status === "running";
-                            const isDone = status === "done";
-                            return (
-                              <button
-                                key={slot.key}
-                                type="button"
-                                onClick={() => void handleReferenceImageSlot(slot.key)}
-                                disabled={!hasFile || !!sceneReferenceBusySlot || isDone}
-                                className={cn(
-                                  "rounded-[18px] border px-4 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60",
-                                  isDone
-                                    ? "border-emerald-400/35 bg-[linear-gradient(90deg,rgba(34,197,94,0.22),rgba(16,185,129,0.16))] text-white"
-                                    : isRunning
-                                      ? "border-cyan-400/35 bg-[linear-gradient(90deg,rgba(145,92,255,0.28),rgba(40,200,255,0.18))] text-white"
-                                      : hasFile
-                                        ? "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
-                                        : "border-white/10 bg-white/5 text-white/40"
-                                )}
+                      {savedStoryConversations.length ? (
+                        <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
+                          {savedStoryConversations.map(
+                            (conversation) => (
+                              <div
+                                key={
+                                  conversation.id
+                                }
+                                className="rounded-[18px] border border-white/10 bg-black/35 p-3"
                               >
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="text-sm font-semibold text-white">{slot.label}</div>
-                                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">
-                                    {isDone ? "Locked" : isRunning ? "Running" : hasFile ? "Ready" : "No image"}
-                                  </div>
+                                <div className="font-semibold text-white">
+                                  {
+                                    conversation.name
+                                  }
                                 </div>
-                                <div className="mt-2 text-xs leading-5 text-white/65">
-                                  {slot.kind === "background"
-                                    ? "Extract visible environment details and continuity anchors for the background image."
-                                    : "Extract visible identity, wardrobe, pose, and lighting details for this character image."}
+
+                                <div className="mt-1 text-xs text-white/45">
+                                  {
+                                    conversation
+                                      .messages
+                                      .length
+                                  }{" "}
+                                  messages
                                 </div>
-                              </button>
-                            );
-                          })}
+
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <GhostButton
+                                    onClick={() =>
+                                      handleOpenStoryConversation(
+                                        conversation
+                                      )
+                                    }
+                                  >
+                                    Open
+                                  </GhostButton>
+
+                                  <GhostButton
+                                    onClick={() =>
+                                      handleDeleteStoryConversation(
+                                        conversation.id
+                                      )
+                                    }
+                                  >
+                                    Delete
+                                  </GhostButton>
+                                </div>
+                              </div>
+                            )
+                          )}
                         </div>
-                      ) : null}
-                    </div>
-
-                    {(() => {
-                      const promptCheck = evaluateScenePromptStrength(sceneDraft);
-                      const toneClass =
-                        promptCheck.rating === "strong"
-                          ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-                          : promptCheck.rating === "usable"
-                            ? "border-amber-400/30 bg-amber-500/10 text-amber-200"
-                            : "border-red-400/30 bg-red-500/10 text-red-200";
-
-                      return (
-                        <div className="rounded-[20px] border border-white/10 bg-black/35 p-4">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div className="text-xs font-semibold uppercase tracking-[0.22em] text-white/55">Prompt strength</div>
-                            <div className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${toneClass}`}>
-                              {promptCheck.rating}
-                            </div>
-                          </div>
-                          <div className="mt-3 text-sm text-white/70">
-                            A strong scene prompt usually includes: subject, setting, action, tone/emotion, and shot/camera intent.
-                          </div>
-                          <div className="mt-3 text-sm text-white/80">
-                            <span className="font-semibold">Detected:</span> {promptCheck.present.length ? promptCheck.present.join(", ") : "none"}
-                          </div>
-                          <div className="mt-2 text-sm text-white/80">
-                            <span className="font-semibold">Missing:</span> {promptCheck.missing.length ? promptCheck.missing.join(", ") : "none"}
-                          </div>
-                          {!promptCheck.canGenerate ? (
-                            <div className="mt-3 rounded-[16px] border border-red-400/25 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-                              Prompt is too weak to generate reliably. Add more scene information before building or creating the scene.
-                            </div>
-                          ) : null}
+                      ) : (
+                        <div className="text-sm text-white/45">
+                          No saved
+                          conversations yet.
                         </div>
-                      );
-                    })()}
-
-                    <div className="flex flex-wrap items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => void handleMicClick("scene", (text) => setSceneDraft((prev) => appendPromptText(prev, text)))}
-                        className={cn(
-                          "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
-                          recordingTarget === "scene"
-                            ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
-                            : "border-white/10 bg-white/5 hover:bg-white/10"
-                        )}
-                        disabled={transcribingTarget === "scene"}
-                      >
-                        <IconMic />
-                      </button>
-
-                      <ActionButton onClick={handleBuildSceneCard} disabled={scenePlanBusy || !sceneDraft.trim() || !sceneReferenceImageCard.trim()}>
-                        {scenePlanBusy ? "Building..." : "Build Reference Card"}
-                      </ActionButton>
-
-                      <ActionButton onClick={handleCreateScene} disabled={sceneWriteBusy || !sceneReferenceCard.trim() || !sceneDraft.trim()}>
-                        {sceneWriteBusy ? "Creating..." : "Create Scene"}
-                      </ActionButton>
-
-                      <ActionButton onClick={() => sendTextToGenerate(sceneOutput)} disabled={!sceneOutput.trim() || missingLockedSceneCharacterDescriptions.length > 0}>
-                        Send to Generate
-                      </ActionButton>
+                      )}
                     </div>
-                    {missingLockedSceneCharacterDescriptions.length ? (
-                      <div className="rounded-[16px] border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
-                        {MISSING_LOCKED_CHARACTER_DESCRIPTION_MESSAGE}
-                      </div>
-                    ) : characterContinuityPrompt ? (
-                      <div className="rounded-[16px] border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100">
-                        Locked character continuity will be injected above the Generate prompt.
-                      </div>
-                    ) : null}
                   </div>
 
                   <div className="space-y-4">
-                    <div className="rounded-[24px] border border-white/10 bg-black/45 p-4">
-                      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                        <div className="text-xs font-semibold uppercase tracking-[0.24em] text-white/55">Reference Image Card</div>
-                        <div className="text-[11px] text-white/45">One slot at a time. Clear one slot or clear all to unlock reruns.</div>
-                      </div>
-
-                      <div className="mb-4 flex flex-wrap gap-2">
-                        {SCENE_REFERENCE_SLOT_OPTIONS.map((slot) => {
-                          const status = sceneReferenceStatuses[slot.key];
-                          const hasText = !!sceneReferenceAnalyses[slot.key].trim();
-                          return (
+                    <div className="max-h-[520px] min-h-[260px] space-y-3 overflow-y-auto rounded-[24px] border border-white/10 bg-black/45 p-4">
+                      {askMessages.length ? (
+                        askMessages.map(
+                          (message) => (
                             <div
-                              key={slot.key}
+                              key={
+                                message.id
+                              }
                               className={cn(
-                                "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em]",
-                                status === "done"
-                                  ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-100"
-                                  : status === "running"
-                                    ? "border-cyan-400/30 bg-cyan-500/10 text-cyan-100"
-                                    : "border-white/10 bg-white/5 text-white/55"
+                                "rounded-[20px] border p-4",
+                                message.role ===
+                                  "user"
+                                  ? "ml-6 border-cyan-400/20 bg-cyan-400/5"
+                                  : "mr-6 border-white/10 bg-white/5"
                               )}
                             >
-                              <span>{slot.label}</span>
-                              <span className="text-[10px] text-white/60">{status === "done" ? "Locked" : status === "running" ? "Running" : hasText ? "Ready" : "Idle"}</span>
-                              {hasText ? (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    clearSceneReferenceAnalysis(slot.key);
-                                    setStatusMessage(`${slot.label} reference cleared.`);
-                                  }}
-                                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/75 transition hover:bg-white/10"
-                                  aria-label={`Clear ${slot.label} reference`}
-                                >
-                                  <IconTrash />
-                                </button>
+                              <div className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-white/45">
+                                {message.role ===
+                                "user"
+                                  ? "You"
+                                  : "Story Helper"}
+                              </div>
+
+                              {message.imageName ? (
+                                <div className="mb-2 text-xs text-cyan-200/70">
+                                  Attached image:{" "}
+                                  {
+                                    message.imageName
+                                  }
+                                </div>
+                              ) : null}
+
+                              <div className="whitespace-pre-wrap text-sm leading-6 text-white/85">
+                                {
+                                  message.content
+                                }
+                              </div>
+
+                              {message.role ===
+                              "assistant" ? (
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <GhostButton
+                                    onClick={() =>
+                                      copyText(
+                                        message.content
+                                      )
+                                    }
+                                  >
+                                    Copy
+                                  </GhostButton>
+
+                                  {speakingStoryMessageId ===
+                                  message.id ? (
+                                    <GhostButton
+                                      onClick={
+                                        handleStopStorySpeech
+                                      }
+                                    >
+                                      Stop
+                                    </GhostButton>
+                                  ) : (
+                                    <GhostButton
+                                      onClick={() =>
+                                        handleReadStoryMessage(
+                                          message
+                                        )
+                                      }
+                                    >
+                                      Read aloud
+                                    </GhostButton>
+                                  )}
+                                </div>
                               ) : null}
                             </div>
-                          );
-                        })}
-                      </div>
-
-                      <textarea
-                        value={sceneVisionSummary}
-                        readOnly
-                        rows={12}
-                        placeholder="Click Reference Image, then run Character 1, Character 2, Character 3, and Background one at a time. Their descriptions will collect here."
-                        className="w-full rounded-[20px] border border-white/10 bg-black/55 px-4 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                      />
+                          )
+                        )
+                      ) : (
+                        <div className="flex min-h-[220px] items-center justify-center px-4 text-center text-sm text-white/40">
+                          Start with your
+                          story idea, ask how
+                          to develop a scene,
+                          or attach an image
+                          for visual story
+                          context.
+                        </div>
+                      )}
                     </div>
 
-                    <div className="rounded-[24px] border border-white/10 bg-black/45 p-4">
-                      <div className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-white/55">Reference Card</div>
-                      <textarea
-                        value={sceneReferenceCard}
-                        onChange={(e) => setSceneReferenceCard(e.target.value)}
-                        rows={12}
-                        placeholder="Build Reference Card to match your reference image card to the scene prompt, characters, background, style, and continuity rules."
-                        className="w-full rounded-[20px] border border-white/10 bg-black/55 px-4 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                      />
-                    </div>
+                    <textarea
+                      value={askInput}
+                      onChange={(e) =>
+                        setAskInput(
+                          e.target.value
+                        )
+                      }
+                      rows={6}
+                      placeholder="Example: My cartoon bunny eats a magical carrot and becomes a superhero. The villain is a nasty wolf doctor. Help me create a strong opening scene."
+                      className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
+                    />
 
-                    <div className="rounded-[24px] border border-white/10 bg-black/45 p-4">
-                      <div className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-white/55">Generated Scene</div>
-                      <textarea
-                        value={sceneOutput}
-                        onChange={(e) => setSceneOutput(e.target.value)}
-                        rows={12}
-                        placeholder="Create Scene to generate the final LTX-ready prompt for this shot."
-                        className="w-full rounded-[20px] border border-white/10 bg-black/55 px-4 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            ) : null}
-            {sceneCharacterPickerSlot ? (
-              <div
-                className="fixed inset-0 z-[135] overflow-y-auto bg-black/82 px-4 py-6 backdrop-blur-sm"
-                onClick={() => setSceneCharacterPickerSlot(null)}
-              >
-                <div
-                  className="mx-auto flex max-h-[86vh] max-w-5xl flex-col overflow-hidden rounded-[28px] border border-cyan-400/20 bg-[#070b16] shadow-[0_0_60px_rgba(0,0,0,0.55)]"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-4">
-                    <div>
-                      <h3 className="text-lg font-semibold text-white">
-                        Choose Character for {sceneReferenceSlotLabel(sceneCharacterPickerSlot)}
-                      </h3>
-                      <p className="text-sm text-white/55">
-                        Shows saved Characters tab thumbnails. Selecting a character applies its saved multi-angle character card to this Scene Creator reference slot.
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <ActionButton onClick={() => void loadSceneCharacterPickerItems()} disabled={sceneCharacterPickerLoading}>
-                        {sceneCharacterPickerLoading ? "Loading..." : "Refresh"}
-                      </ActionButton>
-                      <ActionButton onClick={() => setSceneCharacterPickerSlot(null)}>Close</ActionButton>
-                    </div>
-                  </div>
-
-                  <div className="min-h-[260px] overflow-y-auto p-5">
-                    {sceneCharacterPickerError ? (
-                      <div className="mb-4 rounded-2xl border border-red-400/20 bg-red-500/10 p-4 text-sm text-red-100">
-                        {sceneCharacterPickerError}
-                      </div>
-                    ) : null}
-
-                    {sceneCharacterPickerLoading ? (
-                      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/65">
-                        Loading saved characters...
-                      </div>
-                    ) : null}
-
-                    {!sceneCharacterPickerLoading && !sceneCharacterPickerError && sceneCharacterPickerItems.length === 0 ? (
-                      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/65">
-                        No saved characters found.
-                      </div>
-                    ) : null}
-
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                      {sceneCharacterPickerItems.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => void applySceneCharacterToReference(sceneCharacterPickerSlot, item)}
-                          disabled={Boolean(sceneCharacterPickerSelectingId) || !item.referenceImageUrl}
-                          className="group overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] text-left transition hover:border-cyan-300/40 hover:bg-white/[0.07] disabled:cursor-wait disabled:opacity-60"
-                        >
-                          <div className="aspect-square bg-black/45">
-                            <img
-                              src={item.imageUrl}
-                              alt={item.name}
-                              className="h-full w-full object-cover"
-                              loading="lazy"
-                            />
-                          </div>
-                          <div className="border-t border-white/10 px-3 py-2">
-                            <div className="truncate text-xs font-semibold text-white">{item.name}</div>
-                            {!item.referenceImageUrl ? (
-                              <div className="mt-1 text-[10px] font-semibold text-amber-300">Missing character card</div>
-                            ) : item.characterIdentity && (!item.characterIdentity.promptReadyDescription || !item.characterIdentity.lockedAt) ? (
-                              <div className="mt-1 text-[10px] font-semibold text-amber-300">Missing locked description</div>
-                            ) : (
-                              <div className="mt-1 text-[10px] font-semibold text-cyan-200">Uses character card</div>
-                            )}
-                            {sceneCharacterPickerSelectingId === item.id ? (
-                              <div className="mt-1 text-[11px] text-cyan-200">Selecting...</div>
-                            ) : null}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-            {sceneTutorialOpen ? (
-              <>
-                <div
-                  className="fixed inset-0 z-[140] bg-black/82 px-3 pt-24 pb-28 sm:px-4"
-                  onClick={() => {
-                    setSceneTutorialOpen(false);
-                    setSceneTutorialImageOpen("");
-                    setSceneTutorialImageLabel("");
-                  }}
-                >
-                  <div
-                    className="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-white/10 bg-[#0b1020] shadow-2xl"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-white/10 bg-[#0b1020]/95 px-4 py-4 backdrop-blur">
-                      <div>
-                        <div className="text-sm font-semibold uppercase tracking-[0.22em] text-white/70">Tutorial</div>
-                        <div className="mt-1 text-white/65">Key aspects to include when crafting a stronger LTX-style scene prompt.</div>
-                      </div>
-                      <GhostButton
-                        onClick={() => {
-                          setSceneTutorialOpen(false);
-                          setSceneTutorialImageOpen("");
-                          setSceneTutorialImageLabel("");
-                        }}
+                    <div className="flex flex-wrap gap-3">
+                      <ActionButton
+                        onClick={() =>
+                          askImageInputRef.current?.click()
+                        }
                       >
-                        Close
+                        Attach image
+                      </ActionButton>
+
+                      <input
+                        ref={
+                          askImageInputRef
+                        }
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file =
+                            e.target.files?.[0] ||
+                            null;
+
+                          askImageRef.current =
+                            file;
+
+                          setAskImageName(
+                            file?.name || ""
+                          );
+
+                          updateAskPreview(
+                            file
+                          );
+                        }}
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleMicClick(
+                            "ask",
+                            (text) =>
+                              setAskInput(
+                                (prev) =>
+                                  appendPromptText(
+                                    prev,
+                                    text
+                                  )
+                              )
+                          )
+                        }
+                        className={cn(
+                          "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
+                          recordingTarget ===
+                            "ask"
+                            ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
+                            : "border-white/10 bg-white/5 hover:bg-white/10"
+                        )}
+                        disabled={
+                          transcribingTarget ===
+                          "ask"
+                        }
+                      >
+                        <IconMic />
+                      </button>
+
+                      <GhostButton
+                        onClick={
+                          clearStoryImage
+                        }
+                        disabled={
+                          !askImageName
+                        }
+                      >
+                        Clear image
                       </GhostButton>
                     </div>
 
-                    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
-                      <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
-                        <div className="space-y-3 rounded-[22px] border border-white/10 bg-black/35 p-4 text-sm text-white/75">
-                          <div className="font-semibold text-white/85">Include enough detail to guide the scene:</div>
-                          <ul className="list-disc space-y-2 pl-5">
-                            <li><span className="font-semibold text-white/90">Establish the shot</span> - tell the model how the scene should be framed.</li>
-                            <li><span className="font-semibold text-white/90">Set the scene</span> - location, lighting, atmosphere, color, and surface feel.</li>
-                            <li><span className="font-semibold text-white/90">Describe the action</span> - what happens from start to finish.</li>
-                            <li><span className="font-semibold text-white/90">Define the characters</span> - appearance, identity, emotion, and visible traits.</li>
-                            <li><span className="font-semibold text-white/90">Identify camera movement</span> - pan, tilt, dolly, close-up, reverse angle, hard cut, reaction shot, and shot changes.</li>
-                            <li><span className="font-semibold text-white/90">Describe audio if relevant</span> - ambient sound, speech, and music cues.</li>
-                          </ul>
-                          <div className="rounded-[18px] border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-amber-200">
-                            Weak prompts should not be generated. Give at least a subject, action, setting, and some shot or tone guidance.
-
-                          {(() => {
-                            const tutorialPreview = evaluateTutorialPromptPreview(sceneTutorialDraft);
-                            const badgeClass =
-                              tutorialPreview.rating === "strong"
-                                ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-                                : tutorialPreview.rating === "usable"
-                                  ? "border-amber-400/30 bg-amber-500/10 text-amber-200"
-                                  : "border-red-400/30 bg-red-500/10 text-red-200";
-
-                            const chipClass = (isOn: boolean) =>
-                              isOn
-                                ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-                                : "border-white/10 bg-black/35 text-white/70";
-
-                            return (
-                              <div className="rounded-[18px] border border-white/10 bg-black/30 p-4">
-                                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/55">
-                                  Example Prompt Box
-                                </div>
-                                <textarea
-                                  value={sceneTutorialDraft}
-                                  onChange={(e) => setSceneTutorialDraft(e.target.value)}
-                                  rows={6}
-                                  placeholder="Type a sample scene prompt here and watch the checklist respond in real time."
-                                  className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                                />
-                                <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                                  <div className="text-sm text-white/70">Live tutorial prompt strength</div>
-                                  <div className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${badgeClass}`}>
-                                    {tutorialPreview.rating}
-                                  </div>
-                                </div>
-                                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                                  <div className={`rounded-[14px] border px-3 py-2 text-sm ${chipClass(tutorialPreview.checks.establishShot)}`}>
-                                    {tutorialPreview.checks.establishShot ? "Check" : "Missing"} - Establish shot
-                                  </div>
-                                  <div className={`rounded-[14px] border px-3 py-2 text-sm ${chipClass(tutorialPreview.checks.setScene)}`}>
-                                    {tutorialPreview.checks.setScene ? "Check" : "Missing"} - Set the scene
-                                  </div>
-                                  <div className={`rounded-[14px] border px-3 py-2 text-sm ${chipClass(tutorialPreview.checks.describeAction)}`}>
-                                    {tutorialPreview.checks.describeAction ? "Check" : "Missing"} - Describe the action
-                                  </div>
-                                  <div className={`rounded-[14px] border px-3 py-2 text-sm ${chipClass(tutorialPreview.checks.defineCharacter)}`}>
-                                    {tutorialPreview.checks.defineCharacter ? "Check" : "Missing"} - Define the character
-                                  </div>
-                                  <div className={`rounded-[14px] border px-3 py-2 text-sm ${chipClass(tutorialPreview.checks.cameraMovement)}`}>
-                                    {tutorialPreview.checks.cameraMovement ? "Check" : "Missing"} - Identify camera movement
-                                  </div>
-                                  <div className={`rounded-[14px] border px-3 py-2 text-sm ${chipClass(tutorialPreview.checks.describeAudio)}`}>
-                                    {tutorialPreview.checks.describeAudio ? "Check" : "Missing"} - Describe audio if relevant
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })()}
-                          </div>
-
-                        </div>
-
-                        <div className="space-y-4 pb-6">
-                          {(["example1", "example2"] as const).map((key) => {
-                            const example = SCENE_TUTORIAL_EXAMPLES[key];
-                            const isOpen = sceneTutorialExampleKey === key;
-                            return (
-                              <div key={key} className="rounded-[22px] border border-white/10 bg-black/35 p-4">
-                                <button
-                                  type="button"
-                                  className="block w-full overflow-hidden rounded-[18px] border border-white/10 bg-black/40"
-                                  onClick={() => {
-                                    setSceneTutorialImageOpen(example.imageSrc);
-                                    setSceneTutorialImageLabel(example.title);
-                                  }}
-                                >
-                                  <img
-                                    src={example.imageSrc}
-                                    alt={example.title}
-                                    className="h-40 w-full object-cover"
-                                  />
-                                </button>
-
-                                <GhostButton
-                                  onClick={() => setSceneTutorialExampleKey((prev) => (prev === key ? "" : key))}
-                                  className="mt-3"
-                                >
-                                  {key === "example1" ? "Example 1" : "Example 2"}
-                                </GhostButton>
-
-                                {isOpen ? (
-                                  <div className="mt-4 rounded-[18px] border border-white/10 bg-black/30 p-4">
-                                    <div className="text-sm font-semibold text-white/85">
-                                      {example.title}
-                                    </div>
-
-                                    <div className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-white/55">
-                                      Positive Prompt
-                                    </div>
-                                    <textarea
-                                      readOnly
-                                      value={example.positivePrompt}
-                                      rows={10}
-                                      className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none"
-                                    />
-
-                                    <div className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-white/55">
-                                      Negative Prompt
-                                    </div>
-                                    <textarea
-                                      readOnly
-                                      value={example.negativePrompt}
-                                      rows={7}
-                                      className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none"
-                                    />
-
-                                    <div className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-white/55">
-                                      Example Video
-                                    </div>
-                                    <div className="mt-2 overflow-hidden rounded-[18px] border border-white/10 bg-black/45 p-2">
-                                      <video
-                                        controls
-                                        playsInline
-                                        preload="metadata"
-                                        className="w-full rounded-[14px]"
-                                        src={example.videoSrc}
-                                      />
-                                    </div>
-                                  </div>
-                                ) : null}
-                              </div>
-                            );
-                          })}
-                        </div>
+                    {askImageName ? (
+                      <div className="rounded-[22px] border border-white/10 bg-black/35 p-4 text-white/70">
+                        {askImageName}
                       </div>
-                    </div>
-                  </div>
-                </div>
+                    ) : null}
 
-                {sceneTutorialImageOpen ? (
-                  <div
-                    className="fixed inset-0 z-[150] bg-black/92 px-3 pt-20 pb-24 sm:px-4"
-                    onClick={() => {
-                      setSceneTutorialImageOpen("");
-                      setSceneTutorialImageLabel("");
-                    }}
-                  >
-                    <div
-                      className="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-white/10 bg-[#0b1020] shadow-2xl"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-white/10 bg-[#0b1020]/95 px-4 py-4 backdrop-blur">
-                        <div className="text-sm font-semibold uppercase tracking-[0.22em] text-white/70">{sceneTutorialImageLabel || "Guide Preview"}</div>
+                    {askImagePreviewUrl ? (
+                      <div className="overflow-hidden rounded-[22px] border border-white/10 bg-black/45">
+                        <img
+                          src={
+                            askImagePreviewUrl
+                          }
+                          alt={
+                            askImageName ||
+                            "Story Helper preview"
+                          }
+                          className="aspect-[4/3] w-full object-contain"
+                        />
+                      </div>
+                    ) : null}
+
+                    <div className="flex flex-wrap gap-3">
+                      <ActionButton
+                        onClick={
+                          handleAskAi
+                        }
+                        disabled={
+                          askBusy ||
+                          (!askInput.trim() &&
+                            !askImageName)
+                        }
+                      >
+                        {askBusy
+                          ? "Story Helper is thinking..."
+                          : "Send"}
+                      </ActionButton>
+
+                      {speakingStoryMessageId ? (
                         <GhostButton
-                          onClick={() => {
-                            setSceneTutorialImageOpen("");
-                            setSceneTutorialImageLabel("");
-                          }}
+                          onClick={
+                            handleStopStorySpeech
+                          }
                         >
-                          Back
+                          Stop reading
                         </GhostButton>
-                      </div>
-                      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                        <div className="overflow-hidden rounded-[22px] border border-white/10 bg-black/40 p-2">
-                          <img
-                            src={sceneTutorialImageOpen}
-                            alt={sceneTutorialImageLabel || "Guide Preview"}
-                            className="w-full object-contain"
-                          />
-                        </div>
-                      </div>
+                      ) : null}
                     </div>
                   </div>
-                ) : null}
-              </>
-            ) : null}
-            {assistanceTab === "ask" ? (
-              <Card title="Ask AI">
-                <p className="text-white/70">Ask a direct question, optionally attach an image, or dictate the prompt before sending.</p>
-                <textarea
-                  value={askInput}
-                  onChange={(e) => setAskInput(e.target.value)}
-                  rows={7}
-                  placeholder="Ask for prompt help, workflow guidance, or a scene rewrite."
-                  className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                />
-                <div className="flex flex-wrap gap-3">
-                  <ActionButton onClick={() => askImageInputRef.current?.click()}>Attach image</ActionButton>
-                  <input
-                    ref={askImageInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0] || null;
-                      askImageRef.current = file;
-                      setAskImageName(file?.name || "");
-                      updateAskPreview(file);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void handleMicClick("ask", (text) => setAskInput((prev) => appendPromptText(prev, text)))}
-                    className={cn(
-                      "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
-                      recordingTarget === "ask"
-                        ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
-                        : "border-white/10 bg-white/5 hover:bg-white/10"
-                    )}
-                    disabled={transcribingTarget === "ask"}
-                  >
-                    <IconMic />
-                  </button>
-                  <GhostButton
-                    onClick={() => {
-                      askImageRef.current = null;
-                      setAskImageName("");
-                      updateAskPreview(null);
-                      if (askImageInputRef.current) {
-                        askImageInputRef.current.value = "";
-                      }
-                    }}
-                    disabled={!askImageName}
-                  >
-                    Clear image
-                  </GhostButton>
                 </div>
-                {askImageName ? (
-                  <div className="rounded-[22px] border border-white/10 bg-black/35 p-4 text-white/70">{askImageName}</div>
-                ) : null}
-                {askImagePreviewUrl ? (
-                  <div className="overflow-hidden rounded-[22px] border border-white/10 bg-black/45">
-                    <img src={askImagePreviewUrl} alt={askImageName || "Ask AI preview"} className="aspect-[4/3] w-full object-contain" />
-                  </div>
-                ) : null}
-                <div className="flex flex-wrap gap-3">
-                  <ActionButton onClick={handleAskAi} disabled={askBusy || (!askInput.trim() && !askImageName)}>
-                    {askBusy ? "Asking..." : "Ask AI"}
-                  </ActionButton>
-                  <GhostButton onClick={() => copyText(askAnswer)} disabled={!askAnswer.trim()}>
-                    Copy Answer
-                  </GhostButton>
-                  <ActionButton onClick={() => sendTextToGenerate(askAnswer)} disabled={!askAnswer.trim()}>
-                    Send to Prompt
-                  </ActionButton>
-                </div>
-                <textarea
-                  value={askAnswer}
-                  onChange={(e) => setAskAnswer(e.target.value)}
-                  rows={8}
-                  placeholder="AI answer will appear here."
-                  className="w-full rounded-[24px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
-                />
               </Card>
             ) : null}
           </div>
         ) : null}
 
-        {tab === "angles" ? <AnglesPanel /> : null}
+        {tab === "machine" ? (
+          <div
+            data-otg="machine-placeholder"
+            className="rounded-[28px] border border-white/10 bg-black/45 p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm"
+          >
+            <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-200/70">Machine</p>
+            <h1 className="mt-2 text-4xl font-black tracking-tight text-white">The Machine</h1>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-white/62">
+              This workspace is reserved for the upcoming conversational project-building workflow.
+            </p>
+          </div>
+        ) : null}
         {tab === "storyboard" ? <ProductionV2Panel /> : null}
+        {tab === "h3" ? <H3Panel /> : null}
         {tab === "characters" ? (
           <CharactersPanel
             key={authenticatedOwnerKey || "character-account-unavailable"}
@@ -8035,7 +7331,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
             <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm">
               <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-200/70">App controls</p>
               <h1 className="mt-2 text-4xl font-black tracking-tight text-white">Settings</h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">Check your account, verify the active Comfy connection, and recover stuck local pipeline state without deleting Gallery or Favorites.</p>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">Check your account, verify the active Comfy connection, and recover stuck local pipeline state without deleting Gallery.</p>
             </div>
 
             {isAdmin ? <AdminQuickPanel /> : null}
@@ -8358,7 +7654,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               </Card>
 
               <Card title="Pipeline recovery">
-                <p className="text-sm leading-6 text-white/65">Use this only when the current generation/progress state is stuck. It unlocks the OTG pipeline state and clears the current preview pointer. It does not delete Gallery or Favorites.</p>
+                <p className="text-sm leading-6 text-white/65">Use this only when the current generation/progress state is stuck. It unlocks the OTG pipeline state and clears the current preview pointer. It does not delete Gallery.</p>
                 <div className="flex flex-wrap gap-3">
                   <ActionButton onClick={() => void handleSettingsClearPipeline()} disabled={settingsPipelineBusy}>
                     {settingsPipelineBusy ? "Clearing..." : "Clear Current Pipeline"}
@@ -8370,7 +7666,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
               </Card>
 
               <Card title="Local app state">
-                <p className="text-sm leading-6 text-white/65">Clears saved browser UI state for this app on this device, including remembered tab/view preferences. Server files, Gallery, and Favorites are not touched.</p>
+                <p className="text-sm leading-6 text-white/65">Clears saved browser UI state for this app on this device, including remembered tab/view preferences. Server files and Gallery are not touched.</p>
                 <div className="flex flex-wrap gap-3">
                   <GhostButton onClick={handleSettingsClearLocalState}>Clear Local UI State</GhostButton>
                 </div>
@@ -8426,6 +7722,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         galleryForcePullBusy={galleryForcePullBusy}
         galleryFilter={galleryFilter}
         onGalleryFilterChange={setGalleryFilter}
+        galleryFavoritesOnly={galleryFavoritesOnly}
+        onGalleryFavoritesOnlyChange={setGalleryFavoritesOnly}
         gallerySort={gallerySort}
         onGallerySortChange={setGallerySort}
         galleryViewMode={galleryViewMode}
@@ -8440,27 +7738,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         galleryActionBusyKind={galleryActionBusyKind}
         galleryActionsLocked={galleryActionsLocked}
         visibleGalleryItems={visibleGalleryItems}
+        galleryTotalItems={galleryTotalItems}
         galleryTotalPages={galleryTotalPages}
         onRefreshGallery={() => void loadGallery()}
         onForcePullGallery={() => void handleGalleryForcePull()}
-        favoriteItems={filteredFavoriteItems}
-        favoritesRawCount={favoriteItems.length}
-        favoritesBusy={favoritesBusy}
-        favoritesFilter={favoritesFilter}
-        onFavoritesFilterChange={setFavoritesFilter}
-        favoritesSort={favoritesSort}
-        onFavoritesSortChange={setFavoritesSort}
-        favoritesViewMode={favoritesViewMode}
-        onFavoritesViewModeChange={setFavoritesViewMode}
-        favoritesSearch={favoritesSearch}
-        onFavoritesSearchChange={setFavoritesSearch}
-        favoritesItemsPerPage={favoritesItemsPerPage}
-        onFavoritesItemsPerPageChange={setFavoritesItemsPerPage}
-        favoritesPage={favoritesPage}
-        onFavoritesPageChange={setFavoritesPage}
-        favoritesTotalPages={favoritesTotalPages}
-        visibleFavoriteItems={visibleFavoriteItems}
-        onRefreshFavorites={() => void loadFavorites()}
         onDownload={handleGalleryDownload}
         onFavorite={handleGalleryFavorite}
         onRename={handleGalleryRename}

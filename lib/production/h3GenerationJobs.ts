@@ -14,6 +14,10 @@ import type {
   ProductionV2VisualReference,
 } from "@/lib/production/v2";
 import type { ProductionV2H3BackendId, ProductionV2H3Mode } from "@/lib/production/h3Workflows";
+import {
+  normalizeH3Quality,
+  type H3Quality,
+} from "@/lib/production/h3ProductionRecipes";
 
 export type ProductionV2GenerationStatus =
   | "pending"
@@ -32,6 +36,7 @@ export type ProductionV2H3GenerationPayload = {
   finalPrompt: string;
   promptFingerprint: string;
   durationSeconds: ProductionV2Duration;
+  h3Quality: H3Quality;
   seed: number;
   startImage: ProductionV2VisualReference | null;
   references: ProductionV2VisualReference[];
@@ -195,6 +200,7 @@ function fromRow(row: JobRow | undefined): ProductionV2GenerationJob | null {
     submissionState: row.submission_state as ProductionV2GenerationJob["submissionState"],
     payload: {
       ...rawPayload,
+      h3Quality: normalizeH3Quality(rawPayload.h3Quality),
       userLoras: normalizeProductionV2H3UserLoras(rawPayload.userLoras),
     },
     workflowId: row.workflow_id,

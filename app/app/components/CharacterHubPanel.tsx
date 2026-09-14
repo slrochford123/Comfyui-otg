@@ -26,6 +26,8 @@ import {
   type EditableCharacterCandidate,
 } from "@/lib/client/characterCandidateEditClient";
 import CharacterIdentityVoicePanel, { SavedCharacterLibrary } from "./CharacterIdentityVoicePanel";
+import AssetGalleryPanel from "./AssetGalleryPanel";
+import VoiceCharactersPanel from "./VoiceCharactersPanel";
 import {
   appendCharacterEditCandidate,
   type CharacterCandidateLineage,
@@ -51,7 +53,8 @@ type CharacterHubView =
   | "upload-character"
   | "upload-freeform"
   | "saved-for-later"
-  | "legacy";
+  | "legacy"
+  | "voice-characters";
 
 type CharacterModelId =
   | "ernie-image"
@@ -369,6 +372,12 @@ function CharacterCreateSetup({
   const modifyingCandidate = createCandidates.find(
     (candidate) => candidate.id === modifyCandidateId,
   ) || null;
+
+  // OTG_CHARACTER_HUB_ORBITSHEETS_V2_UI_V1
+  const isOrbitSheetsCharacterCardV2 =
+    Number((characterReferences as any)?.pipelineVersion || 0) >= 2 &&
+    String((characterReferences as any)?.engine || "").trim() ===
+      "orbitsheets-h3";
 
   // OTG_CHARACTER_HUB_DRAFT_RUNTIME_V1
   React.useEffect(() => {
@@ -1111,35 +1120,47 @@ function CharacterCreateSetup({
         const body = refs?.body;
         const card = refs?.characterCard;
 
+        const isOrbitSheetsV2 =
+          Number((refs as any)?.pipelineVersion || 0) >= 2 &&
+          String((refs as any)?.engine || "").trim() ===
+            "orbitsheets-h3";
+
+        const legacyFourBodyReferencesComplete =
+          Boolean(body?.front?.serverPath) &&
+          Boolean(body?.back?.serverPath) &&
+          Boolean(body?.leftProfile?.serverPath) &&
+          Boolean(body?.rightProfile?.serverPath);
+
         if (
           refs?.status !== "complete" ||
-          !body?.front?.serverPath ||
-          !body?.back?.serverPath ||
-          !body?.leftProfile?.serverPath ||
-          !body?.rightProfile?.serverPath ||
-          !card?.serverPath
+          !card?.serverPath ||
+          (!isOrbitSheetsV2 && !legacyFourBodyReferencesComplete)
         ) {
           throw new Error(
-            "Character completion finished without all four body references and the Character Card.",
+            isOrbitSheetsV2
+              ? "OrbitSheets completion did not return a persisted Character Card."
+              : "Legacy Character completion did not return all four body references and the Character Card.",
           );
         }
 
         setCharacterReferences(refs);
         setCharacterCard({
           ...(processedCharacterSource as CharacterCreateCandidate),
-          id: `four-angle-card-${jobId}`,
+          id: `${isOrbitSheetsV2 ? "orbitsheets-card" : "four-angle-card"}-${jobId}`,
           imageUrl: characterReferenceAssetUrl(card),
           serverPath: card.serverPath,
-          promptId: refs.anglePromptId || jobId,
-          modelLabel: "Four-angle Character Card",
-          styleLabel: "Front / Back / Left / Right",
-          workflowId: "internal/character-reference/qwen_character_4angle_lowres",
+          promptId: String((card as any)?.promptId || refs?.anglePromptId || jobId),
+          modelLabel: isOrbitSheetsV2 ? "OrbitSheets H3 Character Card" : "Four-angle Character Card",
+          styleLabel: isOrbitSheetsV2 ? "Six-view Character Card" : "Front / Back / Left / Right",
+          workflowId: isOrbitSheetsV2 ? "orbitsheets-h3-character-card" : "internal/character-reference/qwen_character_4angle_lowres",
           backgroundFree: false,
         });
         setCharacterCardStatus("idle");
         setCharacterCompletionProgress(100);
         setCreateMessage(
-          "Four canonical 1080×1920 Character references and the four-angle Character Card are ready. Review them, then accept.",
+          isOrbitSheetsV2
+            ? "OrbitSheets H3 six-view Character Card is ready. Review it, then accept."
+            : "Four canonical 1080×1920 legacy Character references and the four-angle Character Card are ready. Review them, then accept.",
         );
         return;
       }
@@ -1171,11 +1192,129 @@ function CharacterCreateSetup({
     setCharacterCardStatus("running");
     setCreateError("");
     setCreateMessage(
-      "Queueing four low-resolution Character angles for durable completion...",
+      "Queueing the canonical Character Card for durable completion...",
     );
 
     try {
       let jobId = characterCompletionJobId;
+
+      // OTG_CHARACTER_HUB_COMPLETED_CARD_RECOVERY_V1
+      //
+      // A browser refresh must not submit a second expensive render if
+      // Worker Manager already completed this exact draft/source.
+      if (!jobId) {
+        try {
+          const recoveryOwnerId =
+            getCharacterHubDeviceId();
+
+          const recoveryResponse = await fetch(
+            `/api/characters/completion?characterId=${encodeURIComponent(
+              characterHubDraftId,
+            )}`,
+            {
+              cache: "no-store",
+              credentials: "include",
+              headers: {
+                "x-otg-device-id": recoveryOwnerId,
+              },
+            },
+          );
+
+          const recoveryJson =
+            await recoveryResponse.json().catch(() => null);
+
+          const recoveryJobs =
+            recoveryResponse.ok &&
+            recoveryJson?.ok &&
+            Array.isArray(recoveryJson.jobs)
+              ? recoveryJson.jobs
+              : [];
+
+          const recoveredJob = recoveryJobs.find(
+            (candidateJob: any) => {
+              if (
+                String(candidateJob?.status || "")
+                  .trim()
+                  .toLowerCase() !== "completed"
+              ) {
+                return false;
+              }
+
+              const input =
+                candidateJob?.input &&
+                typeof candidateJob.input === "object" &&
+                !Array.isArray(candidateJob.input)
+                  ? candidateJob.input
+                  : {};
+
+              const result =
+                candidateJob?.result &&
+                typeof candidateJob.result === "object" &&
+                !Array.isArray(candidateJob.result)
+                  ? candidateJob.result
+                  : {};
+
+              const refs =
+                result.characterReferences &&
+                typeof result.characterReferences === "object" &&
+                !Array.isArray(result.characterReferences)
+                  ? result.characterReferences
+                  : {};
+
+              const card =
+                refs.characterCard &&
+                typeof refs.characterCard === "object" &&
+                !Array.isArray(refs.characterCard)
+                  ? refs.characterCard
+                  : {};
+
+              const sourceCandidates = [
+                input.sourceImagePath,
+                input.fullBodyImagePath,
+                input.defaultCharacterSourceImagePath,
+                input.originalSourceImagePath,
+              ]
+                .map((value) => String(value || "").trim())
+                .filter(Boolean);
+
+              return (
+                sourceCandidates.includes(
+                  String(
+                    processedCharacterSource.serverPath || "",
+                  ).trim(),
+                ) &&
+                String(refs.status || "").trim() === "complete" &&
+                Boolean(String(card.serverPath || "").trim())
+              );
+            },
+          );
+
+          if (recoveredJob?.jobId) {
+            jobId = String(recoveredJob.jobId);
+
+            setCharacterCompletionJobId(jobId);
+
+            setCharacterCompletionProgress(
+              Math.max(
+                0,
+                Math.min(
+                  100,
+                  Number(recoveredJob.progress || 100),
+                ),
+              ),
+            );
+
+            setCreateMessage(
+              "Recovered the completed Character Card job. No new H3 render was submitted.",
+            );
+          }
+        } catch (recoveryError) {
+          console.warn(
+            "[Character Hub] Completed Character Card recovery was unavailable; normal submission may continue.",
+            recoveryError,
+          );
+        }
+      }
 
       if (!jobId) {
         const ownerId = getCharacterHubDeviceId();
@@ -1261,7 +1400,7 @@ function CharacterCreateSetup({
       }
 
       setCreateMessage(
-        `Character reference job ${jobId} is saved. Generating four low-resolution angles, then upscaling each to 1080×1920...`,
+        `Character Card job ${jobId} is saved. OrbitSheets H3 will build the six-view Character Card; legacy four-angle generation remains the automatic fallback.`,
       );
 
       await pollCharacterReferenceCompletionV1(jobId);
@@ -1269,7 +1408,7 @@ function CharacterCreateSetup({
       setCharacterCardStatus("error");
       setCreateError(error?.message || String(error));
       setCreateMessage(
-        "Character reference generation stopped. The source, job ID, and completed checkpoints remain saved for Resume.",
+        "Character Card generation stopped. The source, job ID, and completed checkpoints remain saved for Resume.",
       );
     } finally {
       characterCardInFlightRef.current = false;
@@ -1283,7 +1422,9 @@ function CharacterCreateSetup({
       characterReferences?.status !== "complete"
     ) {
       setCreateError(
-        "All four canonical Character references must finish before the Character Card can be accepted.",
+        isOrbitSheetsCharacterCardV2
+          ? "The OrbitSheets Character Card must finish before it can be accepted."
+          : "All four legacy canonical Character references must finish before the Character Card can be accepted.",
       );
       return;
     }
@@ -1291,7 +1432,9 @@ function CharacterCreateSetup({
     setCharacterCardStatus("accepted");
     setCharacterFinalizeStep(true);
     setCreateMessage(
-      "Four-angle Character references accepted. Add the real character name and appearance details, then choose or upload the voice.",
+      isOrbitSheetsCharacterCardV2
+        ? "OrbitSheets Character Card accepted. Add the real character name and appearance details, then choose or upload the voice."
+        : "Legacy four-angle Character references accepted. Add the real character name and appearance details, then choose or upload the voice.",
     );
   }
 
@@ -1591,7 +1734,7 @@ function CharacterCreateSetup({
           <div className="text-xs font-black uppercase tracking-[0.24em] text-amber-200/75">Character Studio</div>
           <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Character Card</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-white/60">
-            Generate exactly four canonical body-angle references: front, back, left profile, and right profile. Qwen creates the low-resolution angles first; each is then upscaled to a 1080×1920 master and combined into one four-angle Character Card.
+            Generate the canonical model-facing Character Card from the processed source. OrbitSheets H3 creates a six-view identity sheet; if OrbitSheets is unavailable, the legacy four-angle Character Card generator runs automatically.
           </p>
         </div>
 
@@ -1625,24 +1768,24 @@ function CharacterCreateSetup({
           </div>
 
           <div className="rounded-[28px] border border-amber-300/15 bg-amber-300/[0.045] p-5">
-            <div className="text-xs font-black uppercase tracking-[0.2em] text-amber-100/70">Four-angle Character Card</div>
+            <div className="text-xs font-black uppercase tracking-[0.2em] text-amber-100/70">Character Card</div>
             {characterCard ? (
               <button type="button" onClick={() => setExpandedCandidate(characterCard)} className="mt-3 block w-full touch-manipulation rounded-2xl border border-amber-200/20 bg-black/30 p-2" aria-label="Expand completed character card">
-                <img src={characterCard.imageUrl} alt="Completed four-angle Character Card" draggable={false} onContextMenu={(event) => event.preventDefault()} className="mx-auto max-h-[640px] w-full rounded-xl object-contain select-none" />
+                <img src={characterCard.imageUrl} alt="Completed Character Card" draggable={false} onContextMenu={(event) => event.preventDefault()} className="mx-auto max-h-[640px] w-full rounded-xl object-contain select-none" />
               </button>
             ) : (
-              <div className="mt-3 rounded-2xl border border-dashed border-white/15 p-8 text-center text-sm text-white/45">Create the Character Card to generate four canonical body-angle references and the final four-angle card.</div>
+              <div className="mt-3 rounded-2xl border border-dashed border-white/15 p-8 text-center text-sm text-white/45">Create the Character Card to generate the canonical six-view model-facing reference sheet.</div>
             )}
             {characterCardStatus === "error" ? <p className="mt-3 text-sm text-red-100">Generation failed. The source and candidates are preserved; retry with Create Character Card.</p> : null}
-            {characterCardStatus === "accepted" ? <p className="mt-3 text-sm text-emerald-100">Four-angle Character Card accepted. The processed single-character source remains the default/profile image.</p> : null}
+            {characterCardStatus === "accepted" ? <p className="mt-3 text-sm text-emerald-100">Character Card accepted. The processed single-character source remains the default/profile image.</p> : null}
           </div>
         </div>
 
         {/* OTG_CHARACTER_HUB_FOUR_MASTER_PREVIEW_V1 */}
-        {characterReferences?.body ? (
+        {!isOrbitSheetsCharacterCardV2 && characterReferences?.body ? (
           <div className="rounded-[28px] border border-cyan-300/15 bg-cyan-300/[0.04] p-5">
             <div className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/70">
-              Four canonical 1080×1920 masters
+              Legacy four-angle 1080×1920 masters
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3">
               {(
@@ -3238,9 +3381,15 @@ export default function CharacterHubPanel({
 
   if (view === "asset-gallery") {
     return (
-      <FutureGalleryPlaceholder
-        title="Asset Gallery"
-        description="Reusable production assets will be rebuilt after Character and Background galleries."
+      <AssetGalleryPanel
+        onBack={() => setView("home")}
+      />
+    );
+  }
+
+  if (view === "voice-characters") {
+    return (
+      <VoiceCharactersPanel
         onBack={() => setView("home")}
       />
     );
@@ -3401,6 +3550,15 @@ export default function CharacterHubPanel({
           onClick={() => setView("asset-gallery")}
           status="Preview section →"
         />
+
+          <GalleryCard
+            eyebrow="Character voice training"
+            title="Voice Characters"
+            description="Train, test, and manage optional HQ voice models for characters that already have a saved Voice Sample."
+            accent="bg-violet-300"
+            onClick={() => setView("voice-characters")}
+            status="Manage HQ voices →"
+          />
       </div>
     </div>
   );

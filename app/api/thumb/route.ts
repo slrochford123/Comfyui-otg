@@ -12,15 +12,12 @@ import {
   userGalleryDir,
   ensureDir,
   safeJoin,
-  safeSegment,
 } from "@/lib/paths";
 import { resolveFfmpegPath } from "@/lib/ffmpeg";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-type Collection = "gallery" | "favorites";
 
 function clampInt(n: number, min: number, max: number) {
   if (!Number.isFinite(n)) return min;
@@ -39,16 +36,6 @@ function isSafeBasename(name: string) {
 function isVideo(name: string) {
   const n = name.toLowerCase();
   return n.endsWith(".mp4") || n.endsWith(".webm") || n.endsWith(".mov") || n.endsWith(".mkv");
-}
-
-function guessFavoritesDirLegacy(username: string | null, deviceId: string) {
-  const root = path.join(process.cwd(), "data", username ? "user_favorites" : "device_favorites");
-  return username ? path.join(root, username) : path.join(root, deviceId);
-}
-
-function favoritesDirDataRoot(username: string | null, deviceId: string) {
-  const root = path.join(OTG_DATA_ROOT, username ? "user_favorites" : "device_favorites");
-  return username ? path.join(root, safeSegment(username)) : path.join(root, safeSegment(deviceId));
 }
 
 function sha1(input: string) {
@@ -115,12 +102,12 @@ function ensureThumbWithFfmpeg(opts: {
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
-    const collection = (url.searchParams.get("collection") || "gallery") as Collection;
+    const collection = url.searchParams.get("collection") || "gallery";
     const name = url.searchParams.get("name") || "";
     const scopeHint = url.searchParams.get("scope");
     const w = clampInt(Number(url.searchParams.get("w") || "384"), 128, 1024);
 
-    if (collection !== "gallery" && collection !== "favorites") {
+    if (collection !== "gallery") {
       return new NextResponse(svgFallback("bad collection"), { status: 400, headers: { "Content-Type": "image/svg+xml" } });
     }
     if (!isSafeBasename(name)) {
@@ -131,17 +118,10 @@ export async function GET(req: NextRequest) {
     const effectiveScope = scopeHint === "user" || scopeHint === "device" ? scopeHint : scope;
 
     let dirCandidates: string[] = [];
-    if (collection === "gallery") {
-      if (effectiveScope === "user" && username) {
-        dirCandidates = [userGalleryDir(username)];
-      } else {
-        dirCandidates = [deviceGalleryDir(deviceId)];
-      }
+    if (effectiveScope === "user" && username) {
+      dirCandidates = [userGalleryDir(username)];
     } else {
-      const favoriteUser = effectiveScope === "user" ? username : null;
-      const d1 = favoritesDirDataRoot(favoriteUser, deviceId);
-      const d2 = guessFavoritesDirLegacy(favoriteUser, deviceId);
-      dirCandidates = [d1, d2];
+      dirCandidates = [deviceGalleryDir(deviceId)];
     }
 
     let inputAbs: string | null = null;

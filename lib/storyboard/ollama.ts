@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
+import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
+import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
 
 function requiredEnv(name: string): string {
   const v = process.env[name];
@@ -52,7 +53,7 @@ Style lock (exact text): ${args.styleLock || ""}
 Negative (do NOT include in output): ${args.negative || ""}
 `;
 
-  const r = await qwenClusterFetch("/api/generate", {
+  const r = await qwenDurableFetch("/api/generate", {
       model,
       prompt: `${sys}\n\n${user}`,
       stream: false,

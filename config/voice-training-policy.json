@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "acceptedMinutesMin": 8,
+  "acceptedMinutesTarget": 10,
+  "acceptedMinutesMax": 12,
+  "referenceMode": "original-sample-only",
+  "speakerSimilarityRequired": true,
+  "transcriptVerificationRequired": true,
+  "audioQualityQcRequired": true,
+  "regenerateRejectedClips": true,
+  "maxGeneratedAttempts": 240,
+  "maxClipRegenerations": 2,
+  "requiredCoverage": [
+    "neutral",
+    "narration",
+    "question",
+    "emotional",
+    "intensity",
+    "phoneme"
+  ],
+  "speakerSimilarityMin": 0.68,
+  "transcriptSimilarityMin": 0.82,
+  "audioQuality": {
+    "minDurationSeconds": 1.0,
+    "maxDurationSeconds": 18.0,
+    "minRms": 0.006,
+    "maxClippingRatio": 0.002,
+    "maxSilenceRatio": 0.55,
+    "silenceAmplitude": 0.003
+  },
+  "speakerQc": {
+    "engine": "speechbrain-ecapa",
+    "model": "speechbrain/spkrec-ecapa-voxceleb",
+    "sampleRate": 16000,
+    "metric": "cosine-similarity",
+    "executionDevice": "cpu"
+  },
+  "transcriptQc": {
+    "engine": "faster-whisper",
+    "endpoint": "/api/ollama-ai/transcribe",
+    "executionDevice": "cpu"
+  },
+  "rvc": {
+    "version": "v2",
+    "sampleRate": 48000,
+    "pitchExtractor": "rmvpe",
+    "pitchGuidance": true
+  },
+  "checkpointSelection": "held-out-best",
+  "checkpointEvaluation": {
+    "enabled": true,
+    "heldOutSource": "independent-espeak-ng",
+    "heldOutPrompts": [
+      "Please bring the silver package to the quiet station before sunset.",
+      "Did the traveler check the final signal before the train arrived?"
+    ],
+    "scoring": {
+      "speakerSimilarity": 0.45,
+      "intelligibility": 0.3,
+      "audioQuality": 0.15,
+      "performance": 0.1
+    },
+    "technicalGate": {
+      "minTranscriptSimilarity": 0.55,
+      "minAudioQualityScore": 0.55,
+      "minDurationRatio": 0.55,
+      "maxDurationRatio": 1.8,
+      "maxClippingRatio": 0.02
+    },
+    "speakerSimilarityGate": "advisory-until-live-calibration"
+  },
+  "thresholdStatus": "initial-test-defaults-require-live-calibration"
+}

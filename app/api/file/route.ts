@@ -56,9 +56,6 @@ export async function GET(req: NextRequest) {
     const allowedRoots = [
       dataRoot,
       path.join(dataRoot, "tmp"),
-      path.join(dataRoot, "tmp", "angles_models"),
-      path.join(dataRoot, "tmp", "angles_uploads"),
-      path.join(dataRoot, "tmp", "angles_bridge"),
       ...configuredExtraAllowedRoots(dataRoot),
     ].map((p) => path.resolve(p));
 

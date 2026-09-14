@@ -1,21 +1,13 @@
 import {
-  acquireComfy5060Lease,
-  createComfyLeaseOwnerId,
   isRtx5060Comfy8188Endpoint,
-  releaseComfy5060Lease,
-  type Comfy5060Lease,
 } from "@/lib/workers/comfy5060Lease";
 import {
-  acquireShawnClusterGpuLease,
   resolveComfyPhysicalGpu,
-  releaseClusterGpuLease,
-  SHAWN_GPU_LOCK_ID,
-  type ClusterGpuLease,
 } from "@/lib/workers/clusterGpu";
-import { heartbeatResourceLock } from "@/lib/workers/resourceLocks";
+import {
+  runWithComfySubmissionCriticalSection,
+} from "@/lib/workers/comfySubmissionCriticalSection";
 
-const IMAGE_LEASE_TTL_SECONDS = 6 * 60 * 60;
-const MONITOR_POLL_MS = 2_000;
 
 export class Comfy5060BusyError extends Error {
   readonly code = "gpu_linux_5060ti_busy";
@@ -48,105 +40,344 @@ function normalizeBaseUrl(value: string): string {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
-function promptIdFromPayload(payload: unknown): string {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "";
-  const record = payload as Record<string, unknown>;
-  return String(record.prompt_id || record.promptId || "").trim();
-}
-
-function historyTerminal(entry: unknown): boolean {
-  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
-  const record = entry as Record<string, unknown>;
-  const status = record.status && typeof record.status === "object" && !Array.isArray(record.status)
-    ? record.status as Record<string, unknown>
-    : {};
-  return status.completed === true || status.status_str === "error" || !!record.outputs;
-}
-
-type PromptGpuLease = Comfy5060Lease | ClusterGpuLease;
-
-async function waitForPromptTerminal(baseUrl: string, promptId: string, lease: PromptGpuLease): Promise<void> {
-  let currentLease: PromptGpuLease | null = lease;
-  const deadline = Date.now() + IMAGE_LEASE_TTL_SECONDS * 1000;
-  let nextHeartbeat = 0;
-  while (Date.now() < deadline && currentLease) {
-    if (Date.now() >= nextHeartbeat) {
-      const renewed = heartbeatResourceLock(currentLease.lockId, currentLease.ownerId, currentLease.fencingToken, IMAGE_LEASE_TTL_SECONDS);
-      currentLease = renewed ? { ...renewed, purpose: currentLease.purpose } as PromptGpuLease : null;
-      nextHeartbeat = Date.now() + 30_000;
-      if (!currentLease) return;
-    }
-    try {
-      const response = await fetch(`${baseUrl}/history/${encodeURIComponent(promptId)}`, { cache: "no-store" });
-      if (response.ok) {
-        const body = await response.json().catch(() => null) as Record<string, unknown> | null;
-        const entry = body?.[promptId] ?? body;
-        if (historyTerminal(entry)) return;
-      }
-    } catch {
-      // Preserve the lease across transient history failures.
-    }
-    await new Promise((resolve) => setTimeout(resolve, MONITOR_POLL_MS));
-  }
-}
-
-function monitorAndRelease(baseUrl: string, promptId: string, lease: PromptGpuLease): void {
-  void waitForPromptTerminal(baseUrl, promptId, lease)
-    .finally(() => {
-      if (lease.lockId === SHAWN_GPU_LOCK_ID) releaseClusterGpuLease(lease as ClusterGpuLease);
-      else releaseComfy5060Lease(lease as Comfy5060Lease);
-    });
-}
-
 export async function submitComfyPromptWithGpuLease(args: {
   baseUrl: string;
   init: RequestInit;
   workerId: string;
   ownerId?: string;
-  fetcher?: (url: string, init: RequestInit) => Promise<Response>;
+  fetcher?: (
+    url: string,
+    init: RequestInit,
+  ) => Promise<Response>;
   purpose?: "image" | "video" | "ltx-fallback";
+  preSubmitCleanup?: "free" | null;
+    submitTimeoutMs?: number;
+    onPromptAccepted?: (
+      promptId: string,
+    ) => Promise<void> | void;
 }): Promise<Response> {
-  const baseUrl = normalizeBaseUrl(args.baseUrl);
-  const submit = args.fetcher || fetch;
-  const physicalGpu = resolveComfyPhysicalGpu(baseUrl);
-  const on5060 = physicalGpu === "slr-5060" || isRtx5060Comfy8188Endpoint(baseUrl);
-  const on3090 = physicalGpu === "shawn-3090";
-  if (!on5060 && !on3090) throw new UnclassifiedComfyGpuError(baseUrl);
+  // OTG_COMFY_PROMPT_QUEUE_ONLY_V1
+  //
+  // ComfyUI remains responsible for render-time FIFO queueing.
+  // OTG does not hold a GPU workload lock while a render runs.
+  //
+  // OTG_COMFY_SUBMISSION_CRITICAL_SECTION_V1
+  //
+  // The separate physical-endpoint mutex below protects only:
+  //
+  //   queue recheck -> optional /free -> /prompt
+  //
+  // It is released immediately after the submission request
+  // finishes.
+  const baseUrl =
+    normalizeBaseUrl(args.baseUrl);
 
-  const purpose = args.purpose || (on3090 ? "video" : /fallback/i.test(args.workerId) ? "ltx-fallback" : "image");
-  const leaseOwnerId = args.ownerId || createComfyLeaseOwnerId(args.workerId);
-  const acquired = on3090
-    ? await acquireShawnClusterGpuLease({ ownerId: leaseOwnerId, workerId: args.workerId, purpose, ttlSeconds: IMAGE_LEASE_TTL_SECONDS })
-    : acquireComfy5060Lease({ ownerId: leaseOwnerId, workerId: args.workerId, purpose: purpose === "ltx-fallback" ? "ltx-fallback" : "image", ttlSeconds: IMAGE_LEASE_TTL_SECONDS });
-  if (!acquired.ok) throw new ComfyGpuBusyError(on3090 ? "shawn-3090" : "slr-5060", acquired.error);
+  const submit =
+    args.fetcher || fetch;
 
-  const lease = acquired.lease;
-  let response: Response;
-  try {
-    response = await submit(`${baseUrl}/prompt`, args.init);
-  } catch (error) {
-    // The POST outcome may be ambiguous. Keep ownership until the long lease
-    // expires rather than allowing a second GPU workload to overlap it.
-    throw error;
+  const physicalGpu =
+    resolveComfyPhysicalGpu(
+      baseUrl,
+    );
+
+  const on5060 =
+    physicalGpu === "slr-5060"
+    || isRtx5060Comfy8188Endpoint(
+      baseUrl,
+    );
+
+  const on3090 =
+    physicalGpu === "shawn-3090";
+
+  if (!on5060 && !on3090) {
+    throw new UnclassifiedComfyGpuError(
+      baseUrl,
+    );
   }
 
-  if (!response.ok) {
-    if (lease.lockId === SHAWN_GPU_LOCK_ID) releaseClusterGpuLease(lease as ClusterGpuLease);
-    else releaseComfy5060Lease(lease as Comfy5060Lease);
-    return response;
+  const guarded =
+    await runWithComfySubmissionCriticalSection(
+      {
+        physicalGpu:
+          on5060
+            ? "slr-5060"
+            : "shawn-3090",
+        ownerId:
+          String(
+            args.ownerId
+            || (
+              `${args.workerId}:`
+              + `${process.pid}:`
+              + `${Date.now()}`
+            ),
+          ).trim(),
+        workerId:
+          args.workerId,
+
+          /*
+           * OTG_COMFY_ADMISSION_WAIT_OUTLIVES_CALLER_TIMEOUT_V1
+           *
+           * Capacity/admission waiting is queue state.
+           * A transport timer must not reject work merely because
+           * another submission owns the short physical mutex.
+           */
+          signal:
+            null,
+      },
+      async () => {
+        if (
+          args.preSubmitCleanup
+          === "free"
+        ) {
+          if (!on5060) {
+            return new Response(
+              JSON.stringify({
+                error:
+                  "Pre-submit /free is qualified only for RTX 5060 Ti H3 R2V.",
+              }),
+              {
+                status: 503,
+                headers: {
+                  "Content-Type":
+                    "application/json",
+                },
+              },
+            );
+          }
+
+          const queueResponse =
+            await submit(
+              `${baseUrl}/queue`,
+              {
+                method: "GET",
+                cache: "no-store",
+              },
+            );
+
+          if (!queueResponse.ok) {
+            return new Response(
+              JSON.stringify({
+                error:
+                  `Could not recheck the RTX 5060 Ti Comfy queue before /free: HTTP ${queueResponse.status}.`,
+              }),
+              {
+                status: 503,
+                headers: {
+                  "Content-Type":
+                    "application/json",
+                },
+              },
+            );
+          }
+
+          const queue =
+            await queueResponse
+              .json()
+              .catch(() => null) as {
+                queue_running?: unknown;
+                queue_pending?: unknown;
+              } | null;
+
+          if (
+            !queue
+            || !Array.isArray(
+              queue.queue_running,
+            )
+            || !Array.isArray(
+              queue.queue_pending,
+            )
+          ) {
+            return new Response(
+              JSON.stringify({
+                error:
+                  "RTX 5060 Ti queue recheck returned an unreadable queue state; /free was not issued.",
+              }),
+              {
+                status: 503,
+                headers: {
+                  "Content-Type":
+                    "application/json",
+                },
+              },
+            );
+          }
+
+          const queueBusy =
+            queue.queue_running.length > 0
+            || queue.queue_pending.length > 0;
+
+          if (queueBusy) {
+            return new Response(
+              JSON.stringify({
+                error:
+                  "RTX 5060 Ti queue became busy before the required R2V /free operation.",
+              }),
+              {
+                status: 409,
+                headers: {
+                  "Content-Type":
+                    "application/json",
+                },
+              },
+            );
+          }
+
+          const freeResponse =
+            await submit(
+              `${baseUrl}/free`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type":
+                    "application/json",
+                },
+                body:
+                  JSON.stringify({
+                    unload_models: true,
+                    free_memory: true,
+                  }),
+              },
+            );
+
+          if (!freeResponse.ok) {
+            return new Response(
+              JSON.stringify({
+                error:
+                  `RTX 5060 Ti pre-submit /free failed with HTTP ${freeResponse.status}.`,
+              }),
+              {
+                status: 503,
+                headers: {
+                  "Content-Type":
+                    "application/json",
+                },
+              },
+            );
+          }
+        }
+
+
+          const submitTimeoutMs =
+            args.submitTimeoutMs == null
+              ? (
+                  args.init.signal
+                    ? 30_000
+                    : null
+                )
+              : Math.max(
+                  1_000,
+                  Math.floor(
+                    Number(
+                      args.submitTimeoutMs,
+                    ) || 30_000,
+                  ),
+                );
+
+          let submitController:
+            AbortController | null =
+              null;
+
+          let submitTimer:
+            ReturnType<typeof setTimeout>
+            | null =
+              null;
+
+          if (
+            submitTimeoutMs != null
+          ) {
+            submitController =
+              new AbortController();
+
+            submitTimer =
+              setTimeout(
+                () =>
+                  submitController?.abort(),
+                submitTimeoutMs,
+              );
+          }
+
+          let response:
+            Response;
+
+          try {
+            response =
+              await submit(
+                `${baseUrl}/prompt`,
+                {
+                  ...args.init,
+
+                  /*
+                   * Reset a caller timeout that may have expired
+                   * while waiting for GPU admission.
+                   */
+                  signal:
+                    submitController?.signal,
+                },
+              );
+          } finally {
+            if (submitTimer) {
+              clearTimeout(
+                submitTimer,
+              );
+            }
+          }
+
+          if (
+            response.ok
+            && args.onPromptAccepted
+          ) {
+            const text =
+              await response
+                .clone()
+                .text()
+                .catch(() => "");
+
+            let payload:
+              Record<string, unknown> = {};
+
+            if (text) {
+              try {
+                payload =
+                  JSON.parse(text) as
+                    Record<string, unknown>;
+              } catch {}
+            }
+
+            const promptId =
+              String(
+                payload.prompt_id
+                || payload.promptId
+                || "",
+              ).trim();
+
+            if (promptId) {
+              await args.onPromptAccepted(
+                promptId,
+              );
+            }
+          }
+
+          return response;
+      },
+    );
+
+  if (!guarded.ok) {
+    return new Response(
+      JSON.stringify({
+        error: guarded.error,
+      }),
+      {
+        status: guarded.status,
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+      },
+    );
   }
 
-  const clone = response.clone();
-  const parsed = await clone.json().catch(() => null);
-  const promptId = promptIdFromPayload(parsed);
-  if (!promptId) {
-    // An unreadable success response is ambiguous. Retain the lease to expiry.
-    return response;
-  }
-  monitorAndRelease(baseUrl, promptId, lease);
-  return response;
+  return guarded.value;
 }
-
 
 /** Backward-compatible name retained while callers migrate to the physical-GPU abstraction. */
 export const submitComfyPromptWith5060Lease = submitComfyPromptWithGpuLease;

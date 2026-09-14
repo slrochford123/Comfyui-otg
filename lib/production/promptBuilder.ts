@@ -8,6 +8,10 @@ import {
   resolveProductionV2H3ReferencePlan,
 } from "@/lib/production/referenceResolver";
 import {
+  buildLtx25IngredientsLockedContext,
+  buildLtx25IngredientsManifest,
+} from "@/lib/production/ltx25IngredientsManifest";
+import {
   composeProductionV2FinalPrompt,
   productionV2H3VoiceBindings,
   type ProductionV2DialogueTurn,
@@ -21,6 +25,7 @@ import {
 // Prompt controls and provider policy are adapted from Hailuo H3 Prompt Builder
 // v2.8.0-beta.1 (c) 2026 Bob Doyle Media, MIT.
 export const PRODUCTION_PROMPT_BUILDER_VERSION = "production-prompt-builder-v2";
+export const H3_T2V_PROMPT_BUILDER_ID = `${PRODUCTION_PROMPT_BUILDER_VERSION}:h3-t2v`;
 export const H3_I2V_PROMPT_BUILDER_ID = `${PRODUCTION_PROMPT_BUILDER_VERSION}:h3-i2v`;
 export const H3_REF2V_PROMPT_BUILDER_ID = `${PRODUCTION_PROMPT_BUILDER_VERSION}:h3-ref2v`;
 export const LTX_INGREDIENTS_PROMPT_BUILDER_ID = `${PRODUCTION_PROMPT_BUILDER_VERSION}:ltx-ingredients`;
@@ -41,7 +46,7 @@ export type BuiltProductionPrompt = {
   lockedReferenceContext: string;
   scenePrompt: string;
   builderId: string;
-  adapter: "h3-i2v" | "h3-ref2v" | "ltx-ingredients";
+  adapter: "h3-t2v" | "h3-i2v" | "h3-ref2v" | "ltx-ingredients";
 };
 
 export type ProductionV2ScenePromptValidation = {
@@ -620,6 +625,211 @@ export function applyProductionV2DeterministicDialogueSequence(
   return `${prompt.trimEnd()}\n\n${canonicalDialogue}`.trim();
 }
 
+/*
+ * OTG_PRODUCTION_V2_LTX_VISION_PROMPT_VALIDATION_V1
+ *
+ * LTX Ingredients uses one compact cinematic paragraph rather than
+ * the timestamped H3 Scene Prompt document format.
+ *
+ * The existing H3 validator remains unchanged.
+ */
+export function validateProductionV2LtxScenePrompt(
+  scene: ProductionV2Scene,
+  value: string,
+): ProductionV2ScenePromptValidation {
+  const raw =
+    String(
+      value
+      || "",
+    ).trim();
+
+  const source =
+    cleanGeneratedPrompt(
+      raw,
+    ).trim();
+
+  const prompt =
+    source
+      .replace(
+        /\s+/g,
+        " ",
+      )
+      .trim();
+
+  const errors:
+    string[] =
+    [];
+
+  if (!prompt) {
+    errors.push(
+      "The LTX Scene Prompt is empty.",
+    );
+  }
+
+  if (
+    prompt.length
+    > 1600
+  ) {
+    errors.push(
+      "The LTX Scene Prompt is too long.",
+    );
+  }
+
+  const words =
+    prompt
+      .split(
+        /\s+/,
+      )
+      .filter(Boolean);
+
+  if (
+    words.length
+    > 150
+  ) {
+    errors.push(
+      "The LTX Scene Prompt must be 150 words or fewer.",
+    );
+  }
+
+  if (
+    /\n\s*\n/.test(
+      raw,
+    )
+  ) {
+    errors.push(
+      "The LTX Scene Prompt must be one flowing paragraph.",
+    );
+  }
+
+  if (
+    /```|^\s*#{1,6}\s|\bUSER\s+SCENE\s+DESCRIPTION\b|\bCAMERA\s+AND\s+FLOW\b|\bFINAL\s+TEMPORAL\s+QUALITY\b|\bLTX\s*2(?:\.5)?\b|\b768P\b/i.test(
+      raw,
+    )
+  ) {
+    errors.push(
+      "The LTX Scene Prompt contains model/meta formatting that is not allowed.",
+    );
+  }
+
+  if (
+    /^\s*(?:scene\s+prompt|final\s+scene\s+prompt)\s*:/i.test(
+      raw,
+    )
+    || /^\s*(?:here(?:'s| is)|sure\b)/i.test(
+      raw,
+    )
+  ) {
+    errors.push(
+      "The LTX Scene Prompt contains meta commentary instead of direct scene prose.",
+    );
+  }
+
+  if (
+    /(?:Shot|Scene)\s+\d+|\bsubject_definitions\s*:|<Picture\s+\d+>|<Video\s+\d+>/i.test(
+      raw,
+    )
+  ) {
+    errors.push(
+      "The LTX Scene Prompt contains H3/reference-document syntax that is not allowed.",
+    );
+  }
+
+  try {
+    const manifest =
+      buildLtx25IngredientsManifest(
+        scene,
+      );
+
+    const lowerPrompt =
+      prompt.toLocaleLowerCase();
+
+    for (
+      const item
+      of manifest.items
+    ) {
+      /*
+       * Character names are identity anchors for LTX Ingredients.
+       * Background/Asset display names are not forced into prose.
+       */
+      if (
+        item.sourceKind
+        !== "character"
+      ) {
+        continue;
+      }
+
+      const name =
+        String(
+          item.name
+          || "",
+        ).trim();
+
+      if (
+        name
+        && !lowerPrompt.includes(
+          name.toLocaleLowerCase(),
+        )
+      ) {
+        errors.push(
+          `The LTX Scene Prompt must represent selected Character ${name} by name.`,
+        );
+      }
+    }
+  } catch (
+    error
+  ) {
+    errors.push(
+      error instanceof Error
+        ? error.message
+        : String(error),
+    );
+  }
+
+  return {
+    ok:
+      errors.length === 0,
+
+    errors,
+
+    /*
+     * Compatibility fields required by the shared validation result.
+     *
+     * LTX deliberately does not use the H3 [Shot N] timestamp syntax.
+     * A non-empty cinematic paragraph is therefore represented as one
+     * logical LTX scene prompt, with no H3 timestamps.
+     */
+    shotCount:
+      prompt
+        ? 1
+        : 0,
+
+    timestamps:
+      [],
+  };
+}
+
+export function validateProductionV2ScenePromptForModel(
+  scene: ProductionV2Scene,
+  value: string,
+): ProductionV2ScenePromptValidation {
+  if (
+    scene.model
+    === "ltx-2.5"
+    && scene.generationMode
+    === "ltx-ingredients-image-to-video"
+  ) {
+    return validateProductionV2LtxScenePrompt(
+      scene,
+      value,
+    );
+  }
+
+  return validateProductionV2ScenePrompt(
+    scene,
+    value,
+  );
+}
+
 function validatedScenePrompt(scene: ProductionV2Scene, provided?: string) {
   const scenePrompt = applyProductionV2DeterministicDialogueSequence(
     scene,
@@ -645,6 +855,18 @@ export function buildH3I2VPrompt(input: BuildProductionPromptInput): BuiltProduc
   };
 }
 
+export function buildH3T2VPrompt(input: BuildProductionPromptInput): BuiltProductionPrompt {
+  assertAdapterInput(input, "minimax-h3", "h3-text-to-video");
+  const scenePrompt = validatedScenePrompt(input.scene, input.scenePrompt);
+  return {
+    prompt: composeProductionV2FinalPrompt("", scenePrompt),
+    lockedReferenceContext: "",
+    scenePrompt,
+    builderId: H3_T2V_PROMPT_BUILDER_ID,
+    adapter: "h3-t2v",
+  };
+}
+
 export function buildH3Ref2VPrompt(input: BuildProductionPromptInput): BuiltProductionPrompt {
   assertAdapterInput(input, "minimax-h3", "h3-reference-to-video");
   const scene = resolveProductionV2H3ReferencePlan(input.scene);
@@ -659,25 +881,93 @@ export function buildH3Ref2VPrompt(input: BuildProductionPromptInput): BuiltProd
   };
 }
 
-export function buildLtxIngredientsPrompt(input: BuildProductionPromptInput): BuiltProductionPrompt {
-  assertAdapterInput(input, "ltx-2.5", "ltx-ingredients-image-to-video");
-  const scene = input.scene;
-  const entities = [
-    ...scene.selectedCharacters.map((item) => `Character ${item.snapshotName}`),
-    ...(scene.selectedBackground ? [`Background ${scene.selectedBackground.snapshotName}`] : []),
-    ...scene.selectedAssets.map((item) => `Asset ${item.snapshotName}`),
-  ];
-  const scenePrompt = `${scene.durationSeconds}-second LTX 2.5 Ingredients Image-to-Video prompt. ${h3StyleProfile(scene.promptOptions.visualStyle)}\n\nINGREDIENTS SHEET MAP: ${entities.length ? entities.join("; ") : "No saved entities selected"}. Match only these saved entities to their corresponding sheet regions while rendering one unified scene. Never show the sheet, panel borders, labels, gutters, or a collage.\n\nUSER SCENE DESCRIPTION: ${finish(scene.promptStateByMode[scene.generationMode].userPrompt)}\n\nCAMERA AND FLOW: ${scene.promptOptions.cameraFeel}. ${effectiveH3ShotFlow(scene.promptOptions.shotFlow, scene.promptOptions.visualStyle, scene.promptStateByMode[scene.generationMode].userPrompt)}. ${scene.promptOptions.aspectRatio}, ${scene.promptOptions.quality}.\n\nAUDIO: ${scene.promptOptions.soundEnabled ? finish(scene.promptOptions.soundDirection || "Native synchronized ambience and effects") : "Complete silence."}\n\nFINAL TEMPORAL QUALITY: Maintain stable faces, clothing, proportions, object shape, background layout, motion direction, and illumination across frames. Avoid morphing, identity swaps, duplicated entities, frozen poses, collage artifacts, panel borders, text, logos, and camera jitter.${scene.promptOptions.thingsToAvoid ? ` Exclude ${finish(scene.promptOptions.thingsToAvoid)}` : ""}`;
+function validatedLtxScenePrompt(
+  scene: ProductionV2Scene,
+  provided?: string,
+) {
+  const scenePrompt =
+    cleanGeneratedPrompt(
+      provided
+      || "",
+    )
+      .replace(
+        /\s+/g,
+        " ",
+      )
+      .trim();
+
+  const validation =
+    validateProductionV2LtxScenePrompt(
+      scene,
+      scenePrompt,
+    );
+
+  if (
+    !validation.ok
+  ) {
+    throw new Error(
+      `LTX Scene Prompt validation failed: ${validation.errors.join(" ")}`,
+    );
+  }
+
+  return scenePrompt;
+}
+
+export function buildLtxIngredientsPrompt(
+  input: BuildProductionPromptInput,
+): BuiltProductionPrompt {
+  assertAdapterInput(
+    input,
+    "ltx-2.5",
+    "ltx-ingredients-image-to-video",
+  );
+
+  const scene =
+    input.scene;
+
+  const manifest =
+    buildLtx25IngredientsManifest(
+      scene,
+    );
+
+  const lockedReferenceContext =
+    buildLtx25IngredientsLockedContext(
+      manifest,
+    );
+
+  /*
+   * OTG_PRODUCTION_V2_LTX_ENHANCED_SCENE_PROMPT_V1
+   *
+   * The durable vision-Qwen result is authoritative.
+   * Do not rebuild LTX prose from the raw user request here.
+   */
+  const scenePrompt =
+    validatedLtxScenePrompt(
+      scene,
+      input.scenePrompt,
+    );
+
   return {
-    prompt: scenePrompt,
-    lockedReferenceContext: "",
+    prompt:
+      composeProductionV2FinalPrompt(
+        lockedReferenceContext,
+        scenePrompt,
+      ),
+
+    lockedReferenceContext,
+
     scenePrompt,
-    builderId: LTX_INGREDIENTS_PROMPT_BUILDER_ID,
-    adapter: "ltx-ingredients",
+
+    builderId:
+      LTX_INGREDIENTS_PROMPT_BUILDER_ID,
+
+    adapter:
+      "ltx-ingredients",
   };
 }
 
 export function buildProductionPrompt(input: BuildProductionPromptInput): BuiltProductionPrompt {
+  if (input.mode === "h3-text-to-video") return buildH3T2VPrompt(input);
   if (input.mode === "h3-image-to-video") return buildH3I2VPrompt(input);
   if (input.mode === "h3-reference-to-video") return buildH3Ref2VPrompt(input);
   if (input.mode === "ltx-ingredients-image-to-video") return buildLtxIngredientsPrompt(input);

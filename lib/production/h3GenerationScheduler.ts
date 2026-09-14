@@ -1,3 +1,4 @@
+import { assertProductionV2H3StartingImage } from "@/lib/production/v2";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fsp from "node:fs/promises";
@@ -32,15 +33,18 @@ import {
 import {
   buildH3Workflow,
   buildH3VsrWorkflow,
+  H3_BACKEND_PRIORITY,
   H3_BACKEND_PROFILES,
   H3_FINAL_HEIGHT,
   H3_FINAL_WIDTH,
-  H3_NATIVE_HEIGHT,
-  H3_NATIVE_WIDTH,
   H3_VSR_BACKEND,
   type ProductionV2H3BackendId,
 } from "@/lib/production/h3Workflows";
 import { productionV2H3UserLoraFilenames } from "@/lib/production/h3Loras";
+import {
+  getH3ProductionRecipe,
+  getH3ProductionTimeEstimate,
+} from "@/lib/production/h3ProductionRecipes";
 import { productionV2Store } from "@/lib/production/v2Store";
 import {
   appendProductionV2GenerationAttempt,
@@ -49,7 +53,6 @@ import {
   type ProductionV2,
   type ProductionV2Scene,
 } from "@/lib/production/v2";
-import { ComfyGpuBusyError } from "@/lib/workers/comfyPromptLease";
 
 type SchedulerDependencies = {
   probe?: (backend: ProductionV2H3BackendId, requirements?: H3BackendCompatibilityRequirements) => Promise<H3BackendProbe>;
@@ -62,11 +65,52 @@ type SchedulerDependencies = {
 
 const GLOBAL_KEY = "__otgProductionV2H3Scheduler";
 const globalState = globalThis as typeof globalThis & {
-  [GLOBAL_KEY]?: { timer: ReturnType<typeof setInterval>; running: boolean };
+  [GLOBAL_KEY]?: {
+    timer: ReturnType<typeof setInterval>;
+    running: boolean;
+    pending: boolean;
+  };
 };
 
 function clean(value: unknown) {
   return String(value ?? "").trim();
+}
+
+function qualifiedNativeDimensions(
+  job: ProductionV2GenerationJob,
+) {
+  const duration =
+    job.payload.durationSeconds;
+
+  if (
+    job.backend
+    && (
+      duration === 5
+      || duration === 10
+    )
+  ) {
+    const recipe =
+      getH3ProductionRecipe(
+        job.mode,
+        duration,
+        job.backend,
+        job.payload.h3Quality,
+      );
+
+    return {
+      nativeWidth:
+        recipe.nativeWidth,
+      nativeHeight:
+        recipe.nativeHeight,
+    };
+  }
+
+  // Backward compatibility only for an older generation row
+  // created before the qualified H3 5s/10s recipe matrix.
+  return {
+    nativeWidth: 1024,
+    nativeHeight: 576,
+  };
 }
 
 async function fileExists(filePath: string) {
@@ -273,10 +317,28 @@ export async function finalizeH3VsrWithNativeAudio(input: {
 
 export function chooseProductionV2H3Backend(probes: H3BackendProbe[]): ProductionV2H3BackendId | null {
   const byId = new Map(probes.map((probe) => [probe.backend, probe]));
-  const primary = byId.get("rtx3090");
-  if (primary?.healthy && primary.compatible && primary.idle) return "rtx3090";
-  const secondary = byId.get("rtx5060ti");
-  if (secondary?.healthy && secondary.compatible && secondary.idle) return "rtx5060ti";
+
+  // OTG_H3_QUEUE_FALLBACK_V1
+  //
+  // Prefer a compatible idle backend first. This preserves load balancing:
+  // if the priority GPU already has Comfy work and the other GPU is idle,
+  // the idle GPU receives the new generation.
+  for (const backend of H3_BACKEND_PRIORITY) {
+    const candidate = byId.get(backend);
+    if (candidate?.healthy && candidate.compatible && candidate.idle) {
+      return backend;
+    }
+  }
+
+  // If every healthy compatible backend already has running/pending work,
+  // select one by normal priority and let ComfyUI serialize the new prompt.
+  for (const backend of H3_BACKEND_PRIORITY) {
+    const candidate = byId.get(backend);
+    if (candidate?.healthy && candidate.compatible) {
+      return backend;
+    }
+  }
+
   return null;
 }
 
@@ -286,6 +348,9 @@ export function applyProductionV2H3GenerationToProduction(
   status: "generating" | "generated" | "failed",
   outputPath?: string,
 ) {
+
+  const nativeDimensions =
+    qualifiedNativeDimensions(job);
   const scenes = production.scenes.map((scene) => {
     if (scene.id !== job.sceneId) return scene;
     if (status === "generated" && outputPath && job.backend && job.comfyPromptId) {
@@ -313,8 +378,8 @@ export function applyProductionV2H3GenerationToProduction(
               backend: job.backend,
               vsrPromptId: job.vsrPromptId,
               vsrBackend: job.vsrBackend,
-              nativeWidth: H3_NATIVE_WIDTH,
-              nativeHeight: H3_NATIVE_HEIGHT,
+              nativeWidth: nativeDimensions.nativeWidth,
+              nativeHeight: nativeDimensions.nativeHeight,
               finalWidth: H3_FINAL_WIDTH,
               finalHeight: H3_FINAL_HEIGHT,
               postprocess: "rtx-vsr-ultra",
@@ -370,8 +435,8 @@ export function applyProductionV2H3GenerationToProduction(
             backend: job.backend,
             vsrPromptId: job.vsrPromptId,
             vsrBackend: job.vsrBackend,
-            nativeWidth: H3_NATIVE_WIDTH,
-            nativeHeight: H3_NATIVE_HEIGHT,
+            nativeWidth: nativeDimensions.nativeWidth,
+            nativeHeight: nativeDimensions.nativeHeight,
             finalWidth: H3_FINAL_WIDTH,
             finalHeight: H3_FINAL_HEIGHT,
             postprocess: "rtx-vsr-ultra",
@@ -446,17 +511,95 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
     });
   } else if (job.mode === "h3-image-to-video") {
     const startImage = job.payload.startImage;
-    if (!startImage?.workflowImage) throw new Error("H3 I2V job lost its starting-image generation source.");
-    if (startImage.sourceKind === "character" && startImage.generationSourceType !== "character-card") {
-      throw new Error("H3 I2V Character input must use the Character Card, never the default thumbnail.");
+    if (!startImage) {
+      throw new Error(
+        "H3 I2V job lost its Starting Image.",
+      );
     }
+
+    assertProductionV2H3StartingImage(
+      startImage,
+    );
+
     startImageFilename = await upload({
       backend: job.backend,
       sourcePath: startImage.workflowImage,
       mediaType: "image",
       uploadName: `${uploadBase}_start`,
     });
-  } else {
+  } else if (job.mode === "h3-reference-to-video") {
+    /*
+     * OTG_PRODUCTION_V2_H3_R2V_CONTINUATION_UPLOAD_V1
+     *
+     * An ordinary R2V continuation may carry one prior Scene video
+     * while still carrying the current Scene's Picture and voice refs.
+     */
+
+    /*
+     * OTG_PRODUCTION_V2_H3_R2V_GUIDE_UPLOAD_R11B_V1
+     *
+     * Reuse the existing durable startImage payload. For a continued
+     * R2V Scene it is the same server-prepared exact final frame that
+     * was originally installed as the destination I2V Starting Image.
+     *
+     * This intentionally avoids adding another H3 job-schema field.
+     */
+    const continuationGuide =
+      job.payload.startImage;
+
+    const videoReference =
+      job.payload.videoReference;
+
+    if (
+      Boolean(continuationGuide)
+      !== Boolean(videoReference)
+    ) {
+      throw new Error(
+        "H3 R2V continuation must carry both the exact frame-0 guide and its prior video reference.",
+      );
+    }
+
+    if (continuationGuide) {
+      assertProductionV2H3StartingImage(
+        continuationGuide,
+      );
+
+      startImageFilename =
+        await upload({
+          backend:
+            job.backend,
+          sourcePath:
+            continuationGuide.workflowImage,
+          mediaType:
+            "image",
+          uploadName:
+            `${uploadBase}_continuation_frame0`,
+        });
+    }
+
+    if (videoReference) {
+      if (
+        !videoReference.mediaVersionId
+        || !videoReference.mediaPath
+      ) {
+        throw new Error(
+          "H3 R2V continuation lost its selected video-reference contract.",
+        );
+      }
+
+      videoReferenceFilename =
+        await upload({
+          backend:
+            job.backend,
+          sourcePath:
+            videoReference.mediaPath,
+          mediaType:
+            "video",
+          uploadName:
+            `${uploadBase}_video_reference`,
+        });
+    }
+
     for (const reference of job.payload.references) {
       const slot = Number(reference.pictureSlot);
       references.push({
@@ -486,6 +629,7 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
   const built = buildH3Workflow({
     backend: job.backend,
     mode: job.mode,
+    h3Quality: job.payload.h3Quality,
     finalPrompt: job.payload.finalPrompt,
     durationSeconds: job.payload.durationSeconds,
     seed: job.payload.seed,
@@ -498,30 +642,113 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
     includeVideoReferenceAudio: job.payload.videoReference?.includeAudio,
     userLoras: job.payload.userLoras,
   });
+  let submitted:
+    ProductionV2GenerationJob | null =
+      null;
+
+  let durableFailure:
+    ProductionV2GenerationJob | null =
+      null;
+
+    const recordAcceptedPrompt =
+      (promptId: string) => {
+        try {
+          submitted =
+            markProductionV2GenerationSubmitted({
+              id:
+                job.id,
+              backend:
+                job.backend!,
+              promptId,
+              workflowId:
+                built.workflowId,
+              workflowFile:
+                built.workflowFile,
+            });
+
+          if (!submitted) {
+            durableFailure =
+              failProductionV2GenerationJob(
+                job.id,
+                "H3 prompt was accepted by ComfyUI but its prompt ID could not be durably recorded. Submission state is unknown; automatic resubmission is disabled to prevent a duplicate render.",
+                true,
+              );
+          }
+        } catch {
+          durableFailure =
+            failProductionV2GenerationJob(
+              job.id,
+              "H3 prompt was accepted by ComfyUI but durable prompt-ID persistence threw an error. Submission state is unknown; automatic resubmission is disabled to prevent a duplicate render.",
+              true,
+            );
+        }
+      };
+
   const result = await submit({
-    backend: job.backend,
-    graph: built.graph,
-    clientId: `otg-production-v2-${randomUUID()}`,
-    jobId: job.id,
+    backend:
+      job.backend,
+    graph:
+      built.graph,
+    clientId:
+      `otg-production-v2-${randomUUID()}`,
+    jobId:
+      job.id,
+    preSubmitCleanup:
+      built.preSubmitCleanup,
+    onAccepted:
+      recordAcceptedPrompt,
   });
+
   if (!result.accepted) {
-    if (result.status === 409 || result.status === 429 || result.status === 503) {
-      requeueProductionV2GenerationBeforeAcceptance(job.id, job.backend, "Waiting for first available GPU");
+    if (
+      result.status === 409
+      || result.status === 429
+      || result.status === 503
+    ) {
+      requeueProductionV2GenerationBeforeAcceptance(
+        job.id,
+        job.backend,
+        "Waiting for first available GPU",
+      );
       return;
     }
-    failProductionV2GenerationJob(job.id, result.error);
-    sceneStatus(job, "failed");
+
+    failProductionV2GenerationJob(
+      job.id,
+      result.error,
+    );
+
+    sceneStatus(
+      job,
+      "failed",
+    );
+
     return;
   }
-  const submitted = markProductionV2GenerationSubmitted({
-    id: job.id,
-    backend: job.backend,
-    promptId: result.promptId,
-    workflowId: built.workflowId,
-    workflowFile: built.workflowFile,
-  });
-  if (!submitted) throw new Error("H3 prompt was accepted but the OTG job could not record its prompt ID.");
-  sceneStatus(submitted, "generating");
+
+  // Dependency-injected test submitters may not implement
+  // the production onAccepted callback. Preserve that seam.
+  if (
+    !submitted
+    && !durableFailure
+  ) {
+    recordAcceptedPrompt(
+      result.promptId,
+    );
+  }
+
+  if (!submitted) {
+    sceneStatus(
+      durableFailure || job,
+      "failed",
+    );
+    return;
+  }
+
+  sceneStatus(
+    submitted,
+    "generating",
+  );
 }
 
 function schedulerProbe(dependencies: SchedulerDependencies) {
@@ -609,35 +836,115 @@ async function prepareAndSubmitVsr(job: ProductionV2GenerationJob, dependencies:
     return;
   }
 
-  let result: Awaited<ReturnType<typeof submitH3Prompt>>;
-  try {
-    result = await (dependencies.submit || submitH3Prompt)({
-      backend: H3_VSR_BACKEND,
-      graph: built.graph,
-      clientId: `otg-production-v2-vsr-${randomUUID()}`,
-      jobId: `${job.id}-vsr`,
-      workerId: "production-v2-h3-vsr",
-    });
-  } catch (error) {
-    if (error instanceof ComfyGpuBusyError) {
-      markProductionV2GenerationVsrWaiting(job.id, "Waiting for RTX 5060 Ti to run VSR ULTRA 1080p");
+    let vsrSubmitted:
+      ProductionV2GenerationJob | null =
+        null;
+
+    let durableFailure:
+      ProductionV2GenerationJob | null =
+        null;
+
+    const recordAcceptedVsrPrompt =
+      (promptId: string) => {
+        try {
+          vsrSubmitted =
+            markProductionV2GenerationVsrSubmitted({
+              id:
+                job.id,
+              promptId,
+            });
+
+          if (!vsrSubmitted) {
+            durableFailure =
+              failProductionV2GenerationJob(
+                job.id,
+                "RTX VSR prompt was accepted by ComfyUI but its prompt ID could not be durably recorded. Submission state is unknown; automatic resubmission is disabled to prevent duplicate post-processing.",
+                true,
+              );
+          }
+        } catch {
+          durableFailure =
+            failProductionV2GenerationJob(
+              job.id,
+              "RTX VSR prompt was accepted by ComfyUI but durable prompt-ID persistence threw an error. Submission state is unknown; automatic resubmission is disabled to prevent duplicate post-processing.",
+              true,
+            );
+        }
+      };
+
+    let result:
+      Awaited<ReturnType<typeof submitH3Prompt>>;
+
+    try {
+      result =
+        await (
+          dependencies.submit
+          || submitH3Prompt
+        )({
+          backend:
+            H3_VSR_BACKEND,
+          graph:
+            built.graph,
+          clientId:
+            `otg-production-v2-vsr-${randomUUID()}`,
+          jobId:
+            `${job.id}-vsr`,
+          workerId:
+            "production-v2-h3-vsr",
+          onAccepted:
+            recordAcceptedVsrPrompt,
+        });
+    } catch (error) {
+      failActiveJob(
+        job,
+        `RTX VSR submission failed: ${
+          error instanceof Error
+            ? error.message
+            : String(error)
+        }`,
+      );
       return;
     }
-    failActiveJob(job, `RTX VSR submission failed: ${error instanceof Error ? error.message : String(error)}`);
-    return;
-  }
-  if (!result.accepted) {
-    if (result.status === 409 || result.status === 429 || result.status === 503) {
-      markProductionV2GenerationVsrWaiting(job.id, "Waiting for RTX 5060 Ti to run VSR ULTRA 1080p");
+
+    if (!result.accepted) {
+      if (
+        result.status === 409
+        || result.status === 429
+        || result.status === 503
+      ) {
+        markProductionV2GenerationVsrWaiting(
+          job.id,
+          "Waiting for RTX 5060 Ti to run VSR ULTRA 1080p",
+        );
+        return;
+      }
+
+      failActiveJob(
+        job,
+        `RTX VSR submission failed: ${result.error}`,
+      );
       return;
     }
-    failActiveJob(job, `RTX VSR submission failed: ${result.error}`);
-    return;
+
+    // Dependency-injected tests may use a submitter that does
+    // not execute the production onAccepted callback.
+    if (
+      !vsrSubmitted
+      && !durableFailure
+    ) {
+      recordAcceptedVsrPrompt(
+        result.promptId,
+      );
+    }
+
+    if (!vsrSubmitted) {
+      sceneStatus(
+        durableFailure || job,
+        "failed",
+      );
+      return;
+    }
   }
-  if (!markProductionV2GenerationVsrSubmitted({ id: job.id, promptId: result.promptId })) {
-    failActiveJob(job, "RTX VSR prompt was accepted but its durable prompt ID could not be recorded; the job was stopped to prevent a duplicate submission.");
-  }
-}
 
 async function advanceVsrJob(job: ProductionV2GenerationJob, dependencies: SchedulerDependencies) {
   if (job.vsrBackend !== H3_VSR_BACKEND || !job.vsrPromptId) {
@@ -773,10 +1080,6 @@ export async function runProductionV2H3SchedulerTick(dependencies: SchedulerDepe
       try {
         await prepareAndSubmit(claimed, dependencies);
       } catch (error) {
-        if (error instanceof ComfyGpuBusyError) {
-          requeueProductionV2GenerationBeforeAcceptance(claimed.id, backend, "Waiting for first available GPU");
-          continue;
-        }
         const message = error instanceof Error ? error.message : String(error);
         const current = getProductionV2GenerationJob(claimed.id);
         const ambiguous = current?.submissionState === "pre-submit" && /timed out|fetch failed|network|successful but unreadable/i.test(message);
@@ -792,17 +1095,46 @@ export async function runProductionV2H3SchedulerTick(dependencies: SchedulerDepe
 
 export function startProductionV2H3Scheduler() {
   if (globalState[GLOBAL_KEY]) return;
-  const state = { running: false, timer: null as unknown as ReturnType<typeof setInterval> };
-  state.timer = setInterval(() => {
-    if (state.running) return;
-    state.running = true;
-    void runProductionV2H3SchedulerTick().finally(() => { state.running = false; });
-  }, Math.max(2_000, Number(process.env.PRODUCTION_V2_H3_SCHEDULER_POLL_MS || 4_000)));
-  state.timer.unref?.();
+  const state = {
+    running: false,
+    pending: false,
+    timer: null as unknown as ReturnType<typeof setInterval>,
+  };
   globalState[GLOBAL_KEY] = state;
+  state.timer = setInterval(
+    requestProductionV2H3SchedulerTick,
+    Math.max(2_000, Number(process.env.PRODUCTION_V2_H3_SCHEDULER_POLL_MS || 4_000)),
+  );
+  state.timer.unref?.();
+}
+
+export function requestProductionV2H3SchedulerTick() {
+  startProductionV2H3Scheduler();
+  const state = globalState[GLOBAL_KEY];
+  if (!state) return;
+  if (state.running) {
+    state.pending = true;
+    return;
+  }
+
+  state.running = true;
+  void runProductionV2H3SchedulerTick().finally(() => {
+    state.running = false;
+    if (!state.pending) return;
+    state.pending = false;
+    requestProductionV2H3SchedulerTick();
+  });
 }
 
 export function productionV2GenerationPublicStatus(job: ProductionV2GenerationJob) {
+  const duration = job.payload.durationSeconds;
+  const recipe = job.backend && (duration === 5 || duration === 10)
+    ? getH3ProductionRecipe(job.mode, duration, job.backend, job.payload.h3Quality)
+    : null;
+  const estimate = duration === 5 || duration === 10
+    ? getH3ProductionTimeEstimate(job.mode, duration, job.payload.h3Quality, job.backend)
+    : null;
+
   return {
     id: job.id,
     productionId: job.productionId,
@@ -814,6 +1146,11 @@ export function productionV2GenerationPublicStatus(job: ProductionV2GenerationJo
     statusMessage: job.statusMessage,
     backend: job.backend,
     backendLabel: job.backend ? H3_BACKEND_PROFILES[job.backend].label : null,
+    h3Quality: job.payload.h3Quality,
+    nativeResolution: recipe ? `${recipe.nativeWidth}x${recipe.nativeHeight}` : null,
+    etaSeconds: estimate?.seconds ?? null,
+    etaMinSeconds: estimate?.minSeconds ?? null,
+    etaMaxSeconds: estimate?.maxSeconds ?? null,
     promptId: job.comfyPromptId,
     vsrPromptId: job.vsrPromptId,
     nativeOutputReady: Boolean(job.nativeOutputPath),

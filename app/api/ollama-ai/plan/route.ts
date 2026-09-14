@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
+import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
+import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -104,7 +105,7 @@ export async function POST(req: NextRequest) {
       },
     };
 
-    const r = await qwenClusterFetch("/api/generate", payload, { timeoutMs });
+    const r = await qwenDurableFetch("/api/generate", payload, { timeoutMs });
 
     const raw = await r.text();
     let data: any = null;

@@ -17,6 +17,11 @@ import {
   type TrainingDatasetManifest,
 } from "@/lib/jobs/trainingDatasetManifest";
 
+const APPLIO_RVC_SAMPLE_RATE_HZ = 48000;
+const APPLIO_CHECKPOINT_SELECTION = "held-out-best";
+const APPLIO_ADAPTIVE_ACCEPTED_MIN_SECONDS = 8 * 60;
+const APPLIO_ADAPTIVE_ACCEPTED_MAX_SECONDS = 12 * 60;
+
 export type ApplioTrainingArtifact = {
   schemaVersion: 1;
   ownerKey: string;
@@ -63,6 +68,17 @@ export type ApplioTrainingArtifact = {
   failedStage?: string;
   totalTrainingMs?: number;
   totalTrainingLabel?: string;
+  selectedCheckpoint?: Record<string, unknown>;
+  checkpointEvaluations?: Array<Record<string, unknown>>;
+  heldOutEvaluation?: Record<string, unknown>;
+  qualityControl?: Record<string, unknown>;
+  sourceReference?: Record<string, unknown>;
+  trainingPolicy?: Record<string, unknown>;
+  rvcVersion?: string;
+  sampleRate?: number;
+  pitchExtractor?: string;
+  pitchGuidance?: boolean;
+  checkpointSelection?: string;
   note: string;
 };
 
@@ -105,9 +121,20 @@ export type ApplioTrainingArtifactResult = {
   failedStage?: string;
   totalTrainingMs?: number;
   totalTrainingLabel?: string;
+  selectedCheckpoint?: Record<string, unknown>;
+  checkpointEvaluations?: Array<Record<string, unknown>>;
+  heldOutEvaluation?: Record<string, unknown>;
+  qualityControl?: Record<string, unknown>;
+  sourceReference?: Record<string, unknown>;
+  trainingPolicy?: Record<string, unknown>;
+  rvcVersion?: string;
+  sampleRate?: number;
+  pitchExtractor?: string;
+  pitchGuidance?: boolean;
+  checkpointSelection?: string;
 };
 
-export type ApplioTrainingStage = "queued" | "preprocess" | "extract" | "train" | "index" | "artifact_copy" | "completed" | "failed";
+export type ApplioTrainingStage = "queued" | "preprocess" | "extract" | "train" | "index" | "artifact_copy" | "testing_voice_model" | "finalizing" | "completed" | "failed";
 
 export type ApplioTrainingProgressSnapshot = {
   mock: false;
@@ -192,21 +219,39 @@ function requireExistingPath(envName: string, label: string): string {
   return resolved;
 }
 
+
 function ensureRealVoicePack(dataset: ManifestResolution): void {
-  const manifest = dataset.manifest;
+  const manifest = dataset.manifest as TrainingDatasetManifest & {
+    adaptiveComplete?: boolean;
+    acceptedDurationSeconds?: number;
+  };
   const clips = Array.isArray(manifest.clips) ? manifest.clips : [];
-  const readyClips = clips.filter((clip) => clip.status === "ready");
-  const generatedClipCount = Number(manifest.generatedClipCount || 0);
+  const readyClips = clips.filter((clip) => (
+    clip.status === "ready" &&
+    !!(clip as unknown as { qc?: { pass?: boolean } }).qc?.pass
+  ));
+  const acceptedDurationSeconds = Number(manifest.acceptedDurationSeconds || 0);
   if (manifest.generationMode !== "real" || manifest.mock !== false) {
     throw new Error(`Real Applio training requires a real voice pack. Rejecting mock/copy pack: ${dataset.manifestPath}`);
   }
   if (manifest.status !== "voice_pack_ready") {
     throw new Error(`Real Applio training requires manifest status voice_pack_ready. manifestPath: ${dataset.manifestPath}`);
   }
-  if (generatedClipCount < 200 || readyClips.length < 200) {
-    throw new Error(`Real Applio training requires 200 ready generated clips. Found generated=${generatedClipCount}, ready=${readyClips.length}.`);
+  if (manifest.adaptiveComplete !== true) {
+    throw new Error("Real Applio training requires adaptiveComplete:true after QC.");
   }
-  for (const clip of clips.slice(0, 200)) {
+  if (
+    acceptedDurationSeconds < APPLIO_ADAPTIVE_ACCEPTED_MIN_SECONDS ||
+    acceptedDurationSeconds > APPLIO_ADAPTIVE_ACCEPTED_MAX_SECONDS
+  ) {
+    throw new Error(
+      `Real Applio training requires 8-12 accepted QC-passing minutes. acceptedDurationSeconds=${acceptedDurationSeconds}.`,
+    );
+  }
+  if (readyClips.length < 1) {
+    throw new Error("Real Applio training requires at least one ready clip with qc.pass:true.");
+  }
+  for (const clip of readyClips) {
     const clipPath = cleanString(clip.expectedAudioPath);
     if (!clipPath || !fs.existsSync(clipPath)) {
       throw new Error(`Real Applio training clip is missing: ${clip.clipId} (${clipPath || "no path"})`);
@@ -475,7 +520,7 @@ function realApplioPlan(ownerKey: string, characterId: string, jobId: string, mo
   const logsDir = path.join(outputDir, "logs");
   const datasetsRoot = path.resolve(cleanString(process.env.APPLIO_DATASETS_ROOT) || path.join(OTG_DATA_ROOT, "applio", "datasets"));
   const preparedDatasetPath = path.join(datasetsRoot, modelName);
-  const sampleRate = positiveIntegerEnv("APPLIO_SAMPLE_RATE", 40000, 16000, 48000);
+  const sampleRate = APPLIO_RVC_SAMPLE_RATE_HZ;
   const trainingQuality = resolveApplioTrainingQuality(jobInput);
   const batchSize = positiveIntegerEnv("APPLIO_BATCH_SIZE", 4, 1, 256);
   const preprocessCpuCores = defaultApplioCpuCores();
@@ -503,12 +548,12 @@ function realApplioPlan(ownerKey: string, characterId: string, jobId: string, mo
     batchSize,
     saveEveryEpoch: trainingQuality.saveEveryEpoch,
     gpu: cleanString(process.env.APPLIO_GPU) || "0",
-    f0Method: cleanString(process.env.APPLIO_F0_METHOD) || "rmvpe",
+    f0Method: "rmvpe",
     indexAlgorithm: cleanString(process.env.APPLIO_INDEX_ALGORITHM) || "Auto",
     vocoder: applioVocoder(),
     cacheDataset: boolFlag("APPLIO_CACHE_DATASET", true),
-    saveEveryWeights: applioBooleanEnv("APPLIO_SAVE_EVERY_WEIGHTS", "True"),
-    saveOnlyLatest: applioBooleanEnv("APPLIO_SAVE_ONLY_LATEST", "False"),
+    saveEveryWeights: "True",
+    saveOnlyLatest: "False",
     pretrained: applioBooleanEnv("APPLIO_PRETRAINED", "True"),
     customPretrained,
     gPretrainedPath: optionalExistingPath("APPLIO_G_PRETRAINED_PATH", customPretrained === "True"),
@@ -526,7 +571,7 @@ function realApplioPlan(ownerKey: string, characterId: string, jobId: string, mo
 function prepareApplioDataset(dataset: ManifestResolution, plan: RealApplioPlan): void {
   fs.rmSync(plan.preparedDatasetPath, { recursive: true, force: true });
   ensureDir(plan.preparedDatasetPath);
-  const readyClips = dataset.manifest.clips.filter((clip) => clip.status === "ready").slice(0, 200);
+  const readyClips = dataset.manifest.clips.filter((clip) => clip.status === "ready" && !!(clip as unknown as { qc?: { pass?: boolean } }).qc?.pass);
   for (const clip of readyClips) {
     const sourcePath = cleanString(clip.expectedAudioPath);
     const targetPath = path.join(plan.preparedDatasetPath, `${clip.clipId}.wav`);
@@ -832,6 +877,7 @@ function verifyApplioTrainEvidence(plan: RealApplioPlan, stdoutText: string): vo
 type ApplioOutputDiscovery = {
   sourceModelPath: string;
   sourceIndexPath: string;
+  checkpointCandidates: string[];
   searchedDirectories: string[];
 };
 
@@ -869,18 +915,37 @@ function newestFileMatching(root: string, extension: ".pth" | ".index", modelNam
   return found[0]?.filePath || "";
 }
 
+
 function collectApplioOutputs(plan: RealApplioPlan): ApplioOutputDiscovery {
   const searchRoots = [
-    path.join(plan.applioRoot, "assets", "weights"),
     path.join(plan.applioRoot, "logs", plan.modelName),
     path.join(plan.applioRoot, "logs"),
     path.resolve(cleanString(process.env.APPLIO_MODELS_ROOT) || path.join(OTG_DATA_ROOT, "applio", "models")),
     plan.outputDir,
   ];
   const searchedDirectories = Array.from(new Set(searchRoots.map((root) => path.resolve(root))));
-  const sourceModelPath = searchedDirectories.map((root) => newestFileMatching(root, ".pth", plan.modelName)).find(Boolean) || "";
+  const checkpointPattern = new RegExp(`^${plan.modelName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}_\\d+e_\\d+s\\.pth$`, "i");
+  const checkpointCandidates: string[] = [];
+  const modelLogRoot = path.join(plan.applioRoot, "logs", plan.modelName);
+  if (fs.existsSync(modelLogRoot)) {
+    for (const entry of fs.readdirSync(modelLogRoot, { withFileTypes: true })) {
+      const filePath = path.join(modelLogRoot, entry.name);
+      if (entry.isFile() && checkpointPattern.test(entry.name) && hasBytes(filePath)) checkpointCandidates.push(filePath);
+    }
+  }
+  checkpointCandidates.sort();
+  if (checkpointCandidates.length === 0) {
+    throw new Error(`No inference-ready RVC checkpoint candidates were found for ${plan.modelName}. Refusing to select G_/D_ training-state files.`);
+  }
+  if (checkpointCandidates.length > 1) {
+    throw new Error(
+      `Held-out checkpoint evaluation is required before selecting among ${checkpointCandidates.length} RVC checkpoints. ` +
+      `Use the canonical Linux Applio worker; newest/final checkpoint selection is forbidden by ${APPLIO_CHECKPOINT_SELECTION}.`,
+    );
+  }
+  const sourceModelPath = checkpointCandidates[0];
   const sourceIndexPath = searchedDirectories.map((root) => newestFileMatching(root, ".index", plan.modelName)).find(Boolean) || "";
-  return { sourceModelPath, sourceIndexPath, searchedDirectories };
+  return { sourceModelPath, sourceIndexPath, checkpointCandidates, searchedDirectories };
 }
 
 function copyVerifiedApplioOutputs(plan: RealApplioPlan, outputs: ApplioOutputDiscovery): void {

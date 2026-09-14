@@ -31,6 +31,16 @@ function cleanString(value: unknown): string {
   return String(value || "").trim();
 }
 
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function recordArray(value: unknown): Array<Record<string, unknown>> | undefined {
+  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => !!recordValue(item)) : undefined;
+}
+
 function workerOwnerKey(req: NextRequest, fallbackOwnerKey: string): string {
   const headerOwnerKey = cleanString(req.headers.get("x-otg-owner-key"));
   return headerOwnerKey || fallbackOwnerKey;
@@ -161,7 +171,10 @@ function buildArtifact(args: {
 
   const modelName = cleanString(inputModel.modelName || artifactInput.modelName) ||
     path.basename(args.modelPath, path.extname(args.modelPath));
-
+  const selectedCheckpointInput = recordValue(artifactInput.selectedCheckpoint) || recordValue(inputModel.selectedCheckpoint);
+  const selectedCheckpoint = selectedCheckpointInput
+    ? { ...selectedCheckpointInput, canonicalModelPath: args.modelPath, canonicalIndexPath: args.indexPath }
+    : undefined;
   return {
     schemaVersion: 1,
     ownerKey: args.ownerKey,
@@ -206,8 +219,19 @@ function buildArtifact(args: {
     trainingCompletedAt: cleanString(artifactInput.trainingCompletedAt) || now,
     totalTrainingMs: Number(artifactInput.totalTrainingMs || 0) || undefined,
     totalTrainingLabel: cleanString(artifactInput.totalTrainingLabel),
+    selectedCheckpoint,
+    checkpointEvaluations: recordArray(artifactInput.checkpointEvaluations),
+    heldOutEvaluation: recordValue(artifactInput.heldOutEvaluation),
+    qualityControl: recordValue(artifactInput.qualityControl),
+    sourceReference: recordValue(artifactInput.sourceReference),
+    trainingPolicy: recordValue(artifactInput.trainingPolicy),
+    rvcVersion: cleanString(artifactInput.rvcVersion || inputModel.rvcVersion) || undefined,
+    sampleRate: Number(artifactInput.sampleRate || inputModel.sampleRate || 0) || undefined,
+    pitchExtractor: cleanString(artifactInput.pitchExtractor || inputModel.pitchExtractor) || undefined,
+    pitchGuidance: artifactInput.pitchGuidance === true || inputModel.pitchGuidance === true ? true : artifactInput.pitchGuidance === false || inputModel.pitchGuidance === false ? false : undefined,
+    checkpointSelection: cleanString(artifactInput.checkpointSelection || inputModel.checkpointSelection) || undefined,
     note: cleanString(artifactInput.note) ||
-      "Real Applio training ran on the remote Windows worker. Required .pth and .index outputs were uploaded and verified.",
+      "Real Applio training ran on the remote Linux worker. Held-out-selected .pth and .index outputs were uploaded and verified.",
   };
 }
 
@@ -249,6 +273,17 @@ function buildResult(args: {
     trainingCompletedAt: args.artifact.trainingCompletedAt,
     totalTrainingMs: args.artifact.totalTrainingMs,
     totalTrainingLabel: args.artifact.totalTrainingLabel,
+    selectedCheckpoint: args.artifact.selectedCheckpoint,
+    checkpointEvaluations: args.artifact.checkpointEvaluations,
+    heldOutEvaluation: args.artifact.heldOutEvaluation,
+    qualityControl: args.artifact.qualityControl,
+    sourceReference: args.artifact.sourceReference,
+    trainingPolicy: args.artifact.trainingPolicy,
+    rvcVersion: args.artifact.rvcVersion,
+    sampleRate: args.artifact.sampleRate,
+    pitchExtractor: args.artifact.pitchExtractor,
+    pitchGuidance: args.artifact.pitchGuidance,
+    checkpointSelection: args.artifact.checkpointSelection,
   };
 }
 

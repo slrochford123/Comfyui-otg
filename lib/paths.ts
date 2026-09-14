@@ -100,18 +100,6 @@ export function getUserInboxRoot(): string {
   return dir;
 }
 
-export function getUserFavoritesRoot(): string {
-  const dir = path.join(OTG_DATA_ROOT, "user_favorites");
-  ensureDir(dir);
-  return dir;
-}
-
-export function getDeviceFavoritesRoot(): string {
-  const dir = path.join(OTG_DATA_ROOT, "device_favorites");
-  ensureDir(dir);
-  return dir;
-}
-
 // Device-scoped dirs
 export function deviceGalleryDir(deviceId: string): string {
   const safe = safeDeviceId(deviceId || "local");
@@ -123,13 +111,6 @@ export function deviceGalleryDir(deviceId: string): string {
 export function deviceInboxDir(deviceId: string): string {
   const safe = safeDeviceId(deviceId || "local");
   const dir = path.join(getDeviceInboxRoot(), safe);
-  ensureDir(dir);
-  return dir;
-}
-
-export function deviceFavoritesDir(deviceId: string): string {
-  const safe = safeDeviceId(deviceId || "local");
-  const dir = path.join(getDeviceFavoritesRoot(), safe);
   ensureDir(dir);
   return dir;
 }
@@ -154,13 +135,6 @@ export function userPreviewDir(userId: string) {
   return path.join(OTG_DATA_ROOT, "user_previews", safeSegment(userId));
 }
 
-export function userFavoritesDir(userId: string): string {
-  const safe = safeSegment(userId || "local");
-  const dir = path.join(getUserFavoritesRoot(), safe);
-  ensureDir(dir);
-  return dir;
-}
-
 /**
  * OwnerDirs: provide BOTH the new generic names and legacy aliases
  * used across older routes (userInboxDir, userGalleryDir, etc.).
@@ -174,14 +148,12 @@ export type OwnerDirs = {
   // preferred generic names
   inbox: string;
   gallery: string;
-  favorites: string;
   preview: string;
 
   // legacy aliases expected by some routes
   userInboxDir: string;
   userGalleryDir: string;
   userPreviewDir: string;
-  userFavoritesDir: string;
 };
 
 export function getOwnerDirs(ownerKey: string): OwnerDirs {
@@ -189,7 +161,6 @@ export function getOwnerDirs(ownerKey: string): OwnerDirs {
 
   const inbox = userInboxDir(userId);
   const gallery = userGalleryDir(userId);
-  const favorites = userFavoritesDir(userId);
   const preview = userPreviewDir(userId);
 
   return {
@@ -197,11 +168,9 @@ export function getOwnerDirs(ownerKey: string): OwnerDirs {
     otgDataDir: OTG_DATA_ROOT,
     inbox,
     gallery,
-    favorites,
     preview,
     userInboxDir: inbox,
     userGalleryDir: gallery,
-    userFavoritesDir: favorites,
     userPreviewDir: preview,
   };
 }

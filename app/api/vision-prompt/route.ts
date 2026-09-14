@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createRequire } from "module";
 import path from "path";
 import fs from "fs";
-import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
+import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
+import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
 
 const require = createRequire(import.meta.url);
 
@@ -22,6 +23,22 @@ const DEFAULT_COMPLETE_DESCRIPTION_PROVIDER = "openai";
 const DEFAULT_COMPLETE_DESCRIPTION_OPENAI_MODEL = "gpt-4.1-mini";
 const DEFAULT_COMPLETE_DESCRIPTION_LOCAL_MODEL = "moondream:latest";
 const DEFAULT_COMPLETE_DESCRIPTION_TIMEOUT_MS = 12_000;
+
+/*
+ * OTG_PRODUCTION_V2_VISION_SINGLE_IMAGE_ENHANCE_R12C_V1
+ * OTG_PRODUCTION_V2_VISION_PREFLIGHT_TELEMETRY_R12E10_V1
+ *
+ * Production V2 deliberately analyzes one image per vision request.
+ * R12B/R12B2/R12B3 showed that multi-image Qwen/Ollama transport
+ * cannot be trusted to preserve every reference slot reliably.
+ */
+const PRODUCTION_V2_VISION_ENHANCE_MODEL =
+  String(
+    process.env
+      .PRODUCTION_V2_VISION_ENHANCE_MODEL
+    || "",
+  ).trim()
+  || "redule26/huihui_ai_qwen2.5-vl-7b-abliterated:latest";
 
 function readPositiveIntEnv(name: string, fallback: number, min: number, max: number) {
   const raw = process.env[name];
@@ -501,7 +518,7 @@ async function ollamaGenerate(
 
   let r: Response;
   try {
-    r = await qwenClusterFetch("/api/generate", payload, { requiredContextTokens: numCtx, timeoutMs });
+    r = await qwenDurableFetch("/api/generate", payload, { requiredContextTokens: numCtx, timeoutMs });
   } catch (error: any) {
     if (error?.name === "AbortError") {
       return {
@@ -615,17 +632,91 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Request must be JSON" }, { status: 415 });
     }
 
-    const { imagePath, promptHint, characterName, purpose, characterAnatomyMode, manualDetails } = body as any;
+    const {
+      imagePath,
+      promptHint,
+      characterName,
+      purpose,
+      characterAnatomyMode,
+      manualDetails,
+
+      /*
+       * Production V2 prompt-enhancement-only metadata.
+       */
+      promptEnhancementRole,
+      referenceName,
+      perspectiveKey,
+    } = body as any;
     if (!imagePath || typeof imagePath !== "string") {
       return NextResponse.json({ error: "Missing imagePath" }, { status: 400 });
     }
 
     const selectedPurpose = (purpose || "character").toString();
     const isCharacterDetails = selectedPurpose === "character_details";
+    const isPromptEnhancement =
+      selectedPurpose
+      === "prompt_enhancement";
     const dataRoot = process.env.OTG_DATA_DIR || path.join(process.cwd(), "data");
+
+    if (isPromptEnhancement) {
+      console.info(
+        "[ProductionV2VisionEnhance] preflight_received",
+        {
+          role:
+            String(
+              promptEnhancementRole
+              || "other",
+            ),
+          referenceName:
+            String(
+              referenceName
+              || "",
+            ).slice(
+              0,
+              160,
+            ),
+          pathKind:
+            /^https?:\/\//i.test(imagePath)
+              ? "http"
+              : imagePath.startsWith("/api/")
+                ? "api"
+                : path.isAbsolute(imagePath)
+                  ? "absolute"
+                  : "relative",
+        },
+      );
+    }
+
     const normalizedImagePath = normalizeVisionImagePath(imagePath, dataRoot);
 
     if (!normalizedImagePath.ok) {
+      if (isPromptEnhancement) {
+        console.warn(
+          "[ProductionV2VisionEnhance] preflight_rejected",
+          {
+            role:
+              String(
+                promptEnhancementRole
+                || "other",
+              ),
+            referenceName:
+              String(
+                referenceName
+                || "",
+              ).slice(
+                0,
+                160,
+              ),
+            normalizedKind:
+              normalizedImagePath
+                .normalizedKind,
+            reason:
+              normalizedImagePath
+                .reason,
+          },
+        );
+      }
+
       if (isCharacterDetails) {
         console.warn("[CompleteDescription] image_path_rejected", {
           normalizedKind: normalizedImagePath.normalizedKind,
@@ -643,8 +734,76 @@ export async function POST(req: NextRequest) {
     }
 
     const resolved = normalizedImagePath.resolved;
+
     if (!fs.existsSync(resolved)) {
-      return NextResponse.json({ error: `File not found: ${resolved}` }, { status: 404 });
+      if (isPromptEnhancement) {
+        console.warn(
+          "[ProductionV2VisionEnhance] file_missing",
+          {
+            role:
+              String(
+                promptEnhancementRole
+                || "other",
+              ),
+            referenceName:
+              String(
+                referenceName
+                || "",
+              ).slice(
+                0,
+                160,
+              ),
+            normalizedKind:
+              normalizedImagePath
+                .normalizedKind,
+            resolved,
+          },
+        );
+      }
+
+      return NextResponse.json(
+        {
+          error:
+            `File not found: ${resolved}`,
+          stage:
+            "file_missing",
+        },
+        {
+          status:
+            404,
+        },
+      );
+    }
+
+    if (isPromptEnhancement) {
+      console.info(
+        "[ProductionV2VisionEnhance] preflight_resolved",
+        {
+          role:
+            String(
+              promptEnhancementRole
+              || "other",
+            ),
+          referenceName:
+            String(
+              referenceName
+              || "",
+            ).slice(
+              0,
+              160,
+            ),
+          normalizedKind:
+            normalizedImagePath
+              .normalizedKind,
+          matchedRoot:
+            normalizedImagePath
+              .matchedRoot,
+          extension:
+            path.extname(
+              resolved,
+            ).toLowerCase(),
+        },
+      );
     }
 
     if (isCharacterDetails) {
@@ -665,8 +824,331 @@ export async function POST(req: NextRequest) {
     const completeDescriptionLocalModel =
       process.env.OTG_COMPLETE_DESCRIPTION_LOCAL_MODEL || DEFAULT_COMPLETE_DESCRIPTION_LOCAL_MODEL;
     const model = QWEN_CLUSTER_MODEL;
-    const visionImage = await fileToVisionBase64(resolved, { autoDescribe: isCharacterDetails });
-    const { b64 } = visionImage;
+
+    let visionImage:
+      VisionImagePayload;
+
+    try {
+      visionImage =
+        await fileToVisionBase64(
+          resolved,
+          {
+            autoDescribe:
+              isCharacterDetails,
+          },
+        );
+    } catch (error) {
+      if (isPromptEnhancement) {
+        console.error(
+          "[ProductionV2VisionEnhance] image_prepare_failed",
+          {
+            role:
+              String(
+                promptEnhancementRole
+                || "other",
+              ),
+            referenceName:
+              String(
+                referenceName
+                || "",
+              ).slice(
+                0,
+                160,
+              ),
+            extension:
+              path.extname(
+                resolved,
+              ).toLowerCase(),
+            error:
+              error
+              instanceof Error
+                ? error.message
+                : String(
+                    error,
+                  ),
+          },
+        );
+      }
+
+      throw error;
+    }
+
+    const {
+      b64,
+    } = visionImage;
+
+    if (isPromptEnhancement) {
+      console.info(
+        "[ProductionV2VisionEnhance] image_prepared",
+        {
+          role:
+            String(
+              promptEnhancementRole
+              || "other",
+            ),
+          referenceName:
+            String(
+              referenceName
+              || "",
+            ).slice(
+              0,
+              160,
+            ),
+          width:
+            visionImage.width,
+          height:
+            visionImage.height,
+          bytes:
+            visionImage.bytes,
+        },
+      );
+    }
+
+    if (isPromptEnhancement) {
+      const allowedRoles =
+        new Set([
+          "continuation_frame",
+          "starting_image",
+          "character",
+          "background",
+          "asset",
+          "other",
+        ]);
+
+      const requestedRole =
+        String(
+          promptEnhancementRole
+          || "",
+        )
+          .trim()
+          .toLowerCase();
+
+      const role =
+        allowedRoles.has(
+          requestedRole,
+        )
+          ? requestedRole
+          : "other";
+
+      const label =
+        String(
+          referenceName
+          || "",
+        )
+          .replace(/\s+/g, " ")
+          .trim()
+        || "Unnamed visual reference";
+
+      const perspective =
+        String(
+          perspectiveKey
+          || "",
+        )
+          .replace(/\s+/g, " ")
+          .trim();
+
+      const roleInstructions:
+        Record<string, string> = {
+          continuation_frame: [
+            "This is the exact final frame from the previous scene.",
+            "Describe the current shot composition, camera position, framing, perspective, visible subjects, their spatial relationships, environment layout, major objects, lighting, time-of-day cues, color palette, and continuity-critical details.",
+            "Treat this image as authoritative current-scene state.",
+          ].join(" "),
+
+          starting_image: [
+            "This is the exact Image-to-Video starting image.",
+            "Describe the shot composition, camera position, framing, perspective, visible subjects, their spatial relationships, environment, major objects, lighting, color palette, and continuity-critical details.",
+            "Treat this image as authoritative current-scene state.",
+          ].join(" "),
+
+          character: [
+            "This is a Character identity reference, possibly a multi-view Character Card.",
+            "Describe only identity-critical visible appearance: face, hair, skin, body build, clothing, accessories, colors, materials, and distinctive features.",
+            "Do not treat the Character Card background, layout, duplicate views, labels, or presentation design as the scene environment.",
+          ].join(" "),
+
+          background: [
+            "This is a Background reference.",
+            "Describe the environment geography, architecture, terrain, room or landscape layout, lighting, atmosphere, major fixed objects, materials, colors, and continuity-critical spatial details.",
+            "Do not promote incidental people or transient foreground subjects into required scene characters.",
+          ].join(" "),
+
+          asset: [
+            "This is an Asset/object reference.",
+            "Describe the object's shape, proportions, materials, colors, markings, surface details, construction, and other identity-critical visible features.",
+            "Do not treat the presentation background as the scene location.",
+          ].join(" "),
+
+          other: [
+            "Describe only factual visual information that would help maintain visual continuity in a video-generation prompt.",
+            "Do not invent unseen details.",
+          ].join(" "),
+        };
+
+      const visionPrompt = [
+        "/no_think",
+        "",
+        "You are a factual visual observer supporting Production V2 video prompt enhancement.",
+        "Inspect exactly ONE supplied image.",
+        "Do not invent actions, dialogue, story events, off-screen objects, or unseen details.",
+        "Do not rewrite the user's scene prompt.",
+        "Return one concise factual paragraph only. No markdown, labels, JSON, preamble, or analysis.",
+        "",
+        `Reference role: ${role}.`,
+        `Reference label: ${label}.`,
+        perspective
+          ? `Reference perspective: ${perspective}.`
+          : "",
+        roleInstructions[role],
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      const timeoutMs =
+        Math.max(
+          8_000,
+          Math.min(
+            180_000,
+            Number(
+              process.env
+                .PRODUCTION_V2_VISION_ENHANCE_TIMEOUT_MS
+              || 120_000,
+            ),
+          ),
+        );
+
+      console.info(
+        "[ProductionV2VisionEnhance] durable_submit",
+        {
+          role,
+          referenceName:
+            label.slice(
+              0,
+              160,
+            ),
+          timeoutMs,
+          model:
+            PRODUCTION_V2_VISION_ENHANCE_MODEL,
+          node:
+            "slr",
+          keepAlive:
+            0,
+        },
+      );
+
+      const response =
+        await qwenDurableFetch(
+          "/api/generate",
+          {
+            stream: false,
+            prompt:
+              visionPrompt,
+            images: [
+              b64,
+            ],
+            options: {
+              temperature: 0.1,
+              top_p: 0.8,
+              repeat_penalty: 1.05,
+              num_predict: 180,
+              num_ctx: 4096,
+            },
+          },
+          {
+            requiredContextTokens:
+              4096,
+            timeoutMs,
+            allowedNodes: [
+              "slr",
+            ],
+            model:
+              PRODUCTION_V2_VISION_ENHANCE_MODEL,
+
+            /*
+             * Do not leave untracked vision-model VRAM resident
+             * after the durable GPU lease has completed.
+             */
+            keepAlive: 0,
+            leaseTtlSeconds: 180,
+            requestKind:
+              "production-v2-vision-enhance",
+          },
+        );
+
+      const raw =
+        await response.text();
+
+      let payload: any = null;
+
+      try {
+        payload =
+          raw
+            ? JSON.parse(
+                raw,
+              )
+            : {};
+      } catch {
+        payload = null;
+      }
+
+      if (!response.ok) {
+        return NextResponse.json(
+          {
+            error:
+              String(
+                payload?.error
+                || raw
+                || `Vision enhancement failed with status ${response.status}.`,
+              ).slice(
+                0,
+                500,
+              ),
+          },
+          {
+            status: 502,
+          },
+        );
+      }
+
+      const descriptor =
+        String(
+          payload?.response
+          || "",
+        )
+          .replace(/\r/g, " ")
+          .replace(/\n+/g, " ")
+          .replace(/\s+/g, " ")
+          .replace(
+            /^["'`\s]+|["'`\s]+$/g,
+            "",
+          )
+          .trim();
+
+      if (!descriptor) {
+        return NextResponse.json(
+          {
+            error:
+              "Vision enhancement returned no factual description.",
+          },
+          {
+            status: 502,
+          },
+        );
+      }
+
+      return NextResponse.json({
+        descriptor,
+        role,
+        label,
+        perspectiveKey:
+          perspective
+          || null,
+        provider:
+          "ollama-qwen-vision-single-image",
+        model:
+          PRODUCTION_V2_VISION_ENHANCE_MODEL,
+      });
+    }
     const autoDescribeTimeoutMs = readPositiveIntEnv(
       "OTG_AUTO_DESCRIBE_TIMEOUT_MS",
       DEFAULT_AUTO_DESCRIBE_TIMEOUT_MS,

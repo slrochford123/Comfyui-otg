@@ -96,6 +96,7 @@ export default function VideoLoraPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [triggerMessage, setTriggerMessage] = useState("");
+  const [open, setOpen] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set(value.map((selection) => selection.id)));
 
   useEffect(() => {
@@ -128,7 +129,7 @@ export default function VideoLoraPanel({
 
   const entries = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return (data?.entries || data?.compatibleEntries || []).filter((entry) => {
+    return (data?.compatibleEntries || []).filter((entry) => {
       if (!needle) return true;
       return [entry.displayName, entry.description, entry.baseModelVariant, ...entry.triggerWords]
         .join(" ")
@@ -139,7 +140,7 @@ export default function VideoLoraPanel({
 
   const selectedBackendId = data?.selectedBackend?.id || "rtx3090";
   const selectedById = new Map(value.map((selection) => [selection.id, selection]));
-  const entryById = new Map((data?.entries || data?.compatibleEntries || []).map((entry) => [entry.id, entry]));
+  const entryById = new Map((data?.compatibleEntries || []).map((entry) => [entry.id, entry]));
   const selectedTriggerWords = value.flatMap((selection) => entryById.get(selection.id)?.triggerWords || []);
   const hasSelectedTriggerWords = selectedTriggerWords.some((word) => String(word || "").trim());
 
@@ -187,10 +188,28 @@ export default function VideoLoraPanel({
 
   return (
     <section aria-labelledby="video-loras-heading" className="space-y-4">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls="video-loras-body"
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full flex-wrap items-center justify-between gap-3 rounded-[18px] border border-white/10 bg-white/[0.04] px-4 py-3 text-left transition hover:bg-white/[0.07]"
+      >
+        <span>
+          <span id="video-loras-heading" className="block text-base font-black text-white">Optional Video LoRAs</span>
+          <span className="mt-1 block text-sm text-white/55">{value.length} of 2 selected. Only LoRAs explicitly verified for this workflow are shown.</span>
+        </span>
+        <span className="rounded-full border border-white/15 px-3 py-1 text-xs font-black text-white/75">
+          {open ? "Hide" : "Show"}
+        </span>
+      </button>
+
+      {open ? (
+        <div id="video-loras-body" className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 id="video-loras-heading" className="text-lg font-black text-white">Video LoRAs</h3>
-          <p className="mt-1 text-sm text-white/55">{value.length} of 2 selected. Internal workflow LoRAs stay active and are not listed.</p>
+          <h3 className="text-lg font-black text-white">Available Video LoRAs</h3>
+          <p className="mt-1 text-sm text-white/55">{value.length} of 2 selected. Only LoRAs explicitly verified for this workflow are shown.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -231,7 +250,7 @@ export default function VideoLoraPanel({
       ) : null}
       {!loading && !error && family !== "wan" && !entries.length ? (
         <p className="rounded-[16px] border border-amber-400/25 bg-amber-500/10 p-4 text-sm leading-6 text-amber-50">
-          No curated, selectable {family.toUpperCase()} LoRA is compatible with this workflow on the selected backend.
+          No verified {family.toUpperCase()} LoRA is compatible with this workflow on the selected backend.
         </p>
       ) : null}
 
@@ -321,6 +340,8 @@ export default function VideoLoraPanel({
           );
         })}
       </div>
+        </div>
+      ) : null}
     </section>
   );
 }

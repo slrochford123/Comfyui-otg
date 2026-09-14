@@ -1,5 +1,5 @@
 export type VideoGenerateOperation = "text_to_video" | "image_to_video" | "first_last_frame";
-export type VideoGenerateModelId = "ltx23" | "wan22";
+export type VideoGenerateModelId = "ltx25" | "ltx23" | "wan22";
 export type VideoGenerateFormat = "safetensor" | "gguf";
 export type VideoGenerateOrientation = "portrait" | "landscape";
 
@@ -29,14 +29,14 @@ export type VideoGenerateWorkflow = {
 export const VIDEO_GENERATE_FPS = 24;
 export const VIDEO_GENERATE_DURATIONS = [5, 10, 15] as const;
 export const VIDEO_GENERATE_SIZES = {
-  landscape: { width: 1280, height: 720 },
-  portrait: { width: 720, height: 1280 },
+  landscape: { width: 1280, height: 704 },
+  portrait: { width: 704, height: 1280 },
 } as const;
 
 export const VIDEO_GENERATE_OPERATION_LABELS: Record<VideoGenerateOperation, string> = {
-  text_to_video: "Create Video",
-  image_to_video: "Create Video with Starter Image",
-  first_last_frame: "Create First and Last Image Video",
+  text_to_video: "Create a Video",
+  image_to_video: "Create a Video with a Starter Image",
+  first_last_frame: "First Frame + Last Frame Video",
 };
 
 export const VIDEO_GENERATION_OPTIONS: Array<{
@@ -44,14 +44,13 @@ export const VIDEO_GENERATION_OPTIONS: Array<{
   label: string;
   description: string;
 }> = [
-  { id: "create", label: "Create Video", description: "Generate a video from a text prompt." },
-  { id: "starter_image", label: "Create Video with Starter Image", description: "Animate one starting image." },
-  { id: "first_last", label: "Create First and Last Image Video", description: "Generate the transition between two supplied frames." },
+  { id: "create", label: "Create a Video", description: "Generate a video from a text prompt." },
+  { id: "starter_image", label: "Create a Video with a Starter Image", description: "Animate one starting image." },
+  { id: "first_last", label: "First Frame + Last Frame Video", description: "Generate the transition between two supplied frames." },
 ];
 
 export const VIDEO_GENERATE_MODEL_OPTIONS: Array<{ id: VideoGenerateModelId; label: string }> = [
-  { id: "ltx23", label: "LTX 2.3" },
-  { id: "wan22", label: "WAN 2.2" },
+  { id: "ltx25", label: "LTX 2.5" },
 ];
 
 export const VIDEO_MODEL_OPTIONS = VIDEO_GENERATE_MODEL_OPTIONS;
@@ -68,127 +67,31 @@ export const VIDEO_FORMAT_OPTIONS: Array<{ id: VideoModelFormat; label: string }
 
 export const VIDEO_GENERATE_WORKFLOWS: VideoGenerateWorkflow[] = [
   {
-    workflowId: "presets/Create a Video",
-    label: "LTX 2.3 - Create Video - SafeTensor",
+    workflowId: "presets/LTX 2.5 Text To Video",
+    label: "LTX 2.5 - Create a Video",
     operation: "text_to_video",
-    modelId: "ltx23",
+    modelId: "ltx25",
     format: "safetensor",
     needsImages: 0,
     runtime: "Estimated runtime depends on duration and active backend.",
   },
   {
-    workflowId: "presets/Create a Video from Images",
-    label: "LTX 2.3 - Starter Image - SafeTensor",
+    workflowId: "presets/LTX 2.5 Image To Video",
+    label: "LTX 2.5 - Create a Video with a Starter Image",
     operation: "image_to_video",
-    modelId: "ltx23",
+    modelId: "ltx25",
     format: "safetensor",
     needsImages: 1,
     runtime: "Estimated runtime depends on duration and active backend.",
   },
   {
-    workflowId: "presets/Create First Image to Last Image Video",
-    label: "LTX 2.3 - First and Last Frame - SafeTensor",
+    workflowId: "presets/LTX 2.5 First Last Frame Video",
+    label: "LTX 2.5 - First Frame + Last Frame Video",
     operation: "first_last_frame",
-    modelId: "ltx23",
+    modelId: "ltx25",
     format: "safetensor",
     needsImages: 2,
     runtime: "Estimated runtime depends on duration and active backend.",
-  },
-  {
-    workflowId: "presets/WAN 2.2 T2V GGUF",
-    label: "WAN 2.2 - Create Video - GGUF",
-    operation: "text_to_video",
-    modelId: "wan22",
-    format: "gguf",
-    needsImages: 0,
-    runtime: "720p at 24 FPS. GGUF runtime depends on duration and active backend.",
-    nodes: {
-      outputNodeIds: ["114"],
-      sizeNodeIds: ["121"],
-      frameNodeIds: ["121"],
-      fpsNodeIds: ["114"],
-    },
-  },
-  {
-    workflowId: "presets/WAN 2.2 T2V SafeTensor",
-    label: "WAN 2.2 - Create Video - SafeTensor",
-    operation: "text_to_video",
-    modelId: "wan22",
-    format: "safetensor",
-    needsImages: 0,
-    runtime: "720p at 24 FPS. SafeTensor runtime depends on duration and active backend.",
-    nodes: {
-      outputNodeIds: ["114"],
-      sizeNodeIds: ["121"],
-      frameNodeIds: ["121"],
-      fpsNodeIds: ["114"],
-    },
-  },
-  {
-    workflowId: "presets/WAN 2.2 I2V GGUF",
-    label: "WAN 2.2 - Starter Image - GGUF",
-    operation: "image_to_video",
-    modelId: "wan22",
-    format: "gguf",
-    needsImages: 1,
-    runtime: "720p at 24 FPS. GGUF runtime depends on duration and active backend.",
-    nodes: {
-      outputNodeIds: ["102"],
-      sizeNodeIds: ["84"],
-      frameNodeIds: ["63"],
-      fpsNodeIds: ["102"],
-      firstImageNodeId: "62",
-    },
-  },
-  {
-    workflowId: "presets/WAN 2.2 I2V SafeTensor",
-    label: "WAN 2.2 - Starter Image - SafeTensor",
-    operation: "image_to_video",
-    modelId: "wan22",
-    format: "safetensor",
-    needsImages: 1,
-    runtime: "720p at 24 FPS. SafeTensor runtime depends on duration and active backend.",
-    nodes: {
-      outputNodeIds: ["102"],
-      sizeNodeIds: ["84"],
-      frameNodeIds: ["63"],
-      fpsNodeIds: ["102"],
-      firstImageNodeId: "62",
-    },
-  },
-  {
-    workflowId: "presets/WAN 2.2 FLF GGUF",
-    label: "WAN 2.2 - First and Last Frame - GGUF",
-    operation: "first_last_frame",
-    modelId: "wan22",
-    format: "gguf",
-    needsImages: 2,
-    runtime: "720p at 24 FPS. BoundBite Q8 GGUF runtime depends on duration and active backend.",
-    nodes: {
-      outputNodeIds: ["174"],
-      sizeNodeIds: ["127"],
-      frameNodeIds: ["177"],
-      fpsNodeIds: ["174"],
-      firstImageNodeId: "139",
-      lastImageNodeId: "147",
-    },
-  },
-  {
-    workflowId: "presets/WAN 2.2 FLF SafeTensor",
-    label: "WAN 2.2 - First and Last Frame - SafeTensor",
-    operation: "first_last_frame",
-    modelId: "wan22",
-    format: "safetensor",
-    needsImages: 2,
-    runtime: "720p at 24 FPS. SafeTensor runtime depends on duration and active backend.",
-    nodes: {
-      outputNodeIds: ["174"],
-      sizeNodeIds: ["127"],
-      frameNodeIds: ["177"],
-      fpsNodeIds: ["174"],
-      firstImageNodeId: "139",
-      lastImageNodeId: "147",
-    },
   },
 ];
 
@@ -228,8 +131,8 @@ export function resolveVideoGenerateWorkflow(selection: {
 }): VideoGenerateWorkflow | null;
 export function resolveVideoGenerateWorkflow(
   generationType: VideoGenerationType,
-  modelFamily: VideoModelFamily,
-  modelFormat: VideoModelFormat
+  modelFamily?: VideoModelFamily,
+  modelFormat?: VideoModelFormat
 ): VideoGenerateWorkflow | null;
 export function resolveVideoGenerateWorkflow(
   selectionOrGenerationType:
@@ -242,8 +145,8 @@ export function resolveVideoGenerateWorkflow(
     ? selectionOrGenerationType
     : {
         operation: phase2Operation(selectionOrGenerationType),
-        modelId: modelFamily as VideoModelFamily,
-        format: phase2Format(modelFormat as VideoModelFormat),
+        modelId: (modelFamily || "ltx25") as VideoModelFamily,
+        format: phase2Format((modelFormat || "safetensors") as VideoModelFormat),
       };
   return VIDEO_GENERATE_WORKFLOWS.find(
     (workflow) =>

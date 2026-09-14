@@ -14,7 +14,6 @@ export type ContentState = {
   positivePrompt?: string | null;
   negativePrompt?: string | null;
   submitPayload?: any | null;
-  favorited?: boolean;
   lastSyncedPromptId?: string | null;
   comfyClientId?: string | null;
   comfyBaseUrl?: string | null;
@@ -45,7 +44,6 @@ export function readState(ownerKey: string): ContentState {
     positivePrompt: null,
     negativePrompt: null,
     submitPayload: null,
-    favorited: false,
     lastSyncedPromptId: null,
     comfyClientId: null,
     comfyBaseUrl: null,
@@ -80,7 +78,6 @@ export function resetState(ownerKey: string) {
     positivePrompt: null,
     negativePrompt: null,
     submitPayload: null,
-    favorited: false,
     lastSyncedPromptId: null,
     comfyClientId: null,
     comfyBaseUrl: null,

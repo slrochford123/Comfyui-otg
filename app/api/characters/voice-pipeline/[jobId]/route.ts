@@ -11,8 +11,12 @@ import {
   resumeVoicePipelineJob,
   stopVoicePipelineJob,
   terminateVoicePipelineJob,
+  ensureApplioTrainingJobForCompletedDataset,
 } from "@/lib/jobs/voicePipelineJobs";
-import { resolveTrainingDatasetManifestPath, trainingDatasetManifestUrl } from "@/lib/jobs/trainingDatasetManifest";
+import {
+  resolveTrainingDatasetManifestPath,
+  validateReadyTrainingDataset,
+} from "@/lib/jobs/trainingDatasetManifest";
 import { hasValidWorkerToken } from "@/lib/jobs/workerAuth";
 
 export const runtime = "nodejs";
@@ -22,54 +26,11 @@ function jsonError(error: string, status = 400) {
   return NextResponse.json({ ok: false, error }, { status, headers: withNoStore() });
 }
 
-function cleanString(value: unknown): string {
-  return String(value || "").trim();
-}
-
 function resolveVoicePipelineJobOwnerKey(jobId: string, fallbackOwnerKey: string): string {
   const storedOwnerKey = findVoicePipelineJobOwnerKey(jobId);
   return storedOwnerKey && /^[A-Za-z0-9._@-]{1,200}$/.test(storedOwnerKey)
     ? storedOwnerKey
     : fallbackOwnerKey;
-}
-
-async function fileHasBytes(filePath: string): Promise<boolean> {
-  try {
-    const stat = await fs.stat(filePath);
-    return stat.isFile() && stat.size > 0;
-  } catch {
-    return false;
-  }
-}
-
-async function validateReadyTrainingDataset(ownerKey: string, characterId: string, jobId: string) {
-  const manifestPath = resolveTrainingDatasetManifestPath(ownerKey, characterId, jobId);
-  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as Record<string, unknown>;
-  const clips = Array.isArray(manifest.clips) ? manifest.clips.filter((clip): clip is Record<string, unknown> => !!clip && typeof clip === "object" && !Array.isArray(clip)) : [];
-  const requestedClipCount = Math.max(1, Number(manifest.requestedClipCount || clips.length || 200));
-  const readyClips = clips.filter((clip) => cleanString(clip.status) === "ready");
-
-  if (manifest.generationMode !== "real" || manifest.provider !== "indextts2") {
-    throw new Error("Dataset is not a real IndexTTS2 training dataset.");
-  }
-  if (readyClips.length < requestedClipCount) {
-    throw new Error(`Dataset is not complete: ${readyClips.length} / ${requestedClipCount} clips are ready.`);
-  }
-
-  for (const clip of readyClips.slice(0, requestedClipCount)) {
-    const expectedAudioPath = cleanString(clip.expectedAudioPath);
-    if (!expectedAudioPath || !(await fileHasBytes(expectedAudioPath))) {
-      throw new Error(`Ready clip is missing or empty: ${cleanString(clip.clipId) || expectedAudioPath}`);
-    }
-  }
-
-  return {
-    manifest,
-    manifestPath,
-    manifestUrl: trainingDatasetManifestUrl(ownerKey, characterId, jobId),
-    requestedClipCount,
-    generatedClipCount: readyClips.length,
-  };
 }
 
 async function quarantineTrainingDataset(ownerKey: string, characterId: string, jobId: string) {
@@ -164,6 +125,10 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ jobId: st
     // because stale UI/browser retries may send an empty, malformed, or already-consumed PATCH body.
     const completedDatasetBeforeBodyRead = getQueuedContractJob(effectiveOwnerKey, jobId);
     if (completedDatasetBeforeBodyRead?.status === "completed") {
+      void ensureApplioTrainingJobForCompletedDataset(
+        effectiveOwnerKey,
+        jobId,
+      );
       return NextResponse.json({ ok: true, job: completedDatasetBeforeBodyRead }, { headers: withNoStore() });
     }
 
@@ -188,6 +153,10 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ jobId: st
 
         if (completedDatasetJobByStoredOwner?.status === "completed") {
 
+          void ensureApplioTrainingJobForCompletedDataset(
+            completedDatasetOwnerKey,
+            jobId,
+          );
           return NextResponse.json({ ok: true, job: completedDatasetJobByStoredOwner }, { headers: withNoStore() });
 
         }
@@ -200,6 +169,10 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ jobId: st
     if (action === "complete_dataset") {
       const alreadyCompletedDatasetJob = getQueuedContractJob(effectiveOwnerKey, jobId);
       if (alreadyCompletedDatasetJob?.status === "completed") {
+        void ensureApplioTrainingJobForCompletedDataset(
+          effectiveOwnerKey,
+          jobId,
+        );
         return NextResponse.json({ ok: true, job: alreadyCompletedDatasetJob }, { headers: withNoStore() });
       }
     }
@@ -225,6 +198,10 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ jobId: st
         clipCount: ready.requestedClipCount,
         requestedClipCount: ready.requestedClipCount,
         generatedClipCount: ready.generatedClipCount,
+        acceptedDurationSeconds: ready.acceptedDurationSeconds,
+        acceptedMinutes: ready.acceptedMinutes,
+        adaptiveComplete: ready.adaptiveComplete,
+        qualityControl: ready.manifest.qualityControl,
         manifestPath: ready.manifestPath,
         manifestUrl: ready.manifestUrl,
         datasetManifestPath: ready.manifestPath,

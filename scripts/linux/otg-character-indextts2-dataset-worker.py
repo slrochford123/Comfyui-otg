@@ -13,6 +13,7 @@ batches to the Linux control plane, and releases GPU memory before polling again
 from __future__ import annotations
 
 import argparse
+import difflib
 import fcntl
 import gc
 import hashlib
@@ -75,7 +76,30 @@ EMOTION_UTTERANCES = [
     ("urgent", "There is no time left, we have to move immediately."),
     ("suspicious", "Something about this story does not feel right."),
     ("determined", "I will finish this, no matter how difficult it becomes."),
+    ("question", "Can you hear the difference between these two quiet sounds?"),
+    ("narration", "The narrow path curved through the forest before reaching the river."),
+    ("statement", "Today I will speak clearly, steadily, and without rushing the words."),
+    ("pace", "Slowly and carefully, I counted each step before moving forward again."),
+    ("phoneme", "Peter picked bright peppers while Sally searched beside the silver shore."),
+    ("phoneme", "Quick brown foxes jump past lazy dogs while vivid voices echo nearby."),
 ]
+
+COVERAGE_BY_EMOTION = {
+    "neutral": "neutral",
+    "question": "question",
+    "curious": "question",
+    "confused": "question",
+    "narration": "narration",
+    "statement": "narration",
+    "serious": "narration",
+    "confident": "narration",
+    "whisper": "intensity",
+    "shout": "intensity",
+    "soft": "intensity",
+    "urgent": "intensity",
+    "phoneme": "phoneme",
+    "pace": "emotional",
+}
 
 REQUIRED_MODEL_FILES = [
     "bpe.model",
@@ -113,22 +137,144 @@ def build_url(base_url: str, path_or_url: str) -> str:
     return urllib.parse.urljoin(base_url.rstrip("/") + "/", value.lstrip("/"))
 
 
-def clamp_clip_count(value: Any, fallback: int = 200) -> int:
+def load_voice_training_policy(policy_path: Path) -> Dict[str, Any]:
+    """Load the central voice-training-policy.json used by the real Linux worker."""
+
+    if not policy_path.is_file():
+        raise WorkerError(
+            f"Voice training policy is missing: {policy_path}"
+        )
+
     try:
-        number = int(float(value))
+        policy = json.loads(
+            policy_path.read_text(
+                encoding="utf-8"
+            )
+        )
+    except Exception as error:
+        raise WorkerError(
+            f"Could not parse voice-training-policy.json: {error}"
+        ) from error
+
+    required = {
+        "acceptedMinutesMin",
+        "acceptedMinutesTarget",
+        "acceptedMinutesMax",
+        "referenceMode",
+        "speakerSimilarityRequired",
+        "transcriptVerificationRequired",
+        "audioQualityQcRequired",
+        "regenerateRejectedClips",
+        "maxGeneratedAttempts",
+        "maxClipRegenerations",
+        "speakerSimilarityMin",
+        "transcriptSimilarityMin",
+        "rvc",
+        "checkpointSelection",
+    }
+
+    missing = sorted(
+        required.difference(
+            policy.keys()
+        )
+    )
+
+    if missing:
+        raise WorkerError(
+            "Voice training policy is incomplete: "
+            + ", ".join(
+                missing
+            )
+        )
+
+    if clean(
+        policy.get(
+            "referenceMode"
+        )
+    ) != "original-sample-only":
+        raise WorkerError(
+            "Voice training policy must use the original saved sample only."
+        )
+
+    return policy
+
+
+def policy_float(
+    policy: Dict[str, Any],
+    key: str,
+    fallback: float,
+) -> float:
+    try:
+        return float(
+            policy.get(
+                key,
+                fallback,
+            )
+        )
     except Exception:
-        number = fallback
-    return max(1, min(200, number))
+        return fallback
+
+
+def policy_int(
+    policy: Dict[str, Any],
+    key: str,
+    fallback: int,
+) -> int:
+    try:
+        return int(
+            float(
+                policy.get(
+                    key,
+                    fallback,
+                )
+            )
+        )
+    except Exception:
+        return fallback
 
 
 def build_utterances(count: int) -> List[Dict[str, str]]:
     rows: List[Dict[str, str]] = []
-    for index in range(count):
-        emotion, text = EMOTION_UTTERANCES[index % len(EMOTION_UTTERANCES)]
-        take = index // len(EMOTION_UTTERANCES) + 1
+
+    for index in range(
+        max(
+            1,
+            count,
+        )
+    ):
+        emotion, base_text = EMOTION_UTTERANCES[
+            index % len(
+                EMOTION_UTTERANCES
+            )
+        ]
+
+        take = (
+            index // len(
+                EMOTION_UTTERANCES
+            )
+        ) + 1
+
+        text = base_text
+
         if take > 1:
-            text = f"{text} Take {take}, keep the same character voice with {emotion} delivery."
-        rows.append({"emotion": emotion, "text": text})
+            text = (
+                f"{base_text} "
+                f"This is alternate reading number {take}."
+            )
+
+        coverage = COVERAGE_BY_EMOTION.get(
+            emotion,
+            "emotional",
+        )
+
+        rows.append(
+            {
+                "emotion": emotion,
+                "coverage": coverage,
+                "text": text,
+            }
+        )
+
     return rows
 
 
@@ -196,8 +342,49 @@ def checkpoint_job(
     extra: Dict[str, Any] | None = None,
 ) -> None:
     progress = 5
-    if requested_count > 0:
-        progress = max(5, min(99, int((generated_count / requested_count) * 100)))
+
+    target_duration = float(
+        (extra or {}).get(
+            "targetDurationSeconds"
+        )
+        or 0
+    )
+
+    accepted_duration = float(
+        (extra or {}).get(
+            "acceptedDurationSeconds"
+        )
+        or 0
+    )
+
+    if target_duration > 0:
+        progress = max(
+            5,
+            min(
+                99,
+                int(
+                    (
+                        accepted_duration
+                        / target_duration
+                    )
+                    * 100
+                ),
+            ),
+        )
+    elif requested_count > 0:
+        progress = max(
+            5,
+            min(
+                99,
+                int(
+                    (
+                        generated_count
+                        / requested_count
+                    )
+                    * 100
+                ),
+            ),
+        )
     result = {
         "remoteWorker": True,
         "platform": "linux",
@@ -385,33 +572,233 @@ def multipart_post(
         raise WorkerError(f"HTTP {error.code} {url}: {raw}") from error
 
 
+def accepted_duration_seconds(
+    clips: List[Dict[str, Any]],
+) -> float:
+    total = 0.0
+
+    for clip in clips:
+        if clean(
+            clip.get(
+                "status"
+            )
+        ) != "ready":
+            continue
+
+        qc = (
+            clip.get(
+                "qc"
+            )
+            if isinstance(
+                clip.get(
+                    "qc"
+                ),
+                dict,
+            )
+            else {}
+        )
+
+        if qc.get(
+            "pass"
+        ) is not True:
+            continue
+
+        try:
+            total += float(
+                clip.get(
+                    "durationSeconds"
+                )
+                or 0
+            )
+        except Exception:
+            pass
+
+    return total
+
+
+def coverage_set(
+    clips: List[Dict[str, Any]],
+) -> set[str]:
+    return {
+        clean(
+            clip.get(
+                "coverage"
+            )
+        )
+        for clip in clips
+        if clean(
+            clip.get(
+                "coverage"
+            )
+        )
+        and clean(
+            clip.get(
+                "status"
+            )
+        ) == "ready"
+        and isinstance(
+            clip.get(
+                "qc"
+            ),
+            dict,
+        )
+        and clip["qc"].get(
+            "pass"
+        )
+        is True
+    }
+
+
+def adaptive_dataset_complete(
+    policy: Dict[str, Any],
+    clips: List[Dict[str, Any]],
+    allow_minimum: bool = False,
+) -> bool:
+    duration = accepted_duration_seconds(
+        clips
+    )
+
+    minimum = (
+        policy_float(
+            policy,
+            "acceptedMinutesMin",
+            8.0,
+        )
+        * 60.0
+    )
+
+    target = (
+        policy_float(
+            policy,
+            "acceptedMinutesTarget",
+            10.0,
+        )
+        * 60.0
+    )
+
+    maximum = (
+        policy_float(
+            policy,
+            "acceptedMinutesMax",
+            12.0,
+        )
+        * 60.0
+    )
+
+    threshold = (
+        minimum
+        if allow_minimum
+        else target
+    )
+
+    required_coverage = {
+        clean(
+            value
+        )
+        for value in (
+            policy.get(
+                "requiredCoverage"
+            )
+            if isinstance(
+                policy.get(
+                    "requiredCoverage"
+                ),
+                list,
+            )
+            else []
+        )
+        if clean(
+            value
+        )
+    }
+
+    return (
+        duration >= threshold
+        and duration <= maximum
+        and required_coverage.issubset(
+            coverage_set(
+                clips
+            )
+        )
+    )
+
+
 def make_manifest(
     owner_key: str,
     character_id: str,
     job_id: str,
     source_ref: str,
-    utterances: List[Dict[str, str]],
-    ready_count: int,
+    accepted_clips: List[Dict[str, Any]],
+    rejected_attempts: List[Dict[str, Any]],
+    policy: Dict[str, Any],
+    adaptive_complete: bool,
 ) -> Dict[str, Any]:
-    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    clips = []
-    for index, row in enumerate(utterances):
-        clip_number = index + 1
-        clip_id = f"clip_{clip_number:03d}"
-        ready = clip_number <= ready_count
-        clips.append(
-            {
-                "clipId": clip_id,
-                "index": index,
-                "text": row["text"],
-                "emotion": row["emotion"],
-                "status": "ready" if ready else "pending",
-                "expectedAudioPath": "",
-                "expectedAudioUrl": None,
-                "generatorProvider": "indextts2" if ready else None,
-                "updatedAt": now,
-            }
+    now = time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ",
+        time.gmtime(),
+    )
+
+    duration = accepted_duration_seconds(
+        accepted_clips
+    )
+
+    accepted_minutes = duration / 60.0
+
+    attempted_count = (
+        len(
+            accepted_clips
         )
+        + len(
+            rejected_attempts
+        )
+    )
+
+    quality_control = {
+        "pass": bool(
+            adaptive_complete
+        ),
+        "speakerSimilarityRequired": bool(
+            policy.get(
+                "speakerSimilarityRequired"
+            )
+        ),
+        "transcriptVerificationRequired": bool(
+            policy.get(
+                "transcriptVerificationRequired"
+            )
+        ),
+        "audioQualityQcRequired": bool(
+            policy.get(
+                "audioQualityQcRequired"
+            )
+        ),
+        "regenerateRejectedClips": bool(
+            policy.get(
+                "regenerateRejectedClips"
+            )
+        ),
+        "attemptedClipCount": attempted_count,
+        "acceptedClipCount": len(
+            accepted_clips
+        ),
+        "rejectedClipCount": len(
+            rejected_attempts
+        ),
+        "rejectedAttempts": rejected_attempts[
+            -100:
+        ],
+        "acceptedCoverage": sorted(
+            coverage_set(
+                accepted_clips
+            )
+        ),
+        "requiredCoverage": list(
+            policy.get(
+                "requiredCoverage"
+            )
+            or []
+        ),
+    }
 
     return {
         "schemaVersion": 1,
@@ -425,18 +812,49 @@ def make_manifest(
             "sourceFormat": ".wav",
             "sampleRate": 24000,
             "channels": 1,
+            "referenceMode": "original-sample-only",
         },
         "logs": {},
         "generationMode": "real",
         "provider": "indextts2",
         "startedAt": now,
-        "completedAt": now if ready_count == len(utterances) else None,
-        "requestedClipCount": len(utterances),
-        "generatedClipCount": ready_count,
-        "clips": clips,
-        "status": "voice_pack_ready" if ready_count == len(utterances) else "manifest_ready",
+        "completedAt": (
+            now
+            if adaptive_complete
+            else None
+        ),
+        "requestedClipCount": len(
+            accepted_clips
+        ),
+        "generatedClipCount": len(
+            accepted_clips
+        ),
+        "acceptedDurationSeconds": round(
+            duration,
+            3,
+        ),
+        "acceptedMinutes": round(
+            accepted_minutes,
+            4,
+        ),
+        "adaptiveComplete": bool(
+            adaptive_complete
+        ),
+        "qualityControl": quality_control,
+        "clips": accepted_clips,
+        "status": (
+            "voice_pack_ready"
+            if adaptive_complete
+            else "manifest_ready"
+        ),
         "mock": False,
-        "note": "Generated on the Linux RTX 3090 IndexTTS2 dataset worker using varied phrase prompts.",
+        "note": (
+            "Adaptive Linux RTX 3090 IndexTTS2 dataset. "
+            "Every generated candidate is conditioned directly "
+            "from the original saved Character Voice Sample and "
+            "must pass transcript verification, ECAPA speaker "
+            "similarity, and waveform audio-quality QC."
+        ),
     }
 
 
@@ -481,20 +899,142 @@ def remote_ready_count(upload_response: Dict[str, Any]) -> int:
     return sum(1 for clip in clips if isinstance(clip, dict) and clip.get("status") == "ready")
 
 
-def assert_manifest_complete(upload_response: Dict[str, Any], requested_count: int) -> Dict[str, Any]:
-    manifest = upload_response.get("manifest")
-    if not isinstance(manifest, dict):
-        raise WorkerError("Remote upload did not return a training dataset manifest.")
-    ready_count = remote_ready_count(upload_response)
-    generated_count = int(manifest.get("generatedClipCount") or ready_count or 0)
-    if manifest.get("generationMode") != "real" or manifest.get("provider") != "indextts2":
-        raise WorkerError("Remote manifest is not a real IndexTTS2 dataset manifest.")
-    if generated_count < requested_count or ready_count < requested_count:
+def assert_manifest_complete(
+    upload_response: Dict[str, Any],
+    policy: Dict[str, Any],
+) -> Dict[str, Any]:
+    manifest = upload_response.get(
+        "manifest"
+    )
+
+    if not isinstance(
+        manifest,
+        dict,
+    ):
         raise WorkerError(
-            f"Remote manifest is incomplete: ready={ready_count}, generated={generated_count}, requested={requested_count}."
+            "Remote upload did not return a training dataset manifest."
         )
-    if manifest.get("status") != "voice_pack_ready":
-        raise WorkerError(f"Remote manifest status is not voice_pack_ready: {manifest.get('status')}")
+
+    if (
+        manifest.get(
+            "generationMode"
+        )
+        != "real"
+        or manifest.get(
+            "provider"
+        )
+        != "indextts2"
+    ):
+        raise WorkerError(
+            "Remote manifest is not a real IndexTTS2 dataset manifest."
+        )
+
+    if manifest.get(
+        "adaptiveComplete"
+    ) is not True:
+        raise WorkerError(
+            "Remote adaptive dataset is not complete."
+        )
+
+    if clean(
+        manifest.get(
+            "status"
+        )
+    ) != "voice_pack_ready":
+        raise WorkerError(
+            "Remote manifest status is not voice_pack_ready."
+        )
+
+    minimum_seconds = (
+        policy_float(
+            policy,
+            "acceptedMinutesMin",
+            8.0,
+        )
+        * 60.0
+    )
+
+    maximum_seconds = (
+        policy_float(
+            policy,
+            "acceptedMinutesMax",
+            12.0,
+        )
+        * 60.0
+    )
+
+    duration = float(
+        manifest.get(
+            "acceptedDurationSeconds"
+        )
+        or 0
+    )
+
+    if (
+        duration < minimum_seconds
+        or duration > maximum_seconds
+    ):
+        raise WorkerError(
+            "Remote adaptive dataset duration is outside policy: "
+            f"{duration:.2f}s."
+        )
+
+    clips = (
+        manifest.get(
+            "clips"
+        )
+        if isinstance(
+            manifest.get(
+                "clips"
+            ),
+            list,
+        )
+        else []
+    )
+
+    ready = [
+        clip
+        for clip in clips
+        if isinstance(
+            clip,
+            dict,
+        )
+        and clean(
+            clip.get(
+                "status"
+            )
+        )
+        == "ready"
+    ]
+
+    if not ready:
+        raise WorkerError(
+            "Remote adaptive dataset has no accepted clips."
+        )
+
+    for clip in ready:
+        qc = (
+            clip.get(
+                "qc"
+            )
+            if isinstance(
+                clip.get(
+                    "qc"
+                ),
+                dict,
+            )
+            else {}
+        )
+
+        if qc.get(
+            "pass"
+        ) is not True:
+            raise WorkerError(
+                "Remote adaptive dataset contains a ready clip "
+                "without passing QC: "
+                f"{clip.get('clipId')}"
+            )
+
     return manifest
 
 
@@ -639,6 +1179,536 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+
+def normalize_transcript_text(
+    value: Any,
+) -> str:
+    text = clean(
+        value
+    ).lower()
+
+    return " ".join(
+        "".join(
+            ch
+            if ch.isalnum()
+            or ch == "'"
+            else " "
+            for ch in text
+        ).split()
+    )
+
+
+def transcript_similarity(
+    expected: str,
+    actual: str,
+) -> float:
+    expected_normalized = normalize_transcript_text(
+        expected
+    )
+
+    actual_normalized = normalize_transcript_text(
+        actual
+    )
+
+    if (
+        not expected_normalized
+        or not actual_normalized
+    ):
+        return 0.0
+
+    return float(
+        difflib.SequenceMatcher(
+            None,
+            expected_normalized.split(),
+            actual_normalized.split(),
+        ).ratio()
+    )
+
+
+def transcribe_clip(
+    args: argparse.Namespace,
+    headers: Dict[str, str],
+    clip_path: Path,
+) -> str:
+    response = multipart_post(
+        build_url(
+            args.base_url,
+            "/api/ollama-ai/transcribe",
+        ),
+        headers,
+        {},
+        [
+            (
+                "audio",
+                clip_path,
+                "audio/wav",
+            )
+        ],
+        timeout=args.qc_timeout_seconds,
+    )
+
+    if response.get(
+        "ok"
+    ) is not True:
+        raise WorkerError(
+            "Transcript verification failed: "
+            + clean(
+                response.get(
+                    "error"
+                )
+            )
+        )
+
+    transcript = clean(
+        response.get(
+            "text"
+        )
+        or response.get(
+            "transcript"
+        )
+    )
+
+    if not transcript:
+        raise WorkerError(
+            "Transcript verification returned empty text."
+        )
+
+    return transcript
+
+
+def audio_quality_metrics(
+    clip_path: Path,
+    policy: Dict[str, Any],
+) -> Dict[str, Any]:
+    import numpy as np
+    import soundfile as sf
+
+    audio, sample_rate = sf.read(
+        str(
+            clip_path
+        ),
+        dtype="float32",
+        always_2d=False,
+    )
+
+    if audio.ndim > 1:
+        audio = audio.mean(
+            axis=1,
+        )
+
+    audio = np.asarray(
+        audio,
+        dtype=np.float32,
+    )
+
+    if (
+        audio.size < 1
+        or int(
+            sample_rate
+        )
+        <= 0
+    ):
+        raise WorkerError(
+            f"Audio quality QC could not read samples from {clip_path}."
+        )
+
+    absolute = np.abs(
+        audio
+    )
+
+    duration = (
+        float(
+            audio.size
+        )
+        / float(
+            sample_rate
+        )
+    )
+
+    peak = float(
+        np.max(
+            absolute
+        )
+    )
+
+    rms = float(
+        np.sqrt(
+            np.mean(
+                np.square(
+                    audio
+                )
+            )
+        )
+    )
+
+    clipping_ratio = float(
+        np.mean(
+            absolute >= 0.999
+        )
+    )
+
+    quality_policy = (
+        policy.get(
+            "audioQuality"
+        )
+        if isinstance(
+            policy.get(
+                "audioQuality"
+            ),
+            dict,
+        )
+        else {}
+    )
+
+    silence_amplitude = float(
+        quality_policy.get(
+            "silenceAmplitude",
+            0.003,
+        )
+    )
+
+    silence_ratio = float(
+        np.mean(
+            absolute
+            < silence_amplitude
+        )
+    )
+
+    return {
+        "durationSeconds": duration,
+        "sampleRate": int(
+            sample_rate
+        ),
+        "peak": peak,
+        "rms": rms,
+        "clippingRatio": clipping_ratio,
+        "silenceRatio": silence_ratio,
+    }
+
+
+def speaker_similarity(
+    args: argparse.Namespace,
+    source_voice: Path,
+    candidate: Path,
+) -> float:
+    command = [
+        args.speaker_qc_python,
+        args.speaker_qc_script,
+        "--source",
+        str(
+            source_voice
+        ),
+        "--candidate",
+        str(
+            candidate
+        ),
+        "--model-dir",
+        args.speaker_qc_model_dir,
+        "--hf-home",
+        args.speaker_qc_hf_home,
+    ]
+
+    environment = os.environ.copy()
+    environment["HF_HUB_OFFLINE"] = "1"
+    environment["TRANSFORMERS_OFFLINE"] = "1"
+
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=args.qc_timeout_seconds,
+        env=environment,
+    )
+
+    try:
+        payload = json.loads(
+            result.stdout.strip()
+            or "{}"
+        )
+    except Exception as error:
+        raise WorkerError(
+            "Speaker similarity QC returned invalid JSON: "
+            f"{result.stdout!r}; stderr={result.stderr!r}"
+        ) from error
+
+    if (
+        result.returncode != 0
+        or payload.get(
+            "ok"
+        )
+        is not True
+    ):
+        raise WorkerError(
+            "Speaker similarity QC failed: "
+            + clean(
+                payload.get(
+                    "error"
+                )
+                or result.stderr
+            )
+        )
+
+    try:
+        return float(
+            payload.get(
+                "speakerSimilarity"
+            )
+        )
+    except Exception as error:
+        raise WorkerError(
+            "Speaker similarity QC returned no numeric score."
+        ) from error
+
+
+def evaluate_clip_quality_control(
+    args: argparse.Namespace,
+    headers: Dict[str, str],
+    policy: Dict[str, Any],
+    source_voice: Path,
+    clip_path: Path,
+    expected_text: str,
+) -> Dict[str, Any]:
+    """Run transcript verification, speaker similarity, and audio quality QC."""
+
+    audio_quality = audio_quality_metrics(
+        clip_path,
+        policy,
+    )
+
+    transcript = transcribe_clip(
+        args,
+        headers,
+        clip_path,
+    )
+
+    transcript_score = transcript_similarity(
+        expected_text,
+        transcript,
+    )
+
+    speaker_score = speaker_similarity(
+        args,
+        source_voice,
+        clip_path,
+    )
+
+    quality_policy = (
+        policy.get(
+            "audioQuality"
+        )
+        if isinstance(
+            policy.get(
+                "audioQuality"
+            ),
+            dict,
+        )
+        else {}
+    )
+
+    reasons: List[str] = []
+
+    min_duration = float(
+        quality_policy.get(
+            "minDurationSeconds",
+            1.0,
+        )
+    )
+
+    max_duration = float(
+        quality_policy.get(
+            "maxDurationSeconds",
+            18.0,
+        )
+    )
+
+    min_rms = float(
+        quality_policy.get(
+            "minRms",
+            0.006,
+        )
+    )
+
+    max_clipping_ratio = float(
+        quality_policy.get(
+            "maxClippingRatio",
+            0.002,
+        )
+    )
+
+    max_silence_ratio = float(
+        quality_policy.get(
+            "maxSilenceRatio",
+            0.55,
+        )
+    )
+
+    speaker_threshold = policy_float(
+        policy,
+        "speakerSimilarityMin",
+        0.68,
+    )
+
+    transcript_threshold = policy_float(
+        policy,
+        "transcriptSimilarityMin",
+        0.82,
+    )
+
+    duration = float(
+        audio_quality[
+            "durationSeconds"
+        ]
+    )
+
+    if (
+        duration < min_duration
+        or duration > max_duration
+    ):
+        reasons.append(
+            "audio-quality-duration"
+        )
+
+    if float(
+        audio_quality[
+            "rms"
+        ]
+    ) < min_rms:
+        reasons.append(
+            "audio-quality-rms"
+        )
+
+    if float(
+        audio_quality[
+            "clippingRatio"
+        ]
+    ) > max_clipping_ratio:
+        reasons.append(
+            "audio-quality-clipping"
+        )
+
+    if float(
+        audio_quality[
+            "silenceRatio"
+        ]
+    ) > max_silence_ratio:
+        reasons.append(
+            "audio-quality-silence"
+        )
+
+    if speaker_score < speaker_threshold:
+        reasons.append(
+            "speaker-similarity"
+        )
+
+    if transcript_score < transcript_threshold:
+        reasons.append(
+            "transcript-verification"
+        )
+
+    return {
+        "pass": len(
+            reasons
+        )
+        == 0,
+        "speakerSimilarity": speaker_score,
+        "speakerSimilarityMin": speaker_threshold,
+        "transcript": transcript,
+        "expectedTranscript": expected_text,
+        "transcriptSimilarity": transcript_score,
+        "transcriptSimilarityMin": transcript_threshold,
+        "audioQuality": audio_quality,
+        "reasons": reasons,
+    }
+
+
+def load_resume_manifest(
+    args: argparse.Namespace,
+    headers: Dict[str, str],
+    job_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    manifest_path = clean(
+        job_result.get(
+            "manifestPath"
+        )
+        or job_result.get(
+            "datasetManifestPath"
+        )
+    )
+
+    if manifest_path:
+        candidate = Path(
+            manifest_path
+        ).expanduser()
+
+        if (
+            candidate.is_file()
+            and candidate.stat().st_size > 0
+        ):
+            try:
+                parsed = json.loads(
+                    candidate.read_text(
+                        encoding="utf-8"
+                    )
+                )
+
+                if isinstance(
+                    parsed,
+                    dict,
+                ):
+                    return parsed
+            except Exception:
+                pass
+
+    manifest_url = clean(
+        job_result.get(
+            "manifestUrl"
+        )
+        or job_result.get(
+            "datasetManifestUrl"
+        )
+    )
+
+    if manifest_url:
+        try:
+            response = request_json(
+                "GET",
+                build_url(
+                    args.base_url,
+                    manifest_url,
+                ),
+                headers,
+                timeout=60,
+            )
+
+            if isinstance(
+                response.get(
+                    "manifest"
+                ),
+                dict,
+            ):
+                return response[
+                    "manifest"
+                ]
+
+            if isinstance(
+                response,
+                dict,
+            ) and isinstance(
+                response.get(
+                    "clips"
+                ),
+                list,
+            ):
+                return response
+        except Exception as error:
+            log(
+                "[warn] Could not restore adaptive "
+                f"manifest state: {error}"
+            )
+
+    return {}
+
+
 def normalize_generated_clip(raw_output: Path, final_output: Path, timeout: int) -> None:
     normalize_audio(raw_output, final_output, timeout=timeout)
     if final_output.stat().st_size <= 1024:
@@ -736,7 +1806,10 @@ def process_one(args: argparse.Namespace) -> int:
     try:
         claim = request_json(
             "POST",
-            build_url(args.base_url, "/api/worker/jobs/claim"),
+            build_url(
+                args.base_url,
+                "/api/worker/jobs/claim",
+            ),
             headers,
             {
                 "jobType": "character_voice_pipeline",
@@ -745,173 +1818,971 @@ def process_one(args: argparse.Namespace) -> int:
                 "workerId": args.worker_id,
             },
         )
-        job = claim.get("job")
-        if not isinstance(job, dict):
-            log("[idle] No queued generate_training_dataset job available.")
+
+        job = claim.get(
+            "job"
+        )
+
+        if not isinstance(
+            job,
+            dict,
+        ):
+            log(
+                "[idle] No queued generate_training_dataset job available."
+            )
             return 0
 
-        job_id = clean(job.get("jobId"))
-        owner_key = clean(job.get("ownerKey") or job.get("owner_key"))
-        character_id = clean(job.get("characterId"))
-        job_input = job.get("input") if isinstance(job.get("input"), dict) else {}
-        if not job_id or not owner_key or not character_id:
-            raise WorkerError(f"Invalid claimed dataset job: {job}")
-
-        headers = auth_headers(args, owner_key)
-        requested_count = clamp_clip_count(job_input.get("requestedClipCount") or job_input.get("clipCount"), 200)
-        if args.max_clips > 0:
-            requested_count = min(requested_count, args.max_clips)
-        utterances = build_utterances(requested_count)
-
-        work_dir = Path(args.work_root).expanduser().resolve() / owner_key / character_id / job_id
-        clips_dir = work_dir / "clips"
-        raw_dir = work_dir / "raw"
-        manifest_path = work_dir / "manifest.json"
-        work_dir.mkdir(parents=True, exist_ok=True)
-        clips_dir.mkdir(parents=True, exist_ok=True)
-        raw_dir.mkdir(parents=True, exist_ok=True)
-
-        job_result = job.get("result") if isinstance(job.get("result"), dict) else {}
-        try:
-            server_ready_count = max(0, min(requested_count, int(job_result.get("generatedClipCount") or 0)))
-        except Exception:
-            server_ready_count = 0
-
-        state: Dict[str, Any] = {
-            "generated_count": server_ready_count,
-            "stage": "claimed",
-            "message": "Linux IndexTTS2 dataset worker claimed the job.",
-        }
-        heartbeat = Heartbeat(args, headers, job_id, requested_count, state)
-        heartbeat.start()
-        checkpoint_job(
-            args,
-            headers,
-            job_id,
-            server_ready_count,
-            requested_count,
-            state["message"],
-            state["stage"],
-        )
-        log(
-            f"[claim] job={job_id} owner={owner_key} character={character_id} "
-            f"clips={requested_count} serverReady={server_ready_count}"
+        job_id = clean(
+            job.get(
+                "jobId"
+            )
         )
 
-        source_path, source_ref = resolve_source_sample(args, headers, job_input, work_dir)
-        state["stage"] = "source_ready"
-        state["message"] = "Approved voice reference is normalized and ready."
-        checkpoint_job(
-            args,
-            headers,
-            job_id,
-            server_ready_count,
-            requested_count,
-            state["message"],
-            state["stage"],
-            {"sourceBytes": source_path.stat().st_size},
+        owner_key = clean(
+            job.get(
+                "ownerKey"
+            )
+            or job.get(
+                "owner_key"
+            )
         )
 
-        gpu_lock = acquire_gpu_lock(args, headers, job_id, state, requested_count)
-        wait_for_comfy_idle(args, headers, job_id, state, requested_count)
-        release_comfy_models(args)
-        free = wait_for_free_vram(args)
-        log(f"[gpu] RTX 3090 free VRAM before IndexTTS2: {free if free is not None else 'unknown'} MiB")
-
-        state["stage"] = "loading_model"
-        state["message"] = "Loading the official IndexTTS2 model on the Linux RTX 3090 worker."
-        checkpoint_job(
-            args,
-            headers,
-            job_id,
-            server_ready_count,
-            requested_count,
-            state["message"],
-            state["stage"],
-            {"freeVramMiB": free, "useFp16": args.use_fp16},
+        character_id = clean(
+            job.get(
+                "characterId"
+            )
         )
-        tts, torch_module = load_indextts2(args)
-        log("[model] Official IndexTTS2 model loaded.")
 
-        pending_upload: List[Path] = []
-        seen_hashes: set[str] = set()
-        last_upload: Dict[str, Any] | None = None
+        job_input = (
+            job.get(
+                "input"
+            )
+            if isinstance(
+                job.get(
+                    "input"
+                ),
+                dict,
+            )
+            else {}
+        )
 
-        for index, row in enumerate(utterances, start=1):
-            clip_id = f"clip_{index:03d}"
-            final_output = clips_dir / f"{clip_id}.wav"
-            raw_output = raw_dir / f"{clip_id}.wav"
-            assert_job_active(args, headers, job_id)
-
-            if index <= server_ready_count and not args.regenerate:
-                log(f"[remote-skip] {clip_id}")
-                continue
-
-            if final_output.is_file() and final_output.stat().st_size > 1024 and not args.regenerate:
-                log(f"[local-resume] {clip_id}")
-            else:
-                last_error: Exception | None = None
-                for attempt in range(1, args.clip_retries + 2):
-                    try:
-                        state["stage"] = "generating"
-                        state["message"] = f"Generating {clip_id}: {index} / {requested_count}."
-                        checkpoint_job(
-                            args,
-                            headers,
-                            job_id,
-                            max(server_ready_count, index - 1),
-                            requested_count,
-                            state["message"],
-                            state["stage"],
-                            {"currentClipId": clip_id, "attempt": attempt},
-                        )
-                        generate_clip(
-                            tts,
-                            source_path,
-                            row["text"],
-                            raw_output,
-                            final_output,
-                            args.clip_timeout_seconds,
-                        )
-                        last_error = None
-                        break
-                    except Exception as error:
-                        last_error = error
-                        log(f"[retry] {clip_id} attempt={attempt} failed: {error}")
-                        final_output.unlink(missing_ok=True)
-                        raw_output.unlink(missing_ok=True)
-                        if attempt <= args.clip_retries:
-                            time.sleep(2)
-                if last_error is not None:
-                    raise WorkerError(f"IndexTTS2 failed for {clip_id} after {args.clip_retries + 1} attempts: {last_error}")
-
-            clip_hash = sha256(final_output)
-            if clip_hash in seen_hashes:
-                raise WorkerError(f"Generated duplicate WAV content detected at {clip_id}; refusing to mark dataset real.")
-            seen_hashes.add(clip_hash)
-            pending_upload.append(final_output)
-
-            local_ready = max(server_ready_count, index)
-            state["generated_count"] = local_ready
-            state["stage"] = "generated"
-            state["message"] = f"Generated {local_ready} / {requested_count} IndexTTS2 clips."
-            checkpoint_job(
-                args,
-                headers,
-                job_id,
-                local_ready,
-                requested_count,
-                state["message"],
-                state["stage"],
-                {"currentClipId": clip_id, "outputBytes": final_output.stat().st_size},
+        if (
+            not job_id
+            or not owner_key
+            or not character_id
+        ):
+            raise WorkerError(
+                f"Invalid claimed dataset job: {job}"
             )
 
-            if len(pending_upload) >= args.upload_chunk_size:
-                assert_job_active(args, headers, job_id)
-                manifest = make_manifest(owner_key, character_id, job_id, source_ref, utterances, local_ready)
-                manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-                state["stage"] = "uploading"
-                state["message"] = f"Uploading clips through {clip_id}."
+        headers = auth_headers(
+            args,
+            owner_key,
+        )
+
+        policy = load_voice_training_policy(
+            Path(
+                args.policy_path
+            ).expanduser().resolve()
+        )
+
+        attempt_budget = max(
+            1,
+            policy_int(
+                policy,
+                "maxGeneratedAttempts",
+                240,
+            ),
+        )
+
+        if args.max_clips > 0:
+            attempt_budget = min(
+                attempt_budget,
+                args.max_clips,
+            )
+
+        utterances = build_utterances(
+            attempt_budget
+        )
+
+        target_duration_seconds = (
+            policy_float(
+                policy,
+                "acceptedMinutesTarget",
+                10.0,
+            )
+            * 60.0
+        )
+
+        minimum_duration_seconds = (
+            policy_float(
+                policy,
+                "acceptedMinutesMin",
+                8.0,
+            )
+            * 60.0
+        )
+
+        maximum_duration_seconds = (
+            policy_float(
+                policy,
+                "acceptedMinutesMax",
+                12.0,
+            )
+            * 60.0
+        )
+
+        work_dir = (
+            Path(
+                args.work_root
+            )
+            .expanduser()
+            .resolve()
+            / owner_key
+            / character_id
+            / job_id
+        )
+
+        clips_dir = (
+            work_dir
+            / "clips"
+        )
+
+        raw_dir = (
+            work_dir
+            / "raw"
+        )
+
+        manifest_path = (
+            work_dir
+            / "manifest.json"
+        )
+
+        work_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        clips_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        raw_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        job_result = (
+            job.get(
+                "result"
+            )
+            if isinstance(
+                job.get(
+                    "result"
+                ),
+                dict,
+            )
+            else {}
+        )
+
+        resume_manifest = load_resume_manifest(
+            args,
+            headers,
+            job_result,
+        )
+
+        resume_clips = (
+            resume_manifest.get(
+                "clips"
+            )
+            if isinstance(
+                resume_manifest.get(
+                    "clips"
+                ),
+                list,
+            )
+            else []
+        )
+
+        accepted_clips: List[Dict[str, Any]] = [
+            dict(
+                clip
+            )
+            for clip in resume_clips
+            if isinstance(
+                clip,
+                dict,
+            )
+            and clean(
+                clip.get(
+                    "status"
+                )
+            )
+            == "ready"
+            and isinstance(
+                clip.get(
+                    "qc"
+                ),
+                dict,
+            )
+            and clip[
+                "qc"
+            ].get(
+                "pass"
+            )
+            is True
+        ]
+
+        quality_control_resume = (
+            resume_manifest.get(
+                "qualityControl"
+            )
+            if isinstance(
+                resume_manifest.get(
+                    "qualityControl"
+                ),
+                dict,
+            )
+            else {}
+        )
+
+        rejected_attempts = (
+            [
+                dict(
+                    item
+                )
+                for item in quality_control_resume.get(
+                    "rejectedAttempts",
+                    [],
+                )
+                if isinstance(
+                    item,
+                    dict,
+                )
+            ]
+            if isinstance(
+                quality_control_resume.get(
+                    "rejectedAttempts"
+                ),
+                list,
+            )
+            else []
+        )
+
+        attempted_count = int(
+            quality_control_resume.get(
+                "attemptedClipCount"
+            )
+            or (
+                len(
+                    accepted_clips
+                )
+                + len(
+                    rejected_attempts
+                )
+            )
+        )
+
+        state: Dict[str, Any] = {
+            "generated_count": len(
+                accepted_clips
+            ),
+            "acceptedDurationSeconds": accepted_duration_seconds(
+                accepted_clips
+            ),
+            "stage": "claimed",
+            "message": (
+                "Linux IndexTTS2 adaptive dataset worker claimed the job."
+            ),
+        }
+
+        heartbeat = Heartbeat(
+            args,
+            headers,
+            job_id,
+            max(
+                1,
+                attempt_budget,
+            ),
+            state,
+        )
+
+        heartbeat.start()
+
+        checkpoint_job(
+            args,
+            headers,
+            job_id,
+            len(
+                accepted_clips
+            ),
+            attempt_budget,
+            state[
+                "message"
+            ],
+            state[
+                "stage"
+            ],
+            {
+                "acceptedDurationSeconds": state[
+                    "acceptedDurationSeconds"
+                ],
+                "targetDurationSeconds": target_duration_seconds,
+                "referenceMode": "original-sample-only",
+            },
+        )
+
+        log(
+            "[claim] "
+            f"job={job_id} "
+            f"owner={owner_key} "
+            f"character={character_id} "
+            f"accepted={len(accepted_clips)} "
+            f"acceptedSeconds={state['acceptedDurationSeconds']:.2f} "
+            f"attemptBudget={attempt_budget}"
+        )
+
+        source_path, source_ref = resolve_source_sample(
+            args,
+            headers,
+            job_input,
+            work_dir,
+        )
+
+        state[
+            "stage"
+        ] = "source_ready"
+
+        state[
+            "message"
+        ] = (
+            "Original saved Character Voice Sample is normalized "
+            "and locked as the only IndexTTS2 speaker reference."
+        )
+
+        checkpoint_job(
+            args,
+            headers,
+            job_id,
+            len(
+                accepted_clips
+            ),
+            attempt_budget,
+            state[
+                "message"
+            ],
+            state[
+                "stage"
+            ],
+            {
+                "sourceBytes": source_path.stat().st_size,
+                "acceptedDurationSeconds": accepted_duration_seconds(
+                    accepted_clips
+                ),
+                "targetDurationSeconds": target_duration_seconds,
+                "referenceMode": "original-sample-only",
+            },
+        )
+
+        gpu_lock = acquire_gpu_lock(
+            args,
+            headers,
+            job_id,
+            state,
+            attempt_budget,
+        )
+
+        wait_for_comfy_idle(
+            args,
+            headers,
+            job_id,
+            state,
+            attempt_budget,
+        )
+
+        release_comfy_models(
+            args
+        )
+
+        free = wait_for_free_vram(
+            args
+        )
+
+        log(
+            "[gpu] RTX 3090 free VRAM before IndexTTS2: "
+            f"{free if free is not None else 'unknown'} MiB"
+        )
+
+        state[
+            "stage"
+        ] = "loading_model"
+
+        state[
+            "message"
+        ] = (
+            "Loading the official IndexTTS2 model "
+            "on the Linux RTX 3090 worker."
+        )
+
+        checkpoint_job(
+            args,
+            headers,
+            job_id,
+            len(
+                accepted_clips
+            ),
+            attempt_budget,
+            state[
+                "message"
+            ],
+            state[
+                "stage"
+            ],
+            {
+                "freeVramMiB": free,
+                "useFp16": args.use_fp16,
+                "acceptedDurationSeconds": accepted_duration_seconds(
+                    accepted_clips
+                ),
+                "targetDurationSeconds": target_duration_seconds,
+            },
+        )
+
+        tts, torch_module = load_indextts2(
+            args
+        )
+
+        log(
+            "[model] Official IndexTTS2 model loaded."
+        )
+
+        pending_upload: List[Path] = []
+
+        seen_hashes: set[str] = set()
+
+        last_upload: Dict[str, Any] | None = None
+
+        last_local_accepted_path: Path | None = None
+
+        budget_exhausted = False
+
+        clip_retry_limit = max(
+            args.clip_retries,
+            policy_int(
+                policy,
+                "maxClipRegenerations",
+                2,
+            ),
+        )
+
+        for row_index in range(
+            attempted_count,
+            len(
+                utterances
+            ),
+        ):
+            if adaptive_dataset_complete(
+                policy,
+                accepted_clips,
+            ):
+                break
+
+            if accepted_duration_seconds(
+                accepted_clips
+            ) >= maximum_duration_seconds:
+                break
+
+            row = utterances[
+                row_index
+            ]
+
+            accepted_this_row = False
+
+            for regeneration in range(
+                clip_retry_limit
+                + 1
+            ):
+                if attempted_count >= attempt_budget:
+                    budget_exhausted = True
+                    break
+
+                attempted_count += 1
+
+                accepted_number = (
+                    len(
+                        accepted_clips
+                    )
+                    + 1
+                )
+
+                clip_id = (
+                    f"clip_{accepted_number:03d}"
+                )
+
+                attempt_id = (
+                    f"attempt_{attempted_count:04d}"
+                )
+
+                final_output = (
+                    clips_dir
+                    / f"{clip_id}.wav"
+                )
+
+                raw_output = (
+                    raw_dir
+                    / f"{attempt_id}.wav"
+                )
+
+                assert_job_active(
+                    args,
+                    headers,
+                    job_id,
+                )
+
+                state[
+                    "stage"
+                ] = "generating"
+
+                state[
+                    "message"
+                ] = (
+                    f"Generating adaptive training candidate "
+                    f"{attempt_id}; "
+                    f"{accepted_duration_seconds(accepted_clips):.1f}s "
+                    f"accepted."
+                )
+
+                checkpoint_job(
+                    args,
+                    headers,
+                    job_id,
+                    len(
+                        accepted_clips
+                    ),
+                    attempt_budget,
+                    state[
+                        "message"
+                    ],
+                    state[
+                        "stage"
+                    ],
+                    {
+                        "currentClipId": clip_id,
+                        "currentAttemptId": attempt_id,
+                        "regeneration": regeneration,
+                        "acceptedDurationSeconds": accepted_duration_seconds(
+                            accepted_clips
+                        ),
+                        "targetDurationSeconds": target_duration_seconds,
+                    },
+                )
+
+                try:
+                    # Critical invariant:
+                    # every candidate is directly conditioned on
+                    # the original saved Character Voice Sample.
+                    generate_clip(
+                        tts,
+                        source_path,
+                        row[
+                            "text"
+                        ],
+                        raw_output,
+                        final_output,
+                        args.clip_timeout_seconds,
+                    )
+
+                    state[
+                        "stage"
+                    ] = "validating_dataset"
+
+                    state[
+                        "message"
+                    ] = (
+                        f"Running transcript verification, "
+                        f"speaker similarity, and audio quality QC "
+                        f"for {clip_id}."
+                    )
+
+                    qc = evaluate_clip_quality_control(
+                        args,
+                        headers,
+                        policy,
+                        source_path,
+                        final_output,
+                        row[
+                            "text"
+                        ],
+                    )
+
+                    if qc.get(
+                        "pass"
+                    ) is not True:
+                        rejection = {
+                            "attemptId": attempt_id,
+                            "clipId": clip_id,
+                            "text": row[
+                                "text"
+                            ],
+                            "coverage": row[
+                                "coverage"
+                            ],
+                            "regeneration": regeneration,
+                            "reasons": list(
+                                qc.get(
+                                    "reasons"
+                                )
+                                or []
+                            ),
+                            "qc": qc,
+                            "rejectedAt": time.strftime(
+                                "%Y-%m-%dT%H:%M:%SZ",
+                                time.gmtime(),
+                            ),
+                        }
+
+                        rejected_attempts.append(
+                            rejection
+                        )
+
+                        log(
+                            "[qc-reject] "
+                            f"{attempt_id} "
+                            + ", ".join(
+                                rejection[
+                                    "reasons"
+                                ]
+                            )
+                        )
+
+                        final_output.unlink(
+                            missing_ok=True
+                        )
+
+                        raw_output.unlink(
+                            missing_ok=True
+                        )
+
+                        if (
+                            policy.get(
+                                "regenerateRejectedClips"
+                            )
+                            is True
+                            and regeneration < clip_retry_limit
+                        ):
+                            continue
+
+                        break
+
+                    duration = float(
+                        (
+                            qc.get(
+                                "audioQuality"
+                            )
+                            or {}
+                        ).get(
+                            "durationSeconds"
+                        )
+                        or 0
+                    )
+
+                    proposed_duration = (
+                        accepted_duration_seconds(
+                            accepted_clips
+                        )
+                        + duration
+                    )
+
+                    if proposed_duration > maximum_duration_seconds:
+                        rejection = {
+                            "attemptId": attempt_id,
+                            "clipId": clip_id,
+                            "text": row[
+                                "text"
+                            ],
+                            "coverage": row[
+                                "coverage"
+                            ],
+                            "regeneration": regeneration,
+                            "reasons": [
+                                "accepted-duration-max"
+                            ],
+                            "qc": qc,
+                            "rejectedAt": time.strftime(
+                                "%Y-%m-%dT%H:%M:%SZ",
+                                time.gmtime(),
+                            ),
+                        }
+
+                        rejected_attempts.append(
+                            rejection
+                        )
+
+                        final_output.unlink(
+                            missing_ok=True
+                        )
+
+                        raw_output.unlink(
+                            missing_ok=True
+                        )
+
+                        break
+
+                    clip_hash = sha256(
+                        final_output
+                    )
+
+                    if clip_hash in seen_hashes:
+                        rejected_attempts.append(
+                            {
+                                "attemptId": attempt_id,
+                                "clipId": clip_id,
+                                "text": row[
+                                    "text"
+                                ],
+                                "coverage": row[
+                                    "coverage"
+                                ],
+                                "regeneration": regeneration,
+                                "reasons": [
+                                    "duplicate-audio"
+                                ],
+                                "qc": qc,
+                                "rejectedAt": time.strftime(
+                                    "%Y-%m-%dT%H:%M:%SZ",
+                                    time.gmtime(),
+                                ),
+                            }
+                        )
+
+                        final_output.unlink(
+                            missing_ok=True
+                        )
+
+                        raw_output.unlink(
+                            missing_ok=True
+                        )
+
+                        if regeneration < clip_retry_limit:
+                            continue
+
+                        break
+
+                    seen_hashes.add(
+                        clip_hash
+                    )
+
+                    accepted_record = {
+                        "clipId": clip_id,
+                        "index": len(
+                            accepted_clips
+                        ),
+                        "text": row[
+                            "text"
+                        ],
+                        "emotion": row[
+                            "emotion"
+                        ],
+                        "coverage": row[
+                            "coverage"
+                        ],
+                        "status": "ready",
+                        "expectedAudioPath": "",
+                        "expectedAudioUrl": None,
+                        "generatorSamplePath": str(
+                            raw_output
+                        ),
+                        "generatorProvider": "indextts2",
+                        "durationSeconds": duration,
+                        "qc": qc,
+                        "updatedAt": time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ",
+                            time.gmtime(),
+                        ),
+                    }
+
+                    accepted_clips.append(
+                        accepted_record
+                    )
+
+                    pending_upload.append(
+                        final_output
+                    )
+
+                    last_local_accepted_path = (
+                        final_output
+                    )
+
+                    accepted_this_row = True
+
+                    current_duration = accepted_duration_seconds(
+                        accepted_clips
+                    )
+
+                    state[
+                        "generated_count"
+                    ] = len(
+                        accepted_clips
+                    )
+
+                    state[
+                        "acceptedDurationSeconds"
+                    ] = current_duration
+
+                    state[
+                        "stage"
+                    ] = "validated"
+
+                    state[
+                        "message"
+                    ] = (
+                        f"Accepted {clip_id}; "
+                        f"{current_duration:.1f}s "
+                        f"of QC-passing speech."
+                    )
+
+                    checkpoint_job(
+                        args,
+                        headers,
+                        job_id,
+                        len(
+                            accepted_clips
+                        ),
+                        attempt_budget,
+                        state[
+                            "message"
+                        ],
+                        state[
+                            "stage"
+                        ],
+                        {
+                            "currentClipId": clip_id,
+                            "acceptedDurationSeconds": current_duration,
+                            "acceptedMinutes": current_duration
+                            / 60.0,
+                            "targetDurationSeconds": target_duration_seconds,
+                            "speakerSimilarity": qc.get(
+                                "speakerSimilarity"
+                            ),
+                            "transcriptSimilarity": qc.get(
+                                "transcriptSimilarity"
+                            ),
+                            "audioQuality": qc.get(
+                                "audioQuality"
+                            ),
+                            "coverage": row[
+                                "coverage"
+                            ],
+                        },
+                    )
+
+                    break
+
+                except Exception as error:
+                    rejection = {
+                        "attemptId": attempt_id,
+                        "clipId": clip_id,
+                        "text": row[
+                            "text"
+                        ],
+                        "coverage": row[
+                            "coverage"
+                        ],
+                        "regeneration": regeneration,
+                        "reasons": [
+                            "generation-or-qc-error"
+                        ],
+                        "error": str(
+                            error
+                        ),
+                        "rejectedAt": time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ",
+                            time.gmtime(),
+                        ),
+                    }
+
+                    rejected_attempts.append(
+                        rejection
+                    )
+
+                    log(
+                        "[retry] "
+                        f"{attempt_id} "
+                        f"regeneration={regeneration} "
+                        f"failed: {error}"
+                    )
+
+                    final_output.unlink(
+                        missing_ok=True
+                    )
+
+                    raw_output.unlink(
+                        missing_ok=True
+                    )
+
+                    if regeneration < clip_retry_limit:
+                        time.sleep(
+                            2
+                        )
+                        continue
+
+                    break
+
+            if budget_exhausted:
+                break
+
+            if not accepted_this_row:
+                continue
+
+            complete_now = adaptive_dataset_complete(
+                policy,
+                accepted_clips,
+            )
+
+            if (
+                len(
+                    pending_upload
+                )
+                >= args.upload_chunk_size
+                or complete_now
+            ):
+                assert_job_active(
+                    args,
+                    headers,
+                    job_id,
+                )
+
+                manifest = make_manifest(
+                    owner_key,
+                    character_id,
+                    job_id,
+                    source_ref,
+                    accepted_clips,
+                    rejected_attempts,
+                    policy,
+                    complete_now,
+                )
+
+                manifest_path.write_text(
+                    json.dumps(
+                        manifest,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+
+                state[
+                    "stage"
+                ] = "uploading"
+
+                state[
+                    "message"
+                ] = (
+                    f"Uploading {len(pending_upload)} "
+                    f"QC-passing adaptive clips."
+                )
+
                 last_upload = upload_batch(
                     args,
                     headers,
@@ -921,45 +2792,198 @@ def process_one(args: argparse.Namespace) -> int:
                     source_path,
                     pending_upload,
                 )
-                server_ready_count = remote_ready_count(last_upload)
-                state["generated_count"] = server_ready_count
-                log(f"[progress] server ready {server_ready_count}/{requested_count}")
+
+                remote_manifest = (
+                    last_upload.get(
+                        "manifest"
+                    )
+                    if isinstance(
+                        last_upload.get(
+                            "manifest"
+                        ),
+                        dict,
+                    )
+                    else {}
+                )
+
+                remote_clips = (
+                    remote_manifest.get(
+                        "clips"
+                    )
+                    if isinstance(
+                        remote_manifest.get(
+                            "clips"
+                        ),
+                        list,
+                    )
+                    else []
+                )
+
+                if remote_clips:
+                    accepted_clips = [
+                        dict(
+                            clip
+                        )
+                        for clip in remote_clips
+                        if isinstance(
+                            clip,
+                            dict,
+                        )
+                        and clean(
+                            clip.get(
+                                "status"
+                            )
+                        )
+                        == "ready"
+                        and isinstance(
+                            clip.get(
+                                "qc"
+                            ),
+                            dict,
+                        )
+                        and clip[
+                            "qc"
+                        ].get(
+                            "pass"
+                        )
+                        is True
+                    ]
+
                 pending_upload = []
 
-        if pending_upload:
-            assert_job_active(args, headers, job_id)
-            local_ready = max(server_ready_count, max(int(path.stem.split("_")[-1]) for path in pending_upload))
-            manifest = make_manifest(owner_key, character_id, job_id, source_ref, utterances, local_ready)
-            manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-            state["stage"] = "uploading"
-            state["message"] = f"Uploading the final IndexTTS2 batch through clip {local_ready}."
+                log(
+                    "[progress] "
+                    f"accepted={len(accepted_clips)} "
+                    f"seconds={accepted_duration_seconds(accepted_clips):.1f} "
+                    f"rejected={len(rejected_attempts)}"
+                )
+
+                if complete_now:
+                    break
+
+        final_complete = adaptive_dataset_complete(
+            policy,
+            accepted_clips,
+            allow_minimum=True,
+        )
+
+        final_duration = accepted_duration_seconds(
+            accepted_clips
+        )
+
+        if not final_complete:
+            raise WorkerError(
+                "Adaptive IndexTTS2 dataset did not reach an "
+                "acceptable 8-12 minute QC-passing corpus with "
+                "required coverage before the attempt budget ended. "
+                f"accepted={len(accepted_clips)}; "
+                f"seconds={final_duration:.2f}; "
+                f"minimum={minimum_duration_seconds:.2f}; "
+                f"target={target_duration_seconds:.2f}; "
+                f"maximum={maximum_duration_seconds:.2f}; "
+                f"coverage={sorted(coverage_set(accepted_clips))}; "
+                f"attempted={attempted_count}; "
+                f"rejected={len(rejected_attempts)}."
+            )
+
+        final_manifest = make_manifest(
+            owner_key,
+            character_id,
+            job_id,
+            source_ref,
+            accepted_clips,
+            rejected_attempts,
+            policy,
+            True,
+        )
+
+        manifest_path.write_text(
+            json.dumps(
+                final_manifest,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        final_upload_paths = list(
+            pending_upload
+        )
+
+        if not final_upload_paths:
+            if (
+                last_local_accepted_path
+                is not None
+                and last_local_accepted_path.is_file()
+            ):
+                final_upload_paths = [
+                    last_local_accepted_path
+                ]
+            elif accepted_clips:
+                candidate = Path(
+                    clean(
+                        accepted_clips[
+                            -1
+                        ].get(
+                            "expectedAudioPath"
+                        )
+                    )
+                )
+
+                if (
+                    candidate.is_file()
+                    and candidate.stat().st_size > 0
+                ):
+                    final_upload_paths = [
+                        candidate
+                    ]
+
+        remote_is_complete = bool(
+            last_upload
+            and isinstance(
+                last_upload.get(
+                    "manifest"
+                ),
+                dict,
+            )
+            and last_upload[
+                "manifest"
+            ].get(
+                "adaptiveComplete"
+            )
+            is True
+        )
+
+        if not remote_is_complete:
+            if not final_upload_paths:
+                raise WorkerError(
+                    "Adaptive dataset is locally complete but "
+                    "no accepted clip is available to finalize "
+                    "the remote manifest."
+                )
+
             last_upload = upload_batch(
                 args,
                 headers,
                 character_id,
                 job_id,
-                manifest,
+                final_manifest,
                 source_path,
-                pending_upload,
-            )
-            server_ready_count = remote_ready_count(last_upload)
-            state["generated_count"] = server_ready_count
-
-        if server_ready_count < requested_count:
-            raise WorkerError(
-                f"IndexTTS2 generation ended before the server had all clips: {server_ready_count}/{requested_count}."
+                final_upload_paths,
             )
 
-        if last_upload is not None:
-            remote_manifest = assert_manifest_complete(last_upload, requested_count)
-            manifest_status = clean(remote_manifest.get("status"))
-        else:
-            manifest_status = clean(job_result.get("status"))
-            if manifest_status != "voice_pack_ready":
-                raise WorkerError(
-                    "Server reported all clips ready, but the claimed job result is not voice_pack_ready. "
-                    "Resume the job after checking its manifest."
-                )
+        if last_upload is None:
+            last_upload = {
+                "manifest": final_manifest,
+            }
+
+        remote_manifest = assert_manifest_complete(
+            last_upload,
+            policy,
+        )
+
+        server_ready_count = remote_ready_count(
+            last_upload
+        )
 
         complete_result = {
             "mock": False,
@@ -968,65 +2992,148 @@ def process_one(args: argparse.Namespace) -> int:
             "remoteWorker": True,
             "platform": "linux",
             "workerId": args.worker_id,
-            "clipCount": requested_count,
-            "requestedClipCount": requested_count,
+            "clipCount": server_ready_count,
+            "requestedClipCount": server_ready_count,
             "generatedClipCount": server_ready_count,
+            "acceptedDurationSeconds": float(
+                remote_manifest.get(
+                    "acceptedDurationSeconds"
+                )
+                or final_duration
+            ),
+            "acceptedMinutes": float(
+                remote_manifest.get(
+                    "acceptedMinutes"
+                )
+                or (
+                    final_duration
+                    / 60.0
+                )
+            ),
+            "adaptiveComplete": True,
+            "qualityControl": remote_manifest.get(
+                "qualityControl"
+            ),
             "generationMode": "real",
+            "referenceMode": "original-sample-only",
             "status": "voice_pack_ready",
-            "localWorkDir": str(work_dir),
-            "manifestStatus": manifest_status,
-            "modelDir": str(Path(args.model_dir).expanduser().resolve()),
+            "localWorkDir": str(
+                work_dir
+            ),
+            "manifestStatus": clean(
+                remote_manifest.get(
+                    "status"
+                )
+            ),
+            "modelDir": str(
+                Path(
+                    args.model_dir
+                )
+                .expanduser()
+                .resolve()
+            ),
             "useFp16": args.use_fp16,
         }
+
         complete = request_json(
             "POST",
-            build_url(args.base_url, "/api/characters/voice-pipeline/worker/complete"),
+            build_url(
+                args.base_url,
+                "/api/characters/voice-pipeline/worker/complete",
+            ),
             headers,
             {
                 "jobId": job_id,
                 "result": complete_result,
-                "message": f"Linux IndexTTS2 dataset ready for review: {server_ready_count}/{requested_count} clips.",
+                "message": (
+                    "Linux IndexTTS2 adaptive dataset ready: "
+                    f"{complete_result['acceptedMinutes']:.2f} "
+                    "QC-passing minutes."
+                ),
             },
             timeout=args.upload_timeout_seconds,
         )
-        log(f"[complete] {json.dumps(complete, indent=2)}")
+
+        log(
+            f"[complete] {json.dumps(complete, indent=2)}"
+        )
+
         return 0
 
     except TerminatedJob as error:
-        log(f"[terminated] {error}")
+        log(
+            f"[terminated] {error}"
+        )
         return 0
+
     except Exception as error:
-        text = f"{error}\n{traceback.format_exc()}"
-        log(f"[error] {text}")
+        text = (
+            f"{error}" + chr(10) +
+            f"{traceback.format_exc()}"
+        )
+
+        log(
+            f"[error] {text}"
+        )
+
         if job_id and owner_key:
-            mark_failed(args, auth_headers(args, owner_key), job_id, text)
+            mark_failed(
+                args,
+                auth_headers(
+                    args,
+                    owner_key,
+                ),
+                job_id,
+                text,
+            )
+
         return 1
+
     finally:
         if heartbeat is not None:
             heartbeat.stop()
+
         if tts is not None:
             try:
                 del tts
             except Exception:
                 pass
+
         gc.collect()
+
         if torch_module is not None:
             try:
                 torch_module.cuda.empty_cache()
                 torch_module.cuda.ipc_collect()
             except Exception as error:
-                log(f"[warn] Could not fully clear IndexTTS2 CUDA cache: {error}")
+                log(
+                    "[warn] Could not fully clear "
+                    f"IndexTTS2 CUDA cache: {error}"
+                )
+
         if gpu_lock is not None:
             try:
-                fcntl.flock(gpu_lock.fileno(), fcntl.LOCK_UN)
+                fcntl.flock(
+                    gpu_lock.fileno(),
+                    fcntl.LOCK_UN,
+                )
+
                 gpu_lock.close()
-                log("[gpu-lock] Released shared voice GPU lock.")
+
+                log(
+                    "[gpu-lock] Released shared voice GPU lock."
+                )
+
             except Exception as error:
-                log(f"[warn] Could not release GPU lock cleanly: {error}")
+                log(
+                    "[warn] Could not release GPU lock cleanly: "
+                    f"{error}"
+                )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Dedicated Linux IndexTTS2 training-dataset worker")
+    repo_root = Path(__file__).resolve().parents[2]
     parser.add_argument("--base-url", default=os.environ.get("OTG_BASE_URL", "http://100.75.162.64:3001"))
     parser.add_argument("--device-id", default=os.environ.get("OTG_DEVICE_ID", "linux-indextts2"))
     parser.add_argument("--worker-id", default=os.environ.get("OTG_WORKER_ID", "linux-indextts2-dataset-worker"))
@@ -1049,6 +3156,51 @@ def main() -> int:
     parser.add_argument("--vram-wait-seconds", type=int, default=int(os.environ.get("OTG_INDEXTTS2_VRAM_WAIT_SECONDS", "180")))
     parser.add_argument("--gpu-lock-file", default=os.environ.get("OTG_VOICE_GPU_LOCK_FILE", "/home/shawn-rochford/AI/runtime/test/voice-gpu.lock"))
     parser.add_argument("--use-fp16", action="store_true", default=truthy(os.environ.get("INDEXTTS2_USE_FP16", "0")))
+    parser.add_argument(
+        "--policy-path",
+        default=os.environ.get(
+            "VOICE_TRAINING_POLICY_PATH",
+            str(repo_root / "config" / "voice-training-policy.json"),
+        ),
+    )
+    parser.add_argument(
+        "--speaker-qc-python",
+        default=os.environ.get(
+            "OTG_VOICE_QC_PYTHON",
+            "/home/shawn-rochford/AI/runtime/test/voice-qc/speechbrain-ecapa/venv/bin/python",
+        ),
+    )
+    parser.add_argument(
+        "--speaker-qc-script",
+        default=os.environ.get(
+            "OTG_VOICE_QC_SCRIPT",
+            str(repo_root / "scripts" / "linux" / "otg-voice-speaker-qc.py"),
+        ),
+    )
+    parser.add_argument(
+        "--speaker-qc-model-dir",
+        default=os.environ.get(
+            "OTG_VOICE_QC_MODEL_DIR",
+            "/home/shawn-rochford/AI/runtime/test/voice-qc/speechbrain-ecapa/models/spkrec-ecapa-voxceleb",
+        ),
+    )
+    parser.add_argument(
+        "--speaker-qc-hf-home",
+        default=os.environ.get(
+            "OTG_VOICE_QC_HF_HOME",
+            "/home/shawn-rochford/AI/runtime/test/voice-qc/speechbrain-ecapa/hf-cache",
+        ),
+    )
+    parser.add_argument(
+        "--qc-timeout-seconds",
+        type=int,
+        default=int(
+            os.environ.get(
+                "OTG_VOICE_QC_TIMEOUT_SECONDS",
+                "300",
+            )
+        ),
+    )
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--regenerate", action="store_true")
     args = parser.parse_args()
@@ -1059,6 +3211,31 @@ def main() -> int:
         raise WorkerError("OTG_INDEXTTS2_UPLOAD_CHUNK_SIZE must be between 1 and 25.")
     if args.clip_retries < 0 or args.clip_retries > 10:
         raise WorkerError("OTG_INDEXTTS2_CLIP_RETRIES must be between 0 and 10.")
+
+    if not Path(args.policy_path).expanduser().is_file():
+        raise WorkerError(
+            f"VOICE_TRAINING_POLICY_PATH is missing: {args.policy_path}"
+        )
+
+    if not Path(args.speaker_qc_python).expanduser().is_file():
+        raise WorkerError(
+            f"OTG_VOICE_QC_PYTHON is missing: {args.speaker_qc_python}"
+        )
+
+    if not Path(args.speaker_qc_script).expanduser().is_file():
+        raise WorkerError(
+            f"OTG_VOICE_QC_SCRIPT is missing: {args.speaker_qc_script}"
+        )
+
+    if not Path(args.speaker_qc_model_dir).expanduser().is_dir():
+        raise WorkerError(
+            f"OTG_VOICE_QC_MODEL_DIR is missing: {args.speaker_qc_model_dir}"
+        )
+
+    if args.qc_timeout_seconds < 10:
+        raise WorkerError(
+            "OTG_VOICE_QC_TIMEOUT_SECONDS must be at least 10."
+        )
 
     while True:
         code = process_one(args)

@@ -107,3 +107,70 @@ export async function extractTailFrameToImage(args: {
 
   return { outputPath, usedSeconds };
 }
+
+/*
+ * OTG_PRODUCTION_V2_EXACT_FINAL_FRAME_V1
+ *
+ * Decode only the final one-second window, reverse that short window,
+ * and take its first decoded frame. This gives Production V2 the final
+ * decoded video frame without changing the older Gallery Extend helper.
+ */
+export async function extractFinalFrameToImage(args: {
+  inputPath: string;
+  outputPath: string;
+}): Promise<{ outputPath: string }> {
+  const {
+    inputPath,
+    outputPath,
+  } = args;
+
+  ensureDir(
+    path.dirname(outputPath),
+  );
+
+  const ffmpeg =
+    resolveFfmpegPath();
+
+  const ff =
+    await runCmd(
+      ffmpeg,
+      [
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-sseof",
+        "-1",
+        "-i",
+        inputPath,
+        "-map",
+        "0:v:0",
+        "-vf",
+        "reverse",
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        outputPath,
+      ],
+      {
+        timeoutMs: 30000,
+      },
+    );
+
+  if (
+    ff.code !== 0
+    || !fs.existsSync(outputPath)
+    || fs.statSync(outputPath).size < 1
+  ) {
+    throw new Error(
+      ff.stderr
+      || ff.stdout
+      || "ffmpeg final-frame extraction failed",
+    );
+  }
+
+  return {
+    outputPath,
+  };
+}

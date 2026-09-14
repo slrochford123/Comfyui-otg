@@ -393,6 +393,214 @@ def run_command(
         )
 
 
+
+# OTG_TYPED_TEST_VOICE_INDEXTTS2_V2
+def generate_typed_source_speech(
+    args: argparse.Namespace,
+    owner_key: str,
+    job_id: str,
+    job_input: Dict[str, Any],
+    reference_audio: Path,
+    work_dir: Path,
+) -> tuple[Path, Dict[str, Any]]:
+    speech_text = clean(job_input.get("text"))
+
+    if not speech_text:
+        raise RuntimeError("Typed Test Voice requires non-empty text.")
+
+    index_root = Path(args.indextts2_root).expanduser().resolve()
+    index_python = Path(args.indextts2_python).expanduser().resolve()
+    index_cfg = Path(args.indextts2_cfg).expanduser().resolve()
+    index_model_dir = Path(args.indextts2_model_dir).expanduser().resolve()
+    bridge = Path(args.indextts2_bridge).expanduser().resolve()
+
+    if not index_root.is_dir():
+        raise RuntimeError(f"IndexTTS2 root is missing: {index_root}")
+    if not index_python.is_file():
+        raise RuntimeError(f"IndexTTS2 Python is missing: {index_python}")
+    if not index_cfg.is_file():
+        raise RuntimeError(f"IndexTTS2 config is missing: {index_cfg}")
+    if not index_model_dir.is_dir():
+        raise RuntimeError(f"IndexTTS2 model directory is missing: {index_model_dir}")
+    if not bridge.is_file():
+        raise RuntimeError(
+            f"IndexTTS2 single-utterance bridge is missing: {bridge}"
+        )
+    if not has_bytes(reference_audio):
+        raise RuntimeError(
+            f"Typed Test Voice reference audio is missing: {reference_audio}"
+        )
+
+    source_dir = work_dir / "source-speech"
+    source_dir.mkdir(parents=True, exist_ok=True)
+
+    input_audio = source_dir / "typed-source.wav"
+    request_path = source_dir / "indextts2-single-utterance.json"
+    stdout_path = source_dir / "indextts2-stdout.log"
+    stderr_path = source_dir / "indextts2-stderr.log"
+
+    request_payload = {
+        "referenceWav": str(reference_audio),
+        "outputDir": str(source_dir),
+        "clips": [
+            {
+                "id": "typed_test_voice",
+                "text": speech_text,
+                "delivery": "neutral",
+                "outputPath": str(input_audio),
+            }
+        ],
+
+        # Audit marker. The bridge itself enforces this in IndexTTS2.infer().
+        "use_random=False": True,
+    }
+
+    request_path.write_text(
+        json.dumps(request_payload, indent=2),
+        encoding="utf-8",
+    )
+
+    command = [
+        str(index_python),
+        str(bridge),
+        "--params-json",
+        str(request_path),
+    ]
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "INDEXTTS2_ROOT": str(index_root),
+            "INDEXTTS2_PYTHON": str(index_python),
+            "INDEXTTS2_CFG": str(index_cfg),
+            "INDEXTTS2_MODEL_DIR": str(index_model_dir),
+            # OTG_INDEXTTS2_CHILD_ENV_V1
+            "VIRTUAL_ENV": str(index_root / ".venv"),
+            "PATH": (
+                str(index_root / ".venv" / "bin")
+                + os.pathsep
+                + os.environ.get("PATH", "")
+            ),
+            "PYTHONPATH": (
+                str(
+                    index_root
+                    / ".venv"
+                    / "lib"
+                    / "python3.11"
+                    / "site-packages"
+                )
+                + os.pathsep
+                + str(index_root)
+                + (
+                    os.pathsep + os.environ.get("PYTHONPATH", "")
+                    if os.environ.get("PYTHONPATH")
+                    else ""
+                )
+            ),
+            "INDEXTTS2_USE_FP16": "0",
+            "INDEXTTS2_USE_CUDA_KERNEL": "0",
+            "INDEXTTS2_USE_DEEPSPEED": "0",
+            "INDEXTTS2_EMO_ALPHA": str(args.indextts2_emo_alpha),
+            "PYTHONUTF8": "1",
+            "PYTHONIOENCODING": "utf-8",
+        }
+    )
+
+    checkpoint(
+        args,
+        owner_key,
+        job_id,
+        20,
+        "indextts2_source_speech",
+        "Generating fresh typed source speech with Linux IndexTTS2.",
+        {
+            "sourceSpeechProvider": "indextts2",
+            "sourceSpeechAdapter": "indextts2_single_utterance",
+            "sourceSpeechText": speech_text,
+            "referenceAudioPath": str(reference_audio),
+            "sourceSpeechRequestPath": str(request_path),
+        },
+    )
+
+    started = time.time()
+
+    with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
+        "w",
+        encoding="utf-8",
+    ) as stderr_file:
+        process = subprocess.Popen(
+            command,
+            cwd=str(index_root),
+            env=env,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            text=True,
+            start_new_session=True,
+        )
+
+        try:
+            while process.poll() is None:
+                if (
+                    time.time() - started
+                    >= args.typed_source_timeout_seconds
+                ):
+                    kill_process_group(process)
+                    raise RuntimeError(
+                        "IndexTTS2 typed source speech timed out after "
+                        f"{args.typed_source_timeout_seconds} seconds."
+                    )
+
+                time.sleep(max(3, args.heartbeat_seconds))
+                assert_job_active(
+                    args,
+                    owner_key,
+                    job_id,
+                )
+
+                checkpoint(
+                    args,
+                    owner_key,
+                    job_id,
+                    25,
+                    "indextts2_source_speech",
+                    "Linux IndexTTS2 typed source speech is running.",
+                    {
+                        "sourceSpeechProvider": "indextts2",
+                        "sourceSpeechAdapter": "indextts2_single_utterance",
+                        "sourceSpeechText": speech_text,
+                        "referenceAudioPath": str(reference_audio),
+                        "sourceSpeechRequestPath": str(request_path),
+                    },
+                )
+        except BaseException:
+            kill_process_group(process)
+            raise
+
+    if process.returncode != 0:
+        raise RuntimeError(
+            "IndexTTS2 typed source speech failed with "
+            f"exit code {process.returncode}. "
+            f"stdout: {stdout_path}; stderr: {stderr_path}"
+        )
+
+    if not has_bytes(input_audio):
+        raise RuntimeError(
+            f"IndexTTS2 did not create typed source speech: {input_audio}"
+        )
+
+    return input_audio, {
+        "sourceSpeechProvider": "indextts2",
+        "sourceSpeechAdapter": "indextts2_single_utterance",
+        "sourceSpeechText": speech_text,
+        "sourceSpeechPath": str(input_audio),
+        "sourceSpeechBytes": input_audio.stat().st_size,
+        "sourceSpeechRequestPath": str(request_path),
+        "sourceSpeechStdoutPath": str(stdout_path),
+        "sourceSpeechStderrPath": str(stderr_path),
+        "referenceAudioPath": str(reference_audio),
+    }
+
+
 def process_job(args: argparse.Namespace, job: Dict[str, Any]) -> None:
     owner_key = clean(job.get("ownerKey"))
     job_id = clean(job.get("jobId"))
@@ -408,6 +616,20 @@ def process_job(args: argparse.Namespace, job: Dict[str, Any]) -> None:
     if job_input.get("trainedArtifactMock") is not False and job_input.get("trainingMock") is not False and job_input.get("artifactMock") is not False:
         raise RuntimeError("Applio inference requires a real trained artifact with mock:false.")
 
+    if job_input.get("serverResolvedTrainedVoice") is not True:
+        raise RuntimeError(
+            "Test Trained Voice requires a server-resolved trained voice artifact."
+        )
+
+    resolved_owner_key = clean(
+        job_input.get("serverResolvedOwnerKey")
+    )
+
+    if resolved_owner_key != owner_key:
+        raise RuntimeError(
+            "Test Trained Voice server owner does not match the claimed job owner."
+        )
+
     work_dir = Path(args.work_root).expanduser().resolve() / safe_segment(owner_key) / safe_segment(character_id) / safe_segment(job_id)
     input_dir = work_dir / "input"
     output_dir = work_dir / "output"
@@ -415,12 +637,31 @@ def process_job(args: argparse.Namespace, job: Dict[str, Any]) -> None:
     input_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
-    input_audio = Path(clean(job_input.get("inputAudioPath"))).expanduser()
-    if not has_bytes(input_audio):
-        input_url = clean(job_input.get("inputAudioUrl"))
-        if not input_url:
-            raise RuntimeError("Missing readable inputAudioPath and inputAudioUrl for Applio inference.")
-        input_audio = download_file(args, owner_key, input_url, input_dir / "input.wav")
+    reference_audio = Path(
+        clean(job_input.get("inputAudioPath"))
+    ).expanduser()
+
+    reference_audio_url = clean(
+        job_input.get("inputAudioUrl")
+    )
+
+    if not has_bytes(reference_audio):
+        if not reference_audio_url:
+            raise RuntimeError(
+                "Missing readable server-resolved reference audio for typed Test Voice."
+            )
+
+        reference_audio = download_file(
+            args,
+            owner_key,
+            reference_audio_url,
+            input_dir / "reference.wav",
+        )
+
+    if not has_bytes(reference_audio):
+        raise RuntimeError(
+            f"Typed Test Voice reference audio is unreadable: {reference_audio}"
+        )
 
     output_audio = output_dir / "output.wav"
     stdout_path = logs_dir / "applio-infer-stdout.log"
@@ -443,7 +684,7 @@ def process_job(args: argparse.Namespace, job: Dict[str, Any]) -> None:
         "--volume_envelope", "1",
         "--protect", str(args.protect),
         "--f0_method", args.f0_method,
-        "--input_path", str(input_audio),
+        "--input_path", str(reference_audio),
         "--output_path", str(output_audio),
         "--pth_path", str(model_path),
         "--index_path", str(index_path),
@@ -457,8 +698,10 @@ def process_job(args: argparse.Namespace, job: Dict[str, Any]) -> None:
         "trainedArtifactId": clean(job_input.get("trainedArtifactId") or job_input.get("voiceModelArtifactId")),
         "trainedModelPath": str(model_path),
         "trainedIndexPath": str(index_path),
-        "inputAudioPath": str(input_audio),
-        "inputAudioUrl": clean(job_input.get("inputAudioUrl")),
+        "inputAudioPath": str(reference_audio),
+        "inputAudioUrl": reference_audio_url,
+        "referenceAudioPath": str(reference_audio),
+        "referenceAudioUrl": reference_audio_url,
         "stdoutPath": str(stdout_path),
         "stderrPath": str(stderr_path),
         "commandPath": str(command_path),
@@ -490,8 +733,67 @@ def process_job(args: argparse.Namespace, job: Dict[str, Any]) -> None:
         gpu_lock = acquire_gpu_lock(args, owner_key, job_id)
         wait_for_comfy_idle(args, owner_key, job_id)
         release_comfy_models(args)
-        checkpoint(args, owner_key, job_id, 30, "applio_inference", "Starting real Applio voice conversion.", base_result)
-        run_command(args, owner_key, job_id, command, applio_root, stdout_path, stderr_path, base_result)
+
+        input_audio, source_speech_result = generate_typed_source_speech(
+            args,
+            owner_key,
+            job_id,
+            job_input,
+            reference_audio,
+            work_dir,
+        )
+
+        # Critical invariant: Applio receives the fresh typed IndexTTS2 WAV,
+        # not the reference/approved speaker sample.
+        command[command.index("--input_path") + 1] = str(input_audio)
+
+        base_result.update(source_speech_result)
+        base_result["inputAudioPath"] = str(input_audio)
+        base_result["inputAudioUrl"] = ""
+
+        command_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 2,
+                    "adapter": "applio_real_inference",
+                    "sourceSpeechProvider": "indextts2",
+                    "sourceSpeechAdapter": "indextts2_single_utterance",
+                    "workerId": args.worker_id,
+                    "jobId": job_id,
+                    "ownerKey": owner_key,
+                    "characterId": character_id,
+                    "cwd": str(applio_root),
+                    "python": str(applio_python),
+                    "command": command,
+                    "inputAudioPath": str(input_audio),
+                    "referenceAudioPath": str(reference_audio),
+                    "startedAt": now_iso(),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        checkpoint(
+            args,
+            owner_key,
+            job_id,
+            40,
+            "applio_inference",
+            "Converting fresh typed IndexTTS2 speech with the trained Applio voice.",
+            base_result,
+        )
+
+        run_command(
+            args,
+            owner_key,
+            job_id,
+            command,
+            applio_root,
+            stdout_path,
+            stderr_path,
+            base_result,
+        )
     finally:
         if gpu_lock is not None:
             try:
@@ -567,6 +869,61 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--applio-root", default=os.environ.get("APPLIO_ROOT", "/home/shawn-rochford/AI/runtime/test/Applio"))
     parser.add_argument("--applio-python", default=os.environ.get("APPLIO_PYTHON", "/home/shawn-rochford/AI/runtime/test/Applio/.venv/bin/python"))
     parser.add_argument("--applio-core", default=os.environ.get("APPLIO_CORE_SCRIPT", "/home/shawn-rochford/AI/runtime/test/Applio/core.py"))
+    parser.add_argument(
+        "--indextts2-root",
+        default=os.environ.get(
+            "INDEXTTS2_ROOT",
+            "/home/shawn-rochford/AI/runtime/test/IndexTTS2",
+        ),
+    )
+    parser.add_argument(
+        "--indextts2-python",
+        default=os.environ.get(
+            "INDEXTTS2_PYTHON",
+            "/home/shawn-rochford/AI/runtime/test/IndexTTS2/.venv/bin/python",
+        ),
+    )
+    parser.add_argument(
+        "--indextts2-cfg",
+        default=os.environ.get(
+            "INDEXTTS2_CFG",
+            "/home/shawn-rochford/AI/runtime/test/IndexTTS2/checkpoints/config.yaml",
+        ),
+    )
+    parser.add_argument(
+        "--indextts2-model-dir",
+        default=os.environ.get(
+            "INDEXTTS2_MODEL_DIR",
+            "/home/shawn-rochford/AI/runtime/test/IndexTTS2/checkpoints",
+        ),
+    )
+    parser.add_argument(
+        "--indextts2-bridge",
+        default=os.environ.get(
+            "INDEXTTS2_BRIDGE",
+            str(
+                Path(__file__).resolve().parents[1]
+                / "index_tts2_clone_pack_bridge.py"
+            ),
+        ),
+    )
+    parser.add_argument(
+        "--indextts2-emo-alpha",
+        default=os.environ.get(
+            "INDEXTTS2_EMO_ALPHA",
+            "0.45",
+        ),
+    )
+    parser.add_argument(
+        "--typed-source-timeout-seconds",
+        type=int,
+        default=int(
+            os.environ.get(
+                "OTG_INDEXTTS2_TYPED_SOURCE_TIMEOUT_SECONDS",
+                "900",
+            )
+        ),
+    )
     parser.add_argument("--work-root", default=os.environ.get("OTG_APPLIO_INFERENCE_WORK_ROOT", "/home/shawn-rochford/AI/runtime/test/applio-inference-jobs"))
     parser.add_argument("--data-root", default=os.environ.get("OTG_DATA_DIR", "/home/shawn-rochford/AI/runtime/test/data"))
     parser.add_argument("--comfy-url", default=os.environ.get("OTG_PRIMARY_COMFY_URL", "http://100.75.162.64:8188"))

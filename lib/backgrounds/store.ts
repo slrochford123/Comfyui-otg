@@ -22,6 +22,21 @@ export type BackgroundAngleKeyV36B =
   | "high"
   | "close";
 
+export const BACKGROUND_PRODUCTION_CANONICAL_ANGLE_KEYS_V36B:
+  readonly BackgroundAngleKeyV36B[] = [
+    "front",
+    "back",
+    "left90",
+    "right90",
+    "up",
+    "down",
+  ];
+
+export type BackgroundReferenceReadinessV36B =
+  | "production-ready"
+  | "needs-upgrade"
+  | "broken";
+
 export type BackgroundRecordV36B = {
   type: "background";
   id: string;
@@ -255,18 +270,10 @@ export function saveBackground(ownerKey: string, input: BackgroundRecordInputV36
     ...normalizeAngleImages(input.angleImages),
   };
 
-  const canonicalAngleKeys: BackgroundAngleKeyV36B[] = [
-    "front",
-    "left90",
-    "right90",
-    "back",
-    "up",
-    "down",
-  ];
-
-  const hasCanonicalBackgroundCard = canonicalAngleKeys.every(
-    (key) => Boolean(angleImages[key]),
-  );
+  const hasCanonicalBackgroundCard =
+    BACKGROUND_PRODUCTION_CANONICAL_ANGLE_KEYS_V36B.every(
+      (key) => Boolean(angleImages[key]),
+    );
 
   const displayImage =
     cleanString(input.displayImage) ||
@@ -337,6 +344,85 @@ function localPathFromStoredReference(value: unknown) {
     return "";
   }
 }
+
+function storedBackgroundReferenceHasBytes(value: unknown) {
+  const candidate = localPathFromStoredReference(value);
+  if (!candidate) return false;
+
+  try {
+    return (
+      fs.existsSync(candidate) &&
+      fs.statSync(candidate).isFile() &&
+      fs.statSync(candidate).size > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+function backgroundImageAssetHasLocalBytes(
+  asset:
+    | Partial<BackgroundImageAssetV36B>
+    | null
+    | undefined,
+) {
+  if (!asset) return false;
+
+  return [
+    asset.workflowImage,
+    asset.imagePath,
+    asset.displayImage,
+    asset.imageUrl,
+  ].some(storedBackgroundReferenceHasBytes);
+}
+
+export function backgroundReferenceReadinessV36B(
+  record:
+    | Partial<BackgroundRecordV36B>
+    | null
+    | undefined,
+): BackgroundReferenceReadinessV36B {
+  if (!record) return "broken";
+
+  const hasMaster =
+    backgroundImageAssetHasLocalBytes(record.establishingImage) ||
+    backgroundImageAssetHasLocalBytes({
+      displayImage: cleanString(record.displayImage),
+      workflowImage: cleanString(record.workflowImage),
+      imagePath: cleanString(record.imagePath),
+      imageUrl: cleanString(record.imageUrl),
+    });
+
+  if (!hasMaster) {
+    return "broken";
+  }
+
+  const hasAllCanonicalAngles =
+    BACKGROUND_PRODUCTION_CANONICAL_ANGLE_KEYS_V36B.every(
+      (key) =>
+        backgroundImageAssetHasLocalBytes(
+          record.angleImages?.[key],
+        ),
+    );
+
+  return hasAllCanonicalAngles
+    ? "production-ready"
+    : "needs-upgrade";
+}
+
+export function isBackgroundProductionReadyV36B(
+  record:
+    | Partial<BackgroundRecordV36B>
+    | null
+    | undefined,
+) {
+  return (
+    backgroundReferenceReadinessV36B(record) ===
+    "production-ready"
+  );
+}
+
+// OTG_BACKGROUND_PRODUCTION_READINESS_PP04C_V1
 
 function recordAssetPaths(ownerKey: string, record: BackgroundRecordV36B | null) {
   if (!record) return new Set<string>();

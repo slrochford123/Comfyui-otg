@@ -123,7 +123,7 @@ export function videoWorkflowDefinition(workflowId: unknown) {
 
 export function detectVideoWorkflowFamily(workflowId: unknown): VideoLoraFamily | null {
   const workflow = videoWorkflowDefinition(workflowId);
-  return workflow?.modelId === "wan22" ? "wan" : workflow?.modelId === "ltx23" ? "ltx" : null;
+  return workflow?.modelId === "wan22" ? "wan" : workflow?.modelId === "ltx23" || workflow?.modelId === "ltx25" ? "ltx" : null;
 }
 
 export function videoWorkflowMode(workflowId: unknown): VideoGenerateOperation | null {

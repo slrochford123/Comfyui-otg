@@ -5,12 +5,12 @@ import { useMemo } from "react";
 export type SpinTabId =
   | "gethelp"
   | "generate"
-  | "angles"
+  | "h3"
+  | "machine"
   | "storyboard"
   | "characters"
   | "gallery"
   | "voices"
-  | "favorites"
   | "editvideo"
   | "settings"
   | "support";
@@ -38,12 +38,12 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, showProductio
     () => [
       { id: "gethelp", label: "AI Assistance" },
       { id: "generate", label: "Generate" },
-      { id: "angles", label: "Angles" },
+      { id: "h3", label: "H3" },
+      { id: "machine", label: "Machine" },
       ...(showProduction ? [{ id: "storyboard", label: "Production" } as Item] : []),
       { id: "characters", label: "Characters" },
       { id: "gallery", label: "Gallery" },
       ...(isAdmin ? [{ id: "voices", label: "Voices" } as Item] : []),
-      { id: "favorites", label: "Favorites" },
       { id: "editvideo", label: "Edit Video" },
       { id: "settings", label: "Settings" },
       { id: "support", label: "Support" },

@@ -14,9 +14,23 @@ import {
   normalizeProductionV2H3UserLoras,
   type ProductionV2H3UserLoraState,
 } from "@/lib/production/h3Loras";
+import {
+  normalizeH3Quality,
+  type H3Quality,
+} from "@/lib/production/h3ProductionRecipes";
 
 export const PRODUCTION_V2_SCHEMA_VERSION = 2 as const;
 export const PRODUCTION_V2_MAX_SCENES = 8;
+/*
+ * OTG_PRODUCTION_V2_MODEL_AWARE_DURATION_POLICY_V1
+ *
+ * The complete persisted duration union remains 5/10/15 for
+ * backwards compatibility, but each generation model exposes
+ * only its qualified production durations.
+ */
+export const PRODUCTION_V2_H3_DURATION_OPTIONS = [5, 10] as const;
+export const PRODUCTION_V2_LTX_DURATION_OPTIONS = [5, 10] as const;
+/* OTG_PRODUCTION_V2_LTX_R13C_CARD_5S10S_AUTHORITY_V1 */
 export const PRODUCTION_V2_DURATION_OPTIONS = [5, 10, 15] as const;
 export const PRODUCTION_V2_H3_MAX_SPEAKERS = 3;
 export const LTX_V2_DEFAULT_INGREDIENT_LIMIT = 6;
@@ -27,7 +41,9 @@ export type ProductionV2SceneStatus = "draft" | "generating" | "generated" | "ac
 export type ProductionV2Stage = "storyboard" | "visual-studios" | "audio-studios" | "assembly";
 export type ProductionV2LifecycleStage = "draft" | "scenes-generated" | "editing" | "assembly-rendered" | "user-verified" | "completed";
 export type ProductionV2Duration = (typeof PRODUCTION_V2_DURATION_OPTIONS)[number];
+export type ProductionV2H3Quality = H3Quality;
 export type ProductionV2GenerationMode =
+  | "h3-text-to-video"
   | "h3-image-to-video"
   | "h3-reference-to-video"
   | "ltx-ingredients-image-to-video";
@@ -52,6 +68,28 @@ export type ProductionV2EntityImage = {
   displayImage?: string;
   workflowImage?: string;
 };
+
+/*
+ * OTG_PRODUCTION_V2_LTX_CHARACTER_VIEW_V1
+ *
+ * LTX Ingredients consumes one single-view Character image.
+ * "default" means the canonical Front view.
+ *
+ * The H3 Character Card contract remains unchanged.
+ */
+export type ProductionV2LtxCharacterView =
+  | "default"
+  | "left"
+  | "right"
+  | "back";
+
+export const PRODUCTION_V2_LTX_CHARACTER_VIEWS =
+  [
+    "default",
+    "left",
+    "right",
+    "back",
+  ] as const;
 
 export type ProductionV2CatalogPerspective = ProductionV2EntityImage & {
   key: string;
@@ -99,11 +137,67 @@ export type ProductionV2CharacterSelection = {
   sourceUpdatedAt?: string;
   defaultImageRef: ProductionV2EntityImage;
   characterCardRef: ProductionV2EntityImage;
+
+  /*
+   * LTX-only single-view references.
+   *
+   * H3 continues to use characterCardRef.
+   * Default maps to the canonical Front image.
+   */
+  ltxReferenceView?: ProductionV2LtxCharacterView;
+  ltxViewImageRefs?: Partial<
+    Record<
+      ProductionV2LtxCharacterView,
+      ProductionV2EntityImage
+    >
+  >;
+
   identityDescription: string;
   speaking: boolean;
   visible: boolean;
   voiceRef?: ProductionV2CharacterVoiceReference;
 };
+
+export function normalizeProductionV2LtxCharacterReferenceView(
+  value: unknown,
+): ProductionV2LtxCharacterView {
+  return value === "left"
+    || value === "right"
+    || value === "back"
+    || value === "default"
+    ? value
+    : "default";
+}
+
+export function productionV2LtxCharacterReferenceImage(
+  character: ProductionV2CharacterSelection,
+): ProductionV2EntityImage | undefined {
+  /*
+   * OTG_PRODUCTION_V2_LTX_R13C_CHARACTER_CARD_AUTHORITY_V1
+   *
+   * One selected Character remains one logical LTX Ingredient.
+   * The complete saved Character Card is the canonical model-facing
+   * identity source. Selector/default/directional images are retained
+   * only for legacy persistence/UI compatibility and never replace a
+   * completed Character Card for LTX Ingredients conditioning.
+   */
+  const card = character.characterCardRef;
+
+  if (
+    card?.workflowImage
+    || card?.displayImage
+  ) {
+    return card;
+  }
+
+  return undefined;
+}
+
+export function productionV2LtxCharacterPerspectiveKey(
+  _character: ProductionV2CharacterSelection,
+) {
+  return "character-card" as const;
+}
 
 export type ProductionV2DialogueTurn = {
   id: string;
@@ -111,11 +205,55 @@ export type ProductionV2DialogueTurn = {
   text: string;
 };
 
+/*
+ * OTG_PRODUCTION_V2_BACKGROUND_SIX_VIEW_SNAPSHOT_V1
+ *
+ * Production-ready Backgrounds have six canonical directional
+ * plates. Scene selections snapshot those assets so later Gallery
+ * changes cannot silently alter an existing Production scene.
+ *
+ * This client-safe tuple intentionally mirrors the Background store
+ * contract without importing the server-side Background store here.
+ */
+export const PRODUCTION_V2_BACKGROUND_CANONICAL_ANGLE_KEYS = [
+  "front",
+  "back",
+  "left90",
+  "right90",
+  "up",
+  "down",
+] as const;
+
+export type ProductionV2BackgroundAngleKey =
+  (typeof PRODUCTION_V2_BACKGROUND_CANONICAL_ANGLE_KEYS)[number];
+
+/*
+ * OTG_PRODUCTION_V2_BACKGROUND_REFERENCE_VIEW_V1
+ *
+ * "master" preserves existing Production behavior.
+ * Directional values select an exact canonical Background plate.
+ * A requested directional plate never silently falls back to Master.
+ */
+export const PRODUCTION_V2_BACKGROUND_REFERENCE_VIEWS = [
+  "master",
+  ...PRODUCTION_V2_BACKGROUND_CANONICAL_ANGLE_KEYS,
+] as const;
+
+export type ProductionV2BackgroundReferenceView =
+  (typeof PRODUCTION_V2_BACKGROUND_REFERENCE_VIEWS)[number];
+
 export type ProductionV2BackgroundSelection = {
   backgroundId: string;
   snapshotName: string;
   sourceUpdatedAt?: string;
   masterImageRef: ProductionV2EntityImage;
+  angleImageRefs?: Partial<
+    Record<
+      ProductionV2BackgroundAngleKey,
+      ProductionV2EntityImage
+    >
+  >;
+  referenceView?: ProductionV2BackgroundReferenceView;
   identityDescription: string;
 };
 
@@ -131,7 +269,7 @@ export type ProductionV2VisualReference = {
   id: string;
   name: string;
   sourceKind: "character" | "background" | "asset" | "production-upload";
-  generationSourceType?: "character-card" | "background-master" | "asset-default" | "production-upload";
+  generationSourceType?: "character-card" | "background-master" | "background-angle" | "asset-default" | "production-upload";
   sourceId?: string;
   perspectiveKey?: string;
   pictureSlot?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
@@ -170,9 +308,26 @@ export type ProductionV2ClipReference = {
   generationJobId?: string;
   promptId?: string;
   backend?: "rtx3090" | "rtx5060ti";
-  model?: "minimax-h3";
-  mode?: "h3-image-to-video" | "h3-reference-to-video";
+  model?: ProductionV2Model;
+  mode?: ProductionV2GenerationMode;
   durationSeconds?: ProductionV2Duration;
+};
+
+/*
+ * OTG_PRODUCTION_V2_CONTINUATION_SOURCE_V1
+ *
+ * Server-prepared continuation lineage. Media and frame paths are
+ * persisted only after owner-scoped source resolution and server-side
+ * final-frame extraction.
+ */
+export type ProductionV2ContinuationSource = {
+  sourceSceneId: string;
+  sourceSceneNumber: number;
+  sourceMediaVersionId: string;
+  sourceMediaPath: string;
+  sourcePreviewUrl?: string;
+  lastFramePath: string;
+  createdAt: string;
 };
 
 export type ProductionV2SceneMediaVersionType = "generated" | "visual-edit" | "trimmed" | "audio-edit" | "assembly-source";
@@ -265,7 +420,7 @@ export type ProductionV2AssemblyState = {
 };
 
 export type ProductionV2H3State = {
-  lastMode: "h3-image-to-video" | "h3-reference-to-video";
+  lastMode: "h3-text-to-video" | "h3-image-to-video" | "h3-reference-to-video";
   userLoras: ProductionV2H3UserLoraState;
   imageToVideo: { startingImage: ProductionV2VisualReference | null };
   referenceToVideo: { resolvedVoiceBindings: ProductionV2ResolvedVoiceBinding[] };
@@ -286,6 +441,7 @@ export type ProductionV2Scene = {
   model: ProductionV2Model;
   generationMode: ProductionV2GenerationMode;
   durationSeconds: ProductionV2Duration;
+  h3Quality: ProductionV2H3Quality;
   promptOptions: ProductionV2PromptOptions;
   promptStateByMode: Record<ProductionV2GenerationMode, ProductionV2PromptState>;
   selectedCharacters: ProductionV2CharacterSelection[];
@@ -298,6 +454,7 @@ export type ProductionV2Scene = {
   workflowVersion: string | null;
   seed: number | null;
   generatedClip: ProductionV2ClipReference | null;
+  continuation: ProductionV2ContinuationSource | null;
   savedAt: string | null;
   generationAttempts: ProductionV2GenerationAttempt[];
   mediaVersions: ProductionV2SceneMediaVersion[];
@@ -334,7 +491,7 @@ export type ProductionV2Summary = {
   activeSceneId: string;
 };
 
-const H3_MODES: ProductionV2GenerationMode[] = ["h3-image-to-video", "h3-reference-to-video"];
+const H3_MODES: ProductionV2GenerationMode[] = ["h3-text-to-video", "h3-image-to-video", "h3-reference-to-video"];
 const LTX_MODES: ProductionV2GenerationMode[] = ["ltx-ingredients-image-to-video"];
 
 function cleanString(value: unknown, fallback = "") {
@@ -345,6 +502,184 @@ function cleanString(value: unknown, fallback = "") {
 function cleanOptionalString(value: unknown) {
   const text = cleanString(value);
   return text || undefined;
+}
+
+export function normalizeProductionV2BackgroundReferenceView(
+  value: unknown,
+): ProductionV2BackgroundReferenceView {
+  return PRODUCTION_V2_BACKGROUND_REFERENCE_VIEWS.some(
+    (candidate) => candidate === value,
+  )
+    ? value as ProductionV2BackgroundReferenceView
+    : "master";
+}
+
+export function productionV2BackgroundReferenceView(
+  background: ProductionV2BackgroundSelection,
+): ProductionV2BackgroundReferenceView {
+  return normalizeProductionV2BackgroundReferenceView(
+    background.referenceView,
+  );
+}
+
+export function productionV2BackgroundReferenceImage(
+  background: ProductionV2BackgroundSelection,
+): ProductionV2EntityImage | null {
+  const view =
+    productionV2BackgroundReferenceView(
+      background,
+    );
+
+  if (view === "master") {
+    return background.masterImageRef;
+  }
+
+  return background.angleImageRefs?.[view] || null;
+}
+
+/*
+ * OTG_PRODUCTION_V2_BACKGROUND_VISUAL_REFERENCE_CONTRACT_V1
+ *
+ * Master references must not claim a directional perspective.
+ * Directional references must identify one exact canonical plate.
+ */
+export function assertProductionV2BackgroundVisualReference(
+  reference: ProductionV2VisualReference,
+) {
+  if (reference.sourceKind !== "background") {
+    return;
+  }
+
+  if (
+    reference.generationSourceType
+    === "background-master"
+  ) {
+    if (reference.perspectiveKey) {
+      throw new Error(
+        `${reference.name} is marked as a Background Master but also declares perspective ${reference.perspectiveKey}.`,
+      );
+    }
+
+    return;
+  }
+
+  if (
+    reference.generationSourceType
+    === "background-angle"
+  ) {
+    const validPerspective =
+      PRODUCTION_V2_BACKGROUND_CANONICAL_ANGLE_KEYS.some(
+        (key) =>
+          key === reference.perspectiveKey,
+      );
+
+    if (!validPerspective) {
+      throw new Error(
+        `${reference.name} is marked as a Background angle but does not declare a valid canonical perspective.`,
+      );
+    }
+
+    return;
+  }
+
+  throw new Error(
+    `${reference.name} does not declare a valid Production Background generation source.`,
+  );
+}
+
+
+/*
+ * OTG_PRODUCTION_V2_H3_I2V_STARTING_IMAGE_CONTRACT_V1
+ *
+ * H3 I2V accepts one exact model-facing Starting Image.
+ *
+ * Character:
+ *   Character Card only. The Default image remains a UI thumbnail.
+ *
+ * Background:
+ *   Master or one exact canonical directional plate.
+ *
+ * Asset:
+ *   Saved Default image only until Asset perspectives receive a
+ *   separate canonical production contract.
+ *
+ * Production upload:
+ *   Explicit user-selected production image.
+ */
+export function assertProductionV2H3StartingImage(
+  reference: ProductionV2VisualReference,
+): asserts reference is ProductionV2VisualReference & {
+  workflowImage: string;
+} {
+  if (!cleanString(reference.workflowImage)) {
+    throw new Error(
+      "The selected H3 Starting Image does not have a model-facing generation source.",
+    );
+  }
+
+  if (reference.sourceKind === "character") {
+    if (
+      reference.generationSourceType
+      !== "character-card"
+    ) {
+      throw new Error(
+        "H3 I2V Character input must use the saved Character Card; default Character images are UI thumbnails only.",
+      );
+    }
+
+    if (reference.perspectiveKey) {
+      throw new Error(
+        "H3 I2V Character Card input must not declare a directional perspective.",
+      );
+    }
+
+    return;
+  }
+
+  if (reference.sourceKind === "background") {
+    assertProductionV2BackgroundVisualReference(
+      reference,
+    );
+    return;
+  }
+
+  if (reference.sourceKind === "asset") {
+    if (
+      reference.generationSourceType
+      !== "asset-default"
+    ) {
+      throw new Error(
+        "H3 I2V Asset input must use the saved Asset default image.",
+      );
+    }
+
+    if (reference.perspectiveKey) {
+      throw new Error(
+        "H3 I2V Asset default input must not declare a perspective.",
+      );
+    }
+
+    return;
+  }
+
+  if (
+    reference.sourceKind === "production-upload"
+  ) {
+    if (
+      reference.generationSourceType
+      !== "production-upload"
+    ) {
+      throw new Error(
+        "H3 I2V production upload must declare the production-upload generation source.",
+      );
+    }
+
+    return;
+  }
+
+  throw new Error(
+    "The selected H3 Starting Image has an unsupported source.",
+  );
 }
 
 function cleanId(value: unknown, fallback: string) {
@@ -406,6 +741,55 @@ export function productionV2ModesForModel(model: ProductionV2Model) {
   return model === "ltx-2.5" ? [...LTX_MODES] : [...H3_MODES];
 }
 
+export function productionV2DurationsForModel(
+  model: ProductionV2Model,
+): ProductionV2Duration[] {
+  return model === "ltx-2.5"
+    ? [...PRODUCTION_V2_LTX_DURATION_OPTIONS]
+    : [...PRODUCTION_V2_H3_DURATION_OPTIONS];
+}
+
+export function normalizeProductionV2DurationForModel(
+  model: ProductionV2Model,
+  value: unknown,
+): ProductionV2Duration {
+  /*
+   * OTG_PRODUCTION_V2_LTX_R13C_DURATION_POLICY_V1
+   *
+   * LTX 2.5 Ingredients is explicitly qualified for 5 and 10
+   * seconds. The shared model-aware normalization below preserves
+   * either value and clamps legacy values above 10 to 10.
+   */
+
+  const numeric = Number(value);
+  const supported =
+    productionV2DurationsForModel(model);
+
+  if (
+    supported.includes(
+      numeric as ProductionV2Duration,
+    )
+  ) {
+    return numeric as ProductionV2Duration;
+  }
+
+  /*
+   * Production V2 supports only 5- and 10-second scenes.
+   *
+   * Keep 15 in the persisted duration union temporarily so
+   * older records remain readable, but normalize any legacy
+   * value above 10 seconds to the longest supported duration.
+   */
+  if (
+    Number.isFinite(numeric)
+    && numeric > 10
+  ) {
+    return 10;
+  }
+
+  return supported[0] || 5;
+}
+
 export function productionV2ModeMatchesModel(model: ProductionV2Model, mode: ProductionV2GenerationMode) {
   return productionV2ModesForModel(model).includes(mode);
 }
@@ -430,6 +814,7 @@ function defaultPromptState(mode: ProductionV2GenerationMode): ProductionV2Promp
 
 function defaultPromptStates(): ProductionV2Scene["promptStateByMode"] {
   return {
+    "h3-text-to-video": defaultPromptState("h3-text-to-video"),
     "h3-image-to-video": defaultPromptState("h3-image-to-video"),
     "h3-reference-to-video": defaultPromptState("h3-reference-to-video"),
     "ltx-ingredients-image-to-video": defaultPromptState("ltx-ingredients-image-to-video"),
@@ -472,6 +857,7 @@ export function createProductionV2Scene(sceneNumber: number, model: ProductionV2
     model,
     generationMode,
     durationSeconds: 5,
+    h3Quality: "lq",
     promptOptions: { ...DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS },
     promptStateByMode: defaultPromptStates(),
     selectedCharacters: [],
@@ -492,6 +878,7 @@ export function createProductionV2Scene(sceneNumber: number, model: ProductionV2
     workflowVersion: null,
     seed: null,
     generatedClip: null,
+    continuation: null,
     savedAt: null,
     generationAttempts: [],
     mediaVersions: [],
@@ -531,6 +918,7 @@ export function invalidateProductionV2Prompts(scene: ProductionV2Scene): Product
     ...scene,
     status: editedSceneStatus(scene),
     promptStateByMode: {
+      "h3-text-to-video": stalePromptState(scene.promptStateByMode["h3-text-to-video"]),
       "h3-image-to-video": stalePromptState(scene.promptStateByMode["h3-image-to-video"]),
       "h3-reference-to-video": stalePromptState(scene.promptStateByMode["h3-reference-to-video"]),
       "ltx-ingredients-image-to-video": stalePromptState(scene.promptStateByMode["ltx-ingredients-image-to-video"]),
@@ -541,16 +929,48 @@ export function invalidateProductionV2Prompts(scene: ProductionV2Scene): Product
 export function switchProductionV2SceneModel(scene: ProductionV2Scene, model: ProductionV2Model): ProductionV2Scene {
   if (scene.model === model) return scene;
   const generationMode = model === "ltx-2.5" ? scene.modelState.ltx.lastMode : scene.modelState.h3.lastMode;
-  return invalidateProductionV2Prompts({ ...scene, model, generationMode, status: "draft" });
+  const durationSeconds = normalizeProductionV2DurationForModel(
+    model,
+    scene.durationSeconds,
+  );
+  return invalidateProductionV2Prompts({ ...scene, model, generationMode, durationSeconds, status: "draft" });
 }
 
+/*
+ * OTG_PRODUCTION_V2_MODE_SHARED_USER_PROMPT_R10_V1
+ *
+ * T2V / I2V / R2V have independent model-specific built prompt state,
+ * but the user's natural-language Scene description follows the Scene.
+ *
+ * Copy only userPrompt into the destination mode. Locked references,
+ * generated Scene Prompt, Final Prompt, fingerprints, and review state
+ * remain destination-mode-owned and are invalidated normally.
+ */
 export function switchProductionV2SceneMode(scene: ProductionV2Scene, generationMode: ProductionV2GenerationMode): ProductionV2Scene {
   if (!productionV2ModeMatchesModel(scene.model, generationMode)) throw new Error(`${generationMode} is not available for ${scene.model}.`);
   if (scene.generationMode === generationMode) return scene;
+
+  const sharedUserPrompt =
+    scene.promptStateByMode[
+      scene.generationMode
+    ].userPrompt;
+
+  const destinationPromptState =
+    scene.promptStateByMode[
+      generationMode
+    ];
+
   return invalidateProductionV2Prompts({
     ...scene,
     generationMode,
     status: "draft",
+    promptStateByMode: {
+      ...scene.promptStateByMode,
+      [generationMode]: {
+        ...destinationPromptState,
+        userPrompt: sharedUserPrompt,
+      },
+    },
     modelState: {
       ...scene.modelState,
       h3: scene.model === "minimax-h3" ? { ...scene.modelState.h3, lastMode: generationMode as ProductionV2H3State["lastMode"] } : scene.modelState.h3,
@@ -583,12 +1003,47 @@ function fingerprintHash(text: string) {
 
 export function productionV2PromptFingerprint(scene: ProductionV2Scene) {
   const prompt = scene.promptStateByMode[scene.generationMode];
-  const entityInputs = scene.generationMode === "h3-image-to-video" ? null : {
+  const ltxIngredientsMode =
+    scene.generationMode
+    === "ltx-ingredients-image-to-video";
+  const backgroundReferenceView =
+    scene.selectedBackground
+      ? ltxIngredientsMode
+        ? "master"
+        : productionV2BackgroundReferenceView(
+            scene.selectedBackground,
+          )
+      : null;
+  const backgroundReferenceImage =
+    scene.selectedBackground
+      ? ltxIngredientsMode
+        ? scene.selectedBackground.masterImageRef
+        : productionV2BackgroundReferenceImage(
+            scene.selectedBackground,
+          )
+      : null;
+  const entityInputs = scene.generationMode === "h3-reference-to-video" || scene.generationMode === "ltx-ingredients-image-to-video" ? {
     characters: scene.selectedCharacters.map((item) => ({
       id: item.characterId,
       name: item.snapshotName,
       identityDescription: item.identityDescription,
-      image: item.characterCardRef.workflowImage || item.characterCardRef.displayImage || "",
+      image:
+        scene.generationMode
+        === "ltx-ingredients-image-to-video"
+          ? (
+              productionV2LtxCharacterReferenceImage(
+                item,
+              )?.workflowImage
+              || productionV2LtxCharacterReferenceImage(
+                item,
+              )?.displayImage
+              || ""
+            )
+          : (
+              item.characterCardRef.workflowImage
+              || item.characterCardRef.displayImage
+              || ""
+            ),
       visible: item.visible,
       speaking: item.speaking,
       voice: item.voiceRef?.sourcePath || "",
@@ -596,14 +1051,18 @@ export function productionV2PromptFingerprint(scene: ProductionV2Scene) {
     background: scene.selectedBackground ? {
       id: scene.selectedBackground.backgroundId,
       identityDescription: scene.selectedBackground.identityDescription,
-      image: scene.selectedBackground.masterImageRef.workflowImage || scene.selectedBackground.masterImageRef.displayImage || "",
+      referenceView: backgroundReferenceView,
+      image:
+        backgroundReferenceImage?.workflowImage
+        || backgroundReferenceImage?.displayImage
+        || "",
     } : null,
     assets: scene.selectedAssets.map((item) => ({
       id: item.assetId,
       identityDescription: item.identityDescription,
       image: item.defaultImageRef.workflowImage || item.defaultImageRef.displayImage || "",
     })),
-  };
+  } : null;
   return fingerprintHash(JSON.stringify({
     model: scene.model,
     mode: scene.generationMode,
@@ -620,7 +1079,22 @@ export function productionV2PromptFingerprint(scene: ProductionV2Scene) {
     startingImage: scene.generationMode === "h3-image-to-video" ? {
       id: scene.modelState.h3.imageToVideo.startingImage?.id || null,
       generationSourceType: scene.modelState.h3.imageToVideo.startingImage?.generationSourceType || null,
+      perspectiveKey: scene.modelState.h3.imageToVideo.startingImage?.perspectiveKey || null,
       workflowImage: scene.modelState.h3.imageToVideo.startingImage?.workflowImage || null,
+    } : null,
+    /*
+     * OTG_PRODUCTION_V2_CONTINUATION_FINGERPRINT_V1
+     *
+     * Continuation changes are model-input changes. A reviewed/built
+     * prompt must become stale if its exact source Scene/version or
+     * extracted final frame changes.
+     */
+    continuation: scene.continuation ? {
+      sourceSceneId: scene.continuation.sourceSceneId,
+      sourceSceneNumber: scene.continuation.sourceSceneNumber,
+      sourceMediaVersionId: scene.continuation.sourceMediaVersionId,
+      sourceMediaPath: scene.continuation.sourceMediaPath,
+      lastFramePath: scene.continuation.lastFramePath,
     } : null,
     userLoras: scene.model === "minimax-h3" ? scene.modelState.h3.userLoras : null,
     resolvedReferences: scene.referencePlan.modelFacingReferences.map((item) => ({
@@ -727,11 +1201,13 @@ export function estimateProductionV2DialogueDurationSeconds(dialogueTurns: Produ
 export function productionV2DialogueDurationWarning(scene: ProductionV2Scene) {
   const estimatedSeconds = estimateProductionV2DialogueDurationSeconds(scene.dialogueTurns);
   if (!estimatedSeconds || estimatedSeconds <= scene.durationSeconds) return null;
-  const recommendation = scene.durationSeconds < 10
-    ? "Consider using 10 or 15 seconds."
-    : scene.durationSeconds < 15
-      ? "Consider using 15 seconds."
-      : "Consider shortening the dialogue or splitting it across scenes.";
+  // OTG_PRODUCTION_V2_DIALOGUE_DURATION_5_10_ONLY_V1
+  // OTG_PRODUCTION_V2_LTX_DIALOGUE_5_10_V1
+  let recommendation =
+    "Consider shortening the dialogue or splitting it across scenes.";
+  if (scene.durationSeconds < 10) {
+    recommendation = "Consider using 10 seconds.";
+  }
   return `Dialogue may be too long for a ${scene.durationSeconds}-second scene. Estimated dialogue duration: ${estimatedSeconds.toFixed(1)} seconds. ${recommendation}`;
 }
 
@@ -758,7 +1234,60 @@ export function productionV2H3VoiceBindings(scene: ProductionV2Scene): Productio
 export function productionV2GenerationReadiness(scene: ProductionV2Scene) {
   const prompt = scene.promptStateByMode[scene.generationMode];
   const fingerprint = productionV2PromptFingerprint(scene);
-  if (!prompt.finalPrompt.trim()) return { ok: false, reason: "Build and review the final prompt first." };
+  if (!prompt.finalPrompt.trim()) return { ok: false, reason: "Build the final prompt first." };
+
+  if (scene.model === "ltx-2.5") {
+    if (scene.generationMode !== "ltx-ingredients-image-to-video") {
+      return {
+        ok: false,
+        reason: "LTX 2.5 currently supports Ingredients Image-to-Video only.",
+      };
+    }
+    /*
+     * OTG_PRODUCTION_V2_LTX_R13C_READINESS_5S10S_V1
+     */
+    if (
+      scene.durationSeconds !== 5
+      && scene.durationSeconds !== 10
+    ) {
+      return {
+        ok: false,
+        reason: "LTX 2.5 Ingredients is production-qualified for 5- or 10-second scenes only.",
+      };
+    }
+
+    const ingredientCount =
+      productionV2LtxVisualIngredientCount(scene);
+
+    if (ingredientCount < 1) {
+      return {
+        ok: false,
+        reason: "Select at least one Character, Background, or Asset for LTX 2.5 Ingredients.",
+      };
+    }
+
+    const ingredientLimit =
+      Math.min(
+        6,
+        Math.max(
+          1,
+          Math.floor(
+            Number(
+              scene.modelState.ltx.ingredients
+                .visualIngredientLimit,
+            ) || LTX_V2_DEFAULT_INGREDIENT_LIMIT,
+          ),
+        ),
+      );
+
+    if (ingredientCount > ingredientLimit) {
+      return {
+        ok: false,
+        reason: `The Scene allows ${ingredientLimit} LTX visual Ingredients, but ${ingredientCount} are selected.`,
+      };
+    }
+  }
+
   if (scene.model === "minimax-h3") {
     try {
       assertProductionV2H3UserLoraTriggers(prompt.scenePrompt, scene.modelState.h3.userLoras);
@@ -766,8 +1295,7 @@ export function productionV2GenerationReadiness(scene: ProductionV2Scene) {
       return { ok: false, reason: error instanceof Error ? error.message : "Enabled H3 LoRA trigger text is missing." };
     }
   }
-  if (prompt.reviewStatus === "stale" || prompt.buildFingerprint !== fingerprint) return { ok: false, reason: "The final prompt is stale. Rebuild and review it." };
-  if (prompt.reviewStatus !== "reviewed" || prompt.reviewedFingerprint !== fingerprint) return { ok: false, reason: "Review the exact final prompt before generation." };
+  if (prompt.reviewStatus === "stale" || prompt.buildFingerprint !== fingerprint) return { ok: false, reason: "The final prompt is stale. Rebuild it." };
   if (scene.generationMode === "h3-reference-to-video") {
     if (scene.referencePlan.status !== "planned" || !scene.referencePlan.modelFacingReferences.length) {
       return { ok: false, reason: "Resolve the ordered H3 Picture and Subject reference manifest before generation." };
@@ -781,9 +1309,19 @@ export function productionV2GenerationReadiness(scene: ProductionV2Scene) {
   if (scene.generationMode === "h3-image-to-video") {
     const startingImage = scene.modelState.h3.imageToVideo.startingImage;
     if (!startingImage) return { ok: false, reason: "Choose one Starting Image." };
-    if (!startingImage.workflowImage) return { ok: false, reason: "The selected Starting Image does not have a generation source." };
-    if (startingImage.sourceKind === "character" && startingImage.generationSourceType !== "character-card") {
-      return { ok: false, reason: "Character generation requires the saved Character Card; the default Character image cannot be used." };
+
+    try {
+      assertProductionV2H3StartingImage(
+        startingImage,
+      );
+    } catch (error) {
+      return {
+        ok: false,
+        reason:
+          error instanceof Error
+            ? error.message
+            : "The selected H3 Starting Image is invalid.",
+      };
     }
   }
   return { ok: true, reason: "Final prompt reviewed and ready for the generation adapter." };
@@ -818,6 +1356,73 @@ export function addProductionV2Scene(production: ProductionV2, model = productio
   if (production.scenes.length >= PRODUCTION_V2_MAX_SCENES) throw new Error(`A production can contain at most ${PRODUCTION_V2_MAX_SCENES} scenes.`);
   const scene = createProductionV2Scene(production.scenes.length + 1, model);
   return { ...production, activeSceneId: scene.id, scenes: [...production.scenes, scene] };
+}
+
+/*
+ * OTG_PRODUCTION_V2_SCENE_REMOVAL_V1
+ *
+ * Scene removal is production-local. Survivors keep their
+ * scene identity/state while scene numbers are made contiguous.
+ * If the active scene is removed, prefer the scene that moves
+ * into its position; removing the final scene falls back to the
+ * previous survivor.
+ */
+export function removeProductionV2Scene(
+  production: ProductionV2,
+  sceneId: string,
+): ProductionV2 {
+  if (production.scenes.length <= 1) {
+    throw new Error(
+      "A Production must contain at least one scene.",
+    );
+  }
+
+  const removedIndex =
+    production.scenes.findIndex(
+      (scene) => scene.id === sceneId,
+    );
+
+  if (removedIndex < 0) {
+    throw new Error(
+      "Scene not found in this Production.",
+    );
+  }
+
+  const scenes =
+    production.scenes
+      .filter(
+        (scene) => scene.id !== sceneId,
+      )
+      .map(
+        (scene, index) => ({
+          ...scene,
+          sceneNumber: index + 1,
+        }),
+      );
+
+  const activeStillExists =
+    scenes.some(
+      (scene) =>
+        scene.id === production.activeSceneId,
+    );
+
+  const fallbackIndex =
+    Math.min(
+      removedIndex,
+      scenes.length - 1,
+    );
+
+  const activeSceneId =
+    production.activeSceneId !== sceneId
+    && activeStillExists
+      ? production.activeSceneId
+      : scenes[fallbackIndex].id;
+
+  return {
+    ...production,
+    activeSceneId,
+    scenes,
+  };
 }
 
 export function productionV2SceneCardStatus(scene: ProductionV2Scene): "Draft" | "Saved" | "Generated" | "Edited" {
@@ -981,18 +1586,181 @@ function normalizeVoiceRef(value: any, fallbackPath?: unknown): ProductionV2Char
 function normalizeCharacterSelection(value: any): ProductionV2CharacterSelection | null {
   const characterId = cleanString(value?.characterId || value?.id);
   const snapshotName = cleanString(value?.snapshotName || value?.name);
+
   if (!characterId || !snapshotName) return null;
+
+  const defaultImageRef =
+    normalizeEntityImage(
+      value?.defaultImageRef
+      || {
+        displayImage:
+          value?.displayImage,
+        workflowImage:
+          value?.workflowImage,
+      },
+    );
+
+  const ltxReferenceView =
+    normalizeProductionV2LtxCharacterReferenceView(
+      value?.ltxReferenceView,
+    );
+
+  const rawLtxViews =
+    value?.ltxViewImageRefs
+    && typeof value.ltxViewImageRefs === "object"
+      ? value.ltxViewImageRefs
+      : {};
+
+  const ltxViewImageRefs:
+    Partial<
+      Record<
+        ProductionV2LtxCharacterView,
+        ProductionV2EntityImage
+      >
+    > = {};
+
+  for (
+    const view
+    of PRODUCTION_V2_LTX_CHARACTER_VIEWS
+  ) {
+    const image =
+      normalizeEntityImage(
+        rawLtxViews?.[view],
+      );
+
+    if (
+      image.workflowImage
+      || image.displayImage
+    ) {
+      ltxViewImageRefs[view] =
+        image;
+    }
+  }
+
+  if (!ltxViewImageRefs.default) {
+    ltxViewImageRefs.default =
+      defaultImageRef;
+  }
+
   return {
     characterId,
     snapshotName,
-    sourceUpdatedAt: cleanOptionalString(value?.sourceUpdatedAt),
-    defaultImageRef: normalizeEntityImage(value?.defaultImageRef || { displayImage: value?.displayImage, workflowImage: value?.workflowImage }),
-    characterCardRef: normalizeEntityImage(value?.characterCardRef || value?.characterCard),
-    identityDescription: cleanString(value?.identityDescription || value?.globalPromptIdentityBlock || value?.description),
-    speaking: Boolean(value?.speaking),
-    visible: value?.visible !== false,
-    voiceRef: normalizeVoiceRef(value?.voiceRef, value?.referenceAudioPath),
+    sourceUpdatedAt:
+      cleanOptionalString(
+        value?.sourceUpdatedAt,
+      ),
+    defaultImageRef,
+    characterCardRef:
+      normalizeEntityImage(
+        value?.characterCardRef
+        || value?.characterCard,
+      ),
+    ltxReferenceView,
+    ltxViewImageRefs,
+    identityDescription:
+      cleanString(
+        value?.identityDescription
+        || value?.globalPromptIdentityBlock
+        || value?.description,
+      ),
+    speaking:
+      Boolean(value?.speaking),
+    visible:
+      value?.visible !== false,
+    voiceRef:
+      normalizeVoiceRef(
+        value?.voiceRef,
+        value?.referenceAudioPath,
+      ),
   };
+}
+
+function normalizeProductionV2BackgroundAngleImageRefs(
+  value: any,
+): Partial<
+  Record<
+    ProductionV2BackgroundAngleKey,
+    ProductionV2EntityImage
+  >
+> {
+  const output: Partial<
+    Record<
+      ProductionV2BackgroundAngleKey,
+      ProductionV2EntityImage
+    >
+  > = {};
+
+  const canonical =
+    new Set<string>(
+      PRODUCTION_V2_BACKGROUND_CANONICAL_ANGLE_KEYS,
+    );
+
+  const objectSource =
+    value?.angleImageRefs
+    && typeof value.angleImageRefs === "object"
+    && !Array.isArray(value.angleImageRefs)
+      ? value.angleImageRefs
+      : null;
+
+  if (objectSource) {
+    for (
+      const key
+      of PRODUCTION_V2_BACKGROUND_CANONICAL_ANGLE_KEYS
+    ) {
+      const image =
+        normalizeEntityImage(
+          objectSource[key],
+        );
+
+      if (
+        image.displayImage
+        || image.workflowImage
+      ) {
+        output[key] = image;
+      }
+    }
+  }
+
+  /*
+   * Compatibility for an earlier/catalog-shaped representation.
+   * Newly saved Production scenes use angleImageRefs.
+   */
+  const perspectives =
+    Array.isArray(value?.perspectives)
+      ? value.perspectives
+      : [];
+
+  for (const perspective of perspectives) {
+    const key =
+      cleanString(
+        perspective?.key,
+      );
+
+    if (
+      !canonical.has(key)
+      || output[
+        key as ProductionV2BackgroundAngleKey
+      ]
+    ) {
+      continue;
+    }
+
+    const image =
+      normalizeEntityImage(
+        perspective,
+      );
+
+    if (
+      image.displayImage
+      || image.workflowImage
+    ) {
+      output[
+        key as ProductionV2BackgroundAngleKey
+      ] = image;
+    }
+  }
+
+  return output;
 }
 
 function normalizeBackgroundSelection(value: any): ProductionV2BackgroundSelection | null {
@@ -1004,6 +1772,14 @@ function normalizeBackgroundSelection(value: any): ProductionV2BackgroundSelecti
     snapshotName,
     sourceUpdatedAt: cleanOptionalString(value?.sourceUpdatedAt),
     masterImageRef: normalizeEntityImage(value?.masterImageRef || { displayImage: value?.displayImage, workflowImage: value?.workflowImage }),
+    angleImageRefs:
+      normalizeProductionV2BackgroundAngleImageRefs(
+        value,
+      ),
+    referenceView:
+      normalizeProductionV2BackgroundReferenceView(
+        value?.referenceView,
+      ),
     identityDescription: cleanString(value?.identityDescription || value?.continuityBlock || value?.masterPrompt || value?.description),
   };
 }
@@ -1030,7 +1806,7 @@ function normalizeVisual(value: any): ProductionV2VisualReference | null {
     id,
     name,
     sourceKind: value.sourceKind,
-    generationSourceType: ["character-card", "background-master", "asset-default", "production-upload"].includes(value?.generationSourceType)
+    generationSourceType: ["character-card", "background-master", "background-angle", "asset-default", "production-upload"].includes(value?.generationSourceType)
       ? value.generationSourceType
       : undefined,
     sourceId: cleanOptionalString(value?.sourceId),
@@ -1113,6 +1889,61 @@ function migrateLegacySpeaking(value: any, characters: ProductionV2CharacterSele
   return characters.map((character) => speakerIds.has(character.characterId) ? { ...character, speaking: true } : character);
 }
 
+function normalizeProductionV2Continuation(
+  value: any,
+): ProductionV2ContinuationSource | null {
+  if (
+    !value
+    || typeof value !== "object"
+    || Array.isArray(value)
+  ) {
+    return null;
+  }
+
+  const sourceSceneId =
+    cleanString(value?.sourceSceneId);
+
+  const sourceMediaVersionId =
+    cleanString(value?.sourceMediaVersionId);
+
+  const sourceMediaPath =
+    cleanString(value?.sourceMediaPath);
+
+  const lastFramePath =
+    cleanString(value?.lastFramePath);
+
+  const sourceSceneNumber =
+    Number(value?.sourceSceneNumber);
+
+  if (
+    !sourceSceneId
+    || !sourceMediaVersionId
+    || !sourceMediaPath
+    || !lastFramePath
+    || !Number.isInteger(sourceSceneNumber)
+    || sourceSceneNumber < 1
+  ) {
+    return null;
+  }
+
+  return {
+    sourceSceneId,
+    sourceSceneNumber,
+    sourceMediaVersionId,
+    sourceMediaPath,
+    sourcePreviewUrl:
+      cleanOptionalString(
+        value?.sourcePreviewUrl,
+      ),
+    lastFramePath,
+    createdAt:
+      cleanString(
+        value?.createdAt,
+        new Date(0).toISOString(),
+      ),
+  };
+}
+
 function normalizeClipReference(value: any): ProductionV2ClipReference | null {
   if (!value || !cleanString(value.id) || !cleanString(value.path)) return null;
   return {
@@ -1123,8 +1954,8 @@ function normalizeClipReference(value: any): ProductionV2ClipReference | null {
     generationJobId: cleanOptionalString(value.generationJobId),
     promptId: cleanOptionalString(value.promptId),
     backend: value.backend === "rtx3090" || value.backend === "rtx5060ti" ? value.backend : undefined,
-    model: value.model === "minimax-h3" ? "minimax-h3" : undefined,
-    mode: value.mode === "h3-image-to-video" || value.mode === "h3-reference-to-video" ? value.mode : undefined,
+    model: value.model === "minimax-h3" || value.model === "ltx-2.5" ? value.model : undefined,
+    mode: value.mode === "h3-text-to-video" || value.mode === "h3-image-to-video" || value.mode === "h3-reference-to-video" || value.mode === "ltx-ingredients-image-to-video" ? value.mode : undefined,
     durationSeconds: isProductionV2Duration(value.durationSeconds) ? Number(value.durationSeconds) as ProductionV2Duration : undefined,
   };
 }
@@ -1155,7 +1986,7 @@ function normalizeSceneMediaVersion(value: any, sceneId: string): ProductionV2Sc
 
 function normalizeGenerationAttempt(value: any): ProductionV2GenerationAttempt | null {
   const statuses: ProductionV2GenerationAttempt["status"][] = ["pending", "running", "completed", "failed"];
-  const modes: ProductionV2GenerationMode[] = ["h3-image-to-video", "h3-reference-to-video", "ltx-ingredients-image-to-video"];
+  const modes: ProductionV2GenerationMode[] = ["h3-text-to-video", "h3-image-to-video", "h3-reference-to-video", "ltx-ingredients-image-to-video"];
   const id = cleanString(value?.id || value?.jobId);
   if (!id || !statuses.includes(value?.status) || !modes.includes(value?.generationMode)) return null;
   return {
@@ -1278,7 +2109,17 @@ function normalizeScene(value: any, index: number, defaultModel: ProductionV2Mod
   const generationMode = productionV2ModeMatchesModel(model, rawMode) ? rawMode : productionV2DefaultMode(model);
   const fallback = createProductionV2Scene(index + 1, model);
   const statuses: ProductionV2SceneStatus[] = ["draft", "generating", "generated", "accepted", "saved", "edited"];
-  const durationSeconds = isProductionV2Duration(value?.durationSeconds) ? Number(value.durationSeconds) as ProductionV2Duration : 5;
+  // OTG_PRODUCTION_V2_LOAD_MODEL_DURATION_NORMALIZATION_V1
+  //
+  // MiniMax H3 exposes its qualified 5/10-second set.
+  // LTX 2.5 Ingredients is qualified for 5 and 10 seconds.
+  // Legacy persisted values remain readable through the schema
+  // union and normalize through the selected model policy.
+  const durationSeconds =
+    normalizeProductionV2DurationForModel(
+      model,
+      value?.durationSeconds,
+    );
   const rawCharacters = Array.isArray(value?.selectedCharacters) ? value.selectedCharacters : Array.isArray(value?.characters) ? value.characters : [];
   let selectedCharacters = rawCharacters.map(normalizeCharacterSelection).filter(Boolean) as ProductionV2CharacterSelection[];
   selectedCharacters = migrateLegacySpeaking(value, selectedCharacters);
@@ -1294,6 +2135,10 @@ function normalizeScene(value: any, index: number, defaultModel: ProductionV2Mod
   const directionLimit = Number(value?.modelState?.ltx?.ingredients?.visualIngredientLimit);
   const sceneId = cleanString(value?.id, fallback.id);
   const generatedClip = normalizeClipReference(value?.generatedClip);
+  const continuation =
+    normalizeProductionV2Continuation(
+      value?.continuation,
+    );
   const seenMediaIds = new Set<string>();
   const rawMediaVersions: any[] = Array.isArray(value?.mediaVersions) ? value.mediaVersions : [];
   let mediaVersions: ProductionV2SceneMediaVersion[] = rawMediaVersions
@@ -1356,8 +2201,10 @@ function normalizeScene(value: any, index: number, defaultModel: ProductionV2Mod
     model,
     generationMode,
     durationSeconds,
+    h3Quality: normalizeH3Quality(value?.h3Quality),
     promptOptions: normalizePromptOptions(value?.promptOptions, cleanString(value?.cameraIntent)),
     promptStateByMode: {
+      "h3-text-to-video": normalizePromptState(value?.promptStateByMode?.["h3-text-to-video"], "h3-text-to-video"),
       "h3-image-to-video": normalizePromptState(value?.promptStateByMode?.["h3-image-to-video"], "h3-image-to-video"),
       "h3-reference-to-video": normalizePromptState(value?.promptStateByMode?.["h3-reference-to-video"], "h3-reference-to-video"),
       "ltx-ingredients-image-to-video": normalizePromptState(value?.promptStateByMode?.["ltx-ingredients-image-to-video"], "ltx-ingredients-image-to-video"),
@@ -1370,7 +2217,7 @@ function normalizeScene(value: any, index: number, defaultModel: ProductionV2Mod
     cameraIntent: cleanString(value?.cameraIntent),
     modelState: {
       h3: {
-        lastMode: value?.modelState?.h3?.lastMode === "h3-reference-to-video" ? "h3-reference-to-video" : "h3-image-to-video",
+        lastMode: H3_MODES.includes(value?.modelState?.h3?.lastMode) ? value.modelState.h3.lastMode : "h3-image-to-video",
         userLoras: normalizeProductionV2H3UserLoras(value?.modelState?.h3?.userLoras),
         imageToVideo: { startingImage },
         referenceToVideo: {
@@ -1382,7 +2229,7 @@ function normalizeScene(value: any, index: number, defaultModel: ProductionV2Mod
       ltx: {
         lastMode: "ltx-ingredients-image-to-video",
         ingredients: {
-          visualIngredientLimit: Number.isFinite(directionLimit) ? Math.max(1, Math.min(12, Math.floor(directionLimit))) : LTX_V2_DEFAULT_INGREDIENT_LIMIT,
+          visualIngredientLimit: Number.isFinite(directionLimit) ? Math.max(1, Math.min(6, Math.floor(directionLimit))) : LTX_V2_DEFAULT_INGREDIENT_LIMIT,
           sheetPreview: {
             status: value?.modelState?.ltx?.ingredients?.sheetPreview?.status === "ready" ? "ready" : "placeholder",
             previewUrl: cleanOptionalString(value?.modelState?.ltx?.ingredients?.sheetPreview?.previewUrl),
@@ -1393,6 +2240,7 @@ function normalizeScene(value: any, index: number, defaultModel: ProductionV2Mod
     workflowVersion: cleanOptionalString(value?.workflowVersion) || null,
     seed: Number.isSafeInteger(value?.seed) ? Number(value.seed) : null,
     generatedClip,
+    continuation,
     savedAt: cleanOptionalString(value?.savedAt) || (value?.status === "saved" ? generatedClip?.createdAt || new Date(0).toISOString() : null),
     generationAttempts: normalizedAttempts,
     mediaVersions,
@@ -1438,7 +2286,13 @@ export function assertProductionV2(value: ProductionV2) {
   if (!Array.isArray(value.scenes) || value.scenes.length < 1 || value.scenes.length > PRODUCTION_V2_MAX_SCENES) throw new Error(`A production must contain between 1 and ${PRODUCTION_V2_MAX_SCENES} scenes.`);
   value.scenes.forEach((scene, index) => {
     if (scene.sceneNumber !== index + 1) throw new Error("Scene numbers must be contiguous and start at 1.");
-    if (!isProductionV2Duration(scene.durationSeconds)) throw new Error("Scene duration must be exactly 5, 10, or 15 seconds.");
+    if (!productionV2DurationsForModel(scene.model).includes(scene.durationSeconds)) {
+      throw new Error(
+        scene.model === "ltx-2.5"
+          ? "LTX 2.5 scene duration must be exactly 5 or 10 seconds."
+          : "MiniMax H3 scene duration must be exactly 5 or 10 seconds.",
+      );
+    }
     if (!productionV2ModeMatchesModel(scene.model, scene.generationMode)) throw new Error(`Scene ${scene.sceneNumber} has an incompatible model and generation mode.`);
     const speakers = productionV2SpeakingCharacters(scene);
     if (speakers.length > PRODUCTION_V2_H3_MAX_SPEAKERS) throw new Error(`MiniMax H3 Reference-to-Video supports at most ${PRODUCTION_V2_H3_MAX_SPEAKERS} speaking Characters.`);

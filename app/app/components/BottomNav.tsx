@@ -2,7 +2,7 @@
 
 import React from "react";
 
-export type TabId = "generate" | "gallery" | "favorites" | "settings" | "admin";
+export type TabId = "generate" | "gallery" | "settings" | "admin";
 
 export default function BottomNav({
   tab,
@@ -33,7 +33,6 @@ export default function BottomNav({
     <nav className="otg-bottom-nav" role="navigation" aria-label="OTG Bottom Navigation">
       {item("generate", "Studio")}
       {item("gallery", "Gallery")}
-      {item("favorites", "Favorites")}
       {item("settings", "Settings")}
       {showAdmin ? item("admin", "Admin") : null}
     </nav>

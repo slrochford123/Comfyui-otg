@@ -38,7 +38,10 @@ import {
   imageModelById,
 } from "@/lib/imageGenerateWorkflows";
 import {
+  VIDEO_GENERATE_FPS,
+  VIDEO_GENERATE_SIZES,
   applyWan22GenerateOverrides,
+  normalizeVideoGenerateDuration,
   videoGenerateSelectionForWorkflowId,
 } from "@/lib/videoGenerateWorkflows";
 
@@ -2805,6 +2808,379 @@ function applyAnimeImagesOverrides(graph: any, body: any) {
   setNodeIfPresent(graph, "46", { filename_prefix: "Anima" });
 }
 
+function getLtx25GenerateSize(body: any) {
+  const orientation = String(body?.orientation || "landscape").toLowerCase() === "portrait" ? "portrait" : "landscape";
+  const size = VIDEO_GENERATE_SIZES[orientation];
+  return {
+    orientation,
+    width: size.width,
+    height: size.height,
+    resolution: `${size.width}x${size.height}`,
+  };
+}
+
+function findLoadImageNodeIds(graph: Record<string, any>) {
+  return sortedNodeIds(graph).filter(
+    (nodeId) =>
+      String(graph?.[nodeId]?.class_type || "") === "LoadImage"
+  );
+}
+
+function ltx25MetaNodeId(
+  meta: Record<string, any>,
+  key: string,
+  label: string
+) {
+  const nodeId = String(meta?.[key] || "").trim();
+
+  if (!nodeId) {
+    throw new Error(
+      `LTX 2.5 local workflow contract mismatch: missing ${label} metadata (${key}).`
+    );
+  }
+
+  return nodeId;
+}
+
+function requireLtx25LocalNode(
+  graph: Record<string, any>,
+  nodeId: string,
+  expectedClassType: string,
+  label: string
+) {
+  const node = graph?.[nodeId];
+
+  if (!node?.inputs || typeof node.inputs !== "object") {
+    throw new Error(
+      `LTX 2.5 local workflow contract mismatch: missing ${label} node ${nodeId}.`
+    );
+  }
+
+  const actualClassType = String(
+    node.class_type || ""
+  );
+
+  if (actualClassType !== expectedClassType) {
+    throw new Error(
+      `LTX 2.5 local workflow contract mismatch: ${label} node ${nodeId} expected ${expectedClassType}, found ${actualClassType || "unknown"}.`
+    );
+  }
+
+  return node;
+}
+
+function bindLtx25LoadImage(
+  graph: Record<string, any>,
+  nodeId: string | null | undefined,
+  imageName: string | null | undefined,
+  label: string
+) {
+  if (!nodeId) {
+    throw new Error(
+      `LTX 2.5 local workflow contract mismatch: missing ${label} LoadImage node.`
+    );
+  }
+
+  const node = requireLtx25LocalNode(
+    graph,
+    nodeId,
+    "LoadImage",
+    label
+  );
+
+  if (!imageName) {
+    throw new Error(
+      `Upload ${label === "last frame" ? "a last frame image" : "a starter image"} for this LTX 2.5 workflow.`
+    );
+  }
+
+  node.inputs.image = imageName;
+}
+
+function applyLtx25GenerateOverrides(
+  graph: Record<string, any>,
+  body: Record<string, any>,
+  assets: {
+    imageA?: string | null;
+    imageB?: string | null;
+  },
+  otgMeta?: Record<string, any> | null
+) {
+  const workflow = videoGenerateSelectionForWorkflowId(
+    body.workflowId || body.preset
+  );
+
+  if (!workflow || workflow.modelId !== "ltx25") {
+    return null;
+  }
+
+  const meta =
+    otgMeta && typeof otgMeta === "object"
+      ? otgMeta
+      : null;
+
+  if (
+    !meta ||
+    String(meta.modelFamily || "") !== "ltx25" ||
+    String(meta.operation || "") !== workflow.operation ||
+    meta.localDefaultWorkflow !== true
+  ) {
+    throw new Error(
+      `LTX 2.5 local workflow contract mismatch: ${workflow.workflowId} is missing canonical local-default metadata.`
+    );
+  }
+
+  const obsoleteApiNodeId = sortedNodeIds(
+    graph
+  ).find((nodeId) =>
+    String(
+      graph?.[nodeId]?.class_type || ""
+    ).startsWith("LtxApi25")
+  );
+
+  if (obsoleteApiNodeId) {
+    throw new Error(
+      `LTX 2.5 local workflow contract mismatch: obsolete API node ${obsoleteApiNodeId} (${String(graph?.[obsoleteApiNodeId]?.class_type || "")}) is not allowed.`
+    );
+  }
+
+  const promptNodeId = ltx25MetaNodeId(
+    meta,
+    "promptNodeId",
+    "prompt"
+  );
+
+  const durationNodeId = ltx25MetaNodeId(
+    meta,
+    "durationNodeId",
+    "duration"
+  );
+
+  const widthNodeId = ltx25MetaNodeId(
+    meta,
+    "widthNodeId",
+    "width"
+  );
+
+  const heightNodeId = ltx25MetaNodeId(
+    meta,
+    "heightNodeId",
+    "height"
+  );
+
+  const frameRateNodeId = ltx25MetaNodeId(
+    meta,
+    "frameRateNodeId",
+    "frame rate"
+  );
+
+  const seedNodeId = ltx25MetaNodeId(
+    meta,
+    "seedNodeId",
+    "seed"
+  );
+
+  const saveVideoNodeId = ltx25MetaNodeId(
+    meta,
+    "saveVideoNodeId",
+    "video output"
+  );
+
+  const promptNode = requireLtx25LocalNode(
+    graph,
+    promptNodeId,
+    "PrimitiveStringMultiline",
+    "prompt"
+  );
+
+  const durationNode = requireLtx25LocalNode(
+    graph,
+    durationNodeId,
+    "PrimitiveInt",
+    "duration"
+  );
+
+  const widthNode = requireLtx25LocalNode(
+    graph,
+    widthNodeId,
+    "PrimitiveInt",
+    "width"
+  );
+
+  const heightNode = requireLtx25LocalNode(
+    graph,
+    heightNodeId,
+    "PrimitiveInt",
+    "height"
+  );
+
+  const fpsNode = requireLtx25LocalNode(
+    graph,
+    frameRateNodeId,
+    "PrimitiveInt",
+    "frame rate"
+  );
+
+  const seedNode = requireLtx25LocalNode(
+    graph,
+    seedNodeId,
+    "RandomNoise",
+    "seed"
+  );
+
+  const outputNode = requireLtx25LocalNode(
+    graph,
+    saveVideoNodeId,
+    "SaveVideo",
+    "video output"
+  );
+
+  const positiveText = String(
+    body?.positivePrompt || body?.prompt || ""
+  ).trim();
+
+  const durationSeconds =
+    normalizeVideoGenerateDuration(
+      body?.durationSeconds
+    );
+
+  const size = getLtx25GenerateSize(body);
+
+  promptNode.inputs.value = positiveText;
+  durationNode.inputs.value = durationSeconds;
+
+  // T2V and I2V use linked resolution helpers in the official
+  // workflow. Generate intentionally replaces those links with
+  // the fixed 720-class dimensions selected by Orientation.
+  widthNode.inputs.value = size.width;
+  heightNode.inputs.value = size.height;
+
+  // Preserve the local/default ComfyUI LTX 2.5 frame rate.
+  fpsNode.inputs.value = VIDEO_GENERATE_FPS;
+
+  // setSeedAuto() already ran before this function and updated
+  // numeric RandomNoise.noise_seed inputs. Only repair malformed
+  // data here rather than generating a second request seed.
+  if (
+    typeof seedNode.inputs.noise_seed !== "number" ||
+    !Number.isFinite(seedNode.inputs.noise_seed)
+  ) {
+    seedNode.inputs.noise_seed =
+      freshProductionSeed();
+  }
+
+  const expectedImageNodeIds =
+    Array.isArray(meta.inputImageNodeIds)
+      ? meta.inputImageNodeIds.map(String)
+      : [];
+
+  if (
+    expectedImageNodeIds.length !==
+    workflow.needsImages
+  ) {
+    throw new Error(
+      `LTX 2.5 local workflow contract mismatch: ${workflow.workflowId} expected ${workflow.needsImages} LoadImage node(s), metadata declares ${expectedImageNodeIds.length}.`
+    );
+  }
+
+  const actualLoadImageNodeIds =
+    findLoadImageNodeIds(graph);
+
+  if (
+    actualLoadImageNodeIds.length !==
+      expectedImageNodeIds.length ||
+    actualLoadImageNodeIds.some(
+      (nodeId, index) =>
+        nodeId !== expectedImageNodeIds[index]
+    )
+  ) {
+    throw new Error(
+      `LTX 2.5 local workflow contract mismatch: expected LoadImage nodes ${expectedImageNodeIds.join(", ") || "none"}, found ${actualLoadImageNodeIds.join(", ") || "none"}.`
+    );
+  }
+
+  let firstFrameNodeId: string | null = null;
+  let lastFrameNodeId: string | null = null;
+
+  if (workflow.needsImages >= 1) {
+    firstFrameNodeId = ltx25MetaNodeId(
+      meta,
+      "firstFrameNodeId",
+      "starter image"
+    );
+
+    if (
+      firstFrameNodeId !==
+      expectedImageNodeIds[0]
+    ) {
+      throw new Error(
+        "LTX 2.5 local workflow contract mismatch: starter image metadata does not match inputImageNodeIds[0]."
+      );
+    }
+
+    bindLtx25LoadImage(
+      graph,
+      firstFrameNodeId,
+      assets.imageA,
+      "starter image"
+    );
+  }
+
+  if (workflow.needsImages === 2) {
+    lastFrameNodeId = ltx25MetaNodeId(
+      meta,
+      "lastFrameNodeId",
+      "last frame"
+    );
+
+    if (
+      lastFrameNodeId !==
+      expectedImageNodeIds[1]
+    ) {
+      throw new Error(
+        "LTX 2.5 local workflow contract mismatch: last frame metadata does not match inputImageNodeIds[1]."
+      );
+    }
+
+    bindLtx25LoadImage(
+      graph,
+      lastFrameNodeId,
+      assets.imageB,
+      "last frame"
+    );
+  }
+
+  const outputPrefix =
+    `video/LTX-2.5_${workflow.operation}`;
+
+  outputNode.inputs.filename_prefix =
+    outputPrefix;
+
+  return {
+    workflowId: workflow.workflowId,
+    operation: workflow.operation,
+    modelId: workflow.modelId,
+    format: workflow.format,
+    localDefaultWorkflow: true,
+    orientation: size.orientation,
+    width: size.width,
+    height: size.height,
+    fps: VIDEO_GENERATE_FPS,
+    durationSeconds,
+    seed: seedNode.inputs.noise_seed,
+    promptNodeId,
+    durationNodeId,
+    widthNodeId,
+    heightNodeId,
+    frameRateNodeId,
+    seedNodeId,
+    firstFrameNodeId,
+    lastFrameNodeId,
+    saveVideoNodeId,
+    outputPrefix,
+  };
+}
+
 function isEditImageWorkflow(body: any, graph: any) {
   const key = workflowKey(body);
   const label = String(body?.workflowLabel || body?.label || body?.workflowName || "").toLowerCase();
@@ -3634,7 +4010,10 @@ export async function POST(req: NextRequest) {
       return Response.json(videoSelection, { status: videoSelection.status });
     }
     route = { kind: "video", baseUrl: videoSelection.backend.baseUrl };
-  } else {
+  } else if (route.kind === "default") {
+    // Image jobs stay pinned to configuredImageComfyBaseUrl().
+    // Do not let generic manifest selection reroute image uploads or
+    // prompt submission to the RTX 3090 video lane.
     manifestSelection = await selectManifestBackend(descriptor as Record<string, unknown>);
     if (!manifestSelection.ok) {
       console.info("[comfy-backend]", {
@@ -3852,17 +4231,18 @@ export async function POST(req: NextRequest) {
     applyAnimeImagesOverrides(graph, body);
   }
 
-  const wan22GenerateWorkflow = videoGenerateSelectionForWorkflowId(
+  const generateVideoWorkflow = videoGenerateSelectionForWorkflowId(
     (body as any).workflowId || (body as any).preset
   );
-  if (wan22GenerateWorkflow?.modelId === "wan22") {
+  if (generateVideoWorkflow?.modelId === "wan22") {
     (body as any).durationSeconds = 5;
   }
   const skipSizeOverride =
     isLtxVideoWorkflow(body, graph) ||
     animeImagesWorkflow ||
     krea2TurboWorkflow ||
-    wan22GenerateWorkflow?.modelId === "wan22";
+    generateVideoWorkflow?.modelId === "wan22" ||
+    generateVideoWorkflow?.modelId === "ltx25";
   if (!skipSizeOverride) {
     const workflowIdHay = String((body as any).workflowId || "").toLowerCase();
     const isCreateImageWorkflow =
@@ -3900,7 +4280,8 @@ export async function POST(req: NextRequest) {
 
   const skipGenericFrameTimingOverrideV36BPU31 =
     animeImagesWorkflow ||
-    wan22GenerateWorkflow?.modelId === "wan22" ||
+    generateVideoWorkflow?.modelId === "wan22" ||
+    generateVideoWorkflow?.modelId === "ltx25" ||
     isProductionAnimateBranchSpecificTimingWorkflowV36BPU31(body);
 
   if (!skipGenericFrameTimingOverrideV36BPU31) {
@@ -3930,13 +4311,21 @@ export async function POST(req: NextRequest) {
         : null;
 
   let wan22VideoSettings: ReturnType<typeof applyWan22GenerateOverrides> = null;
+  let ltx25VideoSettings: ReturnType<typeof applyLtx25GenerateOverrides> = null;
   if (animeImagesWorkflow) {
     applyAnimeImagesOverrides(graph, body);
-  } else if (wan22GenerateWorkflow?.modelId === "wan22") {
+  } else if (generateVideoWorkflow?.modelId === "wan22") {
     wan22VideoSettings = applyWan22GenerateOverrides(
       graph,
       body,
       { imageA: ltxImageA, imageB: ltxImageB }
+    );
+  } else if (generateVideoWorkflow?.modelId === "ltx25") {
+    ltx25VideoSettings = applyLtx25GenerateOverrides(
+      graph,
+      body,
+      { imageA: ltxImageA, imageB: ltxImageB },
+      otgMeta
     );
   } else if (!referenceInputMapping.usesDeclaredReferenceInputs) {
     applyLtx23Overrides(graph, body, {
@@ -3965,7 +4354,9 @@ export async function POST(req: NextRequest) {
   }
 
   const title = String((body as any)?.title || (body as any)?.name || "").trim();
-  setFilenamePrefix__otg(graph, title);
+  if (!ltx25VideoSettings) {
+    setFilenamePrefix__otg(graph, title);
+  }
 
   const loraChoices = Array.isArray((body as any).loras) ? (body as any).loras : null;
   let loraRes: any;
@@ -3979,24 +4370,24 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
-    }
-    const catalogModel = {
-      ...otgImageModel,
-      optionalLoras: readImageLoraCatalog().entries
-        .filter((entry) => entry.enabled && entry.modelId === otgImageModel.id)
-        .map(({ name, label, strength, mature, description, usage }) => ({ name, label, strength, mature, description, usage })),
-    };
-    loraRes = applyImageLoraSelections(graph, catalogModel, loraChoices);
-    if (!loraRes.ok) {
-      return Response.json({ ok: false, error: loraRes.error }, { status: 400 });
-    }
-    const selectedNames = (loraRes.selections || []).map((selection: any) => String(selection.name || "")).filter(Boolean);
-    const availability = await validateLorasAvailableAtBackend(COMFY_BASE_URL, selectedNames);
-    if (!availability.ok) {
-      return Response.json(
-        { ok: false, error: availability.error, missingLoras: availability.missing, backend: COMFY_BASE_URL },
-        { status: 503 }
-      );
+      const catalogModel = {
+        ...otgImageModel,
+        optionalLoras: readImageLoraCatalog().entries
+          .filter((entry) => entry.enabled && entry.modelId === otgImageModel.id)
+          .map(({ name, label, strength, mature, description, usage }) => ({ name, label, strength, mature, description, usage })),
+      };
+      loraRes = applyImageLoraSelections(graph, catalogModel, loraChoices);
+      if (!loraRes.ok) {
+        return Response.json({ ok: false, error: loraRes.error }, { status: 400 });
+      }
+      const selectedNames = (loraRes.selections || []).map((selection: any) => String(selection.name || "")).filter(Boolean);
+      const availability = await validateLorasAvailableAtBackend(COMFY_BASE_URL, selectedNames);
+      if (!availability.ok) {
+        return Response.json(
+          { ok: false, error: availability.error, missingLoras: availability.missing, backend: COMFY_BASE_URL },
+          { status: 503 }
+        );
+      }
     }
   } else {
     loraRes = applySelectedLoras(graph, loraChoices);
@@ -4453,7 +4844,7 @@ export async function POST(req: NextRequest) {
         fallbackReason: videoSelection.fallbackReason,
         ...fallbackDebug,
       } : null,
-      videoSettings: wan22VideoSettings,
+      videoSettings: wan22VideoSettings || ltx25VideoSettings,
       otgRequestDebug: {
         workflowId: (body as any).workflowId ?? (body as any).preset ?? null,
         workflowLabel: (body as any).workflowLabel ?? null,
@@ -4473,7 +4864,7 @@ export async function POST(req: NextRequest) {
         referenceInputMapping,
         characterContinuityPrompt: (body as any).characterContinuityPrompt ?? null,
         selectedCharacterIdentities: (body as any).selectedCharacterIdentities ?? null,
-        videoSettings: wan22VideoSettings,
+        videoSettings: wan22VideoSettings || ltx25VideoSettings,
         ltxImageRuntimeBinding,
         videoLoras: publicVideoLoraSelectionMetadata(validatedVideoLoras),
         videoLorasApplied: videoLoraRes?.applied ?? [],

@@ -112,6 +112,17 @@ export type CharacterVoiceProfile = {
   datasetManifestUrl?: string;
   modelPath?: string;
   indexPath?: string;
+  selectedCheckpoint?: Record<string, unknown>;
+  checkpointEvaluations?: Array<Record<string, unknown>>;
+  heldOutEvaluation?: Record<string, unknown>;
+  qualityControl?: Record<string, unknown>;
+  sourceReference?: Record<string, unknown>;
+  trainingPolicy?: Record<string, unknown>;
+  rvcVersion?: string;
+  sampleRate?: number;
+  pitchExtractor?: string;
+  pitchGuidance?: boolean;
+  checkpointSelection?: string;
   previewVideoJobId?: string;
   status: VoicePipelineStatus;
   updatedAt: string;
@@ -171,6 +182,17 @@ export type CharacterVoiceModelArtifact = {
   failedStage?: string;
   totalTrainingMs?: number;
   totalTrainingLabel?: string;
+  selectedCheckpoint?: Record<string, unknown>;
+  checkpointEvaluations?: Array<Record<string, unknown>>;
+  heldOutEvaluation?: Record<string, unknown>;
+  qualityControl?: Record<string, unknown>;
+  sourceReference?: Record<string, unknown>;
+  trainingPolicy?: Record<string, unknown>;
+  rvcVersion?: string;
+  sampleRate?: number;
+  pitchExtractor?: string;
+  pitchGuidance?: boolean;
+  checkpointSelection?: string;
   mock?: boolean;
   result?: Record<string, unknown>;
   createdAt: string;
@@ -226,6 +248,17 @@ export function findUsableTrainedVoiceArtifact(profile?: CharacterVoiceProfile |
       trainingCompletedAt: profile.trainingCompletedAt,
       totalTrainingMs: profile.totalTrainingMs,
       totalTrainingLabel: profile.totalTrainingLabel,
+      selectedCheckpoint: profile.selectedCheckpoint,
+      checkpointEvaluations: profile.checkpointEvaluations,
+      heldOutEvaluation: profile.heldOutEvaluation,
+      qualityControl: profile.qualityControl,
+      sourceReference: profile.sourceReference,
+      trainingPolicy: profile.trainingPolicy,
+      rvcVersion: profile.rvcVersion,
+      sampleRate: profile.sampleRate,
+      pitchExtractor: profile.pitchExtractor,
+      pitchGuidance: profile.pitchGuidance,
+      checkpointSelection: profile.checkpointSelection,
       mock: false,
       createdAt: now,
       updatedAt: now,
@@ -298,6 +331,30 @@ export function buildApplioTrainingArtifactVoiceProfile(input: {
   const clipCount = firstNumber(result.clipCount, dataset.clipCount, jobInput.requestedClipCount);
   const modelName = firstString(result.modelName, model.modelName);
   const artifactId = firstString(result.modelArtifactId, modelName, `voice_model_${characterId}_${jobId}`);
+  const selectedCheckpoint = isRecord(result.selectedCheckpoint)
+    ? result.selectedCheckpoint
+    : isRecord(model.selectedCheckpoint)
+      ? model.selectedCheckpoint
+      : undefined;
+  const checkpointEvaluations = Array.isArray(result.checkpointEvaluations)
+    ? result.checkpointEvaluations.filter(isRecord)
+    : Array.isArray(model.checkpointEvaluations)
+      ? model.checkpointEvaluations.filter(isRecord)
+      : undefined;
+  const heldOutEvaluation = isRecord(result.heldOutEvaluation) ? result.heldOutEvaluation : undefined;
+  const qualityControl = isRecord(result.qualityControl) ? result.qualityControl : undefined;
+  const sourceReference = isRecord(result.sourceReference) ? result.sourceReference : undefined;
+  const trainingPolicy = isRecord(result.trainingPolicy) ? result.trainingPolicy : undefined;
+  const rvcVersion = firstString(result.rvcVersion, model.rvcVersion);
+  const sampleRate = firstNumber(result.sampleRate, model.sampleRate);
+  const pitchExtractor = firstString(result.pitchExtractor, model.pitchExtractor);
+  const pitchGuidance = result.pitchGuidance === true || model.pitchGuidance === true
+    ? true
+    : result.pitchGuidance === false || model.pitchGuidance === false
+      ? false
+      : undefined;
+  const checkpointSelection = firstString(result.checkpointSelection, model.checkpointSelection);
+
   const trainingQualityPreset = firstString(result.trainingQualityPreset, jobInput.trainingQualityPreset);
   const epochs = firstNumber(result.epochs, jobInput.epochs);
   const saveEveryEpoch = firstNumber(result.saveEveryEpoch, jobInput.saveEveryEpoch);
@@ -352,6 +409,17 @@ export function buildApplioTrainingArtifactVoiceProfile(input: {
     failedStage: failedStage || undefined,
     totalTrainingMs: totalTrainingMs || undefined,
     totalTrainingLabel: totalTrainingLabel || undefined,
+    selectedCheckpoint,
+    checkpointEvaluations,
+    heldOutEvaluation,
+    qualityControl,
+    sourceReference,
+    trainingPolicy,
+    rvcVersion: rvcVersion || undefined,
+    sampleRate: sampleRate || undefined,
+    pitchExtractor: pitchExtractor || undefined,
+    pitchGuidance,
+    checkpointSelection: checkpointSelection || undefined,
     mock: !isRealTrainedArtifact,
     result,
     createdAt: now,
@@ -386,6 +454,17 @@ export function buildApplioTrainingArtifactVoiceProfile(input: {
     failedStage: failedStage || currentProfile?.failedStage || undefined,
     totalTrainingMs: totalTrainingMs || currentProfile?.totalTrainingMs || undefined,
     totalTrainingLabel: totalTrainingLabel || currentProfile?.totalTrainingLabel || undefined,
+    selectedCheckpoint,
+    checkpointEvaluations,
+    heldOutEvaluation,
+    qualityControl,
+    sourceReference,
+    trainingPolicy,
+    rvcVersion: rvcVersion || undefined,
+    sampleRate: sampleRate || undefined,
+    pitchExtractor: pitchExtractor || undefined,
+    pitchGuidance,
+    checkpointSelection: checkpointSelection || undefined,
     voiceModelArtifactId: artifactId,
     voiceModelArtifacts: [...existingArtifacts, artifact],
     trainingArtifactPath: artifactPath || undefined,

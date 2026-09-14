@@ -1,11 +1,5 @@
 
 export const WORKFLOWS = {
-  angles: {
-    file: "Angles.json",
-    output: "image",
-    destination: "gallery",
-    patch: { imageNode: 41, angleNode: 93 }
-  },
 
   storyboard_1: { file: "Storyboard 1.json", images: 1, promptNode: 30, output: "image", destination: "gallery" },
   storyboard_2: { file: "Storyboard 2.json", images: 2, promptNode: 30, output: "image", destination: "gallery" },

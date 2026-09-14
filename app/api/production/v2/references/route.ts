@@ -2,7 +2,10 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 import { listAssets } from "@/lib/assets/store";
-import { listBackgrounds } from "@/lib/backgrounds/store";
+import {
+  isBackgroundProductionReadyV36B,
+  listBackgrounds,
+} from "@/lib/backgrounds/store";
 import { listCharacters } from "@/lib/characters/store";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
@@ -29,7 +32,10 @@ export async function GET(req: NextRequest) {
     return noStore({
       ok: true,
       characters: listCharacters(ownerKey).map(characterToProductionV2Catalog),
-      backgrounds: listBackgrounds(ownerKey).map(backgroundToProductionV2Catalog),
+      backgrounds: listBackgrounds(ownerKey)
+        .filter(isBackgroundProductionReadyV36B)
+        .map(backgroundToProductionV2Catalog),
+      // OTG_PRODUCTION_BACKGROUND_READINESS_FILTER_PP04C_V1
       assets: listAssets(ownerKey).map(assetToProductionV2Catalog),
     });
   } catch (error) {
