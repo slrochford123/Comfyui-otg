@@ -43,6 +43,21 @@ const assetPanelSource =
 const assetApiSource =
   read("app/api/assets/route.ts");
 
+const assetSavedForLaterRouteSource =
+  read("app/api/assets/saved-for-later/route.ts");
+
+const enhancePromptRouteSource =
+  read("app/api/enhance-prompt/route.ts");
+
+const characterCandidateEditClientSource =
+  read("lib/client/characterCandidateEditClient.ts");
+
+const assetCandidateEditClientSource =
+  read("lib/assets/assetCandidateEditClient.ts");
+
+const characterCandidateFlowSource =
+  read("lib/characters/characterCandidateFlow.ts");
+
 const productionReferenceRouteSource =
   read("app/api/production/v2/references/route.ts");
 
@@ -223,21 +238,357 @@ describe(
     );
 
     it(
-      "uses Qwen image editing for Asset candidate edits rather than creating another edit system",
+      "routes Asset Edit through an asset-specific Qwen image-edit prompt with the selected candidate as reference",
       () => {
-        const combined = [
-          assetPanelSource,
-          read(
-            "app/api/assets/create-image/route.ts",
-          ),
-        ].join("\n");
-
-        expect(combined).toMatch(
-          /Qwen|qwen/i,
+        expect(assetPanelSource).toContain(
+          "executeAssetCandidateEdit",
         );
 
-        expect(combined).toMatch(
-          /Edit Image|image.?edit|candidate.?edit/i,
+        expect(assetPanelSource).toContain(
+          "editableAssetCandidate",
+        );
+
+        expect(assetPanelSource).toContain(
+          "ensureStableCandidate",
+        );
+
+        expect(characterCandidateEditClientSource).toContain(
+          "characterEditSubmissionFields",
+        );
+
+        expect(characterCandidateEditClientSource).toContain(
+          '"/api/comfy"',
+        );
+
+        expect(characterCandidateEditClientSource).toContain(
+          "CHARACTER_CANDIDATE_EDIT_CONTRACT.runtimeOutputNodeId",
+        );
+
+        expect(assetCandidateEditClientSource).toContain(
+          "assetEditSubmissionFields",
+        );
+
+        expect(assetCandidateEditClientSource).toContain(
+          "composeAssetCandidateEditInstruction",
+        );
+
+        expect(assetCandidateEditClientSource).toContain(
+          "Preserve the asset's exact identity",
+        );
+
+        expect(assetCandidateEditClientSource).toContain(
+          "Keep the same single asset as the source image.",
+        );
+
+        expect(assetCandidateEditClientSource).not.toContain(
+          "Preserve the character's identity",
+        );
+
+        expect(assetCandidateEditClientSource).toContain(
+          'sourceType: "asset-gallery-candidate-edit"',
+        );
+
+        expect(assetCandidateEditClientSource).toContain(
+          'outputLibrary: "assets"',
+        );
+
+        expect(characterCandidateFlowSource).toContain(
+          'workflowId: CHARACTER_CANDIDATE_EDIT_CONTRACT.workflowId',
+        );
+
+        expect(characterCandidateFlowSource).toContain(
+          'requestKind: "character-candidate-edit"',
+        );
+
+        expect(characterCandidateFlowSource).toContain(
+          'sourceType: "characters-tab-candidate-edit"',
+        );
+
+        expect(characterCandidateFlowSource).toContain(
+          "imageAPath: sourceServerPath",
+        );
+
+        expect(characterCandidateFlowSource).toContain(
+          "loadImageNodeId: CHARACTER_CANDIDATE_EDIT_CONTRACT.inputNodeId",
+        );
+
+        const editStart =
+          assetPanelSource.indexOf(
+            "async function applyCandidateEdit()",
+          );
+
+        const editEnd =
+          assetPanelSource.indexOf(
+            "async function useCandidate(",
+            editStart,
+          );
+
+        expect(editStart).toBeGreaterThan(-1);
+        expect(editEnd).toBeGreaterThan(editStart);
+
+        const editHandler =
+          assetPanelSource.slice(
+            editStart,
+            editEnd,
+          );
+
+        expect(editHandler).toContain(
+          "executeAssetCandidateEdit",
+        );
+
+        expect(editHandler).toContain(
+          "editableAssetCandidate",
+        );
+
+        expect(editHandler).toContain(
+          "stable",
+        );
+
+        expect(editHandler).not.toContain(
+          "/api/assets/create-image",
+        );
+      },
+    );
+
+    it(
+      "adds editable Small, Medium, and Large Asset prompt enhancement through Qwen",
+      () => {
+        expect(assetPanelSource).toContain(
+          "ASSET_PROMPT_ENHANCE_LEVELS",
+        );
+
+        for (const label of [
+          "Small",
+          "Medium",
+          "Large",
+        ]) {
+          expect(assetPanelSource).toContain(
+            `label: "${label}"`,
+          );
+        }
+
+        expect(assetPanelSource).toContain(
+          'data-otg="asset-enhance-prompt-controls"',
+        );
+
+        expect(assetPanelSource).toContain(
+          'data-otg="asset-enhance-prompt-button"',
+        );
+
+        const enhanceStart =
+          assetPanelSource.indexOf(
+            "async function enhanceAssetPrompt()",
+          );
+
+        const enhanceEnd =
+          assetPanelSource.indexOf(
+            "async function generateAsset()",
+            enhanceStart,
+          );
+
+        expect(enhanceStart).toBeGreaterThan(-1);
+        expect(enhanceEnd).toBeGreaterThan(enhanceStart);
+
+        const enhanceHandler =
+          assetPanelSource.slice(
+            enhanceStart,
+            enhanceEnd,
+          );
+
+        expect(enhanceHandler).toContain(
+          '"/api/enhance-prompt"',
+        );
+
+        expect(enhanceHandler).toContain(
+          'contextType: "asset"',
+        );
+
+        expect(enhanceHandler).toContain(
+          "setPrompt(nextPrompt)",
+        );
+
+        expect(enhanceHandler).not.toContain(
+          "generateAsset()",
+        );
+
+        const catchIndex =
+          enhanceHandler.indexOf(
+            "catch (cause)",
+          );
+
+        expect(catchIndex).toBeGreaterThan(-1);
+
+        expect(
+          enhanceHandler.slice(catchIndex),
+        ).not.toContain(
+          "setPrompt(",
+        );
+      },
+    );
+
+    it(
+      "uses the existing Qwen prompt-enhancement endpoint with Asset-specific object instructions",
+      () => {
+        expect(enhancePromptRouteSource).toMatch(
+          /qwenDurableFetch\(\s*"\/api\/generate"/,
+        );
+
+        expect(enhancePromptRouteSource).toContain(
+          'const DEFAULT_ASSET_PROMPT_ENHANCE_QWEN_MODEL = "qwen3.5:4b";',
+        );
+
+        expect(enhancePromptRouteSource).toContain(
+          "process.env.ASSET_PROMPT_ENHANCE_QWEN_MODEL",
+        );
+
+        expect(enhancePromptRouteSource).not.toContain(
+          "process.env.ASSET_PROMPT_ENHANCE_KEEP_ALIVE",
+        );
+
+        expect(enhancePromptRouteSource).not.toContain(
+          "process.env.OLLAMA_PROMPT_ENHANCE_KEEP_ALIVE",
+        );
+
+        expect(enhancePromptRouteSource).toContain(
+          "Asset Qwen must release VRAM immediately after enhancement.",
+        );
+
+        expect(enhancePromptRouteSource).toContain(
+          'context.contextType === "asset"',
+        );
+
+        expect(enhancePromptRouteSource).toContain(
+          ": QWEN_CLUSTER_MODEL",
+        );
+
+        expect(enhancePromptRouteSource).toContain(
+          "model: routedModel",
+        );
+
+        expect(enhancePromptRouteSource).toMatch(
+          /keepAlive:\s*promptEnhanceKeepAliveForContext\(context\)/,
+        );
+
+        expect(enhancePromptRouteSource).toContain(
+          "model: enhancement.model",
+        );
+
+        expect(enhancePromptRouteSource).not.toContain(
+          "const PROMPT_ENHANCE_QWEN_MODEL =",
+        );
+
+        expect(enhancePromptRouteSource).toContain(
+          "Asset context:",
+        );
+
+        expect(enhancePromptRouteSource).toContain(
+          "individual production asset/object/prop",
+        );
+
+        expect(enhancePromptRouteSource).toContain(
+          "SMALL asset purpose: restrained cleanup",
+        );
+
+        expect(enhancePromptRouteSource).toContain(
+          "MEDIUM asset purpose: fuller production-ready image prompt",
+        );
+
+        expect(enhancePromptRouteSource).toContain(
+          "LARGE asset purpose: most detailed production prompt",
+        );
+
+        expect(enhancePromptRouteSource).toContain(
+          "no unrelated invention",
+        );
+
+        expect(enhancePromptRouteSource).toContain(
+          "The original prompt was preserved.",
+        );
+
+        expect(enhancePromptRouteSource).not.toContain(
+          "function heuristicAssetEnhancePrompt",
+        );
+
+        expect(enhancePromptRouteSource).not.toMatch(
+          /provider:\s*"heuristic"/,
+        );
+      },
+    );
+
+    it(
+      "persists Save for Later through the canonical owner-scoped Asset store instead of local React state",
+      () => {
+        expect(assetPanelSource).toContain(
+          "/api/assets/saved-for-later",
+        );
+
+        expect(assetPanelSource).toContain(
+          "loadSavedForLater",
+        );
+
+        expect(assetPanelSource).toContain(
+          "await loadSavedForLater()",
+        );
+
+        expect(assetPanelSource).toContain(
+          "busyCandidateId",
+        );
+
+        expect(assetSavedForLaterRouteSource).toContain(
+          "assets-saved-for-later",
+        );
+
+        expect(assetSavedForLaterRouteSource).toContain(
+          "getOwnerContext",
+        );
+
+        expect(assetSavedForLaterRouteSource).toContain(
+          "writeJsonAtomic",
+        );
+
+        expect(assetSavedForLaterRouteSource).toContain(
+          "export async function GET",
+        );
+
+        expect(assetSavedForLaterRouteSource).toContain(
+          "export async function POST",
+        );
+
+        expect(assetSavedForLaterRouteSource).toContain(
+          "export async function DELETE",
+        );
+
+        expect(assetSavedForLaterRouteSource).toContain(
+          'type: "asset-saved-for-later"',
+        );
+
+        expect(assetSavedForLaterRouteSource).not.toContain(
+          "saveAsset(",
+        );
+
+        for (const field of [
+          "workflowId",
+          "internalPrompt",
+          "sourceCandidateId",
+          "rootCandidateId",
+          "editDepth",
+          "editInstruction",
+          "backgroundFree",
+        ]) {
+          expect(assetPanelSource).toContain(field);
+          expect(assetSavedForLaterRouteSource).toContain(field);
+        }
+
+        expect(assetPanelSource).not.toContain(
+          "asset-saved-for-later-local",
+        );
+
+        expect(assetPanelSource).not.toContain(
+          "saveAssetCandidateToLocalStorage",
+        );
+
+        expect(assetSavedForLaterRouteSource).not.toContain(
+          "localStorage",
         );
       },
     );

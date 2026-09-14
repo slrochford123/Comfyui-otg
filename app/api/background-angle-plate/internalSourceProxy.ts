@@ -15,21 +15,26 @@ type InternalSourceProxyFetch = {
   headers: Headers;
 };
 
-function internalNextOrigin(portValue = process.env.PORT) {
-  const candidate = String(portValue || "").trim();
-  const parsedPort = /^\d+$/.test(candidate) ? Number(candidate) : 0;
-  const port = parsedPort >= 1 && parsedPort <= 65_535 ? String(parsedPort) : "3000";
+function internalNextOrigin(requestOriginValue: string) {
+  const parsed = new URL(requestOriginValue);
 
-  return `http://127.0.0.1:${port}`;
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Selected preview request origin is not supported.");
+  }
+
+  // OTG_BACKGROUND_ANGLE_PLATE_REQUEST_ORIGIN_PP06_V1
+  // The Next.js server may be bound to a specific interface rather than
+  // loopback. Reuse the already validated request origin for internal
+  // same-origin image proxy requests.
+  return parsed.origin;
 }
 
 export function buildInternalSourceProxyFetch(args: {
   requestOrigin: string;
   sourceValue: string;
   requestHeaders: HeaderReader;
-  port?: string;
 }): InternalSourceProxyFetch {
-  const requestOrigin = new URL(args.requestOrigin).origin;
+  const requestOrigin = internalNextOrigin(args.requestOrigin);
   const sourceUrl = new URL(args.sourceValue, requestOrigin);
 
   if (
@@ -41,7 +46,7 @@ export function buildInternalSourceProxyFetch(args: {
 
   const fetchUrl = new URL(
     sourceUrl.pathname + sourceUrl.search,
-    internalNextOrigin(args.port),
+    requestOrigin,
   );
 
   const headers = new Headers();

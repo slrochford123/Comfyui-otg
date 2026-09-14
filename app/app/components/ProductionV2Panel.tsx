@@ -2,7 +2,6 @@
 
 import React, { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { buildProductionPrompt } from "@/lib/production/promptBuilder";
 import {
   H3_COMBAT_LORA_MODES,
   H3_VISUAL_STYLE_LORA_OPTIONS,
@@ -17,11 +16,17 @@ import {
   type ProductionV2PromptOptions,
 } from "@/lib/production/promptOptions";
 import {
+  getH3ProductionTimeEstimate,
+  type H3ProductionMode,
+} from "@/lib/production/h3ProductionRecipes";
+import {
   LTX_V2_DEFAULT_INGREDIENT_LIMIT,
-  PRODUCTION_V2_DURATION_OPTIONS,
+  PRODUCTION_V2_BACKGROUND_CANONICAL_ANGLE_KEYS,
+  productionV2DurationsForModel,
   PRODUCTION_V2_H3_MAX_SPEAKERS,
   PRODUCTION_V2_MAX_SCENES,
   addProductionV2Scene,
+  removeProductionV2Scene,
   buildProductionV2ScenePrompt,
   createProductionV2DialogueTurn,
   invalidateProductionV2Prompts,
@@ -34,8 +39,7 @@ import {
   productionV2SavedScenes,
   productionV2SceneCardStatus,
   productionV2SpeakingCharacters,
-  reviewProductionV2FinalPrompt,
-  selectProductionV2AssemblyClipVersion,
+   selectProductionV2AssemblyClipVersion,
   selectProductionV2SceneMediaVersion,
   switchProductionV2SceneMode,
   switchProductionV2SceneModel,
@@ -52,10 +56,12 @@ import {
   type ProductionV2CatalogCharacter,
   type ProductionV2CatalogPerspective,
   type ProductionV2CharacterSelection,
+  type ProductionV2LtxCharacterView,
   type ProductionV2DialogueTurn,
   type ProductionV2Duration,
   type ProductionV2EntityImage,
   type ProductionV2GenerationMode,
+  type ProductionV2H3Quality,
   type ProductionV2Model,
   type ProductionV2ReferencePlan,
   type ProductionV2Scene,
@@ -63,6 +69,9 @@ import {
   type ProductionV2Stage,
   type ProductionV2Summary,
   type ProductionV2VisualReference,
+  PRODUCTION_V2_BACKGROUND_REFERENCE_VIEWS,
+  productionV2BackgroundReferenceView,
+  type ProductionV2BackgroundReferenceView,
 } from "@/lib/production/v2";
 
 type HomeView = "actions" | "create" | "load" | "delete" | "completed";
@@ -95,6 +104,30 @@ type PromptBuildPayload = {
   error?: string;
 };
 
+type PromptOperationStatus =
+  | "queued"
+  | "waiting_for_qwen"
+  | "completed"
+  | "failed";
+
+type PromptOperationStartPayload = {
+  ok: boolean;
+  operationId: string;
+  status: PromptOperationStatus;
+  statusMessage: string;
+  pollUrl?: string;
+  error?: string;
+};
+
+type PromptOperationPollPayload = {
+  ok: boolean;
+  operationId: string;
+  status: PromptOperationStatus;
+  statusMessage: string;
+  result?: PromptBuildPayload | null;
+  error?: string | null;
+};
+
 type ProductionV2GenerationJobPayload = {
   id: string;
   status:
@@ -111,6 +144,11 @@ type ProductionV2GenerationJobPayload = {
   statusMessage: string | null;
   backend: "rtx3090" | "rtx5060ti" | null;
   backendLabel: string | null;
+  h3Quality: ProductionV2H3Quality;
+  nativeResolution: string | null;
+  etaSeconds: number | null;
+  etaMinSeconds: number | null;
+  etaMaxSeconds: number | null;
   promptId: string | null;
   workflowId: string | null;
   operation?: "scene-generation" | "visual-edit";
@@ -119,22 +157,40 @@ type ProductionV2GenerationJobPayload = {
   videoUrl: string | null;
 };
 
+function formatH3Eta(seconds: number) {
+  const minutes = seconds / 60;
+  return minutes < 2 ? `${Math.round(seconds)} sec` : `${minutes.toFixed(1)} min`;
+}
+
 const MODEL_LABELS: Record<ProductionV2Model, string> = {
   "minimax-h3": "MiniMax H3",
   "ltx-2.5": "LTX 2.5",
 };
 
 const MODE_LABELS: Record<ProductionV2GenerationMode, string> = {
+  "h3-text-to-video": "Text-to-Video",
   "h3-image-to-video": "Image-to-Video",
   "h3-reference-to-video": "Reference-to-Video",
   "ltx-ingredients-image-to-video": "Ingredients Image-to-Video",
 };
 
 const COMPACT_MODE_LABELS: Record<ProductionV2GenerationMode, string> = {
+  "h3-text-to-video": "T2V",
   "h3-image-to-video": "I2V",
   "h3-reference-to-video": "R2V",
   "ltx-ingredients-image-to-video": "Ingredients I2V",
 };
+
+const BACKGROUND_REFERENCE_VIEW_LABELS:
+  Record<ProductionV2BackgroundReferenceView, string> = {
+    master: "Master",
+    front: "Front",
+    back: "Back",
+    left90: "Left",
+    right90: "Right",
+    up: "Up",
+    down: "Down",
+  };
 
 const STAGE_LABELS: Record<ProductionV2Stage, string> = {
   storyboard: "Storyboard",
@@ -186,6 +242,79 @@ const secondaryButton = `${buttonBase} border-white/15 bg-white/[0.06] text-zinc
 const dangerButton = `${buttonBase} border-red-300/35 bg-red-400/15 text-red-100 hover:bg-red-400/25`;
 const fieldClass = "w-full rounded-lg border border-white/12 bg-black/35 px-3 py-2.5 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-cyan-300/60";
 const EMPTY_EXPANDED_GROUPS = new Set<string>();
+
+/*
+ * OTG_PRODUCTION_V2_LTX_R13C_CHARACTER_CARD_UI_V1
+ *
+ * LTX Ingredients uses one logical Ingredient per selected Character,
+ * backed by that Character's complete saved Character Card. Legacy
+ * directional snapshots remain persisted for compatibility but are not
+ * model-facing LTX Ingredients selectors.
+ */
+function LtxCharacterCardReferences({
+  characters,
+}: {
+  characters: ProductionV2CharacterSelection[];
+}) {
+
+  return (
+    <div
+      className="space-y-3 rounded-lg border border-emerald-300/20 bg-emerald-300/[0.04] p-3"
+      data-otg="production-v2-ltx-character-card-references"
+      data-ltx-authority="character-card"
+    >
+      <div>
+        <div className="text-xs font-black uppercase text-emerald-100">
+          LTX Character Ingredients
+        </div>
+        <p className="mt-1 text-xs leading-5 text-zinc-500">
+          Each selected Character contributes exactly one Ingredient using
+          the complete saved Character Card as the canonical identity reference.
+        </p>
+      </div>
+
+      {characters.map((character) => {
+        const cardSrc = mediaUrl(
+          character.characterCardRef.displayImage
+          || character.characterCardRef.workflowImage,
+        );
+
+        return (
+          <div
+            key={character.characterId}
+            className="grid gap-3 rounded-lg border border-white/10 bg-black/25 p-3 sm:grid-cols-[7rem_minmax(0,1fr)]"
+            data-otg="production-v2-ltx-character-card-ingredient"
+            data-character-id={character.characterId}
+          >
+            <div className="overflow-hidden rounded-lg border border-white/10 bg-zinc-900">
+              <div className="aspect-[3/4]">
+                {cardSrc ? (
+                  <img
+                    src={cardSrc}
+                    alt={`${character.snapshotName} Character Card LTX Ingredient`}
+                    className="h-full w-full object-contain p-1"
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center px-2 text-center text-[10px] font-bold text-red-200">
+                    Character Card unavailable
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="min-w-0">
+              <div className="break-words text-sm font-black text-white">
+                {character.snapshotName}
+              </div>
+              <div className="mt-1 text-xs font-bold text-emerald-200">
+                Canonical LTX identity source: Character Card
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function mediaUrl(value: unknown) {
   const text = String(value || "").trim();
@@ -374,27 +503,54 @@ function StageNavigator({ stage, onChange, position }: { stage: ProductionV2Stag
   );
 }
 
+/*
+ * OTG_PRODUCTION_V2_PREVIEW_WITHOUT_SELECTION_R10_V1
+ *
+ * Opening a saved Scene is a preview-only action. It must not change the
+ * active editing Scene, generation mode, prompt state, or reference state.
+ * Selecting a Scene for editing is a separate explicit action.
+ */
 function SavedSceneCard({ scene, selected, onSelect, onOpen }: { scene: ProductionV2Scene; selected: boolean; onSelect: () => void; onOpen: () => void }) {
   const version = selectedSceneVersion(scene);
   const preview = mediaUrl(version?.previewUrl || scene.generatedClip?.previewUrl || "");
   const status = productionV2SceneCardStatus(scene);
+
   return (
-    <button
-      type="button"
-      onClick={() => { onSelect(); if (preview) onOpen(); }}
+    <article
       aria-current={selected ? "true" : undefined}
-      aria-label={`Open saved Scene ${scene.sceneNumber}`}
       data-testid={`production-v2-saved-scene-${scene.id}`}
-      className={`min-w-0 overflow-hidden rounded-lg border text-left transition ${selected ? "production-v2-control-active" : "border-white/10 bg-black/25 hover:border-white/25"}`}
+      className={`min-w-0 overflow-hidden rounded-lg border transition ${selected ? "production-v2-control-active" : "border-white/10 bg-black/25 hover:border-white/25"}`}
     >
-      <div className="aspect-video overflow-hidden bg-zinc-950">
-        {preview ? <video src={preview} muted playsInline preload="metadata" className="pointer-events-none h-full w-full object-cover" aria-label={`Scene ${scene.sceneNumber} poster`} /> : <div className="flex h-full items-center justify-center px-2 text-center text-[10px] font-bold text-zinc-600">No media</div>}
+      <button
+        type="button"
+        onClick={() => { if (preview) onOpen(); }}
+        disabled={!preview}
+        aria-label={`Preview saved Scene ${scene.sceneNumber}`}
+        className="block w-full text-left disabled:cursor-not-allowed"
+        data-otg="production-v2-preview-saved-scene"
+      >
+        <div className="aspect-video overflow-hidden bg-zinc-950">
+          {preview ? <video src={preview} muted playsInline preload="metadata" className="pointer-events-none h-full w-full object-cover" aria-label={`Scene ${scene.sceneNumber} poster`} /> : <div className="flex h-full items-center justify-center px-2 text-center text-[10px] font-bold text-zinc-600">No media</div>}
+        </div>
+        <div className="space-y-1.5 p-2">
+          <div className="flex items-center justify-between gap-1"><span className="text-xs font-black text-white">Scene {scene.sceneNumber}</span><span className="rounded bg-white/[0.07] px-1.5 py-0.5 text-[9px] font-black uppercase text-zinc-300">{status}</span></div>
+          <div className="break-words text-[10px] leading-4 text-zinc-500">{MODEL_LABELS[scene.model]} | {scene.durationSeconds}s</div>
+        </div>
+      </button>
+
+      <div className="border-t border-white/10 p-2">
+        <button
+          type="button"
+          className={`${secondaryButton} w-full`}
+          onClick={onSelect}
+          disabled={selected}
+          aria-label={`Select Scene ${scene.sceneNumber} for editing`}
+          data-otg="production-v2-select-saved-scene"
+        >
+          {selected ? "Current Scene" : "Select Scene"}
+        </button>
       </div>
-      <div className="space-y-1.5 p-2">
-        <div className="flex items-center justify-between gap-1"><span className="text-xs font-black text-white">Scene {scene.sceneNumber}</span><span className="rounded bg-white/[0.07] px-1.5 py-0.5 text-[9px] font-black uppercase text-zinc-300">{status}</span></div>
-        <div className="break-words text-[10px] leading-4 text-zinc-500">{MODEL_LABELS[scene.model]} | {scene.durationSeconds}s</div>
-      </div>
-    </button>
+    </article>
   );
 }
 
@@ -700,21 +856,141 @@ function AssemblyShell({
 }
 
 function characterSelection(item: ProductionV2CatalogCharacter): ProductionV2CharacterSelection {
+  const byPerspective =
+    (key: string) =>
+      item.perspectives.find(
+        (perspective) =>
+          perspective.key === key,
+      );
+
+  const front =
+    byPerspective("front")
+    || item.defaultImage;
+
+  const ltxViewImageRefs:
+    Partial<
+      Record<
+        ProductionV2LtxCharacterView,
+        ProductionV2EntityImage
+      >
+    > = {
+      default: {
+        displayImage:
+          front.displayImage,
+        workflowImage:
+          front.workflowImage,
+      },
+    };
+
+  const left =
+    byPerspective("left-profile");
+
+  const right =
+    byPerspective("right-profile");
+
+  const back =
+    byPerspective("back");
+
+  if (left) {
+    ltxViewImageRefs.left = {
+      displayImage:
+        left.displayImage,
+      workflowImage:
+        left.workflowImage,
+    };
+  }
+
+  if (right) {
+    ltxViewImageRefs.right = {
+      displayImage:
+        right.displayImage,
+      workflowImage:
+        right.workflowImage,
+    };
+  }
+
+  if (back) {
+    ltxViewImageRefs.back = {
+      displayImage:
+        back.displayImage,
+      workflowImage:
+        back.workflowImage,
+    };
+  }
+
   return {
-    characterId: item.id,
-    snapshotName: item.name,
-    sourceUpdatedAt: item.updatedAt,
-    defaultImageRef: item.defaultImage,
-    characterCardRef: item.characterCard,
-    identityDescription: item.identityDescription,
-    speaking: false,
-    visible: true,
-    voiceRef: item.voiceRef,
+    characterId:
+      item.id,
+    snapshotName:
+      item.name,
+    sourceUpdatedAt:
+      item.updatedAt,
+    defaultImageRef:
+      item.defaultImage,
+
+    /*
+     * H3 keeps using this multi-view composite.
+     */
+    characterCardRef:
+      item.characterCard,
+
+    /*
+     * LTX Ingredients starts on Default/Front and may later
+     * select one of the other separately saved directional frames.
+     */
+    ltxReferenceView:
+      "default",
+    ltxViewImageRefs,
+
+    identityDescription:
+      item.identityDescription,
+    speaking:
+      false,
+    visible:
+      true,
+    voiceRef:
+      item.voiceRef,
   };
 }
 
 function backgroundSelection(item: ProductionV2CatalogBackground): ProductionV2BackgroundSelection {
-  return { backgroundId: item.id, snapshotName: item.name, sourceUpdatedAt: item.updatedAt, masterImageRef: item.masterImage, identityDescription: item.identityDescription };
+  const canonical =
+    new Set<string>(
+      PRODUCTION_V2_BACKGROUND_CANONICAL_ANGLE_KEYS,
+    );
+
+  const angleImageRefs =
+    Object.fromEntries(
+      item.perspectives
+        .filter(
+          (perspective) =>
+            canonical.has(
+              perspective.key,
+            ),
+        )
+        .map(
+          (perspective) => [
+            perspective.key,
+            {
+              displayImage:
+                perspective.displayImage,
+              workflowImage:
+                perspective.workflowImage,
+            },
+          ],
+        ),
+    ) as ProductionV2BackgroundSelection["angleImageRefs"];
+
+  return {
+    backgroundId: item.id,
+    snapshotName: item.name,
+    sourceUpdatedAt: item.updatedAt,
+    masterImageRef: item.masterImage,
+    angleImageRefs,
+    referenceView: "master",
+    identityDescription:
+      item.identityDescription,
+  };
 }
 
 function assetSelection(item: ProductionV2CatalogAsset): ProductionV2AssetSelection {
@@ -727,16 +1003,87 @@ function visualReference(
   name: string,
   displayImage: ProductionV2EntityImage,
   generationImage = displayImage,
+  generationSourceType:
+    NonNullable<
+      ProductionV2VisualReference["generationSourceType"]
+    > =
+      kind === "character"
+        ? "character-card"
+        : kind === "background"
+          ? "background-master"
+          : "asset-default",
+  perspectiveKey?: string,
+  referenceId?: string,
 ): ProductionV2VisualReference {
   return {
-    id: `${kind}:${id}`,
+    id: referenceId || `${kind}:${id}`,
     sourceKind: kind,
     sourceId: id,
     name,
-    generationSourceType: kind === "character" ? "character-card" : kind === "background" ? "background-master" : "asset-default",
-    displayImage: displayImage.displayImage || displayImage.workflowImage,
-    workflowImage: generationImage.workflowImage || generationImage.displayImage,
+    generationSourceType,
+    perspectiveKey,
+    displayImage:
+      displayImage.displayImage
+      || displayImage.workflowImage,
+    workflowImage:
+      generationImage.workflowImage
+      || generationImage.displayImage,
   };
+}
+
+/*
+ * OTG_PRODUCTION_V2_H3_I2V_BACKGROUND_CANDIDATES_V1
+ *
+ * Backgrounds expose only the production-qualified Master and
+ * six canonical plates as H3 I2V Starting Images.
+ *
+ * Asset perspectives remain display-only until a separate
+ * canonical Asset production contract is qualified.
+ */
+function backgroundStartingImageReferences(
+  item: ProductionV2CatalogBackground,
+): ProductionV2VisualReference[] {
+  const canonical =
+    new Set<string>(
+      PRODUCTION_V2_BACKGROUND_CANONICAL_ANGLE_KEYS,
+    );
+
+  const master =
+    visualReference(
+      "background",
+      item.id,
+      `${item.name} - Master`,
+      item.masterImage,
+      item.masterImage,
+      "background-master",
+    );
+
+  const directional =
+    item.perspectives
+      .filter(
+        (perspective) =>
+          canonical.has(
+            perspective.key,
+          ),
+      )
+      .map(
+        (perspective) =>
+          visualReference(
+            "background",
+            item.id,
+            `${item.name} - ${perspective.label}`,
+            perspective,
+            perspective,
+            "background-angle",
+            perspective.key,
+            `background:${item.id}:${perspective.key}`,
+          ),
+      );
+
+  return [
+    master,
+    ...directional,
+  ];
 }
 
 export default function ProductionV2Panel() {
@@ -755,6 +1102,15 @@ export default function ProductionV2Panel() {
   const [generationSubmitting, setGenerationSubmitting] = useState(false);
   const [videoRefreshBusy, setVideoRefreshBusy] = useState(false);
   const [videoRetrySubmitting, setVideoRetrySubmitting] = useState(false);
+  const [continueSceneSubmitting, setContinueSceneSubmitting] = useState(false);
+  /*
+   * OTG_PRODUCTION_V2_PROMPT_TOOLS_R10_V1
+   *
+   * Undo is intentionally scoped to the Scene whose prompt was replaced.
+   * Browser/native typing undo remains available independently.
+   */
+  const [promptUndo, setPromptUndo] = useState<{ sceneId: string; value: string } | null>(null);
+  const [promptEnhancingLevel, setPromptEnhancingLevel] = useState<"short" | "medium" | "long" | null>(null);
   const [generationJob, setGenerationJob] = useState<ProductionV2GenerationJobPayload | null>(null);
   const [viewerSceneId, setViewerSceneId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -769,8 +1125,22 @@ export default function ProductionV2Panel() {
   const currentPrompt = selectedScene?.promptStateByMode[selectedScene.generationMode] || null;
   const readiness = selectedScene ? productionV2GenerationReadiness(selectedScene) : { ok: false, reason: "No scene selected." };
   const generationActive = productionV2GenerationIsActive(generationJob?.status);
+  const h3Eta = selectedScene?.model === "minimax-h3"
+    && (selectedScene.durationSeconds === 5 || selectedScene.durationSeconds === 10)
+    ? getH3ProductionTimeEstimate(
+        selectedScene.generationMode as H3ProductionMode,
+        selectedScene.durationSeconds,
+        selectedScene.h3Quality,
+        generationJob?.backend,
+      )
+    : null;
+  /*
+   * Continue Scene follows the explicitly active media version.
+   * selectedSceneVersion already falls back safely when no active
+   * version has been selected.
+   */
   const selectedStoryboardVersion = selectedScene
-    ? selectedScene.mediaVersions.at(-1) || selectedSceneVersion(selectedScene)
+    ? selectedSceneVersion(selectedScene)
     : null;
   const storyboardVideoSrc = mediaUrl(
     selectedStoryboardVersion?.previewUrl || generationJob?.videoUrl || selectedScene?.generatedClip?.previewUrl || "",
@@ -779,6 +1149,15 @@ export default function ProductionV2Panel() {
   const savedScenes = useMemo(() => production ? productionV2SavedScenes(production) : [], [production]);
   const activeStage = production?.activeStage || "storyboard";
   const viewerScene = viewerSceneId ? production?.scenes.find((scene) => scene.id === viewerSceneId) || null : null;
+  const continuationFrameSrc =
+    production && selectedScene?.continuation
+      ? `/api/production/v2/postprocess?${new URLSearchParams({
+          action: "continuation-frame",
+          productionId: production.id,
+          sceneId: selectedScene.id,
+          sourceVersionId: selectedScene.continuation.sourceMediaVersionId,
+        }).toString()}`
+      : "";
 
   async function refreshHome(restoreActive = false) {
     const response = await fetch("/api/production/v2", { credentials: "include", cache: "no-store" });
@@ -878,7 +1257,13 @@ export default function ProductionV2Panel() {
         if (json.job.status === "failed") return;
         timer = setTimeout(poll, 3000);
       } catch (error) {
-        if (!cancelled) setMessage(error instanceof Error ? error.message : "Could not read H3 generation status.");
+        if (!cancelled) {
+          setMessage(
+            error instanceof Error
+              ? error.message
+              : "Could not read Production video generation status.",
+          );
+        }
       }
     }
     void poll();
@@ -1064,6 +1449,57 @@ export default function ProductionV2Panel() {
     updateSharedSceneInput((scene) => ({ ...scene, selectedBackground: scene.selectedBackground?.backgroundId === item.id ? null : backgroundSelection(item) }), true);
   }
 
+  /*
+   * OTG_PRODUCTION_V2_BACKGROUND_REFERENCE_VIEW_UI_V1
+   *
+   * View changes are scene edits. updateSharedSceneInput invalidates
+   * the built prompt, and syncReferences=true rebuilds reference state.
+   */
+  function changeBackgroundReferenceView(
+    referenceView: ProductionV2BackgroundReferenceView,
+  ) {
+    const background =
+      selectedScene?.selectedBackground;
+
+    if (!background) return;
+
+    const referenceImage =
+      referenceView === "master"
+        ? background.masterImageRef
+        : background.angleImageRefs?.[
+            referenceView
+          ];
+
+    if (
+      !referenceImage?.workflowImage
+      && !referenceImage?.displayImage
+    ) {
+      setMessage(
+        `${background.snapshotName} does not have the ${BACKGROUND_REFERENCE_VIEW_LABELS[referenceView]} Background reference plate.`,
+      );
+      return;
+    }
+
+    setMessage("");
+
+    updateSharedSceneInput(
+      (scene) => {
+        if (!scene.selectedBackground) {
+          return scene;
+        }
+
+        return {
+          ...scene,
+          selectedBackground: {
+            ...scene.selectedBackground,
+            referenceView,
+          },
+        };
+      },
+      true,
+    );
+  }
+
   function toggleAsset(item: ProductionV2CatalogAsset) {
     updateSharedSceneInput((scene) => {
       const selected = scene.selectedAssets.some((entry) => entry.assetId === item.id);
@@ -1129,13 +1565,39 @@ export default function ProductionV2Panel() {
   }
 
   function setStartingImage(reference: ProductionV2VisualReference) {
-    updateSharedSceneInput((scene) => ({
-      ...scene,
-      modelState: {
-        ...scene.modelState,
-        h3: { ...scene.modelState.h3, imageToVideo: { startingImage: scene.modelState.h3.imageToVideo.startingImage?.id === reference.id ? null : reference } },
-      },
-    }));
+    updateSharedSceneInput((scene) => {
+      const nextStartingImage =
+        scene.modelState.h3.imageToVideo
+          .startingImage?.id
+          === reference.id
+          ? null
+          : reference;
+
+      const preservesContinuation =
+        Boolean(
+          scene.continuation
+          && nextStartingImage?.workflowImage
+            === scene.continuation.lastFramePath,
+        );
+
+      return {
+        ...scene,
+        continuation:
+          preservesContinuation
+            ? scene.continuation
+            : null,
+        modelState: {
+          ...scene.modelState,
+          h3: {
+            ...scene.modelState.h3,
+            imageToVideo: {
+              startingImage:
+                nextStartingImage,
+            },
+          },
+        },
+      };
+    });
   }
 
   function changeModel(model: ProductionV2Model) {
@@ -1146,58 +1608,807 @@ export default function ProductionV2Panel() {
     updateSelectedScene((scene) => syncProductionV2ReferencePlan(switchProductionV2SceneMode(scene, mode)));
   }
 
-  async function buildPrompt() {
-    if (!selectedScene) return;
-    setBusy(true);
+  function replaceUserPrompt(nextPrompt: string) {
+    if (!selectedScene || !currentPrompt) return;
+
+    setPromptUndo({
+      sceneId: selectedScene.id,
+      value: currentPrompt.userPrompt,
+    });
+
+    updateSelectedScene((scene) =>
+      updateProductionV2ScenePrompt(
+        scene,
+        { userPrompt: nextPrompt },
+      ),
+    );
+  }
+
+  function clearUserPrompt() {
+    if (!currentPrompt?.userPrompt) return;
+    replaceUserPrompt("");
+    setMessage("Scene description cleared. Undo is available.");
+  }
+
+  function undoUserPrompt() {
+    if (
+      !selectedScene
+      || !promptUndo
+      || promptUndo.sceneId !== selectedScene.id
+    ) {
+      return;
+    }
+
+    const restore = promptUndo.value;
+    setPromptUndo(null);
+
+    updateSelectedScene((scene) =>
+      updateProductionV2ScenePrompt(
+        scene,
+        { userPrompt: restore },
+      ),
+    );
+
+    setMessage("Scene description restored.");
+  }
+
+  async function enhanceUserPrompt(
+    level: "short" | "medium" | "long",
+  ) {
+    if (
+      !selectedScene
+      || !currentPrompt?.userPrompt.trim()
+      || promptEnhancingLevel
+    ) {
+      return;
+    }
+
+    const sourceSceneId = selectedScene.id;
+    const originalPrompt = currentPrompt.userPrompt;
+
+    setPromptEnhancingLevel(level);
     setMessage("");
+
     try {
-      if (selectedScene.model === "minimax-h3") {
-        const response = await fetch("/api/production/v2/prompt", {
+      /*
+       * OTG_PRODUCTION_V2_VISION_AWARE_ENHANCE_PANEL_R12C_V1
+       * OTG_PRODUCTION_V2_VISION_PATH_FALLBACK_R12E10_V1
+       *
+       * Never send multiple images through one Qwen/Ollama request.
+       * Each current generation image is analyzed independently,
+       * sequentially, with an explicit semantic role.
+       *
+       * T2V remains text-only.
+       */
+      type EnhanceVisionRole =
+        | "continuation_frame"
+        | "starting_image"
+        | "character"
+        | "background"
+        | "asset";
+
+      type EnhanceVisionItem = {
+        imagePath: string;
+        fallbackImagePath?: string;
+        role: EnhanceVisionRole;
+        label: string;
+        perspectiveKey?: string;
+      };
+
+      const visionItems:
+        EnhanceVisionItem[] = [];
+
+      const pushVisionItem = (
+        imagePathValue: unknown,
+        role: EnhanceVisionRole,
+        label: string,
+        perspectiveKey?: string,
+        fallbackImagePathValue?: unknown,
+      ) => {
+        const primaryImagePath =
+          String(
+            imagePathValue
+            || "",
+          ).trim();
+
+        const fallbackImagePath =
+          String(
+            fallbackImagePathValue
+            || "",
+          ).trim();
+
+        const imagePath =
+          primaryImagePath
+          || fallbackImagePath;
+
+        if (!imagePath) {
+          return;
+        }
+
+        visionItems.push({
+          imagePath,
+          fallbackImagePath:
+            fallbackImagePath
+            && fallbackImagePath
+              !== imagePath
+              ? fallbackImagePath
+              : undefined,
+          role,
+          label,
+          perspectiveKey,
+        });
+      };
+
+      if (
+        selectedScene.generationMode
+        === "h3-image-to-video"
+      ) {
+        if (
+          selectedScene.continuation
+            ?.lastFramePath
+        ) {
+          pushVisionItem(
+            selectedScene
+              .continuation
+              .lastFramePath,
+            "continuation_frame",
+            `Previous Scene ${selectedScene.continuation.sourceSceneNumber} — Exact Last Frame`,
+          );
+        } else {
+          const startingImage =
+            selectedScene
+              .modelState
+              .h3
+              .imageToVideo
+              .startingImage;
+
+          pushVisionItem(
+            startingImage
+              ?.workflowImage
+            || startingImage
+              ?.displayImage,
+            "starting_image",
+            startingImage?.name
+              ? `Starting Image — ${startingImage.name}`
+              : "Starting Image",
+            startingImage
+              ?.perspectiveKey,
+            startingImage
+              ?.displayImage,
+          );
+        }
+      } else if (
+        selectedScene.generationMode
+        === "h3-reference-to-video"
+      ) {
+        /*
+         * Scene authority always comes first.
+         */
+        if (
+          selectedScene.continuation
+            ?.lastFramePath
+        ) {
+          pushVisionItem(
+            selectedScene
+              .continuation
+              .lastFramePath,
+            "continuation_frame",
+            `Previous Scene ${selectedScene.continuation.sourceSceneNumber} — Exact Last Frame`,
+          );
+        }
+
+        /*
+         * Match the H3 resolver's deterministic visual ordering:
+         * Character Cards -> Background -> Assets.
+         */
+        let pictureSlot = 1;
+
+        for (
+          const character
+          of selectedScene
+            .selectedCharacters
+        ) {
+          pushVisionItem(
+            character
+              .characterCardRef
+              .workflowImage
+            || character
+              .characterCardRef
+              .displayImage,
+            "character",
+            `Picture ${pictureSlot} / Character — ${character.snapshotName}`,
+            undefined,
+            character
+              .characterCardRef
+              .displayImage,
+          );
+
+          pictureSlot += 1;
+        }
+
+        if (
+          selectedScene
+            .selectedBackground
+        ) {
+          const background =
+            selectedScene
+              .selectedBackground;
+
+          const backgroundView =
+            background.referenceView
+            || "master";
+
+          const backgroundImage =
+            backgroundView
+            === "master"
+              ? background
+                  .masterImageRef
+              : background
+                  .angleImageRefs
+                  ?.[backgroundView];
+
+          pushVisionItem(
+            backgroundImage
+              ?.workflowImage
+            || backgroundImage
+              ?.displayImage,
+            "background",
+            `Picture ${pictureSlot} / Background — ${background.snapshotName}`,
+            backgroundView,
+            backgroundImage
+              ?.displayImage,
+          );
+
+          pictureSlot += 1;
+        }
+
+        for (
+          const asset
+          of selectedScene
+            .selectedAssets
+        ) {
+          pushVisionItem(
+            asset
+              .defaultImageRef
+              .workflowImage
+            || asset
+              .defaultImageRef
+              .displayImage,
+            "asset",
+            `Picture ${pictureSlot} / Asset — ${asset.snapshotName}`,
+            undefined,
+            asset
+              .defaultImageRef
+              .displayImage,
+          );
+
+          pictureSlot += 1;
+        }
+      }
+
+      /*
+       * OTG_PRODUCTION_V2_LTX_R13C_ENHANCE_VISUAL_AUTHORITY_V1
+       *
+       * LTX Enhance Prompt sees the same authoritative model-facing
+       * identity sources as generation: continuation frame first, then
+       * Character Cards, Background Master, and Asset defaults.
+       */
+      if (
+        selectedScene.generationMode
+        === "ltx-ingredients-image-to-video"
+      ) {
+        if (selectedScene.continuation?.lastFramePath) {
+          pushVisionItem(
+            selectedScene.continuation.lastFramePath,
+            "continuation_frame",
+            `Previous Scene ${selectedScene.continuation.sourceSceneNumber} — Exact Last Frame`,
+          );
+        }
+
+        let ingredientSlot = 1;
+
+        for (const character of selectedScene.selectedCharacters) {
+          pushVisionItem(
+            character.characterCardRef.workflowImage
+            || character.characterCardRef.displayImage,
+            "character",
+            `Ingredient ${ingredientSlot} / Character — ${character.snapshotName}`,
+            undefined,
+            character.characterCardRef.displayImage,
+          );
+          ingredientSlot += 1;
+        }
+
+        if (selectedScene.selectedBackground) {
+          const background = selectedScene.selectedBackground;
+          pushVisionItem(
+            background.masterImageRef.workflowImage
+            || background.masterImageRef.displayImage,
+            "background",
+            `Ingredient ${ingredientSlot} / Background Master — ${background.snapshotName}`,
+            "master",
+            background.masterImageRef.displayImage,
+          );
+          ingredientSlot += 1;
+        }
+
+        for (const asset of selectedScene.selectedAssets) {
+          pushVisionItem(
+            asset.defaultImageRef.workflowImage
+            || asset.defaultImageRef.displayImage,
+            "asset",
+            `Ingredient ${ingredientSlot} / Asset — ${asset.snapshotName}`,
+            undefined,
+            asset.defaultImageRef.displayImage,
+          );
+          ingredientSlot += 1;
+        }
+      }
+
+      const visualDescriptions:
+        string[] = [];
+
+      let visionFailures = 0;
+
+      const visionFailureDetails:
+        string[] = [];
+
+      /*
+       * Intentionally sequential.
+       *
+       * One image enters the vision model at a time, so image
+       * ordering cannot be corrupted by Ollama/Qwen multi-image
+       * temporal merging.
+       */
+      for (
+        const item
+        of visionItems
+      ) {
+        const imagePathCandidates =
+          Array.from(
+            new Set(
+              [
+                item.imagePath,
+                item.fallbackImagePath,
+              ].filter(
+                (
+                  value,
+                ): value is string =>
+                  Boolean(
+                    value,
+                  ),
+              ),
+            ),
+          );
+
+        let described = false;
+        let lastVisionError = "";
+
+        for (
+          let attemptIndex = 0;
+          attemptIndex
+            < imagePathCandidates.length;
+          attemptIndex += 1
+        ) {
+          const imagePath =
+            imagePathCandidates[
+              attemptIndex
+            ];
+
+          try {
+            const visionResponse =
+              await fetch(
+                "/api/vision-prompt",
+                {
+                  method:
+                    "POST",
+                  credentials:
+                    "include",
+                  headers: {
+                    "Content-Type":
+                      "application/json",
+                  },
+                  body:
+                    JSON.stringify({
+                      imagePath,
+                      purpose:
+                        "prompt_enhancement",
+                      promptEnhancementRole:
+                        item.role,
+                      referenceName:
+                        item.label,
+                      perspectiveKey:
+                        item.perspectiveKey
+                        || "",
+                    }),
+                },
+              );
+
+            const visionJson =
+              await readJsonResponse<{
+                descriptor?: string;
+                role?: string;
+                model?: string;
+                error?: string;
+                stage?: string;
+              }>(
+                visionResponse,
+              );
+
+            const descriptor =
+              String(
+                visionJson
+                  .descriptor
+                || "",
+              ).trim();
+
+            if (!descriptor) {
+              lastVisionError =
+                "Vision endpoint returned no descriptor.";
+
+              continue;
+            }
+
+            visualDescriptions.push(
+              `${item.label}: ${descriptor}`,
+            );
+
+            described = true;
+            break;
+          } catch (visionError) {
+            lastVisionError =
+              visionError
+              instanceof Error
+                ? visionError.message
+                : String(
+                    visionError,
+                  );
+
+            console.warn(
+              "[ProductionV2] vision-aware prompt enhancement reference attempt failed",
+              {
+                role:
+                  item.role,
+                label:
+                  item.label,
+                attempt:
+                  attemptIndex + 1,
+                attempts:
+                  imagePathCandidates.length,
+                error:
+                  lastVisionError,
+              },
+            );
+          }
+        }
+
+        if (!described) {
+          visionFailures += 1;
+
+          visionFailureDetails.push(
+            `${item.label}: ${
+              lastVisionError
+              || "Vision analysis failed."
+            }`,
+          );
+        }
+      }
+
+      const visualContext =
+        visualDescriptions
+          .join(
+            "\n",
+          );
+
+      if (
+        visionItems.length
+        && !visualContext
+      ) {
+        console.warn(
+          "[ProductionV2] vision-aware prompt enhancement fell back to text-only",
+          {
+            requestedVisuals:
+              visionItems.length,
+            failedVisuals:
+              visionFailures,
+            failureDetails:
+              visionFailureDetails.slice(
+                0,
+                3,
+              ),
+          },
+        );
+      }
+
+      const response = await fetch(
+        "/api/enhance-prompt",
+        {
           method: "POST",
           credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ scene: selectedScene }),
-        });
-        const json = await readJsonResponse<PromptBuildPayload>(response);
-        updateSelectedScene((scene) => {
-          const resolved = {
-            ...scene,
-            referencePlan: json.referencePlan,
-            modelState: {
-              ...scene.modelState,
-              h3: { ...scene.modelState.h3, referenceToVideo: { resolvedVoiceBindings: json.referencePlan.resolvedVoiceReferences } },
-            },
-          };
-          return buildProductionV2ScenePrompt(resolved, json.scenePrompt, json.builderId, json.lockedReferenceContext);
-        });
-        setMessage(`Scene Prompt built with ${json.provider}${json.repaired ? " after validation repair" : ""}. Review both prompt layers before generation.`);
-      } else {
-        const built = buildProductionPrompt({ model: selectedScene.model, mode: selectedScene.generationMode, scene: selectedScene });
-        updateSelectedScene((scene) => buildProductionV2ScenePrompt(scene, built.scenePrompt, built.builderId, built.lockedReferenceContext));
-        setMessage("LTX Scene Prompt built. Review the exact final prompt before generation.");
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            prompt: originalPrompt,
+            enhanceLevel: level,
+            contextType: "video",
+            mediaMode: selectedScene.generationMode,
+            videoGenerationType:
+              selectedScene.generationMode,
+            durationSeconds:
+              selectedScene.durationSeconds,
+
+            /*
+             * Empty means exact legacy text-only enhancement.
+             */
+            visualContext,
+          }),
+        },
+      );
+
+      const json =
+        await readJsonResponse<{
+          enhancedPrompt?: string;
+          prompt?: string;
+          error?: string;
+        }>(response);
+
+      const enhancedPrompt =
+        String(
+          json.enhancedPrompt
+          || json.prompt
+          || "",
+        ).trim();
+
+      if (!enhancedPrompt) {
+        throw new Error(
+          json.error
+          || "Enhance Prompt returned no text.",
+        );
       }
+
+      setPromptUndo({
+        sceneId: sourceSceneId,
+        value: originalPrompt,
+      });
+
+      setProduction((current) =>
+        current
+          ? {
+              ...current,
+              scenes: current.scenes.map(
+                (scene) =>
+                  scene.id === sourceSceneId
+                    ? updateProductionV2ScenePrompt(
+                        scene,
+                        {
+                          userPrompt:
+                            enhancedPrompt,
+                        },
+                      )
+                    : scene,
+              ),
+            }
+          : current,
+      );
+
+      setMessage(
+        `Scene description enhanced (${level}).`,
+      );
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not build the Scene Prompt.");
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not enhance Scene description.",
+      );
+    } finally {
+      setPromptEnhancingLevel(null);
+    }
+  }
+
+
+  /*
+   * OTG_PRODUCTION_V2_ASYNC_PROMPT_CLIENT_V1
+   *
+   * There is intentionally no GPU-wait deadline here.
+   *
+   * The server operation is durable. A transient browser/network
+   * interruption only interrupts polling, not the prompt job.
+   */
+  async function pollPromptBuildOperation(
+    operationId: string,
+  ): Promise<PromptBuildPayload> {
+    for (;;) {
+      let response: Response;
+
+      try {
+        response = await fetch(
+          `/api/production/v2/prompt/${encodeURIComponent(operationId)}`,
+          {
+            method: "GET",
+            credentials: "include",
+            cache: "no-store",
+          },
+        );
+      } catch {
+        setMessage(
+          "Connection interrupted. The Scene Prompt job is still saved; reconnecting...",
+        );
+
+        await new Promise<void>(
+          (resolve) => {
+            setTimeout(
+              resolve,
+              1500,
+            );
+          },
+        );
+
+        continue;
+      }
+
+      const json =
+        await readJsonResponse<PromptOperationPollPayload>(
+          response,
+        );
+
+      if (
+        json.status
+        === "completed"
+      ) {
+        if (!json.result) {
+          throw new Error(
+            "Scene Prompt operation completed without a result.",
+          );
+        }
+
+        return json.result;
+      }
+
+      if (
+        json.status
+        === "failed"
+      ) {
+        throw new Error(
+          String(
+            json.error
+            || "Scene Prompt generation failed.",
+          ),
+        );
+      }
+
+      setMessage(
+        json.statusMessage
+        || "Scene Prompt queued. Waiting for the prompt model...",
+      );
+
+      await new Promise<void>(
+        (resolve) => {
+          setTimeout(
+            resolve,
+            1500,
+          );
+        },
+      );
+    }
+  }
+
+  async function buildPrompt() {
+    if (!selectedScene) return;
+
+    setBusy(true);
+    setMessage("");
+
+    try {
+      /*
+       * OTG_PRODUCTION_V2_LTX_DURABLE_PROMPT_CLIENT_WIRING_V1
+       *
+       * H3 and qualified LTX 2.5 scenes both cross the durable
+       * Production V2 prompt API boundary.
+       *
+       * LTX must never fall back to the synchronous local
+       * buildProductionPrompt helper here because that bypasses the
+       * Vision-Qwen Ingredients pipeline.
+       */
+      const response = await fetch(
+        "/api/production/v2/prompt",
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            scene: selectedScene,
+          }),
+        },
+      );
+
+      const start =
+        await readJsonResponse<PromptOperationStartPayload>(
+          response,
+        );
+
+      if (!start.operationId) {
+        throw new Error(
+          "The server did not return a Scene Prompt operation id.",
+        );
+      }
+
+      setMessage(
+        start.statusMessage
+        || "Scene Prompt queued. Waiting for the prompt model...",
+      );
+
+      const json =
+        await pollPromptBuildOperation(
+          start.operationId,
+        );
+
+      updateSelectedScene((scene) => {
+        const resolved =
+          scene.model === "minimax-h3"
+            ? {
+                ...scene,
+
+                referencePlan:
+                  json.referencePlan,
+
+                modelState: {
+                  ...scene.modelState,
+
+                  h3: {
+                    ...scene.modelState.h3,
+
+                    referenceToVideo: {
+                      resolvedVoiceBindings:
+                        json.referencePlan.resolvedVoiceReferences,
+                    },
+                  },
+                },
+              }
+            : {
+                ...scene,
+
+                referencePlan:
+                  json.referencePlan,
+              };
+
+        return buildProductionV2ScenePrompt(
+          resolved,
+          json.scenePrompt,
+          json.builderId,
+          json.lockedReferenceContext,
+        );
+      });
+
+      setMessage(
+        `Scene Prompt built with ${json.provider}${json.repaired ? " after validation repair" : ""}.`,
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not build the Scene Prompt.",
+      );
     } finally {
       setBusy(false);
     }
   }
 
-  function reviewFinalPrompt() {
-    try {
-      updateSelectedScene((scene) => reviewProductionV2FinalPrompt(scene));
-      setMessage("Locked References and the exact Final Prompt were reviewed. No generation was submitted.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not review final prompt.");
-    }
-  }
-
-  async function generateVideo() {
-    if (!production || !selectedScene || selectedScene.model !== "minimax-h3") return;
+   async function generateVideo() {
+    if (!production || !selectedScene) return;
+    const generationModelLabel =
+      selectedScene.model === "ltx-2.5"
+        ? "LTX 2.5 Ingredients"
+        : "MiniMax H3";
     setGenerationSubmitting(true);
     setMessage("");
     try {
-      const saved = await saveProduction(production, "Scene saved for MiniMax H3 generation.");
+      const saved = await saveProduction(
+        production,
+        `Scene saved for ${generationModelLabel} generation.`,
+      );
       if (!saved) return;
       const savedScene = saved.scenes.find((scene) => scene.id === selectedScene.id);
       if (!savedScene) throw new Error("Saved Production no longer contains this Scene.");
@@ -1211,7 +2422,11 @@ export default function ProductionV2Panel() {
       setGenerationJob(json.job);
       setMessage(json.job.statusMessage || "Waiting for GPU");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not submit MiniMax H3 generation.");
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not submit Production video generation.",
+      );
     } finally {
       setGenerationSubmitting(false);
     }
@@ -1244,6 +2459,40 @@ export default function ProductionV2Panel() {
       await saveProduction(addProductionV2Scene(production, selectedScene?.model || production.defaultModel), "Scene added.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not add scene.");
+    }
+  }
+
+  async function removeScene() {
+    if (
+      !production
+      || !selectedScene
+      || production.scenes.length <= 1
+    ) return;
+
+    const sceneNumber =
+      selectedScene.sceneNumber;
+
+    const confirmed =
+      window.confirm(
+        `Remove Scene ${sceneNumber}? This removes the scene from this Production.`,
+      );
+
+    if (!confirmed) return;
+
+    try {
+      await saveProduction(
+        removeProductionV2Scene(
+          production,
+          selectedScene.id,
+        ),
+        `Scene ${sceneNumber} removed.`,
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not remove scene.",
+      );
     }
   }
 
@@ -1338,6 +2587,116 @@ export default function ProductionV2Panel() {
     }
   }
 
+  /*
+   * OTG_PRODUCTION_V2_CONTINUE_SCENE_UI_V2
+   *
+   * Supersedes OTG_PRODUCTION_V2_LTX_CONTINUE_SCENE_UI_V1.
+   *
+   * R8 legacy contract text:
+   * "This button is exposed only for LTX until the H3 last-frame I2V
+   * and prior-video R2V continuation backend is complete."
+   *
+   * H3 is now qualified for this continuation handoff:
+   *   I2V -> exact extracted final frame
+   *   R2V -> previous source video + current references/voices
+   */
+  async function continueScene() {
+    if (
+      !production
+      || !selectedScene
+      || !selectedStoryboardVersion
+      || continueSceneSubmitting
+    ) {
+      return;
+    }
+
+    const sourceSceneNumber =
+      selectedScene.sceneNumber;
+
+    setContinueSceneSubmitting(
+      true,
+    );
+
+    setMessage("");
+
+    try {
+      const saved =
+        await saveProduction(
+          production,
+          "Continuation source saved.",
+        );
+
+      if (!saved) {
+        return;
+      }
+
+      const response =
+        await fetch(
+          "/api/production/v2/postprocess",
+          {
+            method:
+              "POST",
+            credentials:
+              "include",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body:
+              JSON.stringify({
+                action:
+                  "prepare-continuation",
+                productionId:
+                  saved.id,
+                sceneId:
+                  selectedScene.id,
+                versionId:
+                  selectedStoryboardVersion.id,
+              }),
+          },
+        );
+
+      const json =
+        await readJsonResponse<{
+          production:
+            ProductionV2;
+          targetSceneId:
+            string;
+        }>(
+          response,
+        );
+
+      const nextScene =
+        json.production.scenes.find(
+          (item) =>
+            item.id
+            === json.targetSceneId,
+        );
+
+      setProduction(
+        json.production,
+      );
+
+      setGenerationJob(
+        null,
+      );
+
+      setMessage(
+        `Scene ${nextScene?.sceneNumber || sourceSceneNumber + 1} created from Scene ${sourceSceneNumber} final frame.`,
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not prepare Continue Scene.",
+      );
+    } finally {
+      setContinueSceneSubmitting(
+        false,
+      );
+    }
+  }
+
   async function saveScene() {
     if (!production || !selectedScene) return;
     const nextScene = markProductionV2SceneSaved(selectedScene);
@@ -1367,16 +2726,41 @@ export default function ProductionV2Panel() {
   if (!selectedScene || !currentPrompt) return null;
 
   const startingImageCandidates = [
-    ...characters.map((item) => visualReference("character", item.id, item.name, item.defaultImage, item.characterCard)),
-    ...backgrounds.map((item) => visualReference("background", item.id, item.name, item.masterImage)),
-    ...assets.map((item) => visualReference("asset", item.id, item.name, item.defaultImage)),
+    ...characters.map(
+      (item) =>
+        visualReference(
+          "character",
+          item.id,
+          item.name,
+          item.defaultImage,
+          item.characterCard,
+        ),
+    ),
+    ...backgrounds.flatMap(
+      (item) =>
+        backgroundStartingImageReferences(
+          item,
+        ),
+    ),
+    ...assets.map(
+      (item) =>
+        visualReference(
+          "asset",
+          item.id,
+          item.name,
+          item.defaultImage,
+        ),
+    ),
   ];
   const ingredientCount = productionV2LtxVisualIngredientCount(selectedScene);
   const ingredientLimit = selectedScene.modelState.ltx.ingredients.visualIngredientLimit || LTX_V2_DEFAULT_INGREDIENT_LIMIT;
   const speakingCharacters = productionV2SpeakingCharacters(selectedScene);
   const speakerCount = speakingCharacters.length;
   const dialogueDurationWarning = productionV2DialogueDurationWarning(selectedScene);
-  const usesDialogueOrder = selectedScene.generationMode === "h3-reference-to-video";
+  const isH3TextToVideo = selectedScene.generationMode === "h3-text-to-video";
+  const isH3ImageToVideo = selectedScene.generationMode === "h3-image-to-video";
+  const isH3ReferenceToVideo = selectedScene.generationMode === "h3-reference-to-video";
+  const usesDialogueOrder = isH3ReferenceToVideo;
   const selectedSceneStatus = productionV2SceneCardStatus(selectedScene);
 
   return (
@@ -1410,6 +2794,7 @@ export default function ProductionV2Panel() {
         <div className="mt-4 flex flex-wrap items-center gap-2" aria-label="Scene navigation">
           {production.scenes.map((scene) => <button key={scene.id} type="button" onClick={() => selectScene(scene.id)} aria-current={scene.id === selectedScene.id ? "step" : undefined} className={`h-10 min-w-10 rounded-lg border px-3 text-sm font-black ${scene.id === selectedScene.id ? "production-v2-control-active" : "border-white/10 bg-black/25 text-zinc-400"}`}>{scene.sceneNumber}</button>)}
           <button className={secondaryButton} disabled={busy || readOnly || production.scenes.length >= PRODUCTION_V2_MAX_SCENES} onClick={() => void addScene()}>+ Add Scene</button>
+          <button className={dangerButton} disabled={busy || readOnly || production.scenes.length <= 1} onClick={() => void removeScene()} data-otg="production-v2-remove-scene">Remove Scene</button>
           <span className="ml-auto text-xs font-bold text-zinc-500">{production.scenes.length}/{PRODUCTION_V2_MAX_SCENES}</span>
         </div>
       </header>
@@ -1419,7 +2804,7 @@ export default function ProductionV2Panel() {
       {activeStage === "storyboard" ? <div className="mx-auto max-w-7xl space-y-4 p-4 sm:p-6">
         {message ? <div role="status" className="rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm text-cyan-50">{message}</div> : null}
         {readOnly ? <div className="rounded-lg border border-amber-300/25 bg-amber-300/10 px-4 py-3 text-sm font-bold text-amber-100">Completed production | Review only</div> : null}
-        <SceneGrid scenes={savedScenes} activeSceneId={selectedScene.id} onSelect={selectScene} onOpen={setViewerSceneId} />
+        <SceneGrid scenes={production.scenes} activeSceneId={selectedScene.id} onSelect={selectScene} onOpen={setViewerSceneId} />
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.34fr)]">
           <div className="space-y-4">
             <div className="production-v2-accent-card rounded-lg border bg-zinc-950/70 p-4" data-otg="production-v2-scene-controls">
@@ -1429,7 +2814,59 @@ export default function ProductionV2Panel() {
             <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-4" data-otg="production-v2-what-happens">
               <NumberedHeading number="01" title="What should happen?" description="Write the scene naturally. The builder must preserve your requested action and story facts." />
               <label className="mt-4 block text-xs font-black uppercase text-zinc-500" htmlFor="production-v2-user-prompt">Scene description</label>
-              <textarea id="production-v2-user-prompt" rows={5} value={currentPrompt.userPrompt} readOnly={readOnly} onChange={(event) => updateSelectedScene((scene) => updateProductionV2ScenePrompt(scene, { userPrompt: event.target.value }))} className={`${fieldClass} mt-2 resize-y`} />
+              <textarea
+                id="production-v2-user-prompt"
+                rows={5}
+                value={currentPrompt.userPrompt}
+                readOnly={Boolean(readOnly || promptEnhancingLevel)}
+                spellCheck={true}
+                autoCorrect="on"
+                autoCapitalize="sentences"
+                onChange={(event) => updateSelectedScene((scene) => updateProductionV2ScenePrompt(scene, { userPrompt: event.target.value }))}
+                className={`${fieldClass} mt-2 resize-y`}
+              />
+              <div className="mt-3 flex flex-wrap gap-2" data-otg="production-v2-user-prompt-tools">
+                <button
+                  type="button"
+                  className={secondaryButton}
+                  disabled={Boolean(readOnly || promptEnhancingLevel || !currentPrompt.userPrompt)}
+                  onClick={clearUserPrompt}
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  className={secondaryButton}
+                  disabled={Boolean(readOnly || promptEnhancingLevel || !promptUndo || promptUndo.sceneId !== selectedScene.id)}
+                  onClick={undoUserPrompt}
+                >
+                  Undo
+                </button>
+                <button
+                  type="button"
+                  className={secondaryButton}
+                  disabled={Boolean(readOnly || promptEnhancingLevel || !currentPrompt.userPrompt.trim())}
+                  onClick={() => void enhanceUserPrompt("short")}
+                >
+                  {promptEnhancingLevel === "short" ? "Enhancing Short..." : "Enhance Short"}
+                </button>
+                <button
+                  type="button"
+                  className={secondaryButton}
+                  disabled={Boolean(readOnly || promptEnhancingLevel || !currentPrompt.userPrompt.trim())}
+                  onClick={() => void enhanceUserPrompt("medium")}
+                >
+                  {promptEnhancingLevel === "medium" ? "Enhancing Medium..." : "Enhance Medium"}
+                </button>
+                <button
+                  type="button"
+                  className={secondaryButton}
+                  disabled={Boolean(readOnly || promptEnhancingLevel || !currentPrompt.userPrompt.trim())}
+                  onClick={() => void enhanceUserPrompt("long")}
+                >
+                  {promptEnhancingLevel === "long" ? "Enhancing Long..." : "Enhance Long"}
+                </button>
+              </div>
             </div>
 
             <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-4" data-otg="production-v2-look-controls">
@@ -1438,9 +2875,34 @@ export default function ProductionV2Panel() {
                 <SelectControl label="Visual style" value={selectedScene.promptOptions.visualStyle} options={H3_VISUAL_STYLE_OPTIONS} disabled={Boolean(readOnly)} onChange={(value) => updatePromptOption("visualStyle", value as ProductionV2PromptOptions["visualStyle"])} />
                 <SelectControl label="Camera feel" value={selectedScene.promptOptions.cameraFeel} options={H3_CAMERA_FEEL_OPTIONS} disabled={Boolean(readOnly)} onChange={(value) => updatePromptOption("cameraFeel", value as ProductionV2PromptOptions["cameraFeel"])} />
                 <SelectControl label="Shot flow" value={selectedScene.promptOptions.shotFlow} options={H3_SHOT_FLOW_OPTIONS} disabled={Boolean(readOnly)} onChange={(value) => updatePromptOption("shotFlow", value as ProductionV2PromptOptions["shotFlow"])} />
-                <div><div className="text-xs font-black uppercase text-zinc-500">Quality</div><div aria-label="Quality" aria-readonly="true" className="mt-2 rounded-lg border border-white/10 bg-black/25 px-3 py-2.5 text-sm font-bold text-zinc-200"><span className="block">1080p final output</span><span className="mt-1 block text-[10px] font-normal text-zinc-500">Native H3 1024x576 + RTX VSR ULTRA</span></div></div>
+                <div>
+                  <div className="text-xs font-black uppercase text-zinc-500">Quality</div>
+                  {selectedScene.model === "minimax-h3" ? (
+                    <div className="mt-2" data-otg="production-v2-h3-quality-control">
+                      <div className="grid grid-cols-2 gap-2" aria-label="MiniMax H3 quality">
+                        <SegmentButton active={selectedScene.h3Quality === "lq"} disabled={Boolean(readOnly)} onClick={() => updateSharedSceneInput((scene) => ({ ...scene, h3Quality: "lq" }))}>LQ</SegmentButton>
+                        <SegmentButton active={selectedScene.h3Quality === "hq"} disabled={Boolean(readOnly)} onClick={() => updateSharedSceneInput((scene) => ({ ...scene, h3Quality: "hq" }))}>HQ</SegmentButton>
+                      </div>
+                      <div className="mt-2 text-[10px] leading-4 text-zinc-500">
+                        {selectedScene.h3Quality === "hq" ? "1.0 MP native (1376x768)" : "0.6 MP native (1056x608)"} + RTX VSR ULTRA
+                      </div>
+                      {h3Eta ? (
+                        <div className="mt-1 text-[10px] leading-4 text-zinc-500" data-otg="production-v2-h3-eta">
+                          Estimated generation time {h3Eta.seconds !== null
+                            ? `~${formatH3Eta(h3Eta.seconds)}`
+                            : `${formatH3Eta(h3Eta.minSeconds)}-${formatH3Eta(h3Eta.maxSeconds)}`}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div aria-label="Quality" aria-readonly="true" className="mt-2 rounded-lg border border-white/10 bg-black/25 px-3 py-2.5 text-sm font-bold text-zinc-200">
+                      <span className="block">1080p delivery target</span>
+                      <span className="mt-1 block text-[10px] font-normal text-zinc-500">LTX 2.5 Ingredients · qualified 5s / 10s workflow</span>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="mt-5"><div className="mb-2 text-xs font-black uppercase text-zinc-500">Video length</div><div className="grid grid-cols-3 gap-2">{PRODUCTION_V2_DURATION_OPTIONS.map((duration) => <SegmentButton key={duration} active={selectedScene.durationSeconds === duration} disabled={Boolean(readOnly)} onClick={() => updateSharedSceneInput((scene) => ({ ...scene, durationSeconds: duration as ProductionV2Duration }))}>{duration} sec</SegmentButton>)}</div></div>
+              <div className="mt-5"><div className="mb-2 text-xs font-black uppercase text-zinc-500">Video length</div><div className="grid grid-cols-2 gap-2">{productionV2DurationsForModel(selectedScene.model).map((duration) => <SegmentButton key={duration} active={selectedScene.durationSeconds === duration} disabled={Boolean(readOnly)} onClick={() => updateSharedSceneInput((scene) => ({ ...scene, durationSeconds: duration as ProductionV2Duration }))}>{duration} sec</SegmentButton>)}</div></div>
               <div className="mt-5 max-w-xs"><div className="text-xs font-black uppercase text-zinc-500">Video shape</div><div aria-label="Video shape" aria-readonly="true" className="mt-2 rounded-lg border border-white/10 bg-black/25 px-3 py-2.5 text-sm font-bold text-zinc-200">16:9</div></div>
               <label className="mt-5 flex items-center gap-3 rounded-lg border border-white/10 bg-black/25 p-3 text-sm font-bold text-zinc-200"><input type="checkbox" checked={selectedScene.promptOptions.soundEnabled} disabled={readOnly} onChange={(event) => updatePromptOption("soundEnabled", event.target.checked)} className="production-v2-checkbox h-4 w-4" /><span><span className="block">Generate sound</span><span className="mt-1 block text-xs font-normal text-zinc-500">Dialogue, effects, and ambience</span></span></label>
               {selectedScene.model === "minimax-h3" ? (
@@ -1473,8 +2935,8 @@ export default function ProductionV2Panel() {
             </div>
 
             <div className="production-v2-accent-card rounded-lg border bg-zinc-950/70 p-4" data-otg="production-v2-reference-controls">
-              <NumberedHeading number="03" title="References" description={selectedScene.generationMode === "h3-image-to-video" ? "Choose exactly one starting image." : "Entity cards remain the source of truth; the resolver assigns ordered model inputs later."} />
-              {selectedScene.generationMode === "h3-image-to-video" ? (
+              <NumberedHeading number="03" title="References" description={isH3ImageToVideo ? "Choose exactly one starting image." : isH3TextToVideo ? "Prompt-only generation. No source image or reference media is submitted." : "Entity cards remain the source of truth; the resolver assigns ordered model inputs later."} />
+              {isH3ImageToVideo ? (
                 <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" data-otg="h3-image-to-video-controls">
                   {startingImageCandidates.map((item) => {
                     const src = mediaUrl(item.displayImage || item.workflowImage);
@@ -1483,23 +2945,85 @@ export default function ProductionV2Panel() {
                   })}
                   {!startingImageCandidates.length ? <p className="col-span-full text-sm text-zinc-500">No saved default or master images.</p> : null}
                 </div>
+              ) : isH3TextToVideo ? (
+                <div className="mt-5 rounded-lg border border-white/10 bg-black/25 px-4 py-3 text-sm font-bold text-zinc-300" data-otg="h3-text-to-video-controls">
+                  Text prompt only. No starting image or reference media will be attached to this scene.
+                </div>
               ) : (
                 <div className="mt-5 space-y-3">
                   <ReferenceAccordion label="Characters" count={selectedScene.selectedCharacters.length} expanded={expandedGroups.has("section:characters")} onToggle={() => toggleExpanded("section:characters")}>
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{characters.map((item) => { const selected = selectedScene.selectedCharacters.some((entry) => entry.characterId === item.id); const full = selectedScene.model === "ltx-2.5" && ingredientCount >= ingredientLimit && !selected; const key = `character:${item.id}`; return <EntityCard key={key} entityType="Character" entityId={item.id} name={item.name} image={item.defaultImage} imageLabel="Default image" perspectives={item.perspectives} selected={selected} expanded={expandedGroups.has(key)} disabled={Boolean(readOnly || full)} onSelect={() => toggleCharacter(item)} onTogglePerspectives={() => toggleExpanded(key)} />; })}</div>{!characters.length ? <p className="text-sm text-zinc-500">No saved Characters.</p> : null}
                   </ReferenceAccordion>
-                  <ReferenceAccordion label="Backgrounds" count={selectedScene.selectedBackground ? 1 : 0} expanded={expandedGroups.has("section:backgrounds")} onToggle={() => toggleExpanded("section:backgrounds")}>
+
+                   {selectedScene.model === "ltx-2.5" && selectedScene.selectedCharacters.length ? (
+                     <LtxCharacterCardReferences
+                        characters={selectedScene.selectedCharacters}
+                      />
+                   ) : null}
+                   <ReferenceAccordion label="Backgrounds" count={selectedScene.selectedBackground ? 1 : 0} expanded={expandedGroups.has("section:backgrounds")} onToggle={() => toggleExpanded("section:backgrounds")}>
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{backgrounds.map((item) => { const selected = selectedScene.selectedBackground?.backgroundId === item.id; const full = selectedScene.model === "ltx-2.5" && ingredientCount >= ingredientLimit && !selected; const key = `background:${item.id}`; return <EntityCard key={key} entityType="Background" entityId={item.id} name={item.name} image={item.masterImage} imageLabel="Master image" perspectives={item.perspectives} selected={selected} expanded={expandedGroups.has(key)} disabled={Boolean(readOnly || full)} onSelect={() => selectBackground(item)} onTogglePerspectives={() => toggleExpanded(key)} />; })}</div>{!backgrounds.length ? <p className="text-sm text-zinc-500">No saved Backgrounds.</p> : null}
                   </ReferenceAccordion>
+                  {selectedScene.selectedBackground ? (
+                    <div
+                      className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.04] p-3"
+                      data-otg="production-v2-background-reference-view"
+                    >
+                      <div className="text-xs font-black uppercase text-cyan-100">
+                        Background Reference View
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-zinc-500">
+                        Choose the exact saved Background plate used as the model-facing reference.
+                      </p>
+                      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        {PRODUCTION_V2_BACKGROUND_REFERENCE_VIEWS.map((referenceView) => {
+                          const referenceImage =
+                            referenceView === "master"
+                              ? selectedScene.selectedBackground!.masterImageRef
+                              : selectedScene.selectedBackground!.angleImageRefs?.[referenceView];
+                          const available =
+                            Boolean(
+                              referenceImage?.workflowImage
+                              || referenceImage?.displayImage,
+                            );
+                          const active =
+                            productionV2BackgroundReferenceView(
+                              selectedScene.selectedBackground!,
+                            ) === referenceView;
+
+                          return (
+                            <button
+                              key={referenceView}
+                              type="button"
+                              aria-pressed={active}
+                              aria-label={`Background Reference View ${BACKGROUND_REFERENCE_VIEW_LABELS[referenceView]}`}
+                              disabled={Boolean(readOnly || !available)}
+                              onClick={() =>
+                                changeBackgroundReferenceView(
+                                  referenceView,
+                                )
+                              }
+                              className={`min-h-10 rounded-lg border px-3 py-2 text-xs font-black transition disabled:cursor-not-allowed disabled:opacity-35 ${
+                                active
+                                  ? "production-v2-control-active"
+                                  : "border-white/10 bg-black/25 text-zinc-400 hover:border-white/25 hover:text-white"
+                              }`}
+                            >
+                              {BACKGROUND_REFERENCE_VIEW_LABELS[referenceView]}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                   <ReferenceAccordion label="Assets" count={selectedScene.selectedAssets.length} expanded={expandedGroups.has("section:assets")} onToggle={() => toggleExpanded("section:assets")}>
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{assets.map((item) => { const selected = selectedScene.selectedAssets.some((entry) => entry.assetId === item.id); const full = selectedScene.model === "ltx-2.5" && ingredientCount >= ingredientLimit && !selected; const key = `asset:${item.id}`; return <EntityCard key={key} entityType="Asset" entityId={item.id} name={item.name} image={item.defaultImage} imageLabel="Default image" perspectives={item.perspectives} selected={selected} expanded={expandedGroups.has(key)} disabled={Boolean(readOnly || full)} onSelect={() => toggleAsset(item)} onTogglePerspectives={() => toggleExpanded(key)} />; })}</div>{!assets.length ? <p className="text-sm text-zinc-500">No saved Assets.</p> : null}
                   </ReferenceAccordion>
-                  {selectedScene.model === "ltx-2.5" ? <div className="rounded-lg border border-dashed border-emerald-300/25 bg-emerald-300/[0.05] p-4 text-center" data-otg="ltx-ingredients-sheet-placeholder"><div className="text-sm font-black text-emerald-100">Ingredients Sheet | {ingredientCount}/{ingredientLimit}</div><div className="mt-2 text-xs text-emerald-100/55">The later sheet composer will use the selected entity cards.</div></div> : null}
+                  {selectedScene.model === "ltx-2.5" ? <div className="rounded-lg border border-dashed border-emerald-300/25 bg-emerald-300/[0.05] p-4 text-center" data-otg="ltx-ingredients-sheet-placeholder"><div className="text-sm font-black text-emerald-100">Ingredients Sheet | {ingredientCount}/{ingredientLimit}</div><div className="mt-2 text-xs text-emerald-100/55">The sheet composer uses each Character's selected single view, plus the selected Background plate and Asset default images.</div></div> : null}
                 </div>
               )}
             </div>
 
-            {selectedScene.generationMode === "h3-reference-to-video" ? (
+            {isH3ReferenceToVideo ? (
               <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-4" data-otg="production-v2-who-speaks">
                 <div className="flex items-start justify-between gap-3"><NumberedHeading number="04" title="Who speaks?" description="Choose up to three selected Characters. Their saved voices are mapped automatically." /><span className="shrink-0 text-xs font-black text-zinc-500">{speakerCount} / {PRODUCTION_V2_H3_MAX_SPEAKERS}</span></div>
                 {selectedScene.selectedCharacters.length ? <div className="mt-5 space-y-3">{selectedScene.selectedCharacters.map((character) => <div key={character.characterId} className={`rounded-lg border p-3 ${character.speaking ? "border-emerald-300/35 bg-emerald-300/[0.07]" : "border-white/10 bg-black/25"}`}><label className={`flex items-center gap-3 ${character.voiceRef?.sourcePath ? "cursor-pointer" : "cursor-not-allowed opacity-55"}`}><input type="checkbox" checked={character.speaking} disabled={Boolean(readOnly || !character.voiceRef?.sourcePath)} onChange={() => toggleSpeaker(character.characterId)} aria-label={`${character.snapshotName} speaks`} className="h-4 w-4 accent-cyan-300" /><span className="min-w-0"><span className="block break-words text-sm font-black text-white">{character.snapshotName}</span><span className="mt-1 block text-xs text-zinc-500">{character.voiceRef?.sourcePath ? "Saved Voice" : "No saved voice"}</span></span></label></div>)}</div> : <p className="mt-5 text-sm text-zinc-500">Select Characters in References before assigning speakers.</p>}
@@ -1538,21 +3062,55 @@ export default function ProductionV2Panel() {
             </div>
 
             <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-4" data-otg="production-v2-prompt-controls">
-              <div className="flex flex-wrap items-start justify-between gap-3"><NumberedHeading number={usesDialogueOrder ? "07" : "05"} title="Review Prompt" description="Locked references are application-owned. Only the Scene Prompt is editable." /><span className={`rounded-full px-3 py-1 text-xs font-black ${currentPrompt.reviewStatus === "reviewed" ? "bg-emerald-300/15 text-emerald-200" : currentPrompt.reviewStatus === "stale" ? "bg-red-300/15 text-red-200" : "bg-amber-300/15 text-amber-100"}`}>{REVIEW_LABELS[currentPrompt.reviewStatus]}</span></div>
-              <div className="mt-5 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.04]" data-otg="production-v2-locked-references"><div className="flex items-center justify-between gap-3 border-b border-cyan-300/15 px-3 py-2"><span className="text-xs font-black uppercase text-cyan-100">Locked References</span><span aria-label="Locked" className="text-xs font-black text-cyan-200">LOCKED</span></div><pre className="max-h-72 overflow-auto whitespace-pre-wrap p-3 text-xs leading-5 text-cyan-50/75">{currentPrompt.lockedReferenceContext || "No separate locked H3 reference block has been built for this scene."}</pre></div>
+              <NumberedHeading number={usesDialogueOrder ? "07" : "05"} title="Prompt Preview" description="Locked references are application-owned. The Scene Prompt may be edited; generation uses the exact Final Prompt shown below." />
+              <div className="mt-5 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.04]" data-otg="production-v2-locked-references"><div className="flex items-center justify-between gap-3 border-b border-cyan-300/15 px-3 py-2"><span className="text-xs font-black uppercase text-cyan-100">Locked References</span><span aria-label="Locked" className="text-xs font-black text-cyan-200">LOCKED</span></div><pre className="max-h-72 overflow-auto whitespace-pre-wrap p-3 text-xs leading-5 text-cyan-50/75">{currentPrompt.lockedReferenceContext || "No separate locked reference block has been built for this scene."}</pre></div>
               <label className="mt-5 block text-xs font-black uppercase text-zinc-500" htmlFor="production-v2-scene-prompt">Scene Prompt</label>
               <textarea id="production-v2-scene-prompt" rows={14} value={currentPrompt.scenePrompt} readOnly={readOnly} onChange={(event) => updateSelectedScene((scene) => updateProductionV2ScenePromptText(scene, event.target.value))} placeholder="Build the scene prompt to review and edit the cinematic instructions." className={`${fieldClass} mt-2 resize-y font-mono text-xs leading-5`} />
               <label className="mt-5 block text-xs font-black uppercase text-zinc-500" htmlFor="production-v2-final-prompt">Exact Final Prompt</label>
-              <textarea id="production-v2-final-prompt" rows={14} value={currentPrompt.finalPrompt} readOnly aria-readonly="true" placeholder="Locked References and Scene Prompt will appear here exactly as H3 receives them." className={`${fieldClass} mt-2 resize-y font-mono text-xs leading-5 text-zinc-400`} />
-              <div className="mt-4 flex flex-wrap items-center gap-3"><button type="button" className={secondaryButton} disabled={Boolean(readOnly || currentPrompt.reviewStatus === "stale" || !currentPrompt.scenePrompt.trim())} onClick={reviewFinalPrompt}>{currentPrompt.reviewStatus === "reviewed" ? "Final Prompt Reviewed" : "Review Final Prompt"}</button><span className="text-xs text-zinc-500">Editing the Scene Prompt requires another review.</span></div>
+              <textarea id="production-v2-final-prompt" rows={14} value={currentPrompt.finalPrompt} readOnly aria-readonly="true" placeholder="Locked References and Scene Prompt will appear here exactly as the selected video model receives them." className={`${fieldClass} mt-2 resize-y font-mono text-xs leading-5 text-zinc-400`} />
+              <div className="mt-4 text-xs text-zinc-500">No separate Final Prompt review step is required. Changes to model inputs or Ingredients still invalidate a stale build.</div>
             </div>
 
             <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-4" data-otg="production-v2-generate-step">
-              <NumberedHeading number={usesDialogueOrder ? "08" : "06"} title="Generate" description={generationJob?.statusMessage || readiness.reason} />
+              {/* OTG_PRODUCTION_V2_STORYBOARD_UI_FINAL_V1 */}
+              <NumberedHeading
+                number={usesDialogueOrder ? "08" : "06"}
+                title="Generate"
+                description={
+                  generationJob?.statusMessage
+                  || (
+                    selectedScene.model === "ltx-2.5"
+                      ? readiness.ok
+                        ? "LTX 2.5 Ingredients is ready for the qualified 5- or 10-second generation path."
+                        : readiness.reason
+                      : readiness.reason
+                  )
+                }
+              />
               <div className="mt-5 flex flex-wrap gap-2">
-                <button type="button" className={productionPrimaryButton} disabled={!readiness.ok || readOnly || generationSubmitting || videoRetrySubmitting || generationActive || selectedScene.model !== "minimax-h3"} onClick={() => void generateVideo()}>{generationSubmitting ? "Submitting..." : generationActive ? generationJob?.statusMessage || "Generating..." : "Generate"}</button>
+                <button
+                  type="button"
+                  className={productionPrimaryButton}
+                  disabled={
+                    !readiness.ok
+                    || readOnly
+                    || generationSubmitting
+                    || videoRetrySubmitting
+                    || generationActive
+                  }
+                  onClick={() => void generateVideo()}
+                  data-otg="production-v2-generate-video"
+                >
+                  {generationSubmitting
+                    ? "Submitting..."
+                    : generationActive
+                      ? generationJob?.statusMessage || "Generating..."
+                      : selectedScene.model === "ltx-2.5"
+                        ? "Generate with LTX 2.5"
+                        : "Generate"}
+                </button>
                 <button type="button" className={secondaryButton} disabled={videoRefreshBusy} onClick={() => void refreshVideoState()}>{videoRefreshBusy ? "Refreshing..." : "Refresh"}</button>
-                {currentPrompt.reviewStatus === "reviewed" ? (
+                {selectedScene.model === "minimax-h3" ? (
                   <button
                     type="button"
                     className={secondaryButton}
@@ -1568,13 +3126,65 @@ export default function ProductionV2Panel() {
               {generationJob ? <div className="mt-3 text-xs text-zinc-500" data-otg="production-v2-generation-provenance">Job {generationJob.id}{generationJob.promptId ? ` · Prompt ${generationJob.promptId}` : ""}{generationJob.retryOfJobId ? ` · Retry of ${generationJob.retryOfJobId}` : ""}</div> : null}
               {generationJob?.error ? <div className="mt-4 rounded-lg border border-red-300/25 bg-red-300/10 px-3 py-2 text-sm text-red-100" role="alert">{generationJob.error}</div> : null}
               {storyboardVideoSrc ? <video key={storyboardVideoSrc} className="mt-5 aspect-video w-full rounded-lg bg-black" controls playsInline preload="metadata" src={storyboardVideoSrc} data-otg="production-v2-generated-video" /> : null}
+              {selectedScene.continuation ? (
+                <div
+                  className="mt-3 rounded-lg border border-emerald-300/20 bg-emerald-300/[0.05] p-3 text-xs text-emerald-100"
+                  data-otg="production-v2-continuation-source"
+                >
+                  {/* OTG_PRODUCTION_V2_CONTINUATION_FRAME_PREVIEW_R10_V1 */}
+                  <div className="font-black uppercase tracking-wide">
+                    Previous Scene — Last Frame
+                  </div>
+                  {continuationFrameSrc ? (
+                    <img
+                      src={continuationFrameSrc}
+                      alt={`Exact final frame from Scene ${selectedScene.continuation.sourceSceneNumber}`}
+                      className="mt-3 aspect-video w-full rounded-lg bg-black object-contain"
+                      data-otg="production-v2-continuation-last-frame"
+                    />
+                  ) : null}
+                  <div className="mt-2">
+                    Continuing from Scene {selectedScene.continuation.sourceSceneNumber} final frame.
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
 
           <aside className="space-y-4">
-            <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-4"><div className="text-xs font-black uppercase text-zinc-500">Scene summary</div><dl className="mt-4 space-y-3 text-sm"><div className="flex justify-between gap-3"><dt className="text-zinc-500">Model</dt><dd className="font-bold text-white">{MODEL_LABELS[selectedScene.model]}</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Mode</dt><dd className="text-right font-bold text-white">{MODE_LABELS[selectedScene.generationMode]}</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Duration</dt><dd className="font-bold text-white">{selectedScene.durationSeconds}s</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Shape</dt><dd className="font-bold text-white">{selectedScene.promptOptions.aspectRatio}</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Characters</dt><dd className="font-bold text-white">{selectedScene.selectedCharacters.length}</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Background</dt><dd className="max-w-32 break-words text-right font-bold text-white">{selectedScene.selectedBackground?.snapshotName || "None"}</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Assets</dt><dd className="font-bold text-white">{selectedScene.selectedAssets.length}</dd></div></dl></div>
-            <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-4"><div className="text-xs font-black uppercase text-zinc-500">Reference manifest</div><div className={`mt-3 text-sm font-bold ${selectedScene.referencePlan.status === "planned" ? "text-emerald-200" : "text-amber-100"}`}>{selectedScene.referencePlan.status === "planned" ? "Resolved" : "Pending build"}</div><div className="mt-2 text-xs leading-5 text-zinc-500">{selectedScene.referencePlan.modelFacingReferences.length} ordered visual references. {selectedScene.referencePlan.resolvedVoiceReferences.length} Character voices mapped automatically.</div></div>
+            <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-4"><div className="text-xs font-black uppercase text-zinc-500">Scene summary</div><dl className="mt-4 space-y-3 text-sm"><div className="flex justify-between gap-3"><dt className="text-zinc-500">Model</dt><dd className="font-bold text-white">{MODEL_LABELS[selectedScene.model]}</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Mode</dt><dd className="text-right font-bold text-white">{MODE_LABELS[selectedScene.generationMode]}</dd></div>{selectedScene.model === "minimax-h3" ? <div className="flex justify-between gap-3"><dt className="text-zinc-500">Quality</dt><dd className="font-bold uppercase text-white">{selectedScene.h3Quality}</dd></div> : null}<div className="flex justify-between gap-3"><dt className="text-zinc-500">Duration</dt><dd className="font-bold text-white">{selectedScene.durationSeconds}s</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Shape</dt><dd className="font-bold text-white">{selectedScene.promptOptions.aspectRatio}</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Characters</dt><dd className="font-bold text-white">{selectedScene.selectedCharacters.length}</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Background</dt><dd className="max-w-32 break-words text-right font-bold text-white">{selectedScene.selectedBackground?.snapshotName || "None"}</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Assets</dt><dd className="font-bold text-white">{selectedScene.selectedAssets.length}</dd></div></dl></div>
+            <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-4"><div className="text-xs font-black uppercase text-zinc-500">Reference manifest</div>{isH3TextToVideo ? <><div className="mt-3 text-sm font-bold text-zinc-300">Prompt-only</div><div className="mt-2 text-xs leading-5 text-zinc-500">No visual or audio references are submitted for H3 Text-to-Video.</div></> : <><div className={`mt-3 text-sm font-bold ${selectedScene.referencePlan.status === "planned" ? "text-emerald-200" : "text-amber-100"}`}>{selectedScene.referencePlan.status === "planned" ? "Resolved" : "Pending build"}</div><div className="mt-2 text-xs leading-5 text-zinc-500">{selectedScene.referencePlan.modelFacingReferences.length} ordered visual references. {selectedScene.referencePlan.resolvedVoiceReferences.length} Character voices mapped automatically.</div></>}</div>
             <button type="button" className={`${productionPrimaryButton} w-full`} disabled={busy || readOnly} onClick={() => void saveScene()}>{busy ? "Saving..." : "Save Scene"}</button>
+            {(selectedScene.model === "ltx-2.5" || selectedScene.model === "minimax-h3") ? (
+              <button
+                type="button"
+                className={`${secondaryButton} w-full`}
+                disabled={
+                  Boolean(
+                    busy
+                    || readOnly
+                    || continueSceneSubmitting
+                    || generationSubmitting
+                    || generationActive
+                    || !selectedStoryboardVersion
+                    || production.scenes.length >= PRODUCTION_V2_MAX_SCENES
+                  )
+                }
+                onClick={() => void continueScene()}
+                data-otg="production-v2-continue-scene"
+                title={
+                  production.scenes.length >= PRODUCTION_V2_MAX_SCENES
+                    ? `A production can contain at most ${PRODUCTION_V2_MAX_SCENES} scenes.`
+                    : "Create the next Scene from the selected video's exact final decoded frame."
+                }
+              >
+                {continueSceneSubmitting
+                  ? "Preparing Continue Scene..."
+                  : production.scenes.length >= PRODUCTION_V2_MAX_SCENES
+                    ? "Scene limit reached"
+                    : "Continue Scene"}
+              </button>
+            ) : null}
           </aside>
         </div>
       </div> : activeStage === "visual-studios" ? (

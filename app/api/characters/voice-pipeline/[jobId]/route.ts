@@ -11,12 +11,13 @@ import {
   resumeVoicePipelineJob,
   stopVoicePipelineJob,
   terminateVoicePipelineJob,
+  ensureApplioTrainingJobForCompletedDataset,
 } from "@/lib/jobs/voicePipelineJobs";
-import { resolveTrainingDatasetManifestPath, trainingDatasetManifestUrl } from "@/lib/jobs/trainingDatasetManifest";
-import { hasValidWorkerToken } from "@/lib/jobs/workerAuth";
 import {
-  loadVoiceTrainingPolicy,
-} from "@/lib/jobs/voiceTrainingPolicy";
+  resolveTrainingDatasetManifestPath,
+  validateReadyTrainingDataset,
+} from "@/lib/jobs/trainingDatasetManifest";
+import { hasValidWorkerToken } from "@/lib/jobs/workerAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,122 +26,11 @@ function jsonError(error: string, status = 400) {
   return NextResponse.json({ ok: false, error }, { status, headers: withNoStore() });
 }
 
-function cleanString(value: unknown): string {
-  return String(value || "").trim();
-}
-
 function resolveVoicePipelineJobOwnerKey(jobId: string, fallbackOwnerKey: string): string {
   const storedOwnerKey = findVoicePipelineJobOwnerKey(jobId);
   return storedOwnerKey && /^[A-Za-z0-9._@-]{1,200}$/.test(storedOwnerKey)
     ? storedOwnerKey
     : fallbackOwnerKey;
-}
-
-async function fileHasBytes(filePath: string): Promise<boolean> {
-  try {
-    const stat = await fs.stat(filePath);
-    return stat.isFile() && stat.size > 0;
-  } catch {
-    return false;
-  }
-}
-
-async function validateReadyTrainingDataset(ownerKey: string, characterId: string, jobId: string) {
-  const policy = loadVoiceTrainingPolicy();
-  const manifestPath = resolveTrainingDatasetManifestPath(ownerKey, characterId, jobId);
-  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8")) as Record<string, unknown>;
-  const clips = Array.isArray(manifest.clips)
-    ? manifest.clips.filter(
-        (clip): clip is Record<string, unknown> =>
-          !!clip &&
-          typeof clip === "object" &&
-          !Array.isArray(clip),
-      )
-    : [];
-
-  const readyClips = clips.filter((clip) => {
-    const qc =
-      clip.qc &&
-      typeof clip.qc === "object" &&
-      !Array.isArray(clip.qc)
-        ? clip.qc as Record<string, unknown>
-        : {};
-
-    return cleanString(clip.status) === "ready" && qc.pass === true;
-  });
-
-  const acceptedDurationSeconds = Number(
-    manifest.acceptedDurationSeconds ||
-      readyClips.reduce(
-        (total, clip) => {
-          const duration = Number(clip.durationSeconds || 0);
-          return total + (Number.isFinite(duration) && duration > 0 ? duration : 0);
-        },
-        0,
-      ),
-  );
-
-  const minimumAcceptedDurationSeconds =
-    policy.acceptedMinutesMin * 60;
-
-  const maximumAcceptedDurationSeconds =
-    policy.acceptedMinutesMax * 60;
-
-  if (manifest.generationMode !== "real" || manifest.provider !== "indextts2") {
-    throw new Error("Dataset is not a real IndexTTS2 training dataset.");
-  }
-
-  if (manifest.adaptiveComplete !== true || manifest.status !== "voice_pack_ready") {
-    throw new Error("Adaptive training dataset has not passed completion gating.");
-  }
-
-  if (
-    !Number.isFinite(acceptedDurationSeconds) ||
-    acceptedDurationSeconds < minimumAcceptedDurationSeconds ||
-    acceptedDurationSeconds > maximumAcceptedDurationSeconds
-  ) {
-    throw new Error(
-      `Adaptive training dataset duration is outside policy: ${acceptedDurationSeconds}s.`,
-    );
-  }
-
-  if (readyClips.length < 1) {
-    throw new Error("Adaptive training dataset has no QC-passing clips.");
-  }
-
-  for (const clip of readyClips) {
-    const qc =
-      clip.qc &&
-      typeof clip.qc === "object" &&
-      !Array.isArray(clip.qc)
-        ? clip.qc as Record<string, unknown>
-        : {};
-
-    if (qc.pass !== true) {
-      throw new Error(
-        `Ready clip did not pass QC: ${cleanString(clip.clipId)}`,
-      );
-    }
-
-    const expectedAudioPath = cleanString(clip.expectedAudioPath);
-
-    if (!expectedAudioPath || !(await fileHasBytes(expectedAudioPath))) {
-      throw new Error(
-        `Ready clip is missing or empty: ${cleanString(clip.clipId) || expectedAudioPath}`,
-      );
-    }
-  }
-
-  return {
-    manifest,
-    manifestPath,
-    manifestUrl: trainingDatasetManifestUrl(ownerKey, characterId, jobId),
-    requestedClipCount: readyClips.length,
-    generatedClipCount: readyClips.length,
-    acceptedDurationSeconds,
-    acceptedMinutes: acceptedDurationSeconds / 60,
-    adaptiveComplete: true,
-  };
 }
 
 async function quarantineTrainingDataset(ownerKey: string, characterId: string, jobId: string) {
@@ -235,6 +125,10 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ jobId: st
     // because stale UI/browser retries may send an empty, malformed, or already-consumed PATCH body.
     const completedDatasetBeforeBodyRead = getQueuedContractJob(effectiveOwnerKey, jobId);
     if (completedDatasetBeforeBodyRead?.status === "completed") {
+      void ensureApplioTrainingJobForCompletedDataset(
+        effectiveOwnerKey,
+        jobId,
+      );
       return NextResponse.json({ ok: true, job: completedDatasetBeforeBodyRead }, { headers: withNoStore() });
     }
 
@@ -259,6 +153,10 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ jobId: st
 
         if (completedDatasetJobByStoredOwner?.status === "completed") {
 
+          void ensureApplioTrainingJobForCompletedDataset(
+            completedDatasetOwnerKey,
+            jobId,
+          );
           return NextResponse.json({ ok: true, job: completedDatasetJobByStoredOwner }, { headers: withNoStore() });
 
         }
@@ -271,6 +169,10 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ jobId: st
     if (action === "complete_dataset") {
       const alreadyCompletedDatasetJob = getQueuedContractJob(effectiveOwnerKey, jobId);
       if (alreadyCompletedDatasetJob?.status === "completed") {
+        void ensureApplioTrainingJobForCompletedDataset(
+          effectiveOwnerKey,
+          jobId,
+        );
         return NextResponse.json({ ok: true, job: alreadyCompletedDatasetJob }, { headers: withNoStore() });
       }
     }

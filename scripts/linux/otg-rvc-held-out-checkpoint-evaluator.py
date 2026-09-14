@@ -394,7 +394,8 @@ def main() -> int:
         asr_endpoint = "/api/ollama-ai/transcribe"
 
     applio_root = Path(args.applio_root).resolve()
-    applio_python = Path(args.applio_python).resolve()
+    # Preserve the venv launcher path; resolving follows the symlink to system Python.
+    applio_python = Path(args.applio_python).expanduser()
     core_script = Path(args.core_script).resolve()
     index_path = Path(args.index_path).resolve()
     reference_audio = Path(args.reference_audio).resolve()

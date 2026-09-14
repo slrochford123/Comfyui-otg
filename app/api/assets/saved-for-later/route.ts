@@ -38,6 +38,13 @@ type SavedAssetCandidate = {
   prompt: string;
   promptId: string;
   seed: number;
+  workflowId: string;
+  internalPrompt: string;
+  sourceCandidateId: string;
+  rootCandidateId: string;
+  editDepth: number;
+  editInstruction: string;
+  backgroundFree: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -65,6 +72,20 @@ function clean(
   return String(
     value ?? "",
   ).trim();
+}
+
+function cleanBoolean(
+  value: unknown,
+) {
+  const raw =
+    clean(value).toLowerCase();
+
+  return [
+    "true",
+    "1",
+    "yes",
+    "on",
+  ].includes(raw);
 }
 
 function rootForOwner(
@@ -445,6 +466,48 @@ export async function POST(
             "seed",
           ),
         ) || 0,
+      workflowId:
+        clean(
+          form.get(
+            "workflowId",
+          ),
+        ),
+      internalPrompt:
+        clean(
+          form.get(
+            "internalPrompt",
+          ),
+        ),
+      sourceCandidateId:
+        clean(
+          form.get(
+            "sourceCandidateId",
+          ),
+        ),
+      rootCandidateId:
+        clean(
+          form.get(
+            "rootCandidateId",
+          ),
+        ),
+      editDepth:
+        Number(
+          form.get(
+            "editDepth",
+          ),
+        ) || 0,
+      editInstruction:
+        clean(
+          form.get(
+            "editInstruction",
+          ),
+        ),
+      backgroundFree:
+        cleanBoolean(
+          form.get(
+            "backgroundFree",
+          ),
+        ),
       createdAt: now,
       updatedAt: now,
     };

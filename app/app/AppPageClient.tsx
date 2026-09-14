@@ -46,6 +46,7 @@ const VoicesPanel = dynamic(() => import("./components/VoicesPanel"), { loading:
 const SupportPanel = dynamic(() => import("./components/SupportPanel"), { loading: PanelLoading });
 const EditVideoPanel = dynamic(() => import("./components/EditVideoPanel"), { loading: PanelLoading });
 const GalleryWorkspace = dynamic(() => import("./components/GalleryWorkspace"), { loading: PanelLoading });
+const H3Panel = dynamic(() => import("./components/H3Panel"), { loading: PanelLoading });
 const AdminQuickPanel = dynamic(() => import("./components/AdminQuickPanel"), { loading: PanelLoading });
 const ProductionCharacterReferencePickerBridge = dynamic(() => import("./components/ProductionCharacterReferencePickerBridge"), { ssr: false, loading: () => null });
 
@@ -334,6 +335,7 @@ const APP_UI_MODE_OPTIONS: { id: AppUiMode; label: string; description: string }
 const APP_TAB_LABELS: Record<SpinTabId, string> = {
   gethelp: "AI Assistance",
   generate: "Generate",
+  h3: "H3",
   machine: "Machine",
   storyboard: "Production",
   characters: "Characters",
@@ -7312,6 +7314,7 @@ async function handleAskAi() {
           </div>
         ) : null}
         {tab === "storyboard" ? <ProductionV2Panel /> : null}
+        {tab === "h3" ? <H3Panel /> : null}
         {tab === "characters" ? (
           <CharactersPanel
             key={authenticatedOwnerKey || "character-account-unavailable"}

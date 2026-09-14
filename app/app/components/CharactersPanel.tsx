@@ -3323,7 +3323,7 @@ async function submitUploadedFullBodyCompletionJob(instruction: string, sourceSe
   return { promptId };
 }
 
-async function submitCharacterCardJob(instruction: string, sourceServerPath: string) {
+async function submitLegacyCharacterCardJob(instruction: string, sourceServerPath: string) {
   void instruction;
 
   const body = new FormData();
@@ -3384,7 +3384,60 @@ async function submitCharacterCardJob(instruction: string, sourceServerPath: str
   }
 
   return { promptId };
-}type CharacterGeneratedImageResultV36BP9 = {
+}
+async function submitOrbitSheetsCharacterCardJob(
+  instruction: string,
+  sourceServerPath: string,
+  anatomyMode: CharacterAnatomyMode,
+) {
+  const body = new FormData();
+
+  body.set("sourceServerPath", sourceServerPath);
+  body.set("characterDescription", instruction);
+  body.set("anatomyMode", anatomyMode);
+
+  const response = await fetch("/api/characters/orbitsheets-card", {
+    method: "POST",
+    body,
+    ...CHARACTER_FETCH_OPTIONS,
+  });
+
+  const json = await response.json().catch(() => null);
+
+  if (!response.ok || !json?.ok) {
+    throw new Error(
+      json?.error ||
+        `OrbitSheets Character Card failed (${response.status}).`,
+    );
+  }
+
+  const promptId = String(
+    json.promptId || json.prompt_id || "",
+  ).trim();
+
+  const url = String(json.url || "").trim();
+  const serverPath = String(json.serverPath || "").trim();
+  const sourceName = String(
+    json.sourceName || json.filename || "",
+  ).trim();
+
+  if (!url || !serverPath) {
+    throw new Error(
+      "OrbitSheets completed without a usable Character Card image.",
+    );
+  }
+
+  return {
+    promptId,
+    generated: {
+      url,
+      serverPath,
+      sourceName,
+    },
+  };
+}
+
+type CharacterGeneratedImageResultV36BP9 = {
   url: string;
   sourceName: string;
 };
@@ -4041,6 +4094,20 @@ function CharacterBuilder({
   const [backgroundRemovalStatus, setBackgroundRemovalStatus] = useState<"idle" | "running" | "done" | "warning">("idle");
   const [backgroundRemovalWarning, setBackgroundRemovalWarning] = useState("");
   const [characterBackgroundPrompt, setCharacterBackgroundPrompt] = useState("");
+
+  // OTG_BACKGROUND_ENHANCE_PROMPT_PP06_V2
+  const [
+    characterBackgroundPromptEnhanceLevel,
+    setCharacterBackgroundPromptEnhanceLevel,
+  ] = useState<
+    "short" | "medium" | "long"
+  >("medium");
+
+  const [
+    characterBackgroundEnhancingPrompt,
+    setCharacterBackgroundEnhancingPrompt,
+  ] = useState(false);
+
   const [characterBackgroundName, setCharacterBackgroundName] = useState("Scene Background");
   const [characterBackgroundBusy, setCharacterBackgroundBusy] = useState(false);
 
@@ -6187,11 +6254,265 @@ async function createCharacterBackgroundCanonicalDirectionalsV36B(
       );
     }
 
-    const canonicalDirections =
+    // OTG_BACKGROUND_QWEN_EDIT_360_CLIENT_PP06_V1
+    const directionGenerationModeV36B =
+      String(
+        json?.directionGenerationMode ||
+          "",
+      ).trim();
+
+    let canonicalDirections =
       json?.canonicalDirections &&
-      typeof json.canonicalDirections === "object"
+      typeof json.canonicalDirections ===
+        "object"
         ? json.canonicalDirections
         : null;
+
+    if (
+      directionGenerationModeV36B ===
+      "qwen-edit-360-projection-v1"
+    ) {
+      const panorama =
+        json?.panorama &&
+        typeof json.panorama ===
+          "object"
+          ? json.panorama
+          : null;
+
+      const panoramaNodeId =
+        String(
+          panorama?.nodeId ||
+            "",
+        ).trim();
+
+      const panoramaPrefix =
+        String(
+          panorama?.filenamePrefix ||
+            json?.expectedOutputPrefix ||
+            "",
+        ).trim();
+
+      const panoramaPromptId =
+        String(
+          panorama?.promptId ||
+            canonicalDirectionalPromptIdV36B,
+        ).trim();
+
+      if (
+        !panorama ||
+        !panoramaNodeId ||
+        !panoramaPrefix ||
+        !panoramaPromptId
+      ) {
+        throw new Error(
+          "Qwen-Edit_360 route returned an incomplete panorama selector.",
+        );
+      }
+
+      if (
+        panoramaPromptId !==
+        canonicalDirectionalPromptIdV36B
+      ) {
+        throw new Error(
+          "Qwen-Edit_360 panorama returned a mismatched prompt id.",
+        );
+      }
+
+      setCharacterBackgroundStatus(
+        `Qwen-Edit_360 panorama queued. Prompt ${panoramaPromptId}. Waiting for exact 2048x1024 panorama output node ${panoramaNodeId}...`,
+      );
+
+      const panoramaCandidate =
+        await waitForBackgroundAnglePlateOutputCandidateV36AK({
+          promptId:
+            panoramaPromptId,
+          provider:
+            originalProvider,
+          prompt:
+            candidate.prompt ||
+            characterBackgroundPrompt ||
+            "",
+          index: 0,
+          name:
+            "Background 360 Panorama",
+          nodeId:
+            panoramaNodeId,
+          prefix:
+            panoramaPrefix,
+          timeoutMs:
+            900000,
+        });
+
+      if (!panoramaCandidate) {
+        throw new Error(
+          `Qwen-Edit_360 panorama output was not found for prompt ${panoramaPromptId}, node ${panoramaNodeId}, prefix ${panoramaPrefix}.`,
+        );
+      }
+
+      const panoramaWorkflowValue =
+        String(
+          panoramaCandidate.workflowImage ||
+            panoramaCandidate.imagePath ||
+            panoramaCandidate.displayImage ||
+            panoramaCandidate.imageUrl ||
+            "",
+        ).trim();
+
+      if (
+        !panoramaWorkflowValue
+      ) {
+        throw new Error(
+          "Qwen-Edit_360 panorama contained no usable image reference.",
+        );
+      }
+
+      setCharacterBackgroundStatus(
+        "360 panorama complete. Projecting deterministic Back, Left, Right, Up, and Down views without additional AI generations...",
+      );
+
+      const projectionBody =
+        new FormData();
+
+      projectionBody.set(
+        "action",
+        "project-panorama",
+      );
+
+      projectionBody.set(
+        "title",
+        characterBackgroundName.trim() ||
+          candidate.name ||
+          "Scene Background",
+      );
+
+      projectionBody.set(
+        "name",
+        characterBackgroundName.trim() ||
+          candidate.name ||
+          "Scene Background",
+      );
+
+      projectionBody.set(
+        "filenamePrefix",
+        directionalPrefix,
+      );
+
+      projectionBody.set(
+        "filename_prefix",
+        directionalPrefix,
+      );
+
+      projectionBody.set(
+        "panoramaPromptId",
+        panoramaPromptId,
+      );
+
+      projectionBody.set(
+        "loadImageValue",
+        panoramaWorkflowValue,
+      );
+
+      projectionBody.set(
+        "sourceImage",
+        panoramaWorkflowValue,
+      );
+
+      projectionBody.set(
+        "inputImage",
+        panoramaWorkflowValue,
+      );
+
+      projectionBody.set(
+        "sourceImagePath",
+        panoramaWorkflowValue,
+      );
+
+      projectionBody.set(
+        "imagePath",
+        panoramaWorkflowValue,
+      );
+
+      projectionBody.set(
+        "image",
+        panoramaWorkflowValue,
+      );
+
+      const projectionResponse =
+        await fetch(
+          "/api/background-angle-plate",
+          {
+            method: "POST",
+            credentials:
+              "include",
+            cache:
+              "no-store",
+            body:
+              projectionBody,
+          },
+        );
+
+      const projectionJson =
+        await projectionResponse
+          .json()
+          .catch(
+            () => null,
+          );
+
+      if (
+        !projectionResponse.ok ||
+        projectionJson?.ok ===
+          false
+      ) {
+        throw new Error(
+          projectionJson?.error ||
+            `360 panorama projection failed (${projectionResponse.status}).`,
+        );
+      }
+
+      if (
+        String(
+          projectionJson?.marker ||
+            "",
+        ) !==
+        "OTG_BACKGROUND_360_PROJECTIONS_PP06_V1"
+      ) {
+        throw new Error(
+          "360 panorama projection returned an unexpected response contract.",
+        );
+      }
+
+      if (
+        projectionJson?.frontUsesMaster !==
+        true
+      ) {
+        throw new Error(
+          "360 panorama projection did not preserve the approved Master as Front.",
+        );
+      }
+
+      if (
+        Number(
+          projectionJson?.generatedDirectionalOutputCount,
+        ) !==
+          CANONICAL_BACKGROUND_CARD_PRESENTATION_V36C.length -
+            1 ||
+        Number(
+          projectionJson?.finalDirectionalReferenceCount,
+        ) !==
+          CANONICAL_BACKGROUND_CARD_PRESENTATION_V36C.length
+      ) {
+        throw new Error(
+          "360 panorama projection did not return the exact five-projected/six-final Background Card contract.",
+        );
+      }
+
+      canonicalDirections =
+        projectionJson?.canonicalDirections &&
+        typeof projectionJson.canonicalDirections ===
+          "object"
+          ? projectionJson.canonicalDirections
+          : null;
+    }
 
     if (!canonicalDirections) {
       throw new Error(
@@ -6224,9 +6545,40 @@ async function createCharacterBackgroundCanonicalDirectionalsV36B(
         canonicalDirections[direction];
 
       if (
-        !canonicalDirection ||
-        !String(canonicalDirection.nodeId || "").trim() ||
-        !String(canonicalDirection.filenamePrefix || "").trim()
+        !canonicalDirection
+      ) {
+        throw new Error(
+          `Canonical ${direction} output selector is missing.`,
+        );
+      }
+
+      const directImageValue =
+        String(
+          canonicalDirection.directImage ||
+            canonicalDirection.workflowImage ||
+            canonicalDirection.imagePath ||
+            canonicalDirection.imageUrl ||
+            "",
+        ).trim();
+
+      const canonicalNodeId =
+        String(
+          canonicalDirection.nodeId ||
+            "",
+        ).trim();
+
+      const canonicalFilenamePrefix =
+        String(
+          canonicalDirection.filenamePrefix ||
+            "",
+        ).trim();
+
+      if (
+        !directImageValue &&
+        (
+          !canonicalNodeId ||
+          !canonicalFilenamePrefix
+        )
       ) {
         throw new Error(
           `Canonical ${direction} output selector is incomplete.`,
@@ -6247,24 +6599,57 @@ async function createCharacterBackgroundCanonicalDirectionalsV36B(
         );
       }
 
-      setCharacterBackgroundStatus(
-        `Prompt ${canonicalDirectionalPromptIdV36B}: waiting for exact ${direction} output node ${canonicalDirection.nodeId}...`,
-      );
+      let directionalCandidate:
+        CharacterBackgroundPreviewCandidateV36E |
+        null = null;
 
-      const directionalCandidate =
-        await waitForBackgroundAnglePlateOutputCandidateV36AK({
-          promptId: canonicalDirectionalPromptIdV36B,
-          provider: originalProvider,
-          prompt:
-            candidate.prompt ||
-            characterBackgroundPrompt ||
-            "",
-          index: 0,
-          name: `Background ${direction}`,
-          nodeId: canonicalDirection.nodeId,
-          prefix: canonicalDirection.filenamePrefix,
-          timeoutMs: 900000,
-        });
+      if (
+        directImageValue
+      ) {
+        setCharacterBackgroundStatus(
+          `Using deterministic ${direction} projection from the single 360 panorama...`,
+        );
+
+        directionalCandidate =
+          makeExactBackgroundPreviewCandidateV36R({
+            value:
+              directImageValue,
+            provider:
+              originalProvider,
+            prompt:
+              candidate.prompt ||
+              characterBackgroundPrompt ||
+              "",
+            index: 0,
+            name:
+              `Background ${direction}`,
+          });
+      } else {
+        setCharacterBackgroundStatus(
+          `Prompt ${canonicalDirectionalPromptIdV36B}: waiting for exact legacy ${direction} output node ${canonicalNodeId}...`,
+        );
+
+        directionalCandidate =
+          await waitForBackgroundAnglePlateOutputCandidateV36AK({
+            promptId:
+              canonicalDirectionalPromptIdV36B,
+            provider:
+              originalProvider,
+            prompt:
+              candidate.prompt ||
+              characterBackgroundPrompt ||
+              "",
+            index: 0,
+            name:
+              `Background ${direction}`,
+            nodeId:
+              canonicalNodeId,
+            prefix:
+              canonicalFilenamePrefix,
+            timeoutMs:
+              900000,
+          });
+      }
 
       if (!directionalCandidate) {
         throw new Error(
@@ -6340,7 +6725,8 @@ async function createCharacterBackgroundCanonicalDirectionalsV36B(
         masterAsset.workflowImage,
       canonicalDirectionalPromptIdV36B,
       canonicalDirectionsV36B:
-        json?.canonicalDirections,
+        canonicalDirections,
+      directionGenerationModeV36B,
       isBackgroundMasterV36B: true,
       isCanonicalBackgroundCardV36B: true,
       backgroundMasterSourceV36B:
@@ -6767,7 +7153,146 @@ async function useCharacterBackgroundCandidateV36J(candidate: CharacterBackgroun
 
     await useCharacterBackgroundCandidateV36J(selected);
   }
-  async function uploadCharacterBackgroundV36A(file: File | null | undefined) {
+
+  async function enhanceCharacterBackgroundPromptV1() {
+    const rawPrompt =
+      characterBackgroundPrompt.trim();
+
+    if (!rawPrompt) {
+      setCharacterBackgroundStatus(
+        "Enter a Background prompt before using Enhance Prompt.",
+      );
+      return;
+    }
+
+    if (
+      characterBackgroundEnhancingPrompt
+    ) {
+      return;
+    }
+
+    const levelLabel =
+      characterBackgroundPromptEnhanceLevel ===
+      "short"
+        ? "Small"
+        : characterBackgroundPromptEnhanceLevel ===
+            "long"
+          ? "Large"
+          : "Medium";
+
+    setCharacterBackgroundEnhancingPrompt(
+      true,
+    );
+
+    setCharacterBackgroundStatus(
+      `Enhancing Background prompt (${levelLabel})...`,
+    );
+
+    try {
+      const response =
+        await fetch(
+          "/api/enhance-prompt",
+          {
+            method:
+              "POST",
+            credentials:
+              "include",
+            cache:
+              "no-store",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body:
+              JSON.stringify({
+                prompt:
+                  rawPrompt,
+
+                // Keep the canonical short/medium/long vocabulary
+                // used by the existing enhancement controls.
+                level:
+                  characterBackgroundPromptEnhanceLevel,
+                size:
+                  characterBackgroundPromptEnhanceLevel,
+                length:
+                  characterBackgroundPromptEnhanceLevel,
+
+                // Background-specific context. Extra context fields
+                // are intentionally additive and do not alter the
+                // user's original requested environment.
+                context:
+                  "background image generation",
+                subject:
+                  "background",
+                kind:
+                  "background",
+              }),
+          },
+        );
+
+      const payload =
+        await response
+          .json()
+          .catch(
+            () => null,
+          );
+
+      if (
+        !response.ok ||
+        payload?.ok ===
+          false
+      ) {
+        throw new Error(
+          String(
+            payload?.error ||
+              payload?.message ||
+              `Background prompt enhancement failed (${response.status}).`,
+          ),
+        );
+      }
+
+      const enhancedPrompt =
+        String(
+          payload?.enhancedPrompt ||
+            payload?.prompt ||
+            payload?.enhanced ||
+            payload?.result ||
+            payload?.text ||
+            payload?.data?.enhancedPrompt ||
+            payload?.data?.prompt ||
+            "",
+        ).trim();
+
+      if (
+        !enhancedPrompt
+      ) {
+        throw new Error(
+          "Background prompt enhancement returned no enhanced prompt.",
+        );
+      }
+
+      setCharacterBackgroundPrompt(
+        enhancedPrompt,
+      );
+
+      setCharacterBackgroundStatus(
+        `Background prompt enhanced (${levelLabel}). Review it before generating.`,
+      );
+    } catch (
+      error: any
+    ) {
+      setCharacterBackgroundStatus(
+        error?.message ||
+          "Background prompt enhancement failed.",
+      );
+    } finally {
+      setCharacterBackgroundEnhancingPrompt(
+        false,
+      );
+    }
+  }
+
+async function uploadCharacterBackgroundV36A(file: File | null | undefined) {
     if (!file) return;
 
     setCharacterBackgroundBusy(true);
@@ -8082,30 +8607,281 @@ async function loadCharacters() {
     await approveFinalFullBodySource(selectedCandidate);
   }
 
-  async function createCharacterCardCandidateFromProcessedSource(processedSource: CandidateImage, options: { forSave?: boolean } = {}): Promise<CandidateImage> {
+    async function createCharacterCardCandidateFromProcessedSource(
+    processedSource: CandidateImage,
+    options: { forSave?: boolean } = {},
+  ): Promise<CandidateImage> {
+    // OTG_ORBITSHEETS_COMPLETED_JOB_RECOVERY_V1
+    //
+    // Before starting a new H3 render, recover a completed deferred
+    // Character Card job whose processed source path matches this source.
+    // This makes browser/session recovery idempotent and prevents an
+    // unnecessary second OrbitSheets render.
+    const recoverySourceServerPathV1 = String(
+      processedSource?.serverPath || "",
+    ).trim();
+
+    if (recoverySourceServerPathV1) {
+      try {
+        const recoveryResponseV1 = await characterFetch(
+          "/api/characters/completion",
+          {
+            method: "GET",
+            cache: "no-store",
+            credentials: "omit",
+            headers: {
+              "x-otg-device-id": getCharacterDeviceId(),
+            },
+          },
+        );
+
+        const recoveryJsonV1 =
+          await recoveryResponseV1.json().catch(() => null);
+
+        const recoveryJobsV1 =
+          recoveryResponseV1.ok &&
+          recoveryJsonV1?.ok &&
+          Array.isArray(recoveryJsonV1.jobs)
+            ? recoveryJsonV1.jobs
+            : [];
+
+        const recoveredJobV1 = recoveryJobsV1.find(
+          (job: any) => {
+            if (
+              String(job?.status || "").trim().toLowerCase() !==
+              "completed"
+            ) {
+              return false;
+            }
+
+            const inputV1 =
+              job?.input &&
+              typeof job.input === "object" &&
+              !Array.isArray(job.input)
+                ? job.input
+                : {};
+
+            const resultV1 =
+              job?.result &&
+              typeof job.result === "object" &&
+              !Array.isArray(job.result)
+                ? job.result
+                : {};
+
+            const refsV1 =
+              resultV1.characterReferences &&
+              typeof resultV1.characterReferences === "object" &&
+              !Array.isArray(resultV1.characterReferences)
+                ? resultV1.characterReferences
+                : {};
+
+            const cardV1 =
+              refsV1.characterCard &&
+              typeof refsV1.characterCard === "object" &&
+              !Array.isArray(refsV1.characterCard)
+                ? refsV1.characterCard
+                : {};
+
+            const recoveredCardPathV1 = String(
+              resultV1.cardImagePath ||
+              cardV1.serverPath ||
+              "",
+            ).trim();
+
+            if (!recoveredCardPathV1) return false;
+
+            if (resultV1.deferredCharacterSave !== true) {
+              return false;
+            }
+
+            const sourceCandidatesV1 = [
+              inputV1.sourceImagePath,
+              inputV1.fullBodyImagePath,
+              inputV1.defaultCharacterSourceImagePath,
+              inputV1.originalSourceImagePath,
+            ]
+              .map((value) => String(value || "").trim())
+              .filter(Boolean);
+
+            return sourceCandidatesV1.includes(
+              recoverySourceServerPathV1,
+            );
+          },
+        );
+
+        if (recoveredJobV1) {
+          const recoveredResultV1 =
+            recoveredJobV1.result &&
+            typeof recoveredJobV1.result === "object" &&
+            !Array.isArray(recoveredJobV1.result)
+              ? recoveredJobV1.result
+              : {};
+
+          const recoveredRefsV1 =
+            recoveredResultV1.characterReferences &&
+            typeof recoveredResultV1.characterReferences === "object" &&
+            !Array.isArray(
+              recoveredResultV1.characterReferences,
+            )
+              ? recoveredResultV1.characterReferences
+              : {};
+
+          const recoveredCardRefV1 =
+            recoveredRefsV1.characterCard &&
+            typeof recoveredRefsV1.characterCard === "object" &&
+            !Array.isArray(recoveredRefsV1.characterCard)
+              ? recoveredRefsV1.characterCard
+              : {};
+
+          const recoveredCardPathV1 = String(
+            recoveredResultV1.cardImagePath ||
+            recoveredCardRefV1.serverPath ||
+            "",
+          ).trim();
+
+          const recoveredCardUrlV1 = String(
+            recoveredResultV1.cardImageUrl ||
+            recoveredCardRefV1.url ||
+            "",
+          ).trim();
+
+          const recoveredEngineV1 = String(
+            recoveredResultV1.characterCardEngine ||
+            recoveredRefsV1.engine ||
+            "",
+          ).trim();
+
+          if (recoveredCardPathV1) {
+            setMessage(
+              "Recovered the completed OrbitSheets Character Card. No new H3 render was needed.",
+            );
+
+            return {
+              id: `recovered-character-card-${Date.now()}`,
+              label:
+                recoveredEngineV1 === "orbitsheets-h3"
+                  ? "OrbitSheets H3 Character Card"
+                  : "Recovered Character Card",
+              url:
+                recoveredCardUrlV1 ||
+                fileUrlFor(recoveredCardPathV1),
+              serverPath: recoveredCardPathV1,
+              promptId: String(
+                recoveredCardRefV1.promptId ||
+                recoveredJobV1.jobId ||
+                "",
+              ).trim(),
+              workflowId:
+                recoveredEngineV1 === "orbitsheets-h3"
+                  ? "orbitsheets-h3-character-card"
+                  : "characters/worker-manager-character-card",
+            };
+          }
+        }
+      } catch (recoveryErrorV1) {
+        console.warn(
+          "[Character Card] Completed-job recovery was unavailable; continuing with normal OrbitSheets generation.",
+          recoveryErrorV1,
+        );
+      }
+    }
+
+
     const sourceServerPath = processedSource.serverPath || "";
+
     if (!sourceServerPath) {
-      throw new Error("Selected full-body image does not have a stable server path for the character-card workflow.");
+      throw new Error(
+        "Selected full-body image does not have a stable server path for the character-card workflow.",
+      );
     }
 
     const id = "character-card-" + Date.now();
-    const instruction = "Create a clean transparent-background character reference sheet from the selected full-body character image. Preserve the exact same character identity, face, hairstyle, outfit, body proportions, colors, materials, clothing, and accessories. Arrange one composite card with five labeled views: FACE CLOSE-UP, FRONT VIEW, BACK VIEW, LEFT SIDE VIEW, and RIGHT SIDE VIEW. Keep the character centered, neutral, uncropped, full body visible for body views, no redesign, no new clothing, no changed accessories, no different character. Use transparent background only; no room, scenery, environment, backdrop, floor, wall, gradient, shadow plate, or baked-in background.";
 
-    setMessage(options.forSave ? "Creating required character card before save..." : "Creating 8-angle character card...");
-    const job = await submitCharacterCardJob(instruction, sourceServerPath);
-    setMessage("Character card job submitted. Prompt ID: " + job.promptId + ". Waiting for output...");
+    const instruction =
+      "Create a multi-view character reference sheet from the selected full-body character image. " +
+      "Preserve the exact same character identity, face, hairstyle or fur, outfit, body proportions, " +
+      "colors, materials, markings, clothing, accessories, silhouette, and natural anatomy. " +
+      "The model-facing card must contain useful consistent views of the same character. " +
+      "Do not redesign the character or change identity-defining features.";
 
-    const generated = await waitForCharacterCardImage(job.promptId);
-    const upload = await copyGeneratedImageToCharacterUpload(generated.url, id + ".png");
-    return {
-      id,
-      label: "Multi-view character reference card",
-      url: upload.fileUrl || generated.url,
-      serverPath: upload.serverPath,
-      internalPrompt: instruction,
-      promptId: job.promptId,
-      workflowId: workflowForCharacterCard(),
-    };
+    setMessage(
+      options.forSave
+        ? "Creating required OrbitSheets Character Card before save..."
+        : "Creating OrbitSheets Character Card...",
+    );
+
+    try {
+      const orbit = await submitOrbitSheetsCharacterCardJob(
+        instruction,
+        sourceServerPath,
+        characterAnatomyMode,
+      );
+
+      /*
+       * Do not leave the canonical Character Card dependent on the
+       * ComfyUI output directory. Copy the generated OrbitSheets image
+       * into the same durable character-upload storage used by the
+       * existing Character Card path.
+       */
+      const upload = await copyGeneratedImageToCharacterUpload(
+        orbit.generated.url,
+        id + ".png",
+      );
+
+      setMessage(
+        "OrbitSheets Character Card created. Using the multi-view sheet as the model-facing Character Card.",
+      );
+
+      return {
+        id,
+        label: "Multi-view character reference card",
+        url: upload.fileUrl || orbit.generated.url,
+        serverPath:
+          upload.serverPath || orbit.generated.serverPath,
+        internalPrompt: instruction,
+        promptId: orbit.promptId,
+        workflowId: "orbitsheets-h3-character-card",
+      };
+    } catch (orbitError) {
+      console.warn(
+        "[Character Card] OrbitSheets failed; using legacy Character Card fallback.",
+        orbitError,
+      );
+
+      setMessage(
+        "OrbitSheets Character Card failed. Retrying with the legacy Character Card generator...",
+      );
+
+      const job = await submitLegacyCharacterCardJob(
+        instruction,
+        sourceServerPath,
+      );
+
+      setMessage(
+        "Legacy Character Card fallback submitted. Prompt ID: " +
+          job.promptId +
+          ". Waiting for output...",
+      );
+
+      const generated =
+        await waitForCharacterCardImage(job.promptId);
+
+      const upload =
+        await copyGeneratedImageToCharacterUpload(
+          generated.url,
+          id + ".png",
+        );
+
+      return {
+        id,
+        label: "Multi-view character reference card",
+        url: upload.fileUrl || generated.url,
+        serverPath: upload.serverPath,
+        internalPrompt: instruction,
+        promptId: job.promptId,
+        workflowId: workflowForCharacterCard(),
+      };
+    }
   }
 
   async function createCharacterCard() {
@@ -13765,6 +14541,85 @@ return (
                       className="mt-3 w-full resize-y rounded-2xl border border-sky-300/20 bg-black/35 p-4 text-base leading-7 text-white outline-none placeholder:text-white/30 focus:border-sky-200/60"
                       data-otg="background-prompt-input"
                     />
+
+                    <div
+                      className="mt-3 flex flex-wrap items-center gap-3"
+                      data-otg="background-enhance-prompt-controls"
+                    >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void enhanceCharacterBackgroundPromptV1()
+                        }
+                        disabled={
+                          characterBackgroundEnhancingPrompt ||
+                          !characterBackgroundPrompt.trim()
+                        }
+                        className="min-h-11 rounded-xl border border-emerald-300/25 bg-emerald-400/10 px-5 text-sm font-black text-emerald-50 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                        data-otg="background-enhance-prompt-button"
+                      >
+                        {characterBackgroundEnhancingPrompt
+                          ? "Enhancing..."
+                          : "Enhance Prompt"}
+                      </button>
+
+                      <div
+                        className="inline-flex overflow-hidden rounded-xl border border-white/10 bg-black/30"
+                        data-otg="background-enhance-prompt-levels"
+                      >
+                        {(
+                          [
+                            {
+                              key: "short",
+                              label: "Small",
+                            },
+                            {
+                              key: "medium",
+                              label: "Medium",
+                            },
+                            {
+                              key: "long",
+                              label: "Large",
+                            },
+                          ] as const
+                        ).map(
+                          (
+                            level,
+                          ) => (
+                            <button
+                              key={
+                                level.key
+                              }
+                              type="button"
+                              aria-pressed={
+                                characterBackgroundPromptEnhanceLevel ===
+                                level.key
+                              }
+                              onClick={() =>
+                                setCharacterBackgroundPromptEnhanceLevel(
+                                  level.key,
+                                )
+                              }
+                              disabled={
+                                characterBackgroundEnhancingPrompt
+                              }
+                              className={`min-h-11 px-4 text-xs font-black transition ${
+                                characterBackgroundPromptEnhanceLevel ===
+                                level.key
+                                  ? "bg-emerald-300 text-slate-950"
+                                  : "text-white/55 hover:bg-white/[0.06]"
+                              } disabled:cursor-not-allowed disabled:opacity-50`}
+                              data-otg={`background-enhance-level-${level.key}`}
+                            >
+                              {
+                                level.label
+                              }
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </div>
+
 
                     <div className="mt-5 grid gap-3 sm:grid-cols-2">
                       <label

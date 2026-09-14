@@ -945,6 +945,11 @@ export default function VoiceCharactersPanel({
       [refreshJobs],
     );
 
+  const [testVoiceTexts, setTestVoiceTexts] =
+    React.useState<Record<string, string>>({});
+  const testVoiceTextsRef =
+    React.useRef<Record<string, string>>({});
+
   const queueTest =
     React.useCallback(
       async (
@@ -955,7 +960,13 @@ export default function VoiceCharactersPanel({
             character,
           );
 
-        if (!artifact) return;
+        const speechText = String(
+          testVoiceTextsRef.current[
+            character.id
+          ] || "",
+        ).trim();
+
+        if (!artifact || !speechText) return;
 
         setActionBusy(
           (current) => ({
@@ -981,6 +992,8 @@ export default function VoiceCharactersPanel({
             character,
             "test_trained_voice",
             {
+              text:
+                speechText,
               trainedModelPath:
                 artifact.modelPath,
               trainedIndexPath:
@@ -1295,6 +1308,50 @@ export default function VoiceCharactersPanel({
                       jobs={jobs}
                     />
 
+                    <label
+                      className="block"
+                      data-otg="voice-test-text-input"
+                    >
+                      <span className="text-xs font-black uppercase tracking-[0.16em] text-violet-200/65">
+                        Test Voice Text
+                      </span>
+
+                      <textarea
+                        value={testVoiceTexts[character.id] || ""}
+                        onChange={(event) => {
+                          const value =
+                            event.target.value;
+
+                          testVoiceTextsRef.current = {
+                            ...testVoiceTextsRef.current,
+                            [character.id]: value,
+                          };
+
+                          setTestVoiceTexts(
+                            (current) => ({
+                              ...current,
+                              [character.id]: value,
+                            }),
+                          );
+
+                          setActionErrors(
+                            (current) => ({
+                              ...current,
+                              [character.id]: "",
+                            }),
+                          );
+                        }}
+                        rows={3}
+                        maxLength={600}
+                        placeholder="Type what you want this character to say..."
+                        className="mt-2 w-full resize-y rounded-xl border border-violet-300/20 bg-black/40 p-4 text-sm leading-6 text-white outline-none placeholder:text-white/25 focus:border-violet-300/45"
+                      />
+
+                      <div className="mt-2 text-[11px] leading-5 text-white/35">
+                        Type any sentence to test this trained HQ Voice. The original Voice Sample is not changed.
+                      </div>
+                    </label>
+
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
@@ -1334,7 +1391,12 @@ export default function VoiceCharactersPanel({
                           isActionBusy ||
                           activeTrainingFlow ||
                           activeTest ||
-                          !hqArtifact
+                          !hqArtifact ||
+                          !String(
+                            testVoiceTexts[
+                              character.id
+                            ] || "",
+                          ).trim()
                         }
                         title={
                           !hqArtifact

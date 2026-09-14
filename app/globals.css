@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import "tailwindcss" source("..");
 
 /* app/globals.css */
 /* Mobile-first dark UI with purple accent for ComfyUI OTG */

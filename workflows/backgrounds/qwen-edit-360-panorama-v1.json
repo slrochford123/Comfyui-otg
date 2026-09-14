@@ -1,0 +1,220 @@
+{
+  "25": {
+    "inputs": {
+      "image": "__OTG_BACKGROUND_360_INPUT__.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Scene Image"
+    }
+  },
+  "47": {
+    "inputs": {
+      "filename_prefix": "otg-background-360-panorama",
+      "images": [
+        "65:40:107",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image - 90 left"
+    }
+  },
+  "72": {
+    "inputs": {
+      "value": "Create a complete 360 panoramic image of the exact same cinematic environment shown in the input image. Extend the unseen surrounding environment coherently. An ultra-wide HDRI image captured on a 360 degree camera, equirectangular projection. Preserve the same architecture, materials, lighting, scale, color palette, atmosphere, and visual style. Keep the input-facing environment recognizable. No people, characters, text, logos, signs, vehicles, or new focal props."
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Prompt 90deg"
+    }
+  },
+  "65:40:107": {
+    "inputs": {
+      "samples": [
+        "65:40:108",
+        0
+      ],
+      "vae": [
+        "48:9",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "65:40:108": {
+    "inputs": {
+      "seed": 8940275346637191,
+      "steps": 20,
+      "cfg": 2.5,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "65:40:103",
+        0
+      ],
+      "positive": [
+        "65:40:111",
+        0
+      ],
+      "negative": [
+        "65:40:106",
+        0
+      ],
+      "latent_image": [
+        "pp06:360:latent",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "65:40:103": {
+    "inputs": {
+      "strength": 1,
+      "pre_cfg": false,
+      "model": [
+        "65:40:104",
+        0
+      ]
+    },
+    "class_type": "CFGNorm",
+    "_meta": {
+      "title": "CFGNorm"
+    }
+  },
+  "65:40:104": {
+    "inputs": {
+      "shift": 3,
+      "model": [
+        "48:20",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "48:20": {
+    "inputs": {
+      "lora_name": "251018_MICKMUMPITZ_QWEN-EDIT_360_03.safetensors",
+      "strength_model": 0.9,
+      "model": [
+        "48:26",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "48:26": {
+    "inputs": {
+      "lora_name": "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors",
+      "strength_model": 1,
+      "model": [
+        "48:12",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "48:12": {
+    "inputs": {
+      "unet_name": "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "65:40:111": {
+    "inputs": {
+      "prompt": [
+        "72",
+        0
+      ],
+      "clip": [
+        "48:10",
+        0
+      ],
+      "vae": [
+        "48:9",
+        0
+      ],
+      "image1": [
+        "25",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus"
+    }
+  },
+  "48:10": {
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "48:9": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "65:40:106": {
+    "inputs": {
+      "prompt": "",
+      "clip": [
+        "48:10",
+        0
+      ],
+      "vae": [
+        "48:9",
+        0
+      ],
+      "image1": [
+        "25",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus"
+    }
+  },
+  "pp06:360:latent": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "width": 2048,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "_meta": {
+      "title": "PP06 QWEN-EDIT_360 2048x1024 latent"
+    }
+  }
+}

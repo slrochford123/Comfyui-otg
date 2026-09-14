@@ -78,7 +78,7 @@ function otgIsAllowedPickerAssetV36BPJ1(asset: any, pickerType: unknown): boolea
   return otgIsSavedCharacterPickerAssetV36BPJ1(asset);
 }
 
-function otgFilterPickerAssetsV36BPJ1<T extends any>(assets: T[], pickerType: unknown): T[] {
+function otgFilterPickerAssetsV36BPJ1<T>(assets: T[], pickerType: unknown): T[] {
   if (String(pickerType || "").toLowerCase() !== "character") return assets;
   return assets.filter((asset) => otgIsSavedCharacterPickerAssetV36BPJ1(asset));
 }

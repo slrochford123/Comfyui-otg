@@ -12,9 +12,9 @@ import {
   removeAssetCandidate,
 } from "@/lib/assets/candidateFlow";
 import {
-  executeCharacterCandidateEdit,
-  type EditableCharacterCandidate,
-} from "@/lib/client/characterCandidateEditClient";
+  executeAssetCandidateEdit,
+  type EditableAssetCandidate,
+} from "@/lib/assets/assetCandidateEditClient";
 
 type AssetWorkspaceMode =
   | "create"
@@ -68,6 +68,13 @@ type SavedAssetCandidate = {
   prompt: string;
   promptId: string;
   seed: number;
+  workflowId?: string;
+  internalPrompt?: string;
+  sourceCandidateId?: string;
+  rootCandidateId?: string;
+  editDepth?: number;
+  editInstruction?: string;
+  backgroundFree?: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -76,6 +83,15 @@ type AssetSort =
   | "newest"
   | "oldest"
   | "name";
+
+const ASSET_PROMPT_ENHANCE_LEVELS = [
+  { key: "short", label: "Small" },
+  { key: "medium", label: "Medium" },
+  { key: "long", label: "Large" },
+] as const;
+
+type AssetPromptEnhanceLevel =
+  (typeof ASSET_PROMPT_ENHANCE_LEVELS)[number]["key"];
 
 const ASSET_ART_STYLES = [
   "Cartoon",
@@ -134,6 +150,20 @@ function numericTime(
   )
     ? parsed
     : 0;
+}
+
+function booleanish(
+  value: unknown,
+) {
+  const raw =
+    text(value).toLowerCase();
+
+  return [
+    "true",
+    "1",
+    "yes",
+    "on",
+  ].includes(raw);
 }
 
 function fileUrl(
@@ -381,6 +411,34 @@ function normalizeSavedAsset(
       Number(
         record.seed,
       ) || 0,
+    workflowId:
+      text(
+        record.workflowId,
+      ),
+    internalPrompt:
+      text(
+        record.internalPrompt,
+      ),
+    sourceCandidateId:
+      text(
+        record.sourceCandidateId,
+      ),
+    rootCandidateId:
+      text(
+        record.rootCandidateId,
+      ),
+    editDepth:
+      Number(
+        record.editDepth,
+      ) || 0,
+    editInstruction:
+      text(
+        record.editInstruction,
+      ),
+    backgroundFree:
+      booleanish(
+        record.backgroundFree,
+      ),
     createdAt:
       text(
         record.createdAt,
@@ -786,7 +844,7 @@ async function copyAssetImageToUpload(
 
 function editableAssetCandidate(
   candidate: AssetCandidate,
-): EditableCharacterCandidate {
+): EditableAssetCandidate {
   return {
     id:
       candidate.id,
@@ -1150,6 +1208,20 @@ export default function AssetGalleryPanel({
     React.useState("");
 
   const [
+    assetPromptEnhanceLevel,
+    setAssetPromptEnhanceLevel,
+  ] =
+    React.useState<AssetPromptEnhanceLevel>(
+      "medium",
+    );
+
+  const [
+    enhancingPrompt,
+    setEnhancingPrompt,
+  ] =
+    React.useState(false);
+
+  const [
     candidates,
     setCandidates,
   ] =
@@ -1461,6 +1533,144 @@ export default function AssetGalleryPanel({
     );
 
     return stable;
+  }
+
+  async function enhanceAssetPrompt() {
+    const originalPrompt =
+      prompt.trim();
+
+    if (!originalPrompt) {
+      setError(
+        "Enter an Asset prompt to enhance.",
+      );
+
+      return;
+    }
+
+    if (enhancingPrompt) {
+      return;
+    }
+
+    const selectedModel =
+      ASSET_IMAGE_MODELS.find(
+        (model) =>
+          model.id ===
+          modelId,
+      );
+
+    setEnhancingPrompt(true);
+    setError("");
+    setMessage(
+      "Enhancing Asset prompt with Qwen...",
+    );
+
+    try {
+      const response =
+        await fetch(
+          "/api/enhance-prompt",
+          {
+            method:
+              "POST",
+            credentials:
+              "include",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body:
+              JSON.stringify({
+                contextType: "asset",
+                prompt:
+                  originalPrompt,
+                enhanceLevel:
+                  assetPromptEnhanceLevel,
+                level:
+                  assetPromptEnhanceLevel,
+                size:
+                  assetPromptEnhanceLevel,
+                mediaMode:
+                  "image",
+                mode:
+                  "image",
+                imageOperation:
+                  "create-asset",
+                workflowId:
+                  "asset-gallery",
+                workflowLabel:
+                  "Asset Gallery",
+                assetName:
+                  assetName.trim(),
+                modelId,
+                modelLabel:
+                  selectedModel?.label ||
+                  "",
+                assetModelLabel:
+                  selectedModel?.label ||
+                  "",
+                artStyle,
+                assetArtStyle:
+                  artStyle,
+                styleLabel:
+                  artStyle,
+              }),
+          },
+        );
+
+      const payload =
+        await readJson(
+          response,
+        );
+
+      if (
+        response.status ===
+        401
+      ) {
+        window.location.href =
+          "/login?reason=session";
+
+        return;
+      }
+
+      if (
+        !response.ok ||
+        payload?.ok ===
+          false
+      ) {
+        throw new Error(
+          text(
+            payload?.error,
+          ) ||
+            `Asset prompt enhancement failed (${response.status}).`,
+        );
+      }
+
+      const nextPrompt =
+        text(
+          payload.enhancedPrompt ||
+            payload.prompt,
+        );
+
+      if (!nextPrompt) {
+        throw new Error(
+          "Asset prompt enhancement returned no prompt. The original prompt was preserved.",
+        );
+      }
+
+      setPrompt(nextPrompt);
+      setMessage(
+        "Asset prompt enhanced. Review or edit it before generating.",
+      );
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Asset prompt enhancement failed. The original prompt was preserved.",
+      );
+
+      setMessage("");
+    } finally {
+      setEnhancingPrompt(false);
+    }
   }
 
   async function generateAsset() {
@@ -1919,6 +2129,51 @@ export default function AssetGalleryPanel({
       );
 
       form.set(
+        "workflowId",
+        candidate.workflowId ||
+          "",
+      );
+
+      form.set(
+        "internalPrompt",
+        candidate.internalPrompt ||
+          "",
+      );
+
+      form.set(
+        "sourceCandidateId",
+        candidate.sourceCandidateId ||
+          "",
+      );
+
+      form.set(
+        "rootCandidateId",
+        candidate.rootCandidateId ||
+          "",
+      );
+
+      form.set(
+        "editDepth",
+        String(
+          candidate.editDepth ||
+            0,
+        ),
+      );
+
+      form.set(
+        "editInstruction",
+        candidate.editInstruction ||
+          "",
+      );
+
+      form.set(
+        "backgroundFree",
+        candidate.backgroundFree
+          ? "true"
+          : "false",
+      );
+
+      form.set(
         "image",
         new File(
           [blob],
@@ -2071,7 +2326,7 @@ export default function AssetGalleryPanel({
         );
 
       const edited =
-        await executeCharacterCandidateEdit(
+        await executeAssetCandidateEdit(
           {
             source:
               editableAssetCandidate(
@@ -2519,8 +2774,10 @@ export default function AssetGalleryPanel({
               masterPromptId,
             nodeId:
               ASSET_MASTER_OUTPUT_NODE,
-            filenamePrefix:
-              outputPrefix,
+            // OTG_ASSET_MASTER_HISTORY_NODE_MATCH_PP06_V1
+            // The SeedVR workflow can emit ComfyUI temp filenames even when
+            // filenamePrefix is supplied at submission. promptId + output
+            // node uniquely identify the canonical Asset Master result.
             timeoutMs:
               15 *
               60 *
@@ -2668,6 +2925,20 @@ export default function AssetGalleryPanel({
         item.promptId,
       seed:
         item.seed,
+      workflowId:
+        item.workflowId,
+      internalPrompt:
+        item.internalPrompt,
+      sourceCandidateId:
+        item.sourceCandidateId,
+      rootCandidateId:
+        item.rootCandidateId,
+      editDepth:
+        item.editDepth,
+      editInstruction:
+        item.editInstruction,
+      backgroundFree:
+        item.backgroundFree,
     };
 
     setCandidates(
@@ -3087,6 +3358,60 @@ export default function AssetGalleryPanel({
               data-otg="asset-prompt-input"
             />
           </label>
+
+          <div
+            className="mt-3 flex flex-wrap items-center gap-3"
+            data-otg="asset-enhance-prompt-controls"
+          >
+            <button
+              type="button"
+              onClick={() =>
+                void enhanceAssetPrompt()
+              }
+              disabled={
+                enhancingPrompt ||
+                !prompt.trim()
+              }
+              className="min-h-11 rounded-xl border border-emerald-300/25 bg-emerald-400/10 px-5 text-sm font-black text-emerald-50 disabled:cursor-not-allowed disabled:opacity-40"
+              data-otg="asset-enhance-prompt-button"
+            >
+              {enhancingPrompt
+                ? "Enhancing..."
+                : "Enhance Prompt"}
+            </button>
+
+            <div className="inline-flex overflow-hidden rounded-xl border border-white/10 bg-black/30">
+              {ASSET_PROMPT_ENHANCE_LEVELS.map(
+                (
+                  level,
+                ) => (
+                  <button
+                    key={
+                      level.key
+                    }
+                    type="button"
+                    aria-pressed={
+                      assetPromptEnhanceLevel ===
+                      level.key
+                    }
+                    onClick={() =>
+                      setAssetPromptEnhanceLevel(
+                        level.key,
+                      )
+                    }
+                    className={`min-h-11 px-4 text-xs font-black transition ${
+                      assetPromptEnhanceLevel ===
+                      level.key
+                        ? "bg-emerald-300 text-slate-950"
+                        : "text-white/55 hover:bg-white/[0.06]"
+                    }`}
+                  >
+                    {level.label}
+                  </button>
+                ),
+              )}
+            </div>
+          </div>
 
           <button
             type="button"

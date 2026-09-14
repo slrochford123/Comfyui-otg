@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
-import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
+import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
+import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,7 +27,7 @@ async function enhanceWithOllama(prompt: string, timeoutMs = 7000): Promise<stri
     "Keep the original meaning and main nouns. You may reorder, clarify, and add camera/lighting descriptors ONLY if they match the existing scene. " +
     "Output ONLY the enhanced prompt text (no quotes, no markdown, no commentary).";
 
-  const r = await qwenClusterFetch("/api/generate", {
+  const r = await qwenDurableFetch("/api/generate", {
         model: QWEN_CLUSTER_MODEL,
         prompt: `${system}\n\nUSER:\n${prompt.trim()}\n\nENHANCED:`,
         stream: false,

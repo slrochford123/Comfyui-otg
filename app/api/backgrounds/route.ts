@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import {
   backgroundAssetDir,
+  backgroundReferenceReadinessV36B,
   backgroundUploadDir,
   backgroundImageUrlForPath,
   deleteBackground,
@@ -565,38 +566,60 @@ function recordNeedsCanonicalAssets(ownerKey: string, record: BackgroundRecordV3
   return false;
 }
 
-async function listAndRepairBackgrounds(req: NextRequest, ownerKey: string) {
+async function listAndRepairBackgrounds(
+  req: NextRequest,
+  ownerKey: string,
+) {
   const items = listBackgrounds(ownerKey);
   const repaired: BackgroundRecordV36B[] = [];
 
   for (const item of items) {
-    if (!recordNeedsCanonicalAssets(ownerKey, item)) {
-      repaired.push(item);
+    let candidate = item;
+
+    if (recordNeedsCanonicalAssets(ownerKey, item)) {
+      try {
+        const canonical = await canonicalizeBackgroundRecord(
+          req,
+          ownerKey,
+          item,
+        );
+        candidate = saveBackground(ownerKey, canonical);
+
+        console.info("[background-library] canonicalized", {
+          ownerKey,
+          id: candidate.id,
+          displayImage: candidate.displayImage,
+          workflowImage: candidate.workflowImage,
+        });
+      } catch (error: any) {
+        console.warn("[background-library] canonicalize_failed", {
+          ownerKey,
+          id: item.id,
+          error: error?.message || String(error),
+        });
+
+        candidate = item;
+      }
+    }
+
+    const readiness =
+      backgroundReferenceReadinessV36B(candidate);
+
+    if (readiness === "broken") {
+      console.info("[background-library] hidden_broken_record", {
+        ownerKey,
+        id: candidate.id,
+      });
       continue;
     }
 
-    try {
-      const canonical = await canonicalizeBackgroundRecord(req, ownerKey, item);
-      const saved = saveBackground(ownerKey, canonical);
-      repaired.push(saved);
-      console.info("[background-library] canonicalized", {
-        ownerKey,
-        id: saved.id,
-        displayImage: saved.displayImage,
-        workflowImage: saved.workflowImage,
-      });
-    } catch (error: any) {
-      console.warn("[background-library] canonicalize_failed", {
-        ownerKey,
-        id: item.id,
-        error: error?.message || String(error),
-      });
-      repaired.push(item);
-    }
+    repaired.push(candidate);
   }
 
   return repaired;
 }
+
+// OTG_BACKGROUND_LIBRARY_READINESS_FILTER_PP04C_V1
 
 export async function GET(req: NextRequest) {
   try {

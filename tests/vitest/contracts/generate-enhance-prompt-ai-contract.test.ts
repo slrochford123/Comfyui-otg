@@ -21,9 +21,9 @@ const route = read("app/api/enhance-prompt/route.ts");
 const app = read("app/app/AppPageClient.tsx");
 
 describe("Generate Enhance Prompt AI contract", () => {
-  it("uses the existing Qwen cluster path without heuristic success fallback", () => {
+  it("uses the durable Qwen cluster path without heuristic success fallback", () => {
     expect(route).toMatch(
-      /qwenClusterFetch\(\s*"\/api\/generate"/,
+      /qwenDurableFetch\(\s*"\/api\/generate"/,
     );
 
     expect(route).not.toContain(

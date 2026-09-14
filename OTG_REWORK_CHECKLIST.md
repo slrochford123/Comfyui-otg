@@ -158,6 +158,15 @@ This file is the source of truth for the TEST-site tab rework.
 - [x] Deploy TEST and live-accept the corrected Characters rework.
 - [x] Commit and close Characters rework before Production rework.
 
+### Final Asset Gallery Follow-Up
+
+- [x] Asset Edit uses canonical Qwen image-edit workflow.
+- [x] Asset prompt supports Small / Medium / Large Qwen enhancement.
+- [x] Asset Save for Later persists through the canonical owner-scoped Asset store.
+- [x] Run focused Asset/Characters regressions, TypeScript, build, and diff validation.
+- [ ] Deploy TEST and live-accept the final Asset Gallery corrections.
+- [ ] Commit final Asset Gallery follow-up and close Characters.
+
 Audio Studio Voice Sample/HQ Voice Model replacement remains Phase 5 of the voice project and will be implemented during the Edit Video / Audio Studio rework after the Character voice-training foundation is accepted.
 
 ## Canonical Remaining Rework Order

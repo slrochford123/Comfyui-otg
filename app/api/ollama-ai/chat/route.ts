@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   QWEN_CLUSTER_MODEL,
-  QwenClusterBusyError,
-  qwenClusterFetch,
 } from "@/lib/workers/qwenClusterRouter";
+import {
+  qwenDurableFetch,
+} from "@/lib/workers/qwenDurableFetch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,7 +15,6 @@ const AI_ASSISTANCE_MODEL = "qwen3.5:4b";
 const AI_ASSISTANCE_NUM_CTX = 16 * 1024;
 const AI_ASSISTANCE_NUM_PREDICT = 500;
 const AI_ASSISTANCE_KEEP_ALIVE = "30m";
-const AI_ASSISTANCE_ROUTE_WAIT_MS = 1500;
 const AI_ASSISTANCE_GUARD_TIMEOUT_MS = 45_000;
 const AI_ASSISTANCE_GUARD_NUM_PREDICT = 500;
 const DEFAULT_CHAT_MESSAGE_LIMIT = 12;
@@ -261,39 +261,49 @@ async function qwenFetchForChatRequest(
   aiAssistance: boolean,
 ): Promise<Response> {
   if (!aiAssistance) {
-    return qwenClusterFetch(path, payload, { timeoutMs });
-  }
-
-  const startedAt = Date.now();
-
-  try {
-    return await qwenClusterFetch(path, payload, {
-      requiredContextTokens: AI_ASSISTANCE_NUM_CTX,
-      waitMs: AI_ASSISTANCE_ROUTE_WAIT_MS,
-      timeoutMs,
-      allowedNodes: ["shawn"],
-      model: AI_ASSISTANCE_MODEL,
-      keepAlive: AI_ASSISTANCE_KEEP_ALIVE,
-    });
-  } catch (error) {
-    if (!(error instanceof QwenClusterBusyError)) {
-      throw error;
-    }
-
-    const remainingTimeoutMs = Math.max(
-      1,
-      timeoutMs - (Date.now() - startedAt),
+    return qwenDurableFetch(
+      path,
+      payload,
+      {
+        timeoutMs,
+        requestKind:
+          "ollama-ai-chat",
+      },
     );
-
-    return qwenClusterFetch(path, payload, {
-      requiredContextTokens: AI_ASSISTANCE_NUM_CTX,
-      waitMs: AI_ASSISTANCE_ROUTE_WAIT_MS,
-      timeoutMs: remainingTimeoutMs,
-      allowedNodes: ["slr"],
-      model: AI_ASSISTANCE_MODEL,
-      keepAlive: AI_ASSISTANCE_KEEP_ALIVE,
-    });
   }
+
+  /*
+   * OTG_QWEN_CHAT_DURABLE_PRIORITY_V1
+   *
+   * AI Assistance historically preferred the RTX 3090 and used
+   * the RTX 5060 Ti as fallback.
+   *
+   * Preserve that preference without a capacity deadline:
+   *
+   *   Shawn/3090 -> SLR/5060 -> durable wait -> retry
+   */
+  return qwenDurableFetch(
+    path,
+    payload,
+    {
+      requiredContextTokens:
+        AI_ASSISTANCE_NUM_CTX,
+
+      timeoutMs,
+
+      allowedNodes:
+        ["shawn", "slr"],
+
+      model:
+        AI_ASSISTANCE_MODEL,
+
+      keepAlive:
+        AI_ASSISTANCE_KEEP_ALIVE,
+
+      requestKind:
+        "ollama-ai-chat-ai-assistance",
+    },
+  );
 }
 
 

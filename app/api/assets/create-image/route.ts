@@ -17,6 +17,9 @@ import {
   getOwnerContext,
   SessionInvalidError,
 } from "@/lib/ownerKey";
+import {
+  submitComfyPromptWith5060Lease,
+} from "@/lib/workers/comfyPromptLease";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -889,9 +892,11 @@ async function submitPrompt(
 
   try {
     const response =
-      await fetch(
-        `${baseUrl}/prompt`,
-        {
+      await submitComfyPromptWith5060Lease({
+        baseUrl,
+        workerId:
+          "api-assets-create-image",
+        init: {
           method: "POST",
           cache: "no-store",
           headers: {
@@ -906,7 +911,7 @@ async function submitPrompt(
           signal:
             controller.signal,
         },
-      );
+      });
 
     const responseText =
       await response.text();
@@ -1090,6 +1095,41 @@ export async function POST(
         config,
       );
 
+    // OTG_ASSET_KREA2_SAVE_OUTPUT_FIX_V2
+    //
+    // The generic Asset candidate path converts the configured image
+    // output node from SaveImage to PreviewImage. Krea 2 also contains
+    // PreviewAny node 30:20, which then becomes the only executed output.
+    // Restore the actual Krea image output before POST /prompt.
+    if (config.id === "krea-2") {
+      const kreaOutputNode = graph[config.outputNodeId];
+
+      if (!kreaOutputNode || typeof kreaOutputNode !== "object") {
+        throw new Error(
+          `Krea 2 output contract mismatch: node ${config.outputNodeId} is missing.`,
+        );
+      }
+
+      const existingInputs =
+        kreaOutputNode.inputs && typeof kreaOutputNode.inputs === "object"
+          ? kreaOutputNode.inputs
+          : {};
+
+      const existingMeta =
+        kreaOutputNode._meta && typeof kreaOutputNode._meta === "object"
+          ? kreaOutputNode._meta
+          : {};
+
+      kreaOutputNode.class_type = "SaveImage";
+      kreaOutputNode.inputs = {
+        ...existingInputs,
+        filename_prefix: `OTG_Asset_Krea2_${Date.now()}`,
+      };
+      kreaOutputNode._meta = {
+        ...existingMeta,
+        title: "OTG Asset Krea 2 Candidate Save",
+      };
+    }
     const promptId =
       await submitPrompt(
         backend.baseUrl,

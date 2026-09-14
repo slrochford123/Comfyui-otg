@@ -649,6 +649,47 @@ function validateCharacterPreviewDub(raw: Record<string, unknown>): string | nul
   return null;
 }
 
+
+function findExistingApplioTrainingJobForDataset(
+  ownerKey: string,
+  characterId: string,
+  sourceDatasetJobId: string,
+): QueuedContractJob | null {
+  const normalizedOwnerKey =
+    cleanString(ownerKey);
+  const normalizedCharacterId =
+    cleanString(characterId);
+  const normalizedSourceDatasetJobId =
+    cleanString(sourceDatasetJobId);
+
+  if (
+    !normalizedOwnerKey ||
+    !normalizedCharacterId ||
+    !normalizedSourceDatasetJobId
+  ) {
+    return null;
+  }
+
+  const existing =
+    readStoreWithFreshLeases().jobs.find(
+      (job) =>
+        job.ownerKey === normalizedOwnerKey &&
+        job.jobType ===
+          "character_voice_pipeline" &&
+        job.action ===
+          "start_applio_training" &&
+        job.characterId ===
+          normalizedCharacterId &&
+        cleanString(
+          job.input?.sourceDatasetJobId,
+        ) === normalizedSourceDatasetJobId,
+    );
+
+  return existing
+    ? publicJob(existing)
+    : null;
+}
+
 export function createCharacterVoicePipelineJob(ownerKey: string, rawInput: unknown): JobValidationResult {
   if (!isPlainObject(rawInput)) return { ok: false, status: 400, error: "Missing JSON object body." };
   const action = cleanString(rawInput.action);
@@ -659,6 +700,27 @@ export function createCharacterVoicePipelineJob(ownerKey: string, rawInput: unkn
 
   const characterId = cleanString(rawInput.characterId);
   if (!characterId) return { ok: false, status: 400, error: "Missing characterId." };
+
+  if (action === "start_applio_training") {
+    const sourceDatasetJobId =
+      cleanString(
+        rawInput.sourceDatasetJobId,
+      );
+
+    const existingTraining =
+      findExistingApplioTrainingJobForDataset(
+        ownerKey,
+        characterId,
+        sourceDatasetJobId,
+      );
+
+    if (existingTraining) {
+      return {
+        ok: true,
+        job: existingTraining,
+      };
+    }
+  }
 
   const providerError = validateProvider(rawInput);
   if (providerError) return { ok: false, status: 400, error: providerError };
@@ -728,6 +790,129 @@ export function createCharacterVoicePipelineJob(ownerKey: string, rawInput: unkn
   }
 
   return { ok: true, job };
+}
+
+
+export function ensureApplioTrainingJobForCompletedDataset(
+  ownerKey: string,
+  datasetJobId: string,
+): JobValidationResult | null {
+  const datasetJob =
+    getQueuedContractJob(
+      ownerKey,
+      datasetJobId,
+    );
+
+  if (
+    !datasetJob ||
+    datasetJob.jobType !==
+      "character_voice_pipeline" ||
+    datasetJob.action !==
+      "generate_training_dataset" ||
+    datasetJob.status !== "completed"
+  ) {
+    return null;
+  }
+
+  const characterId =
+    cleanString(
+      datasetJob.characterId,
+    );
+
+  if (!characterId) {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        "Completed training dataset is missing characterId for Applio auto-chain.",
+    };
+  }
+
+  const datasetInput =
+    isPlainObject(datasetJob.input)
+      ? datasetJob.input
+      : {};
+
+  const datasetResult =
+    isPlainObject(datasetJob.result)
+      ? datasetJob.result
+      : {};
+
+  if (
+    datasetInput.voiceCharactersAutoTrain !==
+    true
+  ) {
+    return null;
+  }
+
+  if (
+    datasetResult.mock === true ||
+    cleanString(
+      datasetResult.generationMode,
+    ).toLowerCase() !== "real" ||
+    cleanString(
+      datasetResult.status,
+    ).toLowerCase() !==
+      "voice_pack_ready"
+  ) {
+    return null;
+  }
+
+  const manifestPath =
+    cleanString(
+      datasetResult.manifestPath ||
+        datasetResult.datasetManifestPath,
+    );
+
+  if (!manifestPath) {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        "Completed real training dataset is missing manifestPath for Applio auto-chain.",
+    };
+  }
+
+  const manifestUrl =
+    cleanString(
+      datasetResult.manifestUrl ||
+        datasetResult.datasetManifestUrl,
+    );
+
+  return createCharacterVoicePipelineJob(
+    ownerKey,
+    {
+      ...datasetInput,
+
+      action:
+        "start_applio_training",
+
+      characterId,
+
+      sourceDatasetJobId:
+        datasetJob.jobId,
+
+      manifestPath,
+      manifestUrl,
+
+      datasetManifestPath:
+        manifestPath,
+
+      datasetManifestUrl:
+        manifestUrl,
+
+      trainingQualityPreset:
+        cleanString(
+          datasetInput.trainingQualityPreset,
+        ) || "normal",
+
+      voiceCharactersAutoTrain:
+        true,
+
+      requestedBy:
+        "voice_characters_server_autochain",
+    },
+  );
 }
 
 export function createProductionAudioStudioJob(ownerKey: string, rawInput: unknown): JobValidationResult {
@@ -1147,6 +1332,23 @@ export function completeRemoteTrainingDatasetJob(
   result: unknown,
   message?: string,
 ): QueuedContractJob | null {
+  const current =
+    getQueuedContractJob(
+      ownerKey,
+      jobId,
+    );
+
+  if (!current) {
+    return null;
+  }
+
+  if (
+    current.status ===
+      "completed"
+  ) {
+    return current;
+  }
+
   const normalizedMessage = cleanString(message);
   return updateVoicePipelineJob(ownerKey, jobId, {
     status: "ready_for_review",
@@ -1189,15 +1391,85 @@ export function completeRemoteWorkerJob(
     }
   }
 
-  return updateVoicePipelineJob(ownerKey, jobId, {
-    status: "completed",
-    progress: 100,
-    message: normalizedMessage || "Remote worker completed.",
-    result: safeResult,
-    error: null,
-    leaseExpiresAt: null,
-    ...ltxRoutingPatch(safeResult),
-  });
+  const completedJob =
+    updateVoicePipelineJob(
+      ownerKey,
+      jobId,
+      {
+        status: "completed",
+        progress: 100,
+        message:
+          normalizedMessage ||
+          "Remote worker completed.",
+        result: safeResult,
+        error: null,
+        leaseExpiresAt: null,
+        ...ltxRoutingPatch(
+          safeResult,
+        ),
+      },
+    );
+
+  if (!completedJob) {
+    return null;
+  }
+
+  const autoChain =
+    ensureApplioTrainingJobForCompletedDataset(
+      ownerKey,
+      jobId,
+    );
+
+  if (autoChain?.ok) {
+    return (
+      updateVoicePipelineJob(
+        ownerKey,
+        jobId,
+        {
+          result:
+            mergeJobResult(
+              completedJob.result,
+              {
+                autoChainStatus:
+                  "ensured",
+                autoChainAction:
+                  "start_applio_training",
+                autoChainJobId:
+                  autoChain.job.jobId,
+              },
+            ),
+        },
+      ) || completedJob
+    );
+  }
+
+  if (autoChain && !autoChain.ok) {
+    return (
+      updateVoicePipelineJob(
+        ownerKey,
+        jobId,
+        {
+          message:
+            `${completedJob.message || "Training dataset completed."} ` +
+            `HQ training auto-chain failed: ${autoChain.error}`,
+          result:
+            mergeJobResult(
+              completedJob.result,
+              {
+                autoChainStatus:
+                  "failed",
+                autoChainAction:
+                  "start_applio_training",
+                autoChainError:
+                  autoChain.error,
+              },
+            ),
+        },
+      ) || completedJob
+    );
+  }
+
+  return completedJob;
 }
 
 export function checkpointRemoteWorkerJob(
@@ -1344,18 +1616,100 @@ export function finalizeTrainingDatasetJob(ownerKey: string, jobId: string, resu
   if (!current || current.jobType !== "character_voice_pipeline" || current.action !== "generate_training_dataset") return null;
   if (current.status !== "ready_for_review" && current.status !== "completed") return null;
 
-  return updateVoicePipelineJob(ownerKey, jobId, {
-    status: "completed",
-    progress: 100,
-    message: "Training dataset completed and locked to the character.",
-    result: mergeJobResult(current.result, {
-      ...(isPlainObject(result) ? sanitizeValue(result) as Record<string, unknown> : {}),
-      status: "voice_pack_ready",
-      finalizedAt: new Date().toISOString(),
-    }),
-    error: null,
-    leaseExpiresAt: null,
-  });
+  const completedJob =
+    updateVoicePipelineJob(
+      ownerKey,
+      jobId,
+      {
+        status: "completed",
+        progress: 100,
+        message:
+          "Training dataset completed and locked to the character.",
+        result:
+          mergeJobResult(
+            current.result,
+            {
+              ...(isPlainObject(
+                result,
+              )
+                ? sanitizeValue(
+                    result,
+                  ) as Record<
+                    string,
+                    unknown
+                  >
+                : {}),
+              status:
+                "voice_pack_ready",
+              finalizedAt:
+                new Date().toISOString(),
+            },
+          ),
+        error: null,
+        leaseExpiresAt: null,
+      },
+    );
+
+  if (!completedJob) {
+    return null;
+  }
+
+  const autoChain =
+    ensureApplioTrainingJobForCompletedDataset(
+      ownerKey,
+      jobId,
+    );
+
+  if (autoChain?.ok) {
+    return (
+      updateVoicePipelineJob(
+        ownerKey,
+        jobId,
+        {
+          result:
+            mergeJobResult(
+              completedJob.result,
+              {
+                autoChainStatus:
+                  "ensured",
+                autoChainAction:
+                  "start_applio_training",
+                autoChainJobId:
+                  autoChain.job.jobId,
+              },
+            ),
+        },
+      ) || completedJob
+    );
+  }
+
+  if (autoChain && !autoChain.ok) {
+    return (
+      updateVoicePipelineJob(
+        ownerKey,
+        jobId,
+        {
+          message:
+            `${completedJob.message || "Training dataset completed."} ` +
+            `HQ training auto-chain failed: ${autoChain.error}`,
+          result:
+            mergeJobResult(
+              completedJob.result,
+              {
+                autoChainStatus:
+                  "failed",
+                autoChainAction:
+                  "start_applio_training",
+                autoChainError:
+                  autoChain.error,
+              },
+            ),
+        },
+      ) || completedJob
+    );
+  }
+
+  return completedJob;
 }
 
 export function terminateVoicePipelineJob(ownerKey: string, jobId: string, result?: unknown): QueuedContractJob | null {

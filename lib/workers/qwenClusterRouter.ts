@@ -22,9 +22,31 @@ export type QwenRoute = { node: QwenClusterNode; baseUrl: string; contextCap: nu
 export class QwenClusterBusyError extends Error {
   readonly code = "qwen_cluster_busy";
   readonly status = 503;
-  constructor(message = "No compatible Qwen GPU is currently available; the request remained queued until its wait timeout.") {
+
+  constructor(
+    message =
+      "No compatible Qwen GPU is currently available.",
+  ) {
     super(message);
     this.name = "QwenClusterBusyError";
+  }
+}
+
+export class QwenContextUnsupportedError extends Error {
+  readonly code = "qwen_context_unsupported";
+  readonly status = 400;
+
+  constructor(
+    requiredContextTokens: number,
+    maximumContextTokens =
+      SHAWN_QWEN_CONTEXT_CAP,
+  ) {
+    super(
+      `Requested context ${requiredContextTokens} exceeds the Qwen cluster maximum of ${maximumContextTokens}.`,
+    );
+
+    this.name =
+      "QwenContextUnsupportedError";
   }
 }
 
@@ -75,23 +97,81 @@ async function tryShawn(owner: string, deps: RouterDependencies): Promise<QwenRo
 
 export async function acquireQwenClusterRoute(requiredContextTokens: number, waitMs = 30_000, deps: RouterDependencies = {}): Promise<QwenRoute> {
   const required = Math.max(1, Math.floor(Number(requiredContextTokens) || SLR_QWEN_CONTEXT_CAP));
-  if (required > SHAWN_QWEN_CONTEXT_CAP) throw new QwenClusterBusyError(`Requested context ${required} exceeds the Qwen cluster maximum of ${SHAWN_QWEN_CONTEXT_CAP}.`);
+  if (
+    required >
+    SHAWN_QWEN_CONTEXT_CAP
+  ) {
+    throw new QwenContextUnsupportedError(
+      required,
+      SHAWN_QWEN_CONTEXT_CAP,
+    );
+  }
   const owner = ownerId();
   const deadline = Date.now() + Math.max(0, waitMs);
   const sleep = deps.sleep || ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
-  const allowedNodes = new Set<QwenClusterNode>(deps.allowedNodes || ["slr", "shawn"]);
+  const allowedNodes = Array.from(
+    new Set<QwenClusterNode>(
+      deps.allowedNodes
+      || ["slr", "shawn"],
+    ),
+  );
+
   do {
-    if (allowedNodes.has("slr") && required <= SLR_QWEN_CONTEXT_CAP) {
-      const slr = trySlr(owner, deps);
-      if (slr) return slr;
+    for (const node of allowedNodes) {
+      if (node === "slr") {
+        if (
+          required
+          > SLR_QWEN_CONTEXT_CAP
+        ) {
+          continue;
+        }
+
+        const slr =
+          trySlr(
+            owner,
+            deps,
+          );
+
+        if (slr) {
+          return slr;
+        }
+
+        continue;
+      }
+
+      if (node === "shawn") {
+        const shawn =
+          await tryShawn(
+            owner,
+            deps,
+          );
+
+        if (shawn) {
+          return shawn;
+        }
+      }
     }
-    if (allowedNodes.has("shawn")) {
-      const shawn = await tryShawn(owner, deps);
-      if (shawn) return shawn;
+
+    if (
+      Date.now()
+      >= deadline
+    ) {
+      break;
     }
-    if (Date.now() >= deadline) break;
-    await sleep(Math.min(500, Math.max(1, deadline - Date.now())));
-  } while (Date.now() <= deadline);
+
+    await sleep(
+      Math.min(
+        500,
+        Math.max(
+          1,
+          deadline - Date.now(),
+        ),
+      ),
+    );
+  } while (
+    Date.now()
+    <= deadline
+  );
   throw new QwenClusterBusyError(required > SLR_QWEN_CONTEXT_CAP
     ? "The RTX 3090 required for this context is occupied; the request was not routed to the 32768-context RTX 5060 Ti."
     : undefined);
@@ -143,6 +223,13 @@ export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payl
   modelByNode?: Partial<Record<QwenClusterNode, string>>;
   keepAlive?: string | number;
   leaseTtlSeconds?: number;
+    onRouteAcquired?: (
+      route: {
+        node: QwenClusterNode;
+        baseUrl: string;
+        contextCap: number;
+      },
+    ) => Promise<void> | void;
 } = {}): Promise<Response> {
   const startedAt = Date.now();
   const totalTimeoutMs = Math.max(1, options.timeoutMs ?? 180_000);
@@ -167,7 +254,33 @@ export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payl
   const remainingTimeoutMs = totalTimeoutMs - (Date.now() - startedAt);
   if (remainingTimeoutMs <= 0) {
     releaseClusterGpuLease(route.lease);
-    throw new DOMException("Qwen cluster request timed out while waiting for a GPU lease.", "AbortError");
+    throw new DOMException("Qwen cluster request timed out before model execution could begin.", "AbortError");
+  }
+
+  /*
+   * OTG_QWEN_DURABLE_QUEUE_V1
+   *
+   * Record the selected physical lane before the Ollama request
+   * begins. If persistence fails here, no inference request has
+   * been sent and the GPU lease can be safely released.
+   */
+  if (options.onRouteAcquired) {
+    try {
+      await options.onRouteAcquired({
+        node:
+          route.node,
+        baseUrl:
+          route.baseUrl,
+        contextCap:
+          route.contextCap,
+      });
+    } catch (error) {
+      releaseClusterGpuLease(
+        route.lease,
+      );
+
+      throw error;
+    }
   }
   const timer = setTimeout(() => controller.abort(), remainingTimeoutMs);
   let responseCompleted = false;

@@ -1,17 +1,24 @@
 import { NextRequest } from "next/server";
-import {
-  QWEN_CLUSTER_MODEL,
-  qwenClusterFetch,
-} from "@/lib/workers/qwenClusterRouter";
+import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
+import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const DEFAULT_ASSET_PROMPT_ENHANCE_QWEN_MODEL = "qwen3.5:4b";
+
+const ASSET_PROMPT_ENHANCE_QWEN_MODEL =
+  String(process.env.ASSET_PROMPT_ENHANCE_QWEN_MODEL || "").trim() ||
+  DEFAULT_ASSET_PROMPT_ENHANCE_QWEN_MODEL;
+
 type EnhanceLevel = "short" | "medium" | "long";
 type EnhanceMode = "image" | "video";
+type EnhanceContextType = "generate" | "asset";
 
 type GenerateEnhanceContext = {
+  contextType: EnhanceContextType;
   mediaMode: EnhanceMode;
+  durationSeconds: number;
   imageOperation: string;
   videoGenerationType: string;
   workflowId: string;
@@ -19,11 +26,60 @@ type GenerateEnhanceContext = {
   selectedStyleId: string;
   styleLabel: string;
   stylePrompt: string;
+  assetName: string;
+  assetModelLabel: string;
+  assetArtStyle: string;
+
+  /*
+   * OTG_PRODUCTION_V2_VISION_AWARE_ENHANCE_R12C_V1
+   *
+   * Production V2 may provide factual, role-labelled visual
+   * observations. Other Enhance Prompt callers leave this blank
+   * and retain their existing behavior.
+   */
+  visualContext: string;
 };
+
+function promptEnhanceModelForContext(
+  context: GenerateEnhanceContext,
+) {
+  return context.contextType === "asset"
+    ? ASSET_PROMPT_ENHANCE_QWEN_MODEL
+    : QWEN_CLUSTER_MODEL;
+}
+
+function promptEnhanceKeepAliveForContext(
+  context: GenerateEnhanceContext,
+) {
+  if (context.contextType === "asset") {
+    // Asset Qwen must release VRAM immediately after enhancement.
+    // The cluster GPU lease ends when the request completes, so retaining
+    // the model afterward would leave untracked VRAM resident on a GPU that
+    // may immediately be leased to ComfyUI.
+    return 0;
+  }
+
+  // Preserve the pre-Asset Generate-screen behavior exactly.
+  return process.env.PROMPT_ENHANCE_KEEP_ALIVE || 0;
+}
 
 function cleanText(value: unknown) {
   return String(value || "")
     .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanMultiline(value: unknown) {
+  return String(value || "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/\s+/g, " ")
+        .trim(),
+    )
+    .filter(Boolean)
+    .join("\n")
     .trim();
 }
 
@@ -73,6 +129,22 @@ function normalizeMode(value: unknown, workflowId: string): EnhanceMode {
   return "image";
 }
 
+function normalizeContextType(value: unknown): EnhanceContextType {
+  const raw = cleanText(value).toLowerCase();
+  if (
+    [
+      "asset",
+      "assets",
+      "asset-gallery",
+      "production-asset",
+    ].includes(raw)
+  ) {
+    return "asset";
+  }
+
+  return "generate";
+}
+
 function buildGenerateContext(body: any): GenerateEnhanceContext {
   const workflowId = cleanText(
     body.workflowId || body.preset || body.workflow || "",
@@ -85,9 +157,20 @@ function buildGenerateContext(body: any): GenerateEnhanceContext {
   );
 
   return {
+    contextType: normalizeContextType(
+      body.contextType || body.promptContext || body.surface || "",
+    ),
     mediaMode: normalizeMode(
       body.mediaMode || body.generateMediaMode || body.mode || body.mediaType,
       workflowId,
+    ),
+    durationSeconds: Math.max(
+      0,
+      Number(
+        body.durationSeconds
+        || body.duration
+        || 0,
+      ) || 0,
     ),
     imageOperation: cleanText(body.imageOperation || body.operation || ""),
     videoGenerationType: cleanText(
@@ -100,10 +183,52 @@ function buildGenerateContext(body: any): GenerateEnhanceContext {
     selectedStyleId: cleanText(body.selectedStyleId || body.styleId || ""),
     styleLabel,
     stylePrompt,
+    assetName: cleanText(body.assetName || body.name || ""),
+    assetModelLabel: cleanText(
+      body.assetModelLabel || body.modelLabel || body.imageModelLabel || "",
+    ),
+    assetArtStyle: cleanText(body.assetArtStyle || body.artStyle || ""),
+
+    visualContext:
+      cleanMultiline(
+        body.visualContext
+        || "",
+      ).slice(
+        0,
+        24_000,
+      ),
   };
 }
 
-function instructionForLevel(level: EnhanceLevel, mode: EnhanceMode) {
+function instructionForLevel(
+  level: EnhanceLevel,
+  mode: EnhanceMode,
+  contextType: EnhanceContextType,
+) {
+  if (contextType === "asset") {
+    if (level === "short") {
+      return [
+        "SMALL asset purpose: restrained cleanup for an individual production asset/object/prop.",
+        "Preserve most of the user's wording while improving clarity and adding only a few useful visual details.",
+        "Keep this the shortest enhancement.",
+      ].join("\n");
+    }
+
+    if (level === "medium") {
+      return [
+        "MEDIUM asset purpose: fuller production-ready image prompt for one individual production asset/object/prop.",
+        "Add useful subject, material, silhouette, surface, color, lighting, composition, and continuity detail.",
+        "Use moderate expansion and preserve the user's intended asset design.",
+      ].join("\n");
+    }
+
+    return [
+      "LARGE asset purpose: most detailed production prompt for one individual production asset/object/prop while preserving user intent.",
+      "Develop detailed visual/material/environment/composition/lighting treatment with no unrelated invention.",
+      "Keep the asset readable as one reusable production object and do not turn it into a video or broad story scene.",
+    ].join("\n");
+  }
+
   if (level === "short") {
     return [
       "SHORT purpose: clean and lightly improve the user's idea.",
@@ -138,7 +263,9 @@ function instructionForLevel(level: EnhanceLevel, mode: EnhanceMode) {
   ].join("\n");
 }
 
-function instructionForMode(mode: EnhanceMode) {
+function instructionForMode(
+  mode: EnhanceMode,
+) {
   if (mode === "image") {
     return [
       "IMAGE context:",
@@ -154,14 +281,50 @@ function instructionForMode(mode: EnhanceMode) {
   ].join("\n");
 }
 
+function instructionForAssetContext() {
+  return [
+    "Asset context:",
+    "Treat the prompt as an individual production asset/object/prop, not as a scene, character sheet, or video prompt.",
+    "Focus on shape, proportions, materials, colors, markings, surface detail, clean lighting, and useful production-reference composition.",
+    "Keep any environment simple and supportive unless the user's asset request explicitly requires one.",
+  ].join("\n");
+}
+
+function instructionForProductionV2LtxDuration(
+  context: GenerateEnhanceContext,
+) {
+  if (
+    context.videoGenerationType
+    !== "ltx-ingredients-image-to-video"
+  ) {
+    return "";
+  }
+
+  const seconds =
+    context.durationSeconds === 10
+      ? 10
+      : 5;
+
+  return [
+    "LTX 2.5 Ingredients duration authority:",
+    `The requested generated clip is exactly ${seconds} seconds.`,
+    seconds === 10
+      ? "Use the full ten-second window for coherent temporal progression when it helps the user's action; do not compress it into five-second pacing."
+      : "Use compact five-second pacing and avoid inventing unnecessary temporal progression.",
+    "Character Cards, the Background Master, Asset references, and any continuation frame remain authoritative for appearance/continuity. The user prompt remains authoritative for action, dialogue, camera, performance, and new events.",
+  ].join("\n");
+}
+
 function contextLines(context: GenerateEnhanceContext) {
   const operation =
     context.mediaMode === "video"
       ? context.videoGenerationType || "create"
       : context.imageOperation || "create";
 
-  return [
+  const lines = [
+    `contextType: ${context.contextType}`,
     `mediaMode: ${context.mediaMode}`,
+    `durationSeconds: ${context.durationSeconds || "not specified"}`,
     `operation: ${operation}`,
     `imageOperation: ${context.imageOperation || "none"}`,
     `videoGenerationType: ${context.videoGenerationType || "none"}`,
@@ -170,7 +333,17 @@ function contextLines(context: GenerateEnhanceContext) {
     `selectedStyleId: ${context.selectedStyleId || "none"}`,
     `styleLabel: ${context.styleLabel || "none"}`,
     `stylePrompt: ${context.stylePrompt || "none"}`,
-  ].join("\n");
+  ];
+
+  if (context.contextType === "asset") {
+    lines.push(
+      `assetName: ${context.assetName || "not specified"}`,
+      `assetModelLabel: ${context.assetModelLabel || "not specified"}`,
+      `assetArtStyle: ${context.assetArtStyle || context.styleLabel || "not specified"}`,
+    );
+  }
+
+  return lines.join("\n");
 }
 
 function buildQwenEnhancePrompt(
@@ -178,28 +351,70 @@ function buildQwenEnhancePrompt(
   level: EnhanceLevel,
   context: GenerateEnhanceContext,
 ) {
+  const isAsset =
+    context.contextType === "asset";
+  const ltxDurationInstruction =
+    instructionForProductionV2LtxDuration(
+      context,
+    );
+
   return [
     "/no_think",
     "",
-    "You enhance prompts for the Generate screen.",
+    isAsset
+      ? "You enhance prompts for the Asset Gallery."
+      : "You enhance prompts for the Generate screen.",
     "Return exactly one JSON object with a single string field named \"enhancedPrompt\".",
     "The value must be the finished prompt only: no markdown, no labels, no notes, no analysis.",
-    "Preserve the user's subject, action, identity, dialogue, and core intent.",
-    "Do not add unrelated characters, locations, lore, or major story facts.",
-    "Use the selected style only when one is present in the Generate context.",
+    isAsset
+      ? "Preserve the user's asset identity, design intent, shape, materials, colors, markings, and core purpose."
+      : "Preserve the user's subject, action, identity, dialogue, and core intent.",
+    isAsset
+      ? "Do not add unrelated characters, locations, lore, major story facts, duplicate asset copies, or non-asset scene action."
+      : "Do not add unrelated characters, locations, lore, or major story facts.",
+    isAsset
+      ? "Use the selected style only when one is present in the Asset context."
+      : "Use the selected style only when one is present in the Generate context.",
     "Avoid generic filler phrases and do not append canned quality tags.",
     "",
-    instructionForLevel(level, context.mediaMode),
+    instructionForLevel(level, context.mediaMode, context.contextType),
     "",
-    instructionForMode(context.mediaMode),
+    isAsset
+      ? instructionForAssetContext()
+      : instructionForMode(context.mediaMode),
+    ...(ltxDurationInstruction
+      ? [
+          "",
+          ltxDurationInstruction,
+        ]
+      : []),
     "",
     "Original user prompt:",
     prompt,
+
+    ...(context.visualContext
+      ? [
+          "",
+          "Vision-derived context from the exact current generation inputs:",
+          context.visualContext,
+          "",
+          "Vision context authority rules:",
+          "The continuation frame or starting image is authoritative for current scene composition, camera framing, spatial relationships, environment, lighting, and current visible state.",
+          "Character-reference observations are authoritative for character identity and visible appearance only; never treat a Character Card background as the scene location.",
+          "Background-reference observations provide environmental geography and appearance, but must not override a continuation frame or starting image.",
+          "Asset-reference observations define the referenced object's visible design and appearance.",
+          "The original user prompt remains authoritative for requested action, dialogue, intent, and story events.",
+          "Do not invent new actions, characters, locations, props, dialogue, or story events merely because visual context is available.",
+        ]
+      : []),
+
     "",
     "Requested enhancement level:",
     level,
     "",
-    "Generate context:",
+    isAsset
+      ? "Asset context:"
+      : "Generate context:",
     contextLines(context),
     "",
     "Enhanced prompt JSON only:",
@@ -250,7 +465,47 @@ async function qwenGenerateEnhancement(
   level: EnhanceLevel,
   context: GenerateEnhanceContext,
 ) {
-  const response = await qwenClusterFetch(
+  const routedModel =
+    promptEnhanceModelForContext(context);
+
+  /*
+   * Production V2 is intentionally scoped by its exact scene modes.
+   * Other Generate/Asset enhancer callers keep their existing routing.
+   */
+  /*
+   * OTG_PRODUCTION_V2_FINAL_ENHANCE_MODE_DISCRIMINATOR_R12E4C_V1
+   *
+   * EnhanceContextType is normalized by the shared enhancer and does
+   * not contain a literal "video" member.
+   *
+   * Production V2 already sends its exact generation mode separately
+   * as videoGenerationType/mediaMode. Use that explicit mode instead
+   * of comparing contextType against an impossible value.
+   */
+  const productionV2VideoMode =
+    String(
+      (context as {
+        videoGenerationType?: unknown;
+        mediaMode?: unknown;
+      }).videoGenerationType
+      || (context as {
+        videoGenerationType?: unknown;
+        mediaMode?: unknown;
+      }).mediaMode
+      || "",
+    ).trim();
+
+  const productionV2VideoContext =
+    [
+      "h3-text-to-video",
+      "h3-image-to-video",
+      "h3-reference-to-video",
+      "ltx-ingredients-image-to-video",
+    ].includes(
+      productionV2VideoMode,
+    );
+
+  const response = await qwenDurableFetch(
     "/api/generate",
     {
       stream: false,
@@ -262,7 +517,9 @@ async function qwenGenerateEnhancement(
           enhancedPrompt: {
             type: "string",
             description:
-              "A finished Generate prompt matching the requested enhancement level.",
+              context.contextType === "asset"
+                ? "A finished Asset Gallery prompt matching the requested enhancement level."
+                : "A finished Generate prompt matching the requested enhancement level.",
           },
         },
         required: ["enhancedPrompt"],
@@ -277,14 +534,85 @@ async function qwenGenerateEnhancement(
       },
     },
     {
-      model: QWEN_CLUSTER_MODEL,
-      keepAlive: process.env.PROMPT_ENHANCE_KEEP_ALIVE || 0,
-      timeoutMs: Math.max(
-        5_000,
-        Number(process.env.PROMPT_ENHANCE_TIMEOUT_MS || 45_000),
-      ),
+      model: routedModel,
+
+      /*
+       * OTG_PRODUCTION_V2_FINAL_ENHANCE_RUNTIME_R12E4_V1
+       *
+       * Production V2's final operation here is TEXT ONLY.
+       *
+       * Do not cold-load the generic 27B model for every Enhance
+       * click. Use already-installed smaller models by physical node.
+       *
+       * Shawn / RTX 3090:
+       *   qwen3.5:4b
+       *
+       * SLR / RTX 5060 Ti fallback:
+       *   existing Qwen2.5-VL 7B, used here as a text model.
+       *
+       * Vision remains the separate single-image SLR operation.
+       * keepAlive remains governed by the existing helper and is
+       * currently zero for this Production V2 path so ComfyUI keeps
+       * GPU priority between requests.
+       */
+      ...(productionV2VideoContext
+        ? {
+            allowedNodes:
+              ["shawn", "slr"] as const,
+
+            modelByNode: {
+              shawn:
+                String(
+                  process.env
+                    .PRODUCTION_V2_PROMPT_ENHANCE_SHAWN_MODEL
+                  || "qwen3.5:4b",
+                ).trim(),
+
+              slr:
+                String(
+                  process.env
+                    .PRODUCTION_V2_PROMPT_ENHANCE_SLR_MODEL
+                  || "redule26/huihui_ai_qwen2.5-vl-7b-abliterated:latest",
+                ).trim(),
+            },
+
+            requestKind:
+              "production-v2-video-prompt-enhancement",
+          }
+        : {}),
+
+      keepAlive:
+        promptEnhanceKeepAliveForContext(context),
+
+      timeoutMs:
+        productionV2VideoContext
+          ? Math.max(
+              15_000,
+              Number(
+                process.env
+                  .PRODUCTION_V2_PROMPT_ENHANCE_TIMEOUT_MS
+                || 120_000,
+              ),
+            )
+          : Math.max(
+              5_000,
+              Number(
+                process.env
+                  .PROMPT_ENHANCE_TIMEOUT_MS
+                || 45_000,
+              ),
+            ),
+
       waitMs: 5_000,
-      leaseTtlSeconds: 90,
+
+      /*
+       * The lease must outlive the 120-second execution window.
+       * Generic callers retain the existing 90-second value.
+       */
+      leaseTtlSeconds:
+        productionV2VideoContext
+          ? 180
+          : 90,
     },
   );
 
@@ -309,7 +637,10 @@ async function qwenGenerateEnhancement(
     );
   }
 
-  return enhancedPrompt;
+  return {
+    enhancedPrompt,
+    model: routedModel,
+  };
 }
 
 async function parseIncoming(req: NextRequest) {
@@ -354,11 +685,14 @@ export async function POST(req: NextRequest): Promise<Response> {
       body.enhanceLevel || body.level || body.size || body.amount,
     );
     const context = buildGenerateContext(body);
-    const enhancedPrompt = await qwenGenerateEnhancement(
+    const enhancement = await qwenGenerateEnhancement(
       originalPrompt,
       level,
       context,
     );
+
+    const enhancedPrompt =
+      enhancement.enhancedPrompt;
 
     return Response.json({
       ok: true,
@@ -367,6 +701,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       originalPrompt,
       level,
       size: level,
+      contextType: context.contextType,
       mode: context.mediaMode,
       mediaMode: context.mediaMode,
       imageOperation: context.imageOperation,
@@ -376,8 +711,15 @@ export async function POST(req: NextRequest): Promise<Response> {
       selectedStyleId: context.selectedStyleId,
       styleLabel: context.styleLabel,
       stylePrompt: context.stylePrompt,
+      assetName: context.assetName,
+      assetModelLabel: context.assetModelLabel,
+      assetArtStyle: context.assetArtStyle,
+      visionContextUsed:
+        Boolean(
+          context.visualContext,
+        ),
       provider: "qwenCluster",
-      model: QWEN_CLUSTER_MODEL,
+      model: enhancement.model,
     });
   } catch (error) {
     const baseMessage =

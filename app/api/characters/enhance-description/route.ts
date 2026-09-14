@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOwnerContext } from "@/lib/ownerKey";
-import { QWEN_CLUSTER_MODEL, qwenClusterFetch } from "@/lib/workers/qwenClusterRouter";
+import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
+import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Legacy OLLAMA_CHARACTER_DESCRIPTION_URL and OLLAMA_BASE_URL configuration
 // names remain documented for compatibility; endpoint selection now belongs
-// exclusively to qwenClusterFetch so routes cannot bypass GPU arbitration.
+// exclusively to qwenDurableFetch so routes cannot bypass durable GPU arbitration.
 
 
 function cleanText(value: unknown) {
@@ -107,7 +108,7 @@ async function enhanceDescription(prompt: string) {
     prompt,
   ].join("\n");
 
-  const response = await qwenClusterFetch(
+  const response = await qwenDurableFetch(
     "/api/generate",
     {
       stream: false,

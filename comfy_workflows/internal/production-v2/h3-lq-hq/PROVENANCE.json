@@ -1,0 +1,247 @@
+{
+  "createdAt": "2026-09-12T03:13:32.835Z",
+  "sourceCampaign": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911",
+  "note": "TEST source registry only; no render was submitted by this copy operation.",
+  "routes": [
+    {
+      "slot": "rtx3090_I2V_10s_HQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx3090_I2V_10s_HQ.api.json",
+      "sourceSha256": "a9b29021a9be7dd50dda104fc1f9026e1552b672c3ae206f650f2a716a6f301c",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx3090_I2V_10s_HQ.api.json",
+      "productionSha256": "f816a16e87b15d48bea1109b3970b946ccc8c1010684cb983c360a2837bdeed8",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "UNVERIFIED_CANDIDATE",
+      "evidence": null
+    },
+    {
+      "slot": "rtx3090_I2V_10s_LQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx3090_I2V_10s_LQ.api.json",
+      "sourceSha256": "ca8274fa372c6417b56a332efb28a41d666f7492db0d9579218f00bb9ce13fe9",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx3090_I2V_10s_LQ.api.json",
+      "productionSha256": "0fd1b8ac1ab7b445c079c5847d5222b981064dc66408d6b15ffb65289a610e9f",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "UNVERIFIED_CANDIDATE",
+      "evidence": null
+    },
+    {
+      "slot": "rtx3090_I2V_5s_HQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx3090_I2V_5s_HQ.api.json",
+      "sourceSha256": "babb34f548de0809d8d631738d2863a38373d65d3e0ebc47b5c95a0fa2a5b6ba",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx3090_I2V_5s_HQ.api.json",
+      "productionSha256": "4a532a2cbf1e3877227860be0034d43732b06d0a936ca82214bc1dc23711e883",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "UNVERIFIED_CANDIDATE",
+      "evidence": null
+    },
+    {
+      "slot": "rtx3090_I2V_5s_LQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx3090_I2V_5s_LQ.api.json",
+      "sourceSha256": "170b4959ae8b050f5e4ff3158211bd0e975b2ded8c14a05a151accd999b49d61",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx3090_I2V_5s_LQ.api.json",
+      "productionSha256": "e1309ceb5f9b4b11a42882d8d3f7a6af3200d5d194cf2df7786a9e9465fabf62",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "UNVERIFIED_CANDIDATE",
+      "evidence": null
+    },
+    {
+      "slot": "rtx3090_R2V_10s_HQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx3090_R2V_10s_HQ.api.json",
+      "sourceSha256": "4fb44921f667a2a06a03ee839ed301347ba9278ecbbb0265c304db51e2249cca",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx3090_R2V_10s_HQ.api.json",
+      "productionSha256": "691c140673c636e78bcb1d215e0d5279f243e545a30569e6573909b0e16367f4",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "UNVERIFIED_CANDIDATE",
+      "evidence": null
+    },
+    {
+      "slot": "rtx3090_R2V_10s_LQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx3090_R2V_10s_LQ.api.json",
+      "sourceSha256": "bacdcb4fec8bf53cb2853e233df5ee657b76984dfa794281734024eab4b800c8",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx3090_R2V_10s_LQ.api.json",
+      "productionSha256": "76548469dcba13bd9c9226fc98696fa7b8bb3e811ed6fa1085753412837b1973",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "UNVERIFIED_CANDIDATE",
+      "evidence": null
+    },
+    {
+      "slot": "rtx3090_R2V_5s_HQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx3090_R2V_5s_HQ.api.json",
+      "sourceSha256": "f5e8693286d76e83500616814422aa219361a01912be4c01eb6f917c89620a85",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx3090_R2V_5s_HQ.api.json",
+      "productionSha256": "70da90d447211a4f6cf47b77831305e2f4f7c59f7b3dc677c451b12c0bca74ff",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "UNVERIFIED_CANDIDATE",
+      "evidence": null
+    },
+    {
+      "slot": "rtx3090_R2V_5s_LQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx3090_R2V_5s_LQ.api.json",
+      "sourceSha256": "d4522a88792106e2820d1ee877a7c99b2935840a63932179c763a371daa7ae76",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx3090_R2V_5s_LQ.api.json",
+      "productionSha256": "4773187541358c41826a12c4c1040290b4966885c9075a0da66df83c4936a51b",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "UNVERIFIED_CANDIDATE",
+      "evidence": null
+    },
+    {
+      "slot": "rtx3090_T2V_10s_HQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx3090_T2V_10s_HQ.api.json",
+      "sourceSha256": "d61a1ae9748be416bbbb03868d62611b86ed47fe1f601955825211aa71e8ed7b",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx3090_T2V_10s_HQ.api.json",
+      "productionSha256": "c90ce526b45a0e7bd0395d26ae5ba8a2c2a9a2baef6ee9251cae4ce2e882e76b",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "UNVERIFIED_CANDIDATE",
+      "evidence": null
+    },
+    {
+      "slot": "rtx3090_T2V_10s_LQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx3090_T2V_10s_LQ.api.json",
+      "sourceSha256": "2eb62727454b4fda0317f89430adea9ffc411ef07d2e81187091f496c6493970",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx3090_T2V_10s_LQ.api.json",
+      "productionSha256": "3fcafe122a658e70c1be6e6ddfd29e24804dc091d03151d326f40ae245b67ba1",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "FAILED",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx3090_T2V_10s_LQ.result.json"
+    },
+    {
+      "slot": "rtx3090_T2V_5s_HQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx3090_T2V_5s_HQ.api.json",
+      "sourceSha256": "ecc19680273dcee2b495439a9c96ea128a81f5a359d8386647411d17e5d08643",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx3090_T2V_5s_HQ.api.json",
+      "productionSha256": "5a5b42c6b4ca5bdeaf455a6b97798093f70ca0b0b632372f2164d2fda6600013",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "VERIFIED_SUCCESS",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx3090_T2V_5s_HQ.result.json"
+    },
+    {
+      "slot": "rtx3090_T2V_5s_LQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx3090_T2V_5s_LQ.api.json",
+      "sourceSha256": "8cd3ba11380f8bc1a425badc0ac8e06129fdfb93419748570221f2dd5fba7e26",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx3090_T2V_5s_LQ.api.json",
+      "productionSha256": "fa39b894a0b8b8a57288cdf2f867d562189a85a8f4910d3abb696ac97305b97e",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "VERIFIED_SUCCESS",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx3090_T2V_5s_LQ.result.json"
+    },
+    {
+      "slot": "rtx5060ti_I2V_10s_HQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx5060ti_I2V_10s_HQ.api.json",
+      "sourceSha256": "849612714a52328aa4c5479d45f75d36b2e816f5dc3b6f6cd35d90441543f6e9",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_I2V_10s_HQ.api.json",
+      "productionSha256": "4d3c7d12177400ed93b5a60ee60c0d5ba2a24c9df3c4954a682b805e3fd97989",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "VERIFIED_SUCCESS",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx5060ti_I2V_10s_HQ.result.json"
+    },
+    {
+      "slot": "rtx5060ti_I2V_10s_LQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx5060ti_I2V_10s_LQ.api.json",
+      "sourceSha256": "a1fab9571ae3b80b2fbe8fc635ff44abfef3a5bcc35808ff0df137d842043ab4",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_I2V_10s_LQ.api.json",
+      "productionSha256": "18481154a667506e244079488d81545636605a70d72b81767fd70fbf9279dd18",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "VERIFIED_SUCCESS",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx5060ti_I2V_10s_LQ.result.json"
+    },
+    {
+      "slot": "rtx5060ti_I2V_5s_HQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx5060ti_I2V_5s_HQ.api.json",
+      "sourceSha256": "3dbf1216b8359664609f09783ff2018c0d24e9335cf9cfca83faaa896df16b87",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_I2V_5s_HQ.api.json",
+      "productionSha256": "4a48e05e7e1e7785c8dbd4b574a293fda06367e3cb22f8c49dbf32f4da4ced31",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "VERIFIED_SUCCESS",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx5060ti_I2V_5s_HQ.result.json"
+    },
+    {
+      "slot": "rtx5060ti_I2V_5s_LQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx5060ti_I2V_5s_LQ.api.json",
+      "sourceSha256": "f044f15568121ff1f512df7d979cf111ba4e81b9bbcbd422703d1d15f28cdcf5",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_I2V_5s_LQ.api.json",
+      "productionSha256": "06b3397fae8dda97b5eec89a10de6034180c0d98823262d40c7691c696662190",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "VERIFIED_SUCCESS",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx5060ti_I2V_5s_LQ.result.json"
+    },
+    {
+      "slot": "rtx5060ti_R2V_10s_HQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx5060ti_R2V_10s_HQ.api.json",
+      "sourceSha256": "21f07e79200b0c67a79fa7c6f323d3e4aa44e0f963a72b4fb0add6c35eb051a7",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_R2V_10s_HQ.api.json",
+      "productionSha256": "a7cbe0c9c0494e6c7f9bde5cd161b496c44e88c9e994d338247c1e8f45246f7b",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "VERIFIED_SUCCESS",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx5060ti_R2V_10s_HQ.result.json"
+    },
+    {
+      "slot": "rtx5060ti_R2V_10s_LQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx5060ti_R2V_10s_LQ.api.json",
+      "sourceSha256": "c19ade82735c6dd1549aee9598ef8813744a7c917bb1e6b7ec1eda2297eca44e",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_R2V_10s_LQ.api.json",
+      "productionSha256": "f2f295340fa73dcf089ad76c118a83d7681781c850df29d338b6fff04b920246",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "VERIFIED_SUCCESS",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx5060ti_R2V_10s_LQ.result.json"
+    },
+    {
+      "slot": "rtx5060ti_R2V_5s_HQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx5060ti_R2V_5s_HQ.api.json",
+      "sourceSha256": "2278acdc39c1670c8515806a5be2336b61fcc74dc2c59c06be9e61831892c345",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_R2V_5s_HQ.api.json",
+      "productionSha256": "57077d3986e7b0e8d8b9d65cb76896828ca8500fbb331c7c9fcbf248a9fa6827",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "VERIFIED_SUCCESS",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx5060ti_R2V_5s_HQ.result.json"
+    },
+    {
+      "slot": "rtx5060ti_R2V_5s_LQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx5060ti_R2V_5s_LQ.api.json",
+      "sourceSha256": "414725234a71efa2b30ec82bc65bfebaa8827b7777133aa9646d093c064185c8",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_R2V_5s_LQ.api.json",
+      "productionSha256": "9ed79058311f4cc4caa723639ff236a2a6a2cfe32f57f60bbc1edfa7f5f0c920",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "VERIFIED_SUCCESS",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx5060ti_R2V_5s_LQ.result.json"
+    },
+    {
+      "slot": "rtx5060ti_T2V_10s_HQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx5060ti_T2V_10s_HQ.api.json",
+      "sourceSha256": "1ae82f4a695d4ee88a014304b4d347fc33d896d7e6fc952c2c8a47ca7d604038",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_10s_HQ.api.json",
+      "productionSha256": "ede7ea6b0c7188bac33f6ede75129a463c17c6dbec5762351835b9470fa80a7c",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "VERIFIED_SUCCESS",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx5060ti_T2V_10s_HQ.result.json"
+    },
+    {
+      "slot": "rtx5060ti_T2V_10s_LQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx5060ti_T2V_10s_LQ.api.json",
+      "sourceSha256": "676e13267c6309d1110711a3dd1662374b54d648099ba5b5d05bb611f69476a4",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_10s_LQ.api.json",
+      "productionSha256": "440804fe3d13dbd84763c644643c6061886719568e64a247033af9b823e7c1bf",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "VERIFIED_SUCCESS",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx5060ti_T2V_10s_LQ.result.json"
+    },
+    {
+      "slot": "rtx5060ti_T2V_5s_HQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx5060ti_T2V_5s_HQ.api.json",
+      "sourceSha256": "bc2cc3786d907b11800795218a8501ad8feee1713246755ba2845da7d9e3bfc8",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_HQ.api.json",
+      "productionSha256": "0313674c40f232643442d2c8c933f93ce97c06ce1a90cfb0d76ac6b1b8146030",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "VERIFIED_SUCCESS",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx5060ti_T2V_5s_HQ.result.json"
+    },
+    {
+      "slot": "rtx5060ti_T2V_5s_LQ",
+      "source": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/candidates/rtx5060ti_T2V_5s_LQ.api.json",
+      "sourceSha256": "fc010578788954f3e4bb890ed4965855ceb8fda4e673180e86e5804bd5ab563c",
+      "productionFile": "/home/shawn-rochford/AI/work/OTG-GitHub-Test-Baseline-Inspect-20260828T2124/comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+      "productionSha256": "224969cee688f97d375962d00b19307d79f7df2fa7723ef4e120723119d1ae76",
+      "adaptation": "Removed benchmark-only SaveAudio node 90 and wired CreateVideo audio directly to VAEDecodeAudio node 14 so production R2V voice slot 1 remains available.",
+      "qualificationStatus": "VERIFIED_SUCCESS",
+      "evidence": "/home/shawn-rochford/Desktop/H3-FINAL-24-CAMPAIGN-20260911/results/rtx5060ti_T2V_5s_LQ.result.json"
+    }
+  ]
+}

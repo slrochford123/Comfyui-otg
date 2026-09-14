@@ -833,6 +833,150 @@ def resolve_original_reference(
     raise RuntimeError("Held-out checkpoint evaluation requires the original saved Character Voice Sample.")
 
 
+
+def recover_completed_training_artifacts(
+    plan: Dict[str, Any],
+) -> Dict[str, Any] | None:
+    """
+    Reuse training only when this exact job has a complete,
+    valid RVC training output set.
+
+    Recovery requires:
+    - trained index,
+    - readable 48 kHz config,
+    - every checkpoint implied by epochs/saveEveryEpoch,
+    - non-empty expected checkpoint files.
+
+    Partial state falls back to normal training.
+    """
+    try:
+        candidates = discover_checkpoint_candidates(plan)
+        source_index = discover_trained_index(plan)
+    except (
+        RuntimeError,
+        FileNotFoundError,
+        OSError,
+        ValueError,
+        TypeError,
+    ):
+        return None
+
+    if not has_bytes(source_index):
+        return None
+
+    config_path = (
+        Path(plan["applioRoot"])
+        / "logs"
+        / plan["modelName"]
+        / "config.json"
+    )
+
+    if not has_bytes(config_path):
+        return None
+
+    try:
+        config = read_json(config_path)
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+    ):
+        return None
+
+    data_config = (
+        config.get("data")
+        if isinstance(config.get("data"), dict)
+        else {}
+    )
+
+    try:
+        sample_rate = int(
+            data_config.get("sample_rate") or 0
+        )
+        epochs = int(
+            plan.get("epochs") or 0
+        )
+        save_every_epoch = int(
+            plan.get("saveEveryEpoch") or 0
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return None
+
+    if sample_rate != 48000:
+        return None
+
+    if epochs <= 0 or save_every_epoch <= 0:
+        return None
+
+    expected_epochs = set(
+        range(
+            save_every_epoch,
+            epochs + 1,
+            save_every_epoch,
+        )
+    )
+
+    expected_epochs.add(epochs)
+
+    candidate_epochs = set()
+    candidate_by_epoch: Dict[int, Dict[str, Any]] = {}
+
+    for candidate in candidates:
+        path_value = clean(
+            candidate.get("path")
+        )
+
+        try:
+            candidate_epoch = int(
+                candidate.get("epoch") or 0
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return None
+
+        if (
+            not path_value
+            or candidate_epoch <= 0
+            or not has_bytes(Path(path_value))
+        ):
+            return None
+
+        candidate_epochs.add(
+            candidate_epoch
+        )
+
+        if candidate_epoch not in candidate_by_epoch:
+            candidate_by_epoch[
+                candidate_epoch
+            ] = candidate
+
+    if not expected_epochs.issubset(
+        candidate_epochs
+    ):
+        return None
+
+    expected_candidates = [
+        candidate_by_epoch[epoch]
+        for epoch in sorted(expected_epochs)
+    ]
+
+    return {
+        "checkpointCandidates": expected_candidates,
+        "indexPath": str(source_index),
+        "configPath": str(config_path),
+        "sampleRate": sample_rate,
+        "epochs": epochs,
+        "saveEveryEpoch": save_every_epoch,
+        "expectedEpochs": sorted(expected_epochs),
+        "candidateEpochs": sorted(candidate_epochs),
+    }
+
+
 def run_checkpoint_evaluation(
     args: argparse.Namespace,
     owner_key: str,
@@ -964,42 +1108,132 @@ def run_training_body(args: argparse.Namespace, job: Dict[str, Any]) -> None:
     }
     Path(plan["logsDir"]).mkdir(parents=True, exist_ok=True)
     commands = build_commands(plan)
-    write_json(Path(plan["commandPath"]), command_log_payload(plan, commands, {
-        "rvcVersion": "v2",
-        "sampleRate": 48000,
-        "pitchExtractor": "rmvpe",
-        "pitchGuidance": True,
-        "checkpointSelection": "held-out-best",
-    }))
+    recovery = recover_completed_training_artifacts(plan)
 
-    checkpoint(args, owner_key, job_id, 10, "Applio training worker preparing adaptive QC-passing dataset.", {**base_result, "currentStage": "queued"})
-    assert_job_active(args, owner_key, job_id)
-    prepare_dataset(ready_clips, Path(plan["preparedDatasetPath"]), manifest_path, source_dataset_job_id)
+    if recovery is not None:
+        base_result.update({
+            "recoveredTrainingArtifacts": True,
+            "recoveredCheckpointCount": len(
+                recovery["checkpointCandidates"]
+            ),
+            "recoveredCheckpointEpochs": list(
+                recovery["expectedEpochs"]
+            ),
+            "resumeFromCompletedTraining": True,
+            "trainingCommandsSkippedOnResume": [
+                "preprocess",
+                "extract",
+                "train",
+            ],
+            "resumeEvidence": {
+                "configPath": recovery["configPath"],
+                "indexPath": recovery["indexPath"],
+                "sampleRate": recovery["sampleRate"],
+                "epochs": recovery["epochs"],
+                "saveEveryEpoch": recovery["saveEveryEpoch"],
+                "expectedEpochs": recovery["expectedEpochs"],
+                "candidateEpochs": recovery["candidateEpochs"],
+            },
+        })
 
-    stage_progress = {"preprocess": 30, "extract": 50, "train": 70}
-    for command in commands:
-        stage = command["step"]
-        progress = stage_progress.get(stage, 20)
-        stage_result = {**base_result, "currentStage": stage}
-        checkpoint(args, owner_key, job_id, progress, f"Applio {stage} started.", stage_result)
-        run_command(args, owner_key, job_id, plan, command, progress, stage_result)
-        if stage == "extract":
-            config_path = Path(plan["applioRoot"]) / "logs" / plan["modelName"] / "config.json"
-            write_json(Path(plan["commandPath"]), command_log_payload(plan, commands, {
-                "postExtractConfigPath": str(config_path),
-                "postExtractConfigExists": has_bytes(config_path),
+    write_json(
+        Path(plan["commandPath"]),
+        command_log_payload(
+            plan,
+            commands,
+            {
                 "rvcVersion": "v2",
                 "sampleRate": 48000,
                 "pitchExtractor": "rmvpe",
                 "pitchGuidance": True,
-            }))
-            if not has_bytes(config_path):
-                raise RuntimeError(f"Config file missing after Applio extract: {config_path}")
-        checkpoint(args, owner_key, job_id, min(94, stage_progress.get(stage, 20) + 10), f"Applio {stage} completed.", {**base_result, "currentStage": stage})
+                "checkpointSelection": "held-out-best",
+                "resumeFromCompletedTraining": bool(recovery),
+                "trainingCommandsSkippedOnResume": (
+                    [
+                        "preprocess",
+                        "extract",
+                        "train",
+                    ]
+                    if recovery
+                    else []
+                ),
+                "resumeEvidence": (
+                    base_result.get("resumeEvidence")
+                    if recovery
+                    else None
+                ),
+            },
+        ),
+    )
 
-    assert_job_active(args, owner_key, job_id)
-    checkpoint_candidates = discover_checkpoint_candidates(plan)
-    source_index = discover_trained_index(plan)
+    if recovery is None:
+        checkpoint(args, owner_key, job_id, 10, "Applio training worker preparing adaptive QC-passing dataset.", {**base_result, "currentStage": "queued"})
+        assert_job_active(args, owner_key, job_id)
+        prepare_dataset(ready_clips, Path(plan["preparedDatasetPath"]), manifest_path, source_dataset_job_id)
+
+        stage_progress = {"preprocess": 30, "extract": 50, "train": 70}
+        for command in commands:
+            stage = command["step"]
+            progress = stage_progress.get(stage, 20)
+            stage_result = {**base_result, "currentStage": stage}
+            checkpoint(args, owner_key, job_id, progress, f"Applio {stage} started.", stage_result)
+            run_command(args, owner_key, job_id, plan, command, progress, stage_result)
+            if stage == "extract":
+                config_path = Path(plan["applioRoot"]) / "logs" / plan["modelName"] / "config.json"
+                write_json(Path(plan["commandPath"]), command_log_payload(plan, commands, {
+                    "postExtractConfigPath": str(config_path),
+                    "postExtractConfigExists": has_bytes(config_path),
+                    "rvcVersion": "v2",
+                    "sampleRate": 48000,
+                    "pitchExtractor": "rmvpe",
+                    "pitchGuidance": True,
+                }))
+                if not has_bytes(config_path):
+                    raise RuntimeError(f"Config file missing after Applio extract: {config_path}")
+            checkpoint(args, owner_key, job_id, min(94, stage_progress.get(stage, 20) + 10), f"Applio {stage} completed.", {**base_result, "currentStage": stage})
+
+        assert_job_active(args, owner_key, job_id)
+        checkpoint_candidates = discover_checkpoint_candidates(plan)
+        source_index = discover_trained_index(plan)
+    else:
+        checkpoint_candidates = list(
+            recovery["checkpointCandidates"]
+        )
+
+        source_index = Path(
+            recovery["indexPath"]
+        )
+
+        checkpoint(
+            args,
+            owner_key,
+            job_id,
+            94,
+            (
+                "Completed 48 kHz Applio training artifacts found; "
+                "Skipping preprocess, feature extraction, and training; "
+                "resuming at held-out evaluation."
+            ),
+            {
+                **base_result,
+                "currentStage": "training_artifacts_reused",
+                "checkpointCandidates": [
+                    {
+                        "path": str(item["path"]),
+                        "epoch": item["epoch"],
+                        "step": item["step"],
+                    }
+                    for item in checkpoint_candidates
+                ],
+            },
+        )
+
+        assert_job_active(
+            args,
+            owner_key,
+            job_id,
+        )
+
     output_dir = Path(plan["outputDir"])
     original_reference, source_reference = resolve_original_reference(
         args,
@@ -1102,6 +1336,29 @@ def run_training_body(args: argparse.Namespace, job: Dict[str, Any]) -> None:
         "status": "trained",
         "mock": False,
         "adapter": "applio_real_training",
+        "resumeFromCompletedTraining": bool(
+            base_result.get("resumeFromCompletedTraining")
+        ),
+        "trainingCommandsSkippedOnResume": (
+            base_result.get(
+                "trainingCommandsSkippedOnResume"
+            )
+            or []
+        ),
+        "resumeEvidence": base_result.get(
+            "resumeEvidence"
+        ),
+        "recoveredTrainingArtifacts": bool(
+            base_result.get("recoveredTrainingArtifacts")
+        ),
+        "recoveredCheckpointCount": int(
+            base_result.get("recoveredCheckpointCount")
+            or 0
+        ),
+        "recoveredCheckpointEpochs": (
+            base_result.get("recoveredCheckpointEpochs")
+            or []
+        ),
         "dataset": {
             "manifestPath": str(manifest_path),
             "manifestUrl": result.get("manifestUrl", ""),

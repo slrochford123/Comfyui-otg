@@ -335,6 +335,220 @@ export function resolveTrainingDatasetManifestPath(ownerKey: string, characterId
   return resolvedManifestPath;
 }
 
+
+export async function validateReadyTrainingDataset(
+  ownerKey: string,
+  characterId: string,
+  jobId: string,
+) {
+  const policy =
+    loadVoiceTrainingPolicy();
+
+  const manifestPath =
+    resolveTrainingDatasetManifestPath(
+      ownerKey,
+      characterId,
+      jobId,
+    );
+
+  const manifest =
+    JSON.parse(
+      await fs.promises.readFile(
+        manifestPath,
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+
+  const clips =
+    Array.isArray(manifest.clips)
+      ? manifest.clips.filter(
+          (
+            clip,
+          ): clip is Record<
+            string,
+            unknown
+          > =>
+            Boolean(
+              clip &&
+                typeof clip ===
+                  "object" &&
+                !Array.isArray(
+                  clip,
+                ),
+            ),
+        )
+      : [];
+
+  const readyClips =
+    clips.filter((clip) => {
+      const qc =
+        clip.qc &&
+        typeof clip.qc ===
+          "object" &&
+        !Array.isArray(clip.qc)
+          ? clip.qc as Record<
+              string,
+              unknown
+            >
+          : {};
+
+      return (
+        cleanString(
+          clip.status,
+        ) === "ready" &&
+        qc.pass === true
+      );
+    });
+
+  const acceptedDurationSeconds =
+    Number(
+      manifest.acceptedDurationSeconds ||
+        readyClips.reduce(
+          (total, clip) => {
+            const duration =
+              Number(
+                clip.durationSeconds ||
+                  0,
+              );
+
+            return (
+              total +
+              (
+                Number.isFinite(
+                  duration,
+                ) &&
+                duration > 0
+                  ? duration
+                  : 0
+              )
+            );
+          },
+          0,
+        ),
+    );
+
+  const minimumAcceptedDurationSeconds =
+    policy.acceptedMinutesMin *
+    60;
+
+  const maximumAcceptedDurationSeconds =
+    policy.acceptedMinutesMax *
+    60;
+
+  if (
+    manifest.generationMode !==
+      "real" ||
+    manifest.provider !==
+      "indextts2"
+  ) {
+    throw new Error(
+      "Dataset is not a real IndexTTS2 training dataset.",
+    );
+  }
+
+  if (
+    manifest.adaptiveComplete !==
+      true ||
+    manifest.status !==
+      "voice_pack_ready"
+  ) {
+    throw new Error(
+      "Adaptive training dataset has not passed completion gating.",
+    );
+  }
+
+  if (
+    !Number.isFinite(
+      acceptedDurationSeconds,
+    ) ||
+    acceptedDurationSeconds <
+      minimumAcceptedDurationSeconds ||
+    acceptedDurationSeconds >
+      maximumAcceptedDurationSeconds
+  ) {
+    throw new Error(
+      `Adaptive training dataset duration is outside policy: ${acceptedDurationSeconds}s.`,
+    );
+  }
+
+  if (readyClips.length < 1) {
+    throw new Error(
+      "Adaptive training dataset has no QC-passing clips.",
+    );
+  }
+
+  for (const clip of readyClips) {
+    const qc =
+      clip.qc &&
+      typeof clip.qc ===
+        "object" &&
+      !Array.isArray(clip.qc)
+        ? clip.qc as Record<
+            string,
+            unknown
+          >
+        : {};
+
+    if (qc.pass !== true) {
+      throw new Error(
+        `Ready clip did not pass QC: ${cleanString(clip.clipId)}`,
+      );
+    }
+
+    const expectedAudioPath =
+      cleanString(
+        clip.expectedAudioPath,
+      );
+
+    if (!expectedAudioPath) {
+      throw new Error(
+        `Ready clip is missing or empty: ${cleanString(clip.clipId)}`,
+      );
+    }
+
+    let validAudio = false;
+
+    try {
+      const stat =
+        await fs.promises.stat(
+          expectedAudioPath,
+        );
+
+      validAudio =
+        stat.isFile() &&
+        stat.size > 0;
+    } catch {
+      validAudio = false;
+    }
+
+    if (!validAudio) {
+      throw new Error(
+        `Ready clip is missing or empty: ${cleanString(clip.clipId) || expectedAudioPath}`,
+      );
+    }
+  }
+
+  return {
+    manifest,
+    manifestPath,
+    manifestUrl:
+      trainingDatasetManifestUrl(
+        ownerKey,
+        characterId,
+        jobId,
+      ),
+    requestedClipCount:
+      readyClips.length,
+    generatedClipCount:
+      readyClips.length,
+    acceptedDurationSeconds,
+    acceptedMinutes:
+      acceptedDurationSeconds /
+      60,
+    adaptiveComplete: true,
+  };
+}
+
 export function resolveTrainingDatasetClipPath(ownerKey: string, characterId: string, jobId: string, clipId: string): string {
   const safeClipId = safeSegment(clipId);
   if (!/^clip_\d{3}$/.test(safeClipId)) {

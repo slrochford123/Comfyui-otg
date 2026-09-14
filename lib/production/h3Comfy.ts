@@ -11,9 +11,7 @@ import {
   type H3PromptGraph,
   type ProductionV2H3BackendId,
 } from "@/lib/production/h3Workflows";
-import { SHAWN_GPU_LOCK_ID, SLR_GPU_LOCK_ID } from "@/lib/workers/clusterGpu";
 import { submitComfyPromptWithGpuLease } from "@/lib/workers/comfyPromptLease";
-import { listResourceLocks } from "@/lib/workers/resourceLocks";
 
 type ObjectInfo = Record<string, {
   input?: { required?: Record<string, unknown> };
@@ -149,15 +147,20 @@ export async function inspectH3BackendCompatibility(
       if (process.env.NODE_ENV !== "test") compatibilityCache.set(cacheKey, dependencyState);
     }
     const { missingNodes, missingAssets } = dependencyState;
-    const lockId = backend === "rtx3090" ? SHAWN_GPU_LOCK_ID : SLR_GPU_LOCK_ID;
-    const locked = listResourceLocks().some((lock) => lock.lockId === lockId);
     const compatible = !missingNodes.length && !missingAssets.length;
     return {
       backend,
       healthy: true,
       compatible,
-      idle: compatible && !queueBusy && !locked,
-      reason: !compatible ? "missing-dependencies" : locked ? "otg-gpu-lock" : queueBusy ? "comfy-queue-active" : "available",
+      // OTG_H3_COMFY_QUEUE_TELEMETRY_NO_LOCK_V1
+      // Running/pending Comfy work affects routing preference only.
+      // It must not make a healthy compatible backend inadmissible.
+      idle: compatible && !queueBusy,
+      reason: !compatible
+        ? "missing-dependencies"
+        : queueBusy
+          ? "comfy-queue-active"
+          : "available",
       missingNodes,
       missingAssets,
     };
@@ -243,26 +246,108 @@ export async function submitH3Prompt(args: {
   jobId: string;
   workerId?: string;
   fetcher?: typeof fetch;
+  preSubmitCleanup?: "free" | null;
+  onAccepted?: (
+    promptId: string,
+  ) => Promise<void> | void;
 }) {
-  const fetcher = args.fetcher || fetch;
-  const response = await submitComfyPromptWithGpuLease({
-    baseUrl: H3_BACKEND_PROFILES[args.backend].baseUrl,
-    workerId: args.workerId || "production-v2-h3",
-    ownerId: args.jobId,
-    purpose: "video",
-    fetcher: (url, init) => fetchWithTimeout(fetcher, url, init, 60_000),
-    init: {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: args.graph, client_id: args.clientId }),
-    },
-  });
-  const text = await response.text().catch(() => "");
-  const payload = text ? JSON.parse(text) as Record<string, unknown> : {};
-  const promptId = clean(payload.prompt_id || payload.promptId);
-  if (!response.ok) return { accepted: false as const, status: response.status, error: clean(payload.error || payload.message || text) || `ComfyUI rejected the prompt with HTTP ${response.status}.` };
-  if (!promptId) throw new Error("ComfyUI returned a successful but unreadable prompt response; submission acceptance is ambiguous.");
-  return { accepted: true as const, promptId };
+  const fetcher =
+    args.fetcher || fetch;
+
+  const response =
+    await submitComfyPromptWithGpuLease({
+      baseUrl:
+        H3_BACKEND_PROFILES[
+          args.backend
+        ].baseUrl,
+      workerId:
+        args.workerId
+        || "production-v2-h3",
+      ownerId:
+        args.jobId,
+      purpose: "video",
+      preSubmitCleanup:
+        args.preSubmitCleanup
+        ?? null,
+      onPromptAccepted:
+        args.onAccepted,
+      fetcher:
+        (url, init) =>
+          fetchWithTimeout(
+            fetcher,
+            url,
+            init,
+            60_000,
+          ),
+      init: {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+        body:
+          JSON.stringify({
+            prompt: args.graph,
+            client_id:
+              args.clientId,
+          }),
+      },
+    });
+
+  const text =
+    await response
+      .text()
+      .catch(() => "");
+
+  let payload:
+    Record<string, unknown> = {};
+
+  if (text) {
+    try {
+      payload =
+        JSON.parse(text) as
+          Record<string, unknown>;
+    } catch {
+      payload = {
+        message: text,
+      };
+    }
+  }
+
+  const promptId =
+    clean(
+      payload.prompt_id
+      || payload.promptId,
+    );
+
+  if (!response.ok) {
+    return {
+      accepted: false as const,
+      status:
+        response.status,
+      error:
+        clean(
+          payload.error
+          || payload.message
+          || text,
+        )
+        || (
+          "ComfyUI rejected the prompt "
+          + `with HTTP ${response.status}.`
+        ),
+    };
+  }
+
+  if (!promptId) {
+    throw new Error(
+      "ComfyUI returned a successful but unreadable prompt response; submission acceptance is ambiguous.",
+    );
+  }
+
+  return {
+    accepted: true as const,
+    promptId,
+  };
 }
 
 function collectFiles(value: unknown, nodeId?: string, out: ComfyHistoryFile[] = []) {

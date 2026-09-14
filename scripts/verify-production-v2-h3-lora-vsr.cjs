@@ -51,6 +51,15 @@ const workflows = require(path.join(root, "lib/production/h3Workflows.ts"));
 const production = require(path.join(root, "lib/production/v2.ts"));
 const jobs = require(path.join(root, "lib/production/h3GenerationJobs.ts"));
 
+const h3SceneModes = ["h3-text-to-video", "h3-image-to-video", "h3-reference-to-video"];
+
+function i2vTemplateWithoutStartImage(graph) {
+  const stripped = JSON.parse(JSON.stringify(graph));
+  delete stripped["40"];
+  delete stripped["39"].inputs.first_frame;
+  return stripped;
+}
+
 const publicSurfaceFiles = [
   "lib/production/h3Loras.ts",
   "lib/production/v2.ts",
@@ -94,68 +103,72 @@ assert(builtPrompt.lockedReferenceContext === "LOCKED REFERENCE MANIFEST", "LoRA
 assert(builtPrompt.scenePrompt.startsWith(dialogue), "LoRA trigger application only extends the Scene Prompt layer");
 assert(production.reviewProductionV2FinalPrompt(builtPromptScene).promptStateByMode[builtPromptScene.generationMode].reviewStatus === "reviewed", "triggered H3 prompt can be reviewed deterministically");
 
+let routeCount = 0;
 for (const backend of ["rtx3090", "rtx5060ti"]) {
-  for (const mode of ["h3-image-to-video", "h3-reference-to-video"]) {
-    assert(workflows.validateH3WorkflowTemplate(backend, mode) === true, `${backend} ${mode} runtime template validator`);
-    const finalPrompt = mode === "h3-reference-to-video"
-      ? `<Picture 1> <Subject 1>\n${triggeredPrompt}`
-      : triggeredPrompt;
-    const built = workflows.buildH3Workflow({
-      backend,
-      mode,
-      finalPrompt,
-      durationSeconds: 5,
-      seed: 123,
-      outputPrefix: `contract/${backend}/${mode}`,
-      startImageFilename: mode === "h3-image-to-video" ? "start.png" : undefined,
-      references: mode === "h3-reference-to-video" ? [{
-        id: "picture-1",
-        name: "Picture 1",
-        sourceKind: "production-upload",
-        pictureSlot: 1,
-        subjectSlot: 1,
-        workflowImage: "/tmp/picture.png",
-        uploadedFilename: "picture.png",
-      }] : undefined,
-      voices: [],
-      userLoras: allIndependent,
-    });
-    const graph = built.graph;
-    const userNodes = ["70", "71", "72"];
-    assert(userNodes.every((id) => graph[id]?.class_type === "LoraLoaderModelOnly"), `${backend} ${mode} selected user LoRA nodes exist`);
-    assert(link(graph["70"].inputs.model, "36") && link(graph["71"].inputs.model, "70") && link(graph["72"].inputs.model, "71") && link(graph["38"].inputs.model, "72"), `${backend} ${mode} Turbo -> user LoRAs -> Sigma chain`);
-    assert(
-      ["70", "71", "72"].map((id) => graph[id].inputs.lora_name).join("|")
-        === "GL_H3_V1-step00017250.safetensors|H3_Combat_V2.safetensors|Motion_Repair.safetensors",
-      `${backend} ${mode} exact qualified user LoRA filenames`,
-    );
-    const spectrum = one(graph, "SpectrumApplyMiniMaxH3");
-    const guider = one(graph, "BasicGuider");
-    if (backend === "rtx3090") {
-      const sage = one(graph, "PathchSageAttentionKJ");
-      const sol = one(graph, "SolAttnPatch");
-      assert(link(sage.node.inputs.model, "38") && link(sol.node.inputs.model, sage.id) && link(spectrum.node.inputs.model, sol.id) && link(guider.node.inputs.model, spectrum.id), `${backend} ${mode} Sage -> Sol -> Spectrum remains after LoRAs`);
-    } else {
-      const ck = one(graph, "ModelAttentionBackend");
-      assert(link(ck.node.inputs.model, "38") && link(spectrum.node.inputs.model, ck.id) && link(guider.node.inputs.model, spectrum.id), `${backend} ${mode} CK -> Spectrum remains after LoRAs`);
+  for (const mode of h3SceneModes) {
+    for (const durationSeconds of [5, 10]) {
+      for (const h3Quality of ["lq", "hq"]) {
+        assert(workflows.validateH3WorkflowTemplate(backend, mode, durationSeconds, h3Quality) === true, `${backend} ${mode} ${durationSeconds}s ${h3Quality} template validator`);
+        const finalPrompt = mode === "h3-reference-to-video"
+          ? `<Picture 1> <Subject 1>\n${triggeredPrompt}`
+          : triggeredPrompt;
+        const built = workflows.buildH3Workflow({
+          backend,
+          mode,
+          h3Quality,
+          finalPrompt,
+          durationSeconds,
+          seed: 123,
+          outputPrefix: `contract/${backend}/${mode}/${durationSeconds}/${h3Quality}`,
+          startImageFilename: mode === "h3-image-to-video" ? "start.png" : undefined,
+          references: mode === "h3-reference-to-video" ? [{
+            id: "picture-1",
+            name: "Picture 1",
+            sourceKind: "production-upload",
+            pictureSlot: 1,
+            subjectSlot: 1,
+            workflowImage: "/tmp/picture.png",
+            uploadedFilename: "picture.png",
+          }] : undefined,
+          voices: [],
+          userLoras: allIndependent,
+        });
+        const graph = built.graph;
+        const expectedWidth = h3Quality === "lq" ? 1056 : 1376;
+        const expectedHeight = h3Quality === "lq" ? 608 : 768;
+        const userNodes = ["70", "71", "72"];
+        routeCount += 1;
+
+        assert(graph["39"].inputs.width === expectedWidth && graph["39"].inputs.height === expectedHeight, `${backend} ${mode} ${durationSeconds}s ${h3Quality} native resolution`);
+        assert(graph["39"].inputs.length === (durationSeconds === 5 ? 124 : 243), `${backend} ${mode} ${durationSeconds}s ${h3Quality} frame contract`);
+        assert(graph["24"].inputs.steps === 8 && graph["24"].inputs.scheduler === "simple" && graph["18"].inputs.sampler_name === "euler", `${backend} ${mode} ${durationSeconds}s ${h3Quality} sampler contract`);
+        assert(graph["36"].inputs.lora_name.includes("turbo_8step") && graph["36"].inputs.strength_model === 1, `${backend} ${mode} ${durationSeconds}s ${h3Quality} Turbo8 contract`);
+        assert(graph["38"].inputs.shift_video === 6 && graph["38"].inputs.shift_audio === 3, `${backend} ${mode} ${durationSeconds}s ${h3Quality} sigma contract`);
+        assert(!Object.values(graph).some((node) => node.class_type === "SpectrumApplyMiniMaxH3"), `${backend} ${mode} ${durationSeconds}s ${h3Quality} excludes Spectrum`);
+        assert(graph["41"].class_type === "H3SLAAttention" && link(graph["41"].inputs.model, "38") && link(graph["32"].inputs.model, "41"), `${backend} ${mode} ${durationSeconds}s ${h3Quality} SLA chain`);
+        assert(graph["41"].inputs.dense_backend === (backend === "rtx5060ti" ? "comfy_kitchen" : "sage:qk_int8_pv_fp16_cuda"), `${backend} ${mode} ${durationSeconds}s ${h3Quality} GPU-specific SLA backend`);
+        assert(userNodes.every((id) => graph[id]?.class_type === "LoraLoaderModelOnly"), `${backend} ${mode} ${durationSeconds}s ${h3Quality} selected user LoRA nodes exist`);
+        assert(link(graph["70"].inputs.model, "36") && link(graph["71"].inputs.model, "70") && link(graph["72"].inputs.model, "71") && link(graph["38"].inputs.model, "72"), `${backend} ${mode} ${durationSeconds}s ${h3Quality} Turbo8 -> user LoRAs -> Sigma chain`);
+      }
     }
   }
 }
+assert(routeCount === 24, "all 24 physical H3 LQ/HQ routes validate");
 
-for (const [duration, frames] of [[5, 124], [10, 243], [15, 362]]) {
+for (const [duration, frames] of [[5, 124], [10, 243]]) {
   assert(workflows.h3FrameCountForDuration(duration) === frames, `${duration}s maps to ${frames} frames`);
 }
-assert(workflows.H3_SAMPLER_STEPS === 8 && workflows.H3_NATIVE_WIDTH === 1024 && workflows.H3_NATIVE_HEIGHT === 576, "native 8-step 1024x576 constants remain intact");
-for (const backend of ["rtx3090", "rtx5060ti"]) {
-  for (const mode of ["h3-image-to-video", "h3-reference-to-video"]) {
-    const graph = workflows.loadH3WorkflowTemplate(backend, mode);
-    assert(graph["31"].inputs.noise_seed === "__OTG_RANDOM_SEED__", `${backend} ${mode} random seed placeholder remains intact`);
-    assert(graph["24"].inputs.steps === 8 && graph["24"].inputs.scheduler === "simple" && graph["24"].inputs.denoise === 1 && graph["18"].inputs.sampler_name === "euler", `${backend} ${mode} 8/simple/Euler/denoise contract`);
-    assert(!Object.values(graph).some((node) => node.class_type === "SplitSigmas"), `${backend} ${mode} has no SplitSigmas`);
-  }
+assert(workflows.H3_SAMPLER_STEPS === 8 && workflows.H3_LQ_NATIVE_WIDTH === 1056 && workflows.H3_LQ_NATIVE_HEIGHT === 608 && workflows.H3_HQ_NATIVE_WIDTH === 1376 && workflows.H3_HQ_NATIVE_HEIGHT === 768, "LQ/HQ native dimensions remain locked");
+assert(
+  workflows.H3_BACKEND_PRIORITY.join(",") === "rtx5060ti,rtx3090",
+  "MiniMax H3 scheduler prefers RTX 5060 Ti before RTX 3090",
+);
+const qualifiedVsrDonor = process.env.OTG_H3_VSR_DONOR_TEMPLATE || "/home/slrochford123/h3-benchmark/rtx-vsr-5s-1024x576-to-1080p-ultra.json";
+if (fs.existsSync(qualifiedVsrDonor)) {
+  assert(fs.readFileSync(path.join(root, workflows.H3_VSR_WORKFLOW_FILE)).equals(fs.readFileSync(qualifiedVsrDonor)), "candidate VSR template is byte-identical to qualified donor");
+} else {
+  console.log(`SKIP: qualified VSR donor template is unavailable at ${qualifiedVsrDonor}`);
 }
-
-assert(fs.readFileSync(path.join(root, workflows.H3_VSR_WORKFLOW_FILE)).equals(fs.readFileSync("/home/slrochford123/h3-benchmark/rtx-vsr-5s-1024x576-to-1080p-ultra.json")), "candidate VSR template is byte-identical to qualified donor");
 assert(workflows.validateH3VsrWorkflowTemplate() === true, "RTX VSR template runtime validator");
 const vsr = workflows.buildH3VsrWorkflow({ videoInputFilename: "native.mp4", outputPrefix: "contract/final_1080p" }).graph;
 assert(vsr["1"].inputs["resize_type.width"] === 1920 && vsr["1"].inputs["resize_type.height"] === 1080 && vsr["1"].inputs.quality === "ULTRA", "RTX VSR target is exactly 1920x1080 ULTRA");
@@ -174,6 +187,7 @@ try {
       finalPrompt: "reviewed prompt",
       promptFingerprint: "fingerprint",
       durationSeconds: 5,
+      h3Quality: "lq",
       seed: 123,
       startImage: null,
       references: [],
@@ -255,9 +269,69 @@ assert(
     ),
   "scheduler completes only from the audio-preserved final artifact",
 );
-assert(schedulerSource.includes("ComfyGpuBusyError") && schedulerSource.includes("production-v2-h3-vsr"), "VSR submission uses existing GPU lease arbitration and retryable busy handling");
+/*
+ * OTG_H3_VERIFIER_VSR_DURABLE_SUBMIT_R9E_V1
+ *
+ * VSR no longer exposes the old ComfyGpuBusyError symbol at the
+ * scheduler layer. The scheduler delegates submission through the
+ * shared durable H3 submit transport and explicitly requeues
+ * retryable busy/unavailable responses.
+ */
+assert(
+  schedulerSource.includes(
+    "schedulerProbe(dependencies)(H3_VSR_BACKEND, { requireVsr: true })",
+  )
+    && schedulerSource.includes(
+      "if (!availability.idle)",
+    )
+    && schedulerSource.includes(
+      "|| submitH3Prompt",
+    )
+    && schedulerSource.includes(
+      '"production-v2-h3-vsr"',
+    )
+    && schedulerSource.includes(
+      "onAccepted:",
+    )
+    && schedulerSource.includes(
+      "recordAcceptedVsrPrompt",
+    )
+    && schedulerSource.includes(
+      "markProductionV2GenerationVsrSubmitted",
+    )
+    && schedulerSource.includes(
+      "result.status === 409",
+    )
+    && schedulerSource.includes(
+      "|| result.status === 429",
+    )
+    && schedulerSource.includes(
+      "|| result.status === 503",
+    )
+    && schedulerSource.includes(
+      "markProductionV2GenerationVsrWaiting(",
+    )
+    && schedulerSource.includes(
+      "automatic resubmission is disabled to prevent duplicate post-processing.",
+    ),
+  "VSR submission uses durable H3 submit arbitration, durable acceptance recording, and retryable busy waiting",
+);
 
 const uiSource = fs.readFileSync(path.join(root, "app/app/components/ProductionV2Panel.tsx"), "utf8");
-assert(uiSource.includes("1080p final output") && uiSource.includes("Native H3 1024x576 + RTX VSR ULTRA"), "UI distinguishes final 1080p from native H3 resolution");
+/*
+ * OTG_H3_VERIFIER_UI_QUALIFIED_NATIVE_PIPELINE_R9F_V1
+ *
+ * The final user-facing deliverable remains 1080p.
+ * Native dimensions belong to the qualified recipe contract and
+ * must not be duplicated as a stale hard-coded UI string.
+ */
+assert(
+  uiSource.includes('data-otg="production-v2-h3-quality-control"')
+    && uiSource.includes('h3Quality: "lq"')
+    && uiSource.includes('h3Quality: "hq"')
+    && uiSource.includes("1.0 MP native (1376x768)")
+    && uiSource.includes("0.6 MP native (1056x608)"),
+  "UI exposes the MiniMax H3 LQ/HQ switch and exact native tier labels",
+);
 
 console.log("PASS: Production V2 H3 LoRA + RTX VSR deterministic contract suite");

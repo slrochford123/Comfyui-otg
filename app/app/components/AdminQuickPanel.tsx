@@ -1,6 +1,8 @@
+"use client";
+
 import type { CSSProperties } from "react";
 
-"use client";
+import H3LoraAdminPanel from "./H3LoraAdminPanel";
 
 export default function AdminQuickPanel() {
   const tileStyle: CSSProperties = {
@@ -35,6 +37,7 @@ export default function AdminQuickPanel() {
               </div>
             </a>
           </div>
+          <H3LoraAdminPanel />
         </div>
       </div>
     </div>

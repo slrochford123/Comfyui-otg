@@ -1,0 +1,242 @@
+{
+  "3": {
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    },
+    "class_type": "VAELoader"
+  },
+  "4": {
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "class_type": "VAELoader"
+  },
+  "5": {
+    "inputs": {
+      "filename_prefix": "H3-FINAL-24/rtx3090_R2V_10s_HQ",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "34",
+        0
+      ]
+    },
+    "class_type": "SaveVideo"
+  },
+  "14": {
+    "inputs": {
+      "samples": [
+        "21",
+        1
+      ],
+      "vae": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeAudio"
+  },
+  "15": {
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader"
+  },
+  "17": {
+    "inputs": {
+      "value": 10
+    },
+    "class_type": "PrimitiveFloat"
+  },
+  "18": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect"
+  },
+  "19": {
+    "inputs": {
+      "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+      "values.a": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression"
+  },
+  "20": {
+    "inputs": {
+      "aspect_ratio": "16:9 (Widescreen)",
+      "megapixels": 1,
+      "multiple": 32
+    },
+    "class_type": "ResolutionSelector"
+  },
+  "21": {
+    "inputs": {
+      "noise": [
+        "31",
+        0
+      ],
+      "guider": [
+        "32",
+        0
+      ],
+      "sampler": [
+        "18",
+        0
+      ],
+      "sigmas": [
+        "24",
+        0
+      ],
+      "latent_image": [
+        "39",
+        1
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced"
+  },
+  "24": {
+    "inputs": {
+      "scheduler": "simple",
+      "steps": 8,
+      "denoise": 1,
+      "model": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler"
+  },
+  "25": {
+    "inputs": {
+      "samples": [
+        "21",
+        1
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "VAEDecode"
+  },
+  "30": {
+    "inputs": {
+      "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader"
+  },
+  "31": {
+    "inputs": {
+      "noise_seed": 20260911
+    },
+    "class_type": "RandomNoise"
+  },
+  "32": {
+    "inputs": {
+      "model": [
+        "41",
+        0
+      ],
+      "conditioning": [
+        "39",
+        0
+      ]
+    },
+    "class_type": "BasicGuider"
+  },
+  "34": {
+    "inputs": {
+      "fps": 24,
+      "bit_depth": 8,
+      "images": [
+        "25",
+        0
+      ],
+      "audio": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "CreateVideo"
+  },
+  "36": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": [
+        "30",
+        0
+      ],
+      "lora_name": "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+      "strength_model": 1
+    }
+  },
+  "38": {
+    "inputs": {
+      "model": [
+        "36",
+        0
+      ],
+      "shift_video": 6,
+      "shift_audio": 3
+    },
+    "class_type": "MiniMaxH3SigmaShift"
+  },
+  "39": {
+    "inputs": {
+      "prompt": "<Subject 1> is the chef and kitchen shown in <Picture 1>; preserve his identity, wardrobe and the environment. A live-action medium close-up of an adult male chef with short brown hair and a trimmed beard, wearing a white chef coat with black piping. In a sunlit kitchen with copper pans and a steaming pot, he slices a cucumber into even rounds on a wooden board, then gathers the slices using the flat side of the knife. One continuous shot with a gentle push-in. Preserve natural hands, a single knife, coherent food motion and stable kitchen geometry. Audio: synchronized knife taps, soft vegetable scraping and a low simmering pot. No dialogue or music.",
+      "width": 1376,
+      "height": 768,
+      "length": 243,
+      "clip": [
+        "15",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "audio_vae": [
+        "4",
+        0
+      ],
+      "ref_image_size": "match",
+      "ref_images.ref_image_0": [
+        "80",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3ReferenceToVideo"
+  },
+  "41": {
+    "class_type": "H3SLAAttention",
+    "inputs": {
+      "model": [
+        "38",
+        0
+      ],
+      "sparsity_ratio": 0.85,
+      "block_size": "64",
+      "min_seq_len": 8192,
+      "dense_last_steps": 0,
+      "protect_audio": true,
+      "enabled": true,
+      "dense_steps": "0",
+      "dense_backend": "sage:qk_int8_pv_fp16_cuda",
+      "disable_fp16_accum": true,
+      "stabilize_motion": false,
+      "reference_protection": "Off"
+    }
+  },
+  "80": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "h3-firstwave-chef.jpg"
+    }
+  }
+}
