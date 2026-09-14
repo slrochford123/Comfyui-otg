@@ -3659,12 +3659,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     const name = getGalleryItemKey(item);
     if (!name) return;
 
-    const a = document.createElement("a");
-    a.href = `/api/gallery/file?name=${encodeURIComponent(name)}&scope=${encodeURIComponent(String(item.source || "user"))}&download=1`;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    const downloadUrl = `/api/gallery/file?name=${encodeURIComponent(name)}&scope=${encodeURIComponent(String(item.source || "user"))}&download=1`;
+    window.location.assign(downloadUrl);
   }
 
   async function handleGalleryFavorite(item: GalleryItem) {
