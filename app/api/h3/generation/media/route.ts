@@ -19,7 +19,12 @@ export async function GET(req: NextRequest) {
     const resolved = path.resolve(job.outputPath);
     const allowedRoot = path.resolve(OTG_DATA_ROOT);
     if (resolved !== allowedRoot && !resolved.startsWith(`${allowedRoot}${path.sep}`)) return NextResponse.json({ ok: false, error: "Generated H3 video path is outside the data root." }, { status: 403 });
-    return mediaFileResponse(req, resolved, { contentType: "video/mp4", fileName: path.basename(resolved), cacheControl: "private, no-store" });
+    return mediaFileResponse(req, resolved, {
+      contentType: "video/mp4",
+      fileName: path.basename(resolved),
+      download: req.nextUrl.searchParams.get("download") === "1",
+      cacheControl: "private, no-store",
+    });
   } catch (error) {
     if (error instanceof SessionInvalidError) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Could not read generated H3 video." }, { status: 500 });

@@ -58,6 +58,7 @@ type JobStatus = {
   startedAt: string | null;
   completedAt: string | null;
   videoUrl: string | null;
+  thumbnailUrl: string | null;
   galleryStatus: "pending" | "saving" | "saved" | "failed";
   galleryFileName: string | null;
   galleryUrl: string | null;
@@ -1528,11 +1529,18 @@ export default function H3Panel() {
             <div className="mt-4">
               <video
                 src={job.videoUrl}
+                poster={job.thumbnailUrl || undefined}
                 controls
+                playsInline
+                preload="metadata"
                 className="max-h-[70vh] w-full rounded-[6px] bg-black"
               />
               <div className="mt-3 flex flex-wrap gap-2">
-                <a href={job.videoUrl} download className={command}>
+                <a
+                  href={`${job.videoUrl}${job.videoUrl.includes("?") ? "&" : "?"}download=1`}
+                  download={job.galleryFileName || "MiniMax-H3-video.mp4"}
+                  className={command}
+                >
                   Download
                 </a>
                 {job.galleryStatus === "saved" ? (
