@@ -13,12 +13,20 @@ describe("mobile media delivery", () => {
     expect(route).toMatch(/mediaFileResponse[\s\S]*download:/);
   });
 
-  it("shows a generated Gallery thumbnail on the completed H3 player", () => {
+  it("shows a generated thumbnail on the completed H3 player", () => {
     const jobs = read("lib/h3DirectJobs.ts");
     const panel = read("app/app/components/H3Panel.tsx");
     expect(jobs).toContain("thumbnailUrl:");
-    expect(jobs).toContain("/api/thumb?collection=gallery");
+    expect(jobs).toContain("/api/h3/generation/thumbnail?jobId=");
     expect(panel).toContain("poster={job.thumbnailUrl || undefined}");
+  });
+
+  it("creates the poster directly from the completed H3 output", () => {
+    const route = read("app/api/h3/generation/thumbnail/route.ts");
+    expect(route).toContain('job.status !== "completed"');
+    expect(route).toContain('"-ss",');
+    expect(route).toContain('"0.5",');
+    expect(route).toContain('contentType: "image/webp"');
   });
 
   it("uses a real attachment navigation for Gallery downloads", () => {

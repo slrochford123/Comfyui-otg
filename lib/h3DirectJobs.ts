@@ -472,8 +472,8 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
     galleryUrl: job.galleryFileName && job.galleryScope
       ? `/api/gallery/file?name=${encodeURIComponent(job.galleryFileName)}&scope=${job.galleryScope}`
       : null,
-    thumbnailUrl: job.galleryFileName && job.galleryScope
-      ? `/api/thumb?collection=gallery&name=${encodeURIComponent(job.galleryFileName)}&scope=${job.galleryScope}&w=768`
+    thumbnailUrl: job.status === "completed"
+      ? `/api/h3/generation/thumbnail?jobId=${encodeURIComponent(job.id)}`
       : null,
     galleryError: job.galleryError || null,
   };
