@@ -305,6 +305,7 @@ export default function H3Panel() {
       includeAudio,
     }),
   );
+  const selectedStylePreset = resolveH3StylePreset(stylePresetId);
   const promptBuilderVisualStyle =
     resolveH3PromptBuilderVisualStyle(stylePresetId, visualStyle);
 
@@ -936,15 +937,61 @@ export default function H3Panel() {
             </summary>
             <div className="mt-4 grid gap-3 md:grid-cols-3">
               <div className="text-xs text-white/55 md:col-span-3">
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <span className="font-bold text-white/75">
-                    Visual Style Preset
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-bold text-white/85">
+                      Visual Style Preset
+                    </span>
+                    <p className="mt-0.5 text-[11px] text-white/40">
+                      Choose a visual identity for the entire H3 video.
+                    </p>
+                  </div>
+
+                  <span className="rounded-full border border-white/10 bg-black/25 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white/45">
+                    {H3_STYLE_PRESETS.length - 1} creative styles
                   </span>
-                  <span className="text-[11px] text-white/40">
-                    {stylePresetId === "none"
-                      ? "H3 default behavior"
-                      : resolveH3StylePreset(stylePresetId)?.subtitle || "Style preset"}
-                  </span>
+                </div>
+
+                <div
+                  className={`mb-3 rounded-xl border px-4 py-3 transition-all ${
+                    stylePresetId === "none"
+                      ? "border-white/10 bg-black/25"
+                      : "border-violet-300/40 bg-gradient-to-r from-violet-500/15 via-fuchsia-500/10 to-cyan-400/10 shadow-[0_0_24px_rgba(139,92,246,.12)]"
+                  }`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-violet-200/60">
+                        Current preset
+                      </p>
+                      <p className="mt-1 text-base font-black text-white">
+                        {selectedStylePreset?.label || "Default / None"}
+                      </p>
+                      <p className="mt-1 text-[11px] font-semibold text-white/50">
+                        {selectedStylePreset?.subtitle ||
+                          "H3 default behavior — no master style prompt added"}
+                      </p>
+                    </div>
+
+                    <span
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${
+                        stylePresetId === "none"
+                          ? "border-white/15 bg-white/[0.05] text-white/55"
+                          : "border-violet-300/45 bg-violet-300/15 text-violet-100"
+                      }`}
+                    >
+                      <span aria-hidden="true">
+                        {stylePresetId === "none" ? "○" : "✓"}
+                      </span>
+                      {stylePresetId === "none" ? "Default" : "Selected"}
+                    </span>
+                  </div>
+
+                  {selectedStylePreset?.description ? (
+                    <p className="mt-2 max-w-4xl text-[11px] leading-relaxed text-white/45">
+                      {selectedStylePreset.description}
+                    </p>
+                  ) : null}
                 </div>
 
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -955,22 +1002,55 @@ export default function H3Panel() {
                       <button
                         key={preset.id}
                         type="button"
+                        aria-pressed={selected}
                         onClick={() => setStylePresetId(preset.id)}
-                        className={`rounded-xl border p-3 text-left transition ${
+                        className={`group relative min-h-[132px] overflow-hidden rounded-xl border p-3 text-left transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70 ${
                           selected
-                            ? "border-white/60 bg-white/15"
-                            : "border-white/10 bg-black/20 hover:border-white/25 hover:bg-white/[0.07]"
+                            ? "z-10 -translate-y-0.5 border-violet-300/75 bg-gradient-to-br from-violet-500/25 via-violet-400/10 to-cyan-400/10 shadow-[0_0_0_1px_rgba(196,181,253,.16),0_10px_30px_rgba(124,58,237,.22)] ring-1 ring-violet-300/45"
+                            : "border-white/10 bg-[#11172a]/90 hover:-translate-y-0.5 hover:border-violet-300/30 hover:bg-white/[0.08] hover:shadow-[0_8px_22px_rgba(0,0,0,.22)]"
                         }`}
                       >
-                        <div className="text-sm font-black text-white">
+                        {selected ? (
+                          <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full border border-violet-200/40 bg-violet-300/20 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-violet-50 shadow-sm">
+                            <span aria-hidden="true">✓</span>
+                            Selected
+                          </span>
+                        ) : null}
+
+                        <div
+                          className={`text-sm font-black text-white ${
+                            selected ? "pr-20" : ""
+                          }`}
+                        >
                           {preset.label}
                         </div>
-                        <div className="mt-1 text-[11px] font-semibold text-white/50">
+
+                        <div
+                          className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${
+                            selected
+                              ? "text-violet-100/75"
+                              : "text-white/45 group-hover:text-white/55"
+                          }`}
+                        >
                           {preset.subtitle}
                         </div>
-                        <div className="mt-2 text-[11px] leading-relaxed text-white/40">
+
+                        <div
+                          className={`mt-2 line-clamp-2 text-[11px] leading-relaxed ${
+                            selected
+                              ? "text-white/65"
+                              : "text-white/38 group-hover:text-white/50"
+                          }`}
+                        >
                           {preset.description}
                         </div>
+
+                        {selected ? (
+                          <div
+                            aria-hidden="true"
+                            className="pointer-events-none absolute inset-x-3 bottom-0 h-px bg-gradient-to-r from-transparent via-violet-200/70 to-transparent"
+                          />
+                        ) : null}
                       </button>
                     );
                   })}
