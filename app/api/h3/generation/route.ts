@@ -18,6 +18,10 @@ import {
 import type { ProductionV2H3Mode } from "@/lib/production/h3Workflows";
 import { ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import { isAcceptedH3MediaFile, supportedH3MediaExtensions, type H3InputMediaKind } from "@/lib/h3MediaTypes";
+import {
+  composeH3StylePrompt,
+  resolveH3StylePreset,
+} from "@/lib/h3StylePresets";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -115,6 +119,9 @@ export async function POST(req: NextRequest) {
     if (!H3_PRODUCTION_DURATION_OPTIONS.includes(durationSeconds)) throw new Error("Choose a 5- or 10-second duration.");
 
     const requestId = crypto.randomUUID();
+    const rawPrompt = String(config.prompt || "").trim();
+    const stylePreset = resolveH3StylePreset(config.stylePresetId);
+    const finalPrompt = composeH3StylePrompt(rawPrompt, stylePreset);
     const imageDescriptions = descriptions(config.imageDescriptions);
     const videoDescriptions = descriptions(config.videoDescriptions);
     const audioDescriptions = descriptions(config.audioDescriptions);
@@ -130,7 +137,7 @@ export async function POST(req: NextRequest) {
       quality,
       orientation,
       durationSeconds,
-      prompt: String(config.prompt || "").trim(),
+      prompt: finalPrompt,
       seed: Number.isSafeInteger(Number(config.seed)) && Number(config.seed) >= 0 ? Number(config.seed) : crypto.randomBytes(6).readUIntBE(0, 6),
       optionalLoras: Array.isArray(config.optionalLoras) ? config.optionalLoras as any : [],
       firstImage: firstFiles[0] || null,
