@@ -13,6 +13,11 @@ import {
 } from "@/lib/h3Studio";
 import { H3_MEDIA_ACCEPT } from "@/lib/h3MediaTypes";
 import {
+  H3_STYLE_PRESETS,
+  resolveH3PromptBuilderVisualStyle,
+  resolveH3StylePreset,
+} from "@/lib/h3StylePresets";
+import {
   getH3NativeDimensions,
   getH3ProductionTimeEstimate,
   H3_ORIENTATION_OPTIONS,
@@ -251,6 +256,7 @@ export default function H3Panel() {
   const [visualStyle, setVisualStyle] = useState<string>(
     DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.visualStyle,
   );
+  const [stylePresetId, setStylePresetId] = useState("none");
   const [cameraFeel, setCameraFeel] = useState<string>(
     DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.cameraFeel,
   );
@@ -299,6 +305,9 @@ export default function H3Panel() {
       includeAudio,
     }),
   );
+  const promptBuilderVisualStyle =
+    resolveH3PromptBuilderVisualStyle(stylePresetId, visualStyle);
+
   const promptContext = {
     mode,
     quality,
@@ -306,7 +315,8 @@ export default function H3Panel() {
     durationSeconds: duration,
     originalPrompt,
     scenePrompt,
-    visualStyle,
+    stylePresetId,
+    visualStyle: promptBuilderVisualStyle,
     cameraFeel,
     shotFlow,
     firstImageName: firstImage?.name,
@@ -314,7 +324,8 @@ export default function H3Panel() {
     references: descriptors,
     loras: selectedLoras,
   };
-  const currentFingerprint = h3StudioPromptFingerprint(promptContext);
+  const currentFingerprint =
+    `${h3StudioPromptFingerprint(promptContext)}|stylePreset:${stylePresetId}`;
   const builderPromptStale =
     promptSource === "builder"
     && (!reviewedFingerprint || reviewedFingerprint !== currentFingerprint);
@@ -473,7 +484,10 @@ export default function H3Panel() {
           videoGenerationType: mode,
           durationSeconds: duration,
           workflowLabel: "MiniMax H3",
-          selectedStyle: { label: visualStyle, prompt: visualStyle },
+          selectedStyle: {
+            label: promptBuilderVisualStyle,
+            prompt: promptBuilderVisualStyle,
+          },
           visualContext: descriptors
             .map((item) => `${item.kind}: ${item.description || item.name}`)
             .join("\n"),
@@ -545,7 +559,10 @@ export default function H3Panel() {
     setScenePrompt(next);
     setPromptSource("builder");
     setReviewedFingerprint(
-      h3StudioPromptFingerprint({ ...promptContext, scenePrompt: next }),
+      `${h3StudioPromptFingerprint({
+        ...promptContext,
+        scenePrompt: next,
+      })}|stylePreset:${stylePresetId}`,
     );
     setMessage("Prompt reviewed and ready.");
   }
@@ -692,6 +709,7 @@ export default function H3Panel() {
         orientation,
         durationSeconds: duration,
         prompt: generationPrompt,
+        stylePresetId,
         optionalLoras: selectedLoras,
         imageDescriptions: references
           .filter((item) => item.kind === "image")
@@ -917,11 +935,56 @@ export default function H3Panel() {
               Choose the Look
             </summary>
             <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <div className="text-xs text-white/55 md:col-span-3">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <span className="font-bold text-white/75">
+                    Visual Style Preset
+                  </span>
+                  <span className="text-[11px] text-white/40">
+                    {stylePresetId === "none"
+                      ? "H3 default behavior"
+                      : resolveH3StylePreset(stylePresetId)?.subtitle || "Style preset"}
+                  </span>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  {H3_STYLE_PRESETS.map((preset) => {
+                    const selected = preset.id === stylePresetId;
+
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => setStylePresetId(preset.id)}
+                        className={`rounded-xl border p-3 text-left transition ${
+                          selected
+                            ? "border-white/60 bg-white/15"
+                            : "border-white/10 bg-black/20 hover:border-white/25 hover:bg-white/[0.07]"
+                        }`}
+                      >
+                        <div className="text-sm font-black text-white">
+                          {preset.label}
+                        </div>
+                        <div className="mt-1 text-[11px] font-semibold text-white/50">
+                          {preset.subtitle}
+                        </div>
+                        <div className="mt-2 text-[11px] leading-relaxed text-white/40">
+                          {preset.description}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <label className="text-xs text-white/55">
-                Visual Style
+                Prompt Builder Visual Style
                 <select
-                  className={`${field} mt-1`}
-                  value={visualStyle}
+                  className={`${field} mt-1 ${
+                    stylePresetId !== "none" ? "opacity-60" : ""
+                  }`}
+                  value={promptBuilderVisualStyle}
+                  disabled={stylePresetId !== "none"}
                   onChange={(event) => setVisualStyle(event.target.value)}
                 >
                   {H3_VISUAL_STYLE_OPTIONS.map((item) => (
@@ -929,6 +992,7 @@ export default function H3Panel() {
                   ))}
                 </select>
               </label>
+
               <label className="text-xs text-white/55">
                 Camera Feel
                 <select

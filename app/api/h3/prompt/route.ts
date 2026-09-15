@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { validateH3LoraSelections } from "@/lib/h3LoraCatalogServer";
 import type { H3StudioReferenceDescriptor } from "@/lib/h3Studio";
+import { resolveH3PromptBuilderVisualStyle } from "@/lib/h3StylePresets";
 import {
   createProductionV2Scene,
   type ProductionV2GenerationMode,
@@ -29,6 +30,12 @@ const MODES: ProductionV2GenerationMode[] = [
   "h3-image-to-video",
   "h3-reference-to-video",
 ];
+
+function isH3VisualStyle(
+  value: string,
+): value is (typeof H3_VISUAL_STYLE_OPTIONS)[number] {
+  return (H3_VISUAL_STYLE_OPTIONS as readonly string[]).includes(value);
+}
 
 function noStore(payload: unknown, init?: ResponseInit) {
   return NextResponse.json(payload, {
@@ -60,6 +67,23 @@ export async function POST(req: NextRequest) {
       throw new Error("Choose Landscape or Portrait orientation.");
     if (!originalPrompt)
       throw new Error("Write your scene before using Prompt Builder.");
+
+    const requestedVisualStyle = H3_VISUAL_STYLE_OPTIONS.includes(
+      body?.visualStyle,
+    )
+      ? body.visualStyle
+      : DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.visualStyle;
+
+    const promptBuilderVisualStyle = resolveH3PromptBuilderVisualStyle(
+      body?.stylePresetId,
+      requestedVisualStyle,
+    );
+
+    if (!isH3VisualStyle(promptBuilderVisualStyle))
+      throw new Error(
+        "Selected H3 style preset has an invalid Prompt Builder visual style.",
+      );
+
     const optionalLoras = validateH3LoraSelections(
       body?.loras,
       mode as any,
@@ -90,9 +114,7 @@ export async function POST(req: NextRequest) {
     scene.h3Quality = quality as "lq" | "hq";
     scene.promptOptions = {
       ...DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS,
-      visualStyle: H3_VISUAL_STYLE_OPTIONS.includes(body?.visualStyle)
-        ? body.visualStyle
-        : DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.visualStyle,
+      visualStyle: promptBuilderVisualStyle,
       cameraFeel: H3_CAMERA_FEEL_OPTIONS.includes(body?.cameraFeel)
         ? body.cameraFeel
         : DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.cameraFeel,
