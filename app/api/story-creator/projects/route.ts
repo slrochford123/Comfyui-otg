@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { SessionInvalidError } from "@/lib/ownerKey";
+import { getSessionUser } from "@/lib/sessionUser";
+
 import {
   createStoryCreatorProject,
   deleteStoryCreatorProject,
@@ -13,7 +16,9 @@ export const dynamic = "force-dynamic";
 
 function jsonError(error: unknown) {
   const message =
-    error instanceof Error ? error.message : "Story Creator request failed.";
+    error instanceof Error
+      ? error.message
+      : "Story Creator request failed.";
 
   const code =
     error &&
@@ -23,29 +28,37 @@ function jsonError(error: unknown) {
       : "";
 
   const status =
-    code === "STORY_PROJECT_LIMIT"
-      ? 409
-      : code === "STORY_PROJECT_NOT_FOUND"
-        ? 404
-        : 400;
+    error instanceof SessionInvalidError
+      ? 401
+      : code === "STORY_PROJECT_LIMIT"
+        ? 409
+        : code === "STORY_PROJECT_NOT_FOUND"
+          ? 404
+          : 400;
 
   return NextResponse.json(
-    { ok: false, error: message, code },
-    { status, headers: { "Cache-Control": "no-store" } },
+    {
+      ok: false,
+      error: message,
+      code,
+    },
+    {
+      status,
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    },
   );
 }
 
-function ownerFromRequest(request: NextRequest) {
-  return String(
-    request.nextUrl.searchParams.get("owner") ||
-      request.headers.get("x-otg-story-owner") ||
-      "",
-  ).trim();
+async function authenticatedOwnerKey(request: NextRequest) {
+  const user = await getSessionUser(request);
+  return user.ownerKey;
 }
 
 export async function GET(request: NextRequest) {
   try {
-    const ownerKey = ownerFromRequest(request);
+    const ownerKey = await authenticatedOwnerKey(request);
     const projects = listStoryCreatorProjects(ownerKey);
 
     return NextResponse.json(
@@ -54,7 +67,11 @@ export async function GET(request: NextRequest) {
         projects,
         limit: STORY_CREATOR_PROJECT_LIMIT,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      {
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      },
     );
   } catch (error) {
     return jsonError(error);
@@ -63,13 +80,11 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const ownerKey = await authenticatedOwnerKey(request);
     const body = await request.json().catch(() => ({}));
 
     const project = createStoryCreatorProject({
-      ownerKey:
-        body?.ownerKey ||
-        request.headers.get("x-otg-story-owner") ||
-        "",
+      ownerKey,
       title: body?.title,
       format: body?.format,
       genre: body?.genre,
@@ -81,7 +96,12 @@ export async function POST(request: NextRequest) {
         project,
         limit: STORY_CREATOR_PROJECT_LIMIT,
       },
-      { status: 201, headers: { "Cache-Control": "no-store" } },
+      {
+        status: 201,
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      },
     );
   } catch (error) {
     return jsonError(error);
@@ -90,13 +110,11 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    const ownerKey = await authenticatedOwnerKey(request);
     const body = await request.json().catch(() => ({}));
 
     const project = updateStoryCreatorProject({
-      ownerKey:
-        body?.ownerKey ||
-        request.headers.get("x-otg-story-owner") ||
-        "",
+      ownerKey,
       id: body?.id,
       title: body?.title,
       format: body?.format,
@@ -104,8 +122,15 @@ export async function PATCH(request: NextRequest) {
     });
 
     return NextResponse.json(
-      { ok: true, project },
-      { headers: { "Cache-Control": "no-store" } },
+      {
+        ok: true,
+        project,
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      },
     );
   } catch (error) {
     return jsonError(error);
@@ -114,19 +139,21 @@ export async function PATCH(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    const ownerKey = await authenticatedOwnerKey(request);
     const body = await request.json().catch(() => ({}));
 
     const result = deleteStoryCreatorProject({
-      ownerKey:
-        body?.ownerKey ||
-        request.headers.get("x-otg-story-owner") ||
-        "",
+      ownerKey,
       id: body?.id,
     });
 
     return NextResponse.json(
       result,
-      { headers: { "Cache-Control": "no-store" } },
+      {
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      },
     );
   } catch (error) {
     return jsonError(error);

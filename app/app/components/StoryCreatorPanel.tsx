@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 type StoryProject = {
   id: string;
@@ -10,6 +16,15 @@ type StoryProject = {
   genre: string;
   createdAt: number;
   updatedAt: number;
+};
+
+type StoryMessage = {
+  id: string;
+  projectId: string;
+  ownerKey: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: number;
 };
 
 type Props = {
@@ -28,15 +43,66 @@ function formatDate(value: number) {
   }
 }
 
-export default function StoryCreatorPanel({ ownerKey }: Props) {
+function errorMessage(
+  data: any,
+  fallback: string,
+) {
+  return typeof data?.error === "string" && data.error.trim()
+    ? data.error
+    : fallback;
+}
+
+function assistantText(data: any) {
+  if (
+    typeof data?.response === "string" &&
+    data.response.trim()
+  ) {
+    return data.response.trim();
+  }
+
+  if (
+    typeof data?.message?.content === "string" &&
+    data.message.content.trim()
+  ) {
+    return data.message.content.trim();
+  }
+
+  if (
+    typeof data?.content === "string" &&
+    data.content.trim()
+  ) {
+    return data.content.trim();
+  }
+
+  return "";
+}
+
+export default function StoryCreatorPanel({
+  ownerKey,
+}: Props) {
   const [projects, setProjects] = useState<StoryProject[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] =
+    useState("");
+
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
+  const [notice, setNotice] = useState("");
   const [newTitle, setNewTitle] = useState("");
 
+  const [storyMessages, setStoryMessages] =
+    useState<StoryMessage[]>([]);
+  const [messagesLoading, setMessagesLoading] =
+    useState(false);
+  const [chatBusy, setChatBusy] = useState(false);
+  const [chatError, setChatError] = useState("");
+  const [draft, setDraft] = useState("");
+
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+
   const selectedProject = useMemo(
-    () => projects.find((project) => project.id === selectedProjectId) || null,
+    () =>
+      projects.find(
+        (project) => project.id === selectedProjectId,
+      ) || null,
     [projects, selectedProjectId],
   );
 
@@ -47,13 +113,10 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
 
     try {
       const response = await fetch(
-        `/api/story-creator/projects?owner=${encodeURIComponent(ownerKey)}`,
+        "/api/story-creator/projects",
         {
           cache: "no-store",
           credentials: "include",
-          headers: {
-            "x-otg-story-owner": ownerKey,
-          },
         },
       );
 
@@ -61,9 +124,10 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
 
       if (!response.ok) {
         throw new Error(
-          typeof data?.error === "string"
-            ? data.error
-            : "Could not load Story Creator projects.",
+          errorMessage(
+            data,
+            "Could not load Story Creator projects.",
+          ),
         );
       }
 
@@ -76,7 +140,10 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
       setSelectedProjectId((current) => {
         if (
           current &&
-          nextProjects.some((project: StoryProject) => project.id === current)
+          nextProjects.some(
+            (project: StoryProject) =>
+              project.id === current,
+          )
         ) {
           return current;
         }
@@ -84,9 +151,9 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
         return "";
       });
 
-      setMessage("");
+      setNotice("");
     } catch (error) {
-      setMessage(
+      setNotice(
         error instanceof Error
           ? error.message
           : "Could not load Story Creator projects.",
@@ -96,45 +163,116 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
     }
   }, [ownerKey]);
 
+  const loadStoryMessages = useCallback(
+    async (projectId: string) => {
+      if (!projectId) {
+        setStoryMessages([]);
+        return;
+      }
+
+      setMessagesLoading(true);
+      setChatError("");
+
+      try {
+        const response = await fetch(
+          `/api/story-creator/messages?projectId=${encodeURIComponent(projectId)}`,
+          {
+            cache: "no-store",
+            credentials: "include",
+          },
+        );
+
+        const data = await response
+          .json()
+          .catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(
+            errorMessage(
+              data,
+              "Could not load Story Director conversation.",
+            ),
+          );
+        }
+
+        setStoryMessages(
+          Array.isArray(data?.messages)
+            ? data.messages
+            : [],
+        );
+      } catch (error) {
+        setChatError(
+          error instanceof Error
+            ? error.message
+            : "Could not load Story Director conversation.",
+        );
+      } finally {
+        setMessagesLoading(false);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     void loadProjects();
   }, [loadProjects]);
+
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setStoryMessages([]);
+      setChatError("");
+      setDraft("");
+      return;
+    }
+
+    void loadStoryMessages(selectedProjectId);
+  }, [selectedProjectId, loadStoryMessages]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({
+      block: "end",
+      behavior: "smooth",
+    });
+  }, [storyMessages, chatBusy]);
 
   async function createProject() {
     if (!ownerKey || busy) return;
 
     if (projects.length >= STORY_LIMIT) {
-      setMessage(
+      setNotice(
         `Story Creator supports up to ${STORY_LIMIT} active stories. Delete one before creating another.`,
       );
       return;
     }
 
     setBusy(true);
-    setMessage("");
+    setNotice("");
 
     try {
-      const response = await fetch("/api/story-creator/projects", {
-        method: "POST",
-        cache: "no-store",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "x-otg-story-owner": ownerKey,
+      const response = await fetch(
+        "/api/story-creator/projects",
+        {
+          method: "POST",
+          cache: "no-store",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title:
+              newTitle.trim() || "Untitled Story",
+          }),
         },
-        body: JSON.stringify({
-          ownerKey,
-          title: newTitle.trim() || "Untitled Story",
-        }),
-      });
+      );
 
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(
-          typeof data?.error === "string"
-            ? data.error
-            : "Could not create Story.",
+          errorMessage(
+            data,
+            "Could not create Story.",
+          ),
         );
       }
 
@@ -142,55 +280,70 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
 
       setProjects((current) => [
         project,
-        ...current.filter((item) => item.id !== project.id),
+        ...current.filter(
+          (item) => item.id !== project.id,
+        ),
       ]);
 
       setSelectedProjectId(project.id);
       setNewTitle("");
-      setMessage("Story created.");
+      setNotice("Story created.");
     } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "Could not create Story.",
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Could not create Story.",
       );
     } finally {
       setBusy(false);
     }
   }
 
-  async function renameProject(project: StoryProject) {
+  async function renameProject(
+    project: StoryProject,
+  ) {
     if (!ownerKey || busy) return;
 
     const nextTitle =
-      window.prompt("Rename Story", project.title)?.trim() || "";
+      window
+        .prompt("Rename Story", project.title)
+        ?.trim() || "";
 
-    if (!nextTitle || nextTitle === project.title) return;
+    if (
+      !nextTitle ||
+      nextTitle === project.title
+    ) {
+      return;
+    }
 
     setBusy(true);
-    setMessage("");
+    setNotice("");
 
     try {
-      const response = await fetch("/api/story-creator/projects", {
-        method: "PATCH",
-        cache: "no-store",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "x-otg-story-owner": ownerKey,
+      const response = await fetch(
+        "/api/story-creator/projects",
+        {
+          method: "PATCH",
+          cache: "no-store",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: project.id,
+            title: nextTitle,
+          }),
         },
-        body: JSON.stringify({
-          ownerKey,
-          id: project.id,
-          title: nextTitle,
-        }),
-      });
+      );
 
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(
-          typeof data?.error === "string"
-            ? data.error
-            : "Could not rename Story.",
+          errorMessage(
+            data,
+            "Could not rename Story.",
+          ),
         );
       }
 
@@ -198,72 +351,232 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
 
       setProjects((current) =>
         current.map((item) =>
-          item.id === updated.id ? updated : item,
+          item.id === updated.id
+            ? updated
+            : item,
         ),
       );
 
-      setMessage("Story renamed.");
+      setNotice("Story renamed.");
     } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "Could not rename Story.",
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Could not rename Story.",
       );
     } finally {
       setBusy(false);
     }
   }
 
-  async function deleteProject(project: StoryProject) {
+  async function deleteProject(
+    project: StoryProject,
+  ) {
     if (!ownerKey || busy) return;
 
     const confirmed = window.confirm(
-      `Delete "${project.title}"?\n\nThis Phase 1A project record will be permanently removed.`,
+      `Delete "${project.title}"?\n\nThe project and its Story Director conversation will be permanently removed.`,
     );
 
     if (!confirmed) return;
 
     setBusy(true);
-    setMessage("");
+    setNotice("");
 
     try {
-      const response = await fetch("/api/story-creator/projects", {
-        method: "DELETE",
-        cache: "no-store",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "x-otg-story-owner": ownerKey,
+      const response = await fetch(
+        "/api/story-creator/projects",
+        {
+          method: "DELETE",
+          cache: "no-store",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: project.id,
+          }),
         },
-        body: JSON.stringify({
-          ownerKey,
-          id: project.id,
-        }),
-      });
+      );
 
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(
-          typeof data?.error === "string"
-            ? data.error
-            : "Could not delete Story.",
+          errorMessage(
+            data,
+            "Could not delete Story.",
+          ),
         );
       }
 
       setProjects((current) =>
-        current.filter((item) => item.id !== project.id),
+        current.filter(
+          (item) => item.id !== project.id,
+        ),
       );
 
       setSelectedProjectId((current) =>
-        current === project.id ? "" : current,
+        current === project.id
+          ? ""
+          : current,
       );
 
-      setMessage("Story deleted.");
+      setNotice("Story deleted.");
     } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "Could not delete Story.",
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Could not delete Story.",
       );
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function persistMessage(
+    projectId: string,
+    role: StoryMessage["role"],
+    content: string,
+  ) {
+    const response = await fetch(
+      "/api/story-creator/messages",
+      {
+        method: "POST",
+        cache: "no-store",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          projectId,
+          role,
+          content,
+        }),
+      },
+    );
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(
+        errorMessage(
+          data,
+          "Could not save Story Director message.",
+        ),
+      );
+    }
+
+    return data.message as StoryMessage;
+  }
+
+  async function sendStoryMessage() {
+    const project = selectedProject;
+    const content = draft.trim();
+
+    if (
+      !project ||
+      !content ||
+      chatBusy
+    ) {
+      return;
+    }
+
+    setChatBusy(true);
+    setChatError("");
+
+    try {
+      const savedUserMessage =
+        await persistMessage(
+          project.id,
+          "user",
+          content,
+        );
+
+      const history = [
+        ...storyMessages,
+        savedUserMessage,
+      ];
+
+      setStoryMessages(history);
+      setDraft("");
+
+      const aiResponse = await fetch(
+        "/api/ollama-ai/chat",
+        {
+          method: "POST",
+          cache: "no-store",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            "x-otg-ai-assistance": "1",
+            "x-otg-ai-assistance-profile":
+              "story-helper",
+          },
+          body: JSON.stringify({
+            messages: history.map(
+              ({ role, content }) => ({
+                role,
+                content,
+              }),
+            ),
+          }),
+        },
+      );
+
+      const aiData = await aiResponse
+        .json()
+        .catch(() => ({}));
+
+      if (!aiResponse.ok) {
+        throw new Error(
+          errorMessage(
+            aiData,
+            "Story Director could not respond.",
+          ),
+        );
+      }
+
+      const responseText =
+        assistantText(aiData);
+
+      if (!responseText) {
+        throw new Error(
+          "Story Director returned an empty response.",
+        );
+      }
+
+      const savedAssistantMessage =
+        await persistMessage(
+          project.id,
+          "assistant",
+          responseText,
+        );
+
+      setStoryMessages([
+        ...history,
+        savedAssistantMessage,
+      ]);
+
+      setProjects((current) =>
+        current.map((item) =>
+          item.id === project.id
+            ? {
+                ...item,
+                updatedAt:
+                  savedAssistantMessage.createdAt,
+              }
+            : item,
+        ),
+      );
+    } catch (error) {
+      setChatError(
+        error instanceof Error
+          ? error.message
+          : "Story Director request failed.",
+      );
+    } finally {
+      setChatBusy(false);
     }
   }
 
@@ -282,14 +595,17 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
               </h1>
 
               <p className="mt-3 max-w-3xl text-sm leading-6 text-white/62">
-                This Story workspace is now persistent. Phase 1B will place the
-                Story Director conversation and Story Bible inside this project.
+                Your Story Director conversation is
+                saved inside this Story and reloads
+                whenever you return.
               </p>
             </div>
 
             <button
               type="button"
-              onClick={() => setSelectedProjectId("")}
+              onClick={() =>
+                setSelectedProjectId("")
+              }
               className="rounded-[14px] border border-white/10 bg-white/[0.05] px-4 py-2 text-sm font-black text-white/75 transition hover:bg-white/[0.09]"
             >
               Back to Stories
@@ -297,66 +613,182 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
           </div>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-3">
-          <div className="rounded-[24px] border border-white/10 bg-black/35 p-5">
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-              Story Director
-            </p>
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+          <section className="flex min-h-[620px] flex-col rounded-[24px] border border-cyan-300/15 bg-black/40">
+            <div className="border-b border-white/10 p-5">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200/60">
+                Story Director
+              </p>
 
-            <h2 className="mt-2 text-xl font-black text-white">
-              Conversation
-            </h2>
+              <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-xl font-black text-white">
+                  Conversation
+                </h2>
 
-            <p className="mt-2 text-sm leading-6 text-white/60">
-              The recovered Story Helper conversation and strict-canon engine
-              will move here in Phase 1B.
-            </p>
-          </div>
+                <span className="text-xs text-white/35">
+                  {storyMessages.length} saved messages
+                </span>
+              </div>
 
-          <div className="rounded-[24px] border border-white/10 bg-black/35 p-5">
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-              Story Bible
-            </p>
+              <p className="mt-2 text-xs leading-5 text-white/45">
+                Uses the existing Story Helper strict-canon
+                protections. User and assistant turns are
+                persisted server-side.
+              </p>
+            </div>
 
-            <h2 className="mt-2 text-xl font-black text-white">
-              Canon & Continuity
-            </h2>
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+              {messagesLoading ? (
+                <div className="text-sm text-white/45">
+                  Loading conversation...
+                </div>
+              ) : storyMessages.length ? (
+                storyMessages.map((item) => (
+                  <div
+                    key={item.id}
+                    className={
+                      item.role === "user"
+                        ? "ml-auto max-w-[88%] rounded-[18px] bg-cyan-300 px-4 py-3 text-sm leading-6 text-black"
+                        : "mr-auto max-w-[92%] rounded-[18px] border border-white/10 bg-white/[0.06] px-4 py-3 text-sm leading-6 text-white/82"
+                    }
+                  >
+                    <div className="mb-1 text-[10px] font-black uppercase tracking-[0.14em] opacity-55">
+                      {item.role === "user"
+                        ? "You"
+                        : "Story Director"}
+                    </div>
 
-            <p className="mt-2 text-sm leading-6 text-white/60">
-              Characters, relationships, locations, world rules, timeline,
-              unresolved questions, and canon status will live here.
-            </p>
-          </div>
+                    <div className="whitespace-pre-wrap">
+                      {item.content}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-[18px] border border-dashed border-white/10 bg-white/[0.025] p-5">
+                  <div className="font-black text-white">
+                    Start telling me your story.
+                  </div>
 
-          <div className="rounded-[24px] border border-white/10 bg-black/35 p-5">
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-              Assets
-            </p>
+                  <p className="mt-2 text-sm leading-6 text-white/52">
+                    You can describe characters, the world,
+                    scenes, relationships, problems, ideas,
+                    or simply talk naturally. This
+                    conversation will remain attached to
+                    this Story.
+                  </p>
+                </div>
+              )}
 
-            <h2 className="mt-2 text-xl font-black text-white">
-              Production
-            </h2>
+              {chatBusy ? (
+                <div className="mr-auto rounded-[18px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/50">
+                  Story Director is thinking...
+                </div>
+              ) : null}
 
-            <p className="mt-2 text-sm leading-6 text-white/60">
-              Character references, locations, storyboards, video, voices,
-              music, and SFX will attach to the Story in later phases.
-            </p>
-          </div>
-        </div>
+              <div ref={chatEndRef} />
+            </div>
 
-        <div className="rounded-[24px] border border-cyan-300/15 bg-cyan-300/[0.04] p-5">
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            <span className="font-black text-white">
-              Persistent Story ID:
-            </span>
+            <div className="border-t border-white/10 p-4">
+              {chatError ? (
+                <div className="mb-3 rounded-[14px] border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs leading-5 text-red-100/80">
+                  {chatError}
+                </div>
+              ) : null}
 
-            <code className="break-all text-cyan-100/75">
-              {selectedProject.id}
-            </code>
-          </div>
+              <textarea
+                value={draft}
+                onChange={(event) =>
+                  setDraft(event.target.value)
+                }
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter" &&
+                    (event.ctrlKey || event.metaKey)
+                  ) {
+                    event.preventDefault();
+                    void sendStoryMessage();
+                  }
+                }}
+                placeholder="Tell the Story Director what happens next..."
+                rows={4}
+                disabled={chatBusy}
+                className="w-full resize-y rounded-[16px] border border-white/10 bg-black/45 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-white/28 focus:border-cyan-300/40 disabled:opacity-60"
+              />
 
-          <div className="mt-2 text-xs text-white/45">
-            Last updated: {formatDate(selectedProject.updatedAt)}
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <span className="text-[11px] text-white/35">
+                  Ctrl/Cmd + Enter to send
+                </span>
+
+                <button
+                  type="button"
+                  disabled={
+                    chatBusy ||
+                    !draft.trim()
+                  }
+                  onClick={() =>
+                    void sendStoryMessage()
+                  }
+                  className="rounded-[14px] bg-cyan-300 px-5 py-2.5 text-sm font-black text-black transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {chatBusy
+                    ? "Thinking..."
+                    : "Send"}
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <div className="space-y-4">
+            <div className="rounded-[24px] border border-white/10 bg-black/35 p-5">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
+                Story Bible
+              </p>
+
+              <h2 className="mt-2 text-xl font-black text-white">
+                Canon & Continuity
+              </h2>
+
+              <p className="mt-2 text-sm leading-6 text-white/60">
+                Structured characters, relationships,
+                locations, world rules, timeline,
+                unresolved questions, and canon status
+                arrive in Phase 2.
+              </p>
+            </div>
+
+            <div className="rounded-[24px] border border-white/10 bg-black/35 p-5">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
+                Assets
+              </p>
+
+              <h2 className="mt-2 text-xl font-black text-white">
+                Production
+              </h2>
+
+              <p className="mt-2 text-sm leading-6 text-white/60">
+                Character references, locations,
+                storyboards, video, voices, music, and
+                SFX attach here in later phases.
+              </p>
+            </div>
+
+            <div className="rounded-[24px] border border-cyan-300/15 bg-cyan-300/[0.04] p-5">
+              <div className="text-xs font-black uppercase tracking-[0.16em] text-cyan-100/60">
+                Persistent Story ID
+              </div>
+
+              <code className="mt-2 block break-all text-xs leading-5 text-cyan-100/75">
+                {selectedProject.id}
+              </code>
+
+              <div className="mt-3 text-xs text-white/45">
+                Last updated:{" "}
+                {formatDate(
+                  selectedProject.updatedAt,
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -375,9 +807,11 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
         </h1>
 
         <p className="mt-3 max-w-3xl text-sm leading-6 text-white/62">
-          Develop a story with an AI creative partner, preserve its canon, and
-          eventually turn characters, locations, scenes, dialogue, images,
-          voices, music, and video into one connected production.
+          Develop a story with an AI creative partner,
+          preserve its canon, and eventually turn
+          characters, locations, scenes, dialogue,
+          images, voices, music, and video into one
+          connected production.
         </p>
       </div>
 
@@ -390,7 +824,9 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
 
             <input
               value={newTitle}
-              onChange={(event) => setNewTitle(event.target.value)}
+              onChange={(event) =>
+                setNewTitle(event.target.value)
+              }
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
@@ -406,16 +842,22 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
           <button
             type="button"
             onClick={() => void createProject()}
-            disabled={busy || projects.length >= STORY_LIMIT}
+            disabled={
+              busy ||
+              projects.length >= STORY_LIMIT
+            }
             className="rounded-[14px] bg-cyan-300 px-5 py-3 text-sm font-black text-black transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {busy ? "Working..." : "+ New Story"}
+            {busy
+              ? "Working..."
+              : "+ New Story"}
           </button>
         </div>
 
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
           <span className="text-white/45">
-            {projects.length} of {STORY_LIMIT} active Stories
+            {projects.length} of {STORY_LIMIT} active
+            Stories
           </span>
 
           {projects.length >= STORY_LIMIT ? (
@@ -426,9 +868,9 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
         </div>
       </div>
 
-      {message ? (
+      {notice ? (
         <div className="rounded-[18px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/72">
-          {message}
+          {notice}
         </div>
       ) : null}
 
@@ -448,13 +890,18 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
               </h2>
 
               <div className="mt-3 text-xs text-white/45">
-                Updated {formatDate(project.updatedAt)}
+                Updated{" "}
+                {formatDate(project.updatedAt)}
               </div>
 
               <div className="mt-5 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => setSelectedProjectId(project.id)}
+                  onClick={() =>
+                    setSelectedProjectId(
+                      project.id,
+                    )
+                  }
                   className="rounded-[12px] bg-white px-4 py-2 text-xs font-black text-black transition hover:bg-cyan-100"
                 >
                   Continue
@@ -462,7 +909,9 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
 
                 <button
                   type="button"
-                  onClick={() => void renameProject(project)}
+                  onClick={() =>
+                    void renameProject(project)
+                  }
                   disabled={busy}
                   className="rounded-[12px] border border-white/10 bg-white/[0.05] px-4 py-2 text-xs font-black text-white/75 transition hover:bg-white/[0.09]"
                 >
@@ -471,7 +920,9 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
 
                 <button
                   type="button"
-                  onClick={() => void deleteProject(project)}
+                  onClick={() =>
+                    void deleteProject(project)
+                  }
                   disabled={busy}
                   className="rounded-[12px] border border-red-400/20 bg-red-500/10 px-4 py-2 text-xs font-black text-red-100/80 transition hover:bg-red-500/15"
                 >
@@ -488,8 +939,8 @@ export default function StoryCreatorPanel({ ownerKey }: Props) {
           </div>
 
           <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-white/55">
-            Create the first Story. In the next phase, its Story Director and
-            Story Bible will live inside this persistent project.
+            Create the first Story and begin talking
+            naturally with its persistent Story Director.
           </p>
         </div>
       )}
