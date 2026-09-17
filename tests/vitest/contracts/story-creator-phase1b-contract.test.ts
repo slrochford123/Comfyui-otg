@@ -49,7 +49,7 @@ describe("Story Creator Phase 1B", () => {
     );
 
     expect(source).toContain(
-      "getSessionUser",
+      "requireSessionUser",
     );
 
     expect(source).toContain(
@@ -71,7 +71,7 @@ describe("Story Creator Phase 1B", () => {
     );
 
     expect(source).toContain(
-      "getSessionUser",
+      "requireSessionUser",
     );
 
     expect(source).toContain(
@@ -136,4 +136,39 @@ describe("Story Creator Phase 1B", () => {
       "Phase 2",
     );
   });
+
+  it("requires a signed session instead of falling back to device scope", () => {
+    const sessionSource = read(
+      "lib/sessionUser.ts",
+    );
+
+    const projectsSource = read(
+      "app/api/story-creator/projects/route.ts",
+    );
+
+    const messagesSource = read(
+      "app/api/story-creator/messages/route.ts",
+    );
+
+    expect(sessionSource).toContain(
+      'if (!token) throw new SessionInvalidError("Missing session")',
+    );
+
+    expect(projectsSource).toContain(
+      "requireSessionUser",
+    );
+
+    expect(messagesSource).toContain(
+      "requireSessionUser",
+    );
+
+    expect(projectsSource).not.toContain(
+      "getSessionUser",
+    );
+
+    expect(messagesSource).not.toContain(
+      "getSessionUser",
+    );
+  });
+
 });

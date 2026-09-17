@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { SessionInvalidError } from "@/lib/ownerKey";
-import { getSessionUser } from "@/lib/sessionUser";
+import { requireSessionUser } from "@/lib/sessionUser";
 
 import {
   addStoryCreatorMessage,
@@ -47,7 +47,7 @@ function jsonError(error: unknown) {
 }
 
 async function authenticatedOwnerKey(request: NextRequest) {
-  const user = await getSessionUser(request);
+  const user = await requireSessionUser(request);
   return user.ownerKey;
 }
 
