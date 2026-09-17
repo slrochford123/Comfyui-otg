@@ -59,24 +59,26 @@ function assistantText(data: any) {
   ) {
     return data.response.trim();
   }
-
+  if (
+    typeof data?.message === "string" &&
+    data.message.trim()
+  ) {
+    return data.message.trim();
+  }
   if (
     typeof data?.message?.content === "string" &&
     data.message.content.trim()
   ) {
     return data.message.content.trim();
   }
-
   if (
     typeof data?.content === "string" &&
     data.content.trim()
   ) {
     return data.content.trim();
   }
-
   return "";
 }
-
 export default function StoryCreatorPanel({
   ownerKey,
 }: Props) {
@@ -97,6 +99,7 @@ export default function StoryCreatorPanel({
   const [draft, setDraft] = useState("");
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const storySendLockRef = useRef(false);
 
   const selectedProject = useMemo(
     () =>
@@ -477,11 +480,12 @@ export default function StoryCreatorPanel({
     if (
       !project ||
       !content ||
-      chatBusy
+      chatBusy ||
+      storySendLockRef.current
     ) {
       return;
     }
-
+    storySendLockRef.current = true;
     setChatBusy(true);
     setChatError("");
 
@@ -576,6 +580,7 @@ export default function StoryCreatorPanel({
           : "Story Director request failed.",
       );
     } finally {
+      storySendLockRef.current = false;
       setChatBusy(false);
     }
   }

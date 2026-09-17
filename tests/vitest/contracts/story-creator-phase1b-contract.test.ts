@@ -171,4 +171,41 @@ describe("Story Creator Phase 1B", () => {
     );
   });
 
+
+  it("accepts the Story Helper top-level message response shape", () => {
+    const source = read(
+      "app/app/components/StoryCreatorPanel.tsx",
+    );
+
+    expect(source).toContain(
+      'typeof data?.message === "string"',
+    );
+
+    expect(source).toContain(
+      "return data.message.trim()",
+    );
+  });
+
+  it("uses a synchronous lock to prevent duplicate Story Director sends", () => {
+    const source = read(
+      "app/app/components/StoryCreatorPanel.tsx",
+    );
+
+    expect(source).toContain(
+      "const storySendLockRef = useRef(false)",
+    );
+
+    expect(source).toContain(
+      "storySendLockRef.current = true",
+    );
+
+    expect(source).toContain(
+      "storySendLockRef.current = false",
+    );
+
+    expect(source).toContain(
+      "chatBusy ||\n      storySendLockRef.current",
+    );
+  });
+
 });
