@@ -429,6 +429,122 @@ function buildStoryHelperGuardEvidence(
   ].join("\n");
 }
 
+
+const STORY_HELPER_GENDERED_PRONOUN_PATTERN =
+  /\b(?:she|her|hers|herself|he|him|his|himself)\b/i;
+
+function userEvidenceHasGenderedPronoun(
+  messages: ChatMessage[],
+) {
+  return normalizeMessages(
+    messages,
+    STORY_HELPER_MESSAGE_LIMIT,
+  )
+    .filter((message) => message.role === "user")
+    .some((message) =>
+      STORY_HELPER_GENDERED_PRONOUN_PATTERN.test(
+        message.content,
+      ),
+    );
+}
+
+function strictCanonHasUnsupportedGenderedPronoun(
+  messages: ChatMessage[],
+  output: string,
+) {
+  if (userEvidenceHasGenderedPronoun(messages)) {
+    return false;
+  }
+
+  return STORY_HELPER_GENDERED_PRONOUN_PATTERN.test(
+    output,
+  );
+}
+
+async function repairStrictCanonPronouns(
+  messages: ChatMessage[],
+  draft: string,
+): Promise<string> {
+  const transcript = normalizeMessages(
+    messages,
+    STORY_HELPER_MESSAGE_LIMIT,
+  )
+    .map(
+      (message, index) =>
+        `[${message.role.toUpperCase()} ${index + 1}] ${message.content}`,
+    )
+    .join("\n\n");
+
+  const payload: Record<string, unknown> = {
+    model: AI_ASSISTANCE_MODEL,
+    stream: false,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You are a deterministic strict-canon correction editor.",
+          "The user evidence contains no established gendered pronouns.",
+          "Rewrite the supplied answer without using she, her, hers, herself, he, him, his, or himself.",
+          "Use the character's established name or neutral wording.",
+          "Do not add facts.",
+          "Do not infer gender, sex, age, role, nationality, ethnicity, relationships, powers, profession, history, or geography.",
+          "Do not list unestablished categories merely to say they are unknown.",
+          "Preserve only concrete facts supported by the user evidence.",
+          "Return only the corrected user-facing answer.",
+        ].join(" "),
+      },
+      {
+        role: "user",
+        content: [
+          "USER EVIDENCE:",
+          transcript || "(empty)",
+          "",
+          "ANSWER TO CORRECT:",
+          draft,
+          "",
+          "Return the corrected answer only.",
+        ].join("\n"),
+      },
+    ],
+    options: {
+      temperature: 0.0,
+      top_p: 0.5,
+      repeat_penalty: 1.05,
+      num_predict: AI_ASSISTANCE_GUARD_NUM_PREDICT,
+    },
+    think: false,
+  };
+
+  try {
+    const response = await qwenFetchForChatRequest(
+      "/api/chat",
+      payload,
+      AI_ASSISTANCE_GUARD_TIMEOUT_MS,
+      true,
+    );
+
+    const raw = await response.text();
+
+    let data: Record<string, unknown> | null = null;
+
+    try {
+      data = raw ? JSON.parse(raw) : null;
+    } catch {
+      data = null;
+    }
+
+    if (!response.ok) {
+      return "";
+    }
+
+    return cleanOutput(
+      readMessageContent(data),
+    );
+  } catch {
+    return "";
+  }
+}
+
 async function enforceStoryHelperCompliance(
   messages: ChatMessage[],
   images: string[],
@@ -504,7 +620,38 @@ async function enforceStoryHelperCompliance(
 
     if (response.ok) {
       const corrected = cleanOutput(readMessageContent(data));
+
       if (corrected) {
+        if (
+          mode === "strict" &&
+          strictCanonHasUnsupportedGenderedPronoun(
+            messages,
+            corrected,
+          )
+        ) {
+          const repaired =
+            await repairStrictCanonPronouns(
+              messages,
+              corrected,
+            );
+
+          if (
+            repaired &&
+            !strictCanonHasUnsupportedGenderedPronoun(
+              messages,
+              repaired,
+            )
+          ) {
+            return repaired;
+          }
+
+          return [
+            "I could not verify this response against the established canon",
+            "without introducing an unsupported identity detail.",
+            "Please retry the request.",
+          ].join(" ");
+        }
+
         return corrected;
       }
     }

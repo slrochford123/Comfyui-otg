@@ -147,4 +147,41 @@ describe("Story Helper canon recall regression contract", () => {
     );
   });
 
+
+  it("deterministically rejects unsupported gendered pronouns in strict canon output", () => {
+    expect(routeSource).toContain(
+      "STORY_HELPER_GENDERED_PRONOUN_PATTERN",
+    );
+
+    expect(routeSource).toContain(
+      "strictCanonHasUnsupportedGenderedPronoun",
+    );
+
+    expect(routeSource).toContain(
+      'message.role === "user"',
+    );
+
+    expect(routeSource).toContain(
+      'mode === "strict"',
+    );
+  });
+
+  it("repairs a strict response once before failing closed", () => {
+    expect(routeSource).toContain(
+      "repairStrictCanonPronouns",
+    );
+
+    expect(routeSource).toContain(
+      "The user evidence contains no established gendered pronouns.",
+    );
+
+    expect(routeSource).toContain(
+      "Do not list unestablished categories merely to say they are unknown.",
+    );
+
+    expect(routeSource).toContain(
+      "without introducing an unsupported identity detail.",
+    );
+  });
+
 });
