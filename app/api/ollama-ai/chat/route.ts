@@ -333,7 +333,7 @@ function detectStoryHelperGuardMode(
     /\b(?:do not|don't|dont|never)\s+(?:invent|add|introduce|assume|change|create|fabricate|make up)\b/i,
     /\bwithout\s+(?:inventing|adding|introducing|assuming|changing|creating|fabricating|making up)\b/i,
     /\bno\s+(?:new|additional|invented)\s+(?:details?|facts?|lore|characters?|locations?|powers?|abilities?|events?)\b/i,
-    /\b(?:use|include|continue with)\s+only\s+(?:what|the\s+(?:established|existing|confirmed|given|user-provided))\b/i,
+    /\b(?:use|using|include|including|continue with)\s+only\s+(?:what|the\s+(?:established|existing|confirmed|given|user-provided))\b/i,
     /\b(?:only use|use only)\s+(?:what|details|facts|information)\s+(?:i|the user)\b/i,
     /\b(?:visual context only|only visual context|not story canon|not canon|not story lore)\b/i,
   ];

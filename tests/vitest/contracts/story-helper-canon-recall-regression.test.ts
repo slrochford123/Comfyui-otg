@@ -184,4 +184,26 @@ describe("Story Helper canon recall regression contract", () => {
     );
   });
 
+
+  it('classifies "using only what I established" as strict canon', () => {
+    expect(routeSource).toContain(
+      "(?:use|using|include|including|continue with)",
+    );
+
+    const strictUsingOnlyPattern =
+      /\b(?:use|using|include|including|continue with)\s+only\s+(?:what|the\s+(?:established|existing|confirmed|given|user-provided))\b/i;
+
+    expect(
+      strictUsingOnlyPattern.test(
+        "Using only what I established, summarize Lena Hart.",
+      ),
+    ).toBe(true);
+
+    expect(
+      strictUsingOnlyPattern.test(
+        "Using only what I established summarize Lena Hart.",
+      ),
+    ).toBe(true);
+  });
+
 });
