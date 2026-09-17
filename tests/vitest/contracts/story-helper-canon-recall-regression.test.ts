@@ -89,4 +89,37 @@ describe("Story Helper canon recall regression contract", () => {
     );
   });
 
+
+  it("preserves the user's level of specificity when stating established canon", () => {
+    expect(routeSource).toContain(
+      "preserve the user's meaning and level of specificity",
+    );
+
+    expect(routeSource).toContain(
+      "'character' does not mean 'protagonist'",
+    );
+
+    expect(routeSource).toContain(
+      "'Boston' must remain 'Boston' rather than 'Boston, MA'",
+    );
+
+    expect(routeSource).toContain(
+      "A generic 'character' is not an established protagonist",
+    );
+
+    expect(routeSource).toContain(
+      "A location such as 'Boston' must remain at that specificity inside canon recall.",
+    );
+  });
+
+  it("keeps inferred specificity available only as reasoning or suggestions", () => {
+    expect(routeSource).toContain(
+      "clearly labeled reasoning or suggestions",
+    );
+
+    expect(routeSource).toContain(
+      "Such interpretations may appear only as clearly labeled reasoning or suggestions unless the user adopts them.",
+    );
+  });
+
 });
