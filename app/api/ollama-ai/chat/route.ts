@@ -92,6 +92,7 @@ function buildSystemMessage(
         "Do not silently reclassify a user's character or story element into a more specific narrative role. For example, 'character' does not mean 'protagonist', 'antagonist', 'hero', 'villain', 'parent', 'leader', or any other role unless the user established that role.",
         "Do not silently expand a user's location into a more specific geographic identity. For example, 'Boston' must remain 'Boston' rather than 'Boston, MA', and a city must not gain a state, province, country, neighborhood, district, or region unless the user established it.",
         "You may discuss plausible classifications, implications, or geographic interpretations as clearly labeled reasoning or suggestions, but never present them as established canon unless the user adopts them.",
+        "Do not infer a character's sex, gender, pronouns, age, nationality, ethnicity, title, family role, or similar identity attribute from a name, appearance, stereotype, or convention. If the user has not established pronouns, avoid gendered pronouns when stating canon and refer to the character by name or use neutral wording.",
         "Do not silently give unnamed characters names. Until the user names them, refer to them descriptively, such as 'the bunny' or 'the wolf doctor'.",
         "Do not invent new powers, colors, relationships, personality traits, history, possessions, locations, or signature characteristics and then present them as if the user already established them.",
         "You may propose new creative details when useful, but clearly present them as optional suggestions rather than existing canon.",
@@ -389,6 +390,7 @@ function buildStoryHelperGuardEvidence(
           "Remove every unsupported new name, location, character, object, action, ability, power, color, costume detail, physical trait, relationship, motive, backstory, possession, rule, event, or atmospheric fact.",
           "Do not replace a removed invention with a different invention.",
           "Leave unspecified details unspecified.",
+          "Do not infer sex, gender, pronouns, age, nationality, ethnicity, titles, family roles, or other identity attributes from a character's name or from convention. If pronouns were not established by the user, avoid gendered pronouns in strict canon output.",
           "Do not include optional new story ideas unless the user's latest request explicitly asks for suggestions while also preserving strict canon.",
         ].join(" ")
       : [
@@ -397,6 +399,7 @@ function buildStoryHelperGuardEvidence(
           "New creative material is allowed only as proposed material, not as a claim about what the user previously established.",
           "Any sentence or section that summarizes, restates, lists, identifies, or describes established canon must contain only facts supported by the user's evidence.",
           "Preserve the user's original level of specificity inside canon statements. Do not narrow, expand, classify, relabel, geographically resolve, or otherwise make an established fact more specific than the user's evidence.",
+          "Inside canon statements, do not infer gendered pronouns or other identity attributes from a character's name. If the user did not establish pronouns, use the character's name or neutral wording instead.",
           "A generic 'character' is not an established protagonist, antagonist, hero, villain, lead, parent, leader, or other narrative role unless the user explicitly established or adopted that role.",
           "A location such as 'Boston' must remain at that specificity inside canon recall. Do not add a state, province, country, neighborhood, district, jurisdiction, or other geographic qualifier unless the user established it.",
           "Do not decorate canon statements with invented adjectives, motives, implications, causes, history, atmosphere, personality traits, or backstory.",
@@ -441,6 +444,7 @@ async function enforceStoryHelperCompliance(
     "Never promote an unaccepted assistant suggestion into canon.",
     "When stating established canon, preserve the user's exact level of specificity. Do not infer a more specific narrative role, classification, geographic identity, relationship, or other qualifier and present it as established.",
     "For example, a user-established 'character' is not automatically a protagonist, and user-established 'Boston' is not automatically 'Boston, MA'. Such interpretations may appear only as clearly labeled reasoning or suggestions unless the user adopts them.",
+    "Do not infer sex, gender, pronouns, age, nationality, ethnicity, titles, family roles, or other identity attributes from a person's or character's name. If the user has not established pronouns, remove unsupported gendered pronouns from canon statements and use the name or neutral wording.",
     "An attached image may establish what is visibly present in the image, but visible image details are not automatically story lore or canon.",
     "If the user says an image is visual context only, keep image-derived design cues separate from story canon.",
     "Do not infer hidden ownership, motives, powers, organizations, relationships, technology, history, or offscreen events from an image.",

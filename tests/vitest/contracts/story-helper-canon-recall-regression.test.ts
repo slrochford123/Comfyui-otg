@@ -122,4 +122,29 @@ describe("Story Helper canon recall regression contract", () => {
     );
   });
 
+
+  it("does not infer pronouns or identity attributes from a character name", () => {
+    expect(routeSource).toContain(
+      "Do not infer a character's sex, gender, pronouns, age, nationality, ethnicity, title, family role",
+    );
+
+    expect(routeSource).toContain(
+      "If the user has not established pronouns, avoid gendered pronouns",
+    );
+
+    expect(routeSource).toContain(
+      "If pronouns were not established by the user, avoid gendered pronouns in strict canon output.",
+    );
+  });
+
+  it("uses neutral wording when pronouns are unresolved", () => {
+    expect(routeSource).toContain(
+      "use the character's name or neutral wording instead",
+    );
+
+    expect(routeSource).toContain(
+      "remove unsupported gendered pronouns from canon statements",
+    );
+  });
+
 });
