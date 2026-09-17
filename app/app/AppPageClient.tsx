@@ -1,5 +1,7 @@
 "use client";
 
+import StoryCreatorPanel from "./components/StoryCreatorPanel";
+
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -336,7 +338,7 @@ const APP_TAB_LABELS: Record<SpinTabId, string> = {
   gethelp: "AI Assistance",
   generate: "Generate",
   h3: "H3",
-  machine: "Machine",
+  machine: "Story Creator",
   storyboard: "Production",
   characters: "Characters",
   gallery: "Gallery",
@@ -7298,16 +7300,7 @@ async function handleAskAi() {
         ) : null}
 
         {tab === "machine" ? (
-          <div
-            data-otg="machine-placeholder"
-            className="rounded-[28px] border border-white/10 bg-black/45 p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm"
-          >
-            <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-200/70">Machine</p>
-            <h1 className="mt-2 text-4xl font-black tracking-tight text-white">The Machine</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-white/62">
-              This workspace is reserved for the upcoming conversational project-building workflow.
-            </p>
-          </div>
+          <StoryCreatorPanel ownerKey={authenticatedOwnerKey} />
         ) : null}
         {tab === "storyboard" ? <ProductionV2Panel /> : null}
         {tab === "h3" ? <H3Panel /> : null}
