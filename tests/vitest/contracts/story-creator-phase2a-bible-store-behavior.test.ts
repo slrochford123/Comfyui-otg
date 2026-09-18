@@ -2,6 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import Database from "better-sqlite3";
+
 import {
   afterAll,
   beforeAll,
@@ -196,6 +198,22 @@ describe(
                 assistantMessage.id,
             }),
           "STORY_BIBLE_ASSISTANT_CANON_FORBIDDEN",
+        );
+
+        expectCode(
+          () =>
+            store.addStoryBibleFact({
+              ownerKey: ownerA,
+              projectId: projectA.id,
+              subjectEntityId: paul.id,
+              predicate:
+                "system_attempted_canon",
+              valueText:
+                "system must not silently become canon",
+              canonStatus: "canon",
+              sourceRole: "system",
+            }),
+          "STORY_BIBLE_SYSTEM_CANON_FORBIDDEN",
         );
 
         const unknownFact =
@@ -398,6 +416,44 @@ describe(
         expect(
           fs.existsSync(tempDb),
         ).toBe(true);
+
+
+        const raw = new Database(tempDb);
+
+        try {
+          expect(() =>
+            raw
+              .prepare(`
+                INSERT INTO story_facts (
+                  id,
+                  project_id,
+                  owner_key,
+                  predicate,
+                  value_text,
+                  canon_status,
+                  source_role,
+                  created_at,
+                  updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `)
+              .run(
+                "direct-system-canon",
+                projectA.id,
+                ownerA,
+                "direct_sql_system_canon",
+                "must be blocked",
+                "canon",
+                "system",
+                Date.now(),
+                Date.now(),
+              ),
+          ).toThrow(
+            /STORY_BIBLE_NON_USER_CANON_FORBIDDEN/,
+          );
+        } finally {
+          raw.close();
+        }
       },
     );
   },

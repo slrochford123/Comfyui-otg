@@ -105,6 +105,18 @@ describe(
         expect(store).toContain(
           "cannot become canon without user adoption",
         );
+
+        expect(store).toContain(
+          "STORY_BIBLE_SYSTEM_CANON_FORBIDDEN",
+        );
+
+        expect(store).toContain(
+          "trg_story_facts_non_user_canon",
+        );
+
+        expect(store).toContain(
+          "NEW.source_role <> 'user'",
+        );
       },
     );
 

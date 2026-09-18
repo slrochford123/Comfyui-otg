@@ -218,6 +218,18 @@ function db() {
 
     CREATE INDEX IF NOT EXISTS idx_story_facts_supersedes
       ON story_facts(supersedes_fact_id);
+
+    CREATE TRIGGER IF NOT EXISTS trg_story_facts_non_user_canon
+      BEFORE INSERT ON story_facts
+      FOR EACH ROW
+      WHEN NEW.canon_status = 'canon'
+        AND NEW.source_role <> 'user'
+      BEGIN
+        SELECT RAISE(
+          ABORT,
+          'STORY_BIBLE_NON_USER_CANON_FORBIDDEN'
+        );
+      END;
   `);
 
   dbInstance = database;
@@ -1105,6 +1117,16 @@ export function addStoryBibleFact(input: {
     throw storyBibleError(
       "STORY_BIBLE_ASSISTANT_CANON_FORBIDDEN",
       "Assistant-authored Story Bible facts cannot become canon without user adoption.",
+    );
+  }
+
+  if (
+    sourceRole === "system" &&
+    canonStatus === "canon"
+  ) {
+    throw storyBibleError(
+      "STORY_BIBLE_SYSTEM_CANON_FORBIDDEN",
+      "System-authored Story Bible facts cannot become canon without explicit user adoption.",
     );
   }
 
