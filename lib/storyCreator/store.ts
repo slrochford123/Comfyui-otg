@@ -28,6 +28,44 @@ export type StoryCreatorMessage = {
   createdAt: number;
 };
 
+export type StoryBibleFactStatus =
+  | "canon"
+  | "suggestion"
+  | "unknown";
+
+export type StoryBibleSourceRole =
+  | "user"
+  | "assistant"
+  | "system";
+
+export type StoryBibleEntity = {
+  id: string;
+  projectId: string;
+  ownerKey: string;
+  entityType: string;
+  name: string;
+  sourceRole: StoryBibleSourceRole;
+  sourceMessageId: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type StoryBibleFact = {
+  id: string;
+  projectId: string;
+  ownerKey: string;
+  subjectEntityId: string | null;
+  predicate: string;
+  valueText: string;
+  objectEntityId: string | null;
+  canonStatus: StoryBibleFactStatus;
+  sourceRole: StoryBibleSourceRole;
+  sourceMessageId: string | null;
+  supersedesFactId: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 let dbInstance: Database.Database | null = null;
 
 function storyCreatorRoot() {
@@ -86,6 +124,100 @@ function db() {
 
     CREATE INDEX IF NOT EXISTS idx_story_messages_project_created
       ON story_messages(project_id, created_at ASC);
+
+    CREATE TABLE IF NOT EXISTS story_entities (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      owner_key TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      source_role TEXT NOT NULL
+        CHECK(source_role IN ('user', 'assistant', 'system')),
+      source_message_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (project_id)
+        REFERENCES story_projects(id)
+        ON DELETE CASCADE,
+      FOREIGN KEY (source_message_id)
+        REFERENCES story_messages(id)
+        ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_story_entities_project_name
+      ON story_entities(
+        project_id,
+        name COLLATE NOCASE,
+        created_at ASC
+      );
+
+    CREATE TABLE IF NOT EXISTS story_facts (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      owner_key TEXT NOT NULL,
+      subject_entity_id TEXT,
+      predicate TEXT NOT NULL,
+      value_text TEXT NOT NULL DEFAULT '',
+      object_entity_id TEXT,
+      canon_status TEXT NOT NULL
+        CHECK(canon_status IN ('canon', 'suggestion', 'unknown')),
+      source_role TEXT NOT NULL
+        CHECK(source_role IN ('user', 'assistant', 'system')),
+      source_message_id TEXT,
+      supersedes_fact_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+
+      CHECK(
+        canon_status = 'unknown'
+        OR length(trim(value_text)) > 0
+        OR object_entity_id IS NOT NULL
+      ),
+
+      CHECK(
+        NOT (
+          source_role = 'assistant'
+          AND canon_status = 'canon'
+        )
+      ),
+
+      FOREIGN KEY (project_id)
+        REFERENCES story_projects(id)
+        ON DELETE CASCADE,
+
+      FOREIGN KEY (subject_entity_id)
+        REFERENCES story_entities(id)
+        ON DELETE CASCADE,
+
+      FOREIGN KEY (object_entity_id)
+        REFERENCES story_entities(id)
+        ON DELETE SET NULL,
+
+      FOREIGN KEY (source_message_id)
+        REFERENCES story_messages(id)
+        ON DELETE SET NULL,
+
+      FOREIGN KEY (supersedes_fact_id)
+        REFERENCES story_facts(id)
+        ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_story_facts_project_status
+      ON story_facts(
+        project_id,
+        canon_status,
+        created_at ASC
+      );
+
+    CREATE INDEX IF NOT EXISTS idx_story_facts_subject_predicate
+      ON story_facts(
+        subject_entity_id,
+        predicate,
+        created_at ASC
+      );
+
+    CREATE INDEX IF NOT EXISTS idx_story_facts_supersedes
+      ON story_facts(supersedes_fact_id);
   `);
 
   dbInstance = database;
@@ -149,6 +281,98 @@ function cleanMessageRole(value: unknown): StoryCreatorMessageRole {
   throw new Error("Story message role must be user or assistant.");
 }
 
+function cleanStoryBibleSourceRole(
+  value: unknown,
+): StoryBibleSourceRole {
+  if (
+    value === "user" ||
+    value === "assistant" ||
+    value === "system"
+  ) {
+    return value;
+  }
+
+  throw new Error(
+    "Story Bible source role must be user, assistant, or system.",
+  );
+}
+
+function cleanStoryBibleFactStatus(
+  value: unknown,
+): StoryBibleFactStatus {
+  if (
+    value === "canon" ||
+    value === "suggestion" ||
+    value === "unknown"
+  ) {
+    return value;
+  }
+
+  throw new Error(
+    "Story Bible fact status must be canon, suggestion, or unknown.",
+  );
+}
+
+function cleanStoryBibleEntityType(value: unknown) {
+  const entityType = String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  if (!entityType) {
+    throw new Error("Story Bible entity type is required.");
+  }
+
+  return entityType.slice(0, 80);
+}
+
+function cleanStoryBibleEntityName(value: unknown) {
+  const name = String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  if (!name) {
+    throw new Error("Story Bible entity name is required.");
+  }
+
+  return name.slice(0, 160);
+}
+
+function cleanStoryBiblePredicate(value: unknown) {
+  const predicate = String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  if (!predicate) {
+    throw new Error("Story Bible fact predicate is required.");
+  }
+
+  return predicate.slice(0, 160);
+}
+
+function cleanStoryBibleFactValue(value: unknown) {
+  return String(value || "")
+    .replace(/\r\n/g, "\n")
+    .trim()
+    .slice(0, 100_000);
+}
+
+function cleanOptionalStoryBibleId(value: unknown) {
+  const id = String(value || "").trim();
+  return id ? id.slice(0, 240) : null;
+}
+
+function storyBibleError(
+  code: string,
+  message: string,
+) {
+  const error = new Error(message) as Error & {
+    code?: string;
+  };
+
+  error.code = code;
+  return error;
+}
+
 function storyProjectNotFoundError() {
   const error = new Error("Story project not found.") as Error & {
     code?: string;
@@ -179,6 +403,58 @@ function rowToMessage(row: any): StoryCreatorMessage {
     role: row.role === "assistant" ? "assistant" : "user",
     content: String(row.content || ""),
     createdAt: Number(row.created_at),
+  };
+}
+
+function rowToStoryBibleEntity(
+  row: any,
+): StoryBibleEntity {
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id),
+    ownerKey: String(row.owner_key),
+    entityType: String(row.entity_type || ""),
+    name: String(row.name || ""),
+    sourceRole: cleanStoryBibleSourceRole(
+      row.source_role,
+    ),
+    sourceMessageId: row.source_message_id
+      ? String(row.source_message_id)
+      : null,
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+function rowToStoryBibleFact(
+  row: any,
+): StoryBibleFact {
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id),
+    ownerKey: String(row.owner_key),
+    subjectEntityId: row.subject_entity_id
+      ? String(row.subject_entity_id)
+      : null,
+    predicate: String(row.predicate || ""),
+    valueText: String(row.value_text || ""),
+    objectEntityId: row.object_entity_id
+      ? String(row.object_entity_id)
+      : null,
+    canonStatus: cleanStoryBibleFactStatus(
+      row.canon_status,
+    ),
+    sourceRole: cleanStoryBibleSourceRole(
+      row.source_role,
+    ),
+    sourceMessageId: row.source_message_id
+      ? String(row.source_message_id)
+      : null,
+    supersedesFactId: row.supersedes_fact_id
+      ? String(row.supersedes_fact_id)
+      : null,
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
   };
 }
 
@@ -482,4 +758,505 @@ export function addStoryCreatorMessage(input: {
   write();
 
   return message;
+}
+
+function assertStoryBibleSourceMessage(input: {
+  ownerKey: string;
+  projectId: string;
+  sourceRole: StoryBibleSourceRole;
+  sourceMessageId: string | null;
+}) {
+  if (!input.sourceMessageId) {
+    return;
+  }
+
+  const row = db()
+    .prepare(`
+      SELECT role
+      FROM story_messages
+      WHERE id = ?
+        AND project_id = ?
+        AND owner_key = ?
+      LIMIT 1
+    `)
+    .get(
+      input.sourceMessageId,
+      input.projectId,
+      input.ownerKey,
+    ) as { role?: string } | undefined;
+
+  if (!row) {
+    throw storyBibleError(
+      "STORY_BIBLE_SOURCE_MESSAGE_NOT_FOUND",
+      "Story Bible source message was not found in this Story.",
+    );
+  }
+
+  if (
+    input.sourceRole !== "system" &&
+    String(row.role || "") !== input.sourceRole
+  ) {
+    throw storyBibleError(
+      "STORY_BIBLE_SOURCE_ROLE_MISMATCH",
+      "Story Bible source role does not match its source message.",
+    );
+  }
+}
+
+function assertOwnedStoryBibleEntity(input: {
+  ownerKey: string;
+  projectId: string;
+  entityId: string;
+}) {
+  const row = db()
+    .prepare(`
+      SELECT *
+      FROM story_entities
+      WHERE id = ?
+        AND project_id = ?
+        AND owner_key = ?
+      LIMIT 1
+    `)
+    .get(
+      input.entityId,
+      input.projectId,
+      input.ownerKey,
+    ) as any;
+
+  if (!row) {
+    throw storyBibleError(
+      "STORY_BIBLE_ENTITY_NOT_FOUND",
+      "Story Bible entity was not found in this Story.",
+    );
+  }
+
+  return rowToStoryBibleEntity(row);
+}
+
+function assertOwnedStoryBibleFact(input: {
+  ownerKey: string;
+  projectId: string;
+  factId: string;
+}) {
+  const row = db()
+    .prepare(`
+      SELECT *
+      FROM story_facts
+      WHERE id = ?
+        AND project_id = ?
+        AND owner_key = ?
+      LIMIT 1
+    `)
+    .get(
+      input.factId,
+      input.projectId,
+      input.ownerKey,
+    ) as any;
+
+  if (!row) {
+    throw storyBibleError(
+      "STORY_BIBLE_FACT_NOT_FOUND",
+      "Story Bible fact was not found in this Story.",
+    );
+  }
+
+  return rowToStoryBibleFact(row);
+}
+
+export function listStoryBibleEntities(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+}) {
+  const { ownerKey, projectId } =
+    assertOwnedActiveProject(
+      input.ownerKey,
+      input.projectId,
+    );
+
+  const rows = db()
+    .prepare(`
+      SELECT
+        rowid AS entity_rowid,
+        *
+      FROM story_entities
+      WHERE project_id = ?
+        AND owner_key = ?
+      ORDER BY
+        created_at ASC,
+        entity_rowid ASC
+    `)
+    .all(
+      projectId,
+      ownerKey,
+    );
+
+  return rows.map(rowToStoryBibleEntity);
+}
+
+export function createStoryBibleEntity(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  entityType: unknown;
+  name: unknown;
+  sourceRole: unknown;
+  sourceMessageId?: unknown;
+}) {
+  const { ownerKey, projectId } =
+    assertOwnedActiveProject(
+      input.ownerKey,
+      input.projectId,
+    );
+
+  const entityType =
+    cleanStoryBibleEntityType(input.entityType);
+
+  const name =
+    cleanStoryBibleEntityName(input.name);
+
+  const sourceRole =
+    cleanStoryBibleSourceRole(input.sourceRole);
+
+  const sourceMessageId =
+    cleanOptionalStoryBibleId(
+      input.sourceMessageId,
+    );
+
+  assertStoryBibleSourceMessage({
+    ownerKey,
+    projectId,
+    sourceRole,
+    sourceMessageId,
+  });
+
+  const now = Date.now();
+
+  const entity: StoryBibleEntity = {
+    id: randomUUID(),
+    projectId,
+    ownerKey,
+    entityType,
+    name,
+    sourceRole,
+    sourceMessageId,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const write = db().transaction(() => {
+    db()
+      .prepare(`
+        INSERT INTO story_entities (
+          id,
+          project_id,
+          owner_key,
+          entity_type,
+          name,
+          source_role,
+          source_message_id,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        entity.id,
+        entity.projectId,
+        entity.ownerKey,
+        entity.entityType,
+        entity.name,
+        entity.sourceRole,
+        entity.sourceMessageId,
+        entity.createdAt,
+        entity.updatedAt,
+      );
+
+    db()
+      .prepare(`
+        UPDATE story_projects
+        SET updated_at = ?
+        WHERE id = ?
+          AND owner_key = ?
+          AND status = 'active'
+      `)
+      .run(
+        now,
+        projectId,
+        ownerKey,
+      );
+  });
+
+  write();
+
+  return entity;
+}
+
+export function listStoryBibleFacts(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  includeSuperseded?: boolean;
+}) {
+  const { ownerKey, projectId } =
+    assertOwnedActiveProject(
+      input.ownerKey,
+      input.projectId,
+    );
+
+  const sql = input.includeSuperseded
+    ? `
+      SELECT
+        f.rowid AS fact_rowid,
+        f.*
+      FROM story_facts AS f
+      WHERE f.project_id = ?
+        AND f.owner_key = ?
+      ORDER BY
+        f.created_at ASC,
+        fact_rowid ASC
+    `
+    : `
+      SELECT
+        f.rowid AS fact_rowid,
+        f.*
+      FROM story_facts AS f
+      WHERE f.project_id = ?
+        AND f.owner_key = ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM story_facts AS newer
+          WHERE newer.supersedes_fact_id = f.id
+            AND newer.project_id = f.project_id
+            AND newer.owner_key = f.owner_key
+        )
+      ORDER BY
+        f.created_at ASC,
+        fact_rowid ASC
+    `;
+
+  const rows = db()
+    .prepare(sql)
+    .all(
+      projectId,
+      ownerKey,
+    );
+
+  return rows.map(rowToStoryBibleFact);
+}
+
+export function addStoryBibleFact(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  subjectEntityId?: unknown;
+  predicate: unknown;
+  valueText?: unknown;
+  objectEntityId?: unknown;
+  canonStatus: unknown;
+  sourceRole: unknown;
+  sourceMessageId?: unknown;
+  supersedesFactId?: unknown;
+}) {
+  const { ownerKey, projectId } =
+    assertOwnedActiveProject(
+      input.ownerKey,
+      input.projectId,
+    );
+
+  const subjectEntityId =
+    cleanOptionalStoryBibleId(
+      input.subjectEntityId,
+    );
+
+  const objectEntityId =
+    cleanOptionalStoryBibleId(
+      input.objectEntityId,
+    );
+
+  const supersedesFactId =
+    cleanOptionalStoryBibleId(
+      input.supersedesFactId,
+    );
+
+  const predicate =
+    cleanStoryBiblePredicate(input.predicate);
+
+  const valueText =
+    cleanStoryBibleFactValue(
+      input.valueText,
+    );
+
+  const canonStatus =
+    cleanStoryBibleFactStatus(
+      input.canonStatus,
+    );
+
+  const sourceRole =
+    cleanStoryBibleSourceRole(
+      input.sourceRole,
+    );
+
+  const sourceMessageId =
+    cleanOptionalStoryBibleId(
+      input.sourceMessageId,
+    );
+
+  if (
+    sourceRole === "assistant" &&
+    canonStatus === "canon"
+  ) {
+    throw storyBibleError(
+      "STORY_BIBLE_ASSISTANT_CANON_FORBIDDEN",
+      "Assistant-authored Story Bible facts cannot become canon without user adoption.",
+    );
+  }
+
+  if (
+    canonStatus !== "unknown" &&
+    !valueText &&
+    !objectEntityId
+  ) {
+    throw storyBibleError(
+      "STORY_BIBLE_FACT_VALUE_REQUIRED",
+      "Canon and suggestion facts require a value or object entity.",
+    );
+  }
+
+  if (subjectEntityId) {
+    assertOwnedStoryBibleEntity({
+      ownerKey,
+      projectId,
+      entityId: subjectEntityId,
+    });
+  }
+
+  if (objectEntityId) {
+    assertOwnedStoryBibleEntity({
+      ownerKey,
+      projectId,
+      entityId: objectEntityId,
+    });
+  }
+
+  assertStoryBibleSourceMessage({
+    ownerKey,
+    projectId,
+    sourceRole,
+    sourceMessageId,
+  });
+
+  if (supersedesFactId) {
+    const previous =
+      assertOwnedStoryBibleFact({
+        ownerKey,
+        projectId,
+        factId: supersedesFactId,
+      });
+
+    const alreadySuperseded = db()
+      .prepare(`
+        SELECT id
+        FROM story_facts
+        WHERE supersedes_fact_id = ?
+          AND project_id = ?
+          AND owner_key = ?
+        LIMIT 1
+      `)
+      .get(
+        supersedesFactId,
+        projectId,
+        ownerKey,
+      );
+
+    if (alreadySuperseded) {
+      throw storyBibleError(
+        "STORY_BIBLE_FACT_ALREADY_SUPERSEDED",
+        "Story Bible fact already has a newer revision.",
+      );
+    }
+
+    if (
+      previous.subjectEntityId !==
+        subjectEntityId ||
+      previous.predicate !== predicate
+    ) {
+      throw storyBibleError(
+        "STORY_BIBLE_REVISION_SCOPE_MISMATCH",
+        "A Story Bible revision must keep the same subject and predicate.",
+      );
+    }
+  }
+
+  const now = Date.now();
+
+  const fact: StoryBibleFact = {
+    id: randomUUID(),
+    projectId,
+    ownerKey,
+    subjectEntityId,
+    predicate,
+    valueText,
+    objectEntityId,
+    canonStatus,
+    sourceRole,
+    sourceMessageId,
+    supersedesFactId,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const write = db().transaction(() => {
+    db()
+      .prepare(`
+        INSERT INTO story_facts (
+          id,
+          project_id,
+          owner_key,
+          subject_entity_id,
+          predicate,
+          value_text,
+          object_entity_id,
+          canon_status,
+          source_role,
+          source_message_id,
+          supersedes_fact_id,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?
+        )
+      `)
+      .run(
+        fact.id,
+        fact.projectId,
+        fact.ownerKey,
+        fact.subjectEntityId,
+        fact.predicate,
+        fact.valueText,
+        fact.objectEntityId,
+        fact.canonStatus,
+        fact.sourceRole,
+        fact.sourceMessageId,
+        fact.supersedesFactId,
+        fact.createdAt,
+        fact.updatedAt,
+      );
+
+    db()
+      .prepare(`
+        UPDATE story_projects
+        SET updated_at = ?
+        WHERE id = ?
+          AND owner_key = ?
+          AND status = 'active'
+      `)
+      .run(
+        now,
+        projectId,
+        ownerKey,
+      );
+  });
+
+  write();
+
+  return fact;
 }
