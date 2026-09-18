@@ -206,4 +206,35 @@ describe("Story Helper canon recall regression contract", () => {
     ).toBe(true);
   });
 
+
+  it("guards unsupported pronouns in optional mode", () => {
+    expect(routeSource).toContain(
+      "async function repairOptionalStoryHelperPronouns(",
+    );
+
+    expect(routeSource).toContain(
+      "Preserve the draft's creative suggestions, questions, reasoning, tone, and structure.",
+    );
+
+    expect(routeSource).toContain(
+      "Keep proposals clearly labeled as suggestions or possibilities and never promote them to established canon.",
+    );
+
+    expect(routeSource).not.toMatch(
+      /mode === "strict"\s*&&\s*strictCanonHasUnsupportedGenderedPronoun\(/,
+    );
+
+    expect(routeSource).toMatch(
+      /mode === "strict"\s*\?\s*await repairStrictCanonPronouns\([\s\S]*?:\s*await repairOptionalStoryHelperPronouns\(/,
+    );
+
+    expect(routeSource).toMatch(
+      /strictCanonHasUnsupportedGenderedPronoun\(\s*messages,\s*draft,\s*\)/,
+    );
+
+    expect(routeSource).toContain(
+      "I could not safely phrase this response without introducing",
+    );
+  });
+
 });

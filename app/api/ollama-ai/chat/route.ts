@@ -545,6 +545,90 @@ async function repairStrictCanonPronouns(
   }
 }
 
+
+async function repairOptionalStoryHelperPronouns(
+  messages: ChatMessage[],
+  draft: string,
+): Promise<string> {
+  const transcript = normalizeMessages(
+    messages,
+    STORY_HELPER_MESSAGE_LIMIT,
+  )
+    .map(
+      (message, index) =>
+        `[${message.role.toUpperCase()} ${index + 1}] ${message.content}`,
+    )
+    .join("\n\n");
+
+  const payload: Record<string, unknown> = {
+    model: AI_ASSISTANCE_MODEL,
+    stream: false,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You are a deterministic Story Helper wording editor.",
+          "The user evidence contains no established gendered pronouns.",
+          "Rewrite the supplied answer only as needed to remove she, her, hers, herself, he, him, his, or himself.",
+          "Use the character's established name, they/them, or neutral wording.",
+          "Preserve the draft's creative suggestions, questions, reasoning, tone, and structure.",
+          "Keep proposals clearly labeled as suggestions or possibilities and never promote them to established canon.",
+          "Do not add facts or infer gender, sex, age, role, nationality, ethnicity, relationships, powers, profession, history, or geography.",
+          "Return only the corrected user-facing answer.",
+        ].join(" "),
+      },
+      {
+        role: "user",
+        content: [
+          "USER EVIDENCE:",
+          transcript || "(empty)",
+          "",
+          "ANSWER TO CORRECT:",
+          draft,
+          "",
+          "Return the corrected answer only.",
+        ].join("\n"),
+      },
+    ],
+    options: {
+      temperature: 0.0,
+      top_p: 0.5,
+      repeat_penalty: 1.05,
+      num_predict: AI_ASSISTANCE_GUARD_NUM_PREDICT,
+    },
+    think: false,
+  };
+
+  try {
+    const response = await qwenFetchForChatRequest(
+      "/api/chat",
+      payload,
+      AI_ASSISTANCE_GUARD_TIMEOUT_MS,
+      true,
+    );
+
+    const raw = await response.text();
+
+    let data: Record<string, unknown> | null = null;
+
+    try {
+      data = raw ? JSON.parse(raw) : null;
+    } catch {
+      data = null;
+    }
+
+    if (!response.ok) {
+      return "";
+    }
+
+    return cleanOutput(
+      readMessageContent(data),
+    );
+  } catch {
+    return "";
+  }
+}
+
 async function enforceStoryHelperCompliance(
   messages: ChatMessage[],
   images: string[],
@@ -623,17 +707,21 @@ async function enforceStoryHelperCompliance(
 
       if (corrected) {
         if (
-          mode === "strict" &&
           strictCanonHasUnsupportedGenderedPronoun(
             messages,
             corrected,
           )
         ) {
           const repaired =
-            await repairStrictCanonPronouns(
-              messages,
-              corrected,
-            );
+            mode === "strict"
+              ? await repairStrictCanonPronouns(
+                  messages,
+                  corrected,
+                )
+              : await repairOptionalStoryHelperPronouns(
+                  messages,
+                  corrected,
+                );
 
           if (
             repaired &&
@@ -665,6 +753,34 @@ async function enforceStoryHelperCompliance(
       "I could not verify this continuation against the established canon,",
       "so I will not add unverified story details.",
       "Please retry the request.",
+    ].join(" ");
+  }
+
+  if (
+    strictCanonHasUnsupportedGenderedPronoun(
+      messages,
+      draft,
+    )
+  ) {
+    const repaired =
+      await repairOptionalStoryHelperPronouns(
+        messages,
+        draft,
+      );
+
+    if (
+      repaired &&
+      !strictCanonHasUnsupportedGenderedPronoun(
+        messages,
+        repaired,
+      )
+    ) {
+      return repaired;
+    }
+
+    return [
+      "I could not safely phrase this response without introducing",
+      "an unsupported identity detail. Please retry the request.",
     ].join(" ");
   }
 
