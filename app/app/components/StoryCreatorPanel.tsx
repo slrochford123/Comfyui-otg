@@ -27,6 +27,37 @@ type StoryMessage = {
   createdAt: number;
 };
 
+type StoryBibleEntity = {
+  id: string;
+  projectId: string;
+  entityType: string;
+  name: string;
+  sourceRole: "user" | "assistant" | "system";
+  sourceMessageId: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type StoryBibleFactStatus =
+  | "canon"
+  | "suggestion"
+  | "unknown";
+
+type StoryBibleFact = {
+  id: string;
+  projectId: string;
+  subjectEntityId: string | null;
+  predicate: string;
+  valueText: string;
+  objectEntityId: string | null;
+  canonStatus: StoryBibleFactStatus;
+  sourceRole: "user" | "assistant" | "system";
+  sourceMessageId: string | null;
+  supersedesFactId: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 type Props = {
   ownerKey: string;
 };
@@ -98,6 +129,15 @@ export default function StoryCreatorPanel({
   const [chatError, setChatError] = useState("");
   const [draft, setDraft] = useState("");
 
+  const [storyBibleEntities, setStoryBibleEntities] =
+    useState<StoryBibleEntity[]>([]);
+  const [storyBibleFacts, setStoryBibleFacts] =
+    useState<StoryBibleFact[]>([]);
+  const [storyBibleLoading, setStoryBibleLoading] =
+    useState(false);
+  const [storyBibleError, setStoryBibleError] =
+    useState("");
+
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const storySendLockRef = useRef(false);
 
@@ -107,6 +147,32 @@ export default function StoryCreatorPanel({
         (project) => project.id === selectedProjectId,
       ) || null,
     [projects, selectedProjectId],
+  );
+
+  const storyBibleEntityNames = useMemo(
+    () =>
+      new Map(
+        storyBibleEntities.map((entity) => [
+          entity.id,
+          entity.name,
+        ]),
+      ),
+    [storyBibleEntities],
+  );
+
+  const storyBibleFactsByStatus = useMemo(
+    () => ({
+      canon: storyBibleFacts.filter(
+        (fact) => fact.canonStatus === "canon",
+      ),
+      suggestion: storyBibleFacts.filter(
+        (fact) => fact.canonStatus === "suggestion",
+      ),
+      unknown: storyBibleFacts.filter(
+        (fact) => fact.canonStatus === "unknown",
+      ),
+    }),
+    [storyBibleFacts],
   );
 
   const loadProjects = useCallback(async () => {
@@ -216,6 +282,67 @@ export default function StoryCreatorPanel({
     [],
   );
 
+  const loadStoryBible = useCallback(
+    async (projectId: string) => {
+      if (!projectId) {
+        setStoryBibleEntities([]);
+        setStoryBibleFacts([]);
+        setStoryBibleError("");
+        return;
+      }
+
+      setStoryBibleLoading(true);
+      setStoryBibleError("");
+
+      try {
+        const response = await fetch(
+          `/api/story-creator/bible?projectId=${encodeURIComponent(projectId)}`,
+          {
+            cache: "no-store",
+            credentials: "include",
+          },
+        );
+
+        const data = await response
+          .json()
+          .catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(
+            errorMessage(
+              data,
+              "Could not load Story Bible.",
+            ),
+          );
+        }
+
+        setStoryBibleEntities(
+          Array.isArray(data?.entities)
+            ? data.entities
+            : [],
+        );
+
+        setStoryBibleFacts(
+          Array.isArray(data?.facts)
+            ? data.facts
+            : [],
+        );
+      } catch (error) {
+        setStoryBibleEntities([]);
+        setStoryBibleFacts([]);
+
+        setStoryBibleError(
+          error instanceof Error
+            ? error.message
+            : "Could not load Story Bible.",
+        );
+      } finally {
+        setStoryBibleLoading(false);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     void loadProjects();
   }, [loadProjects]);
@@ -225,11 +352,21 @@ export default function StoryCreatorPanel({
       setStoryMessages([]);
       setChatError("");
       setDraft("");
+
+      setStoryBibleEntities([]);
+      setStoryBibleFacts([]);
+      setStoryBibleError("");
+
       return;
     }
 
     void loadStoryMessages(selectedProjectId);
-  }, [selectedProjectId, loadStoryMessages]);
+    void loadStoryBible(selectedProjectId);
+  }, [
+    selectedProjectId,
+    loadStoryMessages,
+    loadStoryBible,
+  ]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({
@@ -746,20 +883,184 @@ export default function StoryCreatorPanel({
 
           <div className="space-y-4">
             <div className="rounded-[24px] border border-white/10 bg-black/35 p-5">
-              <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-                Story Bible
-              </p>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
+                    Story Bible
+                  </p>
 
-              <h2 className="mt-2 text-xl font-black text-white">
-                Canon & Continuity
-              </h2>
+                  <h2 className="mt-2 text-xl font-black text-white">
+                    Canon & Continuity
+                  </h2>
+                </div>
+
+                <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-white/45">
+                  Read only
+                </span>
+              </div>
 
               <p className="mt-2 text-sm leading-6 text-white/60">
-                Structured characters, relationships,
-                locations, world rules, timeline,
-                unresolved questions, and canon status
-                arrive in Phase 2.
+                Phase 2 read view. Structured entities
+                and facts are loaded from this Story's
+                durable Story Bible. Story Director does
+                not write or promote canon here yet.
               </p>
+
+              {storyBibleError ? (
+                <div className="mt-4 rounded-[14px] border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs leading-5 text-red-100/80">
+                  {storyBibleError}
+                </div>
+              ) : null}
+
+              {storyBibleLoading ? (
+                <div className="mt-4 text-sm text-white/45">
+                  Loading Story Bible...
+                </div>
+              ) : (
+                <>
+                  <div className="mt-5">
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="text-xs font-black uppercase tracking-[0.16em] text-cyan-100/65">
+                        Entities
+                      </h3>
+
+                      <span className="text-[10px] text-white/35">
+                        {storyBibleEntities.length}
+                      </span>
+                    </div>
+
+                    {storyBibleEntities.length ? (
+                      <div className="mt-2 space-y-2">
+                        {storyBibleEntities.map((entity) => (
+                          <div
+                            key={entity.id}
+                            className="rounded-[12px] border border-white/10 bg-white/[0.035] px-3 py-2"
+                          >
+                            <div className="text-sm font-black text-white/82">
+                              {entity.name}
+                            </div>
+
+                            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[10px] uppercase tracking-[0.1em] text-white/35">
+                              <span>{entity.entityType}</span>
+                              <span>
+                                source: {entity.sourceRole}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-2 rounded-[12px] border border-dashed border-white/10 px-3 py-3 text-xs leading-5 text-white/38">
+                        No Story Bible entities yet.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-5 border-t border-white/10 pt-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="text-xs font-black uppercase tracking-[0.16em] text-cyan-100/65">
+                        Facts
+                      </h3>
+
+                      <span className="text-[10px] text-white/35">
+                        {storyBibleFacts.length}
+                      </span>
+                    </div>
+
+                    {(
+                      [
+                        [
+                          "Canon",
+                          "canon",
+                          storyBibleFactsByStatus.canon,
+                        ],
+                        [
+                          "Suggestions",
+                          "suggestion",
+                          storyBibleFactsByStatus.suggestion,
+                        ],
+                        [
+                          "Unknown",
+                          "unknown",
+                          storyBibleFactsByStatus.unknown,
+                        ],
+                      ] as const
+                    ).map(
+                      ([
+                        label,
+                        status,
+                        facts,
+                      ]) => (
+                        <div
+                          key={status}
+                          className="mt-4"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[11px] font-black uppercase tracking-[0.14em] text-white/52">
+                              {label}
+                            </div>
+
+                            <div className="text-[10px] text-white/30">
+                              {facts.length}
+                            </div>
+                          </div>
+
+                          {facts.length ? (
+                            <div className="mt-2 space-y-2">
+                              {facts.map((fact) => {
+                                const subject =
+                                  fact.subjectEntityId
+                                    ? storyBibleEntityNames.get(
+                                        fact.subjectEntityId,
+                                      ) ||
+                                      "Unknown entity"
+                                    : "Story";
+
+                                const object =
+                                  fact.objectEntityId
+                                    ? storyBibleEntityNames.get(
+                                        fact.objectEntityId,
+                                      ) ||
+                                      "Unknown entity"
+                                    : "";
+
+                                return (
+                                  <div
+                                    key={fact.id}
+                                    className="rounded-[12px] border border-white/10 bg-white/[0.03] px-3 py-2"
+                                  >
+                                    <div className="text-xs leading-5 text-white/72">
+                                      <span className="font-black text-white/88">
+                                        {subject}
+                                      </span>
+                                      {" · "}
+                                      {fact.predicate}
+
+                                      {object
+                                        ? ` → ${object}`
+                                        : fact.valueText
+                                          ? `: ${fact.valueText}`
+                                          : ""}
+                                    </div>
+
+                                    <div className="mt-1 text-[10px] uppercase tracking-[0.1em] text-white/30">
+                                      Source: {fact.sourceRole}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="mt-2 text-xs text-white/32">
+                              No {label.toLowerCase()} facts.
+                            </div>
+                          )}
+                        </div>
+                      ),
+                    )}
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="rounded-[24px] border border-white/10 bg-black/35 p-5">
