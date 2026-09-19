@@ -11,6 +11,19 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function requestError(
+  code: string,
+  message: string,
+) {
+  const error = new Error(message) as Error & {
+    code?: string;
+  };
+
+  error.code = code;
+
+  return error;
+}
+
 function jsonError(error: unknown) {
   const message =
     error instanceof Error
@@ -82,15 +95,38 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const ownerKey = await authenticatedOwnerKey(request);
-    const body = await request.json().catch(() => ({}));
+    const ownerKey =
+      await authenticatedOwnerKey(
+        request,
+      );
 
-    const message = addStoryCreatorMessage({
-      ownerKey,
-      projectId: body?.projectId,
-      role: body?.role,
-      content: body?.content,
-    });
+    const body =
+      await request
+        .json()
+        .catch(() => ({}));
+
+    if (
+      body &&
+      typeof body === "object" &&
+      "role" in body &&
+      (body as { role?: unknown }).role !==
+        "user"
+    ) {
+      throw requestError(
+        "STORY_MESSAGE_ASSISTANT_ROLE_CLIENT_FORBIDDEN",
+        "Assistant Story Creator messages can only be created by the trusted Story Director server flow.",
+      );
+    }
+
+    const message =
+      addStoryCreatorMessage({
+        ownerKey,
+        projectId:
+          body?.projectId,
+        role: "user",
+        content:
+          body?.content,
+      });
 
     return NextResponse.json(
       {
@@ -100,7 +136,8 @@ export async function POST(request: NextRequest) {
       {
         status: 201,
         headers: {
-          "Cache-Control": "no-store",
+          "Cache-Control":
+            "no-store",
         },
       },
     );

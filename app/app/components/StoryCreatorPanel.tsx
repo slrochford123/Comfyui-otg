@@ -83,33 +83,6 @@ function errorMessage(
     : fallback;
 }
 
-function assistantText(data: any) {
-  if (
-    typeof data?.response === "string" &&
-    data.response.trim()
-  ) {
-    return data.response.trim();
-  }
-  if (
-    typeof data?.message === "string" &&
-    data.message.trim()
-  ) {
-    return data.message.trim();
-  }
-  if (
-    typeof data?.message?.content === "string" &&
-    data.message.content.trim()
-  ) {
-    return data.message.content.trim();
-  }
-  if (
-    typeof data?.content === "string" &&
-    data.content.trim()
-  ) {
-    return data.content.trim();
-  }
-  return "";
-}
 export default function StoryCreatorPanel({
   ownerKey,
 }: Props) {
@@ -843,42 +816,6 @@ export default function StoryCreatorPanel({
     }
   }
 
-  async function persistMessage(
-    projectId: string,
-    role: StoryMessage["role"],
-    content: string,
-  ) {
-    const response = await fetch(
-      "/api/story-creator/messages",
-      {
-        method: "POST",
-        cache: "no-store",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          projectId,
-          role,
-          content,
-        }),
-      },
-    );
-
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      throw new Error(
-        errorMessage(
-          data,
-          "Could not save Story Director message.",
-        ),
-      );
-    }
-
-    return data.message as StoryMessage;
-  }
-
   async function sendStoryMessage() {
     const project = selectedProject;
     const content = draft.trim();
@@ -891,82 +828,89 @@ export default function StoryCreatorPanel({
     ) {
       return;
     }
+
     storySendLockRef.current = true;
     setChatBusy(true);
     setChatError("");
 
     try {
-      const savedUserMessage =
-        await persistMessage(
-          project.id,
-          "user",
-          content,
-        );
-
-      const history = [
-        ...storyMessages,
-        savedUserMessage,
-      ];
-
-      setStoryMessages(history);
-      setDraft("");
-
-      const aiResponse = await fetch(
-        "/api/ollama-ai/chat",
+      const response = await fetch(
+        "/api/story-creator/turn",
         {
           method: "POST",
           cache: "no-store",
           credentials: "include",
           headers: {
-            "Content-Type": "application/json",
-            "x-otg-ai-assistance": "1",
-            "x-otg-ai-assistance-profile":
-              "story-helper",
+            "Content-Type":
+              "application/json",
           },
           body: JSON.stringify({
-            messages: history.map(
-              ({ role, content }) => ({
-                role,
-                content,
-              }),
-            ),
+            projectId: project.id,
+            content,
           }),
         },
       );
 
-      const aiData = await aiResponse
-        .json()
-        .catch(() => ({}));
+      const data =
+        await response
+          .json()
+          .catch(() => ({}));
 
-      if (!aiResponse.ok) {
+      if (!response.ok) {
+        const persistedUserMessage =
+          data?.userMessage as
+            | StoryMessage
+            | undefined;
+
+        if (
+          persistedUserMessage?.id
+        ) {
+          setStoryMessages([
+            ...storyMessages,
+            persistedUserMessage,
+          ]);
+
+          setDraft("");
+        }
+
         throw new Error(
           errorMessage(
-            aiData,
+            data,
             "Story Director could not respond.",
           ),
         );
       }
 
-      const responseText =
-        assistantText(aiData);
+      const savedUserMessage =
+        data?.userMessage as
+          | StoryMessage
+          | undefined;
 
-      if (!responseText) {
+      const savedAssistantMessage =
+        data?.assistantMessage as
+          | StoryMessage
+          | undefined;
+
+      if (
+        !savedUserMessage?.id ||
+        savedUserMessage.role !==
+          "user" ||
+        !savedAssistantMessage?.id ||
+        savedAssistantMessage.role !==
+          "assistant"
+      ) {
         throw new Error(
-          "Story Director returned an empty response.",
+          "Story Director returned an invalid persisted turn.",
         );
       }
 
-      const savedAssistantMessage =
-        await persistMessage(
-          project.id,
-          "assistant",
-          responseText,
-        );
-
       setStoryMessages([
-        ...history,
+        ...storyMessages,
+        savedUserMessage,
         savedAssistantMessage,
       ]);
+
+      setDraft("");
 
       setProjects((current) =>
         current.map((item) =>

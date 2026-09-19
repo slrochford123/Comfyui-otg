@@ -93,7 +93,11 @@ describe("Story Creator Phase 1B", () => {
     );
 
     expect(source).toContain(
-      "persistMessage",
+      "/api/story-creator/turn",
+    );
+
+    expect(source).not.toContain(
+      "async function persistMessage",
     );
 
     expect(source).toContain(
@@ -102,19 +106,27 @@ describe("Story Creator Phase 1B", () => {
   });
 
   it("reuses the existing strict-canon Story Helper profile", () => {
-    const source = read(
+    const panelSource = read(
       "app/app/components/StoryCreatorPanel.tsx",
     );
 
-    expect(source).toContain(
+    const turnSource = read(
+      "app/api/story-creator/turn/route.ts",
+    );
+
+    expect(panelSource).toContain(
+      "/api/story-creator/turn",
+    );
+
+    expect(turnSource).toContain(
       "/api/ollama-ai/chat",
     );
 
-    expect(source).toContain(
+    expect(turnSource).toContain(
       '"x-otg-ai-assistance-profile"',
     );
 
-    expect(source).toContain(
+    expect(turnSource).toContain(
       '"story-helper"',
     );
   });
@@ -173,16 +185,24 @@ describe("Story Creator Phase 1B", () => {
 
 
   it("accepts the Story Helper top-level message response shape", () => {
-    const source = read(
-      "app/app/components/StoryCreatorPanel.tsx",
+    const turnSource = read(
+      "app/api/story-creator/turn/route.ts",
     );
 
-    expect(source).toContain(
-      'typeof data?.message === "string"',
+    expect(turnSource).toContain(
+      "function readStoryHelperMessage",
     );
 
-    expect(source).toContain(
-      "return data.message.trim()",
+    expect(turnSource).toContain(
+      "const value =",
+    );
+
+    expect(turnSource).toContain(
+      'typeof value === "string"',
+    );
+
+    expect(turnSource).toContain(
+      "readStoryHelperMessage(",
     );
   });
 
