@@ -137,7 +137,27 @@ describe(
         "STORY_CREATOR_PENDING_TURN_V1",
       );
       expect(panel).toContain(
-        "window.crypto.randomUUID()",
+        'typeof cryptoApi.randomUUID === "function"',
+      );
+
+      expect(panel).toContain(
+        "cryptoApi.randomUUID()",
+      );
+
+      expect(panel).toContain(
+        'typeof cryptoApi.getRandomValues !== "function"',
+      );
+
+      expect(panel).toContain(
+        "cryptoApi.getRandomValues",
+      );
+
+      expect(panel).toContain(
+        "(bytes[6] & 0x0f) | 0x40",
+      );
+
+      expect(panel).toContain(
+        "(bytes[8] & 0x3f) | 0x80",
       );
       expect(panel).toContain(
         "window.sessionStorage.setItem",

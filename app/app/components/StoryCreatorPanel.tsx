@@ -96,18 +96,60 @@ const STORY_CLIENT_TURN_ID_PATTERN =
  * STORY_CREATOR_PENDING_TURN_V1
  */
 function newStoryClientTurnId() {
+  const cryptoApi =
+    typeof window !== "undefined"
+      ? window.crypto
+      : undefined;
+
   if (
-    typeof window === "undefined" ||
-    !window.crypto ||
-    typeof window.crypto.randomUUID !==
-      "function"
+    cryptoApi &&
+    typeof cryptoApi.randomUUID === "function"
+  ) {
+    try {
+      return cryptoApi.randomUUID();
+    } catch {
+      // Fall through to getRandomValues for non-secure HTTP contexts.
+    }
+  }
+
+  if (
+    !cryptoApi ||
+    typeof cryptoApi.getRandomValues !== "function"
   ) {
     throw new Error(
       "Secure Story Director request IDs are unavailable in this browser.",
     );
   }
 
-  return window.crypto.randomUUID();
+  const bytes =
+    new Uint8Array(16);
+
+  cryptoApi.getRandomValues(
+    bytes,
+  );
+
+  bytes[6] =
+    (bytes[6] & 0x0f) | 0x40;
+
+  bytes[8] =
+    (bytes[8] & 0x3f) | 0x80;
+
+  const hex =
+    Array.from(
+      bytes,
+      (value) =>
+        value
+          .toString(16)
+          .padStart(2, "0"),
+    );
+
+  return [
+    hex.slice(0, 4).join(""),
+    hex.slice(4, 6).join(""),
+    hex.slice(6, 8).join(""),
+    hex.slice(8, 10).join(""),
+    hex.slice(10, 16).join(""),
+  ].join("-");
 }
 
 function pendingStoryTurnStorageKey(
