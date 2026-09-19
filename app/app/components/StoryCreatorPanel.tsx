@@ -607,8 +607,6 @@ export default function StoryCreatorPanel({
   }
 
   const loadProjects = useCallback(async () => {
-    if (!ownerKey) return;
-
     setBusy(true);
 
     try {
@@ -807,7 +805,7 @@ export default function StoryCreatorPanel({
   }, [storyMessages, chatBusy]);
 
   async function createProject() {
-    if (!ownerKey || busy) return;
+    if (busy) return;
 
     if (projects.length >= STORY_LIMIT) {
       setNotice(
@@ -873,7 +871,7 @@ export default function StoryCreatorPanel({
   async function renameProject(
     project: StoryProject,
   ) {
-    if (!ownerKey || busy) return;
+    if (busy) return;
 
     const nextTitle =
       window
@@ -943,7 +941,7 @@ export default function StoryCreatorPanel({
   async function deleteProject(
     project: StoryProject,
   ) {
-    if (!ownerKey || busy) return;
+    if (busy) return;
 
     const confirmed = window.confirm(
       `Delete "${project.title}"?\n\nThe project and its Story Director conversation will be permanently removed.`,
