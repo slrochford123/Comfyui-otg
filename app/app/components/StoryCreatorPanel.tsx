@@ -83,6 +83,193 @@ function errorMessage(
     : fallback;
 }
 
+type PendingStoryTurn = {
+  projectId: string;
+  content: string;
+  clientTurnId: string;
+};
+
+const STORY_CLIENT_TURN_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/*
+ * STORY_CREATOR_PENDING_TURN_V1
+ */
+function newStoryClientTurnId() {
+  if (
+    typeof window === "undefined" ||
+    !window.crypto ||
+    typeof window.crypto.randomUUID !==
+      "function"
+  ) {
+    throw new Error(
+      "Secure Story Director request IDs are unavailable in this browser.",
+    );
+  }
+
+  return window.crypto.randomUUID();
+}
+
+function pendingStoryTurnStorageKey(
+  projectId: string,
+) {
+  return (
+    "otg:story-creator:pending-turn:" +
+    projectId
+  );
+}
+
+function readPendingStoryTurn(
+  projectId: string,
+): PendingStoryTurn | null {
+  if (
+    typeof window === "undefined" ||
+    !projectId
+  ) {
+    return null;
+  }
+
+  try {
+    const raw =
+      window.sessionStorage.getItem(
+        pendingStoryTurnStorageKey(
+          projectId,
+        ),
+      );
+
+    if (!raw) {
+      return null;
+    }
+
+    const value =
+      JSON.parse(raw) as
+        Partial<PendingStoryTurn>;
+
+    if (
+      value.projectId !== projectId ||
+      typeof value.content !== "string" ||
+      !value.content.trim() ||
+      typeof value.clientTurnId !== "string" ||
+      !STORY_CLIENT_TURN_ID_PATTERN.test(
+        value.clientTurnId,
+      )
+    ) {
+      window.sessionStorage.removeItem(
+        pendingStoryTurnStorageKey(
+          projectId,
+        ),
+      );
+
+      return null;
+    }
+
+    return {
+      projectId,
+      content: value.content,
+      clientTurnId:
+        value.clientTurnId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePendingStoryTurn(
+  projectId: string,
+  pending:
+    PendingStoryTurn | null,
+) {
+  if (
+    typeof window === "undefined" ||
+    !projectId
+  ) {
+    return;
+  }
+
+  try {
+    const key =
+      pendingStoryTurnStorageKey(
+        projectId,
+      );
+
+    if (!pending) {
+      window.sessionStorage.removeItem(
+        key,
+      );
+
+      return;
+    }
+
+    window.sessionStorage.setItem(
+      key,
+      JSON.stringify(
+        pending,
+      ),
+    );
+  } catch {
+    // In-memory retry identity remains available.
+  }
+}
+
+function storyMessage(
+  value: unknown,
+  expectedRole:
+    StoryMessage["role"],
+): StoryMessage | null {
+  if (
+    !value ||
+    typeof value !== "object"
+  ) {
+    return null;
+  }
+
+  const message =
+    value as Partial<StoryMessage>;
+
+  if (
+    typeof message.id !== "string" ||
+    !message.id ||
+    message.role !== expectedRole
+  ) {
+    return null;
+  }
+
+  return message as StoryMessage;
+}
+
+function mergeStoryMessages(
+  current: StoryMessage[],
+  incoming: StoryMessage[],
+) {
+  const byId =
+    new Map<string, StoryMessage>();
+
+  for (const message of current) {
+    byId.set(
+      message.id,
+      message,
+    );
+  }
+
+  for (const message of incoming) {
+    byId.set(
+      message.id,
+      message,
+    );
+  }
+
+  return Array.from(
+    byId.values(),
+  ).sort(
+    (a, b) =>
+      a.createdAt -
+        b.createdAt ||
+      a.id.localeCompare(
+        b.id,
+      ),
+  );
+}
+
 export default function StoryCreatorPanel({
   ownerKey,
 }: Props) {
@@ -123,6 +310,8 @@ export default function StoryCreatorPanel({
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const storySendLockRef = useRef(false);
+  const storyPendingTurnRef =
+    useRef<PendingStoryTurn | null>(null);
 
   const selectedProject = useMemo(
     () =>
@@ -817,8 +1006,11 @@ export default function StoryCreatorPanel({
   }
 
   async function sendStoryMessage() {
-    const project = selectedProject;
-    const content = draft.trim();
+    const project =
+      selectedProject;
+
+    const content =
+      draft.trim();
 
     if (
       !project ||
@@ -833,95 +1025,169 @@ export default function StoryCreatorPanel({
     setChatBusy(true);
     setChatError("");
 
-    try {
-      const response = await fetch(
-        "/api/story-creator/turn",
-        {
-          method: "POST",
-          cache: "no-store",
-          credentials: "include",
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-          body: JSON.stringify({
-            projectId: project.id,
-            content,
-          }),
-        },
+    const inMemoryPending =
+      storyPendingTurnRef.current;
+
+    const storedPending =
+      readPendingStoryTurn(
+        project.id,
       );
+
+    const rememberedPending =
+      inMemoryPending?.projectId ===
+        project.id
+        ? inMemoryPending
+        : storedPending;
+
+    const pendingTurn:
+      PendingStoryTurn =
+      rememberedPending &&
+      rememberedPending.content ===
+        content
+        ? rememberedPending
+        : {
+            projectId:
+              project.id,
+            content,
+            clientTurnId:
+              newStoryClientTurnId(),
+          };
+
+    storyPendingTurnRef.current =
+      pendingTurn;
+
+    writePendingStoryTurn(
+      project.id,
+      pendingTurn,
+    );
+
+    try {
+      const response =
+        await fetch(
+          "/api/story-creator/turn",
+          {
+            method: "POST",
+            cache: "no-store",
+            credentials: "include",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body:
+              JSON.stringify({
+                projectId:
+                  project.id,
+                content,
+                clientTurnId:
+                  pendingTurn.clientTurnId,
+              }),
+          },
+        );
 
       const data =
         await response
           .json()
           .catch(() => ({}));
 
+      const returnedUser =
+        storyMessage(
+          data?.userMessage,
+          "user",
+        );
+
+      const returnedAssistant =
+        storyMessage(
+          data?.assistantMessage,
+          "assistant",
+        );
+
+      const returnedMessages =
+        [
+          returnedUser,
+          returnedAssistant,
+        ].filter(
+          (
+            message,
+          ): message is StoryMessage =>
+            Boolean(message),
+        );
+
+      if (
+        returnedMessages.length
+      ) {
+        setStoryMessages(
+          (current) =>
+            mergeStoryMessages(
+              current,
+              returnedMessages,
+            ),
+        );
+      }
+
       if (!response.ok) {
-        const persistedUserMessage =
-          data?.userMessage as
-            | StoryMessage
-            | undefined;
+        const code =
+          typeof data?.code === "string"
+            ? data.code
+            : "";
 
         if (
-          persistedUserMessage?.id
+          code ===
+            "STORY_DIRECTOR_TURN_ID_CONFLICT" ||
+          code ===
+            "STORY_DIRECTOR_CLIENT_TURN_ID_INVALID"
         ) {
-          setStoryMessages([
-            ...storyMessages,
-            persistedUserMessage,
-          ]);
+          storyPendingTurnRef.current =
+            null;
 
-          setDraft("");
+          writePendingStoryTurn(
+            project.id,
+            null,
+          );
         }
 
         throw new Error(
           errorMessage(
             data,
-            "Story Director could not respond.",
+            code ===
+              "STORY_DIRECTOR_TURN_IN_PROGRESS"
+              ? "Story Director is still processing this turn. Retry shortly."
+              : "Story Director could not respond.",
           ),
         );
       }
 
-      const savedUserMessage =
-        data?.userMessage as
-          | StoryMessage
-          | undefined;
-
-      const savedAssistantMessage =
-        data?.assistantMessage as
-          | StoryMessage
-          | undefined;
-
       if (
-        !savedUserMessage?.id ||
-        savedUserMessage.role !==
-          "user" ||
-        !savedAssistantMessage?.id ||
-        savedAssistantMessage.role !==
-          "assistant"
+        !returnedUser?.id ||
+        !returnedAssistant?.id
       ) {
         throw new Error(
           "Story Director returned an invalid persisted turn.",
         );
       }
 
-      setStoryMessages([
-        ...storyMessages,
-        savedUserMessage,
-        savedAssistantMessage,
-      ]);
+      storyPendingTurnRef.current =
+        null;
+
+      writePendingStoryTurn(
+        project.id,
+        null,
+      );
 
       setDraft("");
 
-      setProjects((current) =>
-        current.map((item) =>
-          item.id === project.id
-            ? {
-                ...item,
-                updatedAt:
-                  savedAssistantMessage.createdAt,
-              }
-            : item,
-        ),
+      setProjects(
+        (current) =>
+          current.map(
+            (item) =>
+              item.id ===
+              project.id
+                ? {
+                    ...item,
+                    updatedAt:
+                      returnedAssistant.createdAt,
+                  }
+                : item,
+          ),
       );
     } catch (error) {
       setChatError(

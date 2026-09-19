@@ -16,8 +16,11 @@ import {
 } from "../../ollama-ai/chat/route";
 
 import {
-  addStoryCreatorMessage,
+  claimStoryCreatorTurn,
+  completeStoryCreatorTurn,
+  failStoryCreatorTurn,
   listStoryCreatorMessages,
+  saveStoryCreatorTurnAssistant,
 } from "../../../../lib/storyCreator/store";
 
 import {
@@ -33,10 +36,11 @@ function requestError(
   message: string,
   status = 400,
 ) {
-  const error = new Error(message) as Error & {
-    code?: string;
-    status?: number;
-  };
+  const error =
+    new Error(message) as Error & {
+      code?: string;
+      status?: number;
+    };
 
   error.code = code;
   error.status = status;
@@ -44,7 +48,24 @@ function requestError(
   return error;
 }
 
-function jsonError(error: unknown) {
+function jsonResponse(
+  body: unknown,
+  status: number,
+) {
+  return NextResponse.json(
+    body,
+    {
+      status,
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    },
+  );
+}
+
+function jsonError(
+  error: unknown,
+) {
   const message =
     error instanceof Error
       ? error.message
@@ -87,18 +108,13 @@ function jsonError(error: unknown) {
           ? explicitStatus
           : 400;
 
-  return NextResponse.json(
+  return jsonResponse(
     {
       ok: false,
       error: message,
       code,
     },
-    {
-      status,
-      headers: {
-        "Cache-Control": "no-store",
-      },
-    },
+    status,
   );
 }
 
@@ -106,7 +122,9 @@ async function authenticatedOwnerKey(
   request: NextRequest,
 ) {
   const user =
-    await requireSessionUser(request);
+    await requireSessionUser(
+      request,
+    );
 
   return user.ownerKey;
 }
@@ -131,6 +149,12 @@ function assertServerOwnedTurnFields(
     "assistantMessage",
     "sourceRole",
     "sourceMessageId",
+    "leaseToken",
+    "leaseExpiresAt",
+    "status",
+    "turnId",
+    "userMessageId",
+    "assistantMessageId",
   ];
 
   const supplied =
@@ -145,9 +169,25 @@ function assertServerOwnedTurnFields(
   if (supplied.length) {
     throw requestError(
       "STORY_DIRECTOR_TURN_SERVER_FIELDS_FORBIDDEN",
-      "Story Director ownership, message roles, history, and assistant provenance are assigned by the server.",
+      "Story Director ownership, roles, history, assistant provenance, and turn leases are assigned by the server.",
     );
   }
+}
+
+function bodyField(
+  body: unknown,
+  key: string,
+) {
+  if (
+    !body ||
+    typeof body !== "object"
+  ) {
+    return undefined;
+  }
+
+  return (
+    body as Record<string, unknown>
+  )[key];
 }
 
 function readStoryHelperMessage(
@@ -172,6 +212,35 @@ function readStoryHelperMessage(
     : "";
 }
 
+function readStoryHelperError(
+  data: unknown,
+) {
+  if (
+    !data ||
+    typeof data !== "object"
+  ) {
+    return "";
+  }
+
+  const value =
+    (
+      data as {
+        error?: unknown;
+      }
+    ).error;
+
+  return typeof value === "string"
+    ? value.trim()
+    : "";
+}
+
+/*
+ * role: "user"
+ * role: "assistant"
+ *
+ * Both roles remain server-owned.
+ */
+
 export async function POST(
   request: NextRequest,
 ) {
@@ -186,178 +255,284 @@ export async function POST(
         .json()
         .catch(() => ({}));
 
-    assertServerOwnedTurnFields(body);
+    assertServerOwnedTurnFields(
+      body,
+    );
 
     const projectId =
-      body &&
-      typeof body === "object"
-        ? (
-            body as {
-              projectId?: unknown;
-            }
-          ).projectId
-        : undefined;
+      bodyField(
+        body,
+        "projectId",
+      );
 
     const content =
-      body &&
-      typeof body === "object"
-        ? (
-            body as {
-              content?: unknown;
-            }
-          ).content
-        : undefined;
+      bodyField(
+        body,
+        "content",
+      );
+
+    const clientTurnId =
+      bodyField(
+        body,
+        "clientTurnId",
+      );
 
     /*
-     * Persist the user turn before AI work.
-     *
-     * If Story Helper fails, the user's authored turn remains
-     * durable and the response includes that saved message.
+     * STORY_DIRECTOR_TURN_IDEMPOTENCY_V1
      */
-    const userMessage =
-      addStoryCreatorMessage({
+    const claim =
+      claimStoryCreatorTurn({
         ownerKey,
         projectId,
-        role: "user",
+        clientTurnId,
         content,
       });
 
-    const history =
-      listStoryCreatorMessages({
-        ownerKey,
-        projectId:
-          userMessage.projectId,
-      });
-
-    /*
-     * Reuse the accepted strict-canon Story Helper handler
-     * in-process. The browser never chooses assistant
-     * provenance for the resulting message.
-     */
-    const helperRequest =
-      new NextRequest(
-        "http://story-creator.internal/api/ollama-ai/chat",
+    if (
+      claim.action === "completed"
+    ) {
+      return jsonResponse(
         {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json",
-            "x-otg-ai-assistance":
-              "1",
-            "x-otg-ai-assistance-profile":
-              "story-helper",
-          },
-          body: JSON.stringify({
-            messages:
-              history.map(
-                ({
-                  role,
-                  content: messageContent,
-                }) => ({
-                  role,
-                  content:
-                    messageContent,
-                }),
-              ),
-          }),
+          ok: true,
+          replayed: true,
+          resumed: false,
+          clientTurnId:
+            claim.turn.clientTurnId,
+          userMessage:
+            claim.userMessage,
+          assistantMessage:
+            claim.assistantMessage,
+          storyBibleExtraction: null,
+          storyHelperGuard: null,
+          model: null,
         },
+        200,
       );
+    }
 
-    const helperResponse =
-      await runStoryHelperChat(
-        helperRequest,
-      );
-
-    const helperData =
-      await helperResponse
-        .json()
-        .catch(() => ({}));
-
-    if (!helperResponse.ok) {
-      const helperError =
-        helperData &&
-        typeof helperData === "object" &&
-        typeof (
-          helperData as {
-            error?: unknown;
-          }
-        ).error === "string"
-          ? String(
-              (
-                helperData as {
-                  error?: unknown;
-                }
-              ).error,
-            ).trim()
-          : "";
-
-      return NextResponse.json(
+    if (
+      claim.action === "in_progress"
+    ) {
+      return jsonResponse(
         {
           ok: false,
+          error:
+            "This Story Director turn is already being processed. Retry shortly with the same request.",
+          code:
+            "STORY_DIRECTOR_TURN_IN_PROGRESS",
+          retryable: true,
+          clientTurnId:
+            claim.turn.clientTurnId,
+          userMessage:
+            claim.userMessage,
+          assistantMessage:
+            claim.assistantMessage,
+        },
+        409,
+      );
+    }
+
+    const userMessage =
+      claim.userMessage;
+
+    let helperData:
+      unknown = null;
+
+    let assistantCandidate =
+      claim.action === "resume_assistant"
+        ? claim.assistantMessage
+        : null;
+
+    if (
+      claim.action === "claimed"
+    ) {
+      const history =
+        listStoryCreatorMessages({
+          ownerKey,
+          projectId:
+            userMessage.projectId,
+        });
+
+      const helperRequest =
+        new NextRequest(
+          "http://story-creator.internal/api/ollama-ai/chat",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+              "x-otg-ai-assistance":
+                "1",
+              "x-otg-ai-assistance-profile":
+                "story-helper",
+            },
+            body:
+              JSON.stringify({
+                messages:
+                  history.map(
+                    ({
+                      role,
+                      content:
+                        messageContent,
+                    }) => ({
+                      role,
+                      content:
+                        messageContent,
+                    }),
+                  ),
+              }),
+          },
+        );
+
+      let helperResponse:
+        Response;
+
+      try {
+        helperResponse =
+          await runStoryHelperChat(
+            helperRequest,
+          );
+      } catch (error) {
+        failStoryCreatorTurn({
+          ownerKey,
+          projectId:
+            userMessage.projectId,
+          clientTurnId:
+            claim.turn.clientTurnId,
+          leaseToken:
+            claim.leaseToken,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Story Helper request failed.",
+        });
+
+        return jsonResponse(
+          {
+            ok: false,
+            error:
+              error instanceof Error &&
+              error.message.trim()
+                ? error.message.trim()
+                : "Story Director could not respond.",
+            code:
+              "STORY_DIRECTOR_AI_FAILED",
+            retryable: true,
+            clientTurnId:
+              claim.turn.clientTurnId,
+            userMessage,
+          },
+          502,
+        );
+      }
+
+      helperData =
+        await helperResponse
+          .json()
+          .catch(() => ({}));
+
+      if (
+        !helperResponse.ok
+      ) {
+        const helperError =
+          readStoryHelperError(
+            helperData,
+          );
+
+        failStoryCreatorTurn({
+          ownerKey,
+          projectId:
+            userMessage.projectId,
+          clientTurnId:
+            claim.turn.clientTurnId,
+          leaseToken:
+            claim.leaseToken,
           error:
             helperError ||
             "Story Director could not respond.",
-          code:
-            "STORY_DIRECTOR_AI_FAILED",
-          userMessage,
-        },
-        {
-          status:
-            helperResponse.status >= 400 &&
-            helperResponse.status <= 599
-              ? helperResponse.status
-              : 502,
-          headers: {
-            "Cache-Control":
-              "no-store",
+        });
+
+        return jsonResponse(
+          {
+            ok: false,
+            error:
+              helperError ||
+              "Story Director could not respond.",
+            code:
+              "STORY_DIRECTOR_AI_FAILED",
+            retryable: true,
+            clientTurnId:
+              claim.turn.clientTurnId,
+            userMessage,
           },
-        },
-      );
-    }
+          helperResponse.status >= 400 &&
+            helperResponse.status <= 599
+            ? helperResponse.status
+            : 502,
+        );
+      }
 
-    const responseText =
-      readStoryHelperMessage(
-        helperData,
-      );
+      const responseText =
+        readStoryHelperMessage(
+          helperData,
+        );
 
-    if (!responseText) {
-      return NextResponse.json(
-        {
-          ok: false,
+      if (!responseText) {
+        failStoryCreatorTurn({
+          ownerKey,
+          projectId:
+            userMessage.projectId,
+          clientTurnId:
+            claim.turn.clientTurnId,
+          leaseToken:
+            claim.leaseToken,
           error:
             "Story Director returned an empty response.",
-          code:
-            "STORY_DIRECTOR_EMPTY_RESPONSE",
-          userMessage,
-        },
-        {
-          status: 502,
-          headers: {
-            "Cache-Control":
-              "no-store",
+        });
+
+        return jsonResponse(
+          {
+            ok: false,
+            error:
+              "Story Director returned an empty response.",
+            code:
+              "STORY_DIRECTOR_EMPTY_RESPONSE",
+            retryable: true,
+            clientTurnId:
+              claim.turn.clientTurnId,
+            userMessage,
           },
-        },
+          502,
+        );
+      }
+
+      assistantCandidate =
+        saveStoryCreatorTurnAssistant({
+          ownerKey,
+          projectId:
+            userMessage.projectId,
+          clientTurnId:
+            claim.turn.clientTurnId,
+          leaseToken:
+            claim.leaseToken,
+          content:
+            responseText,
+        });
+    }
+
+    if (!assistantCandidate) {
+      throw requestError(
+        "STORY_DIRECTOR_TURN_STATE_CORRUPT",
+        "Story Director turn is missing its persisted assistant message.",
+        500,
       );
     }
 
-    /*
-     * Normal Story Director assistant provenance is assigned
-     * only here, after the trusted Story Helper response exists.
-     */
     const assistantMessage =
-      addStoryCreatorMessage({
-        ownerKey,
-        projectId:
-          userMessage.projectId,
-        role: "assistant",
-        content: responseText,
-      });
+      assistantCandidate;
 
     /*
      * STORY_BIBLE_POST_ASSISTANT_EXTRACTION_V1
-     *
-     * Conversation durability wins over extraction.
-     * The assistant message is already persisted.
      */
     let storyBibleExtraction;
 
@@ -380,8 +555,7 @@ export async function POST(
         });
     } catch (error) {
       storyBibleExtraction = {
-        status:
-          "failed" as const,
+        status: "failed" as const,
         error:
           error instanceof Error &&
           error.message.trim()
@@ -390,25 +564,44 @@ export async function POST(
       };
     }
 
+    completeStoryCreatorTurn({
+      ownerKey,
+      projectId:
+        userMessage.projectId,
+      clientTurnId:
+        claim.turn.clientTurnId,
+      leaseToken:
+        claim.leaseToken,
+    });
+
     return NextResponse.json(
       {
         ok: true,
+        replayed: false,
+        resumed:
+          claim.action ===
+          "resume_assistant",
+        clientTurnId:
+          claim.turn.clientTurnId,
         userMessage,
         assistantMessage,
         storyBibleExtraction,
         storyHelperGuard:
           helperData &&
-          typeof helperData === "object"
+          typeof helperData ===
+            "object"
             ? (
                 helperData as {
-                  storyHelperGuard?: unknown;
+                  storyHelperGuard?:
+                    unknown;
                 }
               ).storyHelperGuard ??
               null
             : null,
         model:
           helperData &&
-          typeof helperData === "object"
+          typeof helperData ===
+            "object"
             ? (
                 helperData as {
                   model?: unknown;
@@ -426,6 +619,8 @@ export async function POST(
       },
     );
   } catch (error) {
-    return jsonError(error);
+    return jsonError(
+      error,
+    );
   }
 }
