@@ -1162,12 +1162,13 @@ export function claimStoryCreatorTurn(
       input.leaseMs,
     );
 
-  const now = Date.now();
   const leaseToken = randomUUID();
 
   const write =
     db().transaction(
       (): StoryCreatorTurnClaim => {
+        const now = Date.now();
+
         assertOwnedActiveProject(
           ownerKey,
           projectId,
@@ -1468,10 +1469,11 @@ export function saveStoryCreatorTurnAssistant(
       input.leaseMs,
     );
 
-  const now = Date.now();
 
   const write =
     db().transaction(() => {
+      const now = Date.now();
+
       const turn =
         requireStoryCreatorTurn(
           ownerKey,
@@ -1482,21 +1484,11 @@ export function saveStoryCreatorTurnAssistant(
       if (
         turn.status === "completed"
       ) {
-        if (!turn.assistantMessageId) {
-          throw storyCreatorTurnError(
-            "STORY_DIRECTOR_TURN_STATE_CORRUPT",
-            "Completed Story Director turn has no assistant message.",
-            500,
-          );
-        }
-
-        return requireStoryCreatorTurnMessage({
-          ownerKey,
-          projectId,
-          messageId:
-            turn.assistantMessageId,
-          expectedRole: "assistant",
-        });
+        throw storyCreatorTurnError(
+          "STORY_DIRECTOR_TURN_STATE_INVALID",
+          "Completed Story Director turns are replayed through claim and cannot save another assistant message.",
+          409,
+        );
       }
 
       if (
@@ -1635,10 +1627,11 @@ export function completeStoryCreatorTurn(
       input.leaseToken,
     );
 
-  const now = Date.now();
 
   const write =
     db().transaction(() => {
+      const now = Date.now();
+
       const turn =
         requireStoryCreatorTurn(
           ownerKey,
@@ -1724,10 +1717,11 @@ export function failStoryCreatorTurn(
       input.error,
     );
 
-  const now = Date.now();
 
   const write =
     db().transaction(() => {
+      const now = Date.now();
+
       const turn =
         requireStoryCreatorTurn(
           ownerKey,

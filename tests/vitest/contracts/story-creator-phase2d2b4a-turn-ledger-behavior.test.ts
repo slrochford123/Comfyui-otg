@@ -633,5 +633,112 @@ describe(
         ).toHaveLength(2);
       },
     );
+    it(
+      "rejects a late assistant save after completion",
+      () => {
+        const p =
+          project(
+            "completed-late-save",
+          );
+
+        const id =
+          turnId(9);
+
+        const claim =
+          store.claimStoryCreatorTurn({
+            ownerKey:
+              p.ownerKey,
+            projectId:
+              p.id,
+            clientTurnId:
+              id,
+            content:
+              "Final scene.",
+          });
+
+        if (
+          claim.action !==
+          "claimed"
+        ) {
+          throw new Error(
+            "claim failed",
+          );
+        }
+
+        const assistant =
+          store.saveStoryCreatorTurnAssistant({
+            ownerKey:
+              p.ownerKey,
+            projectId:
+              p.id,
+            clientTurnId:
+              id,
+            leaseToken:
+              claim.leaseToken,
+            content:
+              "The scene ends.",
+          });
+
+        store.completeStoryCreatorTurn({
+          ownerKey:
+            p.ownerKey,
+          projectId:
+            p.id,
+          clientTurnId:
+            id,
+          leaseToken:
+            claim.leaseToken,
+        });
+
+        let caught:
+          unknown;
+
+        try {
+          store.saveStoryCreatorTurnAssistant({
+            ownerKey:
+              p.ownerKey,
+            projectId:
+              p.id,
+            clientTurnId:
+              id,
+            leaseToken:
+              claim.leaseToken,
+            content:
+              "Late stale response.",
+          });
+        } catch (error) {
+          caught = error;
+        }
+
+        expect(
+          (
+            caught as {
+              code?: string;
+            }
+          ).code,
+        ).toBe(
+          "STORY_DIRECTOR_TURN_STATE_INVALID",
+        );
+
+        const messages =
+          store.listStoryCreatorMessages({
+            ownerKey:
+              p.ownerKey,
+            projectId:
+              p.id,
+          });
+
+        expect(
+          messages,
+        ).toHaveLength(2);
+
+        expect(
+          messages[1]?.id,
+        ).toBe(
+          assistant.id,
+        );
+      },
+    );
+
   },
 );

@@ -100,5 +100,88 @@ describe(
         "export function failStoryCreatorTurn",
       );
     });
+    it(
+      "samples time after entering every immediate transaction",
+      () => {
+        const functions = [
+          [
+            "claimStoryCreatorTurn",
+            "export function saveStoryCreatorTurnAssistant(",
+          ],
+          [
+            "saveStoryCreatorTurnAssistant",
+            "export function completeStoryCreatorTurn(",
+          ],
+          [
+            "completeStoryCreatorTurn",
+            "export function failStoryCreatorTurn(",
+          ],
+          [
+            "failStoryCreatorTurn",
+            "function assertStoryBibleSourceMessage(",
+          ],
+        ] as const;
+
+        for (
+          const [
+            functionName,
+            nextMarker,
+          ] of functions
+        ) {
+          const start =
+            source.indexOf(
+              `export function ${functionName}(`,
+            );
+
+          const end =
+            source.indexOf(
+              nextMarker,
+              start + 1,
+            );
+
+          expect(start).toBeGreaterThan(
+            -1,
+          );
+
+          expect(end).toBeGreaterThan(
+            start,
+          );
+
+          const block =
+            source.slice(
+              start,
+              end,
+            );
+
+          const tx =
+            block.indexOf(
+              "db().transaction",
+            );
+
+          const now =
+            block.indexOf(
+              "const now = Date.now();",
+            );
+
+          const immediate =
+            block.indexOf(
+              "write.immediate()",
+            );
+
+          expect(tx).toBeGreaterThan(
+            -1,
+          );
+
+          expect(now).toBeGreaterThan(
+            tx,
+          );
+
+          expect(immediate).toBeGreaterThan(
+            now,
+          );
+        }
+      },
+    );
+
   },
 );
