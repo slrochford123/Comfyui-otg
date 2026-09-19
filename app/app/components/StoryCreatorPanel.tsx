@@ -138,6 +138,16 @@ export default function StoryCreatorPanel({
   const [storyBibleError, setStoryBibleError] =
     useState("");
 
+  const [
+    storyReferenceOpen,
+    setStoryReferenceOpen,
+  ] = useState(true);
+
+  const [
+    expandedStoryReferenceIds,
+    setExpandedStoryReferenceIds,
+  ] = useState<string[]>([]);
+
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const storySendLockRef = useRef(false);
 
@@ -174,6 +184,265 @@ export default function StoryCreatorPanel({
     }),
     [storyBibleFacts],
   );
+
+  const storyReferenceRecentMentions = useMemo(
+    () => {
+      const recentUserText = storyMessages
+        .filter(
+          (message) =>
+            message.role === "user",
+        )
+        .slice(-8)
+        .map(
+          (message) =>
+            message.content,
+        )
+        .join("\n");
+
+      const matches =
+        recentUserText.match(
+          /\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+|[A-Z][a-z]{3,})\b/g,
+        ) || [];
+
+      const ignored =
+        new Set([
+          "The",
+          "This",
+          "That",
+          "These",
+          "Those",
+          "Give",
+          "Tell",
+          "Treat",
+          "Everything",
+          "Character",
+          "Characters",
+          "Story",
+          "Director",
+          "Canon",
+          "Unknown",
+          "Suggestion",
+          "Suggestions",
+        ]);
+
+      const seen =
+        new Set<string>();
+
+      const mentions:
+        string[] = [];
+
+      for (const match of matches) {
+        const value =
+          match.trim();
+
+        if (
+          !value ||
+          ignored.has(value) ||
+          seen.has(value)
+        ) {
+          continue;
+        }
+
+        seen.add(value);
+        mentions.push(value);
+
+        if (
+          mentions.length >= 8
+        ) {
+          break;
+        }
+      }
+
+      return mentions;
+    },
+    [storyMessages],
+  );
+
+  const storyReferenceRecentText =
+    useMemo(
+      () =>
+        storyMessages
+          .slice(-8)
+          .map(
+            (message) =>
+              message.content,
+          )
+          .join("\n")
+          .toLocaleLowerCase(),
+      [storyMessages],
+    );
+
+  const storyReferenceGroups =
+    useMemo(() => {
+      const factsByEntity =
+        new Map<
+          string,
+          StoryBibleFact[]
+        >();
+
+      for (
+        const fact of
+        storyBibleFacts
+      ) {
+        if (
+          !fact.subjectEntityId
+        ) {
+          continue;
+        }
+
+        const current =
+          factsByEntity.get(
+            fact.subjectEntityId,
+          ) || [];
+
+        current.push(fact);
+
+        factsByEntity.set(
+          fact.subjectEntityId,
+          current,
+        );
+      }
+
+      function categoryFor(
+        entityType: string,
+      ) {
+        const type =
+          entityType
+            .trim()
+            .toLocaleLowerCase();
+
+        if (
+          /character|person|people|hero|villain/.test(
+            type,
+          )
+        ) {
+          return "Characters";
+        }
+
+        if (
+          /location|place|city|world|region|kingdom|building/.test(
+            type,
+          )
+        ) {
+          return "Locations";
+        }
+
+        if (
+          /power|ability|skill|magic|spell/.test(
+            type,
+          )
+        ) {
+          return "Powers & Abilities";
+        }
+
+        if (
+          /object|item|artifact|weapon|vehicle|relic/.test(
+            type,
+          )
+        ) {
+          return "Key Objects";
+        }
+
+        return "Other";
+      }
+
+      const groupOrder = [
+        "Characters",
+        "Locations",
+        "Powers & Abilities",
+        "Key Objects",
+        "Other",
+      ];
+
+      return groupOrder
+        .map((label) => ({
+          label,
+
+          items:
+            storyBibleEntities
+              .filter(
+                (entity) =>
+                  categoryFor(
+                    entity.entityType,
+                  ) === label,
+              )
+              .map(
+                (entity) => ({
+                  entity,
+
+                  facts:
+                    factsByEntity.get(
+                      entity.id,
+                    ) || [],
+
+                  mentioned:
+                    Boolean(
+                      entity.name.trim(),
+                    ) &&
+                    storyReferenceRecentText.includes(
+                      entity.name
+                        .trim()
+                        .toLocaleLowerCase(),
+                    ),
+                }),
+              )
+              .sort(
+                (a, b) => {
+                  if (
+                    a.mentioned !==
+                    b.mentioned
+                  ) {
+                    return a.mentioned
+                      ? -1
+                      : 1;
+                  }
+
+                  return (
+                    a.entity.name.localeCompare(
+                      b.entity.name,
+                    )
+                  );
+                },
+              ),
+        }))
+        .filter(
+          (group) =>
+            group.items.length > 0,
+        );
+    }, [
+      storyBibleEntities,
+      storyBibleFacts,
+      storyReferenceRecentText,
+    ]);
+
+  const storyReferenceStoryFacts =
+    useMemo(
+      () =>
+        storyBibleFacts.filter(
+          (fact) =>
+            !fact.subjectEntityId,
+        ),
+      [storyBibleFacts],
+    );
+
+  function toggleStoryReferenceEntity(
+    entityId: string,
+  ) {
+    setExpandedStoryReferenceIds(
+      (current) =>
+        current.includes(
+          entityId,
+        )
+          ? current.filter(
+              (id) =>
+                id !== entityId,
+            )
+          : [
+              ...current,
+              entityId,
+            ],
+    );
+  }
 
   const loadProjects = useCallback(async () => {
     if (!ownerKey) return;
@@ -755,7 +1024,13 @@ export default function StoryCreatorPanel({
           </div>
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+        <div
+          className={
+            storyReferenceOpen
+              ? "grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(300px,0.9fr)]"
+              : "grid gap-4 xl:grid-cols-[minmax(0,1fr)_64px]"
+          }
+        >
           <section className="flex min-h-[620px] flex-col rounded-[24px] border border-cyan-300/15 bg-black/40">
             <div className="border-b border-white/10 p-5">
               <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200/60">
@@ -881,7 +1156,337 @@ export default function StoryCreatorPanel({
             </div>
           </section>
 
-          <div className="space-y-4">
+          <div
+            className={
+              storyReferenceOpen
+                ? "space-y-4"
+                : "[&>div]:hidden"
+            }
+          >
+            <aside
+              className={
+                storyReferenceOpen
+                  ? "rounded-[24px] border border-cyan-300/20 bg-black/50 p-4"
+                  : "flex min-h-[64px] items-center justify-center rounded-[18px] border border-cyan-300/20 bg-cyan-300/[0.04] p-2 xl:min-h-[620px]"
+              }
+            >
+              {storyReferenceOpen ? (
+                <div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200/65">
+                        Story Reference
+                      </p>
+
+                      <h2 className="mt-1 text-lg font-black text-white">
+                        Quick Reference
+                      </h2>
+                    </div>
+
+                    <button
+                      type="button"
+                      aria-label="Collapse Story Reference"
+                      title="Collapse Story Reference"
+                      onClick={() =>
+                        setStoryReferenceOpen(false)
+                      }
+                      className="rounded-[10px] border border-white/10 bg-white/[0.05] px-2.5 py-1.5 text-sm font-black text-white/60 transition hover:bg-white/[0.1] hover:text-white"
+                    >
+                      ›
+                    </button>
+                  </div>
+
+                  <p className="mt-2 text-xs leading-5 text-white/42">
+                    Fast reminders while you write.
+                    Durable cards come from the Story
+                    Bible. Recent mentions are temporary
+                    and never change canon.
+                  </p>
+
+                  {storyReferenceRecentMentions.length ? (
+                    <section className="mt-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="text-[10px] font-black uppercase tracking-[0.14em] text-white/45">
+                          Recent Mentions
+                        </h3>
+
+                        <span className="text-[9px] uppercase tracking-[0.1em] text-white/25">
+                          Not saved
+                        </span>
+                      </div>
+
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {storyReferenceRecentMentions.map(
+                          (mention) => (
+                            <span
+                              key={mention}
+                              className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-bold text-white/55"
+                            >
+                              {mention}
+                            </span>
+                          ),
+                        )}
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {storyBibleLoading ? (
+                    <div className="mt-4 text-xs text-white/40">
+                      Loading reference...
+                    </div>
+                  ) : storyBibleError ? (
+                    <div className="mt-4 rounded-[12px] border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs leading-5 text-red-100/75">
+                      {storyBibleError}
+                    </div>
+                  ) : storyReferenceGroups.length ||
+                    storyReferenceStoryFacts.length ? (
+                    <div className="mt-5 space-y-5">
+                      {storyReferenceGroups.map(
+                        (group) => (
+                          <section key={group.label}>
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                              <h3 className="text-[10px] font-black uppercase tracking-[0.15em] text-cyan-100/60">
+                                {group.label}
+                              </h3>
+
+                              <span className="text-[10px] text-white/30">
+                                {group.items.length}
+                              </span>
+                            </div>
+
+                            <div className="space-y-2">
+                              {group.items.map(
+                                (item) => {
+                                  const expanded =
+                                    expandedStoryReferenceIds.includes(
+                                      item.entity.id,
+                                    );
+
+                                  const canonFacts =
+                                    item.facts.filter(
+                                      (fact) =>
+                                        fact.canonStatus ===
+                                        "canon",
+                                    );
+
+                                  const visibleFacts =
+                                    expanded
+                                      ? item.facts
+                                      : canonFacts.slice(
+                                          0,
+                                          3,
+                                        );
+
+                                  return (
+                                    <div
+                                      key={
+                                        item.entity.id
+                                      }
+                                      className="rounded-[14px] border border-white/10 bg-white/[0.035] p-3"
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          toggleStoryReferenceEntity(
+                                            item.entity.id,
+                                          )
+                                        }
+                                        className="flex w-full items-start justify-between gap-3 text-left"
+                                      >
+                                        <div className="min-w-0">
+                                          <div className="flex flex-wrap items-center gap-1.5">
+                                            <span className="truncate text-sm font-black text-white/88">
+                                              {
+                                                item.entity
+                                                  .name
+                                              }
+                                            </span>
+
+                                            {item.mentioned ? (
+                                              <span className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.08em] text-cyan-100/75">
+                                                Mentioned
+                                              </span>
+                                            ) : null}
+                                          </div>
+
+                                          <div className="mt-1 text-[9px] uppercase tracking-[0.1em] text-white/32">
+                                            {
+                                              item.entity
+                                                .entityType
+                                            }
+                                          </div>
+                                        </div>
+
+                                        <span className="shrink-0 text-xs font-black text-white/35">
+                                          {expanded
+                                            ? "−"
+                                            : "+"}
+                                        </span>
+                                      </button>
+
+                                      {visibleFacts.length ? (
+                                        <div className="mt-2 space-y-1.5">
+                                          {visibleFacts.map(
+                                            (fact) => {
+                                              const object =
+                                                fact.objectEntityId
+                                                  ? storyBibleEntityNames.get(
+                                                      fact.objectEntityId,
+                                                    ) ||
+                                                    "Unknown entity"
+                                                  : "";
+
+                                              return (
+                                                <div
+                                                  key={
+                                                    fact.id
+                                                  }
+                                                  className={
+                                                    expanded
+                                                      ? "rounded-[10px] bg-black/25 px-2.5 py-2"
+                                                      : "text-[11px] leading-4 text-white/58"
+                                                  }
+                                                >
+                                                  {expanded ? (
+                                                    <div className="mb-1">
+                                                      <span
+                                                        className={
+                                                          fact.canonStatus ===
+                                                          "canon"
+                                                            ? "rounded-full border border-cyan-300/25 bg-cyan-300/10 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.08em] text-cyan-100/75"
+                                                            : fact.canonStatus ===
+                                                                "suggestion"
+                                                              ? "rounded-full border border-amber-300/25 bg-amber-300/10 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.08em] text-amber-100/75"
+                                                              : "rounded-full border border-white/15 bg-white/[0.05] px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.08em] text-white/50"
+                                                        }
+                                                      >
+                                                        {
+                                                          fact.canonStatus
+                                                        }
+                                                      </span>
+                                                    </div>
+                                                  ) : null}
+
+                                                  <span className="font-black text-white/70">
+                                                    {
+                                                      fact.predicate
+                                                    }
+                                                  </span>
+
+                                                  {object
+                                                    ? ` → ${object}`
+                                                    : fact.valueText
+                                                      ? `: ${fact.valueText}`
+                                                      : ""}
+                                                </div>
+                                              );
+                                            },
+                                          )}
+                                        </div>
+                                      ) : expanded ? (
+                                        <div className="mt-2 text-[11px] leading-4 text-white/35">
+                                          No facts recorded.
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  );
+                                },
+                              )}
+                            </div>
+                          </section>
+                        ),
+                      )}
+
+                      {storyReferenceStoryFacts.length ? (
+                        <section>
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <h3 className="text-[10px] font-black uppercase tracking-[0.15em] text-cyan-100/60">
+                              Key Story Points
+                            </h3>
+
+                            <span className="text-[10px] text-white/30">
+                              {
+                                storyReferenceStoryFacts.length
+                              }
+                            </span>
+                          </div>
+
+                          <div className="space-y-2">
+                            {storyReferenceStoryFacts
+                              .slice(0, 6)
+                              .map((fact) => (
+                                <div
+                                  key={fact.id}
+                                  className="rounded-[12px] border border-white/10 bg-white/[0.03] px-3 py-2"
+                                >
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span
+                                      className={
+                                        fact.canonStatus ===
+                                        "canon"
+                                          ? "rounded-full border border-cyan-300/25 bg-cyan-300/10 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.08em] text-cyan-100/75"
+                                          : fact.canonStatus ===
+                                              "suggestion"
+                                            ? "rounded-full border border-amber-300/25 bg-amber-300/10 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.08em] text-amber-100/75"
+                                            : "rounded-full border border-white/15 bg-white/[0.05] px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.08em] text-white/50"
+                                      }
+                                    >
+                                      {
+                                        fact.canonStatus
+                                      }
+                                    </span>
+
+                                    <span className="text-[10px] font-black text-white/70">
+                                      {fact.predicate}
+                                    </span>
+                                  </div>
+
+                                  {fact.valueText ? (
+                                    <div className="mt-1 text-[11px] leading-4 text-white/52">
+                                      {fact.valueText}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ))}
+                          </div>
+                        </section>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="mt-4 rounded-[14px] border border-dashed border-white/10 bg-white/[0.02] p-4">
+                      <div className="text-xs font-black text-white/65">
+                        No durable reference cards yet
+                      </div>
+
+                      <p className="mt-1 text-[11px] leading-5 text-white/36">
+                        Recent Mentions are temporary.
+                        This prototype does not write
+                        anything to the Story Bible.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  aria-label="Open Story Reference"
+                  title="Open Story Reference"
+                  onClick={() =>
+                    setStoryReferenceOpen(true)
+                  }
+                  className="flex h-full w-full items-center justify-center gap-2 text-cyan-100/65 xl:flex-col"
+                >
+                  <span className="text-lg font-black">
+                    ‹
+                  </span>
+
+                  <span className="text-[10px] font-black uppercase tracking-[0.15em] xl:[writing-mode:vertical-rl]">
+                    Story Reference
+                  </span>
+                </button>
+              )}
+            </aside>
+
             <div className="rounded-[24px] border border-white/10 bg-black/35 p-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
