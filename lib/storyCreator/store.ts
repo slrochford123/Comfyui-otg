@@ -28,6 +28,56 @@ export type StoryCreatorMessage = {
   createdAt: number;
 };
 
+export type StoryCreatorTurnStatus =
+  | "running"
+  | "assistant_saved"
+  | "completed"
+  | "failed";
+
+export type StoryCreatorTurn = {
+  id: string;
+  projectId: string;
+  ownerKey: string;
+  clientTurnId: string;
+  requestContent: string;
+  userMessageId: string;
+  assistantMessageId: string | null;
+  status: StoryCreatorTurnStatus;
+  leaseToken: string | null;
+  leaseExpiresAt: number | null;
+  lastError: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type StoryCreatorTurnClaim =
+  | {
+      action: "claimed";
+      turn: StoryCreatorTurn;
+      userMessage: StoryCreatorMessage;
+      assistantMessage: null;
+      leaseToken: string;
+    }
+  | {
+      action: "resume_assistant";
+      turn: StoryCreatorTurn;
+      userMessage: StoryCreatorMessage;
+      assistantMessage: StoryCreatorMessage;
+      leaseToken: string;
+    }
+  | {
+      action: "in_progress";
+      turn: StoryCreatorTurn;
+      userMessage: StoryCreatorMessage;
+      assistantMessage: StoryCreatorMessage | null;
+    }
+  | {
+      action: "completed";
+      turn: StoryCreatorTurn;
+      userMessage: StoryCreatorMessage;
+      assistantMessage: StoryCreatorMessage;
+    };
+
 export type StoryBibleFactStatus =
   | "canon"
   | "suggestion"
@@ -124,6 +174,48 @@ function db() {
 
     CREATE INDEX IF NOT EXISTS idx_story_messages_project_created
       ON story_messages(project_id, created_at ASC);
+
+    CREATE TABLE IF NOT EXISTS story_turns (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      owner_key TEXT NOT NULL,
+      client_turn_id TEXT NOT NULL,
+      request_content TEXT NOT NULL,
+      user_message_id TEXT NOT NULL,
+      assistant_message_id TEXT,
+      status TEXT NOT NULL
+        CHECK(status IN ('running', 'assistant_saved', 'completed', 'failed')),
+      lease_token TEXT,
+      lease_expires_at INTEGER,
+      last_error TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+
+      UNIQUE(
+        owner_key,
+        project_id,
+        client_turn_id
+      ),
+
+      FOREIGN KEY (project_id)
+        REFERENCES story_projects(id)
+        ON DELETE CASCADE,
+
+      FOREIGN KEY (user_message_id)
+        REFERENCES story_messages(id)
+        ON DELETE CASCADE,
+
+      FOREIGN KEY (assistant_message_id)
+        REFERENCES story_messages(id)
+        ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_story_turns_project_status_updated
+      ON story_turns(
+        project_id,
+        status,
+        updated_at ASC
+      );
 
     CREATE TABLE IF NOT EXISTS story_entities (
       id TEXT PRIMARY KEY,
@@ -293,6 +385,129 @@ function cleanMessageRole(value: unknown): StoryCreatorMessageRole {
   throw new Error("Story message role must be user or assistant.");
 }
 
+const STORY_CREATOR_TURN_CLIENT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const STORY_CREATOR_TURN_DEFAULT_LEASE_MS =
+  5 * 60 * 1000;
+
+const STORY_CREATOR_TURN_MAX_LEASE_MS =
+  10 * 60 * 1000;
+
+function storyCreatorTurnError(
+  code: string,
+  message: string,
+  status = 409,
+) {
+  const error =
+    new Error(message) as Error & {
+      code?: string;
+      status?: number;
+    };
+
+  error.code = code;
+  error.status = status;
+
+  return error;
+}
+
+function cleanStoryCreatorClientTurnId(
+  value: unknown,
+) {
+  const id =
+    String(value || "")
+      .trim()
+      .toLowerCase();
+
+  if (
+    !STORY_CREATOR_TURN_CLIENT_ID_PATTERN.test(id)
+  ) {
+    throw storyCreatorTurnError(
+      "STORY_DIRECTOR_CLIENT_TURN_ID_INVALID",
+      "Story Director clientTurnId must be an opaque UUID.",
+      400,
+    );
+  }
+
+  return id;
+}
+
+function cleanStoryCreatorTurnLeaseMs(
+  value: unknown,
+) {
+  if (
+    value === undefined ||
+    value === null
+  ) {
+    return STORY_CREATOR_TURN_DEFAULT_LEASE_MS;
+  }
+
+  const milliseconds =
+    Math.floor(Number(value));
+
+  if (
+    !Number.isFinite(milliseconds) ||
+    milliseconds < 1 ||
+    milliseconds >
+      STORY_CREATOR_TURN_MAX_LEASE_MS
+  ) {
+    throw storyCreatorTurnError(
+      "STORY_DIRECTOR_TURN_LEASE_INVALID",
+      "Story Director turn lease is invalid.",
+      400,
+    );
+  }
+
+  return milliseconds;
+}
+
+function cleanStoryCreatorTurnLeaseToken(
+  value: unknown,
+) {
+  const token =
+    String(value || "").trim();
+
+  if (!token) {
+    throw storyCreatorTurnError(
+      "STORY_DIRECTOR_TURN_LEASE_TOKEN_REQUIRED",
+      "Story Director turn lease token is required.",
+      409,
+    );
+  }
+
+  return token.slice(0, 240);
+}
+
+function cleanStoryCreatorTurnLastError(
+  value: unknown,
+) {
+  return (
+    String(value || "")
+      .replace(/\r\n/g, "\n")
+      .trim() ||
+    "Story Director request failed."
+  ).slice(0, 4000);
+}
+
+function cleanStoryCreatorTurnStatus(
+  value: unknown,
+): StoryCreatorTurnStatus {
+  if (
+    value === "running" ||
+    value === "assistant_saved" ||
+    value === "completed" ||
+    value === "failed"
+  ) {
+    return value;
+  }
+
+  throw storyCreatorTurnError(
+    "STORY_DIRECTOR_TURN_STATE_CORRUPT",
+    "Story Director turn state is invalid.",
+    500,
+  );
+}
+
 function cleanStoryBibleSourceRole(
   value: unknown,
 ): StoryBibleSourceRole {
@@ -415,6 +630,43 @@ function rowToMessage(row: any): StoryCreatorMessage {
     role: row.role === "assistant" ? "assistant" : "user",
     content: String(row.content || ""),
     createdAt: Number(row.created_at),
+  };
+}
+
+function rowToStoryCreatorTurn(
+  row: any,
+): StoryCreatorTurn {
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id),
+    ownerKey: String(row.owner_key),
+    clientTurnId:
+      String(row.client_turn_id),
+    requestContent:
+      String(row.request_content || ""),
+    userMessageId:
+      String(row.user_message_id),
+    assistantMessageId:
+      row.assistant_message_id
+        ? String(row.assistant_message_id)
+        : null,
+    status:
+      cleanStoryCreatorTurnStatus(row.status),
+    leaseToken:
+      row.lease_token
+        ? String(row.lease_token)
+        : null,
+    leaseExpiresAt:
+      row.lease_expires_at === null ||
+      row.lease_expires_at === undefined
+        ? null
+        : Number(row.lease_expires_at),
+    lastError:
+      String(row.last_error || ""),
+    createdAt:
+      Number(row.created_at),
+    updatedAt:
+      Number(row.updated_at),
   };
 }
 
@@ -770,6 +1022,765 @@ export function addStoryCreatorMessage(input: {
   write();
 
   return message;
+}
+
+function selectStoryCreatorTurnRow(
+  ownerKey: string,
+  projectId: string,
+  clientTurnId: string,
+) {
+  return db()
+    .prepare(`
+      SELECT *
+      FROM story_turns
+      WHERE owner_key = ?
+        AND project_id = ?
+        AND client_turn_id = ?
+      LIMIT 1
+    `)
+    .get(
+      ownerKey,
+      projectId,
+      clientTurnId,
+    ) as any;
+}
+
+function requireStoryCreatorTurnMessage(
+  input: {
+    ownerKey: string;
+    projectId: string;
+    messageId: string;
+    expectedRole:
+      StoryCreatorMessageRole;
+  },
+) {
+  const row = db()
+    .prepare(`
+      SELECT *
+      FROM story_messages
+      WHERE id = ?
+        AND project_id = ?
+        AND owner_key = ?
+      LIMIT 1
+    `)
+    .get(
+      input.messageId,
+      input.projectId,
+      input.ownerKey,
+    ) as any;
+
+  if (!row) {
+    throw storyCreatorTurnError(
+      "STORY_DIRECTOR_TURN_STATE_CORRUPT",
+      "Story Director turn references a missing message.",
+      500,
+    );
+  }
+
+  const message = rowToMessage(row);
+
+  if (
+    message.role !==
+      input.expectedRole
+  ) {
+    throw storyCreatorTurnError(
+      "STORY_DIRECTOR_TURN_STATE_CORRUPT",
+      "Story Director turn message role is invalid.",
+      500,
+    );
+  }
+
+  return message;
+}
+
+function requireStoryCreatorTurn(
+  ownerKey: string,
+  projectId: string,
+  clientTurnId: string,
+) {
+  const row =
+    selectStoryCreatorTurnRow(
+      ownerKey,
+      projectId,
+      clientTurnId,
+    );
+
+  if (!row) {
+    throw storyCreatorTurnError(
+      "STORY_DIRECTOR_TURN_NOT_FOUND",
+      "Story Director turn was not found.",
+      404,
+    );
+  }
+
+  return rowToStoryCreatorTurn(row);
+}
+
+function assertStoryCreatorTurnLease(
+  turn: StoryCreatorTurn,
+  leaseToken: string,
+  now: number,
+) {
+  if (
+    turn.leaseToken !== leaseToken ||
+    turn.leaseExpiresAt === null ||
+    turn.leaseExpiresAt <= now
+  ) {
+    throw storyCreatorTurnError(
+      "STORY_DIRECTOR_TURN_LEASE_LOST",
+      "Story Director turn lease is no longer owned by this request.",
+      409,
+    );
+  }
+}
+
+export function claimStoryCreatorTurn(
+  input: {
+    ownerKey: unknown;
+    projectId: unknown;
+    clientTurnId: unknown;
+    content: unknown;
+    leaseMs?: unknown;
+  },
+): StoryCreatorTurnClaim {
+  const ownerKey =
+    cleanOwnerKey(input.ownerKey);
+
+  const projectId =
+    cleanProjectId(input.projectId);
+
+  const clientTurnId =
+    cleanStoryCreatorClientTurnId(
+      input.clientTurnId,
+    );
+
+  const content =
+    cleanMessageContent(input.content);
+
+  const leaseMs =
+    cleanStoryCreatorTurnLeaseMs(
+      input.leaseMs,
+    );
+
+  const now = Date.now();
+  const leaseToken = randomUUID();
+
+  const write =
+    db().transaction(
+      (): StoryCreatorTurnClaim => {
+        assertOwnedActiveProject(
+          ownerKey,
+          projectId,
+        );
+
+        const existingRow =
+          selectStoryCreatorTurnRow(
+            ownerKey,
+            projectId,
+            clientTurnId,
+          );
+
+        if (!existingRow) {
+          const userMessage:
+            StoryCreatorMessage = {
+              id: randomUUID(),
+              projectId,
+              ownerKey,
+              role: "user",
+              content,
+              createdAt: now,
+            };
+
+          db()
+            .prepare(`
+              INSERT INTO story_messages (
+                id,
+                project_id,
+                owner_key,
+                role,
+                content,
+                created_at
+              )
+              VALUES (?, ?, ?, ?, ?, ?)
+            `)
+            .run(
+              userMessage.id,
+              userMessage.projectId,
+              userMessage.ownerKey,
+              userMessage.role,
+              userMessage.content,
+              userMessage.createdAt,
+            );
+
+          db()
+            .prepare(`
+              INSERT INTO story_turns (
+                id,
+                project_id,
+                owner_key,
+                client_turn_id,
+                request_content,
+                user_message_id,
+                assistant_message_id,
+                status,
+                lease_token,
+                lease_expires_at,
+                last_error,
+                created_at,
+                updated_at
+              )
+              VALUES (
+                ?, ?, ?, ?, ?, ?,
+                NULL,
+                'running',
+                ?, ?,
+                '',
+                ?, ?
+              )
+            `)
+            .run(
+              randomUUID(),
+              projectId,
+              ownerKey,
+              clientTurnId,
+              content,
+              userMessage.id,
+              leaseToken,
+              now + leaseMs,
+              now,
+              now,
+            );
+
+          db()
+            .prepare(`
+              UPDATE story_projects
+              SET updated_at = ?
+              WHERE id = ?
+                AND owner_key = ?
+                AND status = 'active'
+            `)
+            .run(
+              now,
+              projectId,
+              ownerKey,
+            );
+
+          return {
+            action: "claimed",
+            turn:
+              requireStoryCreatorTurn(
+                ownerKey,
+                projectId,
+                clientTurnId,
+              ),
+            userMessage,
+            assistantMessage: null,
+            leaseToken,
+          };
+        }
+
+        const turn =
+          rowToStoryCreatorTurn(
+            existingRow,
+          );
+
+        if (
+          turn.requestContent !== content
+        ) {
+          throw storyCreatorTurnError(
+            "STORY_DIRECTOR_TURN_ID_CONFLICT",
+            "This Story Director clientTurnId was already used for different content.",
+            409,
+          );
+        }
+
+        const userMessage =
+          requireStoryCreatorTurnMessage({
+            ownerKey,
+            projectId,
+            messageId:
+              turn.userMessageId,
+            expectedRole: "user",
+          });
+
+        const assistantMessage =
+          turn.assistantMessageId
+            ? requireStoryCreatorTurnMessage({
+                ownerKey,
+                projectId,
+                messageId:
+                  turn.assistantMessageId,
+                expectedRole:
+                  "assistant",
+              })
+            : null;
+
+        if (
+          turn.status === "completed"
+        ) {
+          if (!assistantMessage) {
+            throw storyCreatorTurnError(
+              "STORY_DIRECTOR_TURN_STATE_CORRUPT",
+              "Completed Story Director turn has no assistant message.",
+              500,
+            );
+          }
+
+          return {
+            action: "completed",
+            turn,
+            userMessage,
+            assistantMessage,
+          };
+        }
+
+        const leaseIsLive =
+          Boolean(turn.leaseToken) &&
+          turn.leaseExpiresAt !== null &&
+          turn.leaseExpiresAt > now;
+
+        if (leaseIsLive) {
+          return {
+            action: "in_progress",
+            turn,
+            userMessage,
+            assistantMessage,
+          };
+        }
+
+        if (
+          turn.status ===
+          "assistant_saved"
+        ) {
+          if (!assistantMessage) {
+            throw storyCreatorTurnError(
+              "STORY_DIRECTOR_TURN_STATE_CORRUPT",
+              "Assistant-saved Story Director turn has no assistant message.",
+              500,
+            );
+          }
+
+          db()
+            .prepare(`
+              UPDATE story_turns
+              SET lease_token = ?,
+                  lease_expires_at = ?,
+                  last_error = '',
+                  updated_at = ?
+              WHERE id = ?
+            `)
+            .run(
+              leaseToken,
+              now + leaseMs,
+              now,
+              turn.id,
+            );
+
+          return {
+            action:
+              "resume_assistant",
+            turn:
+              requireStoryCreatorTurn(
+                ownerKey,
+                projectId,
+                clientTurnId,
+              ),
+            userMessage,
+            assistantMessage,
+            leaseToken,
+          };
+        }
+
+        if (assistantMessage) {
+          throw storyCreatorTurnError(
+            "STORY_DIRECTOR_TURN_STATE_CORRUPT",
+            "Running or failed Story Director turn unexpectedly has an assistant message.",
+            500,
+          );
+        }
+
+        db()
+          .prepare(`
+            UPDATE story_turns
+            SET status = 'running',
+                lease_token = ?,
+                lease_expires_at = ?,
+                last_error = '',
+                updated_at = ?
+            WHERE id = ?
+          `)
+          .run(
+            leaseToken,
+            now + leaseMs,
+            now,
+            turn.id,
+          );
+
+        return {
+          action: "claimed",
+          turn:
+            requireStoryCreatorTurn(
+              ownerKey,
+              projectId,
+              clientTurnId,
+            ),
+          userMessage,
+          assistantMessage: null,
+          leaseToken,
+        };
+      },
+    );
+
+  return write.immediate();
+}
+
+export function saveStoryCreatorTurnAssistant(
+  input: {
+    ownerKey: unknown;
+    projectId: unknown;
+    clientTurnId: unknown;
+    leaseToken: unknown;
+    content: unknown;
+    leaseMs?: unknown;
+  },
+) {
+  const ownerKey =
+    cleanOwnerKey(input.ownerKey);
+
+  const projectId =
+    cleanProjectId(input.projectId);
+
+  const clientTurnId =
+    cleanStoryCreatorClientTurnId(
+      input.clientTurnId,
+    );
+
+  const leaseToken =
+    cleanStoryCreatorTurnLeaseToken(
+      input.leaseToken,
+    );
+
+  const content =
+    cleanMessageContent(input.content);
+
+  const leaseMs =
+    cleanStoryCreatorTurnLeaseMs(
+      input.leaseMs,
+    );
+
+  const now = Date.now();
+
+  const write =
+    db().transaction(() => {
+      const turn =
+        requireStoryCreatorTurn(
+          ownerKey,
+          projectId,
+          clientTurnId,
+        );
+
+      if (
+        turn.status === "completed"
+      ) {
+        if (!turn.assistantMessageId) {
+          throw storyCreatorTurnError(
+            "STORY_DIRECTOR_TURN_STATE_CORRUPT",
+            "Completed Story Director turn has no assistant message.",
+            500,
+          );
+        }
+
+        return requireStoryCreatorTurnMessage({
+          ownerKey,
+          projectId,
+          messageId:
+            turn.assistantMessageId,
+          expectedRole: "assistant",
+        });
+      }
+
+      if (
+        turn.status ===
+        "assistant_saved"
+      ) {
+        assertStoryCreatorTurnLease(
+          turn,
+          leaseToken,
+          now,
+        );
+
+        if (!turn.assistantMessageId) {
+          throw storyCreatorTurnError(
+            "STORY_DIRECTOR_TURN_STATE_CORRUPT",
+            "Assistant-saved Story Director turn has no assistant message.",
+            500,
+          );
+        }
+
+        return requireStoryCreatorTurnMessage({
+          ownerKey,
+          projectId,
+          messageId:
+            turn.assistantMessageId,
+          expectedRole:
+            "assistant",
+        });
+      }
+
+      if (
+        turn.status !== "running"
+      ) {
+        throw storyCreatorTurnError(
+          "STORY_DIRECTOR_TURN_STATE_INVALID",
+          "Story Director turn is not ready for an assistant message.",
+          409,
+        );
+      }
+
+      assertStoryCreatorTurnLease(
+        turn,
+        leaseToken,
+        now,
+      );
+
+      const assistantMessage:
+        StoryCreatorMessage = {
+          id: randomUUID(),
+          projectId,
+          ownerKey,
+          role: "assistant",
+          content,
+          createdAt: now,
+        };
+
+      db()
+        .prepare(`
+          INSERT INTO story_messages (
+            id,
+            project_id,
+            owner_key,
+            role,
+            content,
+            created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          assistantMessage.id,
+          assistantMessage.projectId,
+          assistantMessage.ownerKey,
+          assistantMessage.role,
+          assistantMessage.content,
+          assistantMessage.createdAt,
+        );
+
+      db()
+        .prepare(`
+          UPDATE story_turns
+          SET assistant_message_id = ?,
+              status = 'assistant_saved',
+              lease_expires_at = ?,
+              last_error = '',
+              updated_at = ?
+          WHERE id = ?
+        `)
+        .run(
+          assistantMessage.id,
+          now + leaseMs,
+          now,
+          turn.id,
+        );
+
+      db()
+        .prepare(`
+          UPDATE story_projects
+          SET updated_at = ?
+          WHERE id = ?
+            AND owner_key = ?
+            AND status = 'active'
+        `)
+        .run(
+          now,
+          projectId,
+          ownerKey,
+        );
+
+      return assistantMessage;
+    });
+
+  return write.immediate();
+}
+
+export function completeStoryCreatorTurn(
+  input: {
+    ownerKey: unknown;
+    projectId: unknown;
+    clientTurnId: unknown;
+    leaseToken: unknown;
+  },
+) {
+  const ownerKey =
+    cleanOwnerKey(input.ownerKey);
+
+  const projectId =
+    cleanProjectId(input.projectId);
+
+  const clientTurnId =
+    cleanStoryCreatorClientTurnId(
+      input.clientTurnId,
+    );
+
+  const leaseToken =
+    cleanStoryCreatorTurnLeaseToken(
+      input.leaseToken,
+    );
+
+  const now = Date.now();
+
+  const write =
+    db().transaction(() => {
+      const turn =
+        requireStoryCreatorTurn(
+          ownerKey,
+          projectId,
+          clientTurnId,
+        );
+
+      if (
+        turn.status === "completed"
+      ) {
+        return turn;
+      }
+
+      if (
+        turn.status !==
+        "assistant_saved"
+      ) {
+        throw storyCreatorTurnError(
+          "STORY_DIRECTOR_TURN_STATE_INVALID",
+          "Story Director turn cannot complete before the assistant message is saved.",
+          409,
+        );
+      }
+
+      assertStoryCreatorTurnLease(
+        turn,
+        leaseToken,
+        now,
+      );
+
+      db()
+        .prepare(`
+          UPDATE story_turns
+          SET status = 'completed',
+              lease_token = NULL,
+              lease_expires_at = NULL,
+              last_error = '',
+              updated_at = ?
+          WHERE id = ?
+        `)
+        .run(
+          now,
+          turn.id,
+        );
+
+      return requireStoryCreatorTurn(
+        ownerKey,
+        projectId,
+        clientTurnId,
+      );
+    });
+
+  return write.immediate();
+}
+
+export function failStoryCreatorTurn(
+  input: {
+    ownerKey: unknown;
+    projectId: unknown;
+    clientTurnId: unknown;
+    leaseToken: unknown;
+    error: unknown;
+  },
+) {
+  const ownerKey =
+    cleanOwnerKey(input.ownerKey);
+
+  const projectId =
+    cleanProjectId(input.projectId);
+
+  const clientTurnId =
+    cleanStoryCreatorClientTurnId(
+      input.clientTurnId,
+    );
+
+  const leaseToken =
+    cleanStoryCreatorTurnLeaseToken(
+      input.leaseToken,
+    );
+
+  const lastError =
+    cleanStoryCreatorTurnLastError(
+      input.error,
+    );
+
+  const now = Date.now();
+
+  const write =
+    db().transaction(() => {
+      const turn =
+        requireStoryCreatorTurn(
+          ownerKey,
+          projectId,
+          clientTurnId,
+        );
+
+      if (
+        turn.status === "failed"
+      ) {
+        return turn;
+      }
+
+      if (
+        turn.status !== "running"
+      ) {
+        throw storyCreatorTurnError(
+          "STORY_DIRECTOR_TURN_STATE_INVALID",
+          "Story Director turn can only fail before the assistant message is saved.",
+          409,
+        );
+      }
+
+      assertStoryCreatorTurnLease(
+        turn,
+        leaseToken,
+        now,
+      );
+
+      db()
+        .prepare(`
+          UPDATE story_turns
+          SET status = 'failed',
+              lease_token = NULL,
+              lease_expires_at = NULL,
+              last_error = ?,
+              updated_at = ?
+          WHERE id = ?
+        `)
+        .run(
+          lastError,
+          now,
+          turn.id,
+        );
+
+      return requireStoryCreatorTurn(
+        ownerKey,
+        projectId,
+        clientTurnId,
+      );
+    });
+
+  return write.immediate();
 }
 
 function assertStoryBibleSourceMessage(input: {
