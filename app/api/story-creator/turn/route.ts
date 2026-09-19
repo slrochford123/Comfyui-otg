@@ -20,6 +20,10 @@ import {
   listStoryCreatorMessages,
 } from "../../../../lib/storyCreator/store";
 
+import {
+  extractAndPersistStoryBibleProposals,
+} from "@/lib/storyCreator/extractionPersistence";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
@@ -349,11 +353,49 @@ export async function POST(
         content: responseText,
       });
 
+    /*
+     * STORY_BIBLE_POST_ASSISTANT_EXTRACTION_V1
+     *
+     * Conversation durability wins over extraction.
+     * The assistant message is already persisted.
+     */
+    let storyBibleExtraction;
+
+    try {
+      storyBibleExtraction =
+        await extractAndPersistStoryBibleProposals({
+          ownerKey,
+          projectId:
+            userMessage.projectId,
+          userMessage: {
+            content:
+              userMessage.content,
+          },
+          assistantMessage: {
+            id:
+              assistantMessage.id,
+            content:
+              assistantMessage.content,
+          },
+        });
+    } catch (error) {
+      storyBibleExtraction = {
+        status:
+          "failed" as const,
+        error:
+          error instanceof Error &&
+          error.message.trim()
+            ? error.message.trim()
+            : "Story Bible extraction failed.",
+      };
+    }
+
     return NextResponse.json(
       {
         ok: true,
         userMessage,
         assistantMessage,
+        storyBibleExtraction,
         storyHelperGuard:
           helperData &&
           typeof helperData === "object"
