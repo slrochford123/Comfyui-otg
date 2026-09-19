@@ -1282,3 +1282,112 @@ export function addStoryBibleFact(input: {
 
   return fact;
 }
+
+
+function assertStoryBibleProposalProvenance(input: {
+  sourceRole: StoryBibleSourceRole;
+  sourceMessageId: string | null;
+}) {
+  if (input.sourceRole === "user") {
+    throw storyBibleError(
+      "STORY_BIBLE_PROPOSAL_SOURCE_ROLE_FORBIDDEN",
+      "Story Bible proposals must use assistant or system provenance.",
+    );
+  }
+
+  if (
+    input.sourceRole === "assistant" &&
+    !input.sourceMessageId
+  ) {
+    throw storyBibleError(
+      "STORY_BIBLE_PROPOSAL_SOURCE_MESSAGE_REQUIRED",
+      "Assistant Story Bible proposals must reference their originating assistant message.",
+    );
+  }
+}
+
+export function proposeStoryBibleEntity(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  entityType: unknown;
+  name: unknown;
+  sourceRole: unknown;
+  sourceMessageId?: unknown;
+}) {
+  const sourceRole =
+    cleanStoryBibleSourceRole(
+      input.sourceRole,
+    );
+
+  const sourceMessageId =
+    cleanOptionalStoryBibleId(
+      input.sourceMessageId,
+    );
+
+  assertStoryBibleProposalProvenance({
+    sourceRole,
+    sourceMessageId,
+  });
+
+  return createStoryBibleEntity({
+    ownerKey: input.ownerKey,
+    projectId: input.projectId,
+    entityType: input.entityType,
+    name: input.name,
+    sourceRole,
+    sourceMessageId,
+  });
+}
+
+export function proposeStoryBibleFact(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  subjectEntityId?: unknown;
+  predicate: unknown;
+  valueText?: unknown;
+  objectEntityId?: unknown;
+  canonStatus: unknown;
+  sourceRole: unknown;
+  sourceMessageId?: unknown;
+}) {
+  const canonStatus =
+    cleanStoryBibleFactStatus(
+      input.canonStatus,
+    );
+
+  if (canonStatus === "canon") {
+    throw storyBibleError(
+      "STORY_BIBLE_PROPOSAL_CANON_FORBIDDEN",
+      "Story Bible proposals may only be suggestions or unknowns.",
+    );
+  }
+
+  const sourceRole =
+    cleanStoryBibleSourceRole(
+      input.sourceRole,
+    );
+
+  const sourceMessageId =
+    cleanOptionalStoryBibleId(
+      input.sourceMessageId,
+    );
+
+  assertStoryBibleProposalProvenance({
+    sourceRole,
+    sourceMessageId,
+  });
+
+  return addStoryBibleFact({
+    ownerKey: input.ownerKey,
+    projectId: input.projectId,
+    subjectEntityId:
+      input.subjectEntityId,
+    predicate: input.predicate,
+    valueText: input.valueText,
+    objectEntityId:
+      input.objectEntityId,
+    canonStatus,
+    sourceRole,
+    sourceMessageId,
+  });
+}
