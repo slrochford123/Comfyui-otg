@@ -1306,6 +1306,19 @@ function assertStoryBibleProposalProvenance(input: {
   }
 }
 
+/*
+ * STORY_BIBLE_PROPOSAL_REPLAY_IDEMPOTENCY_V1
+ *
+ * Automatic extraction may be retried for the same persisted
+ * assistant message. Replaying the same normalized proposal from
+ * that exact source message must return the original row rather
+ * than create another durable proposal.
+ *
+ * This intentionally does NOT merge proposals across different
+ * source messages. Cross-message entity/fact resolution belongs
+ * to the extraction layer, where ambiguity can be considered
+ * explicitly instead of silently merging story data.
+ */
 export function proposeStoryBibleEntity(input: {
   ownerKey: unknown;
   projectId: unknown;
@@ -1329,11 +1342,76 @@ export function proposeStoryBibleEntity(input: {
     sourceMessageId,
   });
 
+  const {
+    ownerKey,
+    projectId,
+  } =
+    assertOwnedActiveProject(
+      input.ownerKey,
+      input.projectId,
+    );
+
+  const entityType =
+    cleanStoryBibleEntityType(
+      input.entityType,
+    );
+
+  const name =
+    cleanStoryBibleEntityName(
+      input.name,
+    );
+
+  /*
+   * Validate the supplied assistant source even when a replay
+   * would return an already-existing proposal. This prevents
+   * idempotency from becoming a provenance-validation bypass.
+   */
+  assertStoryBibleSourceMessage({
+    ownerKey,
+    projectId,
+    sourceRole,
+    sourceMessageId,
+  });
+
+  if (sourceMessageId) {
+    const existing = db()
+      .prepare(`
+        SELECT
+          rowid AS entity_rowid,
+          *
+        FROM story_entities
+        WHERE project_id = ?
+          AND owner_key = ?
+          AND source_role = ?
+          AND source_message_id = ?
+          AND entity_type = ? COLLATE NOCASE
+          AND name = ? COLLATE NOCASE
+        ORDER BY
+          created_at ASC,
+          entity_rowid ASC
+        LIMIT 1
+      `)
+      .get(
+        projectId,
+        ownerKey,
+        sourceRole,
+        sourceMessageId,
+        entityType,
+        name,
+      );
+
+    if (existing) {
+      return rowToStoryBibleEntity(
+        existing,
+      );
+    }
+  }
+
   return createStoryBibleEntity({
-    ownerKey: input.ownerKey,
-    projectId: input.projectId,
-    entityType: input.entityType,
-    name: input.name,
+    ownerKey,
+    projectId,
+    entityType,
+    name,
     sourceRole,
     sourceMessageId,
   });
@@ -1377,15 +1455,137 @@ export function proposeStoryBibleFact(input: {
     sourceMessageId,
   });
 
-  return addStoryBibleFact({
-    ownerKey: input.ownerKey,
-    projectId: input.projectId,
-    subjectEntityId:
+  const {
+    ownerKey,
+    projectId,
+  } =
+    assertOwnedActiveProject(
+      input.ownerKey,
+      input.projectId,
+    );
+
+  const subjectEntityId =
+    cleanOptionalStoryBibleId(
       input.subjectEntityId,
-    predicate: input.predicate,
-    valueText: input.valueText,
-    objectEntityId:
+    );
+
+  const objectEntityId =
+    cleanOptionalStoryBibleId(
       input.objectEntityId,
+    );
+
+  const predicate =
+    cleanStoryBiblePredicate(
+      input.predicate,
+    );
+
+  const valueText =
+    cleanStoryBibleFactValue(
+      input.valueText,
+    );
+
+  if (
+    canonStatus !== "unknown" &&
+    !valueText &&
+    !objectEntityId
+  ) {
+    throw storyBibleError(
+      "STORY_BIBLE_FACT_VALUE_REQUIRED",
+      "Canon and suggestion facts require a value or object entity.",
+    );
+  }
+
+  if (subjectEntityId) {
+    assertOwnedStoryBibleEntity({
+      ownerKey,
+      projectId,
+      entityId:
+        subjectEntityId,
+    });
+  }
+
+  if (objectEntityId) {
+    assertOwnedStoryBibleEntity({
+      ownerKey,
+      projectId,
+      entityId:
+        objectEntityId,
+    });
+  }
+
+  /*
+   * Validate provenance before any replay lookup. A caller cannot
+   * use an existing proposal to bypass assistant-message matching.
+   */
+  assertStoryBibleSourceMessage({
+    ownerKey,
+    projectId,
+    sourceRole,
+    sourceMessageId,
+  });
+
+  if (sourceMessageId) {
+    const existing = db()
+      .prepare(`
+        SELECT
+          rowid AS fact_rowid,
+          *
+        FROM story_facts
+        WHERE project_id = ?
+          AND owner_key = ?
+          AND source_role = ?
+          AND source_message_id = ?
+          AND canon_status = ?
+          AND predicate = ? COLLATE NOCASE
+          AND (
+            (
+              subject_entity_id IS NULL
+              AND ? IS NULL
+            )
+            OR subject_entity_id = ?
+          )
+          AND (
+            (
+              object_entity_id IS NULL
+              AND ? IS NULL
+            )
+            OR object_entity_id = ?
+          )
+          AND value_text = ?
+          AND supersedes_fact_id IS NULL
+        ORDER BY
+          created_at ASC,
+          fact_rowid ASC
+        LIMIT 1
+      `)
+      .get(
+        projectId,
+        ownerKey,
+        sourceRole,
+        sourceMessageId,
+        canonStatus,
+        predicate,
+        subjectEntityId,
+        subjectEntityId,
+        objectEntityId,
+        objectEntityId,
+        valueText,
+      );
+
+    if (existing) {
+      return rowToStoryBibleFact(
+        existing,
+      );
+    }
+  }
+
+  return addStoryBibleFact({
+    ownerKey,
+    projectId,
+    subjectEntityId,
+    predicate,
+    valueText,
+    objectEntityId,
     canonStatus,
     sourceRole,
     sourceMessageId,
