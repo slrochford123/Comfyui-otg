@@ -156,13 +156,13 @@ describe(
       "keeps the Phase 2B UI read only",
       () => {
         expect(panel).toContain(
-          "Read only",
+          "Review only",
         );
 
         expect(
           panel.replace(/\s+/g, " "),
         ).toContain(
-          "does not write or promote canon here yet",
+          "cannot promote them to canon",
         );
 
         expect(panel).not.toContain(

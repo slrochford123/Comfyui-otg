@@ -145,7 +145,7 @@ describe("Story Creator Phase 1B", () => {
     );
 
     expect(source).toContain(
-      "Phase 2",
+      "Review only",
     );
   });
 

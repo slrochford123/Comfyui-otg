@@ -135,7 +135,7 @@ describe(
         );
 
         expect(panel).toContain(
-          "Read only",
+          "Review only",
         );
 
         expect(panel).toContain(

@@ -88,6 +88,8 @@ export async function POST(request: NextRequest) {
       title: body?.title,
       format: body?.format,
       genre: body?.genre,
+      matureLanguageEnabled:
+        body?.matureLanguageEnabled,
     });
 
     return NextResponse.json(
@@ -119,6 +121,8 @@ export async function PATCH(request: NextRequest) {
       title: body?.title,
       format: body?.format,
       genre: body?.genre,
+      matureLanguageEnabled:
+        body?.matureLanguageEnabled,
     });
 
     return NextResponse.json(

@@ -18,6 +18,8 @@ const mocks =
       vi.fn(),
     claimStoryCreatorTurn:
       vi.fn(),
+    getStoryCreatorProject:
+      vi.fn(),
     listStoryCreatorMessages:
       vi.fn(),
     saveStoryCreatorTurnAssistant:
@@ -60,6 +62,8 @@ vi.mock(
   () => ({
     claimStoryCreatorTurn:
       mocks.claimStoryCreatorTurn,
+    getStoryCreatorProject:
+      mocks.getStoryCreatorProject,
     listStoryCreatorMessages:
       mocks.listStoryCreatorMessages,
     saveStoryCreatorTurnAssistant:
@@ -188,6 +192,20 @@ beforeEach(() => {
     .requireSessionUser
     .mockResolvedValue({
       ownerKey: "owner-1",
+    });
+
+  mocks
+    .getStoryCreatorProject
+    .mockReturnValue({
+      id: "project-1",
+      ownerKey: "owner-1",
+      title: "Test Story",
+      format: "",
+      genre: "",
+      matureLanguageEnabled: false,
+      status: "active",
+      createdAt: 1,
+      updatedAt: 1,
     });
 
   mocks
@@ -362,6 +380,130 @@ describe(
     );
 
     it(
+    "preserves Mature Language instruction with long history",
+    async () => {
+      mocks
+        .claimStoryCreatorTurn
+        .mockReturnValue({
+          action: "claimed",
+          turn:
+            turn("running"),
+          userMessage,
+          assistantMessage:
+            null,
+          leaseToken:
+            "lease-1",
+        });
+
+      mocks
+        .getStoryCreatorProject
+        .mockReturnValue({
+          id: "project-1",
+          ownerKey: "owner-1",
+          title: "Test Story",
+          format: "",
+          genre: "",
+          matureLanguageEnabled: true,
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+        });
+
+      const longHistory =
+        Array.from(
+          {
+            length: 60,
+          },
+          (_, index) => ({
+            ...userMessage,
+            id:
+              `history-message-${index}`,
+            role:
+              index % 2 === 0
+                ? ("user" as const)
+                : ("assistant" as const),
+            content:
+              `history-${index}`,
+            createdAt:
+              index + 1,
+          }),
+        );
+
+      mocks
+        .listStoryCreatorMessages
+        .mockReturnValue(
+          longHistory,
+        );
+
+      let helperMessages:
+        Array<{
+          role: string;
+          content: string;
+        }> = [];
+
+      mocks
+        .runStoryHelperChat
+        .mockImplementation(
+          async (
+            helperRequest:
+              NextRequest,
+          ) => {
+            const helperBody =
+              await helperRequest.json() as {
+                messages?: Array<{
+                  role: string;
+                  content: string;
+                }>;
+              };
+
+            helperMessages =
+              Array.isArray(
+                helperBody.messages,
+              )
+                ? helperBody.messages
+                : [];
+
+            return helperResponse({
+              message:
+                assistantMessage.content,
+            });
+          },
+        );
+
+      const response =
+        await POST(
+          request(),
+        );
+
+      expect(
+        response.status,
+      ).toBe(201);
+
+      expect(
+        helperMessages,
+      ).toHaveLength(48);
+
+      expect(
+        helperMessages[0]?.role,
+      ).toBe("system");
+
+      expect(
+        helperMessages[0]?.content,
+      ).toContain(
+        "Mature Language setting is ON",
+      );
+
+      expect(
+        helperMessages[1]?.content,
+      ).toBe("history-13");
+
+      expect(
+        helperMessages[47]?.content,
+      ).toBe("history-59");
+    },
+  );
+
+  it(
       "marks helper failure failed",
       async () => {
         mocks

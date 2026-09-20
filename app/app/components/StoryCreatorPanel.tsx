@@ -14,6 +14,7 @@ type StoryProject = {
   title: string;
   format: string;
   genre: string;
+  matureLanguageEnabled: boolean;
   createdAt: number;
   updatedAt: number;
 };
@@ -980,6 +981,74 @@ export default function StoryCreatorPanel({
     }
   }
 
+  async function setMatureLanguage(
+    project: StoryProject,
+    enabled: boolean,
+  ) {
+    if (busy) return;
+
+    setBusy(true);
+    setNotice("");
+
+    try {
+      const response = await fetch(
+        "/api/story-creator/projects",
+        {
+          method: "PATCH",
+          cache: "no-store",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: project.id,
+            matureLanguageEnabled:
+              enabled,
+          }),
+        },
+      );
+
+      const data =
+        await response
+          .json()
+          .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          errorMessage(
+            data,
+            "Could not update Mature Language.",
+          ),
+        );
+      }
+
+      const updated =
+        data?.project as StoryProject;
+
+      setProjects((current) =>
+        current.map((item) =>
+          item.id === updated.id
+            ? updated
+            : item,
+        ),
+      );
+
+      setNotice(
+        updated.matureLanguageEnabled
+          ? "Mature Language enabled."
+          : "Mature Language disabled.",
+      );
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Could not update Mature Language.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function deleteProject(
     project: StoryProject,
   ) {
@@ -1260,6 +1329,39 @@ export default function StoryCreatorPanel({
                 saved inside this Story and reloads
                 whenever you return.
               </p>
+
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={
+                    selectedProject.matureLanguageEnabled
+                  }
+                  onClick={() =>
+                    void setMatureLanguage(
+                      selectedProject,
+                      !selectedProject.matureLanguageEnabled,
+                    )
+                  }
+                  disabled={busy}
+                  className={
+                    selectedProject.matureLanguageEnabled
+                      ? "rounded-full border border-amber-300/35 bg-amber-300/15 px-3 py-1.5 text-xs font-black text-amber-100 transition hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:opacity-50"
+                      : "rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5 text-xs font-black text-white/60 transition hover:bg-white/[0.09] disabled:cursor-not-allowed disabled:opacity-50"
+                  }
+                >
+                  Mature Language:{" "}
+                  {selectedProject.matureLanguageEnabled
+                    ? "On"
+                    : "Off"}
+                </button>
+
+                <span className="max-w-xl text-[11px] leading-5 text-white/40">
+                  When on, the Story Director may use
+                  strong language when it fits the
+                  requested dialogue, tone, or scene.
+                </span>
+              </div>
             </div>
 
             <button
@@ -1710,8 +1812,9 @@ export default function StoryCreatorPanel({
 
                       <p className="mt-1 text-[11px] leading-5 text-white/36">
                         Recent Mentions are temporary.
-                        This prototype does not write
-                        anything to the Story Bible.
+                        Story Director extraction may add
+                        durable suggestion or unknown
+                        reference cards after completed turns.
                       </p>
                     </div>
                   )}
@@ -1750,15 +1853,16 @@ export default function StoryCreatorPanel({
                 </div>
 
                 <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-white/45">
-                  Read only
+                  Review only
                 </span>
               </div>
 
               <p className="mt-2 text-sm leading-6 text-white/60">
-                Phase 2 read view. Structured entities
-                and facts are loaded from this Story's
-                durable Story Bible. Story Director does
-                not write or promote canon here yet.
+                Structured entities and facts are loaded
+                from this Story&apos;s durable Story Bible.
+                Story Director extraction may add suggestion
+                or unknown records, but it cannot promote
+                them to canon.
               </p>
 
               {storyBibleError ? (

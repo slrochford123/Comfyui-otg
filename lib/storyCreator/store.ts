@@ -12,6 +12,7 @@ export type StoryCreatorProject = {
   title: string;
   format: string;
   genre: string;
+  matureLanguageEnabled: boolean;
   status: "active";
   createdAt: number;
   updatedAt: number;
@@ -152,6 +153,7 @@ function db() {
       title TEXT NOT NULL,
       format TEXT NOT NULL DEFAULT '',
       genre TEXT NOT NULL DEFAULT '',
+      mature_language_enabled INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -324,6 +326,22 @@ function db() {
       END;
   `);
 
+  const storyProjectColumns =
+    database
+      .prepare("PRAGMA table_info(story_projects)")
+      .all() as Array<{ name: string }>;
+
+  if (
+    storyProjectColumns.every(
+      (column) =>
+        column.name !== "mature_language_enabled",
+    )
+  ) {
+    database.exec(
+      "ALTER TABLE story_projects ADD COLUMN mature_language_enabled INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+
   dbInstance = database;
   return database;
 }
@@ -353,6 +371,26 @@ function cleanShort(value: unknown) {
     .trim()
     .replace(/\s+/g, " ")
     .slice(0, 80);
+}
+
+function cleanMatureLanguageEnabled(
+  value: unknown,
+  fallback: boolean,
+) {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  if (typeof value !== "boolean") {
+    const error = new Error(
+      "Mature Language must be true or false.",
+    ) as Error & { code?: string };
+
+    error.code = "STORY_PROJECT_INVALID";
+    throw error;
+  }
+
+  return value;
 }
 
 function cleanProjectId(value: unknown) {
@@ -616,6 +654,8 @@ function rowToProject(row: any): StoryCreatorProject {
     title: String(row.title),
     format: String(row.format || ""),
     genre: String(row.genre || ""),
+    matureLanguageEnabled:
+      Number(row.mature_language_enabled || 0) === 1,
     status: "active",
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
@@ -751,6 +791,16 @@ function assertOwnedActiveProject(
   };
 }
 
+export function getStoryCreatorProject(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+}) {
+  return assertOwnedActiveProject(
+    input.ownerKey,
+    input.projectId,
+  ).project;
+}
+
 export function listStoryCreatorProjects(ownerKeyInput: unknown) {
   const ownerKey = cleanOwnerKey(ownerKeyInput);
 
@@ -772,6 +822,7 @@ export function createStoryCreatorProject(input: {
   title?: unknown;
   format?: unknown;
   genre?: unknown;
+  matureLanguageEnabled?: unknown;
 }) {
   const ownerKey = cleanOwnerKey(input.ownerKey);
 
@@ -804,6 +855,11 @@ export function createStoryCreatorProject(input: {
     title: cleanTitle(input.title),
     format: cleanShort(input.format),
     genre: cleanShort(input.genre),
+    matureLanguageEnabled:
+      cleanMatureLanguageEnabled(
+        input.matureLanguageEnabled,
+        false,
+      ),
     status: "active",
     createdAt: now,
     updatedAt: now,
@@ -817,11 +873,12 @@ export function createStoryCreatorProject(input: {
         title,
         format,
         genre,
+        mature_language_enabled,
         status,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
     `)
     .run(
       project.id,
@@ -829,6 +886,7 @@ export function createStoryCreatorProject(input: {
       project.title,
       project.format,
       project.genre,
+      project.matureLanguageEnabled ? 1 : 0,
       project.createdAt,
       project.updatedAt,
     );
@@ -842,6 +900,7 @@ export function updateStoryCreatorProject(input: {
   title?: unknown;
   format?: unknown;
   genre?: unknown;
+  matureLanguageEnabled?: unknown;
 }) {
   const ownerKey = cleanOwnerKey(input.ownerKey);
   const id = cleanProjectId(input.id);
@@ -876,6 +935,14 @@ export function updateStoryCreatorProject(input: {
       ? String(existing.genre || "")
       : cleanShort(input.genre);
 
+  const nextMatureLanguageEnabled =
+    cleanMatureLanguageEnabled(
+      input.matureLanguageEnabled,
+      Number(
+        existing.mature_language_enabled || 0,
+      ) === 1,
+    );
+
   const updatedAt = Date.now();
 
   db()
@@ -884,6 +951,7 @@ export function updateStoryCreatorProject(input: {
       SET title = ?,
           format = ?,
           genre = ?,
+          mature_language_enabled = ?,
           updated_at = ?
       WHERE id = ?
         AND owner_key = ?
@@ -893,6 +961,7 @@ export function updateStoryCreatorProject(input: {
       nextTitle,
       nextFormat,
       nextGenre,
+      nextMatureLanguageEnabled ? 1 : 0,
       updatedAt,
       id,
       ownerKey,
@@ -903,6 +972,8 @@ export function updateStoryCreatorProject(input: {
     title: nextTitle,
     format: nextFormat,
     genre: nextGenre,
+    mature_language_enabled:
+      nextMatureLanguageEnabled ? 1 : 0,
     updated_at: updatedAt,
   });
 }

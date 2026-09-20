@@ -19,6 +19,7 @@ import {
   claimStoryCreatorTurn,
   completeStoryCreatorTurn,
   failStoryCreatorTurn,
+  getStoryCreatorProject,
   listStoryCreatorMessages,
   saveStoryCreatorTurnAssistant,
 } from "../../../../lib/storyCreator/store";
@@ -30,6 +31,11 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
+
+const STORY_CREATOR_STORY_HELPER_MESSAGE_LIMIT = 48;
+
+const STORY_CREATOR_MATURE_LANGUAGE_SYSTEM_MESSAGE =
+  "This story's Mature Language setting is ON. Strong language and profanity are allowed when they fit the user's requested tone, dialogue, or scene. Do not sanitize or euphemize ordinary profanity solely because it is strong language. Do not add profanity just to demonstrate the setting. This setting applies only to language; all other Story Helper continuity and safety rules remain unchanged.";
 
 function requestError(
   code: string,
@@ -146,6 +152,7 @@ function assertServerOwnedTurnFields(
     "ownerKey",
     "role",
     "messages",
+  "matureLanguageEnabled",
     "assistantMessage",
     "sourceRole",
     "sourceMessageId",
@@ -353,6 +360,47 @@ export async function POST(
             userMessage.projectId,
         });
 
+      const project =
+        getStoryCreatorProject({
+          ownerKey,
+          projectId:
+            userMessage.projectId,
+        });
+
+      const helperMessages: Array<{
+        role:
+          | "system"
+          | "user"
+          | "assistant";
+        content: string;
+      }> = history
+      .slice(
+        project.matureLanguageEnabled
+          ? -(STORY_CREATOR_STORY_HELPER_MESSAGE_LIMIT - 1)
+          : -STORY_CREATOR_STORY_HELPER_MESSAGE_LIMIT,
+      )
+      .map(
+        ({
+          role,
+          content:
+            messageContent,
+        }) => ({
+          role,
+          content:
+            messageContent,
+        }),
+      );
+
+      if (
+        project.matureLanguageEnabled
+      ) {
+        helperMessages.unshift({
+          role: "system",
+          content:
+            STORY_CREATOR_MATURE_LANGUAGE_SYSTEM_MESSAGE,
+        });
+      }
+
       const helperRequest =
         new NextRequest(
           "http://story-creator.internal/api/ollama-ai/chat",
@@ -369,17 +417,7 @@ export async function POST(
             body:
               JSON.stringify({
                 messages:
-                  history.map(
-                    ({
-                      role,
-                      content:
-                        messageContent,
-                    }) => ({
-                      role,
-                      content:
-                        messageContent,
-                    }),
-                  ),
+                  helperMessages,
               }),
           },
         );
