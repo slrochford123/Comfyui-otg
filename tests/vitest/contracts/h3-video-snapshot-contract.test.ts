@@ -83,7 +83,7 @@ describe(
   "H3 video Snapshot contract",
   () => {
     it(
-      "captures a native-resolution PNG client-side and cleans up the video object URL",
+      "captures a bounded client-side JPEG and cleans up the video object URL",
       () => {
         const picker = source(
           "app/app/components/VideoSnapshotPicker.tsx",
@@ -99,6 +99,18 @@ describe(
 
         expect(picker).toContain(
           "requestVideoFrameCallback",
+        );
+
+        expect(picker).toContain(
+          "SNAPSHOT_FRAME_WAIT_TIMEOUT_MS",
+        );
+
+        expect(picker).toContain(
+          "cancelVideoFrameCallback",
+        );
+
+        expect(picker).toContain(
+          "SNAPSHOT_MAX_DIMENSION",
         );
 
         expect(picker).toContain(
@@ -126,7 +138,15 @@ describe(
         );
 
         expect(picker).toContain(
-          '"image/png"',
+          'SNAPSHOT_MIME_TYPE = "image/jpeg"',
+        );
+
+        expect(picker).toContain(
+          "SNAPSHOT_JPEG_QUALITY",
+        );
+
+        expect(picker).toContain(
+          "captureDurationMs",
         );
 
         expect(picker).not.toMatch(

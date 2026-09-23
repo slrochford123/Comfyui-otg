@@ -14,6 +14,8 @@ export type VideoSnapshotResult = {
   displayTimestamp: string;
   width: number;
   height: number;
+  captureDurationMs: number;
+  encodeDurationMs: number;
 };
 
 type VideoSnapshotPickerProps = {
@@ -32,7 +34,16 @@ type VideoWithFrameCallback =
         metadata: unknown,
       ) => void,
     ) => number;
+    cancelVideoFrameCallback?: (
+      handle: number,
+    ) => void;
   };
+
+const SNAPSHOT_FRAME_WAIT_TIMEOUT_MS = 250;
+const SNAPSHOT_MAX_DIMENSION = 1536;
+const SNAPSHOT_MIME_TYPE = "image/jpeg";
+const SNAPSHOT_EXTENSION = ".jpg";
+const SNAPSHOT_JPEG_QUALITY = 0.92;
 
 function clamp(
   value: number,
@@ -120,9 +131,37 @@ async function waitForDisplayedFrame(
   ) {
     await new Promise<void>(
       (resolve) => {
-        enhanced.requestVideoFrameCallback!(
-          () => resolve(),
+        let settled = false;
+        let handle = 0;
+
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timeout);
+          resolve();
+        };
+
+        const timeout = window.setTimeout(
+          () => {
+            if (
+              handle
+              && typeof enhanced.cancelVideoFrameCallback
+              === "function"
+            ) {
+              enhanced.cancelVideoFrameCallback(
+                handle,
+              );
+            }
+
+            finish();
+          },
+          SNAPSHOT_FRAME_WAIT_TIMEOUT_MS,
         );
+
+        handle =
+          enhanced.requestVideoFrameCallback!(
+            () => finish(),
+          );
       },
     );
 
@@ -156,10 +195,51 @@ async function canvasPng(
             ),
           );
         },
-        "image/png",
+        SNAPSHOT_MIME_TYPE,
+        SNAPSHOT_JPEG_QUALITY,
       );
     },
   );
+}
+
+function snapshotDimensions(
+  width: number,
+  height: number,
+) {
+  if (
+    width <= 0
+    || height <= 0
+  ) {
+    return {
+      width: 0,
+      height: 0,
+    };
+  }
+
+  const scale =
+    Math.min(
+      1,
+      SNAPSHOT_MAX_DIMENSION
+      / Math.max(
+        width,
+        height,
+      ),
+    );
+
+  return {
+    width: Math.max(
+      1,
+      Math.round(
+        width * scale,
+      ),
+    ),
+    height: Math.max(
+      1,
+      Math.round(
+        height * scale,
+      ),
+    ),
+  };
 }
 
 export default function VideoSnapshotPicker({
@@ -358,6 +438,8 @@ export default function VideoSnapshotPicker({
 
     setMessage("");
     setCapturing(true);
+    const captureStartedAt =
+      performance.now();
 
     try {
       video.pause();
@@ -386,11 +468,17 @@ export default function VideoSnapshotPicker({
           "canvas",
         );
 
+      const output =
+        snapshotDimensions(
+          width,
+          height,
+        );
+
       canvas.width =
-        width;
+        output.width;
 
       canvas.height =
-        height;
+        output.height;
 
       const context =
         canvas.getContext(
@@ -407,14 +495,20 @@ export default function VideoSnapshotPicker({
         video,
         0,
         0,
-        width,
-        height,
+        output.width,
+        output.height,
       );
+
+      const encodeStartedAt =
+        performance.now();
 
       const blob =
         await canvasPng(
           canvas,
         );
+
+      const encodedAt =
+        performance.now();
 
       const timestampSeconds =
         video.currentTime;
@@ -436,13 +530,27 @@ export default function VideoSnapshotPicker({
             filenameTimestamp(
               timestampSeconds,
             ),
-            ".png",
+            SNAPSHOT_EXTENSION,
           ].join(""),
           {
-            type: "image/png",
+            type: SNAPSHOT_MIME_TYPE,
             lastModified: Date.now(),
           },
         );
+
+      const captureDurationMs =
+        Math.round(
+          encodedAt - captureStartedAt,
+        );
+
+      const encodeDurationMs =
+        Math.round(
+          encodedAt - encodeStartedAt,
+        );
+
+      setMessage(
+        `Captured frame in ${captureDurationMs} ms. Saving snapshot...`,
+      );
 
       await onSnapshot({
         file,
@@ -450,8 +558,10 @@ export default function VideoSnapshotPicker({
           sourceFile.name,
         timestampSeconds,
         displayTimestamp,
-        width,
-        height,
+        width: output.width,
+        height: output.height,
+        captureDurationMs,
+        encodeDurationMs,
       });
 
       onClose();
