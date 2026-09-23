@@ -1,5 +1,5 @@
 export const H3_PRODUCTION_RECIPE_VERSION =
-  "h3-lq-hq-sla-turbo8-2026-09-11-v1" as const;
+  "fasth3-b02-approx-preview-test-2026-09-22-v1" as const;
 
 export const H3_PRODUCTION_DURATION_OPTIONS = [5, 10] as const;
 export const H3_QUALITY_OPTIONS = ["lq", "hq"] as const;
@@ -18,7 +18,7 @@ export type H3ProductionMode =
   | "h3-image-to-video"
   | "h3-reference-to-video";
 export type H3ProductionBackendId = "rtx5060ti" | "rtx3090";
-export type H3TurboLoraFamily = "fl2v" | "r2v";
+export type H3TurboLoraFamily = "none" | "ref2va";
 
 export type H3ProductionRecipe = {
   recipeId: string;
@@ -36,13 +36,13 @@ export type H3ProductionRecipe = {
   turboLoraFamily: H3TurboLoraFamily;
   turboLoraStrength: 1;
   spectrumEnabled: false;
-  sampler: "euler";
+  sampler: "res_multistep" | "euler";
   scheduler: "simple";
-  videoSigmaShift: 6;
+  videoSigmaShift: 6 | 10;
   audioSigmaShift: 3;
   fps: 24;
   nativeAudio: true;
-  attentionPath: "sla";
+  attentionPath: "comfy_kitchen";
   referenceImageSize: "match" | null;
   submissionCriticalSection: true;
   preSubmitCleanup: null;
@@ -111,9 +111,9 @@ function recipe(spec: RouteSpec): H3ProductionRecipe {
   const hq = quality === "hq";
 
   return {
-    recipeId: `h3-${backend}-${code.toLowerCase()}-${durationSeconds}s-${quality}-sla-turbo8-v1`,
+    recipeId: `h3-${backend}-${code.toLowerCase()}-${durationSeconds}s-${quality}-${mode === "h3-reference-to-video" ? "refvideo-ref2va" : "sla"}-turbo8-v1`,
     routeKey,
-    workflowFile: `comfy_workflows/internal/production-v2/h3-lq-hq/${backend}_${code}_${durationSeconds}s_${quality.toUpperCase()}.api.json`,
+    workflowFile: `comfy_workflows/internal/production-v2/h3-b02-approx-preview/${backend}_${code}_${durationSeconds}s_${quality.toUpperCase()}.api.json`,
     mode,
     durationSeconds,
     backend,
@@ -123,16 +123,16 @@ function recipe(spec: RouteSpec): H3ProductionRecipe {
     nativeHeight: H3_NATIVE_RESOLUTIONS[quality].height,
     frameCount: durationSeconds === 10 ? 243 : 124,
     steps: 8,
-    turboLoraFamily: mode === "h3-reference-to-video" ? "r2v" : "fl2v",
+    turboLoraFamily: mode === "h3-reference-to-video" ? "ref2va" : "none",
     turboLoraStrength: 1,
     spectrumEnabled: false,
-    sampler: "euler",
+    sampler: mode === "h3-reference-to-video" ? "euler" : "res_multistep",
     scheduler: "simple",
-    videoSigmaShift: 6,
+    videoSigmaShift: mode === "h3-reference-to-video" ? 6 : 10,
     audioSigmaShift: 3,
     fps: 24,
     nativeAudio: true,
-    attentionPath: "sla",
+    attentionPath: "comfy_kitchen",
     referenceImageSize: mode === "h3-reference-to-video" ? "match" : null,
     submissionCriticalSection: true,
     preSubmitCleanup: null,

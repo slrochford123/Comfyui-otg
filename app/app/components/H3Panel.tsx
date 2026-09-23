@@ -17,6 +17,8 @@ import {
   resolveH3PromptBuilderVisualStyle,
   resolveH3StylePreset,
 } from "@/lib/h3StylePresets";
+import { H3StylePresetPicker } from "./H3StylePresetPicker";
+import VideoSnapshotPicker from "./VideoSnapshotPicker";
 import {
   getH3NativeDimensions,
   getH3ProductionTimeEstimate,
@@ -36,7 +38,13 @@ import type { ProductionV2H3Mode } from "@/lib/production/h3Workflows";
 
 type Mode = ProductionV2H3Mode;
 type MediaKind = "image" | "video" | "audio";
-type MediaInput = H3StudioReferenceDescriptor & { file: File; url: string };
+type MediaInput = H3StudioReferenceDescriptor & {
+  file: File;
+  url: string;
+  sourceDurationSeconds?: number;
+  clipStartSeconds?: number;
+  clipDurationSeconds?: number;
+};
 type JobStatus = {
   id: string;
   status: string;
@@ -58,6 +66,18 @@ type JobStatus = {
   queueRemaining: number | null;
   progressPercent: number | null;
   currentNode: string | null;
+  approximatePreview: {
+    label: "Approximate Preview";
+    imageUrl: string;
+    mimeType: string;
+    width: number | null;
+    height: number | null;
+    step: number | null;
+    total: number | null;
+    frameCount: number | null;
+    updatedAt: number;
+    source: "ModelPreviewOverrideKJ";
+  } | null;
   error: string | null;
   createdAt: string;
   startedAt: string | null;
@@ -96,6 +116,18 @@ const selectedChoice =
 const REFERENCE_LIMIT_HELP =
   "Up to 9 images, 3 videos, and 3 standalone audio references.";
 const QUALITY_LABELS: Record<H3Quality, string> = { lq: "LQ", hq: "HQ" };
+const H3_LAST_JOB_STORAGE_KEY = "otg:h3:last-direct-job-id:v1";
+const H3_REFERENCE_VIDEO_CLIP_SECONDS = 5;
+
+function readRememberedH3JobId() {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(H3_LAST_JOB_STORAGE_KEY) || "";
+}
+
+function rememberH3Job(job: Pick<JobStatus, "id"> | null | undefined) {
+  if (typeof window === "undefined" || !job?.id) return;
+  window.localStorage.setItem(H3_LAST_JOB_STORAGE_KEY, job.id);
+}
 
 function formatDuration(seconds: number) {
   const value = Math.max(0, Math.round(seconds));
@@ -139,6 +171,91 @@ function MediaPreview({ item }: { item: MediaInput }) {
     );
   return (
     <audio src={item.url} controls preload="metadata" className="w-full" />
+  );
+}
+
+function formatClipSeconds(value: number) {
+  return `${Math.max(0, value).toFixed(2)}s`;
+}
+
+function VideoReferenceWindowControl({
+  item,
+  onChange,
+}: {
+  item: MediaInput;
+  onChange: (patch: Partial<MediaInput>) => void;
+}) {
+  const duration = Number(item.sourceDurationSeconds || 0);
+  const maxStart = Math.max(0, duration - H3_REFERENCE_VIDEO_CLIP_SECONDS);
+  const clipStart = Math.min(
+    Math.max(0, Number(item.clipStartSeconds || 0)),
+    maxStart,
+  );
+  const canChoose = duration >= H3_REFERENCE_VIDEO_CLIP_SECONDS;
+
+  return (
+    <div className="mt-3 rounded-[6px] border border-cyan-300/20 bg-cyan-300/[0.06] p-3">
+      <video
+        src={item.url}
+        preload="metadata"
+        className="hidden"
+        onLoadedMetadata={(event) => {
+          const next = event.currentTarget.duration;
+          if (Number.isFinite(next) && next > 0) {
+            const nextMax = Math.max(0, next - H3_REFERENCE_VIDEO_CLIP_SECONDS);
+            onChange({
+              sourceDurationSeconds: next,
+              clipStartSeconds: Math.min(clipStart, nextMax),
+              clipDurationSeconds: H3_REFERENCE_VIDEO_CLIP_SECONDS,
+            });
+          }
+        }}
+      />
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase text-cyan-100">
+            5-second reference window
+          </p>
+          <p className="mt-1 text-[11px] text-white/45">
+            Only this selected portion is sent to H3.
+          </p>
+        </div>
+        <span className="shrink-0 rounded-full border border-white/10 bg-black/35 px-2 py-1 text-[11px] font-bold text-white/70">
+          {formatClipSeconds(clipStart)} -{" "}
+          {formatClipSeconds(clipStart + H3_REFERENCE_VIDEO_CLIP_SECONDS)}
+        </span>
+      </div>
+      <input
+        aria-label="Reference video 5-second start time"
+        className="mt-3 w-full"
+        type="range"
+        min={0}
+        max={Math.max(0, maxStart)}
+        step="0.05"
+        value={clipStart}
+        disabled={!canChoose}
+        onChange={(event) =>
+          onChange({
+            clipStartSeconds: Number(event.target.value),
+            clipDurationSeconds: H3_REFERENCE_VIDEO_CLIP_SECONDS,
+          })
+        }
+      />
+      <div className="mt-1 flex justify-between text-[11px] text-white/40">
+        <span>0.00s</span>
+        <span>
+          {duration > 0
+            ? `${formatClipSeconds(duration)} source`
+            : "Reading video length..."}
+        </span>
+      </div>
+      {duration > 0 && !canChoose ? (
+        <p className="mt-2 rounded-[6px] border border-amber-300/30 bg-amber-300/10 px-2 py-1 text-xs text-amber-100">
+          Reference video must be at least {H3_REFERENCE_VIDEO_CLIP_SECONDS}{" "}
+          seconds long.
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -274,6 +391,9 @@ export default function H3Panel() {
   const [galleryTarget, setGalleryTarget] = useState<
     "first" | "last" | "reference-image" | "reference-video" | ""
   >("");
+  const [snapshotTarget, setSnapshotTarget] = useState<
+    "first" | "last" | "reference-image" | ""
+  >("");
   const [enhancing, setEnhancing] = useState("");
   const [enhancementLevel, setEnhancementLevel] = useState<
     "short" | "medium" | "long"
@@ -290,20 +410,28 @@ export default function H3Panel() {
   const chunksRef = useRef<Blob[]>([]);
   const cancelRecordingRef = useRef(false);
   const objectUrlsRef = useRef(new Set<string>());
-  const active = Boolean(job && !["completed", "failed"].includes(job.status));
+  const active = Boolean(job && !["completed", "failed", "canceled"].includes(job.status));
   const estimate = useMemo(
     () =>
       getH3ProductionTimeEstimate(mode, duration, quality, job?.backend as any),
     [mode, duration, quality, job?.backend],
   );
   const descriptors = references.map(
-    ({ id, kind, name, description, includeAudio }) => ({
+    ({ id, kind, name, description, includeAudio, clipStartSeconds, clipDurationSeconds }) => ({
       id,
       kind,
       name,
       description,
       includeAudio,
+      clipStartSeconds,
+      clipDurationSeconds,
     }),
+  );
+  const videoReferences = references.filter((item) => item.kind === "video");
+  const videoReferenceTooShort = videoReferences.some(
+    (item) =>
+      Number(item.sourceDurationSeconds || 0) > 0
+      && Number(item.sourceDurationSeconds || 0) < H3_REFERENCE_VIDEO_CLIP_SECONDS,
   );
   const selectedStylePreset = resolveH3StylePreset(stylePresetId);
   const promptBuilderVisualStyle =
@@ -342,7 +470,8 @@ export default function H3Panel() {
     generationPrompt.trim()
       && !builderPromptStale
       && (mode !== "h3-image-to-video" || firstImage)
-      && (mode !== "h3-reference-to-video" || references.length),
+      && (mode !== "h3-reference-to-video" || references.length)
+      && !videoReferenceTooShort,
   );
 
   useEffect(() => {
@@ -386,6 +515,35 @@ export default function H3Panel() {
     const timer = setInterval(() => void refreshJob(job.id), 4000);
     return () => clearInterval(timer);
   }, [active, job?.id]);
+  useEffect(() => {
+    let cancelled = false;
+    async function restoreLatestJob() {
+      const rememberedId = readRememberedH3JobId();
+      const urls = [
+        "/api/h3/generation",
+        rememberedId ? `/api/h3/generation?jobId=${encodeURIComponent(rememberedId)}` : "",
+      ].filter(Boolean);
+      for (const url of urls) {
+        const response = await fetch(url, {
+          cache: "no-store",
+          credentials: "include",
+        }).catch(() => null);
+        if (!response) continue;
+        const data = await response.json().catch(() => ({}));
+        if (cancelled) return;
+        if (response.ok && data.job) {
+          setJob(data.job);
+          rememberH3Job(data.job);
+          setNow(Date.now());
+          return;
+        }
+      }
+    }
+    void restoreLatestJob();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   useEffect(
     () => () => {
       streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -405,6 +563,9 @@ export default function H3Panel() {
       name: file.name,
       description: "",
       includeAudio: false,
+      clipStartSeconds: kind === "video" ? 0 : undefined,
+      clipDurationSeconds:
+        kind === "video" ? H3_REFERENCE_VIDEO_CLIP_SECONDS : undefined,
     };
   }
   function release(item: MediaInput | null) {
@@ -676,7 +837,10 @@ export default function H3Panel() {
       { cache: "no-store" },
     );
     const data = await response.json().catch(() => ({}));
-    if (data.job) setJob(data.job);
+    if (data.job) {
+      setJob(data.job);
+      rememberH3Job(data.job);
+    }
   }
   async function retry() {
     if (!job) return;
@@ -690,7 +854,24 @@ export default function H3Panel() {
     if (!response.ok || !data.job)
       return setMessage(data.error || "Retry failed.");
     setJob(data.job);
+    rememberH3Job(data.job);
     setNow(Date.now());
+  }
+  async function cancelGeneration() {
+    if (!job || !active) return;
+    setMessage("Canceling H3 generation...");
+    const response = await fetch("/api/h3/generation", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "cancel", jobId: job.id }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (data.job) {
+      setJob(data.job);
+      rememberH3Job(data.job);
+    }
+    setMessage(response.ok ? "H3 generation canceled." : data.error || "Could not cancel H3 generation.");
   }
   async function generate() {
     if (builderPromptStale)
@@ -701,6 +882,11 @@ export default function H3Panel() {
       return setMessage("Choose a First Image.");
     if (mode === "h3-reference-to-video" && !references.length)
       return setMessage("Add at least one reference.");
+    if (mode === "h3-reference-to-video" && videoReferenceTooShort) {
+      return setMessage(
+        `Reference videos must be at least ${H3_REFERENCE_VIDEO_CLIP_SECONDS} seconds long.`,
+      );
+    }
     const body = new FormData();
     body.set(
       "config",
@@ -724,6 +910,9 @@ export default function H3Panel() {
         videoAudioFlags: references
           .filter((item) => item.kind === "video")
           .map((item) => item.includeAudio),
+        videoClipStartSeconds: references
+          .filter((item) => item.kind === "video")
+          .map((item) => item.clipStartSeconds || 0),
       }),
     );
     if (firstImage) body.append("firstImage", firstImage.file);
@@ -748,6 +937,7 @@ export default function H3Panel() {
       if (!response.ok || !data.job)
         throw new Error(data.error || "H3 generation could not be submitted.");
       setJob(data.job);
+      rememberH3Job(data.job);
       setNow(Date.now());
       setMessage("");
     } catch (error) {
@@ -940,7 +1130,7 @@ export default function H3Panel() {
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <span className="font-bold text-white/85">
-                      Visual Style Preset
+                      Visual Style
                     </span>
                     <p className="mt-0.5 text-[11px] text-white/40">
                       Choose a visual identity for the entire H3 video.
@@ -952,109 +1142,10 @@ export default function H3Panel() {
                   </span>
                 </div>
 
-                <div
-                  className={`mb-3 rounded-xl border px-4 py-3 transition-all ${
-                    stylePresetId === "none"
-                      ? "border-white/10 bg-black/25"
-                      : "border-violet-300/40 bg-gradient-to-r from-violet-500/15 via-fuchsia-500/10 to-cyan-400/10 shadow-[0_0_24px_rgba(139,92,246,.12)]"
-                  }`}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-violet-200/60">
-                        Current preset
-                      </p>
-                      <p className="mt-1 text-base font-black text-white">
-                        {selectedStylePreset?.label || "Default / None"}
-                      </p>
-                      <p className="mt-1 text-[11px] font-semibold text-white/50">
-                        {selectedStylePreset?.subtitle ||
-                          "H3 default behavior — no master style prompt added"}
-                      </p>
-                    </div>
-
-                    <span
-                      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${
-                        stylePresetId === "none"
-                          ? "border-white/15 bg-white/[0.05] text-white/55"
-                          : "border-violet-300/45 bg-violet-300/15 text-violet-100"
-                      }`}
-                    >
-                      <span aria-hidden="true">
-                        {stylePresetId === "none" ? "○" : "✓"}
-                      </span>
-                      {stylePresetId === "none" ? "Default" : "Selected"}
-                    </span>
-                  </div>
-
-                  {selectedStylePreset?.description ? (
-                    <p className="mt-2 max-w-4xl text-[11px] leading-relaxed text-white/45">
-                      {selectedStylePreset.description}
-                    </p>
-                  ) : null}
-                </div>
-
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                  {H3_STYLE_PRESETS.map((preset) => {
-                    const selected = preset.id === stylePresetId;
-
-                    return (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        aria-pressed={selected}
-                        onClick={() => setStylePresetId(preset.id)}
-                        className={`group relative min-h-[132px] overflow-hidden rounded-xl border p-3 text-left transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70 ${
-                          selected
-                            ? "z-10 -translate-y-0.5 border-violet-300/75 bg-gradient-to-br from-violet-500/25 via-violet-400/10 to-cyan-400/10 shadow-[0_0_0_1px_rgba(196,181,253,.16),0_10px_30px_rgba(124,58,237,.22)] ring-1 ring-violet-300/45"
-                            : "border-white/10 bg-[#11172a]/90 hover:-translate-y-0.5 hover:border-violet-300/30 hover:bg-white/[0.08] hover:shadow-[0_8px_22px_rgba(0,0,0,.22)]"
-                        }`}
-                      >
-                        {selected ? (
-                          <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full border border-violet-200/40 bg-violet-300/20 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-violet-50 shadow-sm">
-                            <span aria-hidden="true">✓</span>
-                            Selected
-                          </span>
-                        ) : null}
-
-                        <div
-                          className={`text-sm font-black text-white ${
-                            selected ? "pr-20" : ""
-                          }`}
-                        >
-                          {preset.label}
-                        </div>
-
-                        <div
-                          className={`mt-1 text-[10px] font-bold uppercase tracking-wide ${
-                            selected
-                              ? "text-violet-100/75"
-                              : "text-white/45 group-hover:text-white/55"
-                          }`}
-                        >
-                          {preset.subtitle}
-                        </div>
-
-                        <div
-                          className={`mt-2 line-clamp-2 text-[11px] leading-relaxed ${
-                            selected
-                              ? "text-white/65"
-                              : "text-white/38 group-hover:text-white/50"
-                          }`}
-                        >
-                          {preset.description}
-                        </div>
-
-                        {selected ? (
-                          <div
-                            aria-hidden="true"
-                            className="pointer-events-none absolute inset-x-3 bottom-0 h-px bg-gradient-to-r from-transparent via-violet-200/70 to-transparent"
-                          />
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
+                <H3StylePresetPicker
+                  value={stylePresetId}
+                  onChange={setStylePresetId}
+                />
               </div>
 
               <label className="text-xs text-white/55">
@@ -1207,6 +1298,13 @@ export default function H3Panel() {
                       >
                         Gallery
                       </button>
+                        <button
+                          type="button"
+                          className={command}
+                          onClick={() => setSnapshotTarget(target)}
+                        >
+                          Snapshot
+                        </button>
                     </div>
                   </article>
                 ))}
@@ -1249,6 +1347,13 @@ export default function H3Panel() {
                   >
                     Gallery Image
                   </button>
+                    <button
+                      type="button"
+                      className={command}
+                      onClick={() => setSnapshotTarget("reference-image")}
+                    >
+                      Snapshot
+                    </button>
                   <button
                     className={command}
                     onClick={() => setGalleryTarget("reference-video")}
@@ -1309,18 +1414,24 @@ export default function H3Panel() {
                       placeholder="Identity, role, motion, or sound use"
                     />
                     {item.kind === "video" ? (
-                      <label className="mt-3 flex items-center gap-2 text-sm text-white/70">
-                        <input
-                          type="checkbox"
-                          checked={item.includeAudio === true}
-                          onChange={(event) =>
-                            updateReference(item.id, {
-                              includeAudio: event.target.checked,
-                            })
-                          }
+                      <>
+                        <VideoReferenceWindowControl
+                          item={item}
+                          onChange={(patch) => updateReference(item.id, patch)}
                         />
-                        Use Audio From Video
-                      </label>
+                        <label className="mt-3 flex items-center gap-2 text-sm text-white/70">
+                          <input
+                            type="checkbox"
+                            checked={item.includeAudio === true}
+                            onChange={(event) =>
+                              updateReference(item.id, {
+                                includeAudio: event.target.checked,
+                              })
+                            }
+                          />
+                          Use Audio From Video
+                        </label>
+                      </>
                     ) : null}
                   </article>
                 ))}
@@ -1661,6 +1772,11 @@ export default function H3Panel() {
             <button className={command} onClick={() => void refreshJob()}>
               Refresh
             </button>
+            {active ? (
+              <button className={command} onClick={() => void cancelGeneration()}>
+                {job.status === "canceling" ? "Canceling..." : "Cancel Generation"}
+              </button>
+            ) : null}
             <button
               className={command}
               disabled={active}
@@ -1669,8 +1785,49 @@ export default function H3Panel() {
               Retry
             </button>
           </div>
+          {job.approximatePreview ? (
+            <div
+              className="mt-4 rounded-[6px] border border-cyan-300/25 bg-cyan-300/[0.06] p-3"
+              data-otg="h3-approximate-preview"
+            >
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-black text-cyan-50">Approximate Preview</h3>
+                  <p className="text-xs text-cyan-100/60">Sampling preview only. Final quality appears after completion.</p>
+                </div>
+                <span className="text-xs font-bold text-cyan-100/60">
+                  {job.approximatePreview.step !== null && job.approximatePreview.total !== null
+                    ? `Step ${job.approximatePreview.step}/${job.approximatePreview.total}`
+                    : "Live"}
+                </span>
+              </div>
+              {job.approximatePreview.mimeType.startsWith("video/") ? (
+                <video
+                  key={job.approximatePreview.updatedAt}
+                  src={job.approximatePreview.imageUrl}
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  preload="auto"
+                  className="max-h-[48vh] w-full rounded-[6px] bg-black object-contain"
+                />
+              ) : (
+                <img
+                  src={job.approximatePreview.imageUrl}
+                  alt="Approximate Preview"
+                  className="max-h-[48vh] w-full rounded-[6px] bg-black object-contain"
+                />
+              )}
+            </div>
+          ) : active ? (
+            <div className="mt-4 rounded-[6px] border border-white/10 bg-black/25 p-3 text-sm text-white/45" data-otg="h3-approximate-preview-empty">
+              Approximate Preview will appear when the sampler emits the first preview frame.
+            </div>
+          ) : null}
           {job.videoUrl ? (
             <div className="mt-4">
+              <h3 className="mb-2 text-sm font-black text-white">Final Video</h3>
               <video
                 src={job.videoUrl}
                 poster={job.thumbnailUrl || undefined}
@@ -1735,6 +1892,32 @@ export default function H3Panel() {
           ) : null}
         </section>
       ) : null}
+      <VideoSnapshotPicker
+        open={Boolean(snapshotTarget)}
+        onClose={() => setSnapshotTarget("")}
+        onSnapshot={({ file }) => {
+          if (snapshotTarget === "first") {
+            replaceSingle(
+              firstImage,
+              file,
+              setFirstImage,
+            );
+          } else if (snapshotTarget === "last") {
+            replaceSingle(
+              lastImage,
+              file,
+              setLastImage,
+            );
+          } else if (snapshotTarget === "reference-image") {
+            addReference(
+              "image",
+              file,
+            );
+          }
+
+          setSnapshotTarget("");
+        }}
+      />
       {galleryTarget ? (
         <GalleryPicker
           kind={galleryTarget.includes("video") ? "video" : "image"}

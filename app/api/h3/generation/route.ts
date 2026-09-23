@@ -5,7 +5,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 
-import { createH3DirectJob, getH3DirectJob, h3DirectPublicStatus, startH3DirectJob, validateH3DirectInput, type H3DirectReference } from "@/lib/h3DirectJobs";
+import { cancelH3DirectJob, createH3DirectJob, ensureH3DirectJobRunner, getH3DirectJob, getLatestH3DirectJob, h3DirectPublicStatus, startH3DirectJob, validateH3DirectInput, type H3DirectReference } from "@/lib/h3DirectJobs";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import {
   H3_ORIENTATION_OPTIONS,
@@ -18,6 +18,10 @@ import {
 import type { ProductionV2H3Mode } from "@/lib/production/h3Workflows";
 import { ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import { isAcceptedH3MediaFile, supportedH3MediaExtensions, type H3InputMediaKind } from "@/lib/h3MediaTypes";
+import {
+  H3_REFERENCE_VIDEO_CLIP_SECONDS,
+  trimH3ReferenceVideoClip,
+} from "@/lib/h3ReferenceVideoClip";
 import {
   composeH3StylePrompt,
   resolveH3StylePreset,
@@ -39,6 +43,12 @@ function parseConfig(form: FormData) {
 
 function descriptions(value: unknown) {
   return Array.isArray(value) ? value.map((item) => String(item || "").trim()) : [];
+}
+
+function numbers(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => Number(item)).map((item) => Number.isFinite(item) ? item : 0)
+    : [];
 }
 
 async function saveFile(ownerKey: string, requestId: string, file: File, category: H3InputMediaKind, index: number) {
@@ -67,13 +77,47 @@ async function saveFile(ownerKey: string, requestId: string, file: File, categor
   return { path: target, name: path.basename(file.name) };
 }
 
-async function fileList(form: FormData, key: string, ownerKey: string, requestId: string, category: H3InputMediaKind, notes: string[], audioFlags: boolean[] = []) {
+async function fileList(
+  form: FormData,
+  key: string,
+  ownerKey: string,
+  requestId: string,
+  category: H3InputMediaKind,
+  notes: string[],
+  audioFlags: boolean[] = [],
+  videoClipStarts: number[] = [],
+) {
   const files = form.getAll(key).filter((item): item is File => item instanceof File && item.size > 0);
-  return Promise.all(files.map(async (file, index): Promise<H3DirectReference> => ({
-    ...(await saveFile(ownerKey, requestId, file, category, index)),
-    description: notes[index] || "",
-    includeAudio: category === "video" ? audioFlags[index] === true : undefined,
-  })));
+  return Promise.all(files.map(async (file, index): Promise<H3DirectReference> => {
+    const saved = await saveFile(ownerKey, requestId, file, category, index);
+
+    if (category !== "video") {
+      return {
+        ...saved,
+        description: notes[index] || "",
+        includeAudio: undefined,
+      };
+    }
+
+    const includeAudio = audioFlags[index] === true;
+    const clip = await trimH3ReferenceVideoClip({
+      inputPath: saved.path,
+      outputDir: path.join(path.dirname(saved.path), "clips"),
+      outputPrefix: `${path.parse(saved.name).name || `video-${index + 1}`}`,
+      startSeconds: videoClipStarts[index] || 0,
+      includeAudio,
+    });
+
+    return {
+      path: clip.outputPath,
+      name: `${path.parse(saved.name).name || `video-${index + 1}`}_clip_${clip.startSeconds.toFixed(2)}s_${H3_REFERENCE_VIDEO_CLIP_SECONDS}s.mp4`,
+      description: [
+        notes[index] || "",
+        `Use selected ${H3_REFERENCE_VIDEO_CLIP_SECONDS}-second reference window ${clip.startSeconds.toFixed(2)}s-${(clip.startSeconds + H3_REFERENCE_VIDEO_CLIP_SECONDS).toFixed(2)}s.`,
+      ].filter(Boolean).join(" "),
+      includeAudio,
+    };
+  }));
 }
 
 function errorResponse(error: unknown) {
@@ -86,8 +130,13 @@ export async function GET(req: NextRequest) {
     const owner = await getOwnerContext(req);
     const { ownerKey } = owner;
     const id = String(req.nextUrl.searchParams.get("jobId") || "").trim();
-    const job = id ? await getH3DirectJob(ownerKey, id) : null;
-    if (!job) return noStore({ ok: false, error: "H3 generation job not found." }, { status: 404 });
+    const job = id ? await getH3DirectJob(ownerKey, id) : await getLatestH3DirectJob(ownerKey);
+    if (!job) {
+      return id
+        ? noStore({ ok: false, error: "H3 generation job not found." }, { status: 404 })
+        : noStore({ ok: true, job: null });
+    }
+    ensureH3DirectJobRunner(job);
     return noStore({ ok: true, job: h3DirectPublicStatus(job) });
   } catch (error) {
     return errorResponse(error);
@@ -100,6 +149,10 @@ export async function POST(req: NextRequest) {
     const { ownerKey } = owner;
     if (req.headers.get("content-type")?.includes("application/json")) {
       const body = await req.json().catch(() => null) as { action?: unknown; jobId?: unknown } | null;
+      if (body?.action === "cancel") {
+        const canceled = await cancelH3DirectJob(ownerKey, String(body.jobId || ""));
+        return noStore({ ok: true, job: h3DirectPublicStatus(canceled) });
+      }
       if (body?.action !== "retry") throw new Error("Unknown H3 generation action.");
       const source = await getH3DirectJob(ownerKey, String(body.jobId || ""));
       if (!source) throw new Error("H3 generation job not found.");
@@ -126,10 +179,11 @@ export async function POST(req: NextRequest) {
     const videoDescriptions = descriptions(config.videoDescriptions);
     const audioDescriptions = descriptions(config.audioDescriptions);
     const videoAudioFlags = Array.isArray(config.videoAudioFlags) ? config.videoAudioFlags.map(Boolean) : [];
+    const videoClipStarts = numbers(config.videoClipStartSeconds);
     const firstFiles = await fileList(form, "firstImage", ownerKey, requestId, "image", [""]);
     const lastFiles = await fileList(form, "lastImage", ownerKey, requestId, "image", [""]);
     const images = await fileList(form, "referenceImages", ownerKey, requestId, "image", imageDescriptions);
-    const videos = await fileList(form, "referenceVideos", ownerKey, requestId, "video", videoDescriptions, videoAudioFlags);
+    const videos = await fileList(form, "referenceVideos", ownerKey, requestId, "video", videoDescriptions, videoAudioFlags, videoClipStarts);
     const audios = await fileList(form, "referenceAudios", ownerKey, requestId, "audio", audioDescriptions);
 
     const input = validateH3DirectInput({

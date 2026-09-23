@@ -207,7 +207,9 @@ function MediaCard({ item, compact, list, deleting, onOpen, onDelete }: { item: 
     <article className={`overflow-hidden rounded-[24px] border border-white/10 bg-black/35 ${list ? "flex flex-col gap-3 p-3 md:flex-row md:items-center" : "p-3"}`}>
       <button type="button" onClick={onOpen} className={list ? "min-w-0 flex-1 text-left" : "block w-full text-left"}>
         {!list ? <div className={compact ? "aspect-square overflow-hidden rounded-[18px] bg-black/60" : "aspect-[4/3] overflow-hidden rounded-[18px] bg-black/60"}>
-          {item.kind === "video" ? <video src={item.url} muted playsInline preload="metadata" className="h-full w-full object-contain" /> : <img src={item.url} alt={item.name} loading="lazy" className="h-full w-full object-contain" />}
+          {item.kind === "video"
+            ? <img src={videoThumbnailUrl(item)} alt={`${item.name} video thumbnail`} loading="lazy" className="h-full w-full object-contain" />
+            : <img src={item.url} alt={item.name} loading="lazy" className="h-full w-full object-contain" />}
         </div> : null}
         <div className={list ? "" : "mt-3"}>
           <div className="flex flex-wrap items-start justify-between gap-2"><span className="break-all font-semibold text-white/90">{item.name}</span><SourceBadge label={item.sourceLabel} /></div>
@@ -216,7 +218,7 @@ function MediaCard({ item, compact, list, deleting, onOpen, onDelete }: { item: 
         </div>
       </button>
       <div className={`flex flex-wrap gap-2 ${list ? "md:shrink-0" : "mt-3"}`}>
-        <a href={`${item.url}&download=1`} download={item.name} className={actionClass}>Download</a>
+        <a href={downloadAdminGalleryUrl(item)} download={item.name} className={actionClass}>Download</a>
         <button type="button" disabled title={disabledReason} className={disabledActionClass}><IconHeart />Heart</button>
         {item.kind === "image" ? <><button type="button" disabled title={disabledReason} className={disabledActionClass}>Edit</button><button type="button" disabled title={disabledReason} className={disabledActionClass}>Animate</button><button type="button" disabled title={disabledReason} className={disabledActionClass}>Characters</button></> : <button type="button" disabled title={disabledReason} className={disabledActionClass}>Extend</button>}
         <button type="button" disabled title={disabledReason} className={disabledActionClass}>Rename</button>
@@ -251,6 +253,20 @@ function MixedMediaViewer({ item, index, total, canPrev, canNext, onPrev, onNext
 
 function SourceBadge({ label }: { label: string }) { return <span className="shrink-0 rounded-full border border-cyan-400/25 bg-cyan-500/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-cyan-100">{label}</span>; }
 function IconHeart() { return <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden="true"><path d="M12 20.5s-7-4.35-7-10a4 4 0 0 1 7-2.47A4 4 0 0 1 19 10.5c0 5.65-7 10-7 10Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>; }
+function downloadAdminGalleryUrl(item: Item) {
+  const separator = item.url.includes("?") ? "&" : "?";
+  return `${item.url}${separator}download=1`;
+}
+
+function videoThumbnailUrl(item: Item) {
+  const params = new URLSearchParams({
+    source: item.source,
+    rel: item.rel,
+    v: String(item.mtimeMs),
+  });
+
+  return `/api/admin/gallery-thumbnail?${params.toString()}`;
+}
 function dedupeItems(items: Item[]) { const seen = new Set<string>(); return items.filter((item) => !seen.has(item.id) && seen.add(item.id)); }
 function formatBytes(value: number) { if (value < 1024) return `${value} B`; if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`; if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MB`; return `${(value / 1024 ** 3).toFixed(1)} GB`; }
 

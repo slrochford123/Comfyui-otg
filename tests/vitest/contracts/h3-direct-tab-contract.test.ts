@@ -133,11 +133,65 @@ describe("H3 direct-generation tab contract", () => {
     const panel = read("app/app/components/H3Panel.tsx");
     expect(panel).toContain("Prompt Builder");
     expect(panel).toContain("Use Audio From Video");
+    expect(panel).toContain("5-second reference window");
+    expect(panel).toContain("videoClipStartSeconds");
+    expect(panel).toContain('aria-label="Reference video 5-second start time"');
     expect(panel).toContain("getH3NativeDimensions(value, orientation).width");
     expect(panel).toContain('aria-label="H3 orientation"');
     expect(panel).toContain("H3_PRODUCTION_DURATION_OPTIONS.map");
     expect(panel).toContain("Up to 9 images, 3 videos, and 3 standalone audio references.");
     expect(panel).toContain('/api/ollama-ai/transcribe');
     expect(panel).toContain('/api/enhance-prompt');
+  });
+
+  it("trims H3 direct R2V video references to the selected 5-second window before upload", () => {
+    const route = read("app/api/h3/generation/route.ts");
+
+    expect(route).toContain("trimH3ReferenceVideoClip");
+    expect(route).toContain("videoClipStartSeconds");
+    expect(route).toContain("startSeconds: videoClipStarts[index] || 0");
+    expect(route).toContain("H3_REFERENCE_VIDEO_CLIP_SECONDS");
+  });
+
+  it("renders approximate-preview video payloads as video, not still images", () => {
+    const panel = read("app/app/components/H3Panel.tsx");
+    const production = read("app/app/components/ProductionV2Panel.tsx");
+    const progress = read("lib/comfyProgress.ts");
+
+    expect(progress).toContain('mimeType.startsWith("image/") || mimeType.startsWith("video/")');
+    expect(progress).toContain("data:${safeMimeType};base64");
+    expect(progress).toContain("findPromptForClient");
+    expect(progress).toContain("type === \"kj_preview_override\"");
+    expect(progress).toContain("applyComfyEvent(payload, eventContext)");
+    expect(panel).toContain('job.approximatePreview.mimeType.startsWith("video/")');
+    expect(panel).toContain("<video");
+    expect(production).toContain('generationJob.approximatePreview.mimeType.startsWith("video/")');
+    expect(production).toContain("<video");
+  });
+
+  it("rehydrates the latest saved H3 job when the tab remounts", () => {
+    const panel = read("app/app/components/H3Panel.tsx");
+    const route = read("app/api/h3/generation/route.ts");
+    const jobs = read("lib/h3DirectJobs.ts");
+
+    expect(panel).toContain("H3_LAST_JOB_STORAGE_KEY");
+    expect(panel).toContain('"/api/h3/generation"');
+    expect(panel).toContain("readRememberedH3JobId()");
+    expect(panel).toContain("rememberH3Job(data.job)");
+    expect(route).toContain("getLatestH3DirectJob(ownerKey)");
+    expect(route).toContain("ensureH3DirectJobRunner(job)");
+    expect(jobs).toContain("export async function getLatestH3DirectJob");
+    expect(jobs).toContain("export function ensureH3DirectJobRunner");
+  });
+
+  it("can reattach an active persisted H3 direct job without duplicate submission", () => {
+    const jobs = read("lib/h3DirectJobs.ts");
+
+    expect(jobs).toContain("clientId: string | null");
+    expect(jobs).toContain("if (backend && promptId)");
+    expect(jobs).toContain("Reconnected to running H3 generation");
+    expect(jobs).toContain("ensureComfyClientProgressMonitor");
+    expect(jobs).toContain("recordComfyPromptSubmitted");
+    expect(jobs).toMatch(/if \(backend && promptId\)[\s\S]*else \{[\s\S]*submitH3Prompt/);
   });
 });

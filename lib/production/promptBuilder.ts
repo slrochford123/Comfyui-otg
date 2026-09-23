@@ -3,6 +3,7 @@ import {
   h3StyleProfile,
   productionV2TargetShotCount,
 } from "@/lib/production/promptOptions";
+import { resolveH3StylePresetByLabel } from "@/lib/h3StylePresets";
 import {
   buildProductionV2LockedReferenceContext,
   resolveProductionV2H3ReferencePlan,
@@ -254,7 +255,7 @@ ${userPrompt}
 
 SELECTED LOOK
 Visual style: ${scene.promptOptions.visualStyle}
-Mandatory visual art direction: ${h3StyleProfile(scene.promptOptions.visualStyle)}
+Mandatory visual art direction: ${resolveH3StylePresetByLabel(scene.promptOptions.visualStyle)?.masterPrompt || h3StyleProfile(scene.promptOptions.visualStyle)}
 Camera feel: ${scene.promptOptions.cameraFeel}
 Shot flow: ${effectiveFlow}
 Format: ${scene.durationSeconds} seconds, ${scene.promptOptions.aspectRatio}, ${scene.promptOptions.quality}

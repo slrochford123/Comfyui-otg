@@ -21,11 +21,13 @@ import {
   getProductionV2Ltx25GenerationJob,
 } from "@/lib/production/ltx25IngredientsJobs";
 import {
+  cancelProductionV2H3Generation,
   productionV2GenerationPublicStatus,
   reconcileProductionV2GenerationJob,
   requestProductionV2H3SchedulerTick,
   startProductionV2H3Scheduler,
 } from "@/lib/production/h3GenerationScheduler";
+import { H3_BACKEND_PROFILES } from "@/lib/production/h3Workflows";
 import {
   productionV2Ltx25GenerationPublicStatus,
   runProductionV2Ltx25SchedulerTick,
@@ -61,6 +63,11 @@ function noStore(payload: unknown, init?: ResponseInit) {
 
 function seed() {
   return crypto.randomBytes(6).readUIntBE(0, 6);
+}
+
+function finiteNumber(value: unknown, fallback = 0) {
+  const next = Number(value);
+  return Number.isFinite(next) ? next : fallback;
 }
 
 function retrySeed(previous: number) {
@@ -280,6 +287,20 @@ export async function POST(req: NextRequest) {
     const scene = production.scenes.find((item) => item.id === sceneId);
     if (!scene) return noStore({ ok: false, error: "Production Scene not found." }, { status: 404 });
     const action = String(body?.action || "scene-generation").trim();
+    if (action === "cancel") {
+      const activeJob =
+        getProductionV2GenerationJob(String((body as any)?.jobId || ""), ownerKey)
+        || getLatestProductionV2SceneGeneration(ownerKey, productionId, sceneId);
+      if (!activeJob) return noStore({ ok: false, error: "Production generation job not found." }, { status: 404 });
+      if (activeJob.backend) {
+        await fetch(`${H3_BACKEND_PROFILES[activeJob.backend].baseUrl}/interrupt`, {
+          method: "POST",
+          cache: "no-store",
+        }).catch(() => undefined);
+      }
+      const canceled = cancelProductionV2H3Generation(activeJob) || activeJob;
+      return noStore({ ok: true, job: productionV2GenerationPublicStatus(canceled) });
+    }
     if (action === "visual-edit") {
       const versionId = String(body?.versionId || "").trim();
       const editPrompt = String(body?.editPrompt || "").trim();
@@ -288,12 +309,14 @@ export async function POST(req: NextRequest) {
       if (editPrompt.length > 4_000) return noStore({ ok: false, error: "Visual edit instructions must be 4,000 characters or fewer." }, { status: 400 });
       const selected = resolveProductionV2Version(production, sceneId, versionId);
       const mediaPath = assertProductionV2OwnedFile(ownerKey, productionId, selected.version.mediaPath);
+      const clipStartSeconds = Math.max(0, finiteNumber((body as any)?.videoClipStartSeconds, 0));
       const finalPrompt = [
         "Use <Video 1> as the exact temporal and visual reference.",
+        `Use only the selected 5-second reference window starting at ${clipStartSeconds.toFixed(2)} seconds.`,
         "Preserve the source video's subjects, action, timing, composition, and audio unless the requested edit explicitly changes them.",
         `Requested visual transformation: ${editPrompt}`,
       ].join("\n");
-      const promptFingerprint = crypto.createHash("sha256").update(JSON.stringify({ operation: "visual-edit", versionId, editPrompt })).digest("hex");
+      const promptFingerprint = crypto.createHash("sha256").update(JSON.stringify({ operation: "visual-edit", versionId, editPrompt, clipStartSeconds })).digest("hex");
       const job = createProductionV2GenerationJob({
         ownerKey,
         productionId,
@@ -310,7 +333,13 @@ export async function POST(req: NextRequest) {
           references: [],
           voices: [],
           userLoras: normalizeProductionV2H3UserLoras(DEFAULT_PRODUCTION_V2_H3_USER_LORAS),
-          videoReference: { mediaVersionId: selected.version.id, mediaPath, includeAudio: true },
+          videoReference: {
+            mediaVersionId: selected.version.id,
+            mediaPath,
+            includeAudio: true,
+            clipStartSeconds,
+            clipDurationSeconds: 5,
+          },
         },
       });
       startProductionV2H3Scheduler();

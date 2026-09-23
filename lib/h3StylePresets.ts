@@ -1,3 +1,15 @@
+import h3StyleMediaManifest from "@/lib/h3StyleMediaManifest.json";
+import { H3_VISUAL_STYLE_PROFILES } from "@/lib/production/promptOptions";
+
+export type H3StylePreviewAssets = {
+  poster: string;
+  previewVideo: string;
+  previewWebm?: string;
+  previewGenerationPrompt?: string;
+  sourceSlug?: string;
+  sourceOrigin?: "prompt-builder" | "style-art";
+};
+
 export type H3StylePreset = {
   id: string;
   label: string;
@@ -7,11 +19,70 @@ export type H3StylePreset = {
   masterPrompt: string;
   promptBuilderVisualStyle?: string;
   thumbnail?: string;
+  aliases?: string[];
+  sourceOrigin?: "prompt-builder" | "style-art" | "default";
+  preview?: H3StylePreviewAssets;
 };
 
 export const DEFAULT_H3_STYLE_PRESET_ID = "none";
 
-export const H3_STYLE_PRESETS: H3StylePreset[] = [
+const PREVIEW_MANIFEST = h3StyleMediaManifest as Record<string, H3StylePreviewAssets>;
+
+function slugLabel(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function withPreview(preset: H3StylePreset): H3StylePreset {
+  const preview = PREVIEW_MANIFEST[preset.id];
+  return preview ? { ...preset, preview } : preset;
+}
+
+const PROMPT_BUILDER_STYLE_PRESETS: H3StylePreset[] = [
+  ["cinematic-realism", "Cinematic realism", "Naturalistic production design", "Realistic & Live Action"],
+  ["live-action", "Live action", "Grounded live-action photography", "Realistic & Live Action"],
+  ["3d-animation", "3D animation", "Premium feature-quality 3D animation", "Animation"],
+  ["cartoon", "Cartoon", "Bold graphic cartoon design", "Animation"],
+  ["anime", "Anime", "Polished cinematic anime", "Animation"],
+  ["illustrated", "Illustrated", "Living editorial illustration", "Illustration & Graphic"],
+  ["game-cinematic", "Game cinematic", "High-end real-time game cinematic", "Gaming"],
+  ["gameplay-first-person", "Gameplay / first-person", "Immersive first-person gameplay", "Gaming"],
+  ["stop-motion", "Stop motion", "Handcrafted stop-motion production", "Animation"],
+  ["mixed-live-action-and-hand-drawn-animation", "Mixed live action and hand-drawn animation", "Live action with hand-drawn animation", "Animation"],
+  ["graphic-motion-design", "Graphic motion design", "Precision motion design", "Illustration & Graphic"],
+  ["animated-poster", "Animated poster", "A moving key-art poster", "Illustration & Graphic"],
+  ["premium-product-commercial", "Premium product commercial", "Luxury commercial photography", "Realistic & Live Action"],
+  ["visceral-cinematic-horror", "Visceral cinematic horror", "Tactile cinematic horror", "Genre & Cinematic"],
+  ["psychological-thriller", "Psychological thriller", "Controlled psychological-thriller imagery", "Genre & Cinematic"],
+  ["gothic-whimsy", "Gothic whimsy", "Playfully macabre storybook gothic", "Genre & Cinematic"],
+  ["dark-fairy-tale", "Dark fairy tale", "Lush but threatening folklore imagery", "Genre & Cinematic"],
+  ["cosmic-horror", "Cosmic horror", "Overwhelming cosmic-horror scale", "Genre & Cinematic"],
+  ["supernatural-mystery", "Supernatural mystery", "Atmospheric supernatural mystery", "Genre & Cinematic"],
+  ["neo-noir-crime", "Neo-noir crime", "Modern neo-noir crime photography", "Genre & Cinematic"],
+  ["analog-found-footage", "Analog found footage", "Degraded consumer-video authenticity", "Genre & Cinematic"],
+  ["retro-science-fiction", "Retro science fiction", "Tactile retro-futurism", "Genre & Cinematic"],
+  ["dystopian-future", "Dystopian future", "Severe dystopian worldbuilding", "Genre & Cinematic"],
+  ["disaster-spectacle", "Disaster spectacle", "Large-scale disaster cinema", "Genre & Cinematic"],
+  ["action-blockbuster", "Action blockbuster", "Premium action-blockbuster imagery", "Genre & Cinematic"],
+  ["pulp-adventure", "Pulp adventure", "Colorful pulp-adventure energy", "Genre & Cinematic"],
+  ["romantic-fantasy", "Romantic fantasy", "Luminous romantic fantasy", "Genre & Cinematic"],
+  ["surreal-dreamscape", "Surreal dreamscape", "Poetic surrealism", "Experimental"],
+].map(([id, label, subtitle, category]) => ({
+  id,
+  label,
+  subtitle,
+  category,
+  description: H3_VISUAL_STYLE_PROFILES[label as keyof typeof H3_VISUAL_STYLE_PROFILES],
+  masterPrompt: H3_VISUAL_STYLE_PROFILES[label as keyof typeof H3_VISUAL_STYLE_PROFILES],
+  promptBuilderVisualStyle: label,
+  aliases: [slugLabel(label)],
+  sourceOrigin: "prompt-builder",
+}));
+
+export const H3_STYLE_PRESETS: H3StylePreset[] = ([
   {
     id: DEFAULT_H3_STYLE_PRESET_ID,
     label: "Default / None",
@@ -20,7 +91,9 @@ export const H3_STYLE_PRESETS: H3StylePreset[] = [
     description:
       "No Atomic Gains master style prompt is added. Existing H3 prompt behavior remains unchanged.",
     masterPrompt: "",
+    sourceOrigin: "default",
   },
+  ...PROMPT_BUILDER_STYLE_PRESETS,
   {
     id: "old-animation-style",
     label: "Old Animation Style",
@@ -207,6 +280,7 @@ Avoid: 3D CGI, photorealism, modern glossy anime rendering, realistic fur, ray t
     category: "Painterly, Graphic & Material",
     description: "Bold black calligraphic brushwork and diluted grey washes bleeding into textured paper.",
     promptBuilderVisualStyle: "Illustrated",
+    aliases: ["ink"],
     masterPrompt: `MASTER STYLE PROMPT — SUMI-E INK-WASH CINEMATIC ANIMATION
 
 Render [SUBJECT / SCENE DESCRIPTION] as sophisticated East Asian ink-wash animation on textured rice paper, combining bold black calligraphic brushwork, diluted grey washes, restrained mineral pigments, negative space, and expressive hand-painted motion.
@@ -338,6 +412,7 @@ A warm tobacco stain tints the paper unevenly. Smoke, rain and fog are the princ
     category: "Painterly, Graphic & Material",
     description: "Bleeding ink, uneven colouring and strokes that wander outside the outlines, over visible paper fibre.",
     promptBuilderVisualStyle: "Illustrated",
+    aliases: ["doodle-children-s-marker", "doodle-childrens-marker"],
     masterPrompt: `CHILDREN'S MARKER-PEN ANIMATION
 
 Render everything with felt-tip marker pens on ordinary paper.
@@ -367,6 +442,7 @@ No vector illustration or clean tablet rendering.`,
     category: "Vintage & Broadcast Animation",
     description: "High-budget golden-age slapstick: elastic original animals, constructed smear drawings and orchestral comic timing.",
     promptBuilderVisualStyle: "Cartoon",
+    aliases: ["tom-and-jerry-style"],
     masterPrompt: `MASTER STYLE PROMPT — 1940s–1950s THEATRICAL SLAPSTICK CEL ANIMATION Render the entire sequence as a lavish hand-drawn American theatrical cartoon from the 1940s–1950s, using traditional ink-and-paint cel animation over richly painted background artwork. The animation should feel like a high-budget theatrical short rather than television animation: extremely expressive poses, sophisticated comic timing, beautifully constructed smear drawings, exaggerated squash-and-stretch, strong silhouettes and carefully synchronized physical comedy.
 CHARACTER DESIGN Create completely original animal characters. Design should use: expressive anthropomorphic animals, simplified but anatomically convincing bodies, large readable eyes, flexible eyebrows, broad cheeks, highly elastic mouths, oversized hands and feet where appropriate, clear contrasting silhouettes. Faces should be extraordinarily expressive.
 Characters may temporarily deform far beyond their normal anatomy during fast action, shock or impacts, then immediately snap back to model. Avoid copying recognizable character shapes, colours, facial features or proportions from existing cartoon properties. LINEWORK Use clean hand-inked dark outlines with elegant line-weight variation. Outer contours are slightly thicker.
@@ -1090,14 +1166,27 @@ Avoid photorealism, 3D CGI, realistic lighting, detailed textures, complex gradi
     masterPrompt: `Rendered entirely in a 1990s RGB phosphor CRT arcade display style: the entire image is built from a dense matrix of individually glowing circular dots (phosphor/pixel dots), never a smooth or vector illustration. Each dot glows in saturated red, green, or blue, with visible gaps of pure black between dots — a true dot-matrix/halftone texture, not a gradient. Every edge and contour carries a sharp RGB chromatic aberration fringe, where the red, green, and blue channels are slightly offset from each other, creating a glowing rainbow-edge halo along silhouettes, exactly like color misconvergence on an old CRT monitor. The background is pure, flat solid black — no scenery, no gradient, no vignette, nothing except the glowing subject. Lighting is entirely self-illuminated by the dot glow itself — no external light source, no shadows cast onto a surface, no ambient occlusion beyond the dot density thinning out toward the edges of forms.
 Color palette stays within the RGB primary/phosphor range (reds, greens, blues, cyans from overlap) — no browns, no pastels, no naturalistic skin tones. The overall impression is a retro arcade demo screen, laser-etched dot-matrix poster, or an old CRT scoreboard display brought to life — sharp, glowing, slightly artificial, high contrast against the black void.`,
   }
-];
+] as H3StylePreset[]).map((preset) => withPreview({
+  sourceOrigin: preset.id === DEFAULT_H3_STYLE_PRESET_ID
+    ? "default"
+    : preset.sourceOrigin || "style-art",
+  ...preset,
+}));
 
 export function resolveH3StylePreset(
   value: unknown,
 ): H3StylePreset | null {
   const id = String(value ?? "").trim();
   if (!id || id === DEFAULT_H3_STYLE_PRESET_ID) return null;
-  return H3_STYLE_PRESETS.find((preset) => preset.id === id) ?? null;
+  return H3_STYLE_PRESETS.find((preset) => preset.id === id || preset.aliases?.includes(id)) ?? null;
+}
+
+export function resolveH3StylePresetByLabel(
+  value: unknown,
+): H3StylePreset | null {
+  const label = String(value ?? "").trim().toLowerCase();
+  if (!label) return null;
+  return H3_STYLE_PRESETS.find((preset) => preset.label.toLowerCase() === label) ?? null;
 }
 
 export function resolveH3PromptBuilderVisualStyle(

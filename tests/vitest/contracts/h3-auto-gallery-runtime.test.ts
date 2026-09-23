@@ -23,6 +23,58 @@ afterAll(() => {
 });
 
 describe("H3 automatic Gallery runtime", () => {
+  it("returns the latest persisted direct job for owner-level tab rehydration", async () => {
+    const owner = {
+      ownerKey: "latest-contract-user",
+      username: "latest-contract-user",
+      deviceId: "latest-contract-device",
+      scope: "user" as const,
+    };
+    const first = await jobs.createH3DirectJob(owner.ownerKey, {
+      mode: "h3-text-to-video",
+      quality: "lq",
+      orientation: "landscape",
+      durationSeconds: 5,
+      prompt: "older job",
+      seed: 1,
+      optionalLoras: [],
+      firstImage: null,
+      lastImage: null,
+      images: [],
+      videos: [],
+      audios: [],
+    }, owner);
+    const second = await jobs.createH3DirectJob(owner.ownerKey, {
+      mode: "h3-text-to-video",
+      quality: "lq",
+      orientation: "landscape",
+      durationSeconds: 5,
+      prompt: "newer job",
+      seed: 2,
+      optionalLoras: [],
+      firstImage: null,
+      lastImage: null,
+      images: [],
+      videos: [],
+      audios: [],
+    }, owner);
+    await fsp.writeFile(
+      path.join(dataRoot, "h3-direct", owner.ownerKey, "jobs", `${first.id}.json`),
+      JSON.stringify({ ...first, createdAt: "2026-09-23T12:00:00.000Z" }, null, 2),
+      "utf8",
+    );
+    await fsp.writeFile(
+      path.join(dataRoot, "h3-direct", owner.ownerKey, "jobs", `${second.id}.json`),
+      JSON.stringify({ ...second, createdAt: "2026-09-23T12:01:00.000Z" }, null, 2),
+      "utf8",
+    );
+
+    await expect(jobs.getLatestH3DirectJob(owner.ownerKey)).resolves.toMatchObject({
+      id: second.id,
+      input: { prompt: "newer job" },
+    });
+  });
+
   it("copies a completed result with metadata exactly once", async () => {
     const owner = {
       ownerKey: "contract-user",

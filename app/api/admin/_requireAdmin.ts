@@ -5,7 +5,11 @@ import { cookieName } from "@/lib/auth/cookies";
 import { verifySession } from "@/lib/auth/jwt";
 
 // Primary admin for this install (requested)
-const HARD_CODED_ADMINS = ["slrochford123@protonmail.com", "slrochford123"];
+const HARD_CODED_ADMINS = [
+  "slrochford123@protonmail.com",
+  "slrochford123",
+  "slrochford",
+];
 
 // Optional extra admins via env (comma-separated emails and/or usernames)
 const ADMIN_IDENTIFIERS = (process.env.ADMIN_IDENTIFIERS || "")

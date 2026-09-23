@@ -71,16 +71,34 @@ describe("H3 exact LQ/HQ workflow integration", () => {
             expect(built.preSubmitCleanup).toBeNull();
             expect(built.graph["24"].inputs.steps).toBe(8);
             expect(built.graph["24"].inputs.scheduler).toBe("simple");
-            expect(built.graph["18"].inputs.sampler_name).toBe("euler");
+            expect(built.graph["18"].inputs.sampler_name).toBe(recipe.sampler);
             expect(built.graph["39"].inputs.width).toBe(recipe.nativeWidth);
             expect(built.graph["39"].inputs.height).toBe(recipe.nativeHeight);
             expect(built.graph["39"].inputs.length).toBe(recipe.frameCount);
-            expect(built.graph["36"].class_type).toBe("LoraLoaderModelOnly");
-            expect(built.graph["36"].inputs.lora_name).toContain("turbo_8step");
-            expect(built.graph["38"].inputs.shift_video).toBe(6);
+            expect(built.graph["30"].inputs.unet_name).toBe(
+              mode === "h3-reference-to-video"
+                ? "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+                : "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
+            );
+            if (mode === "h3-reference-to-video") {
+              expect(built.graph["36"].class_type).toBe("LoraLoaderModelOnly");
+              expect(built.graph["36"].inputs.lora_name).toBe("minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors");
+              expect(built.graph["38"].inputs.model).toEqual(["36", 0]);
+            } else {
+              expect(built.graph["38"].inputs.model).toEqual(["30", 0]);
+            }
+            expect(built.graph["38"].inputs.shift_video).toBe(recipe.videoSigmaShift);
             expect(built.graph["38"].inputs.shift_audio).toBe(3);
-            expect(built.graph["41"].class_type).toBe("H3SLAAttention");
+            expect(built.graph["41"].class_type).toBe(mode === "h3-reference-to-video" ? "H3SLAAttention" : "ModelAttentionBackend");
+            if (mode === "h3-reference-to-video") {
+              expect(built.graph["41"].inputs.engine).toBe("comfy_kitchen");
+            } else {
+              expect(built.graph["41"].inputs.attention).toBe("comfy kitchen attention");
+            }
+            expect(built.graph["164"].class_type).toBe("ModelPreviewOverrideKJ");
+            expect(built.graph["164"].inputs.tiny_vae).toBe("taeh3.safetensors");
             expect(Object.values(built.graph).some((node) => node.class_type === "SpectrumApplyMiniMaxH3")).toBe(false);
+            expect(Object.values(built.graph).some((node) => node.class_type === "H3SLAAttention")).toBe(mode === "h3-reference-to-video");
           }
         }
       }
@@ -88,12 +106,16 @@ describe("H3 exact LQ/HQ workflow integration", () => {
     expect(count).toBe(24);
   });
 
-  it("keeps backend-specific SLA settings attached to the chosen GPU", () => {
+  it("keeps the validated Comfy Kitchen preview chain attached on every H3 backend route", () => {
     const gpu5060 = build("rtx5060ti", "h3-reference-to-video", 10, "hq");
     const gpu3090 = build("rtx3090", "h3-reference-to-video", 10, "hq");
-    expect(gpu5060.graph["41"].inputs.dense_backend).toBe("comfy_kitchen");
-    expect(gpu3090.graph["41"].inputs.dense_backend).toBe("sage:qk_int8_pv_fp16_cuda");
-    expect(gpu5060.graph["41"].inputs.sparsity_ratio).toBe(0.85);
-    expect(gpu3090.graph["41"].inputs.sparsity_ratio).toBe(0.85);
+    for (const built of [gpu5060, gpu3090]) {
+      expect(built.graph["39"].class_type).toBe("MiniMaxH3ReferenceToVideo");
+      expect(built.graph["41"].class_type).toBe("H3SLAAttention");
+      expect(built.graph["41"].inputs.engine).toBe("comfy_kitchen");
+      expect(built.graph["164"].inputs.model).toEqual(["41", 0]);
+      expect(built.graph["24"].inputs.model).toEqual(["164", 0]);
+      expect(built.graph["32"].inputs.model).toEqual(["164", 0]);
+    }
   });
 });

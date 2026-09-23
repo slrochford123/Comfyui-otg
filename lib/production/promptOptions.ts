@@ -58,7 +58,7 @@ export const PRODUCTION_V2_QUALITY = "768P" as const;
 export const H3_ASPECT_RATIO_OPTIONS = [PRODUCTION_V2_ASPECT_RATIO] as const;
 export const H3_QUALITY_OPTIONS = [PRODUCTION_V2_QUALITY] as const;
 
-export type ProductionV2VisualStyle = keyof typeof H3_VISUAL_STYLE_PROFILES;
+export type ProductionV2VisualStyle = string;
 export type ProductionV2CameraFeel = (typeof H3_CAMERA_FEEL_OPTIONS)[number];
 export type ProductionV2ShotFlow = (typeof H3_SHOT_FLOW_OPTIONS)[number];
 export type ProductionV2AspectRatio = (typeof H3_ASPECT_RATIO_OPTIONS)[number];
@@ -87,8 +87,9 @@ export const DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS: ProductionV2PromptOptions = {
 };
 
 export function h3StyleProfile(style: string) {
-  return H3_VISUAL_STYLE_PROFILES[style as ProductionV2VisualStyle]
-    || H3_VISUAL_STYLE_PROFILES[DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.visualStyle];
+  const profiles = H3_VISUAL_STYLE_PROFILES as Record<string, string>;
+  return profiles[style]
+    || profiles[DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.visualStyle];
 }
 
 export function effectiveH3ShotFlow(flow: ProductionV2ShotFlow, style: string, idea: string): ProductionV2ShotFlow {

@@ -12,9 +12,13 @@ import {
 import {
   H3_CAMERA_FEEL_OPTIONS,
   H3_SHOT_FLOW_OPTIONS,
-  H3_VISUAL_STYLE_OPTIONS,
   type ProductionV2PromptOptions,
 } from "@/lib/production/promptOptions";
+import { resolveH3StylePreset, resolveH3StylePresetByLabel } from "@/lib/h3StylePresets";
+import { H3StylePresetPicker } from "./H3StylePresetPicker";
+import VideoSnapshotPicker, {
+  type VideoSnapshotResult,
+} from "./VideoSnapshotPicker";
 import {
   getH3ProductionTimeEstimate,
   type H3ProductionMode,
@@ -140,7 +144,8 @@ type ProductionV2GenerationJobPayload = {
     | "postprocessing_submitted"
     | "postprocessing_running"
     | "completed"
-    | "failed";
+    | "failed"
+    | "canceled";
   statusMessage: string | null;
   backend: "rtx3090" | "rtx5060ti" | null;
   backendLabel: string | null;
@@ -151,6 +156,18 @@ type ProductionV2GenerationJobPayload = {
   etaMaxSeconds: number | null;
   promptId: string | null;
   workflowId: string | null;
+  approximatePreview?: {
+    label: "Approximate Preview";
+    imageUrl: string;
+    mimeType: string;
+    width: number | null;
+    height: number | null;
+    step: number | null;
+    total: number | null;
+    frameCount: number | null;
+    updatedAt: number;
+    source: "ModelPreviewOverrideKJ";
+  } | null;
   operation?: "scene-generation" | "visual-edit";
   retryOfJobId?: string | null;
   error: string | null;
@@ -241,6 +258,7 @@ const productionPrimaryButton = `${buttonBase} production-v2-primary-action`;
 const secondaryButton = `${buttonBase} border-white/15 bg-white/[0.06] text-zinc-100 hover:bg-white/[0.1]`;
 const dangerButton = `${buttonBase} border-red-300/35 bg-red-400/15 text-red-100 hover:bg-red-400/25`;
 const fieldClass = "w-full rounded-lg border border-white/12 bg-black/35 px-3 py-2.5 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-cyan-300/60";
+const H3_REFERENCE_VIDEO_CLIP_SECONDS = 5;
 const EMPTY_EXPANDED_GROUPS = new Set<string>();
 
 /*
@@ -275,8 +293,8 @@ function LtxCharacterCardReferences({
 
       {characters.map((character) => {
         const cardSrc = mediaUrl(
-          character.characterCardRef.displayImage
-          || character.characterCardRef.workflowImage,
+          character.defaultImageRef.displayImage
+          || character.defaultImageRef.workflowImage,
         );
 
         return (
@@ -291,7 +309,7 @@ function LtxCharacterCardReferences({
                 {cardSrc ? (
                   <img
                     src={cardSrc}
-                    alt={`${character.snapshotName} Character Card LTX Ingredient`}
+                    alt={`${character.snapshotName} default Character preview`}
                     className="h-full w-full object-contain p-1"
                   />
                 ) : (
@@ -615,7 +633,7 @@ function StudioShell({
   onVersionChange: (versionId: string) => void;
   onProductionChange: (production: ProductionV2) => void;
   onPersist: () => Promise<ProductionV2 | null>;
-  onH3Edit: (versionId: string, prompt: string) => Promise<void>;
+  onH3Edit: (versionId: string, prompt: string, clipStartSeconds?: number) => Promise<void>;
   onMessage: (message: string) => void;
 }) {
   const version = selectedSceneVersion(scene);
@@ -627,12 +645,17 @@ function StudioShell({
   const [duration, setDuration] = useState<number>(scene.durationSeconds);
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState<number>(scene.durationSeconds);
+  const [referenceClipStart, setReferenceClipStart] = useState(0);
   const [volumePercent, setVolumePercent] = useState(100);
+  const referenceClipMaxStart = Math.max(0, duration - H3_REFERENCE_VIDEO_CLIP_SECONDS);
+  const referenceClipStartClamped = Math.min(Math.max(0, referenceClipStart), referenceClipMaxStart);
+  const referenceClipReady = duration >= H3_REFERENCE_VIDEO_CLIP_SECONDS;
 
   useEffect(() => {
     setDuration(scene.durationSeconds);
     setTrimStart(0);
     setTrimEnd(scene.durationSeconds);
+    setReferenceClipStart(0);
   }, [scene.id, version?.id, scene.durationSeconds]);
 
   async function postProcess(action: "trim" | "volume" | "remove-background-music" | "woosh-sfx", extra: Record<string, unknown> = {}) {
@@ -669,7 +692,53 @@ function StudioShell({
         <aside className="space-y-4 rounded-lg border border-white/10 bg-zinc-950/70 p-4">
           <MediaVersionSelect scene={scene} value={version?.id || ""} label={`${title} media version`} onChange={onVersionChange} />
           {kind === "visual" ? <>
-            <section className="border-t border-white/10 pt-4" data-otg="production-v2-h3-video-edit"><h3 className="text-xs font-black uppercase text-zinc-400">AI Video Edit</h3><p className="mt-2 text-xs text-zinc-500">Current source: {version ? versionLabel(version, scene.mediaVersions.indexOf(version)) : "None"}</p><label className="mt-3 block text-xs font-bold text-zinc-400">Describe your changes<textarea aria-label="AI video edit instructions" rows={4} value={editPrompt} disabled={readOnly} onChange={(event) => setEditPrompt(event.target.value)} className={`${fieldClass} mt-2 resize-y`} /></label><button type="button" className={`${productionPrimaryButton} mt-3 w-full`} disabled={Boolean(readOnly || !version || !editPrompt.trim() || productionV2GenerationIsActive(generationJob?.status))} onClick={() => void onH3Edit(version!.id, editPrompt)}>{generationJob?.operation === "visual-edit" && generationJob.status !== "completed" && generationJob.status !== "failed" ? generationJob.statusMessage || "Rendering Edit..." : "Render Edit"}</button></section>
+            <section className="border-t border-white/10 pt-4" data-otg="production-v2-h3-video-edit">
+              <h3 className="text-xs font-black uppercase text-zinc-400">AI Video Edit</h3>
+              <p className="mt-2 text-xs text-zinc-500">Current source: {version ? versionLabel(version, scene.mediaVersions.indexOf(version)) : "None"}</p>
+              <div className="mt-3 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] p-3" data-otg="production-v2-h3-reference-window">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase text-cyan-100">Reference Window</p>
+                    <p className="mt-1 text-[11px] leading-4 text-zinc-500">Only this 5-second clip is sent to H3.</p>
+                  </div>
+                  <span className="shrink-0 rounded-full border border-white/10 bg-black/35 px-2 py-1 text-[11px] font-bold text-zinc-200">
+                    {referenceClipStartClamped.toFixed(2)}s - {(referenceClipStartClamped + H3_REFERENCE_VIDEO_CLIP_SECONDS).toFixed(2)}s
+                  </span>
+                </div>
+                <input
+                  aria-label="H3 reference video 5-second start time"
+                  type="range"
+                  min={0}
+                  max={referenceClipMaxStart}
+                  step="0.05"
+                  value={referenceClipStartClamped}
+                  disabled={Boolean(readOnly || !version || !referenceClipReady)}
+                  onChange={(event) => setReferenceClipStart(Number(event.target.value))}
+                  className="mt-3 w-full"
+                />
+                <div className="mt-1 flex justify-between text-[11px] text-zinc-500">
+                  <span>0.00s</span>
+                  <span>{duration.toFixed(2)}s source</span>
+                </div>
+                {!referenceClipReady ? (
+                  <p className="mt-2 rounded-md border border-amber-300/30 bg-amber-300/10 px-2 py-1 text-xs text-amber-100">
+                    Source video must be at least {H3_REFERENCE_VIDEO_CLIP_SECONDS} seconds.
+                  </p>
+                ) : null}
+              </div>
+              <label className="mt-3 block text-xs font-bold text-zinc-400">
+                Describe your changes
+                <textarea aria-label="AI video edit instructions" rows={4} value={editPrompt} disabled={readOnly} onChange={(event) => setEditPrompt(event.target.value)} className={`${fieldClass} mt-2 resize-y`} />
+              </label>
+              <button
+                type="button"
+                className={`${productionPrimaryButton} mt-3 w-full`}
+                disabled={Boolean(readOnly || !version || !editPrompt.trim() || !referenceClipReady || productionV2GenerationIsActive(generationJob?.status))}
+                onClick={() => void onH3Edit(version!.id, editPrompt, referenceClipStartClamped)}
+              >
+                {generationJob?.operation === "visual-edit" && generationJob.status !== "completed" && generationJob.status !== "failed" && generationJob.status !== "canceled" ? generationJob.statusMessage || "Rendering Edit..." : "Render Edit"}
+              </button>
+            </section>
             <section className="border-t border-white/10 pt-4" data-otg="production-v2-trim"><h3 className="text-xs font-black uppercase text-zinc-400">Trim</h3><div className="mt-2 grid grid-cols-3 gap-2 text-center text-[11px] text-zinc-500"><span>Original<br /><strong className="text-zinc-200">{duration.toFixed(2)}s</strong></span><span>In<br /><strong className="text-zinc-200">{trimStart.toFixed(2)}s</strong></span><span>Out<br /><strong className="text-zinc-200">{trimEnd.toFixed(2)}s</strong></span></div><label className="mt-3 block text-xs text-zinc-500">In point<input aria-label="Trim in point" type="range" min={0} max={Math.max(0.25, duration - 0.25)} step="0.05" value={Math.min(trimStart, Math.max(0, trimEnd - 0.25))} onChange={(event) => setTrimStart(Math.min(Number(event.target.value), trimEnd - 0.25))} className="mt-2 w-full" /></label><label className="mt-2 block text-xs text-zinc-500">Out point<input aria-label="Trim out point" type="range" min={0.25} max={duration} step="0.05" value={Math.max(trimEnd, trimStart + 0.25)} onChange={(event) => setTrimEnd(Math.max(Number(event.target.value), trimStart + 0.25))} className="mt-2 w-full" /></label><p className="mt-2 text-center text-xs font-bold text-zinc-300">Result: {Math.max(0, trimEnd - trimStart).toFixed(2)}s</p><button type="button" className={`${secondaryButton} mt-3 w-full`} disabled={Boolean(readOnly || !version || operation)} onClick={() => void postProcess("trim", { startSeconds: trimStart, endSeconds: trimEnd })}>{operation === "trim" ? "Trimming..." : "Apply Trim"}</button></section>
           </> : <>
             <section className="border-t border-white/10 pt-4" data-otg="production-v2-woosh-sfx"><h3 className="text-xs font-black uppercase text-zinc-400">Sound Effects</h3><p className="mt-2 text-xs text-zinc-500">Sony Woosh VFlow | video-to-audio</p><label className="mt-3 block text-xs font-bold text-zinc-400">Describe desired sound effects<textarea aria-label="Sound effects description" rows={4} value={sfxPrompt} disabled={readOnly} onChange={(event) => setSfxPrompt(event.target.value)} className={`${fieldClass} mt-2 resize-y`} /></label><button type="button" className={`${productionPrimaryButton} mt-3 w-full`} disabled={Boolean(readOnly || !version || operation)} onClick={() => void postProcess("woosh-sfx", { prompt: sfxPrompt, sfxVolume: 80 })}>{operation === "woosh-sfx" ? "Generating..." : "Generate Sound Effects"}</button><p className="mt-2 text-[10px] leading-4 text-amber-200/70">Public Woosh weights: CC-BY-NC, non-commercial.</p></section>
@@ -1115,9 +1184,14 @@ export default function ProductionV2Panel() {
   const [viewerSceneId, setViewerSceneId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [snapshotOpen, setSnapshotOpen] = useState(false);
   const readOnly = production?.status === "completed";
 
   const selectedScene = useMemo(() => production?.scenes.find((scene) => scene.id === production.activeSceneId) || production?.scenes[0] || null, [production]);
+  const selectedStylePresetId = selectedScene
+    ? (resolveH3StylePresetByLabel(selectedScene.promptOptions.visualStyle)
+      || resolveH3StylePreset(selectedScene.promptOptions.visualStyle))?.id || "cinematic-realism"
+    : "cinematic-realism";
   const productionId = production?.id || "";
   const activeSceneId = production?.activeSceneId || "";
   const expansionScope = production && selectedScene ? `${production.id}:${selectedScene.id}` : "";
@@ -1254,7 +1328,7 @@ export default function ProductionV2Panel() {
           if (!cancelled) setProduction(loaded.production);
           return;
         }
-        if (json.job.status === "failed") return;
+        if (json.job.status === "failed" || json.job.status === "canceled") return;
         timer = setTimeout(poll, 3000);
       } catch (error) {
         if (!cancelled) {
@@ -1415,6 +1489,11 @@ export default function ProductionV2Panel() {
 
   function updatePromptOption<K extends keyof ProductionV2PromptOptions>(key: K, value: ProductionV2PromptOptions[K]) {
     updateSharedSceneInput((scene) => ({ ...scene, promptOptions: { ...scene.promptOptions, [key]: value } }));
+  }
+  function updateStylePreset(styleId: string) {
+    const preset = resolveH3StylePreset(styleId);
+    if (!preset) return;
+    updatePromptOption("visualStyle", preset.label as ProductionV2PromptOptions["visualStyle"]);
   }
 
   function updateH3UserLoras(updater: (current: ProductionV2H3UserLoraState) => ProductionV2H3UserLoraState) {
@@ -1598,6 +1677,163 @@ export default function ProductionV2Panel() {
         },
       };
     });
+  }
+
+  async function useProductionSnapshot(
+    result: VideoSnapshotResult,
+  ) {
+    if (!selectedScene) {
+      throw new Error("No Production scene is selected.");
+    }
+
+    const mode = selectedScene.generationMode;
+
+    if (
+      selectedScene.model !== "minimax-h3"
+      || (
+        mode !== "h3-image-to-video"
+        && mode !== "h3-reference-to-video"
+      )
+    ) {
+      throw new Error(
+        "Snapshot is available only for H3 Image-to-Video and Reference-to-Video.",
+      );
+    }
+
+    if (mode === "h3-reference-to-video") {
+      const referenceCount =
+        selectedScene.selectedCharacters.length
+        + selectedScene.selectedAssets.length
+        + (selectedScene.selectedBackground ? 1 : 0)
+        + selectedScene.modelState.h3.referenceToVideo.uploadedReferences.length;
+
+      if (referenceCount >= 9) {
+        throw new Error(
+          "MiniMax H3 accepts at most 9 image references. Remove a reference before adding another Snapshot.",
+        );
+      }
+    }
+
+    const form = new FormData();
+    form.set("image", result.file);
+    form.set("sceneId", selectedScene.id);
+    form.set("profile", "test_profile");
+
+    const response = await fetch(
+      "/api/production/picture/scene-input-upload",
+      {
+        method: "POST",
+        body: form,
+      },
+    );
+
+    const data = (
+      await response.json().catch(() => ({}))
+    ) as {
+      ok?: boolean;
+      error?: string;
+      filename?: string;
+      workflowImage?: string;
+      imagePath?: string;
+      previewUrl?: string;
+    };
+
+    if (!response.ok || data.ok === false) {
+      throw new Error(
+        data.error
+        || `Snapshot upload failed with HTTP ${response.status}.`,
+      );
+    }
+
+    const workflowImage = String(
+      data.workflowImage
+      || data.imagePath
+      || "",
+    ).trim();
+
+    const displayImage = String(
+      data.previewUrl
+      || data.workflowImage
+      || data.imagePath
+      || "",
+    ).trim();
+
+    if (!workflowImage) {
+      throw new Error(
+        "Snapshot upload did not return a model-facing image path.",
+      );
+    }
+
+    const reference: ProductionV2VisualReference = {
+      id: `production-upload:${selectedScene.id}:${Date.now()}`,
+      name: `Snapshot ${result.displayTimestamp}`,
+      sourceKind: "production-upload",
+      generationSourceType: "production-upload",
+      sourceId: data.filename || result.file.name,
+      identityDescription:
+        `Snapshot from ${result.sourceVideoName} at ${result.displayTimestamp}`,
+      displayImage: displayImage || workflowImage,
+      workflowImage,
+    };
+
+    if (mode === "h3-image-to-video") {
+      setStartingImage(reference);
+      setMessage(
+        `Snapshot ${result.displayTimestamp} selected as the H3 Starting Image.`,
+      );
+      setSnapshotOpen(false);
+      return;
+    }
+
+    updateSharedSceneInput(
+      (scene) => ({
+        ...scene,
+        continuation: null,
+        modelState: {
+          ...scene.modelState,
+          h3: {
+            ...scene.modelState.h3,
+            referenceToVideo: {
+              ...scene.modelState.h3.referenceToVideo,
+              uploadedReferences: [
+                ...scene.modelState.h3.referenceToVideo.uploadedReferences,
+                reference,
+              ],
+            },
+          },
+        },
+      }),
+      true,
+    );
+
+    setMessage(
+      `Snapshot ${result.displayTimestamp} added to H3 Reference-to-Video.`,
+    );
+    setSnapshotOpen(false);
+  }
+
+  function removeProductionSnapshot(
+    referenceId: string,
+  ) {
+    updateSharedSceneInput(
+      (scene) => ({
+        ...scene,
+        modelState: {
+          ...scene.modelState,
+          h3: {
+            ...scene.modelState.h3,
+            referenceToVideo: {
+              ...scene.modelState.h3.referenceToVideo,
+              uploadedReferences:
+                scene.modelState.h3.referenceToVideo.uploadedReferences.filter(
+                  (reference) => reference.id !== referenceId,
+                ),
+            },
+          },
+        },
+      }),
+      true,
+    );
   }
 
   function changeModel(model: ProductionV2Model) {
@@ -1819,8 +2055,11 @@ export default function ProductionV2Panel() {
             `Picture ${pictureSlot} / Character — ${character.snapshotName}`,
             undefined,
             character
-              .characterCardRef
-              .displayImage,
+              .defaultImageRef
+              .displayImage
+            || character
+              .defaultImageRef
+              .workflowImage,
           );
 
           pictureSlot += 1;
@@ -1910,11 +2149,12 @@ export default function ProductionV2Panel() {
         for (const character of selectedScene.selectedCharacters) {
           pushVisionItem(
             character.characterCardRef.workflowImage
-            || character.characterCardRef.displayImage,
+              || character.characterCardRef.displayImage,
             "character",
             `Ingredient ${ingredientSlot} / Character — ${character.snapshotName}`,
             undefined,
-            character.characterCardRef.displayImage,
+            character.defaultImageRef.displayImage
+              || character.defaultImageRef.workflowImage,
           );
           ingredientSlot += 1;
         }
@@ -2361,9 +2601,9 @@ export default function ProductionV2Panel() {
                     ...scene.modelState.h3,
 
                     referenceToVideo: {
-                      resolvedVoiceBindings:
-                        json.referencePlan.resolvedVoiceReferences,
-                    },
+              ...scene.modelState.h3.referenceToVideo,
+              resolvedVoiceBindings: json.referencePlan.resolvedVoiceReferences,
+            },
                   },
                 },
               }
@@ -2453,6 +2693,29 @@ export default function ProductionV2Panel() {
     }
   }
 
+  async function cancelVideoGeneration() {
+    if (!production || !selectedScene || !generationJob || !generationActive) return;
+    setMessage("Canceling Production H3 generation...");
+    try {
+      const response = await fetch("/api/production/v2/generation", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productionId: production.id,
+          sceneId: selectedScene.id,
+          jobId: generationJob.id,
+          action: "cancel",
+        }),
+      });
+      const json = await readJsonResponse<{ job: ProductionV2GenerationJobPayload }>(response);
+      setGenerationJob(json.job);
+      setMessage("Production H3 generation canceled.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not cancel Production H3 generation.");
+    }
+  }
+
   async function addScene() {
     if (!production || production.scenes.length >= PRODUCTION_V2_MAX_SCENES) return;
     try {
@@ -2520,7 +2783,7 @@ export default function ProductionV2Panel() {
     setProduction((current) => current ? { ...current, assembly: { ...current.assembly, ...patch } } : current);
   }
 
-  async function submitH3VisualEdit(versionId: string, editPrompt: string) {
+  async function submitH3VisualEdit(versionId: string, editPrompt: string, clipStartSeconds = 0) {
     if (!production || !selectedScene) return;
     setGenerationSubmitting(true);
     setMessage("");
@@ -2531,7 +2794,7 @@ export default function ProductionV2Panel() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "visual-edit", productionId: saved.id, sceneId: selectedScene.id, versionId, editPrompt }),
+        body: JSON.stringify({ action: "visual-edit", productionId: saved.id, sceneId: selectedScene.id, versionId, editPrompt, videoClipStartSeconds: clipStartSeconds }),
       });
       const json = await readJsonResponse<{ job: ProductionV2GenerationJobPayload }>(response);
       setGenerationJob(json.job);
@@ -2871,8 +3134,15 @@ export default function ProductionV2Panel() {
 
             <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-4" data-otg="production-v2-look-controls">
               <NumberedHeading number="02" title="Choose the look" />
+              <div className="mt-5">
+                <H3StylePresetPicker
+                  value={selectedStylePresetId}
+                  disabled={Boolean(readOnly)}
+                  compact
+                  onChange={updateStylePreset}
+                />
+              </div>
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                <SelectControl label="Visual style" value={selectedScene.promptOptions.visualStyle} options={H3_VISUAL_STYLE_OPTIONS} disabled={Boolean(readOnly)} onChange={(value) => updatePromptOption("visualStyle", value as ProductionV2PromptOptions["visualStyle"])} />
                 <SelectControl label="Camera feel" value={selectedScene.promptOptions.cameraFeel} options={H3_CAMERA_FEEL_OPTIONS} disabled={Boolean(readOnly)} onChange={(value) => updatePromptOption("cameraFeel", value as ProductionV2PromptOptions["cameraFeel"])} />
                 <SelectControl label="Shot flow" value={selectedScene.promptOptions.shotFlow} options={H3_SHOT_FLOW_OPTIONS} disabled={Boolean(readOnly)} onChange={(value) => updatePromptOption("shotFlow", value as ProductionV2PromptOptions["shotFlow"])} />
                 <div>
@@ -2936,8 +3206,68 @@ export default function ProductionV2Panel() {
 
             <div className="production-v2-accent-card rounded-lg border bg-zinc-950/70 p-4" data-otg="production-v2-reference-controls">
               <NumberedHeading number="03" title="References" description={isH3ImageToVideo ? "Choose exactly one starting image." : isH3TextToVideo ? "Prompt-only generation. No source image or reference media is submitted." : "Entity cards remain the source of truth; the resolver assigns ordered model inputs later."} />
+              <div data-otg="production-v2-snapshot-picker">
+                <VideoSnapshotPicker
+                  open={snapshotOpen}
+                  onClose={() => setSnapshotOpen(false)}
+                  onSnapshot={useProductionSnapshot}
+                />
+              </div>
               {isH3ImageToVideo ? (
                 <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" data-otg="h3-image-to-video-controls">
+                    <div
+                      className="col-span-full flex flex-wrap items-center gap-2"
+                      data-otg="production-v2-h3-i2v-snapshot-controls"
+                    >
+                      <button
+                        type="button"
+                        disabled={Boolean(readOnly)}
+                        onClick={() => setSnapshotOpen(true)}
+                        className="rounded-lg border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-xs font-black text-cyan-100 transition hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Snapshot
+                      </button>
+
+                      {selectedScene.modelState.h3.imageToVideo.startingImage?.sourceKind === "production-upload" ? (
+                        <div className="flex min-w-0 items-center gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.04] p-2">
+                          {mediaUrl(
+                            selectedScene.modelState.h3.imageToVideo.startingImage.displayImage
+                            || selectedScene.modelState.h3.imageToVideo.startingImage.workflowImage,
+                          ) ? (
+                            <img
+                              src={mediaUrl(
+                                selectedScene.modelState.h3.imageToVideo.startingImage.displayImage
+                                || selectedScene.modelState.h3.imageToVideo.startingImage.workflowImage,
+                              )}
+                              alt="Snapshot starting image"
+                              className="h-12 w-16 shrink-0 rounded object-cover"
+                            />
+                          ) : null}
+
+                          <div className="min-w-0">
+                            <div className="max-w-48 truncate text-xs font-black text-cyan-100">
+                              {selectedScene.modelState.h3.imageToVideo.startingImage.name}
+                            </div>
+                            <div className="text-[10px] text-zinc-500">
+                              Video Snapshot
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={Boolean(readOnly)}
+                            onClick={() =>
+                              setStartingImage(
+                                selectedScene.modelState.h3.imageToVideo.startingImage!,
+                              )
+                            }
+                            className="rounded-md border border-white/10 px-2 py-1 text-[11px] font-bold text-zinc-300 hover:bg-white/5 disabled:opacity-50"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
                   {startingImageCandidates.map((item) => {
                     const src = mediaUrl(item.displayImage || item.workflowImage);
                     const contain = item.sourceKind !== "background";
@@ -2951,6 +3281,87 @@ export default function ProductionV2Panel() {
                 </div>
               ) : (
                 <div className="mt-5 space-y-3">
+                    {isH3ReferenceToVideo ? (
+                      <div
+                        className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.04] p-3"
+                        data-otg="production-v2-h3-r2v-snapshot-controls"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-xs font-black text-cyan-100">
+                              Snapshot References
+                            </div>
+                            <div className="mt-1 text-xs text-zinc-500">
+                              Capture a frame from a video and add it to the H3 reference deck.
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={Boolean(
+                              readOnly
+                              || (
+                                selectedScene.selectedCharacters.length
+                                + selectedScene.selectedAssets.length
+                                + (selectedScene.selectedBackground ? 1 : 0)
+                                + selectedScene.modelState.h3.referenceToVideo.uploadedReferences.length
+                                >= 9
+                              )
+                            )}
+                            onClick={() => setSnapshotOpen(true)}
+                            className="rounded-lg border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-xs font-black text-cyan-100 transition hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Snapshot
+                          </button>
+                        </div>
+
+                        {selectedScene.modelState.h3.referenceToVideo.uploadedReferences.length ? (
+                          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                            {selectedScene.modelState.h3.referenceToVideo.uploadedReferences.map((reference) => {
+                              const src = mediaUrl(
+                                reference.displayImage
+                                || reference.workflowImage,
+                              );
+
+                              return (
+                                <div
+                                  key={reference.id}
+                                  className="flex min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-black/25 p-2"
+                                >
+                                  {src ? (
+                                    <img
+                                      src={src}
+                                      alt={reference.name}
+                                      className="h-14 w-20 shrink-0 rounded object-cover"
+                                    />
+                                  ) : null}
+
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate text-xs font-black text-zinc-200">
+                                      {reference.name}
+                                    </div>
+                                    <div className="mt-1 text-[10px] text-zinc-500">
+                                      Video Snapshot
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    disabled={Boolean(readOnly)}
+                                    onClick={() =>
+                                      removeProductionSnapshot(reference.id)
+                                    }
+                                    className="rounded-md border border-white/10 px-2 py-1 text-[11px] font-bold text-zinc-300 hover:bg-white/5 disabled:opacity-50"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   <ReferenceAccordion label="Characters" count={selectedScene.selectedCharacters.length} expanded={expandedGroups.has("section:characters")} onToggle={() => toggleExpanded("section:characters")}>
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{characters.map((item) => { const selected = selectedScene.selectedCharacters.some((entry) => entry.characterId === item.id); const full = selectedScene.model === "ltx-2.5" && ingredientCount >= ingredientLimit && !selected; const key = `character:${item.id}`; return <EntityCard key={key} entityType="Character" entityId={item.id} name={item.name} image={item.defaultImage} imageLabel="Default image" perspectives={item.perspectives} selected={selected} expanded={expandedGroups.has(key)} disabled={Boolean(readOnly || full)} onSelect={() => toggleCharacter(item)} onTogglePerspectives={() => toggleExpanded(key)} />; })}</div>{!characters.length ? <p className="text-sm text-zinc-500">No saved Characters.</p> : null}
                   </ReferenceAccordion>
@@ -3122,9 +3533,63 @@ export default function ProductionV2Panel() {
                     {videoRetrySubmitting ? "Retrying..." : "Retry"}
                   </button>
                 ) : null}
+                {selectedScene.model === "minimax-h3" && generationActive ? (
+                  <button
+                    type="button"
+                    className={secondaryButton}
+                    onClick={() => void cancelVideoGeneration()}
+                    data-otg="production-v2-cancel-generation"
+                  >
+                    Cancel Generation
+                  </button>
+                ) : null}
               </div>
               {generationJob ? <div className="mt-3 text-xs text-zinc-500" data-otg="production-v2-generation-provenance">Job {generationJob.id}{generationJob.promptId ? ` · Prompt ${generationJob.promptId}` : ""}{generationJob.retryOfJobId ? ` · Retry of ${generationJob.retryOfJobId}` : ""}</div> : null}
               {generationJob?.error ? <div className="mt-4 rounded-lg border border-red-300/25 bg-red-300/10 px-3 py-2 text-sm text-red-100" role="alert">{generationJob.error}</div> : null}
+              {selectedScene.model === "minimax-h3" && (generationJob?.approximatePreview || generationActive) ? (
+                <div
+                  className="mt-5 rounded-lg border border-cyan-300/25 bg-cyan-300/[0.06] p-3"
+                  data-otg="production-v2-h3-approximate-preview"
+                >
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-sm font-black text-cyan-50">Approximate Preview</h3>
+                      <p className="text-xs text-cyan-100/60">Sampling preview only. Final quality appears after completion.</p>
+                    </div>
+                    <span className="text-xs font-bold text-cyan-100/60">
+                      {generationJob?.approximatePreview?.step !== null && generationJob?.approximatePreview?.total !== null && generationJob?.approximatePreview
+                        ? `Step ${generationJob.approximatePreview.step}/${generationJob.approximatePreview.total}`
+                        : generationActive
+                          ? "Waiting for first preview"
+                          : "Latest"}
+                    </span>
+                  </div>
+                  {generationJob?.approximatePreview ? (
+                    generationJob.approximatePreview.mimeType.startsWith("video/") ? (
+                      <video
+                        key={generationJob.approximatePreview.updatedAt}
+                        src={generationJob.approximatePreview.imageUrl}
+                        autoPlay
+                        muted
+                        loop
+                        playsInline
+                        preload="auto"
+                        className="max-h-[48vh] w-full rounded-lg bg-black object-contain"
+                      />
+                    ) : (
+                      <img
+                        src={generationJob.approximatePreview.imageUrl}
+                        alt="Approximate Preview"
+                        className="max-h-[48vh] w-full rounded-lg bg-black object-contain"
+                      />
+                    )
+                  ) : (
+                    <div className="flex aspect-video items-center justify-center rounded-lg border border-white/10 bg-black/35 text-sm text-zinc-500">
+                      Approximate Preview will appear when the sampler emits the first preview frame.
+                    </div>
+                  )}
+                </div>
+              ) : null}
               {storyboardVideoSrc ? <video key={storyboardVideoSrc} className="mt-5 aspect-video w-full rounded-lg bg-black" controls playsInline preload="metadata" src={storyboardVideoSrc} data-otg="production-v2-generated-video" /> : null}
               {selectedScene.continuation ? (
                 <div

@@ -1,0 +1,316 @@
+{
+  "3": {
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "4": {
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "5": {
+    "inputs": {
+      "filename_prefix": "video/H3_R2V_ReferenceVideo_rtx5060ti_10s_LQ_06MP_APPROX_PREVIEW",
+      "format": "auto",
+      "format.codec": "auto",
+      "codec": "auto",
+      "video": [
+        "34",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video - H3_R2V_ReferenceVideo_10s_LQ_06MP_APPROX_PREVIEW"
+    }
+  },
+  "14": {
+    "inputs": {
+      "samples": [
+        "21",
+        1
+      ],
+      "vae": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeAudio",
+    "_meta": {
+      "title": "VAE Decode Audio"
+    }
+  },
+  "15": {
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "17": {
+    "inputs": {
+      "value": 10
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Duration seconds (10s matrix)"
+    }
+  },
+  "18": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "19": {
+    "inputs": {
+      "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+      "values.a": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Frame count expression (243 frames expected)"
+    }
+  },
+  "20": {
+    "inputs": {
+      "aspect_ratio": "16:9 (Widescreen)",
+      "megapixels": 0.6,
+      "multiple": 32
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "Resolution selector (LQ 06MP)"
+    }
+  },
+  "21": {
+    "inputs": {
+      "noise": [
+        "31",
+        0
+      ],
+      "guider": [
+        "32",
+        0
+      ],
+      "sampler": [
+        "18",
+        0
+      ],
+      "sigmas": [
+        "24",
+        0
+      ],
+      "latent_image": [
+        "39",
+        1
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "24": {
+    "inputs": {
+      "scheduler": "simple",
+      "steps": 8,
+      "denoise": 1,
+      "model": [
+        "164",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "25": {
+    "inputs": {
+      "samples": [
+        "21",
+        1
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "30": {
+    "inputs": {
+      "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "31": {
+    "inputs": {
+      "noise_seed": 424242
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "Default seed (424242)"
+    }
+  },
+  "32": {
+    "inputs": {
+      "model": [
+        "164",
+        0
+      ],
+      "conditioning": [
+        "39",
+        0
+      ]
+    },
+    "class_type": "BasicGuider",
+    "_meta": {
+      "title": "Basic Guider"
+    }
+  },
+  "34": {
+    "inputs": {
+      "fps": 24,
+      "bit_depth": 8,
+      "color_space": "sRGB",
+      "codec": "none",
+      "images": [
+        "25",
+        0
+      ],
+      "audio": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "36": {
+    "inputs": {
+      "lora_name": "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+      "strength_model": 1,
+      "model": [
+        "30",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "38": {
+    "inputs": {
+      "shift_video": 6,
+      "shift_audio": 3,
+      "model": [
+        "36",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3SigmaShift",
+    "_meta": {
+      "title": "ModelSamplingMiniMaxH3"
+    }
+  },
+  "39": {
+    "inputs": {
+      "prompt": "Create a 15-second lifelike realistic, photorealistic live-action dark fantasy scene in a very dark candlelit ritual chamber.\nThe shot begins as a frontal chest-up portrait of the royal Atherian father, facing directly into the screen as if speaking to his sons. The frame shows his full face, shoulders, and part of his chest.\nHe is an older noble royal Atherian man with:\nlong white hair\na full white beard\na weathered, regal face\na solemn, loving, sacrificial expression\nHe has visible blood on:\nhis face\nespecially around the eyebrows / brow\nparts of the forehead\nhis hair\nhis beard\nhis clothes / robe\nThe blood should look realistic, messy, naturally smeared, and tragic.\nHe is wearing visible parts of his blood-stained royal Atherian robe, with realistic dark ceremonial fabric and possibly part of the fur mantle.\nEyes\nHis eyes are the most important visual element.\nThey must have an extremely bright teal-green / emerald supernatural glow at maximum intensity.\nThe glow should feel like 10/10 brightness.\nThe eyes must:\nshine powerfully in the darkness\nstrongly dominate the frame\nremain supernatural and intense\nkeep a clearly visible black pupil\npreserve the natural eye shape and realism\nDo not make the eyes a flat solid color.\nThe eyes should have:\na black pupil in the center\nintensely glowing emerald / teal surrounding eye area\nstrong luminous bloom\nbright glow halo\nslight greenish spill on nearby skin\nDialogue\nThe father speaks directly into the screen and says clearly:\n“I give my life so you may keep yours. Live, my sons, and finish what I could not.”\nHe speaks with:\nlove\nsorrow\nsacrifice\nemotional control\nsolemn fatherly intensity\nHis mouth should sync naturally with the words.\nFade behavior — critical\nThis is the most important correction.\nThe fade should happen like this:\nStage 1 — opening\nAt the beginning, we clearly see:\nhis full face\nhis beard\nhis blood\npart of his chest and robe\nhis glowing eyes\nStage 2 — image fades except the eyes\nAs he continues speaking, the rest of the image gradually fades to black:\nhis face fades\nhis beard fades\nhis hair fades\nhis clothes fade\nthe background fades\nthe candlelit chamber fades\nBut his glowing eyes do not fade at all during this stage.\nHis eyes must remain:\nfully bright\nfully intense\nunchanged in brightness\nstill clearly visible\nEventually, the fade reaches a point where everything is black except his glowing eyes.\nThis is very important:\nThere should be a moment where only his glowing eyes are visible against black, while the rest of him is no longer visible.\nStage 3 — hold the eyes only, then final fade\nHold on only the glowing eyes visible against black for a brief moment.\nThen, in the last 2 seconds, the eyes themselves finally fade to black.\nSo the end progression is:\nface visible\nface fades away\nonly eyes remain\nhold only the eyes\nfinal 2 seconds: eyes fade out\ncomplete black\nLighting\nThe scene is very dark.\nThe only illumination at the beginning should come from:\nfaint candlelight\nthe glow of his eyes\nDo not make the room bright.\nDo not add ambient fill light.\nDo not add daylight.\nDo not add wall glow.\nCamera\nUse a locked frontal chest-up shot or a very subtle slow push-in.\nDo not cut away.\nDo not change angle.\nKeep the father centered and direct.\nAudio\nNo music.\nNo narration.\nNo extra voices.\nUse only:\nthe father’s spoken line\nfaint candle crackle\nsubtle room ambience\nCritical requirements\n15 seconds\nstarts chest-up, frontal\nfather talking directly into the screen\nblood on face, eyebrows, forehead, hair, beard, and clothes\nextremely bright emerald / teal glowing eyes\nblack pupils clearly visible\nface and body fade out first\neyes remain fully bright and unchanged\neventually only the eyes are visible\nhold on the eyes alone\nlast 2 seconds: eyes fade to black\nexact line: “I give my life so you may keep yours. Live, my sons, and finish what I could not.”",
+      "width": 1056,
+      "height": 608,
+      "length": 243,
+      "ref_image_size": "match",
+      "clip": [
+        "15",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "audio_vae": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3ReferenceToVideo",
+    "_meta": {
+      "title": "MiniMax H3 Reference to Video - app-injected references"
+    }
+  },
+  "41": {
+    "inputs": {
+      "sparsity_ratio": 0.85,
+      "block_size": "64",
+      "min_seq_len": 8192,
+      "dense_last_steps": 0,
+      "protect_audio": true,
+      "enabled": true,
+      "dense_steps": "0",
+      "dense_backend": "sage:qk_int8_pv_fp16_cuda",
+      "disable_fp16_accum": true,
+      "stabilize_motion": false,
+      "reference_protection": "Off",
+      "tail_correction": false,
+      "use_int8_qk": true,
+      "engine": "comfy_kitchen",
+      "model": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "H3SLAAttention",
+    "_meta": {
+      "title": "H3 SLA Attention"
+    }
+  },
+  "164": {
+    "class_type": "ModelPreviewOverrideKJ",
+    "inputs": {
+      "max_resolution": 512,
+      "jpeg_quality": 80,
+      "suppress_default_preview": true,
+      "preview_frames": 8,
+      "preview_fps": 8,
+      "tiny_vae": "taeh3.safetensors",
+      "model": [
+        "41",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Approximate Preview (H3 taeh3)"
+    }
+  }
+}

@@ -58,32 +58,38 @@ describe("MiniMax H3 LQ/HQ production recipe matrix", () => {
     }
   });
 
-  it("matches all 24 production graph checksums recorded in provenance", () => {
+  it("installs all 24 FastH3 B02 approximate-preview runtime graphs with provenance", () => {
     const provenance = JSON.parse(fs.readFileSync(
-      path.join(root, "comfy_workflows/internal/production-v2/h3-lq-hq/PROVENANCE.json"),
+      path.join(root, "comfy_workflows/internal/production-v2/h3-b02-approx-preview/INSTALL_PROVENANCE.json"),
       "utf8",
-    )) as { routes: Array<{ slot: string; productionFile: string; productionSha256: string }> };
-    expect(provenance.routes).toHaveLength(24);
-    for (const route of provenance.routes) {
-      const bytes = fs.readFileSync(route.productionFile);
-      expect(crypto.createHash("sha256").update(bytes).digest("hex"), route.slot)
-        .toBe(route.productionSha256);
+    )) as { installed: string[]; activeFamily: string };
+    expect(provenance.activeFamily).toBe("FastH3_B02_T2V_I2V_REF2VA_R2V_REFERENCE_VIDEO_APPROX_PREVIEW");
+    expect(provenance.installed).toHaveLength(24);
+    for (const route of provenance.installed) {
+      const graph = fs.readFileSync(path.join(root, route), "utf8");
+      expect(crypto.createHash("sha256").update(graph).digest("hex")).toMatch(/^[a-f0-9]{64}$/);
+      expect(graph).toContain("ModelPreviewOverrideKJ");
+      if (route.includes("_R2V_")) {
+        expect(graph).toContain("minimax_h3_ref2va_pruned_int8_convrot.safetensors");
+        expect(graph).toContain("minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors");
+        expect(graph).toContain("H3SLAAttention");
+      } else {
+        expect(graph).toContain("fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors");
+      }
     }
   });
 
-  it("locks the LQ/HQ native contracts and approved SLA Turbo8 recipe", () => {
+  it("locks the LQ/HQ native contracts and validated FastH3 B02 preview recipe", () => {
     for (const recipe of Object.values(H3_PRODUCTION_RECIPES)) {
       expect([recipe.megapixels, recipe.nativeWidth, recipe.nativeHeight])
         .toEqual(recipe.quality === "lq" ? [0.6, 1056, 608] : [1, 1376, 768]);
       expect(recipe.frameCount).toBe(recipe.durationSeconds === 5 ? 124 : 243);
       expect(recipe.steps).toBe(8);
       expect(recipe.turboLoraStrength).toBe(1);
-      expect(recipe.turboLoraFamily).toBe(
-        recipe.mode === "h3-reference-to-video" ? "r2v" : "fl2v",
-      );
-      expect(recipe.attentionPath).toBe("sla");
+      expect(recipe.turboLoraFamily).toBe(recipe.mode === "h3-reference-to-video" ? "ref2va" : "none");
+      expect(recipe.attentionPath).toBe("comfy_kitchen");
       expect(recipe.spectrumEnabled).toBe(false);
-      expect(recipe.videoSigmaShift).toBe(6);
+      expect(recipe.videoSigmaShift).toBe(recipe.mode === "h3-reference-to-video" ? 6 : 10);
       expect(recipe.audioSigmaShift).toBe(3);
       expect(recipe.preSubmitCleanup).toBeNull();
     }

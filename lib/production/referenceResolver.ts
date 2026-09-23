@@ -173,23 +173,34 @@ export function resolveProductionV2H3ReferencePlan(
     ),
   ];
 
-  if (!candidates.length) {
+  const uploadedReferences =
+    scene.modelState.h3.referenceToVideo.uploadedReferences
+    || [];
+
+  if (
+    !candidates.length
+    && !uploadedReferences.length
+  ) {
     throw new Error(
-      "Select at least one Character, Background, or Asset reference for H3 Reference-to-Video.",
+      "Select at least one Character, Background, Asset, or Snapshot reference for H3 Reference-to-Video.",
     );
   }
 
-  if (
+  const referenceCount =
     candidates.length
+    + uploadedReferences.length;
+
+  if (
+    referenceCount
     > H3_MAX_IMAGE_REFERENCES
   ) {
     throw new Error(
-      `The selected entities require ${candidates.length} image references; MiniMax H3 accepts at most ${H3_MAX_IMAGE_REFERENCES}. No entity was dropped.`,
+      `The selected references require ${referenceCount} image references; MiniMax H3 accepts at most ${H3_MAX_IMAGE_REFERENCES}. No reference was dropped.`,
     );
   }
 
-  const modelFacingReferences =
-    candidates.map(
+  const modelFacingReferences = [
+    ...candidates.map(
       (item, index) =>
         visualReference(
           item.kind,
@@ -201,7 +212,66 @@ export function resolveProductionV2H3ReferencePlan(
           item.generationSourceType,
           item.perspectiveKey,
         ),
-    );
+    ),
+
+    ...uploadedReferences.map(
+      (reference, index) => {
+        const workflowImage =
+          clean(
+            reference.workflowImage
+            || reference.displayImage,
+          );
+
+        if (!workflowImage) {
+          throw new Error(
+            `${reference.name} does not have a usable Snapshot image.`,
+          );
+        }
+
+        const slot =
+          candidates.length
+          + index
+          + 1;
+
+        if (
+          slot < 1
+          || slot > H3_MAX_IMAGE_REFERENCES
+        ) {
+          throw new Error(
+            `MiniMax H3 Reference-to-Video supports at most ${H3_MAX_IMAGE_REFERENCES} image references.`,
+          );
+        }
+
+        return {
+          ...reference,
+          sourceKind:
+            "production-upload" as const,
+          generationSourceType:
+            "production-upload" as const,
+          sourceId:
+            clean(reference.sourceId)
+            || reference.id,
+          perspectiveKey:
+            undefined,
+          pictureSlot:
+            slot as ProductionV2VisualReference["pictureSlot"],
+          subjectSlot:
+            slot as ProductionV2VisualReference["subjectSlot"],
+          identityDescription:
+            clean(
+              reference.identityDescription,
+            ),
+          displayImage:
+            clean(
+              reference.displayImage,
+            )
+            || workflowImage,
+          workflowImage,
+        };
+      },
+    ),
+  ];
+
 
   const plan: ProductionV2ReferencePlan = {
     status: "planned",
@@ -248,8 +318,8 @@ export function resolveProductionV2H3ReferencePlan(
       h3: {
         ...scene.modelState.h3,
         referenceToVideo: {
-          resolvedVoiceBindings:
-            resolvedVoiceReferences,
+          ...scene.modelState.h3.referenceToVideo,
+          resolvedVoiceBindings: resolvedVoiceReferences,
         },
       },
     },

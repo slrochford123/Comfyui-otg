@@ -6,6 +6,11 @@ import { clearGalleryListCache, safeGalleryName, writeMetaForFile, type GalleryS
 import type { OwnerContext } from "@/lib/ownerKey";
 import { deviceGalleryDir, ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment, userGalleryDir } from "@/lib/paths";
 import {
+  ensureComfyClientProgressMonitor,
+  readComfyPromptProgress,
+  recordComfyPromptSubmitted,
+} from "@/lib/comfyProgress";
+import {
   getH3PromptHistory,
   inspectH3BackendCompatibility,
   submitH3Prompt,
@@ -54,10 +59,11 @@ export type H3DirectJobInput = {
 export type H3DirectJob = {
   id: string;
   ownerKey: string;
-  status: "queued" | "preparing" | "submitted" | "running" | "finalizing" | "completed" | "failed";
+  status: "queued" | "preparing" | "submitted" | "running" | "finalizing" | "completed" | "failed" | "canceling" | "canceled";
   statusMessage: string;
   input: H3DirectJobInput;
   backend: ProductionV2H3BackendId | null;
+  clientId: string | null;
   promptId: string | null;
   workflowId: string | null;
   workflowFile: string | null;
@@ -118,6 +124,62 @@ export async function getH3DirectJob(ownerKey: string, id: string) {
   }
 }
 
+export async function listH3DirectJobs(ownerKey: string) {
+  let names: string[];
+  try {
+    names = await fsp.readdir(jobsDir(ownerKey));
+  } catch {
+    return [];
+  }
+
+  const jobs = await Promise.all(
+    names
+      .filter((name) => name.endsWith(".json"))
+      .map(async (name) => {
+        try {
+          return JSON.parse(await fsp.readFile(path.join(jobsDir(ownerKey), name), "utf8")) as H3DirectJob;
+        } catch {
+          return null;
+        }
+      }),
+  );
+
+  return jobs
+    .filter((job): job is H3DirectJob => Boolean(job?.id && job.ownerKey === ownerKey))
+    .sort((a, b) => Date.parse(b.createdAt || "") - Date.parse(a.createdAt || ""));
+}
+
+export async function getLatestH3DirectJob(ownerKey: string) {
+  return (await listH3DirectJobs(ownerKey))[0] || null;
+}
+
+function isRunnableH3DirectStatus(status: H3DirectJob["status"]) {
+  return ["queued", "preparing", "submitted", "running", "finalizing"].includes(status);
+}
+
+export async function cancelH3DirectJob(ownerKey: string, id: string) {
+  const current = await getH3DirectJob(ownerKey, id);
+  if (!current) throw new Error("H3 generation job was not found.");
+  if (["completed", "failed", "canceled"].includes(current.status)) return current;
+  const canceling = await updateJob(ownerKey, id, {
+    status: "canceling",
+    statusMessage: "Canceling...",
+    error: null,
+  });
+  if (current.backend) {
+    await fetch(`${H3_BACKEND_PROFILES[current.backend].baseUrl}/interrupt`, {
+      method: "POST",
+      cache: "no-store",
+    }).catch(() => undefined);
+  }
+  return updateJob(ownerKey, id, {
+    status: "canceled",
+    statusMessage: "Canceled",
+    error: null,
+    completedAt: new Date().toISOString(),
+  }).catch(() => canceling);
+}
+
 async function updateJob(ownerKey: string, id: string, patch: Partial<H3DirectJob>) {
   const current = await getH3DirectJob(ownerKey, id);
   if (!current) throw new Error("H3 direct-generation job was not found.");
@@ -143,6 +205,7 @@ export async function createH3DirectJob(
       optionalLoras: input.optionalLoras,
     },
     backend: null,
+    clientId: null,
     promptId: null,
     workflowId: null,
     workflowFile: null,
@@ -292,92 +355,130 @@ async function uploadReference(job: H3DirectJob, backend: ProductionV2H3BackendI
 }
 
 async function execute(job: H3DirectJob) {
-  const optionalLoras: ResolvedH3OptionalLora[] = validateH3LoraSelections(job.input.optionalLoras, job.input.mode).resolved;
-  validateRequiredLoraTriggers(job.input, optionalLoras);
-  const userLoraFilenames = optionalLoras.map((lora) => lora.filename);
-  const probes = await Promise.all(H3_BACKEND_PRIORITY.map((backend) => inspectH3BackendCompatibility(backend, { userLoraFilenames })));
-  const backend = chooseProductionV2H3Backend(probes);
-  if (!backend) {
-    const details = probes.map((probe) => `${probe.backend}: ${probe.reason}`).join("; ");
-    throw new Error(`No compatible H3 GPU is available. ${details}`);
+  let persisted = await getH3DirectJob(job.ownerKey, job.id) || job;
+  const optionalLoras: ResolvedH3OptionalLora[] = validateH3LoraSelections(persisted.input.optionalLoras, persisted.input.mode).resolved;
+  validateRequiredLoraTriggers(persisted.input, optionalLoras);
+
+  let backend = persisted.backend;
+  let promptId = persisted.promptId;
+
+  if (backend && promptId) {
+    if (persisted.clientId) {
+      ensureComfyClientProgressMonitor({
+        comfyBaseUrl: H3_BACKEND_PROFILES[backend].baseUrl,
+        clientId: persisted.clientId,
+        idleTimeoutMs: 90 * 60_000,
+      });
+      recordComfyPromptSubmitted({
+        promptId,
+        ownerKey: persisted.ownerKey,
+        deviceId: persisted.galleryOwner?.deviceId || "",
+        clientId: persisted.clientId,
+        comfyBaseUrl: H3_BACKEND_PROFILES[backend].baseUrl,
+      });
+    }
+    persisted = await updateJob(job.ownerKey, job.id, {
+      status: persisted.status === "finalizing" ? "finalizing" : "running",
+      statusMessage: persisted.status === "finalizing" ? persisted.statusMessage : "Reconnected to running H3 generation",
+      error: null,
+    });
+  } else {
+    const userLoraFilenames = optionalLoras.map((lora) => lora.filename);
+    const probes = await Promise.all(H3_BACKEND_PRIORITY.map((candidate) => inspectH3BackendCompatibility(candidate, { userLoraFilenames })));
+    backend = chooseProductionV2H3Backend(probes);
+    if (!backend) {
+      const details = probes.map((probe) => `${probe.backend}: ${probe.reason}`).join("; ");
+      throw new Error(`No compatible H3 GPU is available. ${details}`);
+    }
+    const selectedBackend = backend;
+
+    await updateJob(job.ownerKey, job.id, {
+      status: "preparing",
+      statusMessage: `Preparing inputs for ${H3_BACKEND_PROFILES[selectedBackend].label}`,
+      backend: selectedBackend,
+      startedAt: new Date().toISOString(),
+    });
+
+    const [firstImageFilename, lastImageFilename] = await Promise.all([
+      job.input.firstImage ? uploadReference(job, selectedBackend, job.input.firstImage, "image", "first") : Promise.resolve(""),
+      job.input.lastImage ? uploadReference(job, selectedBackend, job.input.lastImage, "image", "last") : Promise.resolve(""),
+    ]);
+    const imageFilenames = await Promise.all(job.input.images.map((item, index) => uploadReference(job, selectedBackend, item, "image", `picture_${index + 1}`)));
+    const videoFilenames = await Promise.all(job.input.videos.map((item, index) => uploadReference(job, selectedBackend, item, "video", `video_${index + 1}`)));
+    const audioFilenames = await Promise.all(job.input.audios.map((item, index) => uploadReference(job, selectedBackend, item, "audio", `audio_${index + 1}`)));
+
+    const references = job.input.images.map((item, index) => ({
+      id: `direct-picture-${index + 1}`,
+      sourceKind: "production-upload" as const,
+      sourceId: `direct-picture-${index + 1}`,
+      name: item.name,
+      workflowImage: item.path,
+      generationSourceType: "production-upload" as const,
+      pictureSlot: (index + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9,
+      subjectSlot: (index + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9,
+      uploadedFilename: imageFilenames[index],
+    }));
+    const voices = job.input.audios.map((item, index) => ({
+      characterId: `direct-audio-${index + 1}`,
+      snapshotName: item.name,
+      sourcePath: item.path,
+      audioSlot: (index + 1) as 1 | 2 | 3,
+      subjectSlot: (index + 1) as 1 | 2 | 3,
+      speakerId: (index + 1) as 1 | 2 | 3,
+      uploadedFilename: audioFilenames[index],
+    }));
+
+    const built = buildH3Workflow({
+      backend: selectedBackend,
+      mode: job.input.mode,
+      h3Quality: job.input.quality,
+      orientation: job.input.orientation,
+      durationSeconds: job.input.durationSeconds,
+      finalPrompt: promptWithReferences(job.input),
+      seed: job.input.seed,
+      outputPrefix: `otg_h3_direct/${safeSegment(job.id)}`,
+      startImageFilename: firstImageFilename,
+      lastImageFilename,
+      references,
+      voices,
+      videoReferences: job.input.videos.map((item, index) => ({
+        uploadedFilename: videoFilenames[index],
+        includeAudio: item.includeAudio === true,
+      })),
+      userLoras: DEFAULT_PRODUCTION_V2_H3_USER_LORAS,
+      optionalLoras,
+    });
+
+    const clientId = `otg-h3-direct-${crypto.randomUUID()}`;
+    const submitted = await submitH3Prompt({
+      backend: selectedBackend,
+      graph: built.graph,
+      clientId,
+      jobId: job.id,
+      ownerKey: job.ownerKey,
+      deviceId: job.galleryOwner?.deviceId || null,
+      workerId: "h3-direct",
+    });
+    if (!submitted.accepted) throw new Error(submitted.error);
+    backend = selectedBackend;
+    promptId = submitted.promptId;
+    await updateJob(job.ownerKey, job.id, {
+      status: "submitted",
+      statusMessage: "Accepted by ComfyUI",
+      clientId,
+      promptId,
+      workflowId: built.workflowId,
+      workflowFile: built.workflowFile,
+      progressPercent: 2,
+    });
   }
 
-  await updateJob(job.ownerKey, job.id, {
-    status: "preparing",
-    statusMessage: `Preparing inputs for ${H3_BACKEND_PROFILES[backend].label}`,
-    backend,
-    startedAt: new Date().toISOString(),
-  });
-
-  const [firstImageFilename, lastImageFilename] = await Promise.all([
-    job.input.firstImage ? uploadReference(job, backend, job.input.firstImage, "image", "first") : Promise.resolve(""),
-    job.input.lastImage ? uploadReference(job, backend, job.input.lastImage, "image", "last") : Promise.resolve(""),
-  ]);
-  const imageFilenames = await Promise.all(job.input.images.map((item, index) => uploadReference(job, backend, item, "image", `picture_${index + 1}`)));
-  const videoFilenames = await Promise.all(job.input.videos.map((item, index) => uploadReference(job, backend, item, "video", `video_${index + 1}`)));
-  const audioFilenames = await Promise.all(job.input.audios.map((item, index) => uploadReference(job, backend, item, "audio", `audio_${index + 1}`)));
-
-  const references = job.input.images.map((item, index) => ({
-    id: `direct-picture-${index + 1}`,
-    sourceKind: "production-upload" as const,
-    sourceId: `direct-picture-${index + 1}`,
-    name: item.name,
-    workflowImage: item.path,
-    generationSourceType: "production-upload" as const,
-    pictureSlot: (index + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9,
-    subjectSlot: (index + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9,
-    uploadedFilename: imageFilenames[index],
-  }));
-  const voices = job.input.audios.map((item, index) => ({
-    characterId: `direct-audio-${index + 1}`,
-    snapshotName: item.name,
-    sourcePath: item.path,
-    audioSlot: (index + 1) as 1 | 2 | 3,
-    subjectSlot: (index + 1) as 1 | 2 | 3,
-    speakerId: (index + 1) as 1 | 2 | 3,
-    uploadedFilename: audioFilenames[index],
-  }));
-
-  const built = buildH3Workflow({
-    backend,
-    mode: job.input.mode,
-    h3Quality: job.input.quality,
-    orientation: job.input.orientation,
-    durationSeconds: job.input.durationSeconds,
-    finalPrompt: promptWithReferences(job.input),
-    seed: job.input.seed,
-    outputPrefix: `otg_h3_direct/${safeSegment(job.id)}`,
-    startImageFilename: firstImageFilename,
-    lastImageFilename,
-    references,
-    voices,
-    videoReferences: job.input.videos.map((item, index) => ({
-      uploadedFilename: videoFilenames[index],
-      includeAudio: item.includeAudio === true,
-    })),
-    userLoras: DEFAULT_PRODUCTION_V2_H3_USER_LORAS,
-    optionalLoras,
-  });
-
-  const submitted = await submitH3Prompt({
-    backend,
-    graph: built.graph,
-    clientId: `otg-h3-direct-${crypto.randomUUID()}`,
-    jobId: job.id,
-    workerId: "h3-direct",
-  });
-  if (!submitted.accepted) throw new Error(submitted.error);
-  await updateJob(job.ownerKey, job.id, {
-    status: "submitted",
-    statusMessage: "Accepted by ComfyUI",
-    promptId: submitted.promptId,
-    workflowId: built.workflowId,
-    workflowFile: built.workflowFile,
-    progressPercent: 2,
-  });
+  if (!backend || !promptId) throw new Error("H3 generation could not be resumed because backend or prompt ID is missing.");
 
   for (;;) {
-    const history = await getH3PromptHistory(backend, submitted.promptId);
+    const current = await getH3DirectJob(job.ownerKey, job.id);
+    if (current?.status === "canceling" || current?.status === "canceled") return;
+    const history = await getH3PromptHistory(backend, promptId);
     if (history.state === "failed") throw new Error("MiniMax H3 failed in ComfyUI. Review the ComfyUI history for the full node traceback.");
     if (history.state === "completed" && history.video) {
       const outputPath = await downloadH3Video({
@@ -410,7 +511,6 @@ async function execute(job: H3DirectJob) {
       }
       return;
     }
-    const current = await getH3DirectJob(job.ownerKey, job.id);
     const estimate = getH3ProductionTimeEstimate(job.input.mode, job.input.durationSeconds, job.input.quality, backend);
     const elapsed = current?.startedAt ? (Date.now() - Date.parse(current.startedAt)) / 1000 : 0;
     const progressPercent = Math.max(2, Math.min(95, Math.round((elapsed / Math.max(1, estimate.seconds || estimate.maxSeconds)) * 100)));
@@ -434,6 +534,11 @@ export function startH3DirectJob(job: H3DirectJob) {
     .finally(() => state().running.delete(job.id));
 }
 
+export function ensureH3DirectJobRunner(job: H3DirectJob | null | undefined) {
+  if (!job || !isRunnableH3DirectStatus(job.status)) return;
+  startH3DirectJob(job);
+}
+
 export function h3DirectPublicStatus(job: H3DirectJob) {
   const orientation = normalizeH3Orientation(job.input.orientation);
   const nativeDimensions = getH3NativeDimensions(
@@ -441,6 +546,7 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
     orientation,
   );
   const estimate = getH3ProductionTimeEstimate(job.input.mode, job.input.durationSeconds, job.input.quality, job.backend);
+  const progress = readComfyPromptProgress(job.promptId);
   return {
     id: job.id,
     status: job.status,
@@ -463,6 +569,7 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
     queueRemaining: job.queueRemaining,
     progressPercent: job.status === "completed" ? 100 : job.progressPercent,
     currentNode: job.currentNode,
+    approximatePreview: progress?.approximatePreview || null,
     createdAt: job.createdAt,
     startedAt: job.startedAt,
     completedAt: job.completedAt,

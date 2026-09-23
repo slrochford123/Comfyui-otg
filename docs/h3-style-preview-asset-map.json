@@ -1,0 +1,612 @@
+[
+  {
+    "desktopFolder": "cinematic-realism",
+    "displayName": "Cinematic realism",
+    "canonicalStyleId": "cinematic-realism",
+    "canonicalStyleName": "Cinematic realism",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/cinematic-realism/poster.webp",
+    "mp4Path": "/h3/styles/cinematic-realism/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "live-action",
+    "displayName": "Live action",
+    "canonicalStyleId": "live-action",
+    "canonicalStyleName": "Live action",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/live-action/poster.webp",
+    "mp4Path": "/h3/styles/live-action/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "3d-animation",
+    "displayName": "3D animation",
+    "canonicalStyleId": "3d-animation",
+    "canonicalStyleName": "3D animation",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/3d-animation/poster.webp",
+    "mp4Path": "/h3/styles/3d-animation/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "cartoon",
+    "displayName": "Cartoon",
+    "canonicalStyleId": "cartoon",
+    "canonicalStyleName": "Cartoon",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/cartoon/poster.webp",
+    "mp4Path": "/h3/styles/cartoon/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "anime",
+    "displayName": "Anime",
+    "canonicalStyleId": "anime",
+    "canonicalStyleName": "Anime",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/anime/poster.webp",
+    "mp4Path": "/h3/styles/anime/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "illustrated",
+    "displayName": "Illustrated",
+    "canonicalStyleId": "illustrated",
+    "canonicalStyleName": "Illustrated",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/illustrated/poster.webp",
+    "mp4Path": "/h3/styles/illustrated/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "game-cinematic",
+    "displayName": "Game cinematic",
+    "canonicalStyleId": "game-cinematic",
+    "canonicalStyleName": "Game cinematic",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/game-cinematic/poster.webp",
+    "mp4Path": "/h3/styles/game-cinematic/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "gameplay-first-person",
+    "displayName": "Gameplay / first-person",
+    "canonicalStyleId": "gameplay-first-person",
+    "canonicalStyleName": "Gameplay / first-person",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/gameplay-first-person/poster.webp",
+    "mp4Path": "/h3/styles/gameplay-first-person/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "stop-motion",
+    "displayName": "Stop motion",
+    "canonicalStyleId": "stop-motion",
+    "canonicalStyleName": "Stop motion",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/stop-motion/poster.webp",
+    "mp4Path": "/h3/styles/stop-motion/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "mixed-live-action-and-hand-drawn-animation",
+    "displayName": "Mixed live action and hand-drawn animation",
+    "canonicalStyleId": "mixed-live-action-and-hand-drawn-animation",
+    "canonicalStyleName": "Mixed live action and hand-drawn animation",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/mixed-live-action-and-hand-drawn-animation/poster.webp",
+    "mp4Path": "/h3/styles/mixed-live-action-and-hand-drawn-animation/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "graphic-motion-design",
+    "displayName": "Graphic motion design",
+    "canonicalStyleId": "graphic-motion-design",
+    "canonicalStyleName": "Graphic motion design",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/graphic-motion-design/poster.webp",
+    "mp4Path": "/h3/styles/graphic-motion-design/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "animated-poster",
+    "displayName": "Animated poster",
+    "canonicalStyleId": "animated-poster",
+    "canonicalStyleName": "Animated poster",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/animated-poster/poster.webp",
+    "mp4Path": "/h3/styles/animated-poster/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "premium-product-commercial",
+    "displayName": "Premium product commercial",
+    "canonicalStyleId": "premium-product-commercial",
+    "canonicalStyleName": "Premium product commercial",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/premium-product-commercial/poster.webp",
+    "mp4Path": "/h3/styles/premium-product-commercial/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "visceral-cinematic-horror",
+    "displayName": "Visceral cinematic horror",
+    "canonicalStyleId": "visceral-cinematic-horror",
+    "canonicalStyleName": "Visceral cinematic horror",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/visceral-cinematic-horror/poster.webp",
+    "mp4Path": "/h3/styles/visceral-cinematic-horror/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "psychological-thriller",
+    "displayName": "Psychological thriller",
+    "canonicalStyleId": "psychological-thriller",
+    "canonicalStyleName": "Psychological thriller",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/psychological-thriller/poster.webp",
+    "mp4Path": "/h3/styles/psychological-thriller/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "gothic-whimsy",
+    "displayName": "Gothic whimsy",
+    "canonicalStyleId": "gothic-whimsy",
+    "canonicalStyleName": "Gothic whimsy",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/gothic-whimsy/poster.webp",
+    "mp4Path": "/h3/styles/gothic-whimsy/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "dark-fairy-tale",
+    "displayName": "Dark fairy tale",
+    "canonicalStyleId": "dark-fairy-tale",
+    "canonicalStyleName": "Dark fairy tale",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/dark-fairy-tale/poster.webp",
+    "mp4Path": "/h3/styles/dark-fairy-tale/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "cosmic-horror",
+    "displayName": "Cosmic horror",
+    "canonicalStyleId": "cosmic-horror",
+    "canonicalStyleName": "Cosmic horror",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/cosmic-horror/poster.webp",
+    "mp4Path": "/h3/styles/cosmic-horror/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "supernatural-mystery",
+    "displayName": "Supernatural mystery",
+    "canonicalStyleId": "supernatural-mystery",
+    "canonicalStyleName": "Supernatural mystery",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/supernatural-mystery/poster.webp",
+    "mp4Path": "/h3/styles/supernatural-mystery/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "neo-noir-crime",
+    "displayName": "Neo-noir crime",
+    "canonicalStyleId": "neo-noir-crime",
+    "canonicalStyleName": "Neo-noir crime",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/neo-noir-crime/poster.webp",
+    "mp4Path": "/h3/styles/neo-noir-crime/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "analog-found-footage",
+    "displayName": "Analog found footage",
+    "canonicalStyleId": "analog-found-footage",
+    "canonicalStyleName": "Analog found footage",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/analog-found-footage/poster.webp",
+    "mp4Path": "/h3/styles/analog-found-footage/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "retro-science-fiction",
+    "displayName": "Retro science fiction",
+    "canonicalStyleId": "retro-science-fiction",
+    "canonicalStyleName": "Retro science fiction",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/retro-science-fiction/poster.webp",
+    "mp4Path": "/h3/styles/retro-science-fiction/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "dystopian-future",
+    "displayName": "Dystopian future",
+    "canonicalStyleId": "dystopian-future",
+    "canonicalStyleName": "Dystopian future",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/dystopian-future/poster.webp",
+    "mp4Path": "/h3/styles/dystopian-future/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "disaster-spectacle",
+    "displayName": "Disaster spectacle",
+    "canonicalStyleId": "disaster-spectacle",
+    "canonicalStyleName": "Disaster spectacle",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/disaster-spectacle/poster.webp",
+    "mp4Path": "/h3/styles/disaster-spectacle/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "action-blockbuster",
+    "displayName": "Action blockbuster",
+    "canonicalStyleId": "action-blockbuster",
+    "canonicalStyleName": "Action blockbuster",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/action-blockbuster/poster.webp",
+    "mp4Path": "/h3/styles/action-blockbuster/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "pulp-adventure",
+    "displayName": "Pulp adventure",
+    "canonicalStyleId": "pulp-adventure",
+    "canonicalStyleName": "Pulp adventure",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/pulp-adventure/poster.webp",
+    "mp4Path": "/h3/styles/pulp-adventure/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "romantic-fantasy",
+    "displayName": "Romantic fantasy",
+    "canonicalStyleId": "romantic-fantasy",
+    "canonicalStyleName": "Romantic fantasy",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/romantic-fantasy/poster.webp",
+    "mp4Path": "/h3/styles/romantic-fantasy/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "surreal-dreamscape",
+    "displayName": "Surreal dreamscape",
+    "canonicalStyleId": "surreal-dreamscape",
+    "canonicalStyleName": "Surreal dreamscape",
+    "sourceOrigin": "prompt-builder",
+    "posterPath": "/h3/styles/surreal-dreamscape/poster.webp",
+    "mp4Path": "/h3/styles/surreal-dreamscape/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "old-animation-style",
+    "displayName": "Old Animation Style",
+    "canonicalStyleId": "old-animation-style",
+    "canonicalStyleName": "Old Animation Style",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/old-animation-style/poster.webp",
+    "mp4Path": "/h3/styles/old-animation-style/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "1980s-anime",
+    "displayName": "1980s Anime",
+    "canonicalStyleId": "1980s-anime",
+    "canonicalStyleName": "1980s Anime",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/1980s-anime/poster.webp",
+    "mp4Path": "/h3/styles/1980s-anime/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "1990s-fantasy-anime",
+    "displayName": "1990s Fantasy Anime",
+    "canonicalStyleId": "1990s-fantasy-anime",
+    "canonicalStyleName": "1990s Fantasy Anime",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/1990s-fantasy-anime/poster.webp",
+    "mp4Path": "/h3/styles/1990s-fantasy-anime/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "1980s-sci-fi-anime",
+    "displayName": "1980s Sci-Fi Anime",
+    "canonicalStyleId": "1980s-sci-fi-anime",
+    "canonicalStyleName": "1980s Sci-Fi Anime",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/1980s-sci-fi-anime/poster.webp",
+    "mp4Path": "/h3/styles/1980s-sci-fi-anime/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "creature-adventure-tv-anime",
+    "displayName": "Creature-Adventure TV Anime",
+    "canonicalStyleId": "creature-adventure-tv-anime",
+    "canonicalStyleName": "Creature-Adventure TV Anime",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/creature-adventure-tv-anime/poster.webp",
+    "mp4Path": "/h3/styles/creature-adventure-tv-anime/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "ink",
+    "displayName": "Ink",
+    "canonicalStyleId": "sumi-e-ink",
+    "canonicalStyleName": "Ink",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/sumi-e-ink/poster.webp",
+    "mp4Path": "/h3/styles/sumi-e-ink/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "hand-painted-silk",
+    "displayName": "Hand-Painted Silk",
+    "canonicalStyleId": "hand-painted-silk",
+    "canonicalStyleName": "Hand-Painted Silk",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/hand-painted-silk/poster.webp",
+    "mp4Path": "/h3/styles/hand-painted-silk/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "thick-paint",
+    "displayName": "Thick Paint",
+    "canonicalStyleId": "thick-paint",
+    "canonicalStyleName": "Thick Paint",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/thick-paint/poster.webp",
+    "mp4Path": "/h3/styles/thick-paint/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "oil-painting",
+    "displayName": "Oil Painting",
+    "canonicalStyleId": "oil-painting",
+    "canonicalStyleName": "Oil Painting",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/oil-painting/poster.webp",
+    "mp4Path": "/h3/styles/oil-painting/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "charcoal",
+    "displayName": "Charcoal",
+    "canonicalStyleId": "charcoal",
+    "canonicalStyleName": "Charcoal",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/charcoal/poster.webp",
+    "mp4Path": "/h3/styles/charcoal/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "doodle-children-s-marker",
+    "displayName": "Doodle / Children's Marker",
+    "canonicalStyleId": "childrens-marker",
+    "canonicalStyleName": "Doodle / Children's Marker",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/childrens-marker/poster.webp",
+    "mp4Path": "/h3/styles/childrens-marker/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "tom-and-jerry-style",
+    "displayName": "Tom & Jerry Style",
+    "canonicalStyleId": "theatrical-slapstick",
+    "canonicalStyleName": "Tom & Jerry Style",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/theatrical-slapstick/poster.webp",
+    "mp4Path": "/h3/styles/theatrical-slapstick/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "action-figure",
+    "displayName": "Action Figure",
+    "canonicalStyleId": "action-figure",
+    "canonicalStyleName": "Action Figure",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/action-figure/poster.webp",
+    "mp4Path": "/h3/styles/action-figure/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "puppet",
+    "displayName": "Puppet",
+    "canonicalStyleId": "puppet",
+    "canonicalStyleName": "Puppet",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/puppet/poster.webp",
+    "mp4Path": "/h3/styles/puppet/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "noir-cartoon",
+    "displayName": "Noir Cartoon",
+    "canonicalStyleId": "noir-cartoon",
+    "canonicalStyleName": "Noir Cartoon",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/noir-cartoon/poster.webp",
+    "mp4Path": "/h3/styles/noir-cartoon/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "live-action-hybrid",
+    "displayName": "Live-Action Hybrid",
+    "canonicalStyleId": "live-action-hybrid",
+    "canonicalStyleName": "Live-Action Hybrid",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/live-action-hybrid/poster.webp",
+    "mp4Path": "/h3/styles/live-action-hybrid/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "smear-animation",
+    "displayName": "Smear Animation",
+    "canonicalStyleId": "smear-animation",
+    "canonicalStyleName": "Smear Animation",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/smear-animation/poster.webp",
+    "mp4Path": "/h3/styles/smear-animation/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "cgi",
+    "displayName": "CGI",
+    "canonicalStyleId": "cgi",
+    "canonicalStyleName": "CGI",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/cgi/poster.webp",
+    "mp4Path": "/h3/styles/cgi/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "cgi-live-action-hybrid",
+    "displayName": "CGI Live-Action Hybrid",
+    "canonicalStyleId": "cgi-live-action-hybrid",
+    "canonicalStyleName": "CGI Live-Action Hybrid",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/cgi-live-action-hybrid/poster.webp",
+    "mp4Path": "/h3/styles/cgi-live-action-hybrid/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "claymation",
+    "displayName": "Claymation",
+    "canonicalStyleId": "claymation",
+    "canonicalStyleName": "Claymation",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/claymation/poster.webp",
+    "mp4Path": "/h3/styles/claymation/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "wool",
+    "displayName": "Wool",
+    "canonicalStyleId": "wool",
+    "canonicalStyleName": "Wool",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/wool/poster.webp",
+    "mp4Path": "/h3/styles/wool/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "paper-cut-out",
+    "displayName": "Paper Cut-Out",
+    "canonicalStyleId": "paper-cut-out",
+    "canonicalStyleName": "Paper Cut-Out",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/paper-cut-out/poster.webp",
+    "mp4Path": "/h3/styles/paper-cut-out/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "medieval-parchment",
+    "displayName": "Medieval Parchment",
+    "canonicalStyleId": "medieval-parchment",
+    "canonicalStyleName": "Medieval Parchment",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/medieval-parchment/poster.webp",
+    "mp4Path": "/h3/styles/medieval-parchment/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "embroidery",
+    "displayName": "Embroidery",
+    "canonicalStyleId": "embroidery",
+    "canonicalStyleName": "Embroidery",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/embroidery/poster.webp",
+    "mp4Path": "/h3/styles/embroidery/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "paper-stop-motion",
+    "displayName": "Paper Stop-Motion",
+    "canonicalStyleId": "paper-stop-motion",
+    "canonicalStyleName": "Paper Stop-Motion",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/paper-stop-motion/poster.webp",
+    "mp4Path": "/h3/styles/paper-stop-motion/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "marbled-paper",
+    "displayName": "Marbled Paper",
+    "canonicalStyleId": "marbled-paper",
+    "canonicalStyleName": "Marbled Paper",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/marbled-paper/poster.webp",
+    "mp4Path": "/h3/styles/marbled-paper/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "painted-cgi",
+    "displayName": "Painted CGI",
+    "canonicalStyleId": "painted-cgi",
+    "canonicalStyleName": "Painted CGI",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/painted-cgi/poster.webp",
+    "mp4Path": "/h3/styles/painted-cgi/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "vintage-poster",
+    "displayName": "Vintage Poster",
+    "canonicalStyleId": "vintage-poster",
+    "canonicalStyleName": "Vintage Poster",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/vintage-poster/poster.webp",
+    "mp4Path": "/h3/styles/vintage-poster/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "1970s-tokusatsu",
+    "displayName": "1970s Tokusatsu",
+    "canonicalStyleId": "1970s-tokusatsu",
+    "canonicalStyleName": "1970s Tokusatsu",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/1970s-tokusatsu/poster.webp",
+    "mp4Path": "/h3/styles/1970s-tokusatsu/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "1930s-animation",
+    "displayName": "1930s Animation",
+    "canonicalStyleId": "1930s-animation",
+    "canonicalStyleName": "1930s Animation",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/1930s-animation/poster.webp",
+    "mp4Path": "/h3/styles/1930s-animation/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "american-sitcom-animation",
+    "displayName": "American Sitcom Animation",
+    "canonicalStyleId": "american-sitcom-animation",
+    "canonicalStyleName": "American Sitcom Animation",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/american-sitcom-animation/poster.webp",
+    "mp4Path": "/h3/styles/american-sitcom-animation/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "stylized-2d-editorial",
+    "displayName": "Stylized 2D Editorial",
+    "canonicalStyleId": "stylized-2d-editorial",
+    "canonicalStyleName": "Stylized 2D Editorial",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/stylized-2d-editorial/poster.webp",
+    "mp4Path": "/h3/styles/stylized-2d-editorial/preview.mp4",
+    "webmPath": null
+  },
+  {
+    "desktopFolder": "rgb-phosphor-crt-arcade",
+    "displayName": "RGB Phosphor CRT Arcade",
+    "canonicalStyleId": "rgb-phosphor-crt-arcade",
+    "canonicalStyleName": "RGB Phosphor CRT Arcade",
+    "sourceOrigin": "style-art",
+    "posterPath": "/h3/styles/rgb-phosphor-crt-arcade/poster.webp",
+    "mp4Path": "/h3/styles/rgb-phosphor-crt-arcade/preview.mp4",
+    "webmPath": null
+  }
+]

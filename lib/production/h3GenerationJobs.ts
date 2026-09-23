@@ -29,7 +29,8 @@ export type ProductionV2GenerationStatus =
   | "postprocessing_submitted"
   | "postprocessing_running"
   | "completed"
-  | "failed";
+  | "failed"
+  | "canceled";
 
 export type ProductionV2H3GenerationPayload = {
   operation?: "scene-generation" | "visual-edit";
@@ -46,6 +47,8 @@ export type ProductionV2H3GenerationPayload = {
     mediaVersionId: string;
     mediaPath: string;
     includeAudio: boolean;
+    clipStartSeconds?: number;
+    clipDurationSeconds?: number;
   };
   retryOfJobId?: string;
 };
@@ -286,6 +289,19 @@ export function listWaitingProductionV2GenerationJobs(limit = 16) {
     WHERE status IN ('pending','queued_waiting_for_gpu')
     ORDER BY created_at ASC, rowid ASC LIMIT ?
   `).all(Math.max(1, Math.min(100, limit))) as JobRow[]).map(fromRow).filter(Boolean) as ProductionV2GenerationJob[];
+}
+
+export function cancelProductionV2GenerationJob(id: string, message = "Canceled") {
+  const timestamp = nowIso();
+  db().prepare(`
+    UPDATE production_v2_generation_jobs
+    SET status = 'canceled', status_message = ?, error = NULL, completed_at = ?, updated_at = ?
+    WHERE id = ? AND status IN (
+      'pending','queued_waiting_for_gpu','claimed','submitted','running',
+      'postprocessing_waiting_for_gpu','postprocessing_submitted','postprocessing_running'
+    )
+  `).run(message, timestamp, timestamp, id);
+  return selectJob(id);
 }
 
 export function listActiveProductionV2GenerationJobs(limit = 32) {

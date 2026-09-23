@@ -28,6 +28,7 @@ function completedJob(): H3DirectJob {
       audios: [],
     },
     backend: "rtx3090",
+    clientId: "client-contract",
     promptId: "prompt-contract",
     workflowId: "workflow-contract",
     workflowFile: "workflow.api.json",

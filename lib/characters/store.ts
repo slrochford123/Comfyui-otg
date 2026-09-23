@@ -13,6 +13,14 @@ export type CharacterReferenceAsset = {
   promptId?: string;
 };
 
+export type CharacterPreviewVideoAsset = {
+  serverPath?: string;
+  url?: string;
+  sourcePath?: string;
+  promptId?: string;
+  filename?: string;
+};
+
 export type CharacterReferencePackage = {
   pipelineVersion: 1;
   status: "pending" | "generating_angles" | "upscaling" | "stitching" | "complete" | "failed";
@@ -26,6 +34,7 @@ export type CharacterReferencePackage = {
     rightProfile?: CharacterReferenceAsset;
   };
   characterCard?: CharacterReferenceAsset;
+  previewVideo?: CharacterPreviewVideoAsset;
   completedAt?: string;
   error?: string;
 };
@@ -41,6 +50,8 @@ export type CharacterRecord = {
   characterCardPath?: string;
   characterCardWorkflowImagePath?: string;
   characterCardPreviewImagePath?: string;
+  characterCardPreviewVideoPath?: string;
+  characterCardPreviewVideoUrl?: string;
   characterReferences?: CharacterReferencePackage;
   defaultCharacterImagePath?: string;
   defaultCharacterPreviewImagePath?: string;
@@ -80,6 +91,8 @@ export type CreateCharacterInput = {
   characterCardPath?: string;
   characterCardWorkflowImagePath?: string;
   characterCardPreviewImagePath?: string;
+  characterCardPreviewVideoPath?: string;
+  characterCardPreviewVideoUrl?: string;
   characterReferences?: CharacterReferencePackage;
   defaultCharacterImagePath?: string;
   defaultCharacterPreviewImagePath?: string;
@@ -147,6 +160,8 @@ function normalizeRecord(input: CreateCharacterInput, existing?: CharacterRecord
     characterCardPath: input.characterCardPath ? String(input.characterCardPath).trim() : undefined,
     characterCardWorkflowImagePath: input.characterCardWorkflowImagePath ? String(input.characterCardWorkflowImagePath).trim() : undefined,
     characterCardPreviewImagePath: input.characterCardPreviewImagePath ? String(input.characterCardPreviewImagePath).trim() : undefined,
+    characterCardPreviewVideoPath: input.characterCardPreviewVideoPath ? String(input.characterCardPreviewVideoPath).trim() : undefined,
+    characterCardPreviewVideoUrl: input.characterCardPreviewVideoUrl ? String(input.characterCardPreviewVideoUrl).trim() : undefined,
     characterReferences:
       input.characterReferences && typeof input.characterReferences === "object" && !Array.isArray(input.characterReferences)
         ? (input.characterReferences as CharacterReferencePackage)

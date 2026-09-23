@@ -1,0 +1,429 @@
+[
+  {
+    "styleId": "cinematic-realism",
+    "styleName": "Cinematic realism",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Cinematic realism. A rain-soaked evening street market, a weathered food vendor hands a steaming paper cup to a young adult customer beneath warm practical bulbs. Natural skin texture, wet fabric, brushed metal, glass reflections and drifting steam are physically believable. Slow 35mm dolly-in, shallow depth of field, subtle handheld micro-movement, restrained cinematic contrast, realistic exposure roll-off, believable rain interaction and nuanced human micro-expressions. No text or logos.",
+    "sourceSlug": "cinematic-realism"
+  },
+  {
+    "styleId": "live-action",
+    "styleName": "Live action",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Grounded live-action photography. A young adult woman walks through a busy outdoor farmers market at golden hour, briefly smiling as she turns past colorful produce stands. Authentic location, practical sunlight and bounce, natural wardrobe, realistic skin, ordinary background extras, restrained color grade and convincing 35mm lens behavior. Camera tracks beside her at walking pace with gentle natural handheld motion. No text or logos.",
+    "sourceSlug": "live-action"
+  },
+  {
+    "styleId": "3d-animation",
+    "styleName": "3D animation",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Premium feature-quality 3D animation. A curious child and a small rounded robot chase floating soap bubbles across a colorful sunlit plaza, then stop as one giant bubble reflects both faces. Appealing sculpted forms, expressive facial rigs, detailed materials, soft global illumination, controlled subsurface scattering, confident posing and polished cinematic camera motion. No text or logos.",
+    "sourceSlug": "3d-animation"
+  },
+  {
+    "styleId": "cartoon",
+    "styleName": "Cartoon",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Bold graphic cartoon animation. An expressive bicycle courier races through a simplified city as a bundle of colorful balloons escapes from a nearby cart and sweeps across the street. Clean silhouettes, strong shape language, simplified intentional backgrounds, punchy color separation, exaggerated poses and highly readable action. Smooth side-tracking camera. No text or logos.",
+    "sourceSlug": "cartoon"
+  },
+  {
+    "styleId": "anime",
+    "styleName": "Anime",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Polished cinematic anime. A determined swordswoman lands on a rooftop at sunrise, pivots toward the camera and dashes forward as wind whips her coat and birds burst into the sky. Precise linework, controlled cel shading, expressive eyes, dynamic perspective, atmospheric painted city background, speed accents and dramatic color scripting. No franchise character designs, text or logos.",
+    "sourceSlug": "anime"
+  },
+  {
+    "styleId": "illustrated",
+    "styleName": "Illustrated",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Living editorial illustration. A stylish traveler with an umbrella crosses a modern city plaza in light rain, drawn with visible authored linework, layered pigment and brush texture. Selective detail on face and clothing, simplified architecture, designed negative space and sophisticated color harmony. Gentle parallax and character motion while preserving the illustrated surface. No text or logos.",
+    "sourceSlug": "illustrated"
+  },
+  {
+    "styleId": "game-cinematic",
+    "styleName": "Game cinematic",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "High-end real-time game cinematic. A battle-worn armored explorer enters a vast ruined temple as shafts of volumetric light cut through dust. Detailed physically based armor, wet stone, drifting particles and monumental architecture. Heroic over-the-shoulder composition, controlled cinematic camera push, responsive cape and body animation, dramatic rim lighting and dense atmospheric depth, like a premium next-generation story cutscene. No UI, text or logos.",
+    "sourceSlug": "game-cinematic"
+  },
+  {
+    "styleId": "gameplay-first-person",
+    "styleName": "Gameplay / first-person",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Immersive first-person gameplay presentation. First-person gloved hands move through an abandoned research facility, raise a compact flashlight, push open a heavy door and reveal a flooded corridor. Stable player geography, readable navigation, tactile hand interaction, game-authentic practical lighting and responsive head motion. Maintain a convincing player-camera view throughout. No HUD, text or logos.",
+    "sourceSlug": "gameplay-first-person"
+  },
+  {
+    "styleId": "stop-motion",
+    "styleName": "Stop motion",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Handcrafted stop-motion production. A tiny handmade astronaut puppet walks across a miniature lunar landscape, plants a small blank pennant and looks up as a practical model spacecraft passes overhead. Visible fabric, clay, wood and paper textures, miniature practical lighting, shallow macro depth of field and intentionally stepped frame-by-frame movement. No text or logos.",
+    "sourceSlug": "stop-motion"
+  },
+  {
+    "styleId": "mixed-live-action-and-hand-drawn-animation",
+    "styleName": "Mixed live action and hand-drawn animation",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Mixed live action and hand-drawn animation. A real adult street musician performs beneath a city lamppost while expressive hand-drawn colored lines emerge from the guitar, wrap around the lamppost, cast stylized light onto the pavement and transform into animated birds that react to the musician. The drawings inhabit the same perspective and respond convincingly to live movement. No readable text or logos.",
+    "sourceSlug": "mixed-live-action-and-hand-drawn-animation"
+  },
+  {
+    "styleId": "graphic-motion-design",
+    "styleName": "Graphic motion design",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Precision graphic motion design. Bold circles, bars, grids and abstract letter-like blocks snap into a balanced kinetic composition, rotate, mask through one another and reorganize rhythmically around a central geometric symbol. Crisp flat color, strict alignment, clean edges, deliberate transitions and choreographed shape animation. No readable words, brand marks or logos.",
+    "sourceSlug": "graphic-motion-design"
+  },
+  {
+    "styleId": "animated-poster",
+    "styleName": "Animated poster",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Animated poster design. A lone astronaut silhouette stands on a red desert ridge beneath a huge pale planet, arranged as a striking vertical graphic composition. The poster remains mostly still while dust drifts, the planet shifts with restrained parallax, rim light subtly pulses and abstract title-like bars move once as a graphic accent. No readable text or logos.",
+    "sourceSlug": "animated-poster"
+  },
+  {
+    "styleId": "premium-product-commercial",
+    "styleName": "Premium product commercial",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Luxury premium product commercial. A precision mechanical wristwatch rests on polished black stone while the camera makes a slow elegant orbit. Controlled studio reflections glide across brushed steel, sapphire glass and engraved edges; macro detail, immaculate geometry, soft sculpted highlight falloff, subtle atmospheric haze and refined black-on-black production design. The watch remains sharp and physically perfect. No branding, text or logos.",
+    "sourceSlug": "premium-product-commercial"
+  },
+  {
+    "styleId": "visceral-cinematic-horror",
+    "styleName": "Visceral cinematic horror",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Tactile cinematic horror without gore. A lone person descends into a damp decaying basement corridor lit by one sickly practical bulb. Peeling paint, wet concrete, rusted pipes, deep negative space and oppressive darkness. The camera stays uncomfortably close as a shadow briefly crosses a doorway ahead. Dense atmosphere, restrained movement and disturbing material detail. No text or logos.",
+    "sourceSlug": "visceral-cinematic-horror"
+  },
+  {
+    "styleId": "psychological-thriller",
+    "styleName": "Psychological thriller",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Controlled psychological-thriller imagery. An adult woman stands alone in a mirrored elevator; at first every reflection matches, then one reflection turns its head a fraction late. Compressed space, frames within frames, near-symmetrical composition that slowly destabilizes, muted color with one recurring red accent and a slow invasive camera push. No gore, text or logos.",
+    "sourceSlug": "psychological-thriller"
+  },
+  {
+    "styleId": "gothic-whimsy",
+    "styleName": "Gothic whimsy",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Playfully macabre gothic whimsy. A lanky umbrella-carrying traveler walks through a crooked moonlit village of leaning houses, spindly trees and theatrical miniature-like rooftops while tiny black birds hop behind. Handcrafted surface imperfections, blue moonlit fog, elongated silhouettes and charmingly strange proportions. Gentle sideways tracking shot. No text or logos.",
+    "sourceSlug": "gothic-whimsy"
+  },
+  {
+    "styleId": "dark-fairy-tale",
+    "styleName": "Dark fairy tale",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Dark fairy tale. A lone traveler carrying a brass lantern follows a narrow path through an ancient twisted forest toward a tiny candlelit cottage. Lush but threatening folklore imagery, worn storybook texture, jewel-toned shadows, weathered costume, moss, mushrooms and beautiful objects that feel subtly dangerous. Slow storybook dolly forward through branches. No text or logos.",
+    "sourceSlug": "dark-fairy-tale"
+  },
+  {
+    "styleId": "cosmic-horror",
+    "styleName": "Cosmic horror",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Overwhelming cosmic horror. A tiny suited explorer stands on a black shoreline before an impossible colossal structure whose geometry folds into the sky. Distorted horizon, starless void, ancient nonhuman surfaces and pale light bending in physically unsettling ways. Camera starts close behind the figure then pulls impossibly wide to reveal terrifying scale. No gore, text or logos.",
+    "sourceSlug": "cosmic-horror"
+  },
+  {
+    "styleId": "supernatural-mystery",
+    "styleName": "Supernatural mystery",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Atmospheric supernatural mystery. In an ordinary suburban kitchen at midnight, a glass of water trembles, a dining chair slowly slides backward by itself and condensation crawls upward on the window. Cool nocturnal color, pools of practical light, drifting haze and reflective surfaces. Patient observational camera with one impossible detail disturbing an otherwise realistic room. No text or logos.",
+    "sourceSlug": "supernatural-mystery"
+  },
+  {
+    "styleId": "neo-noir-crime",
+    "styleName": "Neo-noir crime",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Modern neo-noir crime photography. A tired detective in a dark coat waits beneath a hard streetlamp in a rain-slick alley while a distant car passes through red neon reflections. Deep blacks, hard directional light, wet pavement, sodium-vs-neon color contrast, glass reflections and drifting smoke. Slow push toward a morally charged close-up. No text or logos.",
+    "sourceSlug": "neo-noir-crime"
+  },
+  {
+    "styleId": "analog-found-footage",
+    "styleName": "Analog found footage",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Degraded analog found-footage horror. A person with a small flashlight walks through an abandoned roadside motel hallway at night. Consumer camcorder look, imperfect autofocus breathing, sensor noise, clipped highlights, rolling exposure, timestamp-era color, nervous reframing and occasional foreground obstruction. The camera briefly catches an unexplained figure at the far end before swinging back. No readable text or logos.",
+    "sourceSlug": "analog-found-footage"
+  },
+  {
+    "styleId": "retro-science-fiction",
+    "styleName": "Retro science fiction",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Tactile retro science fiction. An astronaut sits inside a compact mid-century spacecraft cockpit packed with CRT displays, painted control panels, analog switches, chunky knobs, brushed metal and colored instrument lamps. A planet slowly rises through the forward window as the pilot flips a physical toggle and indicator lights respond. Practical miniature feeling, optimistic retro-futurist industrial design. No readable text or logos.",
+    "sourceSlug": "retro-science-fiction"
+  },
+  {
+    "styleId": "dystopian-future",
+    "styleName": "Dystopian future",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Severe dystopian future. A lone factory worker in utilitarian rain gear crosses a vast concrete plaza beneath a monumental surveillance tower and dense pipes, cables and exhaust stacks. Polluted drizzle, harsh industrial sodium light, cold gray architecture and oppressive institutional scale. Slow symmetrical push-in while scanning lights sweep across the crowd. Controlled, believable worldbuilding. No text or logos.",
+    "sourceSlug": "dystopian-future"
+  },
+  {
+    "styleId": "disaster-spectacle",
+    "styleName": "Disaster spectacle",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Large-scale disaster cinema. A suspension bridge begins to buckle during a violent dust storm as abandoned vehicles slide, cables snap and sections of roadway tilt. Establish the bridge geography clearly before escalating structural failure; credible debris physics, atmospheric depth, human reaction in the foreground and a final wide shot communicating enormous scale. Dramatic but physically readable. No text or logos.",
+    "sourceSlug": "disaster-spectacle"
+  },
+  {
+    "styleId": "action-blockbuster",
+    "styleName": "Action blockbuster",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Premium action-blockbuster sequence. A stunt rider on a black motorcycle races beneath an elevated freeway as a tanker skids sideways behind him and concrete debris crashes across the road. Geography remains crystal clear: hero foreground, threat behind, escape route ahead. Dynamic parallax, practical-feeling sparks and impacts, bold silhouette, aggressive but motivated chase camera and escalating scale. No text or logos.",
+    "sourceSlug": "action-blockbuster"
+  },
+  {
+    "styleId": "pulp-adventure",
+    "styleName": "Pulp adventure",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Colorful pulp-adventure cinema. A rugged explorer in a weathered jacket grips an old map while crossing a swaying rope bridge above a jungle gorge toward a forgotten stone observatory. Golden sunlight, exotic practical location, weathered brass machinery, heroic silhouette and dangerous terrain. Camera cranes from the map to reveal the immense ruins ahead, bold serialized adventure energy. No text or logos.",
+    "sourceSlug": "pulp-adventure"
+  },
+  {
+    "styleId": "romantic-fantasy",
+    "styleName": "Romantic fantasy",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Luminous romantic fantasy. Two adult travelers meet in a moonlit meadow of silver grass beside ancient glowing trees; their flowing fabric catches a gentle breeze as tiny luminous particles spiral between them. Ethereal natural light, elegant production design, enchanted landscape and intimate expressive close-up transitioning to a graceful wider reveal. Tender, magical, cinematic and refined. No text or logos.",
+    "sourceSlug": "romantic-fantasy"
+  },
+  {
+    "styleId": "surreal-dreamscape",
+    "styleName": "Surreal dreamscape",
+    "sourceOrigin": "prompt-builder",
+    "previewGenerationPrompt": "Poetic surreal dreamscape. A solitary woman in a flowing white coat walks across a mirror-flat shallow ocean at dusk while enormous translucent flowers slowly open in the sky and a doorway stands upright on the horizon. Reflections transform into clouds beneath her feet; scale shifts feel lucid rather than chaotic. Graceful slow camera drift, impossible but seamless transitions, symbolic objects and dreamlike gravity. No text or logos.",
+    "sourceSlug": "surreal-dreamscape"
+  },
+  {
+    "styleId": "old-animation-style",
+    "styleName": "Old Animation Style",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Classic early-Technicolor cel animation. An original fox in a neat waistcoat dances around a seaside carousel while gulls flap overhead. Pencil animation cleaned into hand-inked acetate cels over separately painted gouache backgrounds, restrained vintage color palette, subtle cel jitter, held drawings and handcrafted theatrical timing. No existing character designs, text or logos.",
+    "sourceSlug": "old-animation-style"
+  },
+  {
+    "styleId": "1980s-anime",
+    "styleName": "1980s Anime",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "1980s hand-drawn anime. A leather-jacketed biker pauses beneath neon signs on a rain-slick elevated road while distant traffic streams through a painted megacity. Hand-inked cels over richly painted backgrounds, animation on twos with held drawings, expressive smear frames, practical glow, film grain and multiplane camera movement. No readable text or logos.",
+    "sourceSlug": "1980s-anime"
+  },
+  {
+    "styleId": "1990s-fantasy-anime",
+    "styleName": "1990s Fantasy Anime",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "1990s fantasy anime. A swordswoman in a moonlit forest raises one hand and summons a ring of luminous magical runes as wind lifts her cloak and leaves spiral around her. Elegant hand-drawn character design, richly painted forest and ruined shrine backgrounds, subtle cel shadows, glowing effects composited over cels and dramatic fantasy staging. No readable text or logos.",
+    "sourceSlug": "1990s-fantasy-anime"
+  },
+  {
+    "styleId": "1980s-sci-fi-anime",
+    "styleName": "1980s Sci-Fi Anime",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "1980s science-fiction anime. A young pilot in a flight suit crosses a vast mechanical hangar toward an original humanoid mecha while technicians and service vehicles move below. Loving mechanical detail, hand-inked cel animation, painted industrial backgrounds, neon instrument reflections, soft analog compositing, film grain and slow multiplane crane movement. No franchise designs, readable text or logos.",
+    "sourceSlug": "1980s-sci-fi-anime"
+  },
+  {
+    "styleId": "creature-adventure-tv-anime",
+    "styleName": "Creature-Adventure TV Anime",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Bright creature-adventure television anime. A young original explorer runs along a sunny hillside beside a small original winged companion creature as they discover a sparkling waterfall valley. Cheerful weekly-TV cel animation, clean expressive faces, bright outdoor palette, simple readable backgrounds, energetic run cycles and friendly adventure tone. No existing franchise characters, text or logos.",
+    "sourceSlug": "creature-adventure-tv-anime"
+  },
+  {
+    "styleId": "sumi-e-ink",
+    "styleName": "Ink",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Expressive ink-wash animation on textured rice paper. A black crane lifts from reeds beside a still pond as bold calligraphic brush lines break into diluted gray washes. Wet ink blooms visibly into the paper fibers, dry-brush edges catch on texture and empty white space is part of the composition. Slow graceful camera drift. No text or seals.",
+    "sourceSlug": "ink"
+  },
+  {
+    "styleId": "hand-painted-silk",
+    "styleName": "Hand-Painted Silk",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Hand-painted silk animation. Bright koi fish swim across a flowing sheet of hand-dyed silk suspended in soft light. Pigment bleeds gently along the weave, translucent color pools overlap, and every frame preserves visible silk fibers and handmade dye variation. The fabric itself ripples as the painted fish glide through it. Elegant slow camera move. No text or logos.",
+    "sourceSlug": "hand-painted-silk"
+  },
+  {
+    "styleId": "thick-paint",
+    "styleName": "Thick Paint",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Thick wet-paint animation. A red fox runs through a dark forest where every surface is built from heavy impasto paint pushed across a glass plate. Palette-knife ridges, finger smears, brush grooves and ghosts of earlier frames remain visible as the fox moves. Side-tracking camera, rich tactile paint catching raking light. No text or logos.",
+    "sourceSlug": "thick-paint"
+  },
+  {
+    "styleId": "oil-painting",
+    "styleName": "Oil Painting",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Living oil painting. A rider on horseback crosses a windy field at sunset beneath enormous clouds, everything rendered as dimensional oil paint with thick brushwork, sculpted highlights and layered pigment. Grass and cloak move while painted strokes remain visible and tactile. Slow cinematic pan with museum-canvas texture, no photoreal surface. No text or logos.",
+    "sourceSlug": "oil-painting"
+  },
+  {
+    "styleId": "charcoal",
+    "styleName": "Charcoal",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Charcoal animation on rough paper. A contemporary dancer turns under a single stage light; velvet blacks, powdered gray, erased highlights and smudged motion trails build and disappear around the body. Each pose feels freshly drawn in charcoal, with dust and finger blending visible. Static medium shot, full-film-noir lighting. No text or logos.",
+    "sourceSlug": "charcoal"
+  },
+  {
+    "styleId": "childrens-marker",
+    "styleName": "Doodle / Children's Marker",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Childlike marker doodle animation on visible notebook paper. A wobbly hand-drawn rocket made from uneven red, blue and yellow marker lines sputters to life, lifts off and leaves a scribbled smoke trail past simple stars and a smiling moon. Bleeding ink, imperfect coloring, strokes wandering outside outlines and obvious paper fibers. Playful handmade motion. No readable text.",
+    "sourceSlug": "doodle-children-s-marker"
+  },
+  {
+    "styleId": "theatrical-slapstick",
+    "styleName": "Tom & Jerry Style",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Golden-age theatrical slapstick animation with completely original animal characters: a lanky house cat chases a tiny clever mouse through a polished kitchen, skids on a rolling pin and crashes harmlessly into a stack of metal bowls. Elastic squash-and-stretch, constructed smear drawings, fast readable staging, painted backgrounds and orchestral-style comic timing. Do not depict or copy any existing copyrighted character designs. No text or logos.",
+    "sourceSlug": "tom-and-jerry-style"
+  },
+  {
+    "styleId": "action-figure",
+    "styleName": "Action Figure",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Action-figure miniature adventure. A small articulated astronaut toy runs across a realistic cluttered desk as a battery-powered toy robot turns toward it. Visible plastic seams, ball joints, painted details and molded textures; the toys remain unmistakably small inside a human-sized bedroom. Low macro tracking camera, shallow depth of field and believable physical contact. No brands, text or logos.",
+    "sourceSlug": "action-figure"
+  },
+  {
+    "styleId": "puppet",
+    "styleName": "Puppet",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Theatrical puppet film. A carved wooden marionette musician with glossy hand-painted face, hinged jaw and jointed limbs dances on a miniature gilded proscenium stage. Fine strings remain visible, painted scenery shifts behind him and warm footlights reflect from varnished wood. Deliberately physical puppetry motion with a gentle frontal camera move. No text or logos.",
+    "sourceSlug": "puppet"
+  },
+  {
+    "styleId": "noir-cartoon",
+    "styleName": "Noir Cartoon",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Noir cartoon animation. An original trench-coated private detective waits beneath a streetlamp while a suspicious silhouette crosses a rain-soaked alley. Stylized 2D American adult-cartoon design, hard graphic black shadows, sharp white highlights, limited muted color accents and comic-detective staging. Slow lateral camera, smoke and rain as graphic shapes. No text or logos.",
+    "sourceSlug": "noir-cartoon"
+  },
+  {
+    "styleId": "live-action-hybrid",
+    "styleName": "Live-Action Hybrid",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Live-action and animation hybrid. A real adult street musician plays guitar on a photographed city corner while an original hand-drawn blue bird hops from the guitar case onto his shoulder and reacts perfectly to the rhythm. Photoreal live action and animated performer share perspective, shadows, timing and synchronized interaction. Gentle handheld push-in. No text or logos.",
+    "sourceSlug": "live-action-hybrid"
+  },
+  {
+    "styleId": "smear-animation",
+    "styleName": "Smear Animation",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Extreme hand-drawn smear animation. A martial artist sprints across a rooftop, launches into a fast spinning kick and lands in a razor-clean hero pose. Every fast beat uses wildly stretched limbs, duplicated faces, speed arcs and exaggerated in-between drawings, then snaps back to crisp readable held poses. Dynamic side camera, bold timing. No text or logos.",
+    "sourceSlug": "smear-animation"
+  },
+  {
+    "styleId": "cgi",
+    "styleName": "CGI",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Polished modern CGI feature animation. A friendly rounded service robot in a sunlit workshop carefully picks up a small potted plant, studies it and gives a delighted reaction. Appealing simplified shapes, soft rounded forms, clean materials, expressive body language, warm global illumination and polished cinematic character animation. No text or logos.",
+    "sourceSlug": "cgi"
+  },
+  {
+    "styleId": "cgi-live-action-hybrid",
+    "styleName": "CGI Live-Action Hybrid",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "CGI live-action hybrid. In a genuinely photographed city plaza, an adult street photographer walks beside an original fantastical six-legged creature rendered as convincing CGI. Real actors and location retain natural live-action exposure while the creature casts correct shadows, reflects surrounding light and interacts physically with puddles and pigeons. Smooth tracking shot. No text or logos.",
+    "sourceSlug": "cgi-live-action-hybrid"
+  },
+  {
+    "styleId": "claymation",
+    "styleName": "Claymation",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Claymation miniature film. A cheerful clay baker kneads a loaf in a tiny handmade kitchen, flour puffing as the dough stretches. Hand-sculpted modeling clay, chunky proportions, visible fingerprints, tool marks and slightly changing surfaces from frame to frame. Warm miniature practical lighting, shallow macro depth of field and clearly stepped stop-motion movement. No text or logos.",
+    "sourceSlug": "claymation"
+  },
+  {
+    "styleId": "wool",
+    "styleName": "Wool",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Needle-felted wool animation. A small fox made from densely compressed orange wool hops through a miniature forest of felted trees and moss. Loose fibers, fuzzy edges, uneven handmade forms and visible wool armatures catch warm side light. Gentle stop-motion movement, macro lens and cozy tactile miniature scale. No text or logos.",
+    "sourceSlug": "wool"
+  },
+  {
+    "styleId": "paper-cut-out",
+    "styleName": "Paper Cut-Out",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Physical paper cut-out animation. A tiny sailor in a layered paper boat rides across stacked blue paper waves while a cardboard moon rises behind layered clouds. Every character and set piece is real textured paper with visible cut edges, printed fibers, tiny shadows and hinged joints, photographed as a miniature artwork. Side-on theatrical camera. No text or logos.",
+    "sourceSlug": "paper-cut-out"
+  },
+  {
+    "styleId": "medieval-parchment",
+    "styleName": "Medieval Parchment",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Illuminated medieval parchment animation. On aged fibrous parchment, a painted knight raises a tiny shield as a decorative dragon curls around a gold-leaf initial and breathes a ribbon of stylized flame. Manuscript figures move while remaining flat painted illuminations; inked borders, faded pigments, stains, cracked gold and visible parchment fibers. Slow top-down camera drift. No readable text.",
+    "sourceSlug": "medieval-parchment"
+  },
+  {
+    "styleId": "embroidery",
+    "styleName": "Embroidery",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Embroidery animation. A hummingbird made entirely from raised colored cotton and wool thread hovers over stitched wildflowers on heavy woven linen. Every feather is thread; loops, knots, loose fibers and satin stitches catch the light. Wings flutter through frame-by-frame thread movement while the fabric remains clearly physical. Macro camera with shallow depth of field. No text or logos.",
+    "sourceSlug": "embroidery"
+  },
+  {
+    "styleId": "paper-stop-motion",
+    "styleName": "Paper Stop-Motion",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Handmade paper stop-motion. A tiny paper knight climbs a cardboard mountain toward a paper castle while torn clouds slide across a hand-painted matte sky. Newspaper pulp, corrugated cardboard edges, folded joints, visible glue and torn-paper fibers. Intentionally stepped frame-by-frame movement and practical miniature lighting. No text or logos.",
+    "sourceSlug": "paper-stop-motion"
+  },
+  {
+    "styleId": "marbled-paper",
+    "styleName": "Marbled Paper",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Animated marbled-paper art. Two elegant koi fish circle each other on cream paper, their bodies and the water formed from flowing veins of ultramarine, crimson, ochre and white marbling. The colored veins continuously swirl inside the readable fish silhouettes rather than being rigidly texture-mapped. Gentle top-down camera drift, tactile wet pigment and paper grain. No text or logos.",
+    "sourceSlug": "marbled-paper"
+  },
+  {
+    "styleId": "painted-cgi",
+    "styleName": "Painted CGI",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Painted CGI feature animation. A young explorer in a mossy fantasy ruin turns toward a glowing floating seed, rendered as grounded 3D performance but every surface carries visible hand-painted brush texture. Brushstrokes flow through skin tones, fabric, stone and highlights; sculpted form remains fully 3D beneath the painted treatment. Slow close dolly and expressive facial animation. No text or logos.",
+    "sourceSlug": "painted-cgi"
+  },
+  {
+    "styleId": "vintage-poster",
+    "styleName": "Vintage Poster",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Vintage printed poster brought to life. A streamlined steam locomotive charges through a mountain pass beneath a dramatic sunset, rendered with only four to six physical-looking ink colors on heavy paper. Slightly uneven registration, halftone texture, bold graphic shapes and aged print grain. Restrained parallax makes the poster feel animated while remaining visibly printed. No readable text or logos.",
+    "sourceSlug": "vintage-poster"
+  },
+  {
+    "styleId": "1970s-tokusatsu",
+    "styleName": "1970s Tokusatsu",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "1970s tokusatsu television style. A performer in a hand-built rubber monster suit stomps through a practical miniature city while another suited hero lands between tiny buildings. Obvious miniature scale, painted skies, optical glow, practical smoke, sparks, suit creases and fiberglass textures. Low-angle camera and energetic zoom typical of vintage effects television. No text or logos.",
+    "sourceSlug": "1970s-tokusatsu"
+  },
+  {
+    "styleId": "1930s-animation",
+    "styleName": "1930s Animation",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "1930s rubber-hose animation. Original black-and-white cartoon animal musicians bounce through a tiny jazz club with pie-cut pupils, four-fingered gloves and boneless noodle limbs. Hand-inked wobble, repeating dance cycles, squash-and-stretch and worn nitrate-film flicker, scratches and gate weave. No modern shading, no text or logos.",
+    "sourceSlug": "1930s-animation"
+  },
+  {
+    "styleId": "american-sitcom-animation",
+    "styleName": "American Sitcom Animation",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Traditional American 2D sitcom animation. An original suburban family sits at a kitchen table when a toaster suddenly launches toast across the room; everyone turns with exaggerated deadpan reactions. Rounded shapes, bold dark contours, large heads, simple clean color fills and economical television character animation. Locked medium-wide comedy framing. No text or logos.",
+    "sourceSlug": "american-sitcom-animation"
+  },
+  {
+    "styleId": "stylized-2d-editorial",
+    "styleName": "Stylized 2D Editorial",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "Stylized 2D editorial animation. A city cyclist crosses a busy intersection while buses, pedestrians and buildings reduce into bold simplified shapes, flat color fields, clean silhouettes and minimal hand-drawn outlines. Strong negative space and graphic composition; camera pans laterally as layers slide with crisp editorial timing. No text or logos.",
+    "sourceSlug": "stylized-2d-editorial"
+  },
+  {
+    "styleId": "rgb-phosphor-crt-arcade",
+    "styleName": "RGB Phosphor CRT Arcade",
+    "sourceOrigin": "style-art",
+    "previewGenerationPrompt": "RGB phosphor CRT arcade aesthetic. A tiny pixel spacecraft dives through a glowing geometric asteroid field displayed on a curved old arcade monitor. Visible RGB phosphor triads, scanlines, bloom, slight screen curvature, analog color bleed and bright sprite trails. The camera pushes close enough to reveal the phosphor structure while the arcade action remains legible. No readable text or logos.",
+    "sourceSlug": "rgb-phosphor-crt-arcade"
+  }
+]

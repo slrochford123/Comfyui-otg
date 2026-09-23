@@ -52,6 +52,7 @@ type AssetLibraryItem = {
   id: string;
   name: string;
   imageUrl: string;
+  previewVideoUrl?: string;
   identityDescription: string;
   createdAt: number;
 };
@@ -240,6 +241,43 @@ function imageFromAssetRecord(
   );
 }
 
+function previewVideoFromAssetRecord(
+  record: Record<
+    string,
+    any
+  >,
+) {
+  const previewVideo =
+    record.previewVideo;
+
+  if (
+    previewVideo &&
+    typeof previewVideo ===
+      "object"
+  ) {
+    const nested =
+      previewVideo as Record<
+        string,
+        any
+      >;
+
+    return fileUrl(
+      nested.displayImage ||
+        nested.url ||
+        nested.videoUrl ||
+        nested.workflowImage ||
+        nested.serverPath ||
+        nested.path,
+    );
+  }
+
+  return fileUrl(
+    record.previewVideoUrl ||
+      record.videoUrl ||
+      record.characterCardPreviewVideoUrl,
+  );
+}
+
 function unwrapRecords(
   payload: unknown,
 ): unknown[] {
@@ -321,6 +359,10 @@ function normalizeLibraryAsset(
       imageFromAssetRecord(
         record,
       ),
+    previewVideoUrl:
+      previewVideoFromAssetRecord(
+        record,
+      ) || undefined,
     identityDescription:
       text(
         record.identityDescription ||
@@ -2580,7 +2622,7 @@ export default function AssetGalleryPanel({
         `otg-asset-master-${candidate.id}-${Date.now()}`;
 
       setMessage(
-        "Submitting the prepared Asset to SeedVR2 on the RTX 3090...",
+        "Submitting the prepared Asset to SeedVR2 on the RTX 5060 Ti...",
       );
 
       const body =
@@ -2613,7 +2655,7 @@ export default function AssetGalleryPanel({
 
       body.set(
         "gpuTarget",
-        "rtx3090",
+        "rtx5060ti",
       );
 
       body.set(
@@ -2713,7 +2755,10 @@ export default function AssetGalleryPanel({
         ),
       );
 
-      const submitResponse =
+      let assetMasterBackend =
+        "rtx5060ti";
+
+      let submitResponse =
         await fetch(
           "/api/comfy",
           {
@@ -2731,10 +2776,51 @@ export default function AssetGalleryPanel({
           },
         );
 
-      const submit =
+      let submit =
         await readJson(
           submitResponse,
         );
+
+      if (
+        !submitResponse.ok ||
+        submit?.ok ===
+          false
+      ) {
+        setMessage(
+          "RTX 5060 Ti did not accept the Asset Master job. Trying the RTX 3090 backup...",
+        );
+
+        assetMasterBackend =
+          "rtx3090";
+
+        body.set(
+          "gpuTarget",
+          assetMasterBackend,
+        );
+
+        submitResponse =
+          await fetch(
+            "/api/comfy",
+            {
+              method:
+                "POST",
+              credentials:
+                "include",
+              cache:
+                "no-store",
+              headers: {
+                "x-otg-device-id":
+                  getAssetDeviceId(),
+              },
+              body,
+            },
+          );
+
+        submit =
+          await readJson(
+            submitResponse,
+          );
+      }
 
       if (
         !submitResponse.ok ||
@@ -2764,7 +2850,7 @@ export default function AssetGalleryPanel({
       }
 
       setMessage(
-        `SeedVR2 Master queued. Prompt ${masterPromptId}. Waiting for output node ${ASSET_MASTER_OUTPUT_NODE}...`,
+        `SeedVR2 Master queued on ${assetMasterBackend === "rtx5060ti" ? "RTX 5060 Ti" : "RTX 3090"}. Prompt ${masterPromptId}. Waiting for output node ${ASSET_MASTER_OUTPUT_NODE}...`,
       );
 
       const master =
@@ -2800,6 +2886,90 @@ export default function AssetGalleryPanel({
           candidate.name,
         );
 
+      setMessage(
+        "Generating the H3 Asset Card on the RTX 5060...",
+      );
+
+      const assetCardForm =
+        new FormData();
+
+      assetCardForm.set(
+        "sourceServerPath",
+        masterUpload.serverPath,
+      );
+
+      const assetCardResponse =
+        await fetch(
+          "/api/assets/orbitsheets-card",
+          {
+            method:
+              "POST",
+            credentials:
+              "include",
+            cache:
+              "no-store",
+            body:
+              assetCardForm,
+          },
+        );
+
+      const assetCardPayload =
+        await readJson(
+          assetCardResponse,
+        );
+
+      if (
+        assetCardResponse.status ===
+        401
+      ) {
+        window.location.href =
+          "/login?reason=session";
+
+        return;
+      }
+
+      if (
+        !assetCardResponse.ok ||
+        !assetCardPayload?.ok
+      ) {
+        throw new Error(
+          text(
+            assetCardPayload?.error,
+          ) ||
+            `H3 Asset Card generation failed (${assetCardResponse.status}).`,
+        );
+      }
+
+      const assetCardUrl =
+        text(
+          assetCardPayload.url,
+        );
+      const assetCardVideoUrl =
+        text(
+          assetCardPayload.videoUrl,
+        );
+      const assetCardVideoServerPath =
+        text(
+          assetCardPayload.videoServerPath,
+        );
+
+      if (!assetCardUrl) {
+        throw new Error(
+          "H3 Asset Card did not return an image.",
+        );
+      }
+
+      setMessage(
+        "H3 Asset Card generated. Saving the canonical Asset...",
+      );
+
+      const assetCardUpload =
+        await copyAssetImageToUpload(
+          assetCardUrl,
+          `${candidate.id}-h3-card`,
+          candidate.name,
+        );
+
       const saveResponse =
         await fetch(
           "/api/assets",
@@ -2829,6 +2999,24 @@ export default function AssetGalleryPanel({
                     workflowImage:
                       masterUpload.serverPath,
                   },
+                  assetCard: {
+                    displayImage:
+                      assetCardUpload.fileUrl,
+                    workflowImage:
+                      assetCardUpload.serverPath,
+                  },
+                  previewVideo:
+                    assetCardVideoUrl ||
+                    assetCardVideoServerPath
+                      ? {
+                          displayImage:
+                            assetCardVideoUrl ||
+                            assetCardVideoServerPath,
+                          workflowImage:
+                            assetCardVideoServerPath ||
+                            assetCardVideoUrl,
+                        }
+                      : undefined,
                   perspectives: {},
                 },
               }),
@@ -3805,6 +3993,24 @@ export default function AssetGalleryPanel({
                         </div>
                       )}
                     </div>
+
+                    {item.previewVideoUrl ? (
+                      <div className="border-t border-white/10 bg-black/35 p-2">
+                        <video
+                          src={
+                            item.previewVideoUrl
+                          }
+                          poster={
+                            item.imageUrl ||
+                            undefined
+                          }
+                          controls
+                          preload="metadata"
+                          playsInline
+                          className="h-auto w-full rounded-xl bg-black"
+                        />
+                      </div>
+                    ) : null}
 
                     <div className="p-4">
                       <div className="truncate font-black text-white">

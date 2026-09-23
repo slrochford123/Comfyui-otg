@@ -23,6 +23,20 @@ export type ComfyPromptProgressSnapshot = {
   elapsedMs: number | null;
   estimatedRemainingMs: number | null;
   error: string | null;
+  approximatePreview: ComfyApproximatePreviewSnapshot | null;
+};
+
+export type ComfyApproximatePreviewSnapshot = {
+  label: "Approximate Preview";
+  imageUrl: string;
+  mimeType: string;
+  width: number | null;
+  height: number | null;
+  step: number | null;
+  total: number | null;
+  frameCount: number | null;
+  updatedAt: number;
+  source: "ModelPreviewOverrideKJ";
 };
 
 type ComfyPromptProgressRecord = {
@@ -42,6 +56,7 @@ type ComfyPromptProgressRecord = {
   lastUpdateAt: number | null;
   completedAt: number | null;
   error: string | null;
+  approximatePreview: ComfyApproximatePreviewSnapshot | null;
 };
 
 type ComfyProgressGlobal = typeof globalThis & {
@@ -101,6 +116,7 @@ function getOrCreateRecord(promptId: string): ComfyPromptProgressRecord {
     lastUpdateAt: now,
     completedAt: null,
     error: null,
+    approximatePreview: null,
   };
   progressStore.prompts.set(key, created);
   return created;
@@ -174,6 +190,7 @@ export function readComfyPromptProgress(promptId: string | null | undefined): Co
     elapsedMs,
     estimatedRemainingMs,
     error: record.error,
+    approximatePreview: record.approximatePreview,
   };
 }
 
@@ -215,17 +232,72 @@ function markDone(record: ComfyPromptProgressRecord, nodeId: unknown) {
   }
 }
 
-function applyComfyEvent(payload: any) {
+function findPromptForClient(args: {
+  clientId?: string | null;
+  comfyBaseUrl?: string | null;
+}) {
+  const clientId = String(args.clientId || "").trim();
+  const comfyBaseUrl = normalizeBaseUrl(args.comfyBaseUrl);
+  if (!clientId || !comfyBaseUrl) return "";
+
+  let best: ComfyPromptProgressRecord | null = null;
+  for (const record of store().prompts.values()) {
+    if (record.clientId !== clientId) continue;
+    if (normalizeBaseUrl(record.comfyBaseUrl) !== comfyBaseUrl) continue;
+    if (record.status !== "queued" && record.status !== "running") continue;
+    if (!best || (record.lastUpdateAt || 0) > (best.lastUpdateAt || 0)) {
+      best = record;
+    }
+  }
+  return best?.promptId || "";
+}
+
+function applyComfyEvent(payload: any, context: { clientId?: string | null; comfyBaseUrl?: string | null } = {}) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
 
   const type = String(payload.type || "");
   const data = payload.data && typeof payload.data === "object" ? payload.data : payload;
-  const promptId = String(data?.prompt_id || data?.promptId || "").trim();
+  const explicitPromptId = String(data?.prompt_id || data?.promptId || "").trim();
+  const promptId = explicitPromptId || (
+    type === "kj_preview_override" || type === "model_preview_override" || type === "preview_override"
+      ? findPromptForClient(context)
+      : ""
+  );
   if (!promptId) return;
 
   const record = getOrCreateRecord(promptId);
   const now = Date.now();
   record.lastUpdateAt = now;
+
+  if (type === "kj_preview_override" || type === "model_preview_override" || type === "preview_override") {
+    const rawImage = String(data?.image || data?.image_base64 || data?.base64 || "").trim();
+    if (rawImage) {
+      const mimeType = String(data?.mime || data?.mime_type || data?.format || "image/jpeg")
+        .replace(/^image\/image\//, "image/")
+        .replace(/^video\/video\//, "video/");
+      const safeMimeType =
+        mimeType.startsWith("image/") || mimeType.startsWith("video/")
+          ? mimeType
+          : "image/jpeg";
+      const imageUrl = rawImage.startsWith("data:")
+        ? rawImage
+        : `data:${safeMimeType};base64,${rawImage}`;
+      record.status = record.status === "complete" ? "complete" : "running";
+      record.approximatePreview = {
+        label: "Approximate Preview",
+        imageUrl,
+        mimeType: safeMimeType,
+        width: Number.isFinite(Number(data?.width ?? data?.w)) ? Number(data?.width ?? data?.w) : null,
+        height: Number.isFinite(Number(data?.height ?? data?.h)) ? Number(data?.height ?? data?.h) : null,
+        step: Number.isFinite(Number(data?.step)) ? Number(data.step) : null,
+        total: Number.isFinite(Number(data?.total ?? data?.steps)) ? Number(data?.total ?? data?.steps) : null,
+        frameCount: Number.isFinite(Number(data?.frames ?? data?.frame_count)) ? Number(data?.frames ?? data?.frame_count) : null,
+        updatedAt: now,
+        source: "ModelPreviewOverrideKJ",
+      };
+    }
+    return;
+  }
 
   if (type === "execution_start") {
     record.status = "running";
@@ -393,9 +465,14 @@ export function ensureComfyClientProgressMonitor(args: {
     progressStore.clientMonitors.delete(key);
   }, idleTimeoutMs);
 
+  const eventContext = {
+    clientId,
+    comfyBaseUrl: baseUrl,
+  };
+
   const handleMessage = (data: unknown) => {
     const payload = parseMessageData(data);
-    if (payload) applyComfyEvent(payload);
+    if (payload) applyComfyEvent(payload, eventContext);
   };
   const handleOpen = () => resolveOpen(true);
   const handleError = () => {
@@ -411,7 +488,7 @@ export function ensureComfyClientProgressMonitor(args: {
 
   ws.onmessage = (event: any) => {
     const payload = parseMessageData(event?.data);
-    if (payload) applyComfyEvent(payload);
+    if (payload) applyComfyEvent(payload, eventContext);
   };
 
   ws.onopen = handleOpen;

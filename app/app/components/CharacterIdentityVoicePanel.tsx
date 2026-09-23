@@ -28,6 +28,8 @@ import {
 type CharacterAsset = {
   imageUrl: string;
   serverPath?: string;
+  previewVideoUrl?: string;
+  previewVideoServerPath?: string;
 };
 
 type SavedCharacterRecord = {
@@ -40,6 +42,8 @@ type SavedCharacterRecord = {
   backgroundRemovedDefaultImagePath?: string;
   characterCardPath?: string;
   characterCardWorkflowImagePath?: string;
+  characterCardPreviewVideoPath?: string;
+  characterCardPreviewVideoUrl?: string;
   characterReferences?: CharacterReferencePackage;
   description: string;
   referenceAudioPath?: string;
@@ -164,6 +168,19 @@ function voiceAudioUrl(record: SavedCharacterRecord) {
     ? String((record.voiceSettings as Record<string, unknown>).audioUrl || "").trim()
     : "";
   return saved || (record.referenceAudioPath ? `/api/file?path=${encodeURIComponent(record.referenceAudioPath)}` : "");
+}
+
+function characterPreviewVideoUrl(record: SavedCharacterRecord) {
+  const topLevel =
+    String(record.characterCardPreviewVideoUrl || "").trim() ||
+    String(record.characterCardPreviewVideoPath || "").trim();
+  if (topLevel) return characterAssetUrl(topLevel);
+
+  const video = record.characterReferences?.previewVideo;
+  const fromReferences =
+    String(video?.url || "").trim() ||
+    String(video?.serverPath || "").trim();
+  return fromReferences ? characterAssetUrl(fromReferences) : "";
 }
 
 function voiceStyleSummary(profile: VoiceDesignProfile) {
@@ -366,6 +383,7 @@ export function SavedCharacterLibrary() {
               item.characterCardWorkflowImagePath ||
               "";
             const audioUrl = voiceAudioUrl(item);
+            const videoUrl = characterPreviewVideoUrl(item);
             return (
               <article key={item.id} className="overflow-hidden rounded-2xl border border-white/10 bg-black/30">
                 <div className="aspect-[4/5] bg-black/40">
@@ -379,6 +397,18 @@ export function SavedCharacterLibrary() {
                     />
                   ) : null}
                 </div>
+                {videoUrl ? (
+                  <div className="border-t border-white/10 bg-black/35 p-2">
+                    <video
+                      src={videoUrl}
+                      poster={imagePath ? characterAssetUrl(imagePath) : undefined}
+                      controls
+                      preload="metadata"
+                      playsInline
+                      className="h-auto w-full rounded-xl bg-black"
+                    />
+                  </div>
+                ) : null}
                 <div className="space-y-3 p-4">
                   <div>
                     <h3 className="text-lg font-black text-white">{item.name}</h3>
@@ -593,6 +623,8 @@ export default function CharacterIdentityVoicePanel({
           characterCardPath: characterCard.serverPath,
           characterCardWorkflowImagePath: characterCard.serverPath,
           characterCardPreviewImagePath: characterCard.serverPath,
+          characterCardPreviewVideoPath: characterCard.previewVideoServerPath,
+          characterCardPreviewVideoUrl: characterCard.previewVideoUrl,
           characterReferences,
           defaultCharacterImagePath: processedImage.serverPath,
           defaultCharacterPreviewImagePath: processedImage.serverPath,

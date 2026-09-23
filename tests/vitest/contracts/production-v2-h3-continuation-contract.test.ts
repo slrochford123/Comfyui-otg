@@ -188,6 +188,56 @@ describe(
     );
 
     it(
+      "clips H3 Production video references to a selected 5-second window before Comfy upload",
+      () => {
+        const panel =
+          readSource(
+            "app/app/components/ProductionV2Panel.tsx",
+          );
+        const route =
+          readSource(
+            "app/api/production/v2/generation/route.ts",
+          );
+        const scheduler =
+          readSource(
+            "lib/production/h3GenerationScheduler.ts",
+          );
+        const jobs =
+          readSource(
+            "lib/production/h3GenerationJobs.ts",
+          );
+
+        expect(panel).toContain(
+          'data-otg="production-v2-h3-reference-window"',
+        );
+        expect(panel).toContain(
+          'aria-label="H3 reference video 5-second start time"',
+        );
+        expect(panel).toContain(
+          "videoClipStartSeconds: clipStartSeconds",
+        );
+        expect(route).toContain(
+          "videoClipStartSeconds",
+        );
+        expect(route).toContain(
+          "clipStartSeconds",
+        );
+        expect(jobs).toContain(
+          "clipStartSeconds?: number;",
+        );
+        expect(scheduler).toContain(
+          "prepareH3ReferenceVideoClip",
+        );
+        expect(scheduler).toContain(
+          "trimH3ReferenceVideoClip",
+        );
+        expect(scheduler).toContain(
+          "sourcePath: referenceClip.outputPath",
+        );
+      },
+    );
+
+    it(
       "combines prior-video conditioning with normal H3 R2V image and voice conditioning",
       () => {
         const source =

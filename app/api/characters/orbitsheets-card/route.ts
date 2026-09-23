@@ -1,34 +1,136 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
-import {
-  ORBITSHEETS_ANCHOR_HEIGHT,
-  ORBITSHEETS_ANCHOR_WIDTH,
-  prepareOrbitSheetsAnchor,
-} from "@/lib/characters/orbitSheetsAnchor";
+import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const COMFY_BASE =
-  process.env.OTG_H3_COMFY_BASE_URL ||
-  process.env.H3_COMFY_BASE_URL ||
-  "http://100.75.162.64:8189";
+type ComfyOutput = {
+  filename: string;
+  subfolder: string;
+  type: string;
+};
 
-const COMFY_ROOT =
-  process.env.OTG_COMFYUI_ROOT ||
-  "/home/shawn-rochford/AI/ComfyUI/ComfyUI";
+type H3CardBackend = "rtx5060ti" | "rtx3090";
 
-const ORBIT_WORKFLOW =
-  process.env.OTG_ORBITSHEETS_CHARACTER_WORKFLOW ||
-  "/home/shawn-rochford/AI/ComfyUI/ComfyUI/custom_nodes/ComfyUI-OrbitSheets/api_workflows/CharacterTurnaroundSheetH3.json";
+const CARD_EXPRESSIONS = [
+  "neutral",
+  "happy",
+  "smiling",
+  "sad",
+  "angry",
+  "surprised",
+  "scared",
+  "disgusted",
+  "shy/embarrassed",
+  "confident",
+  "serious",
+  "laughing",
+  "crying",
+  "smirking",
+  "confused",
+] as const;
+
+type CardExpression = (typeof CARD_EXPRESSIONS)[number];
+
+type ShotConfig = {
+  angle: string;
+  framing: string;
+  expression: CardExpression;
+};
+
+function normalizeExpression(value: string): CardExpression {
+  const normalized = value.trim().toLowerCase();
+  return (CARD_EXPRESSIONS as readonly string[]).includes(normalized)
+    ? (normalized as CardExpression)
+    : "neutral";
+}
+
+function standardCharacterShots(expression: CardExpression): ShotConfig[] {
+  return [
+    { angle: "front", framing: "wide shot (full body)", expression },
+    { angle: "back", framing: "wide shot (full body)", expression },
+    { angle: "left profile", framing: "wide shot (full body)", expression },
+    { angle: "right profile", framing: "wide shot (full body)", expression },
+    { angle: "front", framing: "medium shot (waist-up)", expression },
+    { angle: "front", framing: "close-up (shoulders/face)", expression },
+  ];
+}
+
+function freeformCharacterShots(expression: CardExpression): ShotConfig[] {
+  return [
+    { angle: "left profile", framing: "wide shot (full body)", expression },
+    { angle: "right profile", framing: "wide shot (full body)", expression },
+    { angle: "front", framing: "wide shot (full body)", expression },
+    { angle: "back", framing: "wide shot (full body)", expression },
+    { angle: "front", framing: "close-up (shoulders/face)", expression },
+    { angle: "back", framing: "close-up (upper back/head)", expression },
+  ];
+}
+
+function applyShotPreset(
+  workflow: any,
+  anatomyMode: string,
+  expression: CardExpression,
+) {
+  const shots =
+    anatomyMode === "freeform"
+      ? freeformCharacterShots(expression)
+      : standardCharacterShots(expression);
+
+  shots.forEach((shot, index) => {
+    const nodeId = String(190 + index);
+    const node = workflow?.[nodeId];
+
+    if (!node || node.class_type !== "H3LookSheetsShotConfig") {
+      throw new Error(
+        `H3 look-sheet workflow is missing expected shot node ${nodeId}.`,
+      );
+    }
+
+    node.inputs.angle = shot.angle;
+    node.inputs.framing = shot.framing;
+    node.inputs.expression = shot.expression;
+  });
+}
 
 function asString(value: unknown) {
   return String(value || "").trim();
 }
 
-function basenameSafe(value: string) {
-  return path.basename(value).replace(/[^a-zA-Z0-9._-]/g, "_");
+function comfyBaseUrl(backend: H3CardBackend = "rtx5060ti") {
+  if (backend === "rtx3090") {
+    return String(
+      process.env.OTG_H3_CARD_COMFY_BACKUP_BASE_URL ||
+        process.env.OTG_VIDEO_PRIMARY_COMFY_URL ||
+        "http://100.75.162.64:8188",
+    )
+      .trim()
+      .replace(/\/+$/, "");
+  }
+
+  return String(
+    process.env.OTG_H3_CARD_COMFY_BASE_URL ||
+      process.env.COMFYUI_IMAGE_URL ||
+      "http://192.168.1.113:8188",
+  )
+    .trim()
+    .replace(/\/+$/, "");
+}
+
+function workflowPath(anatomyMode: string) {
+  const filename =
+    anatomyMode === "freeform"
+      ? "freeform_card.api.json"
+      : "character_card.api.json";
+
+  return path.join(
+    process.cwd(),
+    "comfy_workflows",
+    "card_builder",
+    filename,
+  );
 }
 
 async function comfyJson(url: string, init?: RequestInit) {
@@ -56,48 +158,93 @@ async function comfyJson(url: string, init?: RequestInit) {
   return json;
 }
 
-async function objectInfo() {
-  return comfyJson(`${COMFY_BASE}/object_info`);
-}
-
-function choices(
-  info: any,
-  nodeType: string,
-  inputName: string,
-): string[] {
-  const value =
-    info?.[nodeType]?.input?.required?.[inputName]?.[0];
-
-  return Array.isArray(value) ? value.map(String) : [];
-}
-
-function resolveChoice(
-  info: any,
-  nodeType: string,
-  inputName: string,
-  wantedBasename: string,
+async function uploadSourceToBackend(
+  sourcePath: string,
+  baseUrl: string,
 ) {
-  const values = choices(info, nodeType, inputName);
+  const bytes = await fs.readFile(sourcePath);
+  const originalName = path.basename(sourcePath);
+  const extension = path.extname(originalName) || ".png";
+  const stem =
+    path
+      .basename(originalName, path.extname(originalName))
+      .replace(/[^a-zA-Z0-9._-]/g, "_") || "character";
 
-  const exact = values.find((value) => value === wantedBasename);
-  if (exact) return exact;
+  const uploadName = `otg-card-${Date.now()}-${stem}${extension}`;
 
-  const suffix = values.find((value) =>
-    value.endsWith(wantedBasename),
+  const form = new FormData();
+  form.append(
+    "image",
+    new Blob([new Uint8Array(bytes)]),
+    uploadName,
   );
-  if (suffix) return suffix;
+  form.append("overwrite", "true");
 
-  throw new Error(
-    `${nodeType}.${inputName} does not expose ${wantedBasename}`,
+  const response = await fetch(
+    `${baseUrl}/upload/image`,
+    {
+      method: "POST",
+      body: form,
+      cache: "no-store",
+    },
   );
+
+  const text = await response.text();
+  let json: any = null;
+
+  try {
+    json = JSON.parse(text);
+  } catch {}
+
+  if (!response.ok) {
+    throw new Error(
+      `ComfyUI image upload failed (${response.status}): ${text}`,
+    );
+  }
+
+  const name = asString(json?.name || json?.filename);
+  const subfolder = asString(json?.subfolder);
+
+  if (!name) {
+    throw new Error(
+      `5060 ComfyUI upload returned no filename: ${text}`,
+    );
+  }
+
+  return subfolder ? `${subfolder}/${name}` : name;
 }
 
-async function waitForOutput(promptId: string) {
-  const deadline = Date.now() + 8 * 60 * 1000;
+function firstOutput(
+  result: any,
+  nodeId: string,
+): ComfyOutput | null {
+  const files = Array.isArray(result?.outputs?.[nodeId]?.images)
+    ? result.outputs[nodeId].images
+    : [];
+
+  for (const file of files) {
+    const filename = asString(file?.filename);
+    if (!filename) continue;
+
+    return {
+      filename,
+      subfolder: asString(file?.subfolder),
+      type: asString(file?.type) || "output",
+    };
+  }
+
+  return null;
+}
+
+async function waitForOutputs(
+  promptId: string,
+  baseUrl: string,
+) {
+  const deadline = Date.now() + 10 * 60 * 1000;
 
   while (Date.now() < deadline) {
     const history = await comfyJson(
-      `${COMFY_BASE}/history/${encodeURIComponent(promptId)}`,
+      `${baseUrl}/history/${encodeURIComponent(promptId)}`,
     );
 
     const result = history?.[promptId];
@@ -105,36 +252,31 @@ async function waitForOutput(promptId: string) {
     if (result) {
       const status = result?.status;
 
-      if (
-        status?.status_str === "error" ||
-        status?.completed === false
-      ) {
+      if (status?.status_str === "error") {
         throw new Error(
-          `OrbitSheets ComfyUI prompt failed: ${JSON.stringify(status)}`,
+          `H3 Character Card failed: ${JSON.stringify(status)}`,
         );
       }
 
-      const finalOutput = result?.outputs?.["70"];
-      const finalImages = Array.isArray(finalOutput?.images)
-        ? finalOutput.images
-        : [];
+      const image = firstOutput(result, "70");
+      const video = firstOutput(result, "79");
 
-      for (const image of finalImages) {
-        if (
-          String(image?.type || "") === "output" &&
-          String(image?.filename || "").trim()
-        ) {
-          return {
-            filename: String(image.filename),
-            subfolder: String(image.subfolder || ""),
-            type: "output",
-          };
-        }
+      if (image && video) {
+        return {
+          image,
+          video,
+          description: asString(
+            result?.outputs?.["141"]?.text?.[0],
+          ),
+          prompt: asString(
+            result?.outputs?.["136"]?.text?.[0],
+          ),
+        };
       }
 
       if (status?.completed === true) {
         throw new Error(
-          "OrbitSheets completed without a final Character Card image from output node 70.",
+          "H3 Character Card completed without both node 70 PNG and node 79 MP4 outputs.",
         );
       }
     }
@@ -143,8 +285,100 @@ async function waitForOutput(promptId: string) {
   }
 
   throw new Error(
-    `OrbitSheets timed out waiting for prompt ${promptId}`,
+    `H3 Character Card timed out waiting for prompt ${promptId}`,
   );
+}
+
+function proxyUrl(
+  output: ComfyOutput,
+  kind: "image" | "video",
+  backend: H3CardBackend,
+) {
+  const params = new URLSearchParams({
+    kind,
+    filename: output.filename,
+    subfolder: output.subfolder,
+    type: output.type,
+    backend,
+  });
+
+  return `/api/characters/orbitsheets-card?${params.toString()}`;
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const filename = asString(
+      request.nextUrl.searchParams.get("filename"),
+    );
+    const subfolder = asString(
+      request.nextUrl.searchParams.get("subfolder"),
+    );
+    const type =
+      asString(request.nextUrl.searchParams.get("type")) ||
+      "output";
+    const kind =
+      request.nextUrl.searchParams.get("kind") === "video"
+        ? "video"
+        : "image";
+
+    if (!filename || path.basename(filename) !== filename) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid filename." },
+        { status: 400 },
+      );
+    }
+
+    const backend =
+      request.nextUrl.searchParams.get("backend") === "rtx3090"
+        ? "rtx3090"
+        : "rtx5060ti";
+    const viewUrl = new URL(`${comfyBaseUrl(backend)}/view`);
+    viewUrl.searchParams.set("filename", filename);
+    viewUrl.searchParams.set("type", type);
+    if (subfolder) {
+      viewUrl.searchParams.set("subfolder", subfolder);
+    }
+
+    const response = await fetch(viewUrl, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `ComfyUI output fetch failed (${response.status}).`,
+        },
+        { status: 502 },
+      );
+    }
+
+    const bytes = await response.arrayBuffer();
+
+    return new NextResponse(new Uint8Array(bytes), {
+      status: 200,
+      headers: {
+        "Content-Type":
+          response.headers.get("content-type") ||
+          (kind === "video" ? "video/mp4" : "image/png"),
+        "Content-Length": String(bytes.byteLength),
+        "Cache-Control": "no-store",
+      },
+    });
+  } catch (error) {
+    console.error("[h3-character-card-view]", error);
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "H3 Character Card output fetch failed.",
+      },
+      { status: 500 },
+    );
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -154,234 +388,147 @@ export async function POST(request: NextRequest) {
     const sourceServerPath = asString(
       body.get("sourceServerPath"),
     );
-    const characterDescription = asString(
-      body.get("characterDescription"),
-    );
     const anatomyMode = asString(body.get("anatomyMode"));
+    const expression = normalizeExpression(
+      asString(body.get("expression")),
+    );
 
     if (!sourceServerPath) {
       return NextResponse.json(
-        { error: "sourceServerPath is required." },
+        {
+          ok: false,
+          error: "sourceServerPath is required.",
+        },
         { status: 400 },
       );
     }
 
     const source = path.resolve(sourceServerPath);
-
     await fs.access(source);
 
-    const inputDir = path.join(
-      COMFY_ROOT,
-      "input",
-      "otg_orbitsheets_character",
-    );
-
-    await fs.mkdir(inputDir, { recursive: true });
-
-    const sourceStem = path.parse(basenameSafe(source)).name;
-    const sourceName = `${Date.now()}-${sourceStem}-proportional-anchor.png`;
-    const target = path.join(inputDir, sourceName);
-
-    await prepareOrbitSheetsAnchor(source, target);
-
     const rawWorkflow = await fs.readFile(
-      ORBIT_WORKFLOW,
+      workflowPath(anatomyMode),
       "utf8",
     );
 
     const workflow = JSON.parse(rawWorkflow);
-    const info = await objectInfo();
 
-    const h3Model = resolveChoice(
-      info,
-      "UNETLoader",
-      "unet_name",
-      "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
-    );
-
-    const turboLora = resolveChoice(
-      info,
-      "LoraLoaderModelOnly",
-      "lora_name",
-      "minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors",
-    );
-
-    const description =
-      characterDescription ||
-      "the exact same character from Picture 1";
-
-    const freeform =
-      anatomyMode === "freeform"
-        ? [
-            "Preserve the subject's natural anatomy exactly.",
-            "Do not force humanoid anatomy.",
-            "If animal or quadruped, keep it naturally on all fours.",
-            "If creature, object, spirit, plant, aquatic, robotic, floating, or amorphous, preserve its natural full form.",
-          ].join(" ")
-        : [
-            "Preserve the exact same human identity, face, hairstyle, body proportions, outfit, colors, materials, and accessories.",
-          ].join(" ");
-
-    const prompt = `
-Create a six-view character reference turnaround of the exact same character from Picture 1.
-
-Identity lock:
-${description}
-${freeform}
-Preserve the exact same identity, colors, proportions, materials, markings, clothing, accessories, silhouette, and anatomy in every shot.
-Do not redesign the subject.
-
-Background:
-Plain seamless neutral grey studio backdrop with soft even reference lighting.
-
-Shot plan:
-[Shot 1] Full-body front view, entire character visible with generous margin.
-[Shot 2] Full-body left profile, exact 90-degree side view.
-[Shot 3] Full-body right profile, exact 90-degree side view.
-[Shot 4] Full-body rear view, directly from behind.
-[Shot 5] Full-body three-quarter front view, approximately 45 degrees.
-[Shot 6] Face or identity close-up, neutral expression where applicable.
-
-Each shot is static and locked-off.
-Use hard cuts between shots.
-No walking.
-No continuous orbit.
-No duplicate close-ups.
-No cropping.
-No extra characters.
-`.trim();
-
-    workflow["10"].inputs.value = description;
-
-    workflow["30"].inputs.visual_style =
-      "Cinematic, live-action, realistic studio character reference photography";
-    workflow["30"].inputs.backdrop =
-      "plain seamless neutral grey studio backdrop";
-    workflow["30"].inputs.framing =
-      "full body, generous margin";
-    workflow["30"].inputs.spoken_line = "";
-    workflow["30"].inputs.voice_description = "";
-    workflow["30"].inputs.ambient_sound = "";
-    workflow["30"].inputs.scared_shot = false;
-    workflow["30"].inputs.shot_seconds = 0.75;
-
-    workflow["90"] = {
-      class_type: "LoadImage",
-      inputs: {
-        image: `otg_orbitsheets_character/${sourceName}`,
-      },
-      _meta: {
-        title: "OTG Existing Character Source",
-      },
-    };
-
-    workflow["44"].inputs.first_frame = ["90", 0];
-    workflow["44"].inputs.prompt = prompt;
-    workflow["44"].inputs.width = ORBITSHEETS_ANCHOR_WIDTH;
-    workflow["44"].inputs.height = ORBITSHEETS_ANCHOR_HEIGHT;
-    workflow["44"].inputs.length = 124;
-
-    workflow["40"].inputs.unet_name = h3Model;
-
-    workflow["39"].inputs.lora_name = turboLora;
-    workflow["39"].inputs.strength_model = 1.0;
-
-    workflow["74"].inputs.model = ["39", 0];
-
-    delete workflow["73"];
-
-    workflow["47"].inputs.steps = 4;
-
-    workflow["60"].inputs.count = 6;
-    workflow["60"].inputs.mode = "sharpness_diversity";
-    workflow["60"].inputs.keep_first_frame = false;
-    workflow["60"].inputs.shots = 6;
-    workflow["60"].inputs.boards = 1;
-    workflow["60"].inputs.shot_split = "views (by content)";
-    workflow["60"].inputs.subject_hint = description;
-    workflow["60"].inputs.selection_brief =
-      "Select exactly one sharp representative frame from each distinct shot. Priority: full-body front, left profile, right profile, rear, three-quarter front, identity close-up. Reject the original anchor frame, duplicates, transition frames, cropped bodies, motion blur, anatomy errors, changed markings, changed clothing, and changed identity.";
-
-    delete workflow["60"].inputs.clip;
-
-    workflow["61"].inputs.columns = 2;
-    workflow["61"].inputs.cell_width = 512;
-    workflow["61"].inputs.padding = 8;
-    workflow["61"].inputs.label_frames = false;
-
-    workflow["70"].inputs.filename_prefix =
-      "otg-character-card-orbitsheets/Character Card OrbitSheets";
-
-    for (const nodeId of [
-      "20",
-      "21",
-      "22",
-      "25",
-      "26",
-      "27",
-      "28",
-      "29",
-      "80",
-      "51",
-      "52",
-      "71",
-      "72",
-      "75",
-      "76",
-      "77",
-    ]) {
-      delete workflow[nodeId];
-    }
-
-    const submission = await comfyJson(
-      `${COMFY_BASE}/prompt`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prompt: workflow,
-          client_id: `otg-orbitsheets-${Date.now()}`,
-        }),
-      },
-    );
-
-    const promptId = asString(
-      submission?.prompt_id || submission?.promptId,
-    );
-
-    if (!promptId) {
+    if (
+      !workflow?.["81"] ||
+      workflow["81"].class_type !== "LoadImage"
+    ) {
       throw new Error(
-        "OrbitSheets did not return a ComfyUI prompt id.",
+        "H3 card workflow is missing expected LoadImage node 81.",
       );
     }
 
-    const image = await waitForOutput(promptId);
+    applyShotPreset(workflow, anatomyMode, expression);
 
-    const url =
-      `/api/comfy-image?filename=${encodeURIComponent(image.filename)}` +
-      `&subfolder=${encodeURIComponent(image.subfolder)}` +
-      `&type=${encodeURIComponent(image.type)}`;
+    async function submitOnBackend(backend: H3CardBackend) {
+      const baseUrl = comfyBaseUrl(backend);
+      const backendWorkflow = JSON.parse(JSON.stringify(workflow));
+      const uploadedName =
+        await uploadSourceToBackend(source, baseUrl);
 
-    const serverPath = path.join(
-      COMFY_ROOT,
-      "output",
-      image.subfolder,
-      image.filename,
-    );
+      backendWorkflow["81"].inputs.image = uploadedName;
+
+      const submissionResponse =
+        await submitComfyPromptWith5060Lease({
+          baseUrl,
+          workerId: `api-character-h3-card-${backend}`,
+          init: {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              prompt: backendWorkflow,
+              client_id: `otg-h3-card-${backend}-${Date.now()}`,
+            }),
+          },
+        });
+
+      const submissionText =
+        await submissionResponse.text();
+
+      let submission: any = null;
+
+      try {
+        submission = JSON.parse(submissionText);
+      } catch {}
+
+      if (!submissionResponse.ok) {
+        throw new Error(
+          submission?.error?.message ||
+            submission?.error ||
+            submissionText ||
+            `ComfyUI /prompt failed (${submissionResponse.status}).`,
+        );
+      }
+
+      const promptId = asString(
+        submission?.prompt_id || submission?.promptId,
+      );
+
+      if (!promptId) {
+        throw new Error(
+          "H3 Character Card did not return a ComfyUI prompt id.",
+        );
+      }
+
+      return { backend, baseUrl, promptId };
+    }
+
+    let submission:
+      | { backend: H3CardBackend; baseUrl: string; promptId: string }
+      | null = null;
+
+    try {
+      submission = await submitOnBackend("rtx5060ti");
+    } catch (primaryError) {
+      console.warn(
+        "[h3-character-card] RTX 5060 Ti primary submission failed; trying RTX 3090 backup.",
+        primaryError,
+      );
+      submission = await submitOnBackend("rtx3090");
+    }
+
+    const { backend, baseUrl, promptId } = submission;
+    const result = await waitForOutputs(promptId, baseUrl);
+
+    const url = proxyUrl(result.image, "image", backend);
+    const videoUrl = proxyUrl(result.video, "video", backend);
+    const serverScheme =
+      backend === "rtx5060ti" ? "comfy5060" : "comfy3090";
 
     return NextResponse.json({
       ok: true,
+
+      // Preserve current Character Builder recovery contract.
       engine: "orbitsheets-h3",
       promptId,
+      backend,
+
       url,
-      serverPath,
-      filename: image.filename,
-      sourceName: image.filename,
+      serverPath: `${serverScheme}://output/${result.image.subfolder}/${result.image.filename}`,
+      filename: result.image.filename,
+      sourceName: result.image.filename,
+
+      videoUrl,
+      videoServerPath: `${serverScheme}://output/${result.video.subfolder}/${result.video.filename}`,
+      videoFilename: result.video.filename,
+      videoSourceName: result.video.filename,
+
+      generatedDescription: result.description,
+      generatedPrompt: result.prompt,
+
+      workflow:
+        anatomyMode === "freeform"
+          ? "freeform_card.api.json"
+          : "character_card.api.json",
     });
   } catch (error) {
-    console.error("[orbitsheets-character-card]", error);
+    console.error("[h3-character-card]", error);
 
     return NextResponse.json(
       {
@@ -389,7 +536,7 @@ No extra characters.
         error:
           error instanceof Error
             ? error.message
-            : "OrbitSheets Character Card failed.",
+            : "H3 Character Card failed.",
       },
       { status: 500 },
     );

@@ -11,10 +11,18 @@ import {
   type H3PromptGraph,
   type ProductionV2H3BackendId,
 } from "@/lib/production/h3Workflows";
+import {
+  ensureComfyClientProgressMonitor,
+  recordComfyPromptSubmitted,
+  waitForComfyClientProgressMonitor,
+} from "@/lib/comfyProgress";
 import { submitComfyPromptWithGpuLease } from "@/lib/workers/comfyPromptLease";
 
 type ObjectInfo = Record<string, {
-  input?: { required?: Record<string, unknown> };
+  input?: {
+    required?: Record<string, unknown>;
+    optional?: Record<string, unknown>;
+  };
 }>;
 
 export type H3BackendProbe = {
@@ -65,12 +73,18 @@ async function fetchWithTimeout(fetcher: typeof fetch, url: string, init: Reques
 }
 
 function choices(info: ObjectInfo, node: string, input: string): string[] {
-  const descriptor = info[node]?.input?.required?.[input];
+  const descriptor =
+    info[node]?.input?.required?.[input]
+    ?? info[node]?.input?.optional?.[input];
   if (!Array.isArray(descriptor)) return [];
   const first = descriptor[0];
   if (Array.isArray(first)) return first.map(clean).filter(Boolean);
   if (first && typeof first === "object" && Array.isArray((first as { options?: unknown }).options)) {
     return ((first as { options: unknown[] }).options).map(clean).filter(Boolean);
+  }
+  const second = descriptor[1];
+  if (second && typeof second === "object" && Array.isArray((second as { options?: unknown }).options)) {
+    return ((second as { options: unknown[] }).options).map(clean).filter(Boolean);
   }
   return [];
 }
@@ -244,6 +258,8 @@ export async function submitH3Prompt(args: {
   graph: H3PromptGraph;
   clientId: string;
   jobId: string;
+  ownerKey?: string | null;
+  deviceId?: string | null;
   workerId?: string;
   fetcher?: typeof fetch;
   preSubmitCleanup?: "free" | null;
@@ -253,6 +269,29 @@ export async function submitH3Prompt(args: {
 }) {
   const fetcher =
     args.fetcher || fetch;
+
+  ensureComfyClientProgressMonitor({
+    comfyBaseUrl:
+      H3_BACKEND_PROFILES[
+        args.backend
+      ].baseUrl,
+    clientId:
+      args.clientId,
+    idleTimeoutMs:
+      90 * 60_000,
+  });
+  await waitForComfyClientProgressMonitor({
+    comfyBaseUrl:
+      H3_BACKEND_PROFILES[
+        args.backend
+      ].baseUrl,
+    clientId:
+      args.clientId,
+    timeoutMs:
+      1500,
+  }).catch(
+    () => false,
+  );
 
   const response =
     await submitComfyPromptWithGpuLease({
@@ -343,6 +382,24 @@ export async function submitH3Prompt(args: {
       "ComfyUI returned a successful but unreadable prompt response; submission acceptance is ambiguous.",
     );
   }
+
+  recordComfyPromptSubmitted({
+    promptId,
+    ownerKey:
+      args.ownerKey
+      || args.jobId,
+    deviceId:
+      args.deviceId
+      || "",
+    clientId:
+      args.clientId,
+    comfyBaseUrl:
+      H3_BACKEND_PROFILES[
+        args.backend
+      ].baseUrl,
+    totalNodes:
+      Object.keys(args.graph).length,
+  });
 
   return {
     accepted: true as const,

@@ -14,6 +14,8 @@ export type AssetRecord = {
   name: string;
   description: string;
   defaultImage: AssetImageReference;
+  assetCard?: AssetImageReference;
+  previewVideo?: AssetImageReference;
   perspectives: Record<string, AssetImageReference>;
   createdAt: string;
   updatedAt: string;
@@ -67,12 +69,18 @@ function normalizeRecord(input: AssetRecordInput, previous?: AssetRecord | null)
     || normalizeImage({ displayImage: input.displayImage, workflowImage: input.workflowImage })
     || previous?.defaultImage;
   if (!defaultImage) throw new Error("Asset default image is required.");
+  const assetCard = normalizeImage(input.assetCard)
+    || previous?.assetCard;
+  const previewVideo = normalizeImage(input.previewVideo)
+    || previous?.previewVideo;
   return {
     type: "asset",
     id,
     name: name.slice(0, 120),
     description: clean(input.description) || previous?.description || "",
     defaultImage,
+    assetCard,
+    previewVideo,
     perspectives: { ...(previous?.perspectives || {}), ...normalizePerspectives(input.perspectives) },
     createdAt: previous?.createdAt || clean(input.createdAt) || now,
     updatedAt: now,

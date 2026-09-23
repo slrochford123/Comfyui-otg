@@ -708,6 +708,12 @@ def persist_character(
     metadata = job_input.get("metadata") if isinstance(job_input.get("metadata"), dict) else {}
     voice_settings = job_input.get("voiceSettings") if isinstance(job_input.get("voiceSettings"), dict) else {}
     original_source = clean(job_input.get("originalSourceImagePath")) or source_image_path
+    preview_video = (
+        character_references.get("previewVideo")
+        if isinstance(character_references, dict)
+        and isinstance(character_references.get("previewVideo"), dict)
+        else {}
+    )
 
     payload = {
         "id": character_id,
@@ -724,6 +730,8 @@ def persist_character(
         "characterCardPath": card_path,
         "characterCardWorkflowImagePath": card_path,
         "characterCardPreviewImagePath": card_path,
+        "characterCardPreviewVideoPath": clean(preview_video.get("serverPath")),
+        "characterCardPreviewVideoUrl": clean(preview_video.get("url")),
         "characterCardUrl": card_url,
         "characterReferences": character_references,
         "originalSourceImagePath": original_source,
@@ -875,6 +883,7 @@ def process_job_orbitsheets(
         or job_input.get("anatomyMode")
         or "freeform"
     )
+    expression = clean(job_input.get("expression") or "neutral")
 
     prior_result = (
         job.get("result")
@@ -890,6 +899,8 @@ def process_job_orbitsheets(
         "remoteWorker": True,
         "mock": False,
         "characterCardEngine": "orbitsheets-h3",
+        "anatomyMode": anatomy_mode,
+        "expression": expression,
     }
 
     checkpoint(
@@ -930,6 +941,7 @@ def process_job_orbitsheets(
                 "sourceServerPath": source_image_path,
                 "characterDescription": description,
                 "anatomyMode": anatomy_mode,
+                "expression": expression,
             },
             [],
             timeout=max(300, args.card_timeout_seconds),
@@ -943,6 +955,8 @@ def process_job_orbitsheets(
 
         orbit_url = clean(payload.get("url"))
         orbit_server_path = clean(payload.get("serverPath"))
+        orbit_video_url = clean(payload.get("videoUrl"))
+        orbit_video_server_path = clean(payload.get("videoServerPath"))
 
         if not orbit_url or not orbit_server_path:
             raise RuntimeError(
@@ -960,6 +974,11 @@ def process_job_orbitsheets(
             "url": orbit_url,
             "serverPath": orbit_server_path,
             "filename": clean(payload.get("filename")),
+            "videoUrl": orbit_video_url,
+            "videoServerPath": orbit_video_server_path,
+            "videoFilename": clean(payload.get("videoFilename")),
+            "anatomyMode": anatomy_mode,
+            "expression": expression,
         }
 
         result["orbitsheetsOutput"] = orbit_output
@@ -1084,23 +1103,44 @@ def process_job_orbitsheets(
         "sourceOutputPath": clean(
             orbit_output.get("serverPath")
         ),
+        "anatomyMode": anatomy_mode,
+        "expression": expression,
     }
+
+    video_ref = {
+        "serverPath": clean(orbit_output.get("videoServerPath")),
+        "url": clean(orbit_output.get("videoUrl")),
+        "filename": clean(orbit_output.get("videoFilename")),
+        "engine": "orbitsheets-h3",
+        "promptId": clean(orbit_output.get("promptId")),
+        "sourceOutputPath": clean(orbit_output.get("videoServerPath")),
+        "anatomyMode": anatomy_mode,
+        "expression": expression,
+    }
+    if not video_ref["serverPath"] and not video_ref["url"]:
+        video_ref = {}
 
     refs: Dict[str, Any] = {
         "pipelineVersion": 2,
         "status": "complete",
         "engine": "orbitsheets-h3",
+        "anatomyMode": anatomy_mode,
+        "expression": expression,
         "completionJobId": job_id,
         "body": {},
         "characterCard": card_ref,
         "completedAt": completed_at,
     }
+    if video_ref:
+        refs["previewVideo"] = video_ref
 
     result.update(
         {
             "characterId": character_id,
             "cardImagePath": card_path,
             "cardImageUrl": card_url,
+            "cardPreviewVideoPath": clean(video_ref.get("serverPath")) if video_ref else "",
+            "cardPreviewVideoUrl": clean(video_ref.get("url")) if video_ref else "",
             "characterReferences": refs,
             "status": "completed",
             "currentStage": "references_complete",

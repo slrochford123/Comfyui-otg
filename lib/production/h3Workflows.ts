@@ -47,8 +47,8 @@ export const H3_HQ_NATIVE_HEIGHT = H3_NATIVE_RESOLUTIONS.hq.height;
 export const H3_FPS = 24;
 export const H3_SAMPLER_STEPS = 8;
 export const H3_BACKEND_PRIORITY: readonly ProductionV2H3BackendId[] = [
-  "rtx5060ti",
   "rtx3090",
+  "rtx5060ti",
 ] as const;
 
 const WORKFLOW_ROOT = "comfy_workflows/internal/production-v2";
@@ -119,14 +119,14 @@ export const H3_BACKEND_PROFILES = {
     id: "rtx3090" as const,
     label: "RTX 3090",
     baseUrl: "http://100.75.162.64:8189",
-    diffusionModel: "minimax_h3_fl2va_pruned_fp8_scaled.safetensors",
+    diffusionModel: "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
     textEncoder: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
   },
   rtx5060ti: {
     id: "rtx5060ti" as const,
     label: "RTX 5060 Ti",
     baseUrl: "http://100.98.212.116:8188",
-    diffusionModel: "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    diffusionModel: "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
     textEncoder: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
   },
 } as const;
@@ -134,9 +134,9 @@ export const H3_BACKEND_PROFILES = {
 export const H3_SHARED_ASSETS = {
   videoVae: "minimax_h3_video_vae_fp16.safetensors",
   audioVae: "minimax_h3_audio_vae_fp32.safetensors",
-  turboLora: "MiniMax-H3/Acceleration/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
-  referenceTurboLora: "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
-  attention: "H3 SLA",
+  turboLora: "",
+  referenceTurboLora: "",
+  attention: "Comfy Kitchen",
 } as const;
 
 const H3_COMMON_REQUIRED_NODE_CLASSES = [
@@ -162,6 +162,8 @@ const H3_COMMON_REQUIRED_NODE_CLASSES = [
   "RandomNoise",
   "BasicGuider",
   "H3SLAAttention",
+  "ModelAttentionBackend",
+  "ModelPreviewOverrideKJ",
 ] as const;
 
 /**
@@ -192,6 +194,7 @@ export function h3ExpectedAssetChoicesForBackend(
     VAELoader: ["vae_name"],
     LoraLoaderModelOnly: ["lora_name"],
     ModelAttentionBackend: ["attention"],
+    ModelPreviewOverrideKJ: ["tiny_vae"],
     PathchSageAttentionKJ: ["sage_attention"],
   };
 
@@ -328,8 +331,15 @@ export function validateH3WorkflowTemplate(
   assertNode(graph, contract.outputVideoNodeId, "SaveVideo");
   assertNode(graph, "30", "UNETLoader");
   assertNode(graph, "15", "CLIPLoader");
-  assertNode(graph, "36", "LoraLoaderModelOnly");
   assertNode(graph, "38", "MiniMaxH3SigmaShift");
+  assertNode(
+    graph,
+    "41",
+    mode === "h3-reference-to-video"
+      ? "H3SLAAttention"
+      : "ModelAttentionBackend",
+  );
+  assertNode(graph, "164", "ModelPreviewOverrideKJ");
   assertNode(graph, "24", "BasicScheduler");
   assertNode(graph, "18", "KSamplerSelect");
   assertNode(graph, "21", "SamplerCustomAdvanced");
@@ -350,8 +360,8 @@ export function validateH3WorkflowTemplate(
     );
   }
 
-  if (graph["18"].inputs.sampler_name !== "euler") {
-    throw new Error("Qualified H3 sampler must be Euler.");
+  if (graph["18"].inputs.sampler_name !== recipe.sampler) {
+    throw new Error(`Qualified H3 sampler must be ${recipe.sampler}.`);
   }
 
   assertModelLink(
@@ -364,7 +374,7 @@ export function validateH3WorkflowTemplate(
     graph["38"].inputs.shift_video !== recipe.videoSigmaShift
     || graph["38"].inputs.shift_audio !== recipe.audioSigmaShift
   ) {
-    throw new Error("Qualified H3 sigma shifts must be video 6 / audio 3.");
+    throw new Error(`Qualified H3 sigma shifts must be video ${recipe.videoSigmaShift} / audio ${recipe.audioSigmaShift}.`);
   }
 
   const conditioning = graph[contract.conditioningNodeId];
@@ -426,76 +436,58 @@ export function validateH3WorkflowTemplate(
   }
 
   const unetName = clean(graph["30"].inputs.unet_name);
-  const turboName = clean(graph["36"].inputs.lora_name);
 
-  if (Number(graph["36"].inputs.strength_model) !== 1) {
-    throw new Error("Qualified H3 Turbo LoRA strength must be 1.");
+  const expectedUnetName = mode === "h3-reference-to-video"
+    ? "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+    : "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors";
+
+  if (unetName !== expectedUnetName) {
+    throw new Error(
+      `Qualified H3 route must use ${expectedUnetName}.`,
+    );
   }
 
-  assertModelLink(
-    graph["38"].inputs.model,
-    "36",
-    "MiniMaxH3SigmaShift",
-  );
-
   if (mode === "h3-reference-to-video") {
+    assertNode(graph, "36", "LoraLoaderModelOnly");
     if (
-      unetName
-      !== "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
-    ) {
-      throw new Error(
-        "Qualified H3 R2V must use the Ref2VA INT8 ConvRot diffusion model.",
-      );
-    }
-
-    if (
-      turboName
+      clean(graph["36"].inputs.lora_name)
       !== "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
     ) {
-      throw new Error(
-        "Qualified H3 R2V must use the official Ref2V Turbo LoRA.",
-      );
+      throw new Error("Qualified H3 R2V reference-video route must keep the Ref2V turbo 8-step LoRA.");
     }
+    assertModelLink(graph["36"].inputs.model, "30", "Ref2V turbo LoRA");
+    assertModelLink(graph["38"].inputs.model, "36", "MiniMaxH3SigmaShift");
   } else {
-    if (!/^minimax_h3_fl2va_/i.test(unetName)) {
-      throw new Error(
-        "Qualified H3 T2V/I2V must remain on the FL2VA diffusion family.",
-      );
-    }
-
-    if (!/minimax_h3_fl2v_turbo_8step/i.test(turboName)) {
-      throw new Error(
-        "Qualified H3 T2V/I2V must remain on the FL2V Turbo LoRA family.",
-      );
-    }
+    assertModelLink(graph["38"].inputs.model, "30", "MiniMaxH3SigmaShift");
   }
 
   if (classEntries(graph, "SpectrumApplyMiniMaxH3").length !== 0) {
     throw new Error("Qualified LQ/HQ H3 routes must not use obsolete Spectrum attention.");
   }
 
-  const sla = oneClassNode(graph, "H3SLAAttention");
-  const expectedDenseBackend = backend === "rtx5060ti"
-    ? "comfy_kitchen"
-    : "sage:qk_int8_pv_fp16_cuda";
-  const expectedSparsity = mode === "h3-reference-to-video" ? 0.85 : 0.9;
-
-  if (
-    sla.node.inputs.enabled !== true
-    || Number(sla.node.inputs.sparsity_ratio) !== expectedSparsity
-    || sla.node.inputs.block_size !== "64"
-    || Number(sla.node.inputs.min_seq_len) !== 8192
-    || Number(sla.node.inputs.dense_last_steps) !== 0
-    || sla.node.inputs.protect_audio !== true
-    || sla.node.inputs.dense_steps !== "0"
-    || sla.node.inputs.dense_backend !== expectedDenseBackend
-    || sla.node.inputs.disable_fp16_accum !== true
-  ) {
-    throw new Error(`Qualified ${backend} H3 SLA contract changed.`);
+  if (mode === "h3-reference-to-video") {
+    if (graph["41"].class_type !== "H3SLAAttention") {
+      throw new Error("H3 R2V reference-video routes must preserve H3SLAAttention from the uploaded workflow.");
+    }
+    if (graph["41"].inputs.engine !== "comfy_kitchen") {
+      throw new Error("H3 R2V reference-video routes must use the Comfy Kitchen H3 SLA engine.");
+    }
+  } else {
+    if (classEntries(graph, "H3SLAAttention").length !== 0) {
+      throw new Error("FastH3 B02 preview routes must use Comfy Kitchen attention, not H3 SLA.");
+    }
+    if (graph["41"].inputs.attention !== "comfy kitchen attention") {
+      throw new Error("FastH3 B02 preview routes must use Comfy Kitchen attention.");
+    }
+  }
+  if (graph["164"].inputs.tiny_vae !== "taeh3.safetensors") {
+    throw new Error("FastH3 B02 approximate preview must use taeh3.safetensors.");
   }
 
-  assertModelLink(sla.node.inputs.model, "38", "H3 SLA");
-  assertModelLink(graph["32"].inputs.model, sla.id, "BasicGuider");
+  assertModelLink(graph["41"].inputs.model, "38", "Comfy Kitchen attention");
+  assertModelLink(graph["164"].inputs.model, "41", "Approximate Preview");
+  assertModelLink(graph["32"].inputs.model, "164", "BasicGuider");
+  assertModelLink(graph["24"].inputs.model, "164", "BasicScheduler");
 
   return true;
 }
@@ -652,39 +644,12 @@ function assertQualifiedRecipeGraph(
     }
   }
 
-  if (!graph["36"] || graph["36"].class_type !== "LoraLoaderModelOnly") {
-    throw new Error(
-      `H3 recipe ${recipe.recipeId} requires the qualified Turbo8 LoRA node.`,
-    );
+  if (recipe.mode === "h3-reference-to-video") {
+    assertModelLink(graph["36"].inputs.model, "30", "Ref2V turbo LoRA base");
+    assertModelLink(graph["38"].inputs.model, "36", "MiniMaxH3SigmaShift Ref2V base");
+  } else {
+    assertModelLink(graph["38"].inputs.model, "30", "MiniMaxH3SigmaShift FastH3 base");
   }
-
-  if (Number(graph["36"].inputs.strength_model) !== 1) {
-    throw new Error(
-      `H3 recipe ${recipe.recipeId} Turbo8 LoRA strength must be 1.`,
-    );
-  }
-
-  const turboName = clean(graph["36"].inputs.lora_name);
-
-  if (
-    recipe.turboLoraFamily === "fl2v"
-    && !/minimax_h3_fl2v_turbo_8step/i.test(turboName)
-  ) {
-    throw new Error(
-      `H3 recipe ${recipe.recipeId} requires the FL2V Turbo8 LoRA family.`,
-    );
-  }
-
-  if (
-    recipe.turboLoraFamily === "r2v"
-    && turboName !== "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
-  ) {
-    throw new Error(
-      `H3 recipe ${recipe.recipeId} requires the Ref2V Turbo8 LoRA.`,
-    );
-  }
-
-  assertModelLink(graph["38"].inputs.model, "36", "MiniMaxH3SigmaShift Turbo8 base");
 }
 
 function applyQualifiedH3ProductionRecipe(
@@ -711,7 +676,7 @@ function applyQualifiedH3ProductionRecipe(
 
   return {
     recipe,
-    baseModelNodeId: "36",
+    baseModelNodeId: recipe.mode === "h3-reference-to-video" ? "36" : "30",
   };
 }
 
@@ -751,10 +716,7 @@ function applyH3UserLoraChain(
     previousNodeId = nodeId;
   });
 
-  graph["38"].inputs.model = [
-    previousNodeId,
-    0,
-  ];
+  graph["38"].inputs.model = [previousNodeId, 0];
 
   return selected;
 }

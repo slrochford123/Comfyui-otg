@@ -182,6 +182,8 @@ export async function POST(req: NextRequest) {
       characterCardPath: body?.characterCardPath,
       characterCardWorkflowImagePath: body?.characterCardWorkflowImagePath,
       characterCardPreviewImagePath: body?.characterCardPreviewImagePath,
+      characterCardPreviewVideoPath: body?.characterCardPreviewVideoPath,
+      characterCardPreviewVideoUrl: body?.characterCardPreviewVideoUrl,
       characterReferences: body?.characterReferences,
       defaultCharacterImagePath: body?.defaultCharacterImagePath,
       defaultCharacterPreviewImagePath: body?.defaultCharacterPreviewImagePath,

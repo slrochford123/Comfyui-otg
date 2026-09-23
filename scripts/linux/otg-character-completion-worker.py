@@ -708,6 +708,12 @@ def persist_character(
     metadata = job_input.get("metadata") if isinstance(job_input.get("metadata"), dict) else {}
     voice_settings = job_input.get("voiceSettings") if isinstance(job_input.get("voiceSettings"), dict) else {}
     original_source = clean(job_input.get("originalSourceImagePath")) or source_image_path
+    preview_video = (
+        character_references.get("previewVideo")
+        if isinstance(character_references, dict)
+        and isinstance(character_references.get("previewVideo"), dict)
+        else {}
+    )
 
     payload = {
         "id": character_id,
@@ -724,6 +730,8 @@ def persist_character(
         "characterCardPath": card_path,
         "characterCardWorkflowImagePath": card_path,
         "characterCardPreviewImagePath": card_path,
+        "characterCardPreviewVideoPath": clean(preview_video.get("serverPath")),
+        "characterCardPreviewVideoUrl": clean(preview_video.get("url")),
         "characterCardUrl": card_url,
         "characterReferences": character_references,
         "originalSourceImagePath": original_source,
@@ -819,7 +827,457 @@ def find_existing_completed_character(
     return None
 
 
+
+# OTG_ORBITSHEETS_CHARACTER_COMPLETION_TEST_V1
+
+def process_job_orbitsheets(
+    args: argparse.Namespace,
+    job: Dict[str, Any],
+) -> None:
+    owner_key = clean(job.get("ownerKey"))
+    job_id = clean(job.get("jobId"))
+
+    job_input = (
+        job.get("input")
+        if isinstance(job.get("input"), dict)
+        else {}
+    )
+
+    character_id = clean(
+        job.get("characterId")
+        or job_input.get("characterId")
+        or job_input.get("id")
+    )
+
+    source_image_path = clean(
+        job_input.get("sourceImagePath")
+        or job_input.get("fullBodyImagePath")
+        or job_input.get("defaultCharacterSourceImagePath")
+        or job_input.get("imagePath")
+    )
+
+    if not owner_key or not job_id or not character_id or not source_image_path:
+        raise RuntimeError(
+            "OrbitSheets character completion job is missing ownerKey, "
+            "jobId, characterId, or sourceImagePath."
+        )
+
+    description = clean(
+        job_input.get("description")
+        or job_input.get("globalPromptIdentityBlock")
+        or job_input.get("promptReadyDescription")
+        or job_input.get("characterDescription")
+        or job_input.get("characterName")
+        or job_input.get("name")
+    )
+
+    if not description:
+        description = (
+            "Preserve the exact identity, appearance, proportions, "
+            "materials, colors, markings, clothing, accessories, face, "
+            "and body design of the supplied character in every view."
+        )
+
+    anatomy_mode = clean(
+        job_input.get("characterAnatomyMode")
+        or job_input.get("anatomyMode")
+        or "freeform"
+    )
+    expression = clean(job_input.get("expression") or "neutral")
+
+    prior_result = (
+        job.get("result")
+        if isinstance(job.get("result"), dict)
+        else {}
+    )
+
+    result: Dict[str, Any] = {
+        **prior_result,
+        "characterId": character_id,
+        "sourceImagePath": source_image_path,
+        "workerId": args.worker_id,
+        "remoteWorker": True,
+        "mock": False,
+        "characterCardEngine": "orbitsheets-h3",
+        "anatomyMode": anatomy_mode,
+        "expression": expression,
+    }
+
+    checkpoint(
+        args,
+        owner_key,
+        job_id,
+        10,
+        "orbitsheets_preflight",
+        "OrbitSheets H3 Character Card worker claimed the character.",
+        result,
+    )
+
+    orbit_output = prior_result.get("orbitsheetsOutput")
+
+    if not isinstance(orbit_output, dict):
+        orbit_output = {}
+
+    orbit_url = clean(orbit_output.get("url"))
+
+    if not orbit_url:
+        checkpoint(
+            args,
+            owner_key,
+            job_id,
+            20,
+            "generating_orbitsheets_card",
+            "Generating the six-view OrbitSheets H3 Character Card.",
+            result,
+        )
+
+        payload = multipart_post(
+            build_url(
+                args.base_url,
+                "/api/characters/orbitsheets-card",
+            ),
+            auth_headers(args, owner_key),
+            {
+                "sourceServerPath": source_image_path,
+                "characterDescription": description,
+                "anatomyMode": anatomy_mode,
+                "expression": expression,
+            },
+            [],
+            timeout=max(300, args.card_timeout_seconds),
+        )
+
+        if not payload.get("ok"):
+            raise RuntimeError(
+                "OrbitSheets Character Card request failed: "
+                + json.dumps(payload)[:2000]
+            )
+
+        orbit_url = clean(payload.get("url"))
+        orbit_server_path = clean(payload.get("serverPath"))
+        orbit_video_url = clean(payload.get("videoUrl"))
+        orbit_video_server_path = clean(payload.get("videoServerPath"))
+
+        if not orbit_url or not orbit_server_path:
+            raise RuntimeError(
+                "OrbitSheets Character Card returned no final URL "
+                "or serverPath."
+            )
+
+        orbit_output = {
+            "engine": clean(payload.get("engine"))
+            or "orbitsheets-h3",
+            "promptId": clean(
+                payload.get("promptId")
+                or payload.get("prompt_id")
+            ),
+            "url": orbit_url,
+            "serverPath": orbit_server_path,
+            "filename": clean(payload.get("filename")),
+            "videoUrl": orbit_video_url,
+            "videoServerPath": orbit_video_server_path,
+            "videoFilename": clean(payload.get("videoFilename")),
+            "anatomyMode": anatomy_mode,
+            "expression": expression,
+        }
+
+        result["orbitsheetsOutput"] = orbit_output
+
+        checkpoint(
+            args,
+            owner_key,
+            job_id,
+            78,
+            "orbitsheets_card_ready",
+            "OrbitSheets H3 six-view Character Card rendered.",
+            result,
+        )
+
+    durable = prior_result.get("durableCharacterCard")
+
+    if not isinstance(durable, dict):
+        durable = {}
+
+    card_path = clean(durable.get("serverPath"))
+    card_url = clean(
+        durable.get("fileUrl")
+        or durable.get("url")
+    )
+
+    if not card_path:
+        orbit_server_path = clean(
+            orbit_output.get("serverPath")
+        )
+        orbit_url = clean(
+            orbit_output.get("url")
+        )
+
+        if (
+            orbit_server_path
+            and os.path.isfile(orbit_server_path)
+        ):
+            card_bytes = Path(
+                orbit_server_path
+            ).read_bytes()
+
+            if not card_bytes:
+                raise RuntimeError(
+                    "OrbitSheets local output file is empty: "
+                    + orbit_server_path
+                )
+
+            durable_upload = upload_character_asset_bytes(
+                args,
+                owner_key,
+                character_id,
+                "character-card",
+                card_bytes,
+            )
+
+            durable = {
+                "serverPath": clean(
+                    durable_upload.get("serverPath")
+                ),
+                "fileUrl": clean(
+                    durable_upload.get("url")
+                ),
+                "sourceServerPath": orbit_server_path,
+                "copyMode": "local-server-path",
+            }
+
+        elif orbit_url:
+            durable = upload_card(
+                args,
+                owner_key,
+                character_id,
+                build_url(
+                    args.base_url,
+                    orbit_url,
+                ),
+            )
+
+            durable["copyMode"] = "app-image-url"
+
+        else:
+            raise RuntimeError(
+                "OrbitSheets result has neither a readable "
+                "serverPath nor an image URL for durable upload."
+            )
+
+        card_path = clean(
+            durable.get("serverPath")
+        )
+        card_url = clean(
+            durable.get("fileUrl")
+            or durable.get("url")
+        )
+
+        if not card_path:
+            raise RuntimeError(
+                "Durable OrbitSheets Character Card upload "
+                "returned no serverPath."
+            )
+
+        result["durableCharacterCard"] = durable
+
+        checkpoint(
+            args,
+            owner_key,
+            job_id,
+            90,
+            "persisting_orbitsheets_card",
+            "OrbitSheets Character Card copied into durable character storage.",
+            result,
+        )
+
+    completed_at = time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ",
+        time.gmtime(),
+    )
+
+    card_ref = {
+        "serverPath": card_path,
+        "url": card_url,
+        "engine": "orbitsheets-h3",
+        "promptId": clean(orbit_output.get("promptId")),
+        "sourceOutputPath": clean(
+            orbit_output.get("serverPath")
+        ),
+        "anatomyMode": anatomy_mode,
+        "expression": expression,
+    }
+
+    video_ref = {
+        "serverPath": clean(orbit_output.get("videoServerPath")),
+        "url": clean(orbit_output.get("videoUrl")),
+        "filename": clean(orbit_output.get("videoFilename")),
+        "engine": "orbitsheets-h3",
+        "promptId": clean(orbit_output.get("promptId")),
+        "sourceOutputPath": clean(orbit_output.get("videoServerPath")),
+        "anatomyMode": anatomy_mode,
+        "expression": expression,
+    }
+    if not video_ref["serverPath"] and not video_ref["url"]:
+        video_ref = {}
+
+    refs: Dict[str, Any] = {
+        "pipelineVersion": 2,
+        "status": "complete",
+        "engine": "orbitsheets-h3",
+        "anatomyMode": anatomy_mode,
+        "expression": expression,
+        "completionJobId": job_id,
+        "body": {},
+        "characterCard": card_ref,
+        "completedAt": completed_at,
+    }
+    if video_ref:
+        refs["previewVideo"] = video_ref
+
+    result.update(
+        {
+            "characterId": character_id,
+            "cardImagePath": card_path,
+            "cardImageUrl": card_url,
+            "cardPreviewVideoPath": clean(video_ref.get("serverPath")) if video_ref else "",
+            "cardPreviewVideoUrl": clean(video_ref.get("url")) if video_ref else "",
+            "characterReferences": refs,
+            "status": "completed",
+            "currentStage": "references_complete",
+            "completedAt": completed_at,
+        }
+    )
+
+    if job_input.get("deferCharacterSave") is True:
+        result["deferredCharacterSave"] = True
+
+        complete_job(
+            args,
+            owner_key,
+            job_id,
+            result,
+        )
+
+        log(
+            f"[PASS] OrbitSheets deferred Character Card complete "
+            f"character={character_id}; job={job_id}"
+        )
+        return
+
+    checkpoint(
+        args,
+        owner_key,
+        job_id,
+        94,
+        "persisting_character",
+        "OrbitSheets Character Card complete. Saving canonical character record.",
+        result,
+    )
+
+    saved_character = find_existing_completed_character(
+        args,
+        owner_key,
+        character_id,
+        job_id,
+    )
+
+    if saved_character is None:
+        saved_character = persist_character(
+            args,
+            owner_key,
+            job_input,
+            card_path,
+            card_url,
+            refs,
+        )
+
+    result.update(
+        {
+            "savedCharacterId": clean(
+                saved_character.get("id")
+            )
+            or character_id,
+            "character": saved_character,
+            "status": "completed",
+            "currentStage": "completed",
+        }
+    )
+
+    complete_job(
+        args,
+        owner_key,
+        job_id,
+        result,
+    )
+
+    log(
+        f"[PASS] OrbitSheets Character Card character package complete "
+        f"character={character_id}; job={job_id}"
+    )
+
+
 def process_job(args: argparse.Namespace, job: Dict[str, Any]) -> None:
+    if clean(getattr(args, "card_engine", "legacy")) == "orbitsheets":
+        try:
+            process_job_orbitsheets(args, job)
+            return
+        except Exception as orbit_error:
+            message = str(orbit_error)
+
+            deterministic_fallback = any(
+                token in message
+                for token in (
+                    "HTTP 400 ",
+                    "HTTP 404 ",
+                    "HTTP 409 ",
+                    "HTTP 422 ",
+                    "HTTP 503 ",
+                )
+            )
+
+            if deterministic_fallback:
+                owner_key = clean(job.get("ownerKey"))
+                job_id = clean(job.get("jobId"))
+
+                log(
+                    "[fallback] OrbitSheets deterministic failure; "
+                    "using legacy Character Card pipeline: "
+                    + message
+                )
+
+                if owner_key and job_id:
+                    checkpoint(
+                        args,
+                        owner_key,
+                        job_id,
+                        15,
+                        "orbitsheets_fallback",
+                        "OrbitSheets unavailable. Falling back to the legacy Character Card generator.",
+                        {
+                            "characterCardEngine": "legacy-fallback",
+                            "orbitsheetsError": message,
+                        },
+                    )
+            else:
+                owner_key = clean(job.get("ownerKey"))
+                job_id = clean(job.get("jobId"))
+
+                if owner_key and job_id:
+                    fail_job(
+                        args,
+                        owner_key,
+                        job_id,
+                        message,
+                        {
+                            "characterCardEngine": "orbitsheets-h3",
+                            "status": "failed",
+                            "currentStage": "failed",
+                            "orbitsheetsError": message,
+                        },
+                    )
+
+                raise
+
     owner_key = clean(job.get("ownerKey"))
     job_id = clean(job.get("jobId"))
     job_input = job.get("input") if isinstance(job.get("input"), dict) else {}
@@ -1288,6 +1746,14 @@ def main() -> int:
     parser.add_argument("--interval-seconds", type=int, default=10)
     parser.add_argument("--card-timeout-seconds", type=int, default=1200)
     parser.add_argument("--once", action="store_true")
+    parser.add_argument(
+        "--card-engine",
+        choices=("legacy", "orbitsheets"),
+        default=os.environ.get(
+            "OTG_CHARACTER_CARD_ENGINE",
+            "orbitsheets",
+        ),
+    )
     args = parser.parse_args()
 
     if not clean(args.worker_token):

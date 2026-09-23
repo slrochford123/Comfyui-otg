@@ -570,7 +570,7 @@ function qwenPayload(
         1.08,
 
       num_predict:
-        600,
+        2048,
     },
   };
 }
@@ -785,6 +785,20 @@ function parseGeneration(
         || json.message
         || `Local prompt model failed with HTTP ${responseStatus}.`,
       ),
+    );
+  }
+
+  const doneReason =
+    String(
+      json.done_reason
+      || "",
+    )
+      .trim()
+      .toLowerCase();
+
+  if (doneReason === "length") {
+    throw new Error(
+      "The local Prompt Builder response was truncated before completion. Please try again.",
     );
   }
 

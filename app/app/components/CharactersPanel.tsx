@@ -3385,16 +3385,39 @@ async function submitLegacyCharacterCardJob(instruction: string, sourceServerPat
 
   return { promptId };
 }
+const CHARACTER_CARD_EXPRESSIONS = [
+  "neutral",
+  "happy",
+  "smiling",
+  "sad",
+  "angry",
+  "surprised",
+  "scared",
+  "disgusted",
+  "shy/embarrassed",
+  "confident",
+  "serious",
+  "laughing",
+  "crying",
+  "smirking",
+  "confused",
+] as const;
+
+type CharacterCardExpression =
+  (typeof CHARACTER_CARD_EXPRESSIONS)[number];
+
 async function submitOrbitSheetsCharacterCardJob(
   instruction: string,
   sourceServerPath: string,
   anatomyMode: CharacterAnatomyMode,
+  expression: CharacterCardExpression,
 ) {
   const body = new FormData();
 
   body.set("sourceServerPath", sourceServerPath);
   body.set("characterDescription", instruction);
   body.set("anatomyMode", anatomyMode);
+  body.set("expression", expression);
 
   const response = await fetch("/api/characters/orbitsheets-card", {
     method: "POST",
@@ -4084,6 +4107,7 @@ function CharacterBuilder({
   const [uploadedImage, setUploadedImage] = useState<CandidateImage | null>(null);
   const [imageCompleteness, setImageCompleteness] = useState<ImageCompleteness>("full_body");
   const [characterAnatomyMode, setCharacterAnatomyMode] = useState<CharacterAnatomyMode>("standard");
+  const [characterCardExpression, setCharacterCardExpression] = useState<CharacterCardExpression>("neutral");
   const [characterInputMode, setCharacterInputMode] = useState<CharacterInputMode>("create");
   const [sourceFraming, setSourceFraming] = useState<SourceFraming>("full_body");
   const [fullBodyStatus, setFullBodyStatus] = useState<FullBodyStatus>("not_required");
@@ -4314,6 +4338,9 @@ const [characterBackgroundStatus, setCharacterBackgroundStatus] = useState("");
       if (typeof saved.selectedCandidateId === "string") setSelectedCandidateId(saved.selectedCandidateId);
       if ("uploadedImage" in saved) setUploadedImage(saved.uploadedImage || null);
       if (saved.characterAnatomyMode === "standard" || saved.characterAnatomyMode === "freeform") setCharacterAnatomyMode(saved.characterAnatomyMode);
+      if ((CHARACTER_CARD_EXPRESSIONS as readonly string[]).includes(saved.characterCardExpression)) {
+        setCharacterCardExpression(saved.characterCardExpression as CharacterCardExpression);
+      }
       if (saved.characterInputMode === "create" || saved.characterInputMode === "upload") setCharacterInputMode(saved.characterInputMode);
       if (saved.sourceFraming === "face" || saved.sourceFraming === "half_body" || saved.sourceFraming === "full_body") setSourceFraming(saved.sourceFraming);
       if (saved.fullBodyStatus === "not_required" || saved.fullBodyStatus === "required" || saved.fullBodyStatus === "generated" || saved.fullBodyStatus === "approved") {
@@ -4495,6 +4522,7 @@ const [characterBackgroundStatus, setCharacterBackgroundStatus] = useState("");
       selectedCandidateId,
       uploadedImage,
       characterAnatomyMode,
+      characterCardExpression,
       characterInputMode,
       sourceFraming,
       fullBodyStatus,
@@ -8621,7 +8649,7 @@ async function loadCharacters() {
       processedSource?.serverPath || "",
     ).trim();
 
-    if (recoverySourceServerPathV1) {
+    if (options.forSave && recoverySourceServerPathV1) {
       try {
         const recoveryResponseV1 = await characterFetch(
           "/api/characters/completion",
@@ -8815,6 +8843,7 @@ async function loadCharacters() {
         instruction,
         sourceServerPath,
         characterAnatomyMode,
+        characterCardExpression,
       );
 
       /*
@@ -12595,8 +12624,47 @@ async function saveCharacter() {
 
           {step === "card" ? (
             <Panel title="Character Card">
-              <p className="text-sm text-zinc-400">Create consistent face, front, back, left side, and right side reference views from the selected full-body character.</p>
+              <p className="text-sm text-zinc-400">
+                {characterAnatomyMode === "freeform"
+                  ? "Creates six full-body/full-form views: front, back, left profile, right profile, front 3/4 left, and back 3/4 right."
+                  : "Creates six reference views: full-body front, back, left profile, and right profile, plus a waist-up front view and a close-up front view."}
+              </p>
               {selectedFullBody ? <img src={otgDisplayImageUrlV36BP6(selectedFullBody.url)} alt="Processed default character image" className="mt-4 max-h-[520px] rounded-xl border border-zinc-800 object-contain" /> : null}
+              <div className="mt-5 max-w-sm space-y-2">
+                <label
+                  htmlFor="character-card-expression"
+                  className="block text-sm font-medium text-zinc-300"
+                >
+                  Expression
+                </label>
+
+                <select
+                  id="character-card-expression"
+                  value={characterCardExpression}
+                  onChange={(event) =>
+                    setCharacterCardExpression(
+                      event.target.value as CharacterCardExpression,
+                    )
+                  }
+                  disabled={loading || !selectedFullBody}
+                  className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 disabled:opacity-50"
+                >
+                  {CHARACTER_CARD_EXPRESSIONS.map((expression) => (
+                    <option key={expression} value={expression}>
+                      {expression === "shy/embarrassed"
+                        ? "Shy / Embarrassed"
+                        : expression.charAt(0).toUpperCase() +
+                          expression.slice(1)}
+                    </option>
+                  ))}
+                </select>
+
+                <p className="text-xs text-zinc-500">
+                  Controls the character's expression across the generated
+                  reference views.
+                </p>
+              </div>
+
               {characterAnatomyMode === "freeform" && selectedFullBody ? (
                 <div className="mt-5 space-y-3 rounded-xl border border-cyan-400/30 bg-cyan-400/10 p-4">
                   <p className="text-sm text-cyan-100">{FREEFORM_FULL_BODY_NOTICE}</p>

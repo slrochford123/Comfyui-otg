@@ -151,7 +151,7 @@ describe("H3 Studio redesign contracts", () => {
     ).toThrow("not approved");
   });
 
-  it("inserts optional LoRAs after the locked Turbo node without changing Turbo", () => {
+  it("inserts optional LoRAs after the validated FastH3 base without changing B02 preview settings", () => {
     const built = buildH3Workflow({
       backend: "rtx3090",
       mode: "h3-text-to-video",
@@ -169,15 +169,16 @@ describe("H3 Studio redesign contracts", () => {
         },
       ],
     });
-    expect(built.graph["36"].inputs.strength_model).toBe(1);
+    expect(built.graph["30"].inputs.unet_name).toBe("fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors");
     expect(built.graph["70"]).toMatchObject({
       class_type: "LoraLoaderModelOnly",
       inputs: {
-        model: ["36", 0],
+        model: ["30", 0],
         lora_name: "creative.safetensors",
         strength_model: 0.65,
       },
     });
     expect(built.graph["38"].inputs.model).toEqual(["70", 0]);
+    expect(built.graph["164"].inputs.tiny_vae).toBe("taeh3.safetensors");
   });
 });

@@ -63,6 +63,27 @@ type CharacterModelId =
   | "boogu"
   | "mage-flow";
 
+const CHARACTER_CARD_EXPRESSIONS = [
+  "neutral",
+  "happy",
+  "smiling",
+  "sad",
+  "angry",
+  "surprised",
+  "scared",
+  "disgusted",
+  "shy/embarrassed",
+  "confident",
+  "serious",
+  "laughing",
+  "crying",
+  "smirking",
+  "confused",
+] as const;
+
+type CharacterCardExpression =
+  (typeof CHARACTER_CARD_EXPRESSIONS)[number];
+
 const CHARACTER_IMAGE_MODELS: Array<{
   id: CharacterModelId;
   label: string;
@@ -97,6 +118,25 @@ const CHARACTER_IMAGE_MODELS: Array<{
 
 function cn(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
+}
+
+function characterCardExpressionLabel(expression: CharacterCardExpression) {
+  return expression === "shy/embarrassed"
+    ? "Shy / Embarrassed"
+    : expression.charAt(0).toUpperCase() + expression.slice(1);
+}
+
+function normalizeCharacterCardExpression(
+  value: unknown,
+): CharacterCardExpression {
+  const normalized = String(value || "").trim().toLowerCase();
+  return (CHARACTER_CARD_EXPRESSIONS as readonly string[]).includes(normalized)
+    ? (normalized as CharacterCardExpression)
+    : "neutral";
+}
+
+function normalizeCharacterCardAnatomyMode(value: unknown) {
+  return String(value || "").trim() === "freeform" ? "freeform" : "standard";
 }
 
 function BackButton({
@@ -350,6 +390,10 @@ function CharacterCreateSetup({
   const [processedCharacterSource, setProcessedCharacterSource] = React.useState<CharacterCreateCandidate | null>(null);
   const [characterCard, setCharacterCard] = React.useState<CharacterCreateCandidate | null>(null);
   const [characterCardStatus, setCharacterCardStatus] = React.useState<"idle" | "running" | "error" | "accepted">("idle");
+  const [characterCardExpression, setCharacterCardExpression] =
+    React.useState<CharacterCardExpression>("neutral");
+  const [characterCardLockedExpression, setCharacterCardLockedExpression] =
+    React.useState<CharacterCardExpression | null>(null);
   const [characterFinalizeStep, setCharacterFinalizeStep] = React.useState(false);
   // OTG_CHARACTER_HUB_REFERENCE_STATE_V1
   const [characterReferences, setCharacterReferences] =
@@ -378,6 +422,10 @@ function CharacterCreateSetup({
     Number((characterReferences as any)?.pipelineVersion || 0) >= 2 &&
     String((characterReferences as any)?.engine || "").trim() ===
       "orbitsheets-h3";
+  const characterCardExpressionLocked =
+    characterCardStatus === "running" ||
+    characterCardInFlightRef.current ||
+    Boolean(characterCardLockedExpression && characterCard?.serverPath);
 
   // OTG_CHARACTER_HUB_DRAFT_RUNTIME_V1
   React.useEffect(() => {
@@ -430,6 +478,19 @@ function CharacterCreateSetup({
             setCompletionPrompt(saved.completionPrompt);
           }
           setCharacterCard(saved.characterCard || null);
+          const restoredExpression = normalizeCharacterCardExpression(
+            saved.characterCardExpression,
+          );
+          setCharacterCardExpression(restoredExpression);
+          setCharacterCardLockedExpression(
+            saved.characterCardLockedExpression
+              ? normalizeCharacterCardExpression(
+                  saved.characterCardLockedExpression,
+                )
+              : saved.characterCard?.serverPath
+                ? restoredExpression
+                : null,
+          );
           setCharacterCardStep(Boolean(saved.characterCardStep));
           setCharacterFinalizeStep(Boolean(saved.characterFinalizeStep));
           setCharacterReferences(saved.characterReferences || null);
@@ -523,6 +584,8 @@ function CharacterCreateSetup({
               uploadFraming,
               uploadedSource,
               completionPrompt,
+              characterCardExpression,
+              characterCardLockedExpression,
               characterCardStep,
               characterCard,
               characterCardStatus,
@@ -556,6 +619,8 @@ function CharacterCreateSetup({
     uploadFraming,
     uploadedSource,
     completionPrompt,
+    characterCardExpression,
+    characterCardLockedExpression,
     characterCardStep,
     characterCard,
     characterCardStatus,
@@ -716,7 +781,11 @@ function CharacterCreateSetup({
     if (candidate.id !== selectedCreateCandidateId) {
       setProcessedCharacterSource(null);
       setCharacterCard(null);
+      setCharacterCardLockedExpression(null);
       setCharacterCardStatus("idle");
+      setCharacterReferences(null);
+      setCharacterCompletionJobId("");
+      setCharacterCompletionProgress(0);
     }
     setSelectedCreateCandidateId(candidate.id);
     setCreateMessage(
@@ -734,7 +803,11 @@ function CharacterCreateSetup({
         setSelectedCreateCandidateId("");
         setProcessedCharacterSource(null);
         setCharacterCard(null);
+        setCharacterCardLockedExpression(null);
         setCharacterCardStatus("idle");
+        setCharacterReferences(null);
+        setCharacterCompletionJobId("");
+        setCharacterCompletionProgress(0);
       }
 
       return remaining;
@@ -929,6 +1002,12 @@ function CharacterCreateSetup({
         };
       }
       setProcessedCharacterSource(processed);
+      setCharacterCard(null);
+      setCharacterCardStatus("idle");
+      setCharacterCardLockedExpression(null);
+      setCharacterReferences(null);
+      setCharacterCompletionJobId("");
+      setCharacterCompletionProgress(0);
       setCharacterCardStep(true);
       setCreateMessage("Processed source image is ready. Create the Character Card when ready.");
     } catch (error: any) {
@@ -949,6 +1028,7 @@ function CharacterCreateSetup({
     setSelectedCreateCandidateId("");
     setProcessedCharacterSource(null);
     setCharacterCard(null);
+    setCharacterCardLockedExpression(null);
     setCharacterCardStep(false);
     setCharacterFinalizeStep(false);
     setCharacterCardStatus("idle");
@@ -1003,6 +1083,7 @@ function CharacterCreateSetup({
       setSelectedCreateCandidateId("");
       setProcessedCharacterSource(null);
       setCharacterCard(null);
+      setCharacterCardLockedExpression(null);
       setCharacterCardStep(false);
       setCharacterFinalizeStep(false);
       setCreateMessage("Uploaded source is ready. Confirm what the image contains.");
@@ -1119,6 +1200,7 @@ function CharacterCreateSetup({
 
         const body = refs?.body;
         const card = refs?.characterCard;
+        const previewVideo = refs?.previewVideo;
 
         const isOrbitSheetsV2 =
           Number((refs as any)?.pipelineVersion || 0) >= 2 &&
@@ -1144,11 +1226,14 @@ function CharacterCreateSetup({
         }
 
         setCharacterReferences(refs);
+        setCharacterCardLockedExpression(characterCardExpression);
         setCharacterCard({
           ...(processedCharacterSource as CharacterCreateCandidate),
           id: `${isOrbitSheetsV2 ? "orbitsheets-card" : "four-angle-card"}-${jobId}`,
           imageUrl: characterReferenceAssetUrl(card),
           serverPath: card.serverPath,
+          previewVideoUrl: String(previewVideo?.url || "").trim(),
+          previewVideoServerPath: String(previewVideo?.serverPath || "").trim(),
           promptId: String((card as any)?.promptId || refs?.anglePromptId || jobId),
           modelLabel: isOrbitSheetsV2 ? "OrbitSheets H3 Character Card" : "Four-angle Character Card",
           styleLabel: isOrbitSheetsV2 ? "Six-view Character Card" : "Front / Back / Left / Right",
@@ -1182,26 +1267,38 @@ function CharacterCreateSetup({
   async function createCharacterCard() {
     if (
       characterCardInFlightRef.current ||
-      !processedCharacterSource?.serverPath ||
-      !characterHubDraftId
+      !processedCharacterSource?.serverPath
     ) {
       return;
     }
 
+    const requestedExpression = characterCardExpression;
+    const requestedAnatomyMode = normalizeCharacterCardAnatomyMode(mode);
+    const existingCardWillBeRegenerated = Boolean(characterCard?.serverPath);
+    const draftId = characterHubDraftId || newCharacterHubDraftId();
+    if (!characterHubDraftId) setCharacterHubDraftId(draftId);
+
     characterCardInFlightRef.current = true;
     setCharacterCardStatus("running");
+    setCharacterCardLockedExpression(requestedExpression);
+    if (existingCardWillBeRegenerated) {
+      setCharacterCard(null);
+      setCharacterReferences(null);
+      setCharacterCompletionJobId("");
+      setCharacterCompletionProgress(0);
+    }
     setCreateError("");
     setCreateMessage(
       "Queueing the canonical Character Card for durable completion...",
     );
 
     try {
-      let jobId = characterCompletionJobId;
+      let jobId = existingCardWillBeRegenerated ? "" : characterCompletionJobId;
 
       // OTG_CHARACTER_HUB_COMPLETED_CARD_RECOVERY_V1
       //
       // A browser refresh must not submit a second expensive render if
-      // Worker Manager already completed this exact draft/source.
+      // Worker Manager already completed this exact draft/source/mode/expression.
       if (!jobId) {
         try {
           const recoveryOwnerId =
@@ -1209,7 +1306,7 @@ function CharacterCreateSetup({
 
           const recoveryResponse = await fetch(
             `/api/characters/completion?characterId=${encodeURIComponent(
-              characterHubDraftId,
+              draftId,
             )}`,
             {
               cache: "no-store",
@@ -1268,6 +1365,15 @@ function CharacterCreateSetup({
                   ? refs.characterCard
                   : {};
 
+              const refsEngine = String(refs.engine || "").trim();
+              const refsPipelineVersion = Number(refs.pipelineVersion || 0);
+              if (
+                refsPipelineVersion < 2 ||
+                refsEngine !== "orbitsheets-h3"
+              ) {
+                return false;
+              }
+
               const sourceCandidates = [
                 input.sourceImagePath,
                 input.fullBodyImagePath,
@@ -1277,12 +1383,28 @@ function CharacterCreateSetup({
                 .map((value) => String(value || "").trim())
                 .filter(Boolean);
 
+              const candidateAnatomyMode = normalizeCharacterCardAnatomyMode(
+                input.characterAnatomyMode ||
+                  input.anatomyMode ||
+                  refs.anatomyMode,
+              );
+              const rawExpression =
+                input.expression || refs.expression || card.expression;
+              const candidateExpression =
+                rawExpression === undefined ||
+                rawExpression === null ||
+                String(rawExpression).trim() === ""
+                  ? "neutral"
+                  : normalizeCharacterCardExpression(rawExpression);
+
               return (
                 sourceCandidates.includes(
                   String(
                     processedCharacterSource.serverPath || "",
                   ).trim(),
                 ) &&
+                candidateAnatomyMode === requestedAnatomyMode &&
+                candidateExpression === requestedExpression &&
                 String(refs.status || "").trim() === "complete" &&
                 Boolean(String(card.serverPath || "").trim())
               );
@@ -1305,7 +1427,7 @@ function CharacterCreateSetup({
             );
 
             setCreateMessage(
-              "Recovered the completed Character Card job. No new H3 render was submitted.",
+              "Recovered the completed Character Card job for this source, mode, and expression. No new H3 render was submitted.",
             );
           }
         } catch (recoveryError) {
@@ -1326,17 +1448,22 @@ function CharacterCreateSetup({
             "x-otg-device-id": ownerId,
           },
           body: JSON.stringify({
-            characterId: characterHubDraftId,
+            characterId: draftId,
             sourceImagePath: processedCharacterSource.serverPath,
             fullBodyImagePath: processedCharacterSource.serverPath,
             defaultCharacterSourceImagePath: processedCharacterSource.serverPath,
             originalSourceImagePath: processedCharacterSource.serverPath,
+            characterAnatomyMode: requestedAnatomyMode,
+            anatomyMode: requestedAnatomyMode,
+            expression: requestedExpression,
             deferCharacterSave: true,
             characterReferenceGpuTarget: "rtx5060ti",
             metadata: {
               source: "character-hub-v1",
               mode,
               sourceMode,
+              characterAnatomyMode: requestedAnatomyMode,
+              expression: requestedExpression,
               ...(sourceMode === "uploaded" ? { uploadFraming } : {}),
             },
           }),
@@ -1365,7 +1492,7 @@ function CharacterCreateSetup({
             },
             body: JSON.stringify({
               mode: "new_character",
-              characterId: characterHubDraftId,
+              characterId: draftId,
               currentStage: "character_references",
               state: {
                 builderOwner: "character-hub-v1",
@@ -1373,7 +1500,7 @@ function CharacterCreateSetup({
                 mode,
                 sourceMode,
                 currentStage: "character_references",
-                characterHubDraftId,
+                characterHubDraftId: draftId,
                 modelId,
                 description,
                 stylePresetId,
@@ -1385,6 +1512,8 @@ function CharacterCreateSetup({
                 uploadFraming,
                 uploadedSource,
                 completionPrompt,
+                characterCardExpression: requestedExpression,
+                characterCardLockedExpression: requestedExpression,
                 characterCardStep: true,
                 characterCard: null,
                 characterCardStatus: "running",
@@ -1400,7 +1529,7 @@ function CharacterCreateSetup({
       }
 
       setCreateMessage(
-        `Character Card job ${jobId} is saved. OrbitSheets H3 will build the six-view Character Card; legacy four-angle generation remains the automatic fallback.`,
+        `Character Card job ${jobId} is saved. OrbitSheets H3 will build the six-view ${characterCardExpressionLabel(requestedExpression)} Character Card; legacy four-angle generation remains the automatic fallback.`,
       );
 
       await pollCharacterReferenceCompletionV1(jobId);
@@ -1454,6 +1583,23 @@ function CharacterCreateSetup({
     setCharacterFinalizeStep(false);
     setCharacterCardStep(false);
     setCreateMessage("Returned to candidates. The current selection, processed source, and Character Card are preserved.");
+  }
+
+  function startNewCharacterCardExpression() {
+    if (characterCardInFlightRef.current || characterCardStatus === "running") {
+      return;
+    }
+
+    setCharacterCard(null);
+    setCharacterCardStatus("idle");
+    setCharacterCardLockedExpression(null);
+    setCharacterReferences(null);
+    setCharacterCompletionJobId("");
+    setCharacterCompletionProgress(0);
+    setCreateError("");
+    setCreateMessage(
+      "Started a new Character Card setup for this processed source. Choose the expression, then create the new card.",
+    );
   }
 
   const characterCreateJobInFlightRef = React.useRef(false);
@@ -1714,6 +1860,8 @@ function CharacterCreateSetup({
         characterCard={{
           imageUrl: characterCard.imageUrl,
           serverPath: characterCard.serverPath,
+          previewVideoUrl: characterCard.previewVideoUrl,
+          previewVideoServerPath: characterCard.previewVideoServerPath,
         }}
         characterReferences={characterReferences || undefined}
         onBackToCard={() => {
@@ -1734,7 +1882,7 @@ function CharacterCreateSetup({
           <div className="text-xs font-black uppercase tracking-[0.24em] text-amber-200/75">Character Studio</div>
           <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Character Card</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-white/60">
-            Generate the canonical model-facing Character Card from the processed source. OrbitSheets H3 creates a six-view identity sheet; if OrbitSheets is unavailable, the legacy four-angle Character Card generator runs automatically.
+            Generate the canonical model-facing Character Card from the processed source. {isFreeform ? "Freeform creates six full-form views: left profile, right profile, front, back, front close-up face, and back close-up." : "Standard creates four full-body views plus a waist-up front view and a close-up front view."} If OrbitSheets is unavailable, the legacy four-angle Character Card generator runs automatically.
           </p>
         </div>
 
@@ -1832,6 +1980,45 @@ function CharacterCreateSetup({
             </div>
           </div>
         ) : null}
+
+        <div className="rounded-[28px] border border-amber-300/15 bg-amber-300/[0.045] p-5">
+          <label
+            htmlFor={`character-hub-card-expression-${mode}-${sourceMode}`}
+            className="text-xs font-black uppercase tracking-[0.2em] text-amber-100/70"
+          >
+            Expression
+          </label>
+          <select
+            id={`character-hub-card-expression-${mode}-${sourceMode}`}
+            value={characterCardExpression}
+            onChange={(event) =>
+              setCharacterCardExpression(
+                normalizeCharacterCardExpression(event.target.value),
+              )
+            }
+            disabled={characterCardExpressionLocked}
+            className="mt-3 w-full max-w-sm rounded-xl border border-amber-200/20 bg-black/35 px-3 py-3 text-sm font-bold text-white outline-none focus:border-amber-200/60 disabled:opacity-50"
+            data-otg="character-card-expression"
+          >
+            {CHARACTER_CARD_EXPRESSIONS.map((expression) => (
+              <option key={expression} value={expression}>
+                {characterCardExpressionLabel(expression)}
+              </option>
+            ))}
+          </select>
+          <p className="mt-3 text-sm leading-6 text-white/55">
+            Applies to every H3 Character Card view. It locks while this card is running and after this exact card is complete.
+          </p>
+          {characterCardExpressionLocked && characterCardStatus !== "running" ? (
+            <button
+              type="button"
+              onClick={startNewCharacterCardExpression}
+              className="mt-4 min-h-10 rounded-xl border border-amber-200/25 bg-amber-300/10 px-4 text-sm font-black text-amber-50"
+            >
+              Start New Card
+            </button>
+          ) : null}
+        </div>
 
         <CharacterCardRuntimeActions
           hasSource={Boolean(processedCharacterSource?.serverPath)}
@@ -2601,6 +2788,8 @@ type CharacterCreateCandidate = CharacterCandidateLineage & {
   id: string;
   imageUrl: string;
   serverPath?: string;
+  previewVideoUrl?: string;
+  previewVideoServerPath?: string;
   promptId: string;
   seed: number;
   backend: string;
@@ -2655,6 +2844,13 @@ type CharacterReferencePackageV1 = {
     rightProfile?: CharacterReferenceAssetV1;
   };
   characterCard?: CharacterReferenceAssetV1;
+  previewVideo?: {
+    serverPath?: string;
+    url?: string;
+    filename?: string;
+    sourceOutputPath?: string;
+    promptId?: string;
+  };
   completedAt?: string;
   error?: string;
 };

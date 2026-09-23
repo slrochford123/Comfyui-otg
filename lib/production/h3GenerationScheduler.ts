@@ -4,6 +4,12 @@ import { randomUUID } from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
 
+import { readComfyPromptProgress } from "@/lib/comfyProgress";
+import {
+  H3_REFERENCE_VIDEO_CLIP_SECONDS,
+  trimH3ReferenceVideoClip,
+} from "@/lib/h3ReferenceVideoClip";
+import { ensureDir, OTG_DATA_ROOT, safeSegment } from "@/lib/paths";
 import {
   downloadH3Video,
   getH3PromptHistory,
@@ -14,6 +20,7 @@ import {
   type H3BackendProbe,
 } from "@/lib/production/h3Comfy";
 import {
+  cancelProductionV2GenerationJob,
   claimProductionV2GenerationJob,
   completeProductionV2GenerationJob,
   failProductionV2GenerationJob,
@@ -127,6 +134,36 @@ async function fileExists(filePath: string) {
 
     throw error;
   }
+}
+
+async function prepareH3ReferenceVideoClip(job: ProductionV2GenerationJob) {
+  const reference = job.payload.videoReference;
+  if (!reference?.mediaVersionId || !reference.mediaPath) {
+    throw new Error("H3 R2V job lost its selected video-reference contract.");
+  }
+
+  const outputDir = path.join(
+    OTG_DATA_ROOT,
+    "productions-v2",
+    safeSegment(job.ownerKey),
+    safeSegment(job.productionId),
+    "h3-reference-clips",
+    safeSegment(job.id),
+  );
+  ensureDir(outputDir);
+
+  const clip = await trimH3ReferenceVideoClip({
+    inputPath: reference.mediaPath,
+    outputDir,
+    outputPrefix: `${job.id}_video_reference`,
+    startSeconds: reference.clipStartSeconds || 0,
+    includeAudio: reference.includeAudio,
+  });
+
+  return {
+    ...clip,
+    promptNote: `Use selected ${H3_REFERENCE_VIDEO_CLIP_SECONDS}-second reference window ${clip.startSeconds.toFixed(2)}s-${(clip.startSeconds + H3_REFERENCE_VIDEO_CLIP_SECONDS).toFixed(2)}s.`,
+  };
 }
 
 export async function finalizeH3VsrWithNativeAudio(input: {
@@ -345,7 +382,7 @@ export function chooseProductionV2H3Backend(probes: H3BackendProbe[]): Productio
 export function applyProductionV2H3GenerationToProduction(
   production: ProductionV2,
   job: ProductionV2GenerationJob,
-  status: "generating" | "generated" | "failed",
+  status: "generating" | "generated" | "failed" | "canceled",
   outputPath?: string,
 ) {
 
@@ -474,7 +511,7 @@ export function applyProductionV2H3GenerationToProduction(
   return syncProductionV2AssemblyClips(updated);
 }
 
-function sceneStatus(job: ProductionV2GenerationJob, status: "generating" | "generated" | "failed", outputPath?: string) {
+function sceneStatus(job: ProductionV2GenerationJob, status: "generating" | "generated" | "failed" | "canceled", outputPath?: string) {
   const production = productionV2Store.load(job.ownerKey, job.productionId);
   if (!production) return;
   productionV2Store.save(job.ownerKey, applyProductionV2H3GenerationToProduction(production, job, status, outputPath));
@@ -487,6 +524,8 @@ export function reconcileProductionV2GenerationJob(job: ProductionV2GenerationJo
     sceneStatus(job, "generating");
   } else if (job.status === "failed") {
     sceneStatus(job, "failed");
+  } else if (job.status === "canceled") {
+    sceneStatus(job, "canceled");
   }
 }
 
@@ -503,9 +542,10 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
   if (job.payload.operation === "visual-edit") {
     const reference = job.payload.videoReference;
     if (!reference?.mediaVersionId || !reference.mediaPath) throw new Error("H3 visual edit lost its selected video-reference contract.");
+    const referenceClip = await prepareH3ReferenceVideoClip(job);
     videoReferenceFilename = await upload({
       backend: job.backend,
-      sourcePath: reference.mediaPath,
+      sourcePath: referenceClip.outputPath,
       mediaType: "video",
       uploadName: `${uploadBase}_video_reference`,
     });
@@ -587,12 +627,15 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
         );
       }
 
+      const referenceClip =
+        await prepareH3ReferenceVideoClip(job);
+
       videoReferenceFilename =
         await upload({
           backend:
             job.backend,
           sourcePath:
-            videoReference.mediaPath,
+            referenceClip.outputPath,
           mediaType:
             "video",
           uploadName:
@@ -693,6 +736,8 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
       `otg-production-v2-${randomUUID()}`,
     jobId:
       job.id,
+    ownerKey:
+      job.ownerKey,
     preSubmitCleanup:
       built.preSubmitCleanup,
     onAccepted:
@@ -891,6 +936,8 @@ async function prepareAndSubmitVsr(job: ProductionV2GenerationJob, dependencies:
             `${job.id}-vsr`,
           workerId:
             "production-v2-h3-vsr",
+          ownerKey:
+            job.ownerKey,
           onAccepted:
             recordAcceptedVsrPrompt,
         });
@@ -1134,6 +1181,7 @@ export function productionV2GenerationPublicStatus(job: ProductionV2GenerationJo
   const estimate = duration === 5 || duration === 10
     ? getH3ProductionTimeEstimate(job.mode, duration, job.payload.h3Quality, job.backend)
     : null;
+  const progress = readComfyPromptProgress(job.comfyPromptId);
 
   return {
     id: job.id,
@@ -1157,6 +1205,7 @@ export function productionV2GenerationPublicStatus(job: ProductionV2GenerationJo
     finalResolution: `${H3_FINAL_WIDTH}x${H3_FINAL_HEIGHT}`,
     workflowId: job.workflowId,
     workflowFile: job.workflowFile,
+    approximatePreview: progress?.approximatePreview || null,
     error: job.error,
     createdAt: job.createdAt,
     submittedAt: job.submittedAt,
@@ -1165,4 +1214,8 @@ export function productionV2GenerationPublicStatus(job: ProductionV2GenerationJo
     retryOfJobId: job.payload.retryOfJobId || null,
     videoUrl: job.status === "completed" ? `/api/production/v2/generation/media?jobId=${encodeURIComponent(job.id)}` : null,
   };
+}
+
+export function cancelProductionV2H3Generation(job: ProductionV2GenerationJob) {
+  return cancelProductionV2GenerationJob(job.id, "Canceled");
 }

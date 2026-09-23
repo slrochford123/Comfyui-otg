@@ -279,7 +279,7 @@ describe("H3 LoRA policy and deletion boundaries", () => {
     });
   });
 
-  it("keeps the required Turbo node locked while layering an optional LoRA", () => {
+  it("keeps the validated FastH3 base locked while layering an optional LoRA", () => {
     const built = buildH3Workflow({
       backend: "rtx3090",
       mode: "h3-text-to-video",
@@ -297,7 +297,8 @@ describe("H3 LoRA policy and deletion boundaries", () => {
         },
       ],
     });
-    expect(built.graph["36"].inputs.strength_model).toBe(1);
-    expect(built.graph["70"].inputs.model).toEqual(["36", 0]);
+    expect(built.graph["30"].inputs.unet_name).toBe("fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors");
+    expect(built.graph["70"].inputs.model).toEqual(["30", 0]);
+    expect(built.graph["38"].inputs.model).toEqual(["70", 0]);
   });
 });

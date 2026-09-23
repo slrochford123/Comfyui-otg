@@ -12,6 +12,14 @@ import {
   join,
 } from "node:path";
 
+import {
+  inspectH3BackendCompatibility,
+} from "@/lib/production/h3Comfy";
+
+import {
+  h3RequiredNodeClassesForBackend,
+} from "@/lib/production/h3Workflows";
+
 const comfySource = readFileSync(
   join(
     process.cwd(),
@@ -99,6 +107,39 @@ describe(
 
         expect(comfySource).toContain(
           '"comfy-queue-active"',
+        );
+      },
+    );
+
+    it(
+      "waits briefly for the H3 preview websocket before prompt submission",
+      () => {
+        expect(
+          comfySource,
+        ).toContain(
+          "waitForComfyClientProgressMonitor",
+        );
+
+        const waitIndex =
+          comfySource.indexOf(
+            "await waitForComfyClientProgressMonitor",
+          );
+
+        const submitIndex =
+          comfySource.indexOf(
+            "await submitComfyPromptWithGpuLease",
+          );
+
+        expect(
+          waitIndex,
+        ).toBeGreaterThan(
+          -1,
+        );
+
+        expect(
+          submitIndex,
+        ).toBeGreaterThan(
+          waitIndex,
         );
       },
     );
@@ -224,6 +265,156 @@ describe(
 
         expect(source).toContain(
           "return null;",
+        );
+      },
+    );
+
+    it(
+      "recognizes FastH3 preview dependencies exposed through optional and COMBO schemas",
+      async () => {
+        const requiredNodes =
+          new Set(
+            h3RequiredNodeClassesForBackend(
+              "rtx3090",
+            ),
+          );
+
+        const fetcher = (async (url: string | URL) => {
+          const target =
+            String(
+              url,
+            );
+
+          if (
+            target.endsWith(
+              "/queue",
+            )
+          ) {
+            return Response.json({
+              queue_running: [],
+              queue_pending: [],
+            });
+          }
+
+          const node =
+            decodeURIComponent(
+              target.split(
+                "/object_info/",
+              )[1] || "",
+            );
+
+          if (
+            !requiredNodes.has(
+              node,
+            )
+          ) {
+            return new Response(
+              "{}",
+              {
+                status: 404,
+              },
+            );
+          }
+
+          const input =
+            {
+              required: {},
+              optional: {},
+            } as {
+              required: Record<string, unknown>;
+              optional: Record<string, unknown>;
+            };
+
+          if (
+            node === "UNETLoader"
+          ) {
+            input.required.unet_name = [
+              [
+                "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
+                "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+              ],
+            ];
+          } else if (
+            node === "CLIPLoader"
+          ) {
+            input.required.clip_name = [
+              [
+                "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+              ],
+            ];
+          } else if (
+            node === "VAELoader"
+          ) {
+            input.required.vae_name = [
+              [
+                "minimax_h3_video_vae_fp16.safetensors",
+                "minimax_h3_audio_vae_fp32.safetensors",
+              ],
+            ];
+          } else if (
+            node === "LoraLoaderModelOnly"
+          ) {
+            input.required.lora_name = [
+              [
+                "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+              ],
+            ];
+          } else if (
+            node === "ModelAttentionBackend"
+          ) {
+            input.required.attention = [
+              "COMBO",
+              {
+                options: [
+                  "pytorch attention",
+                  "comfy kitchen attention",
+                ],
+              },
+            ];
+          } else if (
+            node === "ModelPreviewOverrideKJ"
+          ) {
+            input.optional.tiny_vae = [
+              "COMBO",
+              {
+                options: [
+                  "none",
+                  "taeh3.safetensors",
+                ],
+              },
+            ];
+          }
+
+          return Response.json({
+            [node]: {
+              input,
+            },
+          });
+        }) as typeof fetch;
+
+        const probe =
+          await inspectH3BackendCompatibility(
+            "rtx3090",
+            {},
+            fetcher,
+          );
+
+        expect(
+          probe.reason,
+        ).toBe(
+          "available",
+        );
+
+        expect(
+          probe.missingNodes,
+        ).toEqual(
+          [],
+        );
+
+        expect(
+          probe.missingAssets,
+        ).toEqual(
+          [],
         );
       },
     );
