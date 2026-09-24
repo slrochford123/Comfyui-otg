@@ -1785,7 +1785,7 @@ export default function H3Panel() {
               Retry
             </button>
           </div>
-          {job.approximatePreview ? (
+          {active && job.approximatePreview ? (
             <div
               className="mt-4 rounded-[6px] border border-cyan-300/25 bg-cyan-300/[0.06] p-3"
               data-otg="h3-approximate-preview"

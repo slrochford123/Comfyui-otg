@@ -149,6 +149,18 @@ describe(
           "captureDurationMs",
         );
 
+        expect(picker).toContain(
+          "Download Snapshot",
+        );
+
+        expect(picker).toContain(
+          "downloadFile",
+        );
+
+        expect(picker).toContain(
+          "anchor.download = file.name",
+        );
+
         expect(picker).not.toMatch(
           /ffmpeg/i,
         );
@@ -343,6 +355,31 @@ describe(
 
         expect(v2).toContain(
           'reference.sourceKind === "production-upload"',
+        );
+      },
+    );
+
+    it(
+      "shows approximate H3 previews only while video generation is active",
+      () => {
+        const h3Panel = source(
+          "app/app/components/H3Panel.tsx",
+        );
+
+        expect(h3Panel).toContain(
+          "active && job.approximatePreview",
+        );
+
+        const productionPanel = source(
+          "app/app/components/ProductionV2Panel.tsx",
+        );
+
+        expect(productionPanel).toContain(
+          'selectedScene.model === "minimax-h3" && generationActive',
+        );
+
+        expect(productionPanel).not.toContain(
+          "generationJob?.approximatePreview || generationActive",
         );
       },
     );

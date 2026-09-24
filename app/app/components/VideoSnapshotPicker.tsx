@@ -202,6 +202,38 @@ async function canvasPng(
   );
 }
 
+function downloadFile(
+  file: File,
+) {
+  const url =
+    URL.createObjectURL(
+      file,
+    );
+
+  const anchor =
+    document.createElement(
+      "a",
+    );
+
+  anchor.href = url;
+  anchor.download = file.name;
+  anchor.rel = "noopener";
+  document.body.appendChild(
+    anchor,
+  );
+  anchor.click();
+  anchor.remove();
+
+  window.setTimeout(
+    () => {
+      URL.revokeObjectURL(
+        url,
+      );
+    },
+    0,
+  );
+}
+
 function snapshotDimensions(
   width: number,
   height: number,
@@ -422,7 +454,7 @@ export default function VideoSnapshotPicker({
     video.currentTime = next;
   }
 
-  async function capture() {
+  async function captureFrame() {
     const video =
       videoRef.current;
 
@@ -433,7 +465,7 @@ export default function VideoSnapshotPicker({
       || seeking
       || capturing
     ) {
-      return;
+      return null;
     }
 
     setMessage("");
@@ -548,11 +580,7 @@ export default function VideoSnapshotPicker({
           encodedAt - encodeStartedAt,
         );
 
-      setMessage(
-        `Captured frame in ${captureDurationMs} ms. Saving snapshot...`,
-      );
-
-      await onSnapshot({
+      return {
         file,
         sourceVideoName:
           sourceFile.name,
@@ -562,18 +590,52 @@ export default function VideoSnapshotPicker({
         height: output.height,
         captureDurationMs,
         encodeDurationMs,
-      });
-
-      onClose();
+      };
     } catch (error) {
       setMessage(
         error instanceof Error
           ? error.message
           : "Could not capture the video frame.",
       );
+
+      return null;
     } finally {
       setCapturing(false);
     }
+  }
+
+  async function useSnapshot() {
+    const result =
+      await captureFrame();
+
+    if (!result) {
+      return;
+    }
+
+    setMessage(
+      `Captured frame in ${result.captureDurationMs} ms. Saving snapshot...`,
+    );
+
+    await onSnapshot(result);
+
+    onClose();
+  }
+
+  async function downloadSnapshot() {
+    const result =
+      await captureFrame();
+
+    if (!result) {
+      return;
+    }
+
+    downloadFile(
+      result.file,
+    );
+
+    setMessage(
+      `Downloaded snapshot ${result.file.name}.`,
+    );
   }
 
   if (!open) {
@@ -812,7 +874,17 @@ export default function VideoSnapshotPicker({
                   <button
                     type="button"
                     disabled={!ready || seeking || capturing}
-                    onClick={() => void capture()}
+                    onClick={() => void downloadSnapshot()}
+                    aria-label="Download Snapshot"
+                    className="min-h-9 rounded-md border border-white/10 bg-white/[0.04] px-3 text-xs font-black text-zinc-300 transition hover:border-white/25 hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
+                  >
+                    Download Snapshot
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!ready || seeking || capturing}
+                    onClick={() => void useSnapshot()}
                     className="min-h-9 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-4 text-xs font-black text-cyan-100 transition hover:border-cyan-200/55 hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-35"
                   >
                     {capturing

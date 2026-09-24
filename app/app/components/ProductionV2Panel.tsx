@@ -3546,7 +3546,7 @@ export default function ProductionV2Panel() {
               </div>
               {generationJob ? <div className="mt-3 text-xs text-zinc-500" data-otg="production-v2-generation-provenance">Job {generationJob.id}{generationJob.promptId ? ` · Prompt ${generationJob.promptId}` : ""}{generationJob.retryOfJobId ? ` · Retry of ${generationJob.retryOfJobId}` : ""}</div> : null}
               {generationJob?.error ? <div className="mt-4 rounded-lg border border-red-300/25 bg-red-300/10 px-3 py-2 text-sm text-red-100" role="alert">{generationJob.error}</div> : null}
-              {selectedScene.model === "minimax-h3" && (generationJob?.approximatePreview || generationActive) ? (
+              {selectedScene.model === "minimax-h3" && generationActive ? (
                 <div
                   className="mt-5 rounded-lg border border-cyan-300/25 bg-cyan-300/[0.06] p-3"
                   data-otg="production-v2-h3-approximate-preview"
