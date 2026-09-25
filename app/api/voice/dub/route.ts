@@ -226,7 +226,7 @@ async function runCommand(template: string, values: Record<string, string>, cwd?
   const filled = fillTemplate(template, values);
   const parts = splitCommand(filled);
   if (!parts.length) throw new Error("Voice conversion command is empty.");
-  await new Promise<void>((resolve, reject) => {
+  return await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     const child = spawn(parts[0], parts.slice(1), { cwd, windowsHide: true, shell: false });
     let stderr = "";
     let stdout = "";
@@ -239,10 +239,149 @@ async function runCommand(template: string, values: Record<string, string>, cwd?
     child.on("error", (error) => { clearTimeout(timer); reject(error); });
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (code === 0) resolve();
+      if (code === 0) resolve({ stdout, stderr });
       else reject(new Error(`Voice conversion command failed with exit code ${code}. ${stderr || stdout}`.slice(0, 5000)));
     });
   });
+}
+
+async function runProcess(command: string, args: string[], cwd?: string, timeoutMs = COMMAND_TIMEOUT_MS) {
+  return await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn(command, args, { cwd, windowsHide: true, shell: false });
+    let stderr = "";
+    let stdout = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`Process timed out after ${Math.round(timeoutMs / 1000)} seconds: ${command}`));
+    }, timeoutMs);
+    child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
+    child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
+    child.on("error", (error) => { clearTimeout(timer); reject(error); });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve({ stdout, stderr });
+      else reject(new Error(`Process failed with exit code ${code}: ${command}. ${stderr || stdout}`.slice(0, 5000)));
+    });
+  });
+}
+
+function isCudaCapacityError(error: unknown) {
+  const text = String(error instanceof Error ? error.message : error).toLowerCase();
+  return text.includes("torch.outofmemoryerror")
+    || text.includes("cuda out of memory")
+    || (text.includes("out of memory") && text.includes("cuda"));
+}
+
+function shellQuote(value: string) {
+  return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
+}
+
+function applioFallbackHost() {
+  return String(process.env.APPLIO_FALLBACK_HOST || "otg-slr").trim();
+}
+
+function applioFallbackRoot() {
+  return String(process.env.APPLIO_FALLBACK_ROOT || "/opt/Applio").trim();
+}
+
+async function prepareApplioFallbackGpu() {
+  const host = applioFallbackHost();
+  const sshBase = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host];
+
+  const queueResult = await runProcess(
+    "ssh",
+    [...sshBase, "curl -fsS http://127.0.0.1:8188/queue"],
+    undefined,
+    15000,
+  );
+
+  let queue: { queue_running?: unknown[]; queue_pending?: unknown[] };
+  try {
+    queue = JSON.parse(queueResult.stdout.trim());
+  } catch {
+    throw new Error("Applio fallback GPU queue check returned invalid data.");
+  }
+
+  const running = Array.isArray(queue.queue_running) ? queue.queue_running.length : 0;
+  const pending = Array.isArray(queue.queue_pending) ? queue.queue_pending.length : 0;
+
+  if (running > 0 || pending > 0) {
+    throw new Error("Applio fallback GPU is busy with an active or queued ComfyUI job.");
+  }
+
+  await runProcess(
+    "ssh",
+    [
+      ...sshBase,
+      `curl -fsS -X POST http://127.0.0.1:8188/free -H 'Content-Type: application/json' -d '{"unload_models":true,"free_memory":true}' >/dev/null`,
+    ],
+    undefined,
+    15000,
+  );
+}
+
+async function runApplioFallback(
+  inputPath: string,
+  outputPath: string,
+  modelPath: string,
+  indexPath: string,
+  pitch: string,
+  jobDir: string,
+) {
+  const host = applioFallbackHost();
+  const root = applioFallbackRoot();
+  const remoteId = safeSegment(path.basename(jobDir) || `voice-dub-${Date.now()}`);
+  const remoteDir = `${root}/otg-fallback/${remoteId}`;
+  const remoteInput = `${remoteDir}/input.wav`;
+  const remoteOutput = `${remoteDir}/output.wav`;
+  const remoteModel = `${remoteDir}/model.pth`;
+  const remoteIndex = `${remoteDir}/model.index`;
+
+  const sshBase = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host];
+  const scpBase = ["-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"];
+
+  await prepareApplioFallbackGpu();
+
+  await runProcess(
+    "ssh",
+    [...sshBase, `mkdir -p ${shellQuote(remoteDir)} && rm -f ${shellQuote(remoteInput)} ${shellQuote(remoteOutput)} ${shellQuote(remoteModel)} ${shellQuote(remoteIndex)}`],
+    undefined,
+    15000,
+  );
+
+  try {
+    await runProcess("scp", [...scpBase, inputPath, `${host}:${remoteInput}`], undefined, 120000);
+    await runProcess("scp", [...scpBase, modelPath, `${host}:${remoteModel}`], undefined, 120000);
+    await runProcess("scp", [...scpBase, indexPath, `${host}:${remoteIndex}`], undefined, 120000);
+
+    await prepareApplioFallbackGpu();
+
+    const command = [
+      `cd ${shellQuote(root)}`,
+      `flock -n /tmp/otg-applio-fallback.lock ${shellQuote(`${root}/.venv/bin/python`)} ${shellQuote(`${root}/core.py`)} infer`,
+      `--pitch ${shellQuote(pitch)}`,
+      `--index_rate ${shellQuote(process.env.APPLIO_INFERENCE_INDEX_RATE || "0.75")}`,
+      "--volume_envelope 1",
+      `--protect ${shellQuote(process.env.APPLIO_INFERENCE_PROTECT || "0.33")}`,
+      `--f0_method ${shellQuote(process.env.APPLIO_INFERENCE_F0_METHOD || "rmvpe")}`,
+      `--input_path ${shellQuote(remoteInput)}`,
+      `--output_path ${shellQuote(remoteOutput)}`,
+      `--pth_path ${shellQuote(remoteModel)}`,
+      `--index_path ${shellQuote(remoteIndex)}`,
+      "--split_audio False --f0_autotune False --clean_audio False --export_format WAV",
+      `--embedder_model ${shellQuote(process.env.APPLIO_INFERENCE_EMBEDDER_MODEL || "contentvec")}`,
+    ].join(" ");
+
+    await runProcess("ssh", [...sshBase, command], undefined, COMMAND_TIMEOUT_MS);
+    await runProcess("scp", [...scpBase, `${host}:${remoteOutput}`, outputPath], undefined, 120000);
+  } finally {
+    const cleanup = `rm -f ${shellQuote(remoteInput)} ${shellQuote(remoteOutput)} ${shellQuote(remoteModel)} ${shellQuote(remoteIndex)}; rmdir ${shellQuote(remoteDir)} 2>/dev/null || true`;
+    await runProcess("ssh", [...sshBase, cleanup], undefined, 15000).catch(() => {});
+  }
+
+  if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size <= 0) {
+    throw new Error("Applio fallback conversion did not return a usable output file.");
+  }
 }
 
 async function convertWithFfmpeg(inputPath: string, outputPath: string) {
@@ -517,25 +656,63 @@ function defaultApplioCommand() {
 
 async function runApplio(inputPath: string, outputPath: string, modelPath: string, indexPath: string, pitch: string, jobDir: string) {
   if (!modelPath || !indexPath) throw new Error("Trained Applio voice conversion requires modelPath and indexPath.");
-  const command = process.env.APPLIO_DUB_COMMAND?.trim() || process.env.APPLIO_INFERENCE_COMMAND?.trim() || defaultApplioCommand();
-  await runCommand(command, {
-    input: inputPath,
-    output: outputPath,
-    model: modelPath,
-    index: indexPath,
-    pth: modelPath,
-    pth_path: modelPath,
-    index_path: indexPath,
-    pitch,
-    indexRate: process.env.APPLIO_INFERENCE_INDEX_RATE || "0.75",
-    protect: process.env.APPLIO_INFERENCE_PROTECT || "0.33",
-    f0Method: process.env.APPLIO_INFERENCE_F0_METHOD || "rmvpe",
-    embedderModel: process.env.APPLIO_INFERENCE_EMBEDDER_MODEL || "contentvec",
-    jobDir,
-  }, applioRoot(), COMMAND_TIMEOUT_MS);
 
-  if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size <= 0) {
-    throw new Error("Applio voice conversion did not write a usable output file.");
+  const command = process.env.APPLIO_DUB_COMMAND?.trim()
+    || process.env.APPLIO_INFERENCE_COMMAND?.trim()
+    || defaultApplioCommand();
+
+  try {
+    const result = await runCommand(command, {
+      input: inputPath,
+      output: outputPath,
+      model: modelPath,
+      index: indexPath,
+      pth: modelPath,
+      pth_path: modelPath,
+      index_path: indexPath,
+      pitch,
+      indexRate: process.env.APPLIO_INFERENCE_INDEX_RATE || "0.75",
+      protect: process.env.APPLIO_INFERENCE_PROTECT || "0.33",
+      f0Method: process.env.APPLIO_INFERENCE_F0_METHOD || "rmvpe",
+      embedderModel: process.env.APPLIO_INFERENCE_EMBEDDER_MODEL || "contentvec",
+      jobDir,
+    }, applioRoot(), COMMAND_TIMEOUT_MS);
+
+    if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size <= 0) {
+      const detail = String(result.stderr || result.stdout || "").trim().slice(-3500);
+      throw new Error(
+        `Applio voice conversion did not write a usable output file.${detail ? ` Applio: ${detail}` : ""}`,
+      );
+    }
+  } catch (error) {
+    if (!isCudaCapacityError(error)) {
+      throw new Error("Character Voice conversion failed.");
+    }
+
+    try {
+      fs.rmSync(outputPath, { force: true });
+    } catch {}
+
+    try {
+      await runApplioFallback(
+        inputPath,
+        outputPath,
+        modelPath,
+        indexPath,
+        pitch,
+        jobDir,
+      );
+    } catch (fallbackError) {
+      const message = String(
+        fallbackError instanceof Error ? fallbackError.message : fallbackError,
+      );
+
+      if (message.includes("fallback GPU is busy")) {
+        throw new Error("Character Voice conversion is temporarily busy. Please try again shortly.");
+      }
+
+      throw new Error("Character Voice conversion failed.");
+    }
   }
 }
 
