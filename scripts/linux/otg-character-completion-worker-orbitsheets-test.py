@@ -898,7 +898,7 @@ def process_job_orbitsheets(
         "workerId": args.worker_id,
         "remoteWorker": True,
         "mock": False,
-        "characterCardEngine": "orbitsheets-h3",
+        "characterCardEngine": "qwen-image-edit-2.1",
         "anatomyMode": anatomy_mode,
         "expression": expression,
     }
@@ -908,8 +908,8 @@ def process_job_orbitsheets(
         owner_key,
         job_id,
         10,
-        "orbitsheets_preflight",
-        "OrbitSheets H3 Character Card worker claimed the character.",
+        "qwen21_card_preflight",
+        "Qwen Image Edit 2.1 Character Card worker claimed the character.",
         result,
     )
 
@@ -926,8 +926,8 @@ def process_job_orbitsheets(
             owner_key,
             job_id,
             20,
-            "generating_orbitsheets_card",
-            "Generating the six-view OrbitSheets H3 Character Card.",
+            "generating_qwen21_card",
+            "Generating the six-view Qwen Image Edit 2.1 Character Card.",
             result,
         )
 
@@ -949,7 +949,7 @@ def process_job_orbitsheets(
 
         if not payload.get("ok"):
             raise RuntimeError(
-                "OrbitSheets Character Card request failed: "
+                "Qwen Image Edit 2.1 Character Card request failed: "
                 + json.dumps(payload)[:2000]
             )
 
@@ -960,13 +960,13 @@ def process_job_orbitsheets(
 
         if not orbit_url or not orbit_server_path:
             raise RuntimeError(
-                "OrbitSheets Character Card returned no final URL "
+                "Qwen Image Edit 2.1 Character Card returned no final URL "
                 "or serverPath."
             )
 
         orbit_output = {
             "engine": clean(payload.get("engine"))
-            or "orbitsheets-h3",
+            or "qwen-image-edit-2.1",
             "promptId": clean(
                 payload.get("promptId")
                 or payload.get("prompt_id")
@@ -988,8 +988,8 @@ def process_job_orbitsheets(
             owner_key,
             job_id,
             78,
-            "orbitsheets_card_ready",
-            "OrbitSheets H3 six-view Character Card rendered.",
+            "qwen21_card_ready",
+            "Qwen Image Edit 2.1 six-view Character Card rendered.",
             result,
         )
 
@@ -1022,7 +1022,7 @@ def process_job_orbitsheets(
 
             if not card_bytes:
                 raise RuntimeError(
-                    "OrbitSheets local output file is empty: "
+                    "Qwen Image Edit 2.1 local output file is empty: "
                     + orbit_server_path
                 )
 
@@ -1060,7 +1060,7 @@ def process_job_orbitsheets(
 
         else:
             raise RuntimeError(
-                "OrbitSheets result has neither a readable "
+                "Qwen Image Edit 2.1 result has neither a readable "
                 "serverPath nor an image URL for durable upload."
             )
 
@@ -1074,7 +1074,7 @@ def process_job_orbitsheets(
 
         if not card_path:
             raise RuntimeError(
-                "Durable OrbitSheets Character Card upload "
+                "Durable Qwen Image Edit 2.1 Character Card upload "
                 "returned no serverPath."
             )
 
@@ -1085,8 +1085,8 @@ def process_job_orbitsheets(
             owner_key,
             job_id,
             90,
-            "persisting_orbitsheets_card",
-            "OrbitSheets Character Card copied into durable character storage.",
+            "persisting_qwen21_card",
+            "Qwen Image Edit 2.1 Character Card copied into durable character storage.",
             result,
         )
 
@@ -1098,7 +1098,8 @@ def process_job_orbitsheets(
     card_ref = {
         "serverPath": card_path,
         "url": card_url,
-        "engine": "orbitsheets-h3",
+        "engine": clean(orbit_output.get("engine"))
+        or "qwen-image-edit-2.1",
         "promptId": clean(orbit_output.get("promptId")),
         "sourceOutputPath": clean(
             orbit_output.get("serverPath")
@@ -1111,7 +1112,8 @@ def process_job_orbitsheets(
         "serverPath": clean(orbit_output.get("videoServerPath")),
         "url": clean(orbit_output.get("videoUrl")),
         "filename": clean(orbit_output.get("videoFilename")),
-        "engine": "orbitsheets-h3",
+        "engine": clean(orbit_output.get("engine"))
+        or "qwen-image-edit-2.1",
         "promptId": clean(orbit_output.get("promptId")),
         "sourceOutputPath": clean(orbit_output.get("videoServerPath")),
         "anatomyMode": anatomy_mode,
@@ -1123,7 +1125,8 @@ def process_job_orbitsheets(
     refs: Dict[str, Any] = {
         "pipelineVersion": 2,
         "status": "complete",
-        "engine": "orbitsheets-h3",
+        "engine": clean(orbit_output.get("engine"))
+        or "qwen-image-edit-2.1",
         "anatomyMode": anatomy_mode,
         "expression": expression,
         "completionJobId": job_id,
@@ -1159,7 +1162,7 @@ def process_job_orbitsheets(
         )
 
         log(
-            f"[PASS] OrbitSheets deferred Character Card complete "
+            f"[PASS] Qwen Image Edit 2.1 deferred Character Card complete "
             f"character={character_id}; job={job_id}"
         )
         return
@@ -1170,7 +1173,7 @@ def process_job_orbitsheets(
         job_id,
         94,
         "persisting_character",
-        "OrbitSheets Character Card complete. Saving canonical character record.",
+        "Qwen Image Edit 2.1 Character Card complete. Saving canonical character record.",
         result,
     )
 
@@ -1211,7 +1214,7 @@ def process_job_orbitsheets(
     )
 
     log(
-        f"[PASS] OrbitSheets Character Card character package complete "
+        f"[PASS] Qwen Image Edit 2.1 Character Card character package complete "
         f"character={character_id}; job={job_id}"
     )
 
@@ -1252,10 +1255,10 @@ def process_job(args: argparse.Namespace, job: Dict[str, Any]) -> None:
                         job_id,
                         15,
                         "orbitsheets_fallback",
-                        "OrbitSheets unavailable. Falling back to the legacy Character Card generator.",
+                        "Qwen Image Edit 2.1 unavailable. Falling back to the legacy Character Card generator.",
                         {
                             "characterCardEngine": "legacy-fallback",
-                            "orbitsheetsError": message,
+                            "qwenImageEdit21Error": message,
                         },
                     )
             else:
@@ -1269,10 +1272,10 @@ def process_job(args: argparse.Namespace, job: Dict[str, Any]) -> None:
                         job_id,
                         message,
                         {
-                            "characterCardEngine": "orbitsheets-h3",
+                            "characterCardEngine": "qwen-image-edit-2.1",
                             "status": "failed",
                             "currentStage": "failed",
-                            "orbitsheetsError": message,
+                            "qwenImageEdit21Error": message,
                         },
                     )
 

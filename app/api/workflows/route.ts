@@ -17,10 +17,10 @@ function parseAllowlist() {
 
 const DEFAULT_VISIBLE_WORKFLOW_IDS = new Set([
   "presets/image_krea2_turbo_t2i",
-  "presets/image_qwen_image_edit_2511_int8",
+  "presets/image_qwen_image_2_1_t2i",
+  "presets/image_qwen_image_2_1_image_edit",
   "presets/image_anima_base_v1",
   "presets/create a picture",
-  "presets/edit image",
 
   "presets/create anime images","presets/create a video",
   "presets/create a video from images",
@@ -41,7 +41,7 @@ const DEFAULT_VISIBLE_WORKFLOW_IDS = new Set([
 
 function isHiddenByDefault(id: string) {
   const v = (id || "").toLowerCase();
-  if (v === "presets/edit image" || v === "edit image") return false;
+  if (v === "presets/edit image" || v === "edit image") return true;
 
   if (DEFAULT_VISIBLE_WORKFLOW_IDS.has(v)) return false;
 

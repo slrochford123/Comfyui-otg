@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomInt } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import sharp from "sharp";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 
 export const runtime = "nodejs";
@@ -12,11 +14,10 @@ type ComfyOutput = {
   type: string;
 };
 
-type H3CardBackend = "rtx5060ti" | "rtx3090";
+type CardBackend = "rtx5060ti" | "rtx3090";
 
-const CARD_EXPRESSIONS = [
+const CHARACTER_CARD_EXPRESSIONS = new Set([
   "neutral",
-  "happy",
   "smiling",
   "sad",
   "angry",
@@ -30,76 +31,20 @@ const CARD_EXPRESSIONS = [
   "crying",
   "smirking",
   "confused",
-] as const;
-
-type CardExpression = (typeof CARD_EXPRESSIONS)[number];
-
-type ShotConfig = {
-  angle: string;
-  framing: string;
-  expression: CardExpression;
-};
-
-function normalizeExpression(value: string): CardExpression {
-  const normalized = value.trim().toLowerCase();
-  return (CARD_EXPRESSIONS as readonly string[]).includes(normalized)
-    ? (normalized as CardExpression)
-    : "neutral";
-}
-
-function standardCharacterShots(expression: CardExpression): ShotConfig[] {
-  return [
-    { angle: "front", framing: "wide shot (full body)", expression },
-    { angle: "back", framing: "wide shot (full body)", expression },
-    { angle: "left profile", framing: "wide shot (full body)", expression },
-    { angle: "right profile", framing: "wide shot (full body)", expression },
-    { angle: "front", framing: "medium shot (waist-up)", expression },
-    { angle: "front", framing: "close-up (shoulders/face)", expression },
-  ];
-}
-
-function freeformCharacterShots(expression: CardExpression): ShotConfig[] {
-  return [
-    { angle: "left profile", framing: "wide shot (full body)", expression },
-    { angle: "right profile", framing: "wide shot (full body)", expression },
-    { angle: "front", framing: "wide shot (full body)", expression },
-    { angle: "back", framing: "wide shot (full body)", expression },
-    { angle: "front", framing: "close-up (shoulders/face)", expression },
-    { angle: "back", framing: "close-up (upper back/head)", expression },
-  ];
-}
-
-function applyShotPreset(
-  workflow: any,
-  anatomyMode: string,
-  expression: CardExpression,
-) {
-  const shots =
-    anatomyMode === "freeform"
-      ? freeformCharacterShots(expression)
-      : standardCharacterShots(expression);
-
-  shots.forEach((shot, index) => {
-    const nodeId = String(190 + index);
-    const node = workflow?.[nodeId];
-
-    if (!node || node.class_type !== "H3LookSheetsShotConfig") {
-      throw new Error(
-        `H3 look-sheet workflow is missing expected shot node ${nodeId}.`,
-      );
-    }
-
-    node.inputs.angle = shot.angle;
-    node.inputs.framing = shot.framing;
-    node.inputs.expression = shot.expression;
-  });
-}
+]);
 
 function asString(value: unknown) {
   return String(value || "").trim();
 }
 
-function comfyBaseUrl(backend: H3CardBackend = "rtx5060ti") {
+function normalizeExpression(value: unknown) {
+  const normalized = asString(value).toLowerCase();
+  return CHARACTER_CARD_EXPRESSIONS.has(normalized)
+    ? normalized
+    : "neutral";
+}
+
+function comfyBaseUrl(backend: CardBackend = "rtx5060ti") {
   if (backend === "rtx3090") {
     return String(
       process.env.OTG_H3_CARD_COMFY_BACKUP_BASE_URL ||
@@ -122,14 +67,43 @@ function comfyBaseUrl(backend: H3CardBackend = "rtx5060ti") {
 function workflowPath(anatomyMode: string) {
   const filename =
     anatomyMode === "freeform"
-      ? "freeform_card.api.json"
-      : "character_card.api.json";
+      ? "qwen21_freeform_character_card.api.json"
+      : "qwen21_character_card.api.json";
 
   return path.join(
     process.cwd(),
     "comfy_workflows",
     "card_builder",
     filename,
+  );
+}
+
+function cardPrompt(anatomyMode: string, expression: string) {
+  const expressionLine =
+    expression && expression !== "neutral"
+      ? `Selected expression: ${expression}. Make every visible face use this ${expression} expression, especially the front view, side profiles, and close-up face. Preserve identity while changing only the facial expression. `
+      : "Selected expression: neutral. Use a neutral expression wherever the face is visible, especially the front view, side profiles, and close-up face. ";
+
+  if (anatomyMode === "freeform") {
+    return (
+      "Use <image1> as the exact freeform character reference. " +
+      "Create one professional 1920x1080 landscape five-view character card of the SAME character or creature with exactly these views arranged cleanly in a single landscape reference sheet: FRONT view, BACK view, LEFT profile, RIGHT profile, and CLOSE-UP FACE shot. " +
+      expressionLine +
+      "Preserve the exact identity, anatomy, silhouette, posture language, colors, markings, materials, clothing or surface details, accessories, texture, and distinctive features across every view. " +
+      "Keep neutral studio lighting, consistent scale, consistent design, and a clean light-gray studio background. " +
+      "Infer unseen sides only as necessary and keep them consistent with the source. " +
+      "No scenery, no props, no extra characters, no text, no labels, no captions, no letters, no numbers, no watermarks."
+    );
+  }
+
+  return (
+    "Use <image1> as the exact character reference. " +
+    "Create one professional 1920x1080 landscape five-view character card of the SAME character with exactly these views arranged cleanly in a single landscape reference sheet: full-body FRONT, full-body BACK, full-body LEFT profile, full-body RIGHT profile, and CLOSE-UP FACE shot. " +
+    expressionLine +
+    "Preserve the exact identity, face, head shape, hairstyle or fur, skin or surface materials, body proportions, clothing, armor, colors, markings, accessories, silhouette, mechanical construction, and all distinctive features across every view. " +
+    "Keep neutral studio lighting, consistent scale, consistent design, and a clean light-gray studio background. " +
+    "Infer unseen sides only as necessary and keep them consistent with the source. " +
+    "No scenery, no props, no extra characters, no text, no labels, no captions, no letters, no numbers, no watermarks."
   );
 }
 
@@ -162,15 +136,44 @@ async function uploadSourceToBackend(
   sourcePath: string,
   baseUrl: string,
 ) {
-  const bytes = await fs.readFile(sourcePath);
+  const sourceBytes = await fs.readFile(sourcePath);
+  const bytes = await sharp({
+    create: {
+      width: 1920,
+      height: 1080,
+      channels: 3,
+      background: "#d9d9d9",
+    },
+  })
+    .composite([
+      {
+        input: await sharp(sourceBytes, {
+          animated: false,
+          failOn: "none",
+          limitInputPixels: false,
+        })
+          .rotate()
+          .resize({
+            width: 620,
+            height: 980,
+            fit: "inside",
+            withoutEnlargement: true,
+          })
+          .png()
+          .toBuffer(),
+        left: 650,
+        top: 50,
+      },
+    ])
+    .png()
+    .toBuffer();
   const originalName = path.basename(sourcePath);
-  const extension = path.extname(originalName) || ".png";
   const stem =
     path
       .basename(originalName, path.extname(originalName))
       .replace(/[^a-zA-Z0-9._-]/g, "_") || "character";
 
-  const uploadName = `otg-card-${Date.now()}-${stem}${extension}`;
+  const uploadName = `otg-qwen21-card-canvas-${Date.now()}-${stem}.png`;
 
   const form = new FormData();
   form.append(
@@ -254,29 +257,21 @@ async function waitForOutputs(
 
       if (status?.status_str === "error") {
         throw new Error(
-          `H3 Character Card failed: ${JSON.stringify(status)}`,
+          `Qwen Image Edit 2.1 Character Card failed: ${JSON.stringify(status)}`,
         );
       }
 
-      const image = firstOutput(result, "70");
-      const video = firstOutput(result, "79");
+      const image = firstOutput(result, "461");
 
-      if (image && video) {
+      if (image) {
         return {
           image,
-          video,
-          description: asString(
-            result?.outputs?.["141"]?.text?.[0],
-          ),
-          prompt: asString(
-            result?.outputs?.["136"]?.text?.[0],
-          ),
         };
       }
 
       if (status?.completed === true) {
         throw new Error(
-          "H3 Character Card completed without both node 70 PNG and node 79 MP4 outputs.",
+          "Qwen Image Edit 2.1 Character Card completed without node 461 PNG output.",
         );
       }
     }
@@ -285,14 +280,14 @@ async function waitForOutputs(
   }
 
   throw new Error(
-    `H3 Character Card timed out waiting for prompt ${promptId}`,
+    `Qwen Image Edit 2.1 Character Card timed out waiting for prompt ${promptId}`,
   );
 }
 
 function proxyUrl(
   output: ComfyOutput,
   kind: "image" | "video",
-  backend: H3CardBackend,
+  backend: CardBackend,
 ) {
   const params = new URLSearchParams({
     kind,
@@ -366,7 +361,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("[h3-character-card-view]", error);
+    console.error("[qwen21-character-card-view]", error);
 
     return NextResponse.json(
       {
@@ -374,7 +369,7 @@ export async function GET(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "H3 Character Card output fetch failed.",
+            : "Qwen Image Edit 2.1 Character Card output fetch failed.",
       },
       { status: 500 },
     );
@@ -389,9 +384,7 @@ export async function POST(request: NextRequest) {
       body.get("sourceServerPath"),
     );
     const anatomyMode = asString(body.get("anatomyMode"));
-    const expression = normalizeExpression(
-      asString(body.get("expression")),
-    );
+    const expression = normalizeExpression(body.get("expression"));
 
     if (!sourceServerPath) {
       return NextResponse.json(
@@ -414,28 +407,62 @@ export async function POST(request: NextRequest) {
     const workflow = JSON.parse(rawWorkflow);
 
     if (
-      !workflow?.["81"] ||
-      workflow["81"].class_type !== "LoadImage"
+      !workflow?.["470"] ||
+      workflow["470"].class_type !== "LoadImage"
     ) {
       throw new Error(
-        "H3 card workflow is missing expected LoadImage node 81.",
+        "Qwen card workflow is missing expected LoadImage node 470.",
       );
     }
 
-    applyShotPreset(workflow, anatomyMode, expression);
+    if (
+      !workflow?.["474"] ||
+      workflow["474"].class_type !== "TextEncodeQwenImage21"
+    ) {
+      throw new Error(
+        "Qwen card workflow is missing expected TextEncodeQwenImage21 node 474.",
+      );
+    }
 
-    async function submitOnBackend(backend: H3CardBackend) {
+    if (
+      !workflow?.["458"] ||
+      workflow["458"].class_type !== "KSampler"
+    ) {
+      throw new Error(
+        "Qwen card workflow is missing expected KSampler node 458.",
+      );
+    }
+
+    if (
+      !workflow?.["461"] ||
+      workflow["461"].class_type !== "SaveImageAdvanced"
+    ) {
+      throw new Error(
+        "Qwen card workflow is missing expected SaveImageAdvanced node 461.",
+      );
+    }
+
+    workflow["474"].inputs.prompt = cardPrompt(
+      anatomyMode,
+      expression,
+    );
+    workflow["474"].inputs.negative_prompt =
+      "different identity, redesigned character, inconsistent costume, inconsistent colors, inconsistent body proportions, duplicate person, multiple characters, extra limbs, missing limbs, blurry, low quality, cropped view, cut off head, cut off feet, text, labels, captions, watermark, logo, signature, decorative border";
+    workflow["474"].inputs.resolution = 0;
+    workflow["458"].inputs.seed = randomInt(1, 1_000_000_000);
+
+    async function submitOnBackend(backend: CardBackend) {
       const baseUrl = comfyBaseUrl(backend);
       const backendWorkflow = JSON.parse(JSON.stringify(workflow));
       const uploadedName =
         await uploadSourceToBackend(source, baseUrl);
 
-      backendWorkflow["81"].inputs.image = uploadedName;
+      backendWorkflow["470"].inputs.image = uploadedName;
 
       const submissionResponse =
         await submitComfyPromptWith5060Lease({
           baseUrl,
-          workerId: `api-character-h3-card-${backend}`,
+          workerId: `api-character-qwen21-card-${backend}`,
           init: {
             method: "POST",
             headers: {
@@ -443,7 +470,7 @@ export async function POST(request: NextRequest) {
             },
             body: JSON.stringify({
               prompt: backendWorkflow,
-              client_id: `otg-h3-card-${backend}-${Date.now()}`,
+              client_id: `otg-qwen21-card-${backend}-${Date.now()}`,
             }),
           },
         });
@@ -472,7 +499,7 @@ export async function POST(request: NextRequest) {
 
       if (!promptId) {
         throw new Error(
-          "H3 Character Card did not return a ComfyUI prompt id.",
+          "Qwen Image Edit 2.1 Character Card did not return a ComfyUI prompt id.",
         );
       }
 
@@ -480,14 +507,14 @@ export async function POST(request: NextRequest) {
     }
 
     let submission:
-      | { backend: H3CardBackend; baseUrl: string; promptId: string }
+      | { backend: CardBackend; baseUrl: string; promptId: string }
       | null = null;
 
     try {
       submission = await submitOnBackend("rtx5060ti");
     } catch (primaryError) {
       console.warn(
-        "[h3-character-card] RTX 5060 Ti primary submission failed; trying RTX 3090 backup.",
+        "[qwen21-character-card] RTX 5060 Ti primary submission failed; trying RTX 3090 backup.",
         primaryError,
       );
       submission = await submitOnBackend("rtx3090");
@@ -497,15 +524,14 @@ export async function POST(request: NextRequest) {
     const result = await waitForOutputs(promptId, baseUrl);
 
     const url = proxyUrl(result.image, "image", backend);
-    const videoUrl = proxyUrl(result.video, "video", backend);
     const serverScheme =
       backend === "rtx5060ti" ? "comfy5060" : "comfy3090";
 
     return NextResponse.json({
       ok: true,
 
-      // Preserve current Character Builder recovery contract.
-      engine: "orbitsheets-h3",
+      engine: "qwen-image-edit-2.1",
+      cardEngine: "qwen-image-edit-2.1",
       promptId,
       backend,
 
@@ -514,21 +540,22 @@ export async function POST(request: NextRequest) {
       filename: result.image.filename,
       sourceName: result.image.filename,
 
-      videoUrl,
-      videoServerPath: `${serverScheme}://output/${result.video.subfolder}/${result.video.filename}`,
-      videoFilename: result.video.filename,
-      videoSourceName: result.video.filename,
+      videoUrl: "",
+      videoServerPath: "",
+      videoFilename: "",
+      videoSourceName: "",
 
-      generatedDescription: result.description,
-      generatedPrompt: result.prompt,
+      generatedDescription: "",
+      generatedPrompt: workflow["474"].inputs.prompt,
+      expression,
 
       workflow:
         anatomyMode === "freeform"
-          ? "freeform_card.api.json"
-          : "character_card.api.json",
+          ? "qwen21_freeform_character_card.api.json"
+          : "qwen21_character_card.api.json",
     });
   } catch (error) {
-    console.error("[h3-character-card]", error);
+    console.error("[qwen21-character-card]", error);
 
     return NextResponse.json(
       {
@@ -536,7 +563,7 @@ export async function POST(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "H3 Character Card failed.",
+            : "Qwen Image Edit 2.1 Character Card failed.",
       },
       { status: 500 },
     );

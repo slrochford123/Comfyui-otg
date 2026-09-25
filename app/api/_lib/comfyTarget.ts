@@ -288,6 +288,8 @@ export function classifyComfyJob(descriptor: ComfyRouteDescriptor): ComfyJobKind
     mode.includes("image") ||
     key.includes("qwen image") ||
     key.includes("qwen-image") ||
+    key.includes("image_qwen_image_2_1") ||
+    key.includes("character_card_qwen_image_2_1") ||
     key.includes("image_krea2_turbo_t2i") ||
     key.includes("create a picture") ||
     key.includes("create picture") ||

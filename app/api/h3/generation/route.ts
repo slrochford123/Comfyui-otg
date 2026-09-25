@@ -125,6 +125,14 @@ function errorResponse(error: unknown) {
   return noStore({ ok: false, error: error instanceof Error ? error.message : "H3 generation request failed." }, { status: 400 });
 }
 
+function freshH3RetrySeed(previousSeed: number) {
+  let nextSeed = crypto.randomBytes(6).readUIntBE(0, 6);
+  while (nextSeed === previousSeed) {
+    nextSeed = crypto.randomBytes(6).readUIntBE(0, 6);
+  }
+  return nextSeed;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const owner = await getOwnerContext(req);
@@ -156,7 +164,11 @@ export async function POST(req: NextRequest) {
       if (body?.action !== "retry") throw new Error("Unknown H3 generation action.");
       const source = await getH3DirectJob(ownerKey, String(body.jobId || ""));
       if (!source) throw new Error("H3 generation job not found.");
-      const retry = await createH3DirectJob(ownerKey, source.input, source.galleryOwner || owner);
+      const retryInput = {
+        ...source.input,
+        seed: freshH3RetrySeed(source.input.seed),
+      };
+      const retry = await createH3DirectJob(ownerKey, retryInput, source.galleryOwner || owner);
       startH3DirectJob(retry);
       return noStore({ ok: true, job: h3DirectPublicStatus(retry) }, { status: 202 });
     }

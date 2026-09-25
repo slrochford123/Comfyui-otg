@@ -61,7 +61,8 @@ type CharacterModelId =
   | "z-image"
   | "krea-2"
   | "boogu"
-  | "mage-flow";
+  | "mage-flow"
+  | "qwen-image-2-1";
 
 const CHARACTER_CARD_EXPRESSIONS = [
   "neutral",
@@ -113,6 +114,11 @@ const CHARACTER_IMAGE_MODELS: Array<{
     id: "mage-flow",
     label: "Mage Flow",
     workflowFile: "image_mage_flow_turbo_t2i_int8.json",
+  },
+  {
+    id: "qwen-image-2-1",
+    label: "Qwen Image 2.1",
+    workflowFile: "image_qwen_image_2_1_t2i.json",
   },
 ];
 
@@ -417,11 +423,17 @@ function CharacterCreateSetup({
     (candidate) => candidate.id === modifyCandidateId,
   ) || null;
 
-  // OTG_CHARACTER_HUB_ORBITSHEETS_V2_UI_V1
+  // OTG_CHARACTER_HUB_QWEN21_CARD_UI_V1
+  const characterCardEngineV1 = String(
+    (characterReferences as any)?.engine || "",
+  ).trim();
+  const isQwenImageEditCharacterCardV1 =
+    Number((characterReferences as any)?.pipelineVersion || 0) >= 2 &&
+    characterCardEngineV1 === "qwen-image-edit-2.1";
   const isOrbitSheetsCharacterCardV2 =
     Number((characterReferences as any)?.pipelineVersion || 0) >= 2 &&
-    String((characterReferences as any)?.engine || "").trim() ===
-      "orbitsheets-h3";
+    (characterCardEngineV1 === "orbitsheets-h3" ||
+      characterCardEngineV1 === "qwen-image-edit-2.1");
   const characterCardExpressionLocked =
     characterCardStatus === "running" ||
     characterCardInFlightRef.current ||
@@ -1132,13 +1144,13 @@ function CharacterCreateSetup({
         serverPath: completed.serverPath,
         promptId: completed.promptId,
         seed: Number(seed),
-        backend: "qwen-image-edit",
+        backend: "qwen-image-edit-2-1",
         modelLabel: isFreeform
           ? "Qwen Completed Freeform Character"
           : "Qwen Completed Character",
         styleLabel: uploadFraming === "head" ? "Head completion" : "Half Body completion",
         internalPrompt: completed.instruction,
-        workflowId: "presets/Edit Image",
+        workflowId: "presets/image_qwen_image_2_1_image_edit",
         backgroundFree: false,
       };
       setCreateCandidates([candidate]);
@@ -1202,10 +1214,14 @@ function CharacterCreateSetup({
         const card = refs?.characterCard;
         const previewVideo = refs?.previewVideo;
 
+        const refsEngineV1 = String((refs as any)?.engine || "").trim();
+        const isQwenCardV1 =
+          Number((refs as any)?.pipelineVersion || 0) >= 2 &&
+          refsEngineV1 === "qwen-image-edit-2.1";
         const isOrbitSheetsV2 =
           Number((refs as any)?.pipelineVersion || 0) >= 2 &&
-          String((refs as any)?.engine || "").trim() ===
-            "orbitsheets-h3";
+          (refsEngineV1 === "orbitsheets-h3" ||
+            refsEngineV1 === "qwen-image-edit-2.1");
 
         const legacyFourBodyReferencesComplete =
           Boolean(body?.front?.serverPath) &&
@@ -1220,7 +1236,7 @@ function CharacterCreateSetup({
         ) {
           throw new Error(
             isOrbitSheetsV2
-              ? "OrbitSheets completion did not return a persisted Character Card."
+              ? "Qwen Image Edit 2.1 completion did not return a persisted Character Card."
               : "Legacy Character completion did not return all four body references and the Character Card.",
           );
         }
@@ -1229,22 +1245,32 @@ function CharacterCreateSetup({
         setCharacterCardLockedExpression(characterCardExpression);
         setCharacterCard({
           ...(processedCharacterSource as CharacterCreateCandidate),
-          id: `${isOrbitSheetsV2 ? "orbitsheets-card" : "four-angle-card"}-${jobId}`,
+          id: `${isOrbitSheetsV2 ? "qwen21-card" : "four-angle-card"}-${jobId}`,
           imageUrl: characterReferenceAssetUrl(card),
           serverPath: card.serverPath,
           previewVideoUrl: String(previewVideo?.url || "").trim(),
           previewVideoServerPath: String(previewVideo?.serverPath || "").trim(),
           promptId: String((card as any)?.promptId || refs?.anglePromptId || jobId),
-          modelLabel: isOrbitSheetsV2 ? "OrbitSheets H3 Character Card" : "Four-angle Character Card",
+          modelLabel: isOrbitSheetsV2
+            ? isQwenCardV1
+              ? "Qwen Image Edit 2.1 Character Card"
+              : "OrbitSheets H3 Character Card"
+            : "Four-angle Character Card",
           styleLabel: isOrbitSheetsV2 ? "Six-view Character Card" : "Front / Back / Left / Right",
-          workflowId: isOrbitSheetsV2 ? "orbitsheets-h3-character-card" : "internal/character-reference/qwen_character_4angle_lowres",
+          workflowId: isOrbitSheetsV2
+            ? isQwenCardV1
+              ? "qwen-image-edit-2.1-character-card"
+              : "orbitsheets-h3-character-card"
+            : "internal/character-reference/qwen_character_4angle_lowres",
           backgroundFree: false,
         });
         setCharacterCardStatus("idle");
         setCharacterCompletionProgress(100);
         setCreateMessage(
           isOrbitSheetsV2
-            ? "OrbitSheets H3 six-view Character Card is ready. Review it, then accept."
+            ? isQwenCardV1
+              ? "Qwen Image Edit 2.1 five-view Character Card is ready. Review it, then accept."
+              : "OrbitSheets H3 six-view Character Card is ready. Review it, then accept."
             : "Four canonical 1080×1920 legacy Character references and the four-angle Character Card are ready. Review them, then accept.",
         );
         return;
@@ -1299,7 +1325,7 @@ function CharacterCreateSetup({
       //
       // A browser refresh must not submit a second expensive render if
       // Worker Manager already completed this exact draft/source/mode/expression.
-      if (!jobId) {
+      if (!jobId && !existingCardWillBeRegenerated) {
         try {
           const recoveryOwnerId =
             getCharacterHubDeviceId();
@@ -1369,7 +1395,8 @@ function CharacterCreateSetup({
               const refsPipelineVersion = Number(refs.pipelineVersion || 0);
               if (
                 refsPipelineVersion < 2 ||
-                refsEngine !== "orbitsheets-h3"
+                (refsEngine !== "orbitsheets-h3" &&
+                  refsEngine !== "qwen-image-edit-2.1")
               ) {
                 return false;
               }
@@ -1427,7 +1454,7 @@ function CharacterCreateSetup({
             );
 
             setCreateMessage(
-              "Recovered the completed Character Card job for this source, mode, and expression. No new H3 render was submitted.",
+              "Recovered the completed Qwen Image Edit 2.1 Character Card job for this source, mode, and expression. No new render was submitted.",
             );
           }
         } catch (recoveryError) {
@@ -1529,7 +1556,7 @@ function CharacterCreateSetup({
       }
 
       setCreateMessage(
-        `Character Card job ${jobId} is saved. OrbitSheets H3 will build the six-view ${characterCardExpressionLabel(requestedExpression)} Character Card; legacy four-angle generation remains the automatic fallback.`,
+        `Character Card job ${jobId} is saved. Qwen Image Edit 2.1 will build the five-view ${characterCardExpressionLabel(requestedExpression)} Character Card; legacy four-angle generation remains the automatic fallback.`,
       );
 
       await pollCharacterReferenceCompletionV1(jobId);
@@ -1552,7 +1579,7 @@ function CharacterCreateSetup({
     ) {
       setCreateError(
         isOrbitSheetsCharacterCardV2
-          ? "The OrbitSheets Character Card must finish before it can be accepted."
+          ? "The Qwen Image Edit 2.1 Character Card must finish before it can be accepted."
           : "All four legacy canonical Character references must finish before the Character Card can be accepted.",
       );
       return;
@@ -1562,7 +1589,7 @@ function CharacterCreateSetup({
     setCharacterFinalizeStep(true);
     setCreateMessage(
       isOrbitSheetsCharacterCardV2
-        ? "OrbitSheets Character Card accepted. Add the real character name and appearance details, then choose or upload the voice."
+        ? "Qwen Image Edit 2.1 Character Card accepted. Add the real character name and appearance details, then choose or upload the voice."
         : "Legacy four-angle Character references accepted. Add the real character name and appearance details, then choose or upload the voice.",
     );
   }
@@ -1882,7 +1909,7 @@ function CharacterCreateSetup({
           <div className="text-xs font-black uppercase tracking-[0.24em] text-amber-200/75">Character Studio</div>
           <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Character Card</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-white/60">
-            Generate the canonical model-facing Character Card from the processed source. {isFreeform ? "Freeform creates six full-form views: left profile, right profile, front, back, front close-up face, and back close-up." : "Standard creates four full-body views plus a waist-up front view and a close-up front view."} If OrbitSheets is unavailable, the legacy four-angle Character Card generator runs automatically.
+            Generate the canonical model-facing Character Card from the processed source. Standard and freeform cards use front, back, left, right, and close-up face views. {isQwenImageEditCharacterCardV1 ? "This card was created with Qwen Image Edit 2.1." : "Qwen Image Edit 2.1 is the primary card generator; legacy four-angle generation remains the automatic fallback."}
           </p>
         </div>
 
@@ -1922,7 +1949,7 @@ function CharacterCreateSetup({
                 <img src={characterCard.imageUrl} alt="Completed Character Card" draggable={false} onContextMenu={(event) => event.preventDefault()} className="mx-auto max-h-[640px] w-full rounded-xl object-contain select-none" />
               </button>
             ) : (
-              <div className="mt-3 rounded-2xl border border-dashed border-white/15 p-8 text-center text-sm text-white/45">Create the Character Card to generate the canonical six-view model-facing reference sheet.</div>
+              <div className="mt-3 rounded-2xl border border-dashed border-white/15 p-8 text-center text-sm text-white/45">Create the Character Card to generate the canonical five-view model-facing reference sheet.</div>
             )}
             {characterCardStatus === "error" ? <p className="mt-3 text-sm text-red-100">Generation failed. The source and candidates are preserved; retry with Create Character Card.</p> : null}
             {characterCardStatus === "accepted" ? <p className="mt-3 text-sm text-emerald-100">Character Card accepted. The processed single-character source remains the default/profile image.</p> : null}
@@ -2007,7 +2034,7 @@ function CharacterCreateSetup({
             ))}
           </select>
           <p className="mt-3 text-sm leading-6 text-white/55">
-            Applies to every H3 Character Card view. It locks while this card is running and after this exact card is complete.
+            Applies to every Qwen Image Edit 2.1 Character Card view. It locks while this card is running and after this exact card is complete.
           </p>
           {characterCardExpressionLocked && characterCardStatus !== "running" ? (
             <button

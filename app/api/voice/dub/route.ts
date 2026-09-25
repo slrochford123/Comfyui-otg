@@ -23,8 +23,9 @@ const IGNORE_RE = /[\\/](venv|\.venv|env|node_modules|site-packages|test_data|te
 const COMMAND_TIMEOUT_MS = Number(process.env.SEEDVC_COMMAND_TIMEOUT_MS || process.env.XTTS_COMMAND_TIMEOUT_MS || process.env.VOICE_DUB_TIMEOUT_MS || 900000);
 const WHISPER_TIMEOUT_MS = Number(process.env.WHISPER_TIMEOUT_MS || 600000);
 const MAX_TRANSCRIPT_CHARS = Number(process.env.XTTS_MAX_TRANSCRIPT_CHARS || 1200);
+const AUK_TIMEOUT_MS = Number(process.env.AUK_COMMAND_TIMEOUT_MS || 900000);
 
-type Engine = "seed-vc" | "xtts";
+type Engine = "applio" | "seed-vc" | "xtts";
 
 type ResolvedVoice = {
   voicePath: string;
@@ -112,7 +113,45 @@ function hasSeedVcRuntime() {
   return Boolean(process.env.SEEDVC_DUB_COMMAND?.trim() || findSeedVcScript());
 }
 
-function resolveVoice(voicePathRaw: string, requestedEngineRaw: string): ResolvedVoice {
+function validateReadablePath(rawValue: string, label: string, extRe?: RegExp) {
+  const filePath = expandVoicePath(rawValue);
+  const allowed = ALLOWED_REFERENCE_ROOTS.some((root) => assertInside(root, filePath));
+  if (!filePath || !allowed || !fs.existsSync(filePath) || IGNORE_RE.test(filePath)) {
+    throw new Error(`${label} is invalid or outside the allowed voice data roots.`);
+  }
+  if (extRe && !extRe.test(filePath)) {
+    throw new Error(`${label} has an unsupported file type.`);
+  }
+  return filePath;
+}
+
+function resolveVoice(voicePathRaw: string, requestedEngineRaw: string, explicitModelPathRaw = "", explicitIndexPathRaw = "", explicitSamplePathRaw = ""): ResolvedVoice {
+  const requestedEngine = String(requestedEngineRaw || "auto").toLowerCase();
+  const explicitModelPath = String(explicitModelPathRaw || "").trim()
+    ? validateReadablePath(explicitModelPathRaw, "Trained Applio model", MODEL_EXT_RE)
+    : "";
+  const explicitIndexPath = String(explicitIndexPathRaw || "").trim()
+    ? validateReadablePath(explicitIndexPathRaw, "Trained Applio index", /\.index$/i)
+    : "";
+  const explicitSamplePath = String(explicitSamplePathRaw || "").trim()
+    ? validateReadablePath(explicitSamplePathRaw, "Character voice reference sample", AUDIO_EXT_RE)
+    : "";
+
+  if (requestedEngine === "applio" || explicitModelPath || explicitIndexPath) {
+    if (!explicitModelPath || !explicitIndexPath) {
+      throw new Error("Trained character voice dubbing requires both an Applio model path and index path.");
+    }
+    return {
+      voicePath: explicitModelPath,
+      engine: "applio",
+      modelPath: explicitModelPath,
+      indexPath: explicitIndexPath,
+      samplePath: explicitSamplePath,
+      modelName: path.basename(explicitModelPath, path.extname(explicitModelPath)),
+      isAudioReference: false,
+    };
+  }
+
   const voicePath = expandVoicePath(voicePathRaw);
   const allowed = ALLOWED_REFERENCE_ROOTS.some((root) => assertInside(root, voicePath));
   if (!voicePath || !allowed || !fs.existsSync(voicePath) || IGNORE_RE.test(voicePath)) {
@@ -124,7 +163,6 @@ function resolveVoice(voicePathRaw: string, requestedEngineRaw: string): Resolve
   const modelPath = newest(files, MODEL_EXT_RE);
   const indexPath = newest(files, /\.index$/i);
   const samplePath = stat.isFile() && AUDIO_EXT_RE.test(voicePath) ? voicePath : newest(files, AUDIO_EXT_RE);
-  const requestedEngine = String(requestedEngineRaw || "auto").toLowerCase();
 
   let engine: Engine;
   if (requestedEngine === "seed-vc" || requestedEngine === "xtts") {
@@ -339,7 +377,174 @@ async function runSeedVc(inputPath: string, outputPath: string, samplePath: stri
   }
 }
 
+function applioPython() {
+  const configured = process.env.APPLIO_PYTHON?.trim();
+  if (configured) return configured;
+  const root = process.env.APPLIO_ROOT || "/home/shawn-rochford/AI/runtime/test/Applio";
+  const venv = path.join(root, ".venv", "bin", "python");
+  return fs.existsSync(venv) ? venv : "python";
+}
+
+function applioRoot() {
+  return path.resolve(process.env.APPLIO_ROOT || "/home/shawn-rochford/AI/runtime/test/Applio");
+}
+
+function applioCoreScript() {
+  return path.resolve(process.env.APPLIO_CORE_SCRIPT || path.join(applioRoot(), "core.py"));
+}
+
+function aukRoot() {
+  return path.resolve(process.env.AUK_ROOT || "/home/shawn-rochford/AI/runtime/test/AuK");
+}
+
+function aukCli() {
+  return path.resolve(process.env.AUK_CLI || path.join(aukRoot(), ".venv", "bin", "auk-infer"));
+}
+
+function aukCheckpoint() {
+  return path.resolve(process.env.AUK_CKPT || path.join(aukRoot(), "ckpts", "AuK-Flash", "auk_flash.safetensors"));
+}
+
+function aukQwenPath() {
+  return path.resolve(process.env.AUK_QWEN_PATH || path.join(aukRoot(), "ckpts", "Qwen2.5-Omni-3B"));
+}
+
+function emotionInstruction(emotion: string) {
+  const normalized = String(emotion || "preserve").toLowerCase().trim();
+  const map: Record<string, string> = {
+    preserve: "preserve the natural emotional intent of the source performance",
+    quiet: "speak quietly, controlled, intimate, and clearly audible",
+    whisper: "speak in a clear whisper with breathy close-mic delivery",
+    excited: "sound excited, energetic, and bright without rushing the words",
+    angry: "sound angry and tense while keeping the words intelligible",
+    shouting: "sound like a raised voice or shout with force and urgency",
+    sad: "sound sad, restrained, and emotionally heavy",
+    scared: "sound scared, nervous, and tense",
+    confident: "sound confident, direct, and assured",
+  };
+  return map[normalized] || map.preserve;
+}
+
+async function probeAudioDurationSeconds(audioPath: string) {
+  const ffprobe = process.env.FFPROBE_PATH || process.env.OTG_FFPROBE_PATH || "ffprobe";
+  return await new Promise<number>((resolve) => {
+    const child = spawn(
+      ffprobe,
+      ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", audioPath],
+      { windowsHide: true },
+    );
+    let stdout = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve(0);
+    }, 15000);
+    child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
+    child.on("error", () => { clearTimeout(timer); resolve(0); });
+    child.on("close", () => {
+      clearTimeout(timer);
+      const seconds = Number(stdout.trim());
+      resolve(Number.isFinite(seconds) && seconds > 0 ? seconds : 0);
+    });
+  });
+}
+
+async function runAukRewriteSource(args: {
+  sourcePerformancePath: string;
+  referenceAudioPath: string;
+  outputPath: string;
+  replacementText: string;
+  emotion: string;
+}) {
+  if (!args.replacementText.trim()) {
+    throw new Error("Rewrite Line mode requires replacement text.");
+  }
+  if (!args.referenceAudioPath || !fs.existsSync(args.referenceAudioPath)) {
+    throw new Error("Rewrite Line mode requires a character voice reference sample for AuK source-speech generation.");
+  }
+
+  const cli = aukCli();
+  const ckpt = aukCheckpoint();
+  const qwenPath = aukQwenPath();
+  if (!fs.existsSync(cli) || !fs.existsSync(ckpt) || !fs.existsSync(qwenPath)) {
+    throw new Error("AuK rewrite runtime is not available. Check AUK_ROOT, AUK_CLI, AUK_CKPT, and AUK_QWEN_PATH.");
+  }
+
+  const sourceSeconds = await probeAudioDurationSeconds(args.sourcePerformancePath);
+  const genSeconds = sourceSeconds > 0 ? Math.max(0.35, Math.min(30, sourceSeconds)) : 0;
+  const instruction = [
+    `Say exactly: "${args.replacementText.trim()}"`,
+    `Use the reference voice and ${emotionInstruction(args.emotion)}.`,
+    "Keep the delivery natural and suitable for replacing a line inside a video.",
+  ].join(" ");
+
+  const cliArgs = [
+    "--ckpt", ckpt,
+    "--qwen_path", qwenPath,
+    "--audio", args.referenceAudioPath,
+    "--instruction", instruction,
+    "--gen_text", args.replacementText.trim(),
+    "--seed", String(Math.floor(Math.random() * 2147483647)),
+    "--output", args.outputPath,
+  ];
+  if (genSeconds > 0) cliArgs.splice(cliArgs.length - 2, 0, "--gen_seconds", String(genSeconds));
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(cli, cliArgs, { cwd: aukRoot(), windowsHide: true });
+    let stderr = "";
+    let stdout = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`AuK rewrite generation timed out after ${Math.round(AUK_TIMEOUT_MS / 1000)} seconds.`));
+    }, AUK_TIMEOUT_MS);
+    child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
+    child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
+    child.on("error", (error) => { clearTimeout(timer); reject(error); });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`AuK rewrite generation failed with exit code ${code}. ${stderr || stdout}`.slice(0, 5000)));
+    });
+  });
+
+  if (!fs.existsSync(args.outputPath) || fs.statSync(args.outputPath).size <= 0) {
+    throw new Error("AuK rewrite generation did not write a usable output file.");
+  }
+}
+
+function defaultApplioCommand() {
+  return `"${applioPython()}" "${applioCoreScript()}" infer --pitch {pitch} --index_rate {indexRate} --volume_envelope 1 --protect {protect} --f0_method {f0Method} --input_path "{input}" --output_path "{output}" --pth_path "{model}" --index_path "{index}" --split_audio False --f0_autotune False --clean_audio False --export_format WAV --embedder_model "{embedderModel}"`;
+}
+
+async function runApplio(inputPath: string, outputPath: string, modelPath: string, indexPath: string, pitch: string, jobDir: string) {
+  if (!modelPath || !indexPath) throw new Error("Trained Applio voice conversion requires modelPath and indexPath.");
+  const command = process.env.APPLIO_DUB_COMMAND?.trim() || process.env.APPLIO_INFERENCE_COMMAND?.trim() || defaultApplioCommand();
+  await runCommand(command, {
+    input: inputPath,
+    output: outputPath,
+    model: modelPath,
+    index: indexPath,
+    pth: modelPath,
+    pth_path: modelPath,
+    index_path: indexPath,
+    pitch,
+    indexRate: process.env.APPLIO_INFERENCE_INDEX_RATE || "0.75",
+    protect: process.env.APPLIO_INFERENCE_PROTECT || "0.33",
+    f0Method: process.env.APPLIO_INFERENCE_F0_METHOD || "rmvpe",
+    embedderModel: process.env.APPLIO_INFERENCE_EMBEDDER_MODEL || "contentvec",
+    jobDir,
+  }, applioRoot(), COMMAND_TIMEOUT_MS);
+
+  if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size <= 0) {
+    throw new Error("Applio voice conversion did not write a usable output file.");
+  }
+}
+
 async function runConversion(args: { engine: Engine; inputPath: string; outputPath: string; voicePath: string; modelPath: string; indexPath: string; samplePath: string; pitch: string; jobDir: string }) {
+  if (args.engine === "applio") {
+    await runApplio(args.inputPath, args.outputPath, args.modelPath, args.indexPath, args.pitch, args.jobDir);
+    return { transcript: "", mode: "applio-trained-character-performance" };
+  }
+
   if (args.engine === "seed-vc") {
     await runSeedVc(args.inputPath, args.outputPath, args.samplePath, args.pitch, args.jobDir);
     return { transcript: "", mode: "seed-vc-reference" };
@@ -358,11 +563,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Missing performance audio upload. Record again or re-select the uploaded audio after restarting the app." }, { status: 400 });
     }
 
-    const voicePathRaw = String(form.get("voice_path") || form.get("voicePath") || form.get("selectedVoicePath") || form.get("modelPath") || "").trim();
+    const voicePathRaw = String(form.get("voice_path") || form.get("voicePath") || form.get("selectedVoicePath") || "").trim();
+    const modelPathRaw = String(form.get("model_path") || form.get("modelPath") || form.get("trainedModelPath") || "").trim();
+    const indexPathRaw = String(form.get("index_path") || form.get("indexPath") || form.get("trainedIndexPath") || "").trim();
+    const samplePathRaw = String(form.get("voice_sample_path") || form.get("samplePath") || form.get("approvedSamplePath") || "").trim();
     const requestedEngine = String(form.get("engine") || "auto").trim().toLowerCase();
     const pitch = String(Number(form.get("pitch") || form.get("pitchShift") || 0) || 0);
     const title = cleanTitle(String(form.get("title") || form.get("outputName") || "voice_dub"));
-    const voice = resolveVoice(voicePathRaw, requestedEngine);
+    const dubMode = String(form.get("dub_mode") || form.get("dubMode") || "preserve_performance").trim();
+    const emotion = String(form.get("emotion") || "preserve").trim();
+    const replacementText = String(form.get("replacement_text") || form.get("replacementText") || form.get("text") || "").trim();
+    const voice = resolveVoice(voicePathRaw, requestedEngine, modelPathRaw, indexPathRaw, samplePathRaw);
 
     const root = ownerJobRoot(owner.ownerKey);
     ensureDir(root);
@@ -377,10 +588,25 @@ export async function POST(req: NextRequest) {
     const outputPath = safeJoin(jobDir, `${title}.wav`);
     await saveUpload(perfFile, rawInput);
     await convertWithFfmpeg(rawInput, normalizedInput);
+    let conversionInput = normalizedInput;
+    let sourceSpeechMode = "source-performance";
+
+    if (dubMode !== "preserve_performance") {
+      const aukSourcePath = safeJoin(jobDir, "rewrite_source_auk.wav");
+      await runAukRewriteSource({
+        sourcePerformancePath: normalizedInput,
+        referenceAudioPath: voice.samplePath,
+        outputPath: aukSourcePath,
+        replacementText,
+        emotion,
+      });
+      conversionInput = aukSourcePath;
+      sourceSpeechMode = "auk-rewrite-line";
+    }
 
     const conversion = await runConversion({
       engine: voice.engine,
-      inputPath: normalizedInput,
+      inputPath: conversionInput,
       outputPath,
       voicePath: voice.voicePath,
       modelPath: voice.modelPath,
@@ -397,12 +623,16 @@ export async function POST(req: NextRequest) {
       operation: "voice-dubbing",
       engine: voice.engine,
       conversionMode: conversion.mode,
+      sourceSpeechMode,
       modelName: voice.modelName,
       voicePath: voice.voicePath,
       modelPath: voice.modelPath,
       indexPath: voice.indexPath,
       samplePath: voice.samplePath,
       pitch: Number(pitch),
+      dubMode,
+      emotion,
+      replacementText: replacementText || undefined,
       transcript: conversion.transcript || undefined,
       inputFileName: perfFile.name || "performance_audio",
       outputFileName: path.basename(outputPath),
@@ -411,7 +641,9 @@ export async function POST(req: NextRequest) {
     };
     await fsp.writeFile(`${outputPath}.json`, JSON.stringify(meta, null, 2), "utf8");
 
-    const message = conversion.mode === "seed-vc-reference"
+    const message = conversion.mode === "applio-trained-character-performance"
+      ? "Voice conversion is ready using the trained character Applio model while preserving the source performance timing and emotion."
+      : conversion.mode === "seed-vc-reference"
       ? "Voice conversion is ready using Seed-VC zero-shot reference conversion."
       : "Voice conversion is ready using Whisper transcript plus XTTS character reference voice. This is transcript-based fallback, not true voice-to-voice timing.";
 
@@ -424,7 +656,10 @@ export async function POST(req: NextRequest) {
       saved: false,
       engine: voice.engine,
       conversionMode: conversion.mode,
+      sourceSpeechMode,
       modelName: voice.modelName,
+      emotion,
+      dubMode,
       sizeBytes: stat.size,
       message,
     }, { headers: { "Cache-Control": "no-store" } });

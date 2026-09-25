@@ -11,10 +11,10 @@ const panel = readFileSync(
   "utf8",
 );
 
-describe("OrbitSheets browser recovery contract", () => {
+describe("Qwen Image Edit 2.1 browser recovery contract", () => {
   it("checks completed Character Completion jobs before a new render", () => {
     expect(panel).toContain(
-      "OTG_ORBITSHEETS_COMPLETED_JOB_RECOVERY_V1",
+      "OTG_QWEN21_COMPLETED_JOB_RECOVERY_V1",
     );
     expect(panel).toContain(
       '"/api/characters/completion"',
@@ -25,11 +25,14 @@ describe("OrbitSheets browser recovery contract", () => {
     expect(panel).toContain(
       "sourceCandidatesV1.includes(",
     );
+    expect(panel).toContain(
+      "recoveredExpressionV1 === characterCardExpression",
+    );
   });
 
   it("returns the recovered durable Character Card", () => {
     expect(panel).toContain(
-      "Recovered the completed OrbitSheets Character Card. No new H3 render was needed.",
+      "Recovered the completed Qwen Image Edit 2.1 Character Card. No new render was needed.",
     );
     expect(panel).toContain(
       "recoveredCardPathV1",
@@ -39,9 +42,9 @@ describe("OrbitSheets browser recovery contract", () => {
     );
   });
 
-  it("still uses OrbitSheets for new cards", () => {
+  it("still uses the card route for new Qwen cards", () => {
     expect(panel).toContain(
-      'workflowId: "orbitsheets-h3-character-card"',
+      'workflowId: "qwen-image-edit-2.1-character-card"',
     );
     expect(panel).toContain(
       "/api/characters/orbitsheets-card",
@@ -50,7 +53,7 @@ describe("OrbitSheets browser recovery contract", () => {
 
   it("keeps the legacy Character Card fallback", () => {
     expect(panel).toContain(
-      "[Character Card] OrbitSheets failed; using legacy Character Card fallback.",
+      "[Character Card] Qwen Image Edit 2.1 failed; using legacy Character Card fallback.",
     );
     expect(panel).toContain(
       "submitLegacyCharacterCardJob",

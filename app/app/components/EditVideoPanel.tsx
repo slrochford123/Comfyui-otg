@@ -7,6 +7,7 @@ import EditVideoEditAnythingPanel from "./EditVideoEditAnythingPanel";
 import EditVideoWooshPanel from "./EditVideoWooshPanel";
 import EditVideoVoiceDubbingPanel from "./EditVideoVoiceDubbingPanel";
 import EditVideoExtractAudioPanel from "./EditVideoExtractAudioPanel";
+import EditVideoSwapCharactersPanel from "./EditVideoSwapCharactersPanel";
 
 type GalleryVideoItem = {
   fileName?: string;
@@ -174,7 +175,7 @@ function ordinal(position: number) {
 }
 
 export default function EditVideoPanel({ onRefreshGallery }: Props) {
-  const [activeTool, setActiveTool] = React.useState<"stitch" | "audio" | "voice" | "extract" | "remove" | "video">("stitch");
+  const [activeTool, setActiveTool] = React.useState<"stitch" | "audio" | "voice" | "extract" | "remove" | "video" | "swap">("stitch");
   const [slots, setSlots] = React.useState<StitchSlot[]>(() => createEmptySlots());
   const [galleryPickerSlot, setGalleryPickerSlot] = React.useState<number | null>(null);
   const [audioGalleryOpen, setAudioGalleryOpen] = React.useState(false);
@@ -859,16 +860,17 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
           {[
             { id: "stitch", label: "Stitch Video", disabled: false },
             { id: "audio", label: "Audio Editing", disabled: false },
-            { id: "voice", label: "Voice Dubbing", disabled: false },
+            { id: "voice", label: "Dialogue Replacement", disabled: false },
             { id: "extract", label: "Extract Audio", disabled: false },
             { id: "remove", label: "Remove Music" },
             { id: "video", label: "Video Editing", disabled: false },
+            { id: "swap", label: "Swap Characters", disabled: false },
           ].map((tool) => (
             <button
               key={tool.id}
               type="button"
               disabled={tool.disabled}
-              onClick={() => !tool.disabled && setActiveTool(tool.id as "stitch" | "audio" | "voice" | "extract" | "remove" | "video")}
+              onClick={() => !tool.disabled && setActiveTool(tool.id as "stitch" | "audio" | "voice" | "extract" | "remove" | "video" | "swap")}
               className={cn(
                 "inline-flex min-h-12 items-center justify-center rounded-full border px-5 py-3 text-base font-semibold transition disabled:cursor-not-allowed disabled:opacity-45",
                 activeTool === tool.id
@@ -1522,6 +1524,10 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
 
       {activeTool === "video" ? (
         <EditVideoEditAnythingPanel onRefreshGallery={onRefreshGallery} />
+      ) : null}
+
+      {activeTool === "swap" ? (
+        <EditVideoSwapCharactersPanel onRefreshGallery={onRefreshGallery} />
       ) : null}
 
       {galleryPickerSlot !== null || audioGalleryOpen ? (

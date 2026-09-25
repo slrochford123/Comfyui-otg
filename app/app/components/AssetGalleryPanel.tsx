@@ -2887,7 +2887,7 @@ export default function AssetGalleryPanel({
         );
 
       setMessage(
-        "Generating the H3 Asset Card on the RTX 5060...",
+        "Generating the Qwen Image Edit 2.1 Asset Card...",
       );
 
       const assetCardForm =
@@ -2936,7 +2936,7 @@ export default function AssetGalleryPanel({
           text(
             assetCardPayload?.error,
           ) ||
-            `H3 Asset Card generation failed (${assetCardResponse.status}).`,
+            `Qwen Image Edit 2.1 Asset Card generation failed (${assetCardResponse.status}).`,
         );
       }
 
@@ -2955,18 +2955,18 @@ export default function AssetGalleryPanel({
 
       if (!assetCardUrl) {
         throw new Error(
-          "H3 Asset Card did not return an image.",
+          "Qwen Image Edit 2.1 Asset Card did not return an image.",
         );
       }
 
       setMessage(
-        "H3 Asset Card generated. Saving the canonical Asset...",
+        "Qwen Image Edit 2.1 Asset Card generated. Saving the canonical Asset...",
       );
 
       const assetCardUpload =
         await copyAssetImageToUpload(
           assetCardUrl,
-          `${candidate.id}-h3-card`,
+          `${candidate.id}-qwen21-card`,
           candidate.name,
         );
 

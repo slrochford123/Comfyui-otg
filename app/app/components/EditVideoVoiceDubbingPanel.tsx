@@ -12,6 +12,8 @@ type VoiceModel = {
   engine: "seed-vc" | "xtts" | "reference" | "character";
   path: string;
   displayPath: string;
+  modelPath?: string;
+  indexPath?: string;
   samplePath?: string;
   usable: boolean;
   notes?: string;
@@ -227,11 +229,36 @@ export default function EditVideoVoiceDubbingPanel({
         selectedModel.notes ||
           "Selected voice is not usable for conversion yet.",
       );
+    const trainedCharacter = selectedModel.engine === "character";
+
+    if (
+      trainedCharacter &&
+      (!selectedModel.modelPath || !selectedModel.indexPath)
+    ) {
+      return setStatus(
+        "Selected trained character is missing its Applio model or index path.",
+      );
+    }
+
     const form = new FormData();
     form.append("performance_audio", performanceFile, performanceFile.name);
     form.append("voice_id", selectedModel.id);
     form.append("voice_path", selectedModel.path);
-    form.append("engine", engine);
+
+    if (trainedCharacter) {
+      form.append("engine", "applio");
+      form.append("model_path", selectedModel.modelPath || selectedModel.path);
+      form.append("index_path", selectedModel.indexPath || "");
+
+      if (selectedModel.samplePath) {
+        form.append("voice_sample_path", selectedModel.samplePath);
+      }
+    } else {
+      form.append("engine", engine);
+    }
+
+    form.append("dub_mode", "preserve_performance");
+    form.append("emotion", "preserve");
     form.append("pitch", String(pitch));
     form.append("title", cleanName(outputTitle));
     setBusy(true);
@@ -446,10 +473,10 @@ export default function EditVideoVoiceDubbingPanel({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-black uppercase tracking-[0.24em] text-white/55">
-            Voice Dubbing
+            Dialogue Replacement
           </p>
           <h2 className="mt-1 text-2xl font-black text-white">
-            Local voice dubbing
+            Dialogue Replacement
           </h2>
           <p className="mt-2 max-w-4xl text-sm leading-6 text-white/58">
             Use Seed-VC for voice-to-voice performance conversion, IndexTTS2 for emotional character Text-to-Speech, or XTTS / Qwen3-TTS
@@ -467,7 +494,7 @@ export default function EditVideoVoiceDubbingPanel({
           active={modeTab === "audio"}
           onClick={() => setModeTab("audio")}
         >
-          Seed-VC Performance Conversion
+          Performance → Character Voice
         </Button>
         <Button
           active={modeTab === "tts"}
@@ -539,7 +566,7 @@ export default function EditVideoVoiceDubbingPanel({
         <div className="mt-5 space-y-4">
           <div className="rounded-[22px] border border-white/10 bg-black/30 p-4">
             <h3 className="text-sm font-black text-white">
-              Step 1: Record or upload performance audio
+              Step 1: Perform the line
             </h3>
             <div className="mt-3 flex flex-wrap gap-2">
               <button
@@ -579,7 +606,7 @@ export default function EditVideoVoiceDubbingPanel({
           </div>
           <div className="rounded-[22px] border border-white/10 bg-black/30 p-4">
             <h3 className="text-sm font-black text-white">
-              Step 2: Convert voice
+              Step 2: Convert to character voice
             </h3>
             <div className="mt-3 grid gap-3 md:grid-cols-[1fr_180px_2fr]">
               <div>
@@ -591,7 +618,7 @@ export default function EditVideoVoiceDubbingPanel({
                   onChange={(event) => setEngine(event.target.value as any)}
                   className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none"
                 >
-                  <option value="auto">Auto (Seed-VC preferred)</option>
+                  <option value="auto">Auto (trained character → Applio)</option>
                   <option value="seed-vc">Seed-VC</option>
                   <option value="xtts">XTTS fallback</option>
                 </select>
@@ -674,6 +701,40 @@ export default function EditVideoVoiceDubbingPanel({
               </div>
             </div>
           ) : null}
+        </div>
+      ) : null}
+
+      {modeTab === "audio" ? (
+        <div className="mt-5 rounded-[22px] border border-cyan-400/15 bg-cyan-400/[0.04] p-4">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200/70">
+            Step 3
+          </p>
+
+          <h3 className="mt-1 text-sm font-black text-white">
+            Put the approved performance into an existing video
+          </h3>
+
+          <p className="mt-2 text-sm leading-6 text-white/60">
+            Use the approved character WAV as the master dialogue while
+            MiniMax H3 regenerates the character's mouth and facial performance.
+            Preserve the original scene audio and automatically re-stitch the
+            replacement segment into the source movie.
+          </p>
+
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-[16px] border border-white/10 bg-black/25 px-3 py-3 text-sm text-white/55">
+              Select video + dialogue timing
+            </div>
+            <div className="rounded-[16px] border border-white/10 bg-black/25 px-3 py-3 text-sm text-white/55">
+              MiniMax H3 lip-sync replacement
+            </div>
+            <div className="rounded-[16px] border border-white/10 bg-black/25 px-3 py-3 text-sm text-white/55">
+              Preserve music / ambience / SFX
+            </div>
+            <div className="rounded-[16px] border border-white/10 bg-black/25 px-3 py-3 text-sm text-white/55">
+              Conform + automatic re-stitch
+            </div>
+          </div>
         </div>
       ) : null}
 

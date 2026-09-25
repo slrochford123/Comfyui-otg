@@ -46,11 +46,19 @@ export const IMAGE_MODELS: ImageModelDefinition[] = [
     optionalLoras: [],
   },
   {
-    id: "presets/image_qwen_image_edit_2511_int8",
-    label: "Qwen Image Edit 2511 INT8",
+    id: "presets/image_qwen_image_2_1_t2i",
+    label: "Qwen Image 2.1",
+    operation: "create",
+    maxInputImages: 0,
+    defaultLora: null,
+    optionalLoras: [],
+  },
+  {
+    id: "presets/image_qwen_image_2_1_image_edit",
+    label: "Qwen Image Edit 2.1",
     operation: "edit",
     maxInputImages: 3,
-    defaultLora: "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+    defaultLora: null,
     optionalLoras: [],
   },
   {
@@ -194,7 +202,11 @@ export function applyEditImageReferences(graph: Record<string, any>, inputImages
   const plusEncoders = Object.values<any>(graph || {}).filter((node) =>
     String(node?.class_type || "").includes("TextEncodeQwenImageEditPlus")
   );
-  if (!plusEncoders.length || maxImages === 1) return { applied: images.length ? 1 : 0, maxImages: 1 };
+  const qwen21Encoders = Object.values<any>(graph || {}).filter((node) =>
+    String(node?.class_type || "") === "TextEncodeQwenImage21"
+  );
+  const encoders = plusEncoders.length ? plusEncoders : qwen21Encoders;
+  if (!encoders.length || maxImages === 1) return { applied: images.length ? 1 : 0, maxImages: 1 };
 
   for (let index = 1; index < images.length; index += 1) {
     const nodeId = `otg_edit_reference_${index + 1}`;
@@ -203,11 +215,25 @@ export function applyEditImageReferences(graph: Record<string, any>, inputImages
       inputs: { image: images[index] },
       _meta: { title: `OTG Edit Reference ${index + 1}` },
     };
-    for (const encoder of plusEncoders) encoder.inputs[`image${index + 1}`] = [nodeId, 0];
+    for (const encoder of encoders) {
+      const classType = String(encoder?.class_type || "");
+      const inputName =
+        classType === "TextEncodeQwenImage21"
+          ? `images.image_${index + 1}`
+          : `image${index + 1}`;
+      encoder.inputs[inputName] = [nodeId, 0];
+    }
   }
 
-  for (const encoder of plusEncoders) {
-    for (let index = images.length; index < 3; index += 1) delete encoder.inputs[`image${index + 1}`];
+  for (const encoder of encoders) {
+    const classType = String(encoder?.class_type || "");
+    for (let index = images.length; index < 3; index += 1) {
+      const inputName =
+        classType === "TextEncodeQwenImage21"
+          ? `images.image_${index + 1}`
+          : `image${index + 1}`;
+      delete encoder.inputs[inputName];
+    }
   }
   return { applied: images.length, maxImages: 3 };
 }

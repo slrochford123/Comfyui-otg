@@ -110,8 +110,20 @@ describe("H3 orientation and optional Builder UI", () => {
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/h3/generation")).toBe(true);
     });
-    const generationCall = fetchMock.mock.calls.find(([url]) => String(url) === "/api/h3/generation")!;
-    const config = JSON.parse(String((generationCall[1]?.body as FormData).get("config")));
+    const generationCall = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        String(url) === "/api/h3/generation" &&
+        init?.method === "POST",
+    );
+
+    expect(generationCall).toBeTruthy();
+
+    const generationBody = generationCall?.[1]?.body;
+    expect(generationBody).toBeInstanceOf(FormData);
+
+    const config = JSON.parse(
+      String((generationBody as FormData).get("config")),
+    );
     expect(config).toMatchObject({
       prompt: "Two samurai fight in moonlight.",
       orientation: "portrait",

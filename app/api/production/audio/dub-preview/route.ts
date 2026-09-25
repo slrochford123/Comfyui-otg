@@ -203,7 +203,14 @@ type AudioStudioVoiceMappingV36BPW5 = {
   characterId: string;
   voiceModelId: string;
   voicePath: string;
+  modelPath: string;
+  indexPath: string;
+  samplePath: string;
   voiceName: string;
+  engine: string;
+  dubMode: string;
+  emotion: string;
+  replacementText: string;
   segments: AudioStudioVoiceSegmentV36BPW5[];
 };
 
@@ -211,6 +218,12 @@ type AudioStudioRenderedSegmentV36BPW5 = {
   mapping: AudioStudioVoiceMappingV36BPW5;
   segment: AudioStudioVoiceSegmentV36BPW5;
   audioPath: string;
+};
+
+type AudioStudioMixPlanV36BPW9 = {
+  sourceBedPath: string;
+  sourceBedKind: "demucs_background" | "original_audio";
+  sourceBedKeepsOriginalDialogue: boolean;
 };
 
 function normalizeSecondsV36BPW5(value: unknown) {
@@ -237,20 +250,39 @@ function segmentsForDetectedVoiceV36BPW5(body: any, voiceId: string) {
   return normalizeSegmentsV36BPW5(found?.segments);
 }
 
+function analysisBackgroundStemPathV36BPW9(body: any) {
+  const value = String(
+    body?.audioClipAnalysis?.separation?.backgroundStemPath ||
+      body?.audioClipAnalysis?.backgroundStemPath ||
+      "",
+  ).trim();
+  if (!value || !path.isAbsolute(value) || !fssync.existsSync(value)) return "";
+  return value;
+}
+
 function normalizeVoiceMappingsV36BPW5(body: any) {
   const rawMappings = Array.isArray(body?.voiceMappings) ? body.voiceMappings : [];
   const normalized = rawMappings
     .map((mapping: any, index: number) => {
       const voiceId = String(mapping?.voiceId || mapping?.mappedVoiceId || mapping?.speakerId || `speaker_${index + 1}`).trim();
       const voicePath = String(mapping?.voicePath || mapping?.voice_path || "").trim();
-      if (!voiceId || !voicePath) return null;
+      const modelPath = String(mapping?.modelPath || mapping?.trainedModelPath || "").trim();
+      const indexPath = String(mapping?.indexPath || mapping?.trainedIndexPath || "").trim();
+      if (!voiceId || (!voicePath && (!modelPath || !indexPath))) return null;
       const explicitSegments = normalizeSegmentsV36BPW5(mapping?.segments);
       return {
         voiceId,
         characterId: String(mapping?.characterId || "").trim(),
         voiceModelId: String(mapping?.voiceModelId || mapping?.targetVoiceId || "").trim(),
         voicePath,
+        modelPath,
+        indexPath,
+        samplePath: String(mapping?.samplePath || mapping?.approvedSamplePath || mapping?.voiceSamplePath || "").trim(),
         voiceName: String(mapping?.voiceName || mapping?.targetVoiceName || "").trim(),
+        engine: String(mapping?.engine || (modelPath && indexPath ? "applio" : "auto")).trim(),
+        dubMode: String(mapping?.dubMode || mapping?.dub_mode || body?.dubMode || body?.dub_mode || "preserve_performance").trim(),
+        emotion: String(mapping?.emotion || body?.emotion || "preserve").trim(),
+        replacementText: String(mapping?.replacementText || mapping?.replacement_text || body?.replacementText || body?.replacement_text || "").trim(),
         segments: explicitSegments.length ? explicitSegments : segmentsForDetectedVoiceV36BPW5(body, voiceId),
       };
     })
@@ -266,7 +298,14 @@ function normalizeVoiceMappingsV36BPW5(body: any) {
     characterId: String(body?.characterId || ""),
     voiceModelId: String(body?.voiceModelId || ""),
     voicePath: fallbackVoicePath,
+    modelPath: String(body?.modelPath || body?.trainedModelPath || "").trim(),
+    indexPath: String(body?.indexPath || body?.trainedIndexPath || "").trim(),
+    samplePath: String(body?.samplePath || body?.approvedSamplePath || "").trim(),
     voiceName: "",
+    engine: String(body?.engine || "auto").trim(),
+    dubMode: String(body?.dubMode || body?.dub_mode || "preserve_performance").trim(),
+    emotion: String(body?.emotion || "preserve").trim(),
+    replacementText: String(body?.replacementText || body?.replacement_text || "").trim(),
     segments: [],
   }];
 }
@@ -324,25 +363,65 @@ async function runVoiceDubForSegmentV36BPW5(request: NextRequest, segmentPath: s
   return { audioPath: dubbedAudioPath, dub: dubJson };
 }
 
-function ffmpegEscapePathV36BPW5(value: string) {
-  return value.replace(/\\/g, "/").replace(/'/g, "\\'");
+async function runMappedVoiceDubForSegmentV36BPW5(
+  request: NextRequest,
+  segmentPath: string,
+  mapping: AudioStudioVoiceMappingV36BPW5,
+  title: string,
+) {
+  const segmentBytes = await fs.readFile(segmentPath);
+  const form = new FormData();
+  form.append("performance_audio", new Blob([new Uint8Array(segmentBytes)], { type: "audio/wav" }), path.basename(segmentPath));
+  form.append("voice_path", mapping.voicePath || mapping.samplePath || mapping.modelPath);
+  form.append("model_path", mapping.modelPath);
+  form.append("index_path", mapping.indexPath);
+  form.append("voice_sample_path", mapping.samplePath);
+  form.append("engine", mapping.engine || (mapping.modelPath && mapping.indexPath ? "applio" : "auto"));
+  form.append("title", title);
+  form.append("dub_mode", mapping.dubMode || "preserve_performance");
+  form.append("emotion", mapping.emotion || "preserve");
+  form.append("replacement_text", mapping.replacementText || "");
+  form.append("character_id", mapping.characterId || "");
+  form.append("voice_model_id", mapping.voiceModelId || "");
+
+  const dubResponse = await fetch(new URL("/api/voice/dub", request.nextUrl.origin), {
+    method: "POST",
+    body: form,
+    headers: { cookie: request.headers.get("cookie") || "" },
+    cache: "no-store",
+  });
+
+  const dubJson = await dubResponse.json().catch(() => null);
+  if (!dubResponse.ok || !dubJson?.ok) {
+    throw new Error(dubJson?.error || `Voice dub failed (${dubResponse.status}).`);
+  }
+
+  const dubbedAudioPath = String(dubJson.audioPath || "").trim();
+  if (!dubbedAudioPath || !fssync.existsSync(dubbedAudioPath)) {
+    throw new Error("Voice dub completed but did not return a readable dubbed audio file.");
+  }
+
+  return { audioPath: dubbedAudioPath, dub: dubJson };
 }
 
 async function mixRenderedSegmentsV36BPW5(
   sourceVideoPath: string,
   renderedSegments: AudioStudioRenderedSegmentV36BPW5[],
   outputPath: string,
+  mixPlan: AudioStudioMixPlanV36BPW9,
 ) {
   if (!renderedSegments.length) throw new Error("No dubbed speaker segments were generated.");
 
   // OTG_AUDIO_STUDIO_PRESERVE_SOURCE_BED_V36BPW6
   // OTG_AUDIO_STUDIO_REMOVE_DOUBLED_ORIGINAL_VOICE_V36BPW7
-  // Preserve the original bed outside mapped dialogue, but remove the original bed during mapped
-  // dubbed segments so the source voice does not double against the replacement voice.
-  // This is the natural preview setting. True music/SFX preservation under replaced dialogue
-  // still needs a later Demucs/UVR vocal-separation pass.
+  // Use the separated no-vocals bed when analysis produced one. Otherwise preserve the original
+  // audio bed outside mapped dialogue, but remove it during mapped dubbed segments so the source
+  // voice does not double against the replacement voice.
   const sourceBedVolumeRaw = Number(process.env.OTG_AUDIO_STUDIO_SOURCE_BED_VOLUME ?? 1);
-  const mappedDialogueBedVolumeRaw = Number(process.env.OTG_AUDIO_STUDIO_MAPPED_DIALOGUE_BED_VOLUME ?? 0);
+  const mappedDialogueBedVolumeRaw = Number(
+    process.env.OTG_AUDIO_STUDIO_MAPPED_DIALOGUE_BED_VOLUME ??
+      (mixPlan.sourceBedKeepsOriginalDialogue ? 0 : 1),
+  );
   // OTG_AUDIO_STUDIO_DUBBED_VOICE_GAIN_V36BPW8
   // Segment voice conversion often returns quieter audio than the original clip bed.
   // Boost the dubbed segments before mixing and apply a limiter after the final mix.
@@ -352,11 +431,18 @@ async function mixRenderedSegmentsV36BPW5(
   const dubbedVoiceVolume = Number.isFinite(dubbedVoiceVolumeRaw) ? Math.max(0.25, Math.min(4, dubbedVoiceVolumeRaw)) : 1.8;
 
   const args = ["-y", "-i", sourceVideoPath];
+  let renderedInputOffset = 1;
+  let baseInputLabel = "[0:a]";
+  if (mixPlan.sourceBedPath) {
+    args.push("-i", mixPlan.sourceBedPath);
+    renderedInputOffset = 2;
+    baseInputLabel = "[1:a]";
+  }
   for (const rendered of renderedSegments) args.push("-i", rendered.audioPath);
 
-  let sourceBedFilter = `[0:a]volume=${sourceBedVolume}`;
+  let sourceBedFilter = `${baseInputLabel}volume=${sourceBedVolume}`;
   for (const rendered of renderedSegments) {
-    if (rendered.segment.end > rendered.segment.start) {
+    if (mixPlan.sourceBedKeepsOriginalDialogue && rendered.segment.end > rendered.segment.start) {
       sourceBedFilter += `,volume=enable='between(t,${rendered.segment.start},${rendered.segment.end})':volume=${duckedSourceBedVolume}`;
     }
   }
@@ -365,11 +451,11 @@ async function mixRenderedSegmentsV36BPW5(
   const labels: string[] = ["[base]"];
 
   renderedSegments.forEach((rendered, index) => {
-    const inputIndex = index + 1;
+    const inputIndex = index + renderedInputOffset;
     const duration = Math.max(0.05, rendered.segment.end - rendered.segment.start);
     const delayMs = Math.max(0, Math.round(rendered.segment.start * 1000));
     const label = `seg${index}`;
-    filters.push(`[${inputIndex}:a]atrim=0:${duration},asetpts=PTS-STARTPTS,volume=${dubbedVoiceVolume},adelay=${delayMs}|${delayMs}[${label}]`);
+    filters.push(`[${inputIndex}:a]atrim=0:${duration},apad,atrim=0:${duration},asetpts=PTS-STARTPTS,volume=${dubbedVoiceVolume},adelay=${delayMs}|${delayMs}[${label}]`);
     labels.push(`[${label}]`);
   });
 
@@ -391,6 +477,12 @@ async function renderSegmentFirstDubV36BPW5(
 ) {
   const renderedSegments: AudioStudioRenderedSegmentV36BPW5[] = [];
   const baseTitle = safeName(body.title || "audio_studio_dub", "audio_studio_dub");
+  const backgroundStemPath = analysisBackgroundStemPathV36BPW9(body);
+  const mixPlan: AudioStudioMixPlanV36BPW9 = {
+    sourceBedPath: backgroundStemPath,
+    sourceBedKind: backgroundStemPath ? "demucs_background" : "original_audio",
+    sourceBedKeepsOriginalDialogue: !backgroundStemPath,
+  };
 
   for (const [mappingIndex, mapping] of voiceMappings.entries()) {
     if (!mapping.segments.length && voiceMappings.length > 1) {
@@ -421,12 +513,11 @@ async function renderSegmentFirstDubV36BPW5(
         );
       }
 
-      const dubbed = await runVoiceDubForSegmentV36BPW5(
+      const dubbed = await runMappedVoiceDubForSegmentV36BPW5(
         request,
         segmentPath,
-        mapping.voicePath,
+        mapping,
         `${baseTitle}_${safeSegment(mapping.voiceId || `speaker_${mappingIndex + 1}`)}_${String(segmentIndex + 1).padStart(3, "0")}_${runId}`,
-        String(body.engine || "auto"),
       );
 
       renderedSegments.push({
@@ -438,9 +529,9 @@ async function renderSegmentFirstDubV36BPW5(
   }
 
   const dubbedAudioPath = safeJoin(workDir, "segment_first_dubbed_audio.m4a");
-  await mixRenderedSegmentsV36BPW5(sourceVideoPath, renderedSegments, dubbedAudioPath);
+  await mixRenderedSegmentsV36BPW5(sourceVideoPath, renderedSegments, dubbedAudioPath, mixPlan);
 
-  return { dubbedAudioPath, renderedSegments };
+  return { dubbedAudioPath, renderedSegments, mixPlan };
 }
 
 export async function POST(request: NextRequest) {
@@ -457,7 +548,7 @@ export async function POST(request: NextRequest) {
     await fs.mkdir(workDir, { recursive: true });
 
     const sourceVideoPath = await findSourceVideo(body, request, workDir);
-    const { dubbedAudioPath, renderedSegments } = await renderSegmentFirstDubV36BPW5(
+    const { dubbedAudioPath, renderedSegments, mixPlan } = await renderSegmentFirstDubV36BPW5(
       request,
       sourceVideoPath,
       voiceMappings,
@@ -472,6 +563,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       runId,
+      workflow: {
+        uploadVideo: true,
+        extractAudio: true,
+        separateDialogueAndBackground: body?.audioClipAnalysis?.separation?.tool || "not_provided",
+        detectSpeakers: body?.audioClipAnalysis?.diarization?.tool || "not_provided",
+        convertSelectedOnly: true,
+        preserveOriginalTiming: true,
+        mixBackgroundAndDubbedDialogue: true,
+        outputVideo: true,
+      },
+      mixPlan,
       sourceVideoPath,
       dubbedAudioPath,
       previewVideoPath: previewPath,
@@ -481,6 +583,11 @@ export async function POST(request: NextRequest) {
         characterId: mapping.characterId,
         voiceModelId: mapping.voiceModelId,
         voicePath: mapping.voicePath,
+        modelPath: mapping.modelPath,
+        indexPath: mapping.indexPath,
+        engine: mapping.engine,
+        dubMode: mapping.dubMode,
+        emotion: mapping.emotion,
         segmentCount: mapping.segments.length,
       })),
       renderedSegments: renderedSegments.map((rendered) => ({

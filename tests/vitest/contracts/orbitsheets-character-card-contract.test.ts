@@ -8,25 +8,25 @@ function read(rel: string) {
   return fs.readFileSync(path.join(root, rel), "utf8");
 }
 
-describe("OrbitSheets Character Card integration", () => {
-  it("uses OrbitSheets first and preserves legacy fallback", () => {
+describe("Qwen Image Edit 2.1 Character Card integration", () => {
+  it("uses Qwen Image Edit 2.1 first and preserves legacy fallback", () => {
     const src = read("app/app/components/CharactersPanel.tsx");
 
-    expect(src).toContain("submitOrbitSheetsCharacterCardJob");
+    expect(src).toContain("submitQwenEditCharacterCardJob");
     expect(src).toContain("/api/characters/orbitsheets-card");
     expect(src).toContain("submitLegacyCharacterCardJob");
     expect(src).toContain(
-      "OrbitSheets failed; using legacy Character Card fallback",
+      "Qwen Image Edit 2.1 failed; using legacy Character Card fallback",
     );
     expect(src).toContain(
-      'workflowId: "orbitsheets-h3-character-card"',
+      'workflowId: "qwen-image-edit-2.1-character-card"',
     );
     expect(src).toContain(
       'return "presets/character_card_8_angles_low_angle"',
     );
   });
 
-  it("uses the processed full-body source as the OrbitSheets input", () => {
+  it("uses the processed full-body source as the Qwen card input", () => {
     const src = read("app/app/components/CharactersPanel.tsx");
 
     expect(src).toContain(
@@ -37,31 +37,48 @@ describe("OrbitSheets Character Card integration", () => {
     );
   });
 
-  it("keeps the server integration TEST-scoped to the H3 8189 lane", () => {
+  it("uses Qwen Image Edit 2.1 card-builder workflows", () => {
     const src = read(
       "app/api/characters/orbitsheets-card/route.ts",
     );
 
+    const standard = read(
+      "comfy_workflows/card_builder/qwen21_character_card.api.json",
+    );
+    const freeform = read(
+      "comfy_workflows/card_builder/qwen21_freeform_character_card.api.json",
+    );
+
     expect(src).toContain(
-      "http://100.75.162.64:8189",
+      "qwen21_character_card.api.json",
     );
     expect(src).toContain(
-      "CharacterTurnaroundSheetH3.json",
+      "qwen21_freeform_character_card.api.json",
     );
     expect(src).toContain(
-      "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "Qwen Image Edit 2.1 Character Card",
+    );
+    expect(src).toContain("normalizeExpression");
+    expect(src).toContain("Selected expression:");
+    expect(src).toContain(
+      "Make every visible face use this",
+    );
+    expect(src).toContain("expression, especially the front view");
+    expect(src).toContain(
+      "width: 1920",
     );
     expect(src).toContain(
-      "minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors",
+      "height: 1080",
     );
-    expect(src).toContain(
-      'workflow["47"].inputs.steps = 4',
-    );
-    expect(src).toContain(
-      'workflow["60"].inputs.count = 6',
-    );
-    expect(src).toContain(
-      'workflow["60"].inputs.mode = "sharpness_diversity"',
-    );
+    expect(standard).toContain("TextEncodeQwenImage21");
+    expect(standard).toContain("qwen_image_2.1_int8_convrot.safetensors");
+    expect(standard).toContain("five-view character card");
+    expect(standard).toContain("CLOSE-UP FACE shot");
+    expect(standard).not.toContain("CLOSE-UP BACK shot");
+    expect(freeform).toContain("FRONT view");
+    expect(freeform).toContain("BACK view");
+    expect(freeform).toContain("CLOSE-UP FACE shot");
+    expect(freeform).not.toContain("HALF-BODY FRONT shot");
+    expect(freeform).not.toContain("HALF-BODY BACK shot");
   });
 });

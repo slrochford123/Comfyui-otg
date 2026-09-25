@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomInt } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import sharp from "sharp";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 
 export const runtime = "nodejs";
@@ -12,13 +14,13 @@ type ComfyOutput = {
   type: string;
 };
 
-type H3CardBackend = "rtx5060ti" | "rtx3090";
+type CardBackend = "rtx5060ti" | "rtx3090";
 
 function asString(value: unknown) {
   return String(value || "").trim();
 }
 
-function comfyBaseUrl(backend: H3CardBackend = "rtx5060ti") {
+function comfyBaseUrl(backend: CardBackend = "rtx5060ti") {
   if (backend === "rtx3090") {
     return String(
       process.env.OTG_H3_CARD_COMFY_BACKUP_BASE_URL ||
@@ -43,25 +45,19 @@ function workflowPath() {
     process.cwd(),
     "comfy_workflows",
     "card_builder",
-    "asset_card.api.json",
+    "qwen21_asset_card.api.json",
   );
 }
 
-function applyAssetFrameSelectionGuidance(workflow: any) {
-  const selector = workflow?.["164"];
-  if (
-    !selector ||
-    selector.class_type !== "H3LookSheetsSelectFrames"
-  ) {
-    throw new Error(
-      "H3 Asset Card workflow is missing expected H3LookSheetsSelectFrames node 164.",
-    );
-  }
-
-  selector.inputs.saved_frame_count = 6;
-  selector.inputs.tier1_shots_clusters = 6;
-  selector.inputs.tier2_prompt_how_to_select_frames =
-    "Select exactly six clear neutral product-reference views of the same asset: front, back, left side, right side, top looking down, and bottom looking up. Prefer sharp, well-exposed frames with the full object visible and centered. Reject motion blur, occlusion, heavy cropping, face/expression language, and near-duplicate angles.";
+function assetCardPrompt() {
+  return (
+    "Use <image1> as the exact asset reference. " +
+    "Create one professional 1920x1080 landscape six-view asset card of the SAME object with exactly these views arranged cleanly in a 3x2 sheet: LEFT side, RIGHT side, FRONT, BACK, low underside view looking up, and top-down view looking down. " +
+    "Preserve the exact object identity, silhouette, proportions, materials, colors, markings, wear, labels that are physically part of the object, surface finish, and all distinctive construction details across every view. " +
+    "Keep neutral studio lighting, consistent scale, consistent design, centered full-object views, and a clean light-gray studio background. " +
+    "Infer unseen sides only as necessary and keep them consistent with the source. " +
+    "No scene context, no hands, no extra objects, no decorative props, no generated captions, no added labels, no watermarks."
+  );
 }
 
 async function comfyJson(url: string, init?: RequestInit) {
@@ -93,15 +89,44 @@ async function uploadSourceToBackend(
   sourcePath: string,
   baseUrl: string,
 ) {
-  const bytes = await fs.readFile(sourcePath);
+  const sourceBytes = await fs.readFile(sourcePath);
+  const bytes = await sharp({
+    create: {
+      width: 1920,
+      height: 1080,
+      channels: 3,
+      background: "#d9d9d9",
+    },
+  })
+    .composite([
+      {
+        input: await sharp(sourceBytes, {
+          animated: false,
+          failOn: "none",
+          limitInputPixels: false,
+        })
+          .rotate()
+          .resize({
+            width: 900,
+            height: 820,
+            fit: "inside",
+            withoutEnlargement: true,
+          })
+          .png()
+          .toBuffer(),
+        left: 510,
+        top: 130,
+      },
+    ])
+    .png()
+    .toBuffer();
   const originalName = path.basename(sourcePath);
-  const extension = path.extname(originalName) || ".png";
   const stem =
     path
       .basename(originalName, path.extname(originalName))
       .replace(/[^a-zA-Z0-9._-]/g, "_") || "asset";
 
-  const uploadName = `otg-asset-card-${Date.now()}-${stem}${extension}`;
+  const uploadName = `otg-qwen21-asset-card-canvas-${Date.now()}-${stem}.png`;
 
   const form = new FormData();
   form.append(
@@ -185,29 +210,21 @@ async function waitForOutputs(
 
       if (status?.status_str === "error") {
         throw new Error(
-          `H3 Asset Card failed: ${JSON.stringify(status)}`,
+          `Qwen Image Edit 2.1 Asset Card failed: ${JSON.stringify(status)}`,
         );
       }
 
-      const image = firstOutput(result, "70");
-      const video = firstOutput(result, "79");
+      const image = firstOutput(result, "461");
 
-      if (image && video) {
+      if (image) {
         return {
           image,
-          video,
-          description: asString(
-            result?.outputs?.["141"]?.text?.[0],
-          ),
-          prompt: asString(
-            result?.outputs?.["136"]?.text?.[0],
-          ),
         };
       }
 
       if (status?.completed === true) {
         throw new Error(
-          "H3 Asset Card completed without both node 70 PNG and node 79 MP4 outputs.",
+          "Qwen Image Edit 2.1 Asset Card completed without node 461 PNG output.",
         );
       }
     }
@@ -216,14 +233,14 @@ async function waitForOutputs(
   }
 
   throw new Error(
-    `H3 Asset Card timed out waiting for prompt ${promptId}`,
+    `Qwen Image Edit 2.1 Asset Card timed out waiting for prompt ${promptId}`,
   );
 }
 
 function proxyUrl(
   output: ComfyOutput,
   kind: "image" | "video",
-  backend: H3CardBackend,
+  backend: CardBackend,
 ) {
   const params = new URLSearchParams({
     kind,
@@ -298,7 +315,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("[h3-asset-card-view]", error);
+    console.error("[qwen21-asset-card-view]", error);
 
     return NextResponse.json(
       {
@@ -306,7 +323,7 @@ export async function GET(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "H3 Asset Card output fetch failed.",
+            : "Qwen Image Edit 2.1 Asset Card output fetch failed.",
       },
       { status: 500 },
     );
@@ -342,46 +359,59 @@ export async function POST(request: NextRequest) {
     const workflow = JSON.parse(rawWorkflow);
 
     if (
-      !workflow?.["81"] ||
-      workflow["81"].class_type !== "LoadImage"
+      !workflow?.["470"] ||
+      workflow["470"].class_type !== "LoadImage"
     ) {
       throw new Error(
-        "H3 Asset Card workflow is missing expected LoadImage node 81.",
+        "Qwen Asset Card workflow is missing expected LoadImage node 470.",
       );
     }
 
     if (
-      !workflow?.["143"] ||
-      workflow["143"].class_type !== "OTGH3CardDescribe"
+      !workflow?.["474"] ||
+      workflow["474"].class_type !== "TextEncodeQwenImage21"
     ) {
       throw new Error(
-        "H3 Asset Card workflow is missing expected OTGH3CardDescribe node 143.",
+        "Qwen Asset Card workflow is missing expected TextEncodeQwenImage21 node 474.",
       );
     }
 
     if (
-      !workflow?.["189"] ||
-      workflow["189"].class_type !== "OTGH3CardPrompt"
+      !workflow?.["458"] ||
+      workflow["458"].class_type !== "KSampler"
     ) {
       throw new Error(
-        "H3 Asset Card workflow is missing expected OTGH3CardPrompt node 189.",
+        "Qwen Asset Card workflow is missing expected KSampler node 458.",
       );
     }
 
-    applyAssetFrameSelectionGuidance(workflow);
+    if (
+      !workflow?.["461"] ||
+      workflow["461"].class_type !== "SaveImageAdvanced"
+    ) {
+      throw new Error(
+        "Qwen Asset Card workflow is missing expected SaveImageAdvanced node 461.",
+      );
+    }
 
-    async function submitOnBackend(backend: H3CardBackend) {
+    workflow["474"].inputs.prompt = assetCardPrompt();
+    workflow["474"].inputs.negative_prompt =
+      "different object, redesigned asset, inconsistent proportions, inconsistent colors, duplicate object, multiple objects, blurry, low quality, cropped view, cut off object, person, hands, text, captions, generated labels, watermark, logo, signature, decorative border";
+    workflow["474"].inputs.resolution = 0;
+    workflow["458"].inputs.seed = randomInt(1, 1_000_000_000);
+
+    async function submitOnBackend(backend: CardBackend) {
       const baseUrl = comfyBaseUrl(backend);
       const backendWorkflow = JSON.parse(JSON.stringify(workflow));
       const uploadedName =
         await uploadSourceToBackend(source, baseUrl);
 
-      backendWorkflow["81"].inputs.image = uploadedName;
+      backendWorkflow["470"].inputs.image = uploadedName;
 
       const submissionResponse =
         await submitComfyPromptWith5060Lease({
           baseUrl,
-          workerId: `api-asset-h3-card-${backend}`,
+          workerId: `api-asset-qwen21-card-${backend}`,
           init: {
             method: "POST",
             headers: {
@@ -389,7 +419,7 @@ export async function POST(request: NextRequest) {
             },
             body: JSON.stringify({
               prompt: backendWorkflow,
-              client_id: `otg-asset-h3-card-${backend}-${Date.now()}`,
+              client_id: `otg-asset-qwen21-card-${backend}-${Date.now()}`,
             }),
           },
         });
@@ -418,7 +448,7 @@ export async function POST(request: NextRequest) {
 
       if (!promptId) {
         throw new Error(
-          "H3 Asset Card did not return a ComfyUI prompt id.",
+          "Qwen Image Edit 2.1 Asset Card did not return a ComfyUI prompt id.",
         );
       }
 
@@ -426,14 +456,14 @@ export async function POST(request: NextRequest) {
     }
 
     let submission:
-      | { backend: H3CardBackend; baseUrl: string; promptId: string }
+      | { backend: CardBackend; baseUrl: string; promptId: string }
       | null = null;
 
     try {
       submission = await submitOnBackend("rtx5060ti");
     } catch (primaryError) {
       console.warn(
-        "[h3-asset-card] RTX 5060 Ti primary submission failed; trying RTX 3090 backup.",
+        "[qwen21-asset-card] RTX 5060 Ti primary submission failed; trying RTX 3090 backup.",
         primaryError,
       );
       submission = await submitOnBackend("rtx3090");
@@ -446,7 +476,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      engine: "orbitsheets-h3",
+      engine: "qwen-image-edit-2.1",
+      cardEngine: "qwen-image-edit-2.1",
       promptId,
       backend,
 
@@ -455,17 +486,17 @@ export async function POST(request: NextRequest) {
       filename: result.image.filename,
       sourceName: result.image.filename,
 
-      videoUrl: proxyUrl(result.video, "video", backend),
-      videoServerPath: `${serverScheme}://output/${result.video.subfolder}/${result.video.filename}`,
-      videoFilename: result.video.filename,
-      videoSourceName: result.video.filename,
+      videoUrl: "",
+      videoServerPath: "",
+      videoFilename: "",
+      videoSourceName: "",
 
-      generatedDescription: result.description,
-      generatedPrompt: result.prompt,
-      workflow: "asset_card.api.json",
+      generatedDescription: "",
+      generatedPrompt: workflow["474"].inputs.prompt,
+      workflow: "qwen21_asset_card.api.json",
     });
   } catch (error) {
-    console.error("[h3-asset-card]", error);
+    console.error("[qwen21-asset-card]", error);
 
     return NextResponse.json(
       {
@@ -473,7 +504,7 @@ export async function POST(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "H3 Asset Card failed.",
+            : "Qwen Image Edit 2.1 Asset Card failed.",
       },
       { status: 500 },
     );

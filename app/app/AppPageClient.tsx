@@ -253,6 +253,10 @@ type PersistedGenerateState = {
   galleryItemsPerPage?: number;
 };
 
+type GenerateSubmitNotice =
+  | { state: "idle"; message: "" }
+  | { state: "submitting" | "accepted" | "failed"; message: string; promptId?: string };
+
 type GenerateStylePreset = {
   id: string;
   label: string;
@@ -351,11 +355,11 @@ const APP_TAB_LABELS: Record<SpinTabId, string> = {
 const WORKFLOW_FALLBACKS: WorkflowItem[] = [
   { id: "create-picture", label: "Create a Picture", runtime: "Estimated runtime: about 20 to 60 seconds." },
   { id: "animate-image", label: "Animate an Image", runtime: "Estimated runtime: about 2 to 6 minutes." },
-  { id: "presets/Edit Image", label: "Edit Image", runtime: "Estimated runtime: about 30 to 90 seconds." },
+  { id: "presets/image_qwen_image_2_1_image_edit", label: "Edit Image", runtime: "Estimated runtime: about 30 to 90 seconds." },
   { id: "skyreels-v3", label: "SkyReels V3", runtime: "Estimated runtime: about 3 to 10 minutes." },
 ];
 
-const GALLERY_EDIT_WORKFLOW_ID = "presets/Edit Pictures";
+const GALLERY_EDIT_WORKFLOW_ID = "presets/image_qwen_image_2_1_image_edit";
 const GALLERY_ANIMATE_WORKFLOW_ID = "presets/Create a Video from Pictures";
 const ITEMS_PER_PAGE_OPTIONS = [5, 10, 25, 50, 100, 0] as const;
 const GENERATE_DURATION_OPTIONS = [5, 10, 15] as const;
@@ -1403,6 +1407,8 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
 
   const [generateBusy, setGenerateBusy] = useState(false);
   const generateSubmitInFlightRef = useRef(false);
+  const [generateSubmitNotice, setGenerateSubmitNotice] =
+    useState<GenerateSubmitNotice>({ state: "idle", message: "" });
   const [progressStatus, setProgressStatus] = useState<"idle" | "running" | "complete" | "error">("idle");
   const [progressQueue, setProgressQueue] = useState(0);
   const [progressPercent, setProgressPercent] = useState(0);
@@ -3014,11 +3020,37 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         successMessage?: string;
       }
     ) => {
-      const res = await fetch("/api/comfy", {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      });
+      try {
+        const health = await fetch("/api/healthz", {
+          cache: "no-store",
+          credentials: "include",
+          headers: { accept: "application/json" },
+        });
+        if (!health.ok) {
+          throw new Error(`App health check failed (${health.status}).`);
+        }
+      } catch (error) {
+        throw new Error(
+          `Could not reach the app before submitting. Check the Android connection and try again. ${error instanceof Error ? error.message : ""}`.trim(),
+        );
+      }
+
+      let res: Response;
+      try {
+        res = await fetch("/api/comfy", {
+          method: "POST",
+          body: formData,
+          credentials: "include",
+          cache: "no-store",
+          headers: {
+            accept: "application/json",
+          },
+        });
+      } catch (error) {
+        throw new Error(
+          `Submission connection failed before the app could confirm acceptance. Check the Android network connection and try again. ${error instanceof Error ? error.message : "Failed fetch"}`.trim(),
+        );
+      }
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -3061,8 +3093,17 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       if (promptId) {
         setActivePromptId(promptId);
         setStatusMessage(`${baseMessage} Prompt ID: ${promptId}`);
+        setGenerateSubmitNotice({
+          state: "accepted",
+          message: "Generation accepted. You can stay here or check Progress below.",
+          promptId,
+        });
       } else {
         setStatusMessage(baseMessage);
+        setGenerateSubmitNotice({
+          state: "accepted",
+          message: "Generation accepted. You can stay here or check Progress below.",
+        });
       }
 
       setProgressStatus("running");
@@ -3469,6 +3510,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     generateSubmitInFlightRef.current = true;
     setGenerateBusy(true);
     setStatusMessage("");
+    setGenerateSubmitNotice({
+      state: "submitting",
+      message: "Please wait. Submitting your generation to ComfyUI...",
+    });
     refreshedCompletePromptRef.current = "";
     latestPreviewIdentityRef.current = "";
     setProgressStatus("running");
@@ -3586,7 +3631,12 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     } catch (error) {
       setProgressStatus("error");
       setProgressPercent(100);
-      setStatusMessage(error instanceof Error ? error.message : "Generate failed.");
+      const message = error instanceof Error ? error.message : "Generate failed.";
+      setStatusMessage(message);
+      setGenerateSubmitNotice({
+        state: "failed",
+        message,
+      });
     } finally {
       generateSubmitInFlightRef.current = false;
       setGenerateBusy(false);
@@ -6682,9 +6732,30 @@ async function handleAskAi() {
                     (isCustomAudioVideoWorkflowSelected && (!uploadedFileName || !customAudioFileName))
                   }
                 >
-                  {generateBusy ? "Submitting..." : "Generate"}
+                  {generateBusy ? "Please wait..." : "Generate"}
                 </ActionButton>
               </div>
+              {generateSubmitNotice.state !== "idle" ? (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className={cn(
+                    "rounded-[18px] border px-4 py-3 text-sm font-semibold",
+                    generateSubmitNotice.state === "submitting"
+                      ? "border-cyan-300/30 bg-cyan-400/10 text-cyan-50"
+                      : generateSubmitNotice.state === "accepted"
+                        ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-50"
+                        : "border-red-300/30 bg-red-500/10 text-red-50",
+                  )}
+                >
+                  <div>{generateSubmitNotice.message}</div>
+                  {generateSubmitNotice.promptId ? (
+                    <div className="mt-1 break-all font-mono text-xs text-white/65">
+                      Prompt ID: {generateSubmitNotice.promptId}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </Card>
 
             <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">

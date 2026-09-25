@@ -138,7 +138,7 @@ import type { CharacterVoicePipelineAction, QueuedContractJob } from "../../../l
 
 
 // OTG_CHARACTER_GENERATOR_OPTIONS_BOOGU_V1
-type CharacterGeneratorOptionId = "ernie" | "zturbo" | "krea2" | "boogu";
+type CharacterGeneratorOptionId = "ernie" | "zturbo" | "krea2" | "boogu" | "qwen21";
 
 const CHARACTER_GENERATOR_OPTIONS: Array<{
   id: CharacterGeneratorOptionId;
@@ -183,6 +183,16 @@ const CHARACTER_GENERATOR_OPTIONS: Array<{
     workflowJsonPath: "workflows/presets/image_boogu_image_0_1_turbo_t2i.json",
     workflowLabel: "characters/boogu-image-0.1-turbo",
   },
+  {
+    id: "qwen21",
+    title: "Generator Option 5",
+    subtitle: "Qwen Image 2.1",
+    workflowId: "presets/image_qwen_image_2_1_t2i",
+    workflowFile: "workflows/characters/create/image_qwen_image_2_1_t2i.json",
+    workflowPath: "workflows/characters/create/image_qwen_image_2_1_t2i.json",
+    workflowJsonPath: "workflows/characters/create/image_qwen_image_2_1_t2i.json",
+    workflowLabel: "characters/qwen-image-2.1",
+  },
 ];
 
 type CharacterGeneratorOutputSelector = {
@@ -199,6 +209,9 @@ function characterGeneratorOutputSelector(optionId: CharacterGeneratorOptionId):
   }
   if (optionId === "boogu") {
     return { nodeId: "33", filenamePrefix: "Boogu" };
+  }
+  if (optionId === "qwen21") {
+    return { nodeId: "461", filenamePrefix: "Qwen_Image_2_1" };
   }
   return {};
 }
@@ -243,6 +256,17 @@ function characterGeneratorPayload(optionId: CharacterGeneratorOptionId) {
     payload.saveImageNodeId = "33";
     payload.saveImageInput = "filename_prefix";
     payload.seedNodeId = "44";
+    payload.seedNodeInput = "seed";
+  }
+
+  if (option.id === "qwen21") {
+    payload.promptNodeId = "452";
+    payload.promptNodeInput = "prompt";
+    payload.positivePromptNodeId = "452";
+    payload.positivePromptNodeInput = "prompt";
+    payload.saveImageNodeId = "461";
+    payload.saveImageInput = "filename_prefix";
+    payload.seedNodeId = "458";
     payload.seedNodeInput = "seed";
   }
 
@@ -806,7 +830,8 @@ type CharacterBackgroundProvider =
   | "z-image"
   | "krea-2"
   | "boogu"
-  | "mage-flow";
+  | "mage-flow"
+  | "qwen-image-2-1";
 
 const CHARACTER_BACKGROUND_PROVIDER_PRESETS_V36E = [
   {
@@ -834,6 +859,11 @@ const CHARACTER_BACKGROUND_PROVIDER_PRESETS_V36E = [
     label: "Mage Flow",
     description: "Create one 1280x720 landscape preview with the same Mage Flow workflow used by Character Creator.",
   },
+  {
+    id: "qwen-image-2-1" as const,
+    label: "Qwen Image 2.1",
+    description: "Create one 1280x720 landscape preview with the Qwen Image 2.1 workflow.",
+  },
 ] as const;
 
 function normalizeCharacterBackgroundProviderV1(
@@ -844,7 +874,8 @@ function normalizeCharacterBackgroundProviderV1(
     provider === "z-image" ||
     provider === "krea-2" ||
     provider === "boogu" ||
-    provider === "mage-flow"
+    provider === "mage-flow" ||
+    provider === "qwen-image-2-1"
   ) {
     return provider;
   }
@@ -3101,7 +3132,7 @@ function workflowForCharacterStyle(preset: string) {
 }
 
 function workflowForUploadedFullBodyCompletion() {
-  return "presets/Edit Image";
+  return "presets/image_qwen_image_2_1_image_edit";
 }
 
 function buildUploadedFullBodyCompletionPrompt(anatomyMode: CharacterAnatomyMode, userPrompt: string) {
@@ -3323,6 +3354,54 @@ async function submitUploadedFullBodyCompletionJob(instruction: string, sourceSe
   return { promptId };
 }
 
+async function submitQwen21CharacterCardJob(
+  instruction: string,
+  sourceServerPath: string,
+) {
+  const body = new FormData();
+  body.set("workflowId", "presets/character_card_qwen_image_2_1");
+  body.set("requestKind", "characters-qwen21-character-card");
+  body.set("sourceType", "characters-qwen21-character-card");
+  body.set("label", "Qwen Image 2.1 Character Card");
+  body.set("imageAPath", sourceServerPath);
+  body.set("prompt", instruction);
+  body.set("positivePrompt", instruction);
+  body.set("galleryExclusion", "character-card-only");
+
+  const response = await fetch("/api/comfy", {
+    method: "POST",
+    body,
+    ...CHARACTER_FETCH_OPTIONS,
+  });
+  const json = await response.json().catch(() => null);
+
+  if (!response.ok || !json?.ok) {
+    throw new Error(
+      json?.error ||
+        `Qwen Image 2.1 Character Card submission failed (${response.status}).`,
+    );
+  }
+
+  const promptId = String(
+    json.promptId || json.prompt_id || "",
+  ).trim();
+
+  if (!promptId) {
+    throw new Error(
+      "Qwen Image 2.1 Character Card submitted without a prompt ID.",
+    );
+  }
+
+  return {
+    promptId,
+    outputSelector: {
+      nodeId: "461",
+      filenamePrefix: "Character_Card_Qwen21",
+    },
+  };
+}
+
+
 async function submitLegacyCharacterCardJob(instruction: string, sourceServerPath: string) {
   void instruction;
 
@@ -3406,7 +3485,7 @@ const CHARACTER_CARD_EXPRESSIONS = [
 type CharacterCardExpression =
   (typeof CHARACTER_CARD_EXPRESSIONS)[number];
 
-async function submitOrbitSheetsCharacterCardJob(
+async function submitQwenEditCharacterCardJob(
   instruction: string,
   sourceServerPath: string,
   anatomyMode: CharacterAnatomyMode,
@@ -3430,7 +3509,7 @@ async function submitOrbitSheetsCharacterCardJob(
   if (!response.ok || !json?.ok) {
     throw new Error(
       json?.error ||
-        `OrbitSheets Character Card failed (${response.status}).`,
+        `Qwen Image Edit 2.1 Character Card failed (${response.status}).`,
     );
   }
 
@@ -3446,7 +3525,7 @@ async function submitOrbitSheetsCharacterCardJob(
 
   if (!url || !serverPath) {
     throw new Error(
-      "OrbitSheets completed without a usable Character Card image.",
+      "Qwen Image Edit 2.1 completed without a usable Character Card image.",
     );
   }
 
@@ -4006,7 +4085,7 @@ function CharacterBuilder({
   const [selectedCharacterGeneratorOption, setSelectedCharacterGeneratorOption] = useState<CharacterGeneratorOptionId>(() => {
     if (typeof window === "undefined") return "ernie";
     const stored = window.localStorage.getItem("otg-character-generator-option");
-    return stored === "zturbo" || stored === "krea2" || stored === "boogu" ? (stored as CharacterGeneratorOptionId) : "ernie";
+    return stored === "zturbo" || stored === "krea2" || stored === "boogu" || stored === "qwen21" ? (stored as CharacterGeneratorOptionId) : "ernie";
   });
 
   useEffect(() => {
@@ -8639,12 +8718,12 @@ async function loadCharacters() {
     processedSource: CandidateImage,
     options: { forSave?: boolean } = {},
   ): Promise<CandidateImage> {
-    // OTG_ORBITSHEETS_COMPLETED_JOB_RECOVERY_V1
+    // OTG_QWEN21_COMPLETED_JOB_RECOVERY_V1
     //
-    // Before starting a new H3 render, recover a completed deferred
+    // Before starting a new Qwen Image Edit 2.1 render, recover a completed deferred
     // Character Card job whose processed source path matches this source.
     // This makes browser/session recovery idempotent and prevents an
-    // unnecessary second OrbitSheets render.
+    // unnecessary second Qwen card render.
     const recoverySourceServerPathV1 = String(
       processedSource?.serverPath || "",
     ).trim();
@@ -8731,8 +8810,20 @@ async function loadCharacters() {
               .map((value) => String(value || "").trim())
               .filter(Boolean);
 
-            return sourceCandidatesV1.includes(
-              recoverySourceServerPathV1,
+            const recoveredExpressionV1 = String(
+              inputV1.expression ||
+                refsV1.expression ||
+                cardV1.expression ||
+                "neutral",
+            )
+              .trim()
+              .toLowerCase();
+
+            return (
+              sourceCandidatesV1.includes(
+                recoverySourceServerPathV1,
+              ) &&
+              recoveredExpressionV1 === characterCardExpression
             );
           },
         );
@@ -8781,14 +8872,14 @@ async function loadCharacters() {
 
           if (recoveredCardPathV1) {
             setMessage(
-              "Recovered the completed OrbitSheets Character Card. No new H3 render was needed.",
+              "Recovered the completed Qwen Image Edit 2.1 Character Card. No new render was needed.",
             );
 
             return {
               id: `recovered-character-card-${Date.now()}`,
               label:
-                recoveredEngineV1 === "orbitsheets-h3"
-                  ? "OrbitSheets H3 Character Card"
+                recoveredEngineV1 === "qwen-image-edit-2.1"
+                  ? "Qwen Image Edit 2.1 Character Card"
                   : "Recovered Character Card",
               url:
                 recoveredCardUrlV1 ||
@@ -8800,15 +8891,15 @@ async function loadCharacters() {
                 "",
               ).trim(),
               workflowId:
-                recoveredEngineV1 === "orbitsheets-h3"
-                  ? "orbitsheets-h3-character-card"
+                recoveredEngineV1 === "qwen-image-edit-2.1"
+                  ? "qwen-image-edit-2.1-character-card"
                   : "characters/worker-manager-character-card",
             };
           }
         }
       } catch (recoveryErrorV1) {
         console.warn(
-          "[Character Card] Completed-job recovery was unavailable; continuing with normal OrbitSheets generation.",
+          "[Character Card] Completed-job recovery was unavailable; continuing with normal Qwen Image Edit 2.1 generation.",
           recoveryErrorV1,
         );
       }
@@ -8834,12 +8925,12 @@ async function loadCharacters() {
 
     setMessage(
       options.forSave
-        ? "Creating required OrbitSheets Character Card before save..."
-        : "Creating OrbitSheets Character Card...",
+        ? "Creating required Qwen Image Edit 2.1 Character Card before save..."
+        : "Creating Qwen Image Edit 2.1 Character Card...",
     );
 
     try {
-      const orbit = await submitOrbitSheetsCharacterCardJob(
+      const qwenCard = await submitQwenEditCharacterCardJob(
         instruction,
         sourceServerPath,
         characterAnatomyMode,
@@ -8848,37 +8939,37 @@ async function loadCharacters() {
 
       /*
        * Do not leave the canonical Character Card dependent on the
-       * ComfyUI output directory. Copy the generated OrbitSheets image
+       * ComfyUI output directory. Copy the generated Qwen Image Edit 2.1 image
        * into the same durable character-upload storage used by the
        * existing Character Card path.
        */
       const upload = await copyGeneratedImageToCharacterUpload(
-        orbit.generated.url,
+        qwenCard.generated.url,
         id + ".png",
       );
 
       setMessage(
-        "OrbitSheets Character Card created. Using the multi-view sheet as the model-facing Character Card.",
+        "Qwen Image Edit 2.1 Character Card created. Using the multi-view sheet as the model-facing Character Card.",
       );
 
       return {
         id,
         label: "Multi-view character reference card",
-        url: upload.fileUrl || orbit.generated.url,
+        url: upload.fileUrl || qwenCard.generated.url,
         serverPath:
-          upload.serverPath || orbit.generated.serverPath,
+          upload.serverPath || qwenCard.generated.serverPath,
         internalPrompt: instruction,
-        promptId: orbit.promptId,
-        workflowId: "orbitsheets-h3-character-card",
+        promptId: qwenCard.promptId,
+        workflowId: "qwen-image-edit-2.1-character-card",
       };
-    } catch (orbitError) {
+    } catch (qwenError) {
       console.warn(
-        "[Character Card] OrbitSheets failed; using legacy Character Card fallback.",
-        orbitError,
+        "[Character Card] Qwen Image Edit 2.1 failed; using legacy Character Card fallback.",
+        qwenError,
       );
 
       setMessage(
-        "OrbitSheets Character Card failed. Retrying with the legacy Character Card generator...",
+        "Qwen Image Edit 2.1 Character Card failed. Retrying with the legacy Character Card generator...",
       );
 
       const job = await submitLegacyCharacterCardJob(

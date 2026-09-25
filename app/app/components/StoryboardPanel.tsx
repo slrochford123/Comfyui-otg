@@ -497,6 +497,8 @@ type ProductionVoiceModelOption = {
   path: string;
   displayPath?: string;
   samplePath?: string;
+  modelPath?: string;
+  indexPath?: string;
   characterId?: string;
   usable: boolean;
   notes?: string;
@@ -3257,6 +3259,10 @@ useEffect(() => {
   const [audioDubPreviewBusy, setAudioDubPreviewBusy] = useState(false);
   const [audioDubPreviewResult, setAudioDubPreviewResult] = useState<any | null>(null);
   const [audioDubPreviewError, setAudioDubPreviewError] = useState("");
+  const [audioDubAdvancedOpen, setAudioDubAdvancedOpen] = useState(false);
+  const [audioDubMode, setAudioDubMode] = useState<"preserve_performance" | "rewrite_line">("preserve_performance");
+  const [audioDubEmotion, setAudioDubEmotion] = useState("preserve");
+  const [audioDubReplacementText, setAudioDubReplacementText] = useState("");
   const [audioStudioSonyWooshBusy, setAudioStudioSonyWooshBusy] = useState(false);
   const [audioStudioSonyWooshError, setAudioStudioSonyWooshError] = useState("");
 
@@ -3619,6 +3625,8 @@ useEffect(() => {
             path: String(item?.path || "").trim(),
             displayPath: item?.displayPath ? String(item.displayPath) : undefined,
             samplePath: item?.samplePath ? String(item.samplePath) : undefined,
+            modelPath: item?.modelPath ? String(item.modelPath) : undefined,
+            indexPath: item?.indexPath ? String(item.indexPath) : undefined,
             characterId: item?.characterId ? String(item.characterId) : undefined,
             usable: item?.usable !== false,
             notes: item?.notes ? String(item.notes) : undefined,
@@ -13850,6 +13858,13 @@ const renderedManifest = normalizeProductionEditManifest(row, {
           characterId,
           voiceModelId: selectedVoice?.id || "",
           voicePath: selectedVoice?.path || "",
+          modelPath: selectedVoice?.modelPath || selectedVoice?.path || "",
+          indexPath: selectedVoice?.indexPath || "",
+          samplePath: selectedVoice?.samplePath || "",
+          engine: selectedVoice?.engine === "character" ? "applio" : selectedVoice?.engine || "auto",
+          dubMode: audioDubMode,
+          emotion: audioDubEmotion,
+          replacementText: audioDubReplacementText,
           voiceName: selectedVoice?.name || String(characterId || ""),
           segments,
         };
@@ -13862,6 +13877,17 @@ const renderedManifest = normalizeProductionEditManifest(row, {
     const missingVoiceMapping = selectedVoiceMappings.find((mapping) => !mapping.voicePath);
     if (missingVoiceMapping) {
       setNotice(`Detected ${missingVoiceMapping.voiceId} is mapped to a character without a usable Characters-tab voice model.`);
+      return;
+    }
+
+    const missingTrainedArtifact = selectedVoiceMappings.find((mapping) => mapping.engine === "applio" && (!mapping.modelPath || !mapping.indexPath));
+    if (missingTrainedArtifact) {
+      setNotice(`Detected ${missingTrainedArtifact.voiceId} is mapped to a character without a verified trained Applio model and index.`);
+      return;
+    }
+
+    if (audioDubMode !== "preserve_performance" && !audioDubReplacementText.trim()) {
+      setNotice("Type the replacement line before using Rewrite Line mode.");
       return;
     }
 
@@ -13902,6 +13928,9 @@ const renderedManifest = normalizeProductionEditManifest(row, {
           voiceMappings: selectedVoiceMappings,
           audioClipAnalysis: audioClipAnalysisResult,
           voiceCharacterMap: audioClipVoiceCharacterMap,
+          dubMode: audioDubMode,
+          emotion: audioDubEmotion,
+          replacementText: audioDubReplacementText,
           title: `Scene ${clipIndex + 1} voice dub preview`,
         }),
       });
@@ -13912,7 +13941,7 @@ const renderedManifest = normalizeProductionEditManifest(row, {
       }
 
       setAudioDubPreviewResult(data);
-      setNotice("Voice dub preview ready. Play the preview video and approve or adjust the mapping.");
+      setNotice("Voice swap video ready. Play the output and approve or adjust the mapping.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Voice dub preview failed.";
       setAudioDubPreviewError(message);
@@ -13960,7 +13989,7 @@ const renderedManifest = normalizeProductionEditManifest(row, {
               <div className="font-black text-white">{scene.title}</div>
               <div>Clips found: {rows.length}</div>
               <div>Character voice models: {characterVoiceModelOptions.length}</div>
-              <div>Status: queued job skeleton</div>
+                <div>Status: voice swap pipeline</div>
             </div>
           </div>
         </div>
@@ -14120,6 +14149,7 @@ const renderedManifest = normalizeProductionEditManifest(row, {
                         status: String(voice.status || "detected"),
                         segmentCount: Number(voice.segmentCount || voice.segments?.length || 0),
                         totalSpeechSeconds: Number(voice.totalSpeechSeconds || 0),
+                        sampleUrl: String(voice.sampleUrl || ""),
                       }))
                     : Array.from({ length: 3 }, (_unused, index) => ({
                         id: `speaker_${index + 1}`,
@@ -14142,7 +14172,7 @@ const renderedManifest = normalizeProductionEditManifest(row, {
                               Separate dialogue, detect speakers, map voices to characters
                             </h3>
                             <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-white/60">
-                              Uses Demucs-style source separation plus speaker diarization. Detect up to five dialogue voices, then map each voice lane to a checked clip character. Checked characters without saved voice models are skipped automatically.
+                              Upload or choose a clip, separate dialogue from the background, detect up to five dialogue voices, preview speaker samples, then map selected voice lanes to trained character voices.
                             </p>
                           </div>
 
@@ -14221,8 +14251,14 @@ const renderedManifest = normalizeProductionEditManifest(row, {
                                 </div>
                                 {voiceRow.status === "detected" ? (
                                   <p className="mt-2 text-xs font-bold text-white/70">
-                                    {Number(voiceRow.totalSpeechSeconds || 0).toFixed(1)}s detected speech. Select a character voice model below to replace this lane.
+                                    {Number(voiceRow.totalSpeechSeconds || 0).toFixed(1)}s detected speech. Preview the sample, then select a character voice model below to replace this lane.
                                   </p>
+                                ) : null}
+
+                                {voiceRow.sampleUrl ? (
+                                  <audio controls preload="none" className="mt-3 w-full">
+                                    <source src={voiceRow.sampleUrl} />
+                                  </audio>
                                 ) : null}
 
                                 <label className="mt-3 block text-[11px] font-black uppercase tracking-[0.18em] text-white/45">
@@ -14305,8 +14341,15 @@ const renderedManifest = normalizeProductionEditManifest(row, {
                             <p className="text-[11px] font-black uppercase tracking-[0.24em] text-emerald-100/80">Voice Dub Preview</p>
                             <h3 className="mt-2 text-lg font-black text-white">Start character voice dub</h3>
                             <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-white/55">
-                              Uses the selected detected voice mapping and the saved Characters-tab voice model to generate a preview video with the replaced voice.
+                              Converts only the selected detected voice lanes with the saved Characters-tab voice models, keeps the original timing slots, mixes the result with the background bed, and outputs a new video.
                             </p>
+                            <button
+                              type="button"
+                              onClick={() => setAudioDubAdvancedOpen((current) => !current)}
+                              className="mt-3 rounded-[12px] border border-white/10 bg-black/20 px-3 py-2 text-xs font-black text-emerald-100 transition hover:bg-white/[0.06]"
+                            >
+                              {audioDubAdvancedOpen ? "Hide Advanced Controls" : "Advanced Controls"}
+                            </button>
                           </div>
                           <button
                             type="button"
@@ -14314,9 +14357,53 @@ const renderedManifest = normalizeProductionEditManifest(row, {
                             disabled={audioDubPreviewBusy || !activeAudioStudioClip || !Object.values(audioClipVoiceCharacterMap).some(Boolean)}
                             className="rounded-[14px] border border-emerald-200/30 bg-emerald-300/10 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-300/15 disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            {audioDubPreviewBusy ? "Dubbing..." : "Start Dub Preview"}
+                            {audioDubPreviewBusy ? "Generating voice swap..." : "Generate Voice Swap"}
                           </button>
                         </div>
+
+                        {audioDubAdvancedOpen ? (
+                          <div className="mt-4 grid gap-4 rounded-[14px] border border-white/10 bg-black/20 p-4 md:grid-cols-3">
+                            <label className="grid gap-1 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+                              Dub mode
+                              <select
+                                value={audioDubMode}
+                                onChange={(event) => setAudioDubMode(event.target.value === "rewrite_line" ? "rewrite_line" : "preserve_performance")}
+                                className="rounded-[12px] border border-white/10 bg-slate-950/80 px-3 py-3 text-sm font-bold normal-case tracking-normal text-white outline-none focus:border-emerald-300/30"
+                              >
+                                <option value="preserve_performance">Preserve performance</option>
+                                <option value="rewrite_line">Rewrite line</option>
+                              </select>
+                            </label>
+
+                            <label className="grid gap-1 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+                              Emotion
+                              <select
+                                value={audioDubEmotion}
+                                onChange={(event) => setAudioDubEmotion(event.target.value)}
+                                className="rounded-[12px] border border-white/10 bg-slate-950/80 px-3 py-3 text-sm font-bold normal-case tracking-normal text-white outline-none focus:border-emerald-300/30"
+                              >
+                                {["preserve", "quiet", "whisper", "excited", "angry", "shouting", "sad", "scared", "confident"].map((emotion) => (
+                                  <option key={emotion} value={emotion}>{emotion === "preserve" ? "Preserve source emotion" : emotion.charAt(0).toUpperCase() + emotion.slice(1)}</option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label className="grid gap-1 text-xs font-black uppercase tracking-[0.18em] text-white/45 md:col-span-3">
+                              Replacement line
+                              <textarea
+                                value={audioDubReplacementText}
+                                onChange={(event) => setAudioDubReplacementText(event.target.value)}
+                                rows={3}
+                                placeholder="Only needed for Rewrite Line mode."
+                                className="rounded-[12px] border border-white/10 bg-slate-950/80 px-3 py-3 text-sm font-semibold normal-case tracking-normal text-white outline-none placeholder:text-white/25 focus:border-emerald-300/30"
+                              />
+                            </label>
+
+                            <p className="md:col-span-3 text-xs font-semibold leading-5 text-white/45">
+                              Preserve Performance uses the trained Applio character model on the detected dialogue audio, keeping the original timing and emotion. Rewrite Line uses AuK to create the replacement source line with the selected emotion, then converts that line through the trained voice model.
+                            </p>
+                          </div>
+                        ) : null}
 
                         {audioDubPreviewError ? (
                           <p className="mt-4 rounded-[12px] border border-rose-300/25 bg-rose-500/10 px-4 py-3 text-sm font-bold text-rose-100">
@@ -14326,10 +14413,18 @@ const renderedManifest = normalizeProductionEditManifest(row, {
 
                         {audioDubPreviewResult?.previewVideoUrl ? (
                           <div className="mt-4 overflow-hidden rounded-[14px] border border-white/10 bg-black/25 p-3">
-                            <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">Dubbed preview</p>
+                            <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">Voice swap output</p>
                             <video key={audioDubPreviewResult.previewVideoUrl} controls className="aspect-video w-full rounded-[12px] bg-black object-contain">
                               <source src={audioDubPreviewResult.previewVideoUrl} />
                             </video>
+                            {audioDubPreviewResult.workflow ? (
+                              <div className="mt-3 grid gap-1 rounded-[10px] border border-white/10 bg-black/20 p-3 text-xs font-semibold text-white/55">
+                                <div>Separation: {String(audioDubPreviewResult.workflow.separateDialogueAndBackground || "unknown")}</div>
+                                <div>Speaker detection: {String(audioDubPreviewResult.workflow.detectSpeakers || "unknown")}</div>
+                                <div>Mix bed: {String(audioDubPreviewResult.mixPlan?.sourceBedKind || "unknown")}</div>
+                                <div>Timing: selected converted segments are trimmed or padded back into their original slots.</div>
+                              </div>
+                            ) : null}
                             <p className="mt-2 break-all text-xs font-semibold text-white/45">{audioDubPreviewResult.previewVideoPath || audioDubPreviewResult.previewVideoUrl}</p>
                           </div>
                         ) : null}

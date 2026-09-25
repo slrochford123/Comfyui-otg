@@ -11,20 +11,28 @@ const hub = readFileSync(
   "utf8",
 );
 
-describe("Character Hub OrbitSheets V2 contract", () => {
-  it("recognizes OrbitSheets V2 as a canonical-card result", () => {
+const runtimeControls = readFileSync(
+  resolve(
+    process.cwd(),
+    "app/app/components/CharacterCandidateRuntimeControls.tsx",
+  ),
+  "utf8",
+);
+
+describe("Character Hub Qwen Image Edit 2.1 card contract", () => {
+  it("recognizes Qwen Image Edit 2.1 as a canonical-card result", () => {
     expect(hub).toContain(
-      "OTG_CHARACTER_HUB_ORBITSHEETS_V2_UI_V1",
+      "OTG_CHARACTER_HUB_QWEN21_CARD_UI_V1",
     );
     expect(hub).toContain("isOrbitSheetsV2");
     expect(hub).toContain("pipelineVersion");
-    expect(hub).toContain("orbitsheets-h3");
+    expect(hub).toContain("qwen-image-edit-2.1");
     expect(hub).toContain(
       "legacyFourBodyReferencesComplete",
     );
   });
 
-  it("does not require four body masters for OrbitSheets V2", () => {
+  it("does not require four body masters for Qwen card V2", () => {
     expect(hub).toContain(
       "(!isOrbitSheetsV2 && !legacyFourBodyReferencesComplete)",
     );
@@ -33,15 +41,15 @@ describe("Character Hub OrbitSheets V2 contract", () => {
     );
   });
 
-  it("hydrates the OrbitSheets card into Character Hub", () => {
+  it("hydrates the Qwen card into Character Hub", () => {
     expect(hub).toContain(
-      '"OrbitSheets H3 Character Card"',
+      '"Qwen Image Edit 2.1 Character Card"',
     );
     expect(hub).toContain(
       '"Six-view Character Card"',
     );
     expect(hub).toContain(
-      '"orbitsheets-h3-character-card"',
+      '"qwen-image-edit-2.1-character-card"',
     );
   });
 
@@ -56,7 +64,19 @@ describe("Character Hub OrbitSheets V2 contract", () => {
       "sourceCandidates.includes(",
     );
     expect(hub).toContain(
-      "Recovered the completed Character Card job. No new H3 render was submitted.",
+      "Recovered the completed Qwen Image Edit 2.1 Character Card job",
+    );
+  });
+
+  it("forces a fresh render when regenerating an existing card", () => {
+    expect(hub).toContain(
+      "existingCardWillBeRegenerated",
+    );
+    expect(hub).toContain(
+      "if (!jobId && !existingCardWillBeRegenerated)",
+    );
+    expect(runtimeControls).toContain(
+      "Regenerate Character Card",
     );
   });
 
@@ -69,12 +89,12 @@ describe("Character Hub OrbitSheets V2 contract", () => {
     );
   });
 
-  it("describes OrbitSheets as primary with legacy fallback", () => {
+  it("describes Qwen Image Edit 2.1 as primary with legacy fallback", () => {
     expect(hub).toContain(
-      "OrbitSheets H3 creates a six-view identity sheet",
+      "Qwen Image Edit 2.1 is the primary card generator",
     );
     expect(hub).toContain(
-      "legacy four-angle Character Card generator runs automatically",
+      "legacy four-angle generation remains the automatic fallback",
     );
   });
 });

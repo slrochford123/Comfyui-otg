@@ -108,7 +108,7 @@ export function CharacterCardRuntimeActions(props: {
   return (
     <div className="mt-5 flex flex-wrap gap-3">
       <button type="button" onClick={props.onCreate} disabled={props.busy || !props.hasSource || props.gated} className="rounded-xl bg-amber-300 px-4 py-2 text-sm font-semibold text-zinc-950 disabled:opacity-50">
-        {props.busy ? "Generating..." : props.hasCard ? "Regenerate" : "Create Character Card"}
+        {props.busy ? "Generating..." : props.hasCard ? "Regenerate Character Card" : "Create Character Card"}
       </button>
       <button type="button" onClick={props.onAccept} disabled={!props.hasCard || props.busy} className="rounded-xl border border-emerald-300 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-100 disabled:opacity-40">
         Accept Character Card

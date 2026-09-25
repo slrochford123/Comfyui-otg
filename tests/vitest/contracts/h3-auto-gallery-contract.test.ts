@@ -74,7 +74,9 @@ describe("H3 automatic Gallery persistence", () => {
   it("records request ownership and preserves it for retries", () => {
     const route = read("app/api/h3/generation/route.ts");
     expect(route).toContain("createH3DirectJob(ownerKey, input, owner)");
-    expect(route).toContain("createH3DirectJob(ownerKey, source.input, source.galleryOwner || owner)");
+    expect(route).toContain("freshH3RetrySeed(source.input.seed)");
+    expect(route).toContain("createH3DirectJob(ownerKey, retryInput, source.galleryOwner || owner)");
+    expect(route).not.toContain("createH3DirectJob(ownerKey, source.input, source.galleryOwner || owner)");
     expect(read("lib/h3DirectJobs.ts")).toContain("galleryOwner");
   });
 

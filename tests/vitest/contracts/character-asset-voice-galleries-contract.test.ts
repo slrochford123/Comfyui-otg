@@ -146,6 +146,10 @@ describe(
             "Mage Flow",
             "image_mage_flow_turbo_t2i_int8.json",
           ],
+          [
+            "Qwen Image 2.1",
+            "image_qwen_image_2_1_t2i.json",
+          ],
         ];
 
         for (const [label, workflow] of expected) {

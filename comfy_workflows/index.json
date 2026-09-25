@@ -35,6 +35,39 @@
       "description": "Qwen Image Edit workflow. Upload a source image, enter edit instructions, and generate a prompt-guided edited image."
     },
     {
+      "id": "presets/image_qwen_image_2_1_t2i",
+      "label": "Qwen Image 2.1",
+      "type": "preset",
+      "path": "presets/image_qwen_image_2_1_t2i.json",
+      "file": "presets/image_qwen_image_2_1_t2i.json",
+      "tags": [
+        "image",
+        "text-to-image",
+        "qwen-image-2.1",
+        "generate"
+      ],
+      "enabled": true,
+      "description": "Qwen Image 2.1 text-to-image workflow using qwen_image_2.1_int8_convrot, qwen3vl_8b_int8_convrot, and qwen_image_2.1_vae_bf16."
+    },
+    {
+      "id": "presets/image_qwen_image_2_1_image_edit",
+      "label": "Qwen Image Edit 2.1",
+      "type": "preset",
+      "path": "presets/image_qwen_image_2_1_image_edit.json",
+      "file": "presets/image_qwen_image_2_1_image_edit.json",
+      "tags": [
+        "image",
+        "edit",
+        "image-to-image",
+        "qwen-image-2.1",
+        "generate"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "requiresInputImage": true,
+      "description": "Qwen Image Edit 2.1 workflow. Upload a source image, enter edit instructions, and optionally provide additional reference images."
+    },
+    {
       "id": "presets/Create Anime Images",
       "label": "Create Anime Images",
       "type": "preset",
@@ -162,7 +195,7 @@
       "promptNodeId": "30",
       "characterReferenceMax": 5
     },
-        {
+    {
       "id": "internal/characters/character_intro_video_ltx23",
       "label": "Characters Intro Video LTX 2.3",
       "type": "internal",
@@ -335,6 +368,24 @@
       "img2img": true,
       "requiresInputImage": true,
       "description": "8-angle character card workflow with default profile, left, right, back, front, 3/4 left, 3/4 right, extreme close-up, and final stitched Character Card output."
+    },
+    {
+      "id": "presets/character_card_qwen_image_2_1",
+      "label": "Qwen Image 2.1 Character Card",
+      "type": "preset",
+      "path": "presets/character_card_qwen_image_2_1.json",
+      "file": "presets/character_card_qwen_image_2_1.json",
+      "tags": [
+        "image",
+        "character-card",
+        "image-to-image",
+        "qwen-image-2.1",
+        "characters"
+      ],
+      "enabled": true,
+      "img2img": true,
+      "requiresInputImage": true,
+      "description": "Dedicated Qwen Image Edit 2.1 six-view Character Card workflow."
     }
   ]
 }

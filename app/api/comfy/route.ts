@@ -1585,6 +1585,29 @@ function applyLtx23Overrides(
     .join(" ");
 
   if (
+    characterCardContext.includes("presets/character_card_qwen_image_2_1") ||
+    characterCardContext.includes("characters-qwen21-character-card")
+  ) {
+    if (!assets.imageA) {
+      throw new Error("Qwen Character Card requires a current uploaded source image from imageA/imageAPath.");
+    }
+    if (!hasNode("470") || nodeClassType("470") !== "LoadImage") {
+      throw new Error("Qwen Character Card contract mismatch: node 470 must be LoadImage.");
+    }
+    if (!hasNode("474") || nodeClassType("474") !== "TextEncodeQwenImage21") {
+      throw new Error("Qwen Character Card contract mismatch: node 474 must be TextEncodeQwenImage21.");
+    }
+    if (!hasNode("458") || nodeClassType("458") !== "KSampler") {
+      throw new Error("Qwen Character Card contract mismatch: node 458 must be KSampler.");
+    }
+    if (!hasNode("461") || nodeClassType("461") !== "SaveImageAdvanced") {
+      throw new Error("Qwen Character Card contract mismatch: node 461 must be SaveImageAdvanced.");
+    }
+    setNodeIfPresent(graph, "470", { image: assets.imageA });
+
+    return;
+  }
+  if (
     characterCardContext.includes("presets/character_card_8_angles_low_angle") ||
     characterCardContext.includes("characters-8-angle-card")
   ) {
@@ -3187,6 +3210,8 @@ function isEditImageWorkflow(body: any, graph: any) {
 
   if (
     key.includes("presets/edit image") ||
+    key.includes("image_qwen_image_2_1_image_edit") ||
+    key.includes("qwen_image_2_1_image_edit") ||
     key.includes("edit image") ||
     key.includes("edit picture") ||
     label.includes("edit image") ||
@@ -3196,14 +3221,23 @@ function isEditImageWorkflow(body: any, graph: any) {
   }
 
   const modelName = graph?.["433:37"]?.inputs?.unet_name;
+  const qwen21ModelName = graph?.["451"]?.inputs?.unet_name;
   const promptNode = graph?.["435"]?.class_type;
   const outputNode = graph?.["60"]?.class_type;
 
   return (
+    (
+      typeof qwen21ModelName === "string" &&
+      qwen21ModelName.toLowerCase().includes("qwen_image_2.1") &&
+      graph?.["474"]?.class_type === "TextEncodeQwenImage21" &&
+      graph?.["461"]?.class_type === "SaveImageAdvanced"
+    ) ||
+    (
     typeof modelName === "string" &&
     modelName.toLowerCase().includes("qwen_image_edit") &&
     promptNode === "PrimitiveStringMultiline" &&
     outputNode === "SaveImage"
+    )
   );
 }
 
@@ -3257,10 +3291,16 @@ function applyCharacterReferenceBackendModelsV1(
 function applyEditImageOverrides(graph: any, body: any) {
   if (!graph || typeof graph !== "object") return;
 
-  const imageA = typeof body?.imageA === "string" ? body.imageA : null;
+  const imageA =
+    typeof body?.imageA === "string"
+      ? body.imageA
+      : typeof body?.imageAPath === "string"
+        ? body.imageAPath
+        : null;
   if (imageA) {
     setFirstLoadImageNode(graph, imageA);
     setNodeIfPresent(graph, "78", { image: imageA });
+    setNodeIfPresent(graph, "470", { image: imageA });
   }
 
   const positiveText = String(body?.positivePrompt || body?.prompt || "").trim();
@@ -3272,6 +3312,7 @@ function applyEditImageOverrides(graph: any, body: any) {
 
   if (positiveText) {
     setNodeIfPresent(graph, "435", { value: positiveText });
+    setNodeIfPresent(graph, "474", { prompt: positiveText });
     if (characterCandidateEdit) {
       // Candidate edits use the user's requested change plus preservation text verbatim.
       // Do not apply the Production "Next Scene" prompt adapter here.
@@ -3281,16 +3322,25 @@ function applyEditImageOverrides(graph: any, body: any) {
     }
   }
 
-  // Qwen Image Edit uses TextEncodeQwenImageEditPlus. Keep negative empty unless the user explicitly provides one.
+  // Qwen Image Edit keeps negative empty unless the user explicitly provides one.
   setNodeIfPresent(graph, "433:110", { prompt: negativeText || "" });
+  setNodeIfPresent(graph, "474", { negative_prompt: negativeText || "" });
 
   setNodeIfPresent(graph, "60", { filename_prefix: "Edit_Image" });
+  setNodeIfPresent(graph, "461", { filename_prefix: "Edit_Image" });
 
   // Uploaded better workflow uses Lightning LoRA by default: 4 steps, CFG 1.
   setNodeIfPresent(graph, "433:443", { value: true });
   setNodeIfPresent(graph, "433:436", { value: 4 });
   setNodeIfPresent(graph, "433:437", { value: 1 });
   setNodeIfPresent(graph, "433:3", {
+    sampler_name: "euler",
+    scheduler: "simple",
+    denoise: 1,
+  });
+  setNodeIfPresent(graph, "458", {
+    steps: 25,
+    cfg: 1,
     sampler_name: "euler",
     scheduler: "simple",
     denoise: 1,
@@ -3302,15 +3352,11 @@ function assertCharacterCandidateEditContract(graph: any, body: any) {
   if (!context.includes("character-candidate-edit")) return;
 
   const expected = [
-    ["78", "LoadImage"],
-    ["433:111", "TextEncodeQwenImageEditPlus"],
-    ["433:110", "TextEncodeQwenImageEditPlus"],
-    ["433:3", "KSampler"],
-    ["433:443", "PrimitiveBoolean"],
-    ["433:436", "PrimitiveInt"],
-    ["433:437", "PrimitiveFloat"],
-    ["433:8", "VAEDecode"],
-    ["60", "SaveImage"],
+    ["470", "LoadImage"],
+    ["474", "TextEncodeQwenImage21"],
+    ["458", "KSampler"],
+    ["457", "VAEDecode"],
+    ["461", "SaveImageAdvanced"],
   ] as const;
   for (const [nodeId, classType] of expected) {
     if (String(graph?.[nodeId]?.class_type || "") !== classType) {
@@ -3319,24 +3365,23 @@ function assertCharacterCandidateEditContract(graph: any, body: any) {
   }
 
   const exactValues = [
-    [graph?.["433:37"]?.inputs?.unet_name, "qwen_image_edit_2509_fp8_e4m3fn.safetensors", "model"],
-    [graph?.["433:38"]?.inputs?.clip_name, "qwen_2.5_vl_7b_fp8_scaled.safetensors", "CLIP"],
-    [graph?.["433:39"]?.inputs?.vae_name, "qwen_image_vae.safetensors", "VAE"],
-    [graph?.["433:89"]?.inputs?.lora_name, "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors", "LoRA"],
+    [graph?.["451"]?.inputs?.unet_name, "qwen_image_2.1_int8_convrot.safetensors", "model"],
+    [graph?.["453"]?.inputs?.clip_name, "qwen3vl_8b_int8_convrot.safetensors", "CLIP"],
+    [graph?.["454"]?.inputs?.vae_name, "qwen_image_2.1_vae_bf16.safetensors", "VAE"],
   ] as const;
   for (const [actual, expectedValue, label] of exactValues) {
     if (String(actual || "") !== expectedValue) {
       throw new Error(`Character candidate edit ${label} contract mismatch; expected ${expectedValue}.`);
     }
   }
-  if (graph?.["433:443"]?.inputs?.value !== true || Number(graph?.["433:436"]?.inputs?.value) !== 4 || Number(graph?.["433:437"]?.inputs?.value) !== 1) {
-    throw new Error("Character candidate edit Lightning/4-step/CFG 1 contract mismatch.");
+  if (Number(graph?.["458"]?.inputs?.steps) !== 25 || Number(graph?.["458"]?.inputs?.cfg) !== 1) {
+    throw new Error("Character candidate edit Qwen 2.1 steps/CFG contract mismatch.");
   }
-  if (String(graph?.["433:111"]?.inputs?.prompt || "") !== String(body?.positivePrompt || body?.prompt || "").trim()) {
-    throw new Error("Character candidate edit positive instruction was not bound verbatim to node 433:111.");
+  if (String(graph?.["474"]?.inputs?.prompt || "") !== String(body?.positivePrompt || body?.prompt || "").trim()) {
+    throw new Error("Character candidate edit positive instruction was not bound verbatim to node 474.");
   }
-  if (String(graph?.["433:110"]?.inputs?.prompt || "") !== String(body?.negativePrompt || body?.neg || "").trim()) {
-    throw new Error("Character candidate edit negative prompt was not bound to node 433:110.");
+  if (String(graph?.["474"]?.inputs?.negative_prompt || "") !== String(body?.negativePrompt || body?.neg || "").trim()) {
+    throw new Error("Character candidate edit negative prompt was not bound to node 474.");
   }
 }
 

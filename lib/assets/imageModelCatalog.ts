@@ -3,7 +3,8 @@ export type AssetImageModelId =
   | "z-image"
   | "krea-2"
   | "boogu"
-  | "mage-flow";
+  | "mage-flow"
+  | "qwen-image-2-1";
 
 export type AssetImageModel = {
   id: AssetImageModelId;
@@ -41,6 +42,12 @@ export const ASSET_IMAGE_MODELS: readonly AssetImageModel[] = [
     label: "Mage Flow",
     workflowFile:
       "workflows/characters/create/image_mage_flow_turbo_t2i_int8.json",
+  },
+  {
+    id: "qwen-image-2-1",
+    label: "Qwen Image 2.1",
+    workflowFile:
+      "workflows/characters/create/image_qwen_image_2_1_t2i.json",
   },
 ] as const;
 

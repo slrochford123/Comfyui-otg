@@ -117,8 +117,39 @@ main() {
     log "Skipping full npm test by default. Set RUN_FULL_TESTS=1 to run it."
   fi
 
-  AUTH_SECRET="${AUTH_SECRET:-codex-test-build-secret}"
-  export AUTH_SECRET
+  # Build with the real TEST auth environment. Never use a
+  # hard-coded AUTH_SECRET fallback in source control.
+  if [[ -z "${AUTH_SECRET:-}" ]]; then
+    local work_repo
+
+    work_repo="$(
+      systemctl show "$SERVICE_NAME" -p Environment --value --no-pager |
+      sed -n 's/.*OTG_WORK_REPO=\([^ ]*\).*/\1/p'
+    )"
+
+    [[ -n "$work_repo" ]] || die \
+      "Could not determine OTG_WORK_REPO from $SERVICE_NAME"
+
+    AUTH_SECRET="$(
+      OTG_BUILD_ENV_ROOT="$work_repo" node <<'NODE'
+const { loadEnvConfig } = require("@next/env");
+
+loadEnvConfig(process.env.OTG_BUILD_ENV_ROOT, false);
+
+if (!process.env.AUTH_SECRET) {
+  process.exit(97);
+}
+
+process.stdout.write(process.env.AUTH_SECRET);
+NODE
+    )"
+
+    export AUTH_SECRET
+  fi
+
+  [[ -n "${AUTH_SECRET:-}" ]] || die \
+    "AUTH_SECRET could not be loaded from the TEST environment."
+
   run npm run build
 
   [[ -f "$REPO_DIR/.next/standalone/server.js" ]] || die ".next/standalone/server.js was not produced"
@@ -137,7 +168,7 @@ main() {
   run mkdir -p "$release/.next"
   run rsync -a --delete "$REPO_DIR/.next/static/" "$release/.next/static/"
 
-  for item in public comfy_workflows scripts docs; do
+  for item in public comfy_workflows config scripts docs; do
     if [[ -e "$REPO_DIR/$item" ]]; then
       run rsync -a --delete "$REPO_DIR/$item/" "$release/$item/"
     fi

@@ -174,6 +174,22 @@ type ProductionV2GenerationJobPayload = {
   videoUrl: string | null;
 };
 
+type ProductionV2VoiceModelOption = {
+  id: string;
+  name: string;
+  engine: string;
+  provider?: string;
+  characterId?: string;
+  characterName?: string;
+  voiceModelId?: string;
+  path?: string;
+  modelPath?: string;
+  indexPath?: string;
+  samplePath?: string;
+  displayPath?: string;
+  usable?: boolean;
+};
+
 function formatH3Eta(seconds: number) {
   const minutes = seconds / 60;
   return minutes < 2 ? `${Math.round(seconds)} sec` : `${minutes.toFixed(1)} min`;
@@ -340,6 +356,24 @@ function mediaUrl(value: unknown) {
   if (/^(https?:|blob:|data:)/i.test(text) || text.startsWith("/api/") || text.startsWith("/characters/")) return text;
   if (text.startsWith("/")) return `/api/file?path=${encodeURIComponent(text)}`;
   return text;
+}
+
+function fileNameFromUrl(value: unknown) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  try {
+    const parsed = new URL(text, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    const name =
+      parsed.searchParams.get("name") ||
+      parsed.searchParams.get("filename") ||
+      parsed.searchParams.get("file") ||
+      parsed.pathname.split("/").pop() ||
+      "";
+    return decodeURIComponent(name);
+  } catch {
+    const clean = text.split("?")[0] || "";
+    return decodeURIComponent(clean.split("/").pop() || "");
+  }
 }
 
 function formatUpdatedAt(value: string) {
@@ -647,16 +681,195 @@ function StudioShell({
   const [trimEnd, setTrimEnd] = useState<number>(scene.durationSeconds);
   const [referenceClipStart, setReferenceClipStart] = useState(0);
   const [volumePercent, setVolumePercent] = useState(100);
+  const [voiceModels, setVoiceModels] = useState<ProductionV2VoiceModelOption[]>([]);
+  const [voiceModelsLoading, setVoiceModelsLoading] = useState(false);
+  const [audioExpectedSpeakerCount, setAudioExpectedSpeakerCount] = useState(0);
+  const [audioClipAnalysisBusy, setAudioClipAnalysisBusy] = useState(false);
+  const [audioClipAnalysisResult, setAudioClipAnalysisResult] = useState<any | null>(null);
+  const [audioClipVoiceCharacterMap, setAudioClipVoiceCharacterMap] = useState<Record<string, string>>({});
+  const [audioDubPreviewBusy, setAudioDubPreviewBusy] = useState(false);
+  const [audioDubPreviewResult, setAudioDubPreviewResult] = useState<any | null>(null);
+  const [audioDubPreviewError, setAudioDubPreviewError] = useState("");
+  const [audioDubAdvancedOpen, setAudioDubAdvancedOpen] = useState(false);
+  const [audioDubMode, setAudioDubMode] = useState<"preserve_performance" | "rewrite_line">("preserve_performance");
+  const [audioDubEmotion, setAudioDubEmotion] = useState("preserve");
+  const [audioDubReplacementText, setAudioDubReplacementText] = useState("");
   const referenceClipMaxStart = Math.max(0, duration - H3_REFERENCE_VIDEO_CLIP_SECONDS);
   const referenceClipStartClamped = Math.min(Math.max(0, referenceClipStart), referenceClipMaxStart);
   const referenceClipReady = duration >= H3_REFERENCE_VIDEO_CLIP_SECONDS;
+  const sourceVideoUrl = mediaUrl(version?.previewUrl || version?.mediaPath || scene.generatedClip?.previewUrl || scene.generatedClip?.path || "");
+  const sourceVideoFileName = fileNameFromUrl(version?.mediaPath || version?.previewUrl || scene.generatedClip?.path || scene.generatedClip?.previewUrl || sourceVideoUrl);
+  const audioSceneTitle = `Scene ${scene.sceneNumber}`;
+  const detectedVoiceRows = Array.isArray(audioClipAnalysisResult?.voices) ? audioClipAnalysisResult.voices : [];
+  const selectedVoiceMappingsReady = Object.values(audioClipVoiceCharacterMap).some(Boolean);
 
   useEffect(() => {
     setDuration(scene.durationSeconds);
     setTrimStart(0);
     setTrimEnd(scene.durationSeconds);
     setReferenceClipStart(0);
+    setAudioClipAnalysisResult(null);
+    setAudioClipVoiceCharacterMap({});
+    setAudioDubPreviewResult(null);
+    setAudioDubPreviewError("");
   }, [scene.id, version?.id, scene.durationSeconds]);
+
+  useEffect(() => {
+    if (kind !== "audio") return;
+    let cancelled = false;
+    setVoiceModelsLoading(true);
+    fetch("/api/voice/models", {
+      cache: "no-store",
+      credentials: "include",
+    })
+      .then((response) => readJsonResponse<{ items?: ProductionV2VoiceModelOption[] }>(response))
+      .then((json) => {
+        if (!cancelled) setVoiceModels(Array.isArray(json.items) ? json.items : []);
+      })
+      .catch((error) => {
+        if (!cancelled) onMessage(error instanceof Error ? error.message : "Could not load character voice models.");
+      })
+      .finally(() => {
+        if (!cancelled) setVoiceModelsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [kind, onMessage]);
+
+  async function analyzeClipAudioForDubbing() {
+    if (!version || !sourceVideoUrl) {
+      onMessage("Select or generate a media version before analyzing voice dubbing.");
+      return;
+    }
+
+    setAudioClipAnalysisBusy(true);
+    setAudioClipAnalysisResult(null);
+    setAudioClipVoiceCharacterMap({});
+    setAudioDubPreviewResult(null);
+    setAudioDubPreviewError("");
+    onMessage(`Analyzing audio for Scene ${scene.sceneNumber}...`);
+
+    try {
+      const response = await fetch("/api/production/audio/analyze-clip", {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productionId: production.id,
+          sceneId: scene.id,
+          sceneTitle: audioSceneTitle,
+          clipIndex: scene.sceneNumber - 1,
+          sourceUrl: sourceVideoUrl,
+          sourcePath: version.mediaPath,
+          sourceFileName: sourceVideoFileName,
+          expectedSpeakerCount: audioExpectedSpeakerCount || undefined,
+        }),
+      });
+      const data = await readJsonResponse<any>(response);
+      const voices = Array.isArray(data.voices) ? data.voices : [];
+      setAudioClipAnalysisResult(data);
+      setAudioClipVoiceCharacterMap(Object.fromEntries(voices.map((voice: any, index: number) => [String(voice.id || `speaker_${index + 1}`), ""])));
+      onMessage(voices.length ? `Analyze Clip Audio complete. Detected ${voices.length} voice lane${voices.length === 1 ? "" : "s"}.` : "Analyze Clip Audio complete, but no clear dialogue was detected.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Analyze Clip Audio failed.";
+      setAudioClipAnalysisResult({ ok: false, error: message, voices: [] });
+      setAudioClipVoiceCharacterMap({});
+      onMessage(message);
+    } finally {
+      setAudioClipAnalysisBusy(false);
+    }
+  }
+
+  async function startAudioStudioDubPreview() {
+    if (!version || !sourceVideoUrl) {
+      onMessage("Select or generate a media version before starting voice dub.");
+      return;
+    }
+
+    const selectedVoiceMappings = Object.entries(audioClipVoiceCharacterMap)
+      .filter(([, voiceModelId]) => String(voiceModelId || "").trim())
+      .map(([voiceId, voiceModelId]) => {
+        const selectedVoice = voiceModels.find((option) => option.id === voiceModelId || option.characterId === voiceModelId);
+        const detectedVoice = detectedVoiceRows.find((voice: any, index: number) => String(voice?.id || voice?.voiceId || voice?.speakerId || `speaker_${index + 1}`) === voiceId);
+        const segments = (Array.isArray(detectedVoice?.segments) ? detectedVoice.segments : [])
+          .map((segment: any) => {
+            const start = Number(segment?.start ?? segment?.startSeconds ?? segment?.from ?? segment?.begin);
+            const end = Number(segment?.end ?? segment?.endSeconds ?? segment?.to ?? segment?.stop);
+            return Number.isFinite(start) && Number.isFinite(end) && end > start ? { start, end } : null;
+          })
+          .filter(Boolean);
+        return {
+          voiceId,
+          characterId: selectedVoice?.characterId || "",
+          voiceModelId: selectedVoice?.id || "",
+          voicePath: selectedVoice?.path || "",
+          modelPath: selectedVoice?.modelPath || selectedVoice?.path || "",
+          indexPath: selectedVoice?.indexPath || "",
+          samplePath: selectedVoice?.samplePath || "",
+          engine: selectedVoice?.engine === "character" ? "applio" : selectedVoice?.engine || "auto",
+          dubMode: audioDubMode,
+          emotion: audioDubEmotion,
+          replacementText: audioDubReplacementText,
+          voiceName: selectedVoice?.name || "",
+          segments,
+        };
+      });
+
+    if (!selectedVoiceMappings.length) {
+      onMessage("Analyze the clip and map at least one detected voice to a character voice model before starting dub.");
+      return;
+    }
+    const missingArtifact = selectedVoiceMappings.find((mapping) => !mapping.modelPath || !mapping.indexPath);
+    if (missingArtifact) {
+      onMessage(`Detected ${missingArtifact.voiceId} is mapped to a character without a verified trained Applio model and index.`);
+      return;
+    }
+    if (audioDubMode !== "preserve_performance" && !audioDubReplacementText.trim()) {
+      onMessage("Type the replacement line before using Rewrite Line mode.");
+      return;
+    }
+
+    setAudioDubPreviewBusy(true);
+    setAudioDubPreviewResult(null);
+    setAudioDubPreviewError("");
+    onMessage(`Starting voice dub preview for Scene ${scene.sceneNumber}...`);
+
+    try {
+      const response = await fetch("/api/production/audio/dub-preview", {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productionId: production.id,
+          sceneId: scene.id,
+          sceneTitle: audioSceneTitle,
+          clipIndex: scene.sceneNumber - 1,
+          sourceUrl: sourceVideoUrl,
+          sourcePath: version.mediaPath,
+          sourceFileName: sourceVideoFileName,
+          voiceMappings: selectedVoiceMappings,
+          audioClipAnalysis: audioClipAnalysisResult,
+          voiceCharacterMap: audioClipVoiceCharacterMap,
+          dubMode: audioDubMode,
+          emotion: audioDubEmotion,
+          replacementText: audioDubReplacementText,
+          title: `Scene ${scene.sceneNumber} voice dub preview`,
+        }),
+      });
+      const data = await readJsonResponse<any>(response);
+      setAudioDubPreviewResult(data);
+      onMessage("Voice swap video ready. Play the output and adjust the mapping if needed.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Voice dub preview failed.";
+      setAudioDubPreviewError(message);
+      onMessage(message);
+    } finally {
+      setAudioDubPreviewBusy(false);
+    }
+  }
 
   async function postProcess(action: "trim" | "volume" | "remove-background-music" | "woosh-sfx", extra: Record<string, unknown> = {}) {
     if (!version) return;
@@ -741,6 +954,134 @@ function StudioShell({
             </section>
             <section className="border-t border-white/10 pt-4" data-otg="production-v2-trim"><h3 className="text-xs font-black uppercase text-zinc-400">Trim</h3><div className="mt-2 grid grid-cols-3 gap-2 text-center text-[11px] text-zinc-500"><span>Original<br /><strong className="text-zinc-200">{duration.toFixed(2)}s</strong></span><span>In<br /><strong className="text-zinc-200">{trimStart.toFixed(2)}s</strong></span><span>Out<br /><strong className="text-zinc-200">{trimEnd.toFixed(2)}s</strong></span></div><label className="mt-3 block text-xs text-zinc-500">In point<input aria-label="Trim in point" type="range" min={0} max={Math.max(0.25, duration - 0.25)} step="0.05" value={Math.min(trimStart, Math.max(0, trimEnd - 0.25))} onChange={(event) => setTrimStart(Math.min(Number(event.target.value), trimEnd - 0.25))} className="mt-2 w-full" /></label><label className="mt-2 block text-xs text-zinc-500">Out point<input aria-label="Trim out point" type="range" min={0.25} max={duration} step="0.05" value={Math.max(trimEnd, trimStart + 0.25)} onChange={(event) => setTrimEnd(Math.max(Number(event.target.value), trimStart + 0.25))} className="mt-2 w-full" /></label><p className="mt-2 text-center text-xs font-bold text-zinc-300">Result: {Math.max(0, trimEnd - trimStart).toFixed(2)}s</p><button type="button" className={`${secondaryButton} mt-3 w-full`} disabled={Boolean(readOnly || !version || operation)} onClick={() => void postProcess("trim", { startSeconds: trimStart, endSeconds: trimEnd })}>{operation === "trim" ? "Trimming..." : "Apply Trim"}</button></section>
           </> : <>
+            <section className="border-t border-white/10 pt-4" data-otg="production-v2-voice-dubbing">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-xs font-black uppercase text-zinc-400">Voice Dubbing</h3>
+                  <p className="mt-2 text-xs leading-5 text-zinc-500">Separate dialogue, detect speakers, and map voice lanes to trained Character voices.</p>
+                </div>
+                <span className="shrink-0 rounded-full border border-white/10 bg-black/25 px-3 py-1 text-[11px] font-black text-zinc-400">
+                  {voiceModelsLoading ? "Loading voices" : `${voiceModels.length} voice model${voiceModels.length === 1 ? "" : "s"}`}
+                </span>
+              </div>
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+                <label className="text-xs font-bold text-zinc-400">
+                  Expected voices
+                  <select
+                    aria-label="Expected voices"
+                    value={audioExpectedSpeakerCount}
+                    disabled={readOnly}
+                    onChange={(event) => setAudioExpectedSpeakerCount(Number(event.target.value) || 0)}
+                    className={`${fieldClass} mt-2`}
+                  >
+                    <option value={0}>Auto</option>
+                    <option value={1}>1 voice</option>
+                    <option value={2}>2 voices</option>
+                    <option value={3}>3 voices</option>
+                    <option value={4}>4 voices</option>
+                    <option value={5}>5 voices</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className={`${secondaryButton} self-end`}
+                  disabled={Boolean(readOnly || !version || audioClipAnalysisBusy)}
+                  onClick={() => void analyzeClipAudioForDubbing()}
+                >
+                  {audioClipAnalysisBusy ? "Analyzing..." : "Analyze Clip Audio"}
+                </button>
+              </div>
+
+              {detectedVoiceRows.length ? (
+                <div className="mt-4 space-y-3">
+                  {detectedVoiceRows.map((voice: any, index: number) => {
+                    const voiceId = String(voice?.id || voice?.voiceId || voice?.speakerId || `speaker_${index + 1}`);
+                    const speechSeconds = Number(voice?.totalSpeechSeconds || 0);
+                    return (
+                      <div key={voiceId} className="rounded-lg border border-white/10 bg-black/20 p-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-sm font-black text-white">{String(voice?.label || `Voice ${index + 1}`)}</p>
+                            <p className="mt-1 text-[11px] leading-4 text-zinc-500">
+                              {Number.isFinite(speechSeconds) && speechSeconds > 0 ? `${speechSeconds.toFixed(1)}s detected speech.` : "Detected dialogue lane."}
+                            </p>
+                          </div>
+                          {voice?.sampleUrl ? <audio controls preload="none" src={mediaUrl(voice.sampleUrl)} className="w-full sm:w-44" /> : null}
+                        </div>
+                        <label className="mt-3 block text-[11px] font-black uppercase text-zinc-500">
+                          Map to character voice
+                          <select
+                            aria-label={`Map ${voiceId} to character voice`}
+                            value={audioClipVoiceCharacterMap[voiceId] || ""}
+                            disabled={readOnly}
+                            onChange={(event) => setAudioClipVoiceCharacterMap((previous) => ({ ...previous, [voiceId]: event.target.value }))}
+                            className={`${fieldClass} mt-2 normal-case`}
+                          >
+                            <option value="">Skip this detected voice</option>
+                            {voiceModels.map((voiceModel) => (
+                              <option key={`${voiceId}_${voiceModel.id}`} value={voiceModel.id}>
+                                {voiceModel.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3 text-xs leading-5 text-zinc-500">
+                  Analyze the selected media version to reveal speaker lanes for mapping.
+                </p>
+              )}
+
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  className={secondaryButton}
+                  onClick={() => setAudioDubAdvancedOpen((current) => !current)}
+                >
+                  {audioDubAdvancedOpen ? "Hide Advanced Controls" : "Advanced Controls"}
+                </button>
+                <button
+                  type="button"
+                  className={`${productionPrimaryButton} flex-1`}
+                  disabled={Boolean(readOnly || !version || audioDubPreviewBusy || !selectedVoiceMappingsReady)}
+                  onClick={() => void startAudioStudioDubPreview()}
+                >
+                  {audioDubPreviewBusy ? "Generating voice swap..." : "Generate Voice Swap"}
+                </button>
+              </div>
+
+              {audioDubAdvancedOpen ? (
+                <div className="mt-3 grid gap-3 rounded-lg border border-white/10 bg-black/20 p-3">
+                  <label className="text-xs font-bold text-zinc-400">
+                    Dub mode
+                    <select value={audioDubMode} disabled={readOnly} onChange={(event) => setAudioDubMode(event.target.value === "rewrite_line" ? "rewrite_line" : "preserve_performance")} className={`${fieldClass} mt-2`}>
+                      <option value="preserve_performance">Preserve performance</option>
+                      <option value="rewrite_line">Rewrite line</option>
+                    </select>
+                  </label>
+                  <label className="text-xs font-bold text-zinc-400">
+                    Emotion
+                    <input value={audioDubEmotion} disabled={readOnly} onChange={(event) => setAudioDubEmotion(event.target.value)} className={`${fieldClass} mt-2`} />
+                  </label>
+                  <label className="text-xs font-bold text-zinc-400">
+                    Replacement line
+                    <textarea rows={3} value={audioDubReplacementText} disabled={readOnly || audioDubMode !== "rewrite_line"} onChange={(event) => setAudioDubReplacementText(event.target.value)} className={`${fieldClass} mt-2 resize-y`} />
+                  </label>
+                </div>
+              ) : null}
+
+              {audioDubPreviewError ? <p className="mt-3 rounded-lg border border-red-300/20 bg-red-400/10 p-3 text-xs leading-5 text-red-100">{audioDubPreviewError}</p> : null}
+              {audioDubPreviewResult?.previewVideoUrl ? (
+                <div className="mt-3 rounded-lg border border-emerald-300/20 bg-emerald-300/[0.06] p-3">
+                  <p className="text-xs font-black uppercase text-emerald-100">Voice swap output</p>
+                  <video controls playsInline preload="metadata" src={mediaUrl(audioDubPreviewResult.previewVideoUrl)} className="mt-3 aspect-video w-full rounded-lg bg-black" />
+                </div>
+              ) : null}
+            </section>
             <section className="border-t border-white/10 pt-4" data-otg="production-v2-woosh-sfx"><h3 className="text-xs font-black uppercase text-zinc-400">Sound Effects</h3><p className="mt-2 text-xs text-zinc-500">Sony Woosh VFlow | video-to-audio</p><label className="mt-3 block text-xs font-bold text-zinc-400">Describe desired sound effects<textarea aria-label="Sound effects description" rows={4} value={sfxPrompt} disabled={readOnly} onChange={(event) => setSfxPrompt(event.target.value)} className={`${fieldClass} mt-2 resize-y`} /></label><button type="button" className={`${productionPrimaryButton} mt-3 w-full`} disabled={Boolean(readOnly || !version || operation)} onClick={() => void postProcess("woosh-sfx", { prompt: sfxPrompt, sfxVolume: 80 })}>{operation === "woosh-sfx" ? "Generating..." : "Generate Sound Effects"}</button><p className="mt-2 text-[10px] leading-4 text-amber-200/70">Public Woosh weights: CC-BY-NC, non-commercial.</p></section>
             <section className="border-t border-white/10 pt-4"><h3 className="text-xs font-black uppercase text-zinc-400">Remove Background Music</h3><button type="button" className={`${secondaryButton} mt-3 w-full`} disabled={Boolean(readOnly || !version || operation)} onClick={() => void postProcess("remove-background-music")}>{operation === "remove-background-music" ? "Separating..." : "Remove Background Music"}</button><p className="mt-2 text-[10px] leading-4 text-zinc-500">Demucs source separation preserves the non-music stem.</p></section>
             <section className="border-t border-white/10 pt-4"><h3 className="text-xs font-black uppercase text-zinc-400">Clip Volume</h3><label className="mt-3 block text-xs text-zinc-500">Volume: <strong className="text-zinc-200">{volumePercent}%</strong><input aria-label="Clip volume percent" type="range" min="0" max="200" step="1" value={volumePercent} disabled={readOnly} onChange={(event) => setVolumePercent(Number(event.target.value))} className="mt-2 w-full" /></label><button type="button" className={`${secondaryButton} mt-3 w-full`} disabled={Boolean(readOnly || !version || operation)} onClick={() => void postProcess("volume", { volumePercent })}>{operation === "volume" ? "Applying..." : "Apply Volume"}</button></section>

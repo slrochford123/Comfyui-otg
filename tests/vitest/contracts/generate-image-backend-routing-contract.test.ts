@@ -21,6 +21,15 @@ describe("Generate image backend routing contract", () => {
     );
   });
 
+  it("classifies Qwen Image 2.1 still-image workflows as image-lane work", () => {
+    expect(targetSource).toContain(
+      'key.includes("image_qwen_image_2_1")',
+    );
+    expect(targetSource).toContain(
+      'key.includes("character_card_qwen_image_2_1")',
+    );
+  });
+
   it("does not let manifest routing replace an already classified image backend", () => {
     const start = routeSource.indexOf(
       "const descriptor = await peekWorkflowDescriptor(req);",

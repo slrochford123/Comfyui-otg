@@ -188,6 +188,33 @@ const MODEL_CONFIG: Record<
     preferredBackend:
       "local-3090",
   },
+
+  "qwen-image-2-1": {
+    id: "qwen-image-2-1",
+    label: "Qwen Image 2.1",
+    workflowFile:
+      "workflows/characters/create/image_qwen_image_2_1_t2i.json",
+    outputNodeId: "461",
+    requiredNodes: [
+      "UNETLoader",
+      "CLIPLoader",
+      "VAELoader",
+      "TextEncodeQwenImage21",
+      "KSampler",
+      "VAEDecode",
+      "SaveImageAdvanced",
+    ],
+    requirements: {
+      unet:
+        "qwen_image_2.1_int8_convrot.safetensors",
+      clip:
+        "qwen3vl_8b_int8_convrot.safetensors",
+      vae:
+        "qwen_image_2.1_vae_bf16.safetensors",
+    },
+    preferredBackend:
+      "image-primary",
+  },
 };
 
 const supportCache = new Map<
@@ -618,6 +645,43 @@ function mutateWorkflow(args: {
           "900001",
           0,
         ],
+      );
+      break;
+
+    case "qwen-image-2-1":
+      setInput(
+        graph,
+        "452",
+        "prompt",
+        prompt,
+      );
+      setInput(
+        graph,
+        "452",
+        "negative_prompt",
+        assetNegativePrompt(),
+      );
+      setInput(
+        graph,
+        "456",
+        "width",
+        OUTPUT_WIDTH,
+      );
+      setInput(
+        graph,
+        "456",
+        "height",
+        OUTPUT_HEIGHT,
+      );
+      setInput(
+        graph,
+        "458",
+        "seed",
+        seed,
+      );
+      replaceOutputWithPreview(
+        graph,
+        config.outputNodeId,
       );
       break;
   }

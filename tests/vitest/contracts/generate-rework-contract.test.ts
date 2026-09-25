@@ -92,17 +92,18 @@ describe("Generate tab rework contract", () => {
 
     expect(IMAGE_MODELS.map((model) => model.id)).toEqual([
       "presets/image_krea2_turbo_t2i",
-      "presets/image_qwen_image_edit_2511_int8",
+      "presets/image_qwen_image_2_1_t2i",
+      "presets/image_qwen_image_2_1_image_edit",
       "presets/image_anima_base_v1",
     ]);
 
     expect(
       imageModelsForOperation("create").map((model) => model.label),
-    ).toEqual(["Krea 2 Turbo"]);
+    ).toEqual(["Krea 2 Turbo", "Qwen Image 2.1"]);
 
     expect(
       imageModelsForOperation("edit").map((model) => model.label),
-    ).toEqual(["Qwen Image Edit 2511 INT8"]);
+    ).toEqual(["Qwen Image Edit 2.1"]);
 
     expect(
       imageModelsForOperation("animate").map((model) => model.label),
@@ -495,5 +496,16 @@ describe("Generate tab rework contract", () => {
     expect(generateIndex).toBeGreaterThan(orientationIndex);
     expect(progressIndex).toBeGreaterThan(generateIndex);
     expect(previewIndex).toBeGreaterThan(progressIndex);
+  });
+
+  it("shows Generate submission feedback next to the button for mobile users", () => {
+    expect(appSource).toContain("GenerateSubmitNotice");
+    expect(appSource).toContain("/api/healthz");
+    expect(appSource).toContain("Please wait. Submitting your generation to ComfyUI...");
+    expect(appSource).toContain("Submission connection failed before the app could confirm acceptance.");
+    expect(appSource).toContain("Generation accepted. You can stay here or check Progress below.");
+    expect(appSource).toContain('role="status"');
+    expect(appSource).toContain('aria-live="polite"');
+    expect(appSource).toContain('{generateBusy ? "Please wait..." : "Generate"}');
   });
 });

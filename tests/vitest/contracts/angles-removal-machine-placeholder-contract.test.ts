@@ -12,7 +12,7 @@ function read(relativePath: string): string {
   return fs.readFileSync(path.join(root, relativePath), "utf8");
 }
 
-describe("Angles removal and Machine placeholder contract", () => {
+describe("Angles removal and Story Creator contract", () => {
   it("removes Angles-only application code and workflows", () => {
     const removed = [
       "app/app/components/AnglesPanel.tsx",
@@ -72,18 +72,18 @@ describe("Angles removal and Machine placeholder contract", () => {
     }
   });
 
-  it("replaces the Angles navigation surface with Machine", () => {
+  it("replaces the Angles navigation surface with Story Creator", () => {
     const app = read("app/app/AppPageClient.tsx");
     const nav = read("app/app/components/SpinDialNav.tsx");
 
     expect(app).not.toContain("import AnglesPanel");
     expect(app).not.toContain("<AnglesPanel");
     expect(nav).not.toMatch(/label\s*:\s*["']Angles["']/);
-    expect(`${app}\n${nav}`).toMatch(/Machine/);
+    expect(`${app}\n${nav}`).toMatch(/Story Creator/);
     expect(app).toMatch(/["']machine["']/);
   });
 
-  it("keeps the legacy /angles route only as a redirect to Machine", () => {
+  it("keeps the legacy /angles route only as a redirect to Story Creator", () => {
     const source = read("app/angles/page.tsx");
 
     expect(source).toContain("tab=machine");

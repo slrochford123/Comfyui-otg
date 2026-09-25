@@ -103,7 +103,7 @@
         }
       }
     },
-                            {
+    {
       "id": "internal/characters/character_intro_video_ltx23",
       "workflowFile": "internal/characters/character_intro_video_ltx23.json",
       "kind": "video",
@@ -1086,7 +1086,7 @@
         }
       }
     },
-        {
+    {
       "id": "presets/Anime to Realism",
       "workflowFile": "presets/Anime to Realism.json",
       "kind": "image",
@@ -3211,7 +3211,7 @@
         }
       }
     },
-        {
+    {
       "id": "presets/character_card_8_angles_low_angle",
       "workflowFile": "presets/character_card_8_angles_low_angle.json",
       "kind": "image",
@@ -4748,6 +4748,101 @@
         "rtx5060ti": {
           "state": "disabled",
           "reason": "LTX 2.5 API Generate workflow is not enabled on the RTX 5060 Ti fallback until separately verified.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/image_qwen_image_2_1_t2i",
+      "workflowFile": "presets/image_qwen_image_2_1_t2i.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "EmptyLatentImage",
+        "KSampler",
+        "SaveImageAdvanced",
+        "TextEncodeQwenImage21",
+        "UNETLoader",
+        "VAEDecode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "qwen_image_2.1_int8_convrot.safetensors",
+        "qwen3vl_8b_int8_convrot.safetensors",
+        "qwen_image_2.1_vae_bf16.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [],
+      "expectedInputCount": 0,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "Node classes and model files are present; Qwen Image 2.1 has not yet been benchmarked through OTG.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "installed-not-tested",
+          "reason": "Node classes and model files are present; Qwen Image 2.1 has not yet been benchmarked through OTG.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        }
+      }
+    },
+    {
+      "id": "presets/image_qwen_image_2_1_image_edit",
+      "workflowFile": "presets/image_qwen_image_2_1_image_edit.json",
+      "kind": "image",
+      "requiredNodeTypes": [
+        "CLIPLoader",
+        "KSampler",
+        "LoadImage",
+        "QwenImage21Cache",
+        "SaveImageAdvanced",
+        "TextEncodeQwenImage21",
+        "UNETLoader",
+        "VAEDecode",
+        "VAELoader"
+      ],
+      "requiredModels": [
+        "qwen_image_2.1_int8_convrot.safetensors",
+        "qwen3vl_8b_int8_convrot.safetensors",
+        "qwen_image_2.1_vae_bf16.safetensors"
+      ],
+      "requiredLoras": [],
+      "requiredInputAssets": [
+        "image"
+      ],
+      "expectedInputCount": 1,
+      "expectedOutputTypes": [
+        "image"
+      ],
+      "graphDefaults": {},
+      "estimatedOrMeasuredVramGb": null,
+      "backendSupport": {
+        "rtx3090": {
+          "state": "installed-not-tested",
+          "reason": "Node classes and model files are present; Qwen Image 2.1 has not yet been benchmarked through OTG.",
+          "missingNodes": [],
+          "missingModels": [],
+          "testedConfiguration": null,
+          "estimatedOrMeasuredVramGb": null
+        },
+        "rtx5060ti": {
+          "state": "installed-not-tested",
+          "reason": "Node classes and model files are present; Qwen Image 2.1 has not yet been benchmarked through OTG.",
           "missingNodes": [],
           "missingModels": [],
           "testedConfiguration": null,

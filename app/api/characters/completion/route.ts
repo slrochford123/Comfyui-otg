@@ -6,6 +6,7 @@ import {
   createCharacterCompletionJob,
   listCharacterCompletionJobs,
 } from "@/lib/jobs/characterCompletionJobs";
+import { expectedWorkerToken } from "@/lib/jobs/workerAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +20,9 @@ export async function POST(req: NextRequest) {
     const owner = await getOwnerContext(req);
     const body = await readJsonBody<Record<string, unknown>>(req.clone());
     if (!body.ok) return jsonError(body.error, body.status);
+    if (!expectedWorkerToken()) {
+      return jsonError("Character Card Worker Manager token is not configured on this TEST server.", 503);
+    }
 
     const created = createCharacterCompletionJob(owner.ownerKey, body.value);
     if (!created.ok) return jsonError(created.error, created.status);

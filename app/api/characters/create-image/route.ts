@@ -39,7 +39,8 @@ type CharacterCreateModelId =
   | "z-image"
   | "krea-2"
   | "boogu"
-  | "mage-flow";
+  | "mage-flow"
+  | "qwen-image-2-1";
 type CharacterStylePresetId =
   | "cartoon"
   | "anime"
@@ -168,6 +169,27 @@ const MODEL_CONFIG: Record<CharacterCreateModelId, ModelConfig> = {
       unet: "mage_flow_turbo_int8_convrot.safetensors",
       clip: "qwen3vl_4b_bf16.safetensors",
       vae: "mage_flow_vae_bf16.safetensors",
+    },
+    preferredBackend: "image-primary",
+  },
+  "qwen-image-2-1": {
+    id: "qwen-image-2-1",
+    label: "Qwen Image 2.1",
+    workflowFile: "workflows/characters/create/image_qwen_image_2_1_t2i.json",
+    outputNodeId: "461",
+    requiredNodes: [
+      "UNETLoader",
+      "CLIPLoader",
+      "VAELoader",
+      "TextEncodeQwenImage21",
+      "KSampler",
+      "VAEDecode",
+      "SaveImageAdvanced",
+    ],
+    requirements: {
+      unet: "qwen_image_2.1_int8_convrot.safetensors",
+      clip: "qwen3vl_8b_int8_convrot.safetensors",
+      vae: "qwen_image_2.1_vae_bf16.safetensors",
     },
     preferredBackend: "image-primary",
   },
@@ -410,6 +432,15 @@ function mutateWorkflow(args: {
       };
 
       replaceOutputWithPreview(graph, config.outputNodeId, ["900001", 0]);
+      break;
+
+    case "qwen-image-2-1":
+      setInput(graph, "452", "prompt", prompt);
+      setInput(graph, "452", "negative_prompt", negativePrompt(mode));
+      setInput(graph, "456", "width", OUTPUT_WIDTH);
+      setInput(graph, "456", "height", OUTPUT_HEIGHT);
+      setInput(graph, "458", "seed", seed);
+      replaceOutputWithPreview(graph, config.outputNodeId);
       break;
   }
 

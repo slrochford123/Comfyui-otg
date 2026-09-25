@@ -65,6 +65,13 @@ type DetectedVoiceLane = {
   segmentCount: number;
   totalSpeechSeconds: number;
   confidence: string;
+  samplePath?: string;
+  sampleUrl?: string;
+};
+
+type DemucsResult = {
+  vocalsPath: string;
+  backgroundPath: string;
 };
 
 function safeName(value: unknown, fallback = "clip") {
@@ -264,8 +271,8 @@ async function findRecursive(root: string, wantedFileName: string): Promise<stri
   return "";
 }
 
-async function tryDemucs(sourcePath: string, workDir: string) {
-  if (process.env.OTG_DEMUCS_ENABLED === "0") return "";
+async function tryDemucs(sourcePath: string, workDir: string): Promise<DemucsResult | null> {
+  if (process.env.OTG_DEMUCS_ENABLED === "0") return null;
 
   const demucsOut = path.join(workDir, "demucs");
   await fs.mkdir(demucsOut, { recursive: true });
@@ -277,9 +284,45 @@ async function tryDemucs(sourcePath: string, workDir: string) {
       { timeout: 30 * 60 * 1000, maxBuffer: 1024 * 1024 * 40, windowsHide: true }
     );
 
-    return await findRecursive(demucsOut, "vocals.wav");
+    const vocalsPath = await findRecursive(demucsOut, "vocals.wav");
+    const backgroundPath =
+      (await findRecursive(demucsOut, "no_vocals.wav")) ||
+      (await findRecursive(demucsOut, "instrumental.wav")) ||
+      (await findRecursive(demucsOut, "accompaniment.wav"));
+    return vocalsPath ? { vocalsPath, backgroundPath } : null;
   } catch {
-    return "";
+    return null;
+  }
+}
+
+function fileUrl(filePath: string) {
+  return filePath ? `/api/file?path=${encodeURIComponent(filePath)}&v=${Date.now()}` : "";
+}
+
+async function extractVoiceLaneSamples(voices: DetectedVoiceLane[], analysisWav: string, workDir: string) {
+  await fs.mkdir(path.join(workDir, "voice_samples"), { recursive: true });
+
+  for (const voice of voices) {
+    const firstSegment = voice.segments.find((segment) => segment.end > segment.start);
+    if (!firstSegment) continue;
+
+    const start = Math.max(0, firstSegment.start);
+    const duration = Math.max(0.25, Math.min(6, firstSegment.end - firstSegment.start));
+    const samplePath = path.join(workDir, "voice_samples", `${safeName(voice.id, "speaker")}_sample.wav`);
+
+    try {
+      await execFileAsync(
+        FFMPEG_BIN,
+        ["-y", "-ss", String(start), "-t", String(duration), "-i", analysisWav, "-vn", "-ac", "1", "-ar", "16000", "-sample_fmt", "s16", samplePath],
+        { timeout: 2 * 60 * 1000, maxBuffer: 1024 * 1024 * 10, windowsHide: true }
+      );
+      if (await exists(samplePath)) {
+        voice.samplePath = samplePath;
+        voice.sampleUrl = fileUrl(samplePath);
+      }
+    } catch {
+      // The lane remains usable even when sample extraction fails.
+    }
   }
 }
 
@@ -568,8 +611,8 @@ export async function POST(request: NextRequest) {
     const extractedWav = path.join(workDir, "source_mono_16k.wav");
     await extractMonoWav(sourcePath, extractedWav);
 
-    const demucsVocals = await tryDemucs(sourcePath, workDir);
-    const analysisWav = demucsVocals || extractedWav;
+    const demucs = await tryDemucs(sourcePath, workDir);
+    const analysisWav = demucs?.vocalsPath || extractedWav;
     const expectedSpeakerCount = clampExpectedSpeakerCount(
       body.expectedSpeakerCount ?? body.speakerCount ?? body.maxSpeakers
     );
@@ -586,9 +629,11 @@ export async function POST(request: NextRequest) {
     const voices = externalVoices || buildEstimatedSpeakerLanes(
       segments,
       totalSpeechSeconds,
-      Boolean(demucsVocals),
+      Boolean(demucs?.vocalsPath),
       expectedSpeakerCount
     );
+
+    await extractVoiceLaneSamples(voices, analysisWav, workDir);
 
     const result = {
       ok: true,
@@ -596,9 +641,11 @@ export async function POST(request: NextRequest) {
       sourceFileName: safeName(body.sourceFileName || fileNameFromUrl(body.sourceUrl), path.basename(sourcePath)),
       durationSeconds: duration,
       separation: {
-        tool: demucsVocals ? "demucs" : "ffmpeg_audio_extract",
+        tool: demucs?.vocalsPath ? "demucs" : "ffmpeg_audio_extract",
         dialogueStemPath: analysisWav,
-        demucsAvailable: Boolean(demucsVocals),
+        backgroundStemPath: demucs?.backgroundPath || "",
+        demucsAvailable: Boolean(demucs?.vocalsPath),
+        backgroundStemAvailable: Boolean(demucs?.backgroundPath),
       },
       diarization: {
         tool: externalVoices ? "external_speaker_diarization" : "silencedetect_estimated_speaker_lanes",

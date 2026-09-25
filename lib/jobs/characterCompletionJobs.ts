@@ -194,6 +194,36 @@ function publicJob(job: CharacterCompletionJob): CharacterCompletionJob {
   return JSON.parse(JSON.stringify(job)) as CharacterCompletionJob;
 }
 
+function compareTimeDesc(aRaw: unknown, bRaw: unknown): number {
+  const a = parseTime(aRaw) || 0;
+  const b = parseTime(bRaw) || 0;
+  return b - a;
+}
+
+function claimPriority(job: CharacterCompletionJob): number {
+  if (job.status === "queued") return 0;
+  if (job.status === "interrupted") return 1;
+  return 99;
+}
+
+function compareClaimCandidates(a: CharacterCompletionJob, b: CharacterCompletionJob): number {
+  const priorityDelta = claimPriority(a) - claimPriority(b);
+  if (priorityDelta !== 0) return priorityDelta;
+  return (
+    compareTimeDesc(a.updatedAt, b.updatedAt) ||
+    compareTimeDesc(a.createdAt, b.createdAt) ||
+    a.jobId.localeCompare(b.jobId)
+  );
+}
+
+function findClaimCandidateIndex(jobs: CharacterCompletionJob[]): number {
+  const candidates = jobs
+    .map((job, index) => ({ job, index }))
+    .filter(({ job }) => job.action === "complete_character" && (job.status === "queued" || job.status === "interrupted"))
+    .sort((a, b) => compareClaimCandidates(a.job, b.job) || b.index - a.index);
+  return candidates[0]?.index ?? -1;
+}
+
 export function createCharacterCompletionJob(
   ownerKeyRaw: unknown,
   inputRaw: unknown,
@@ -270,7 +300,7 @@ export function getCharacterCompletionJob(ownerKeyRaw: unknown, jobIdRaw: unknow
 export function claimCharacterCompletionJob(workerIdRaw: unknown): CharacterCompletionJob | null {
   const workerId = cleanString(workerIdRaw) || "linux-character-completion-worker";
   const store = readFreshStore();
-  const index = store.jobs.findIndex((job) => job.action === "complete_character" && (job.status === "queued" || job.status === "interrupted"));
+  const index = findClaimCandidateIndex(store.jobs);
   if (index < 0) return null;
 
   const timestamp = nowIso();
