@@ -42,6 +42,16 @@ type VideoDubResult = {
 
 type VideoTtsEngine = "xtts" | "qwen3" | "omnivoice";
 
+type DialogueSegmentResult = {
+  jobId: string;
+  fileName: string;
+  url: string;
+  startTime: number;
+  endTime: number;
+  duration: number;
+  sourceDuration: number;
+};
+
 function cleanName(value: string) {
   return (
     String(value || "voice_dub")
@@ -105,9 +115,19 @@ export default function EditVideoVoiceDubbingPanel({
     null,
   );
 
+  const [segmentStart, setSegmentStart] = React.useState(0);
+  const [segmentEnd, setSegmentEnd] = React.useState(0);
+  const [segmentSourceDuration, setSegmentSourceDuration] = React.useState(0);
+  const [segmentBusy, setSegmentBusy] = React.useState(false);
+  const [segmentStatus, setSegmentStatus] = React.useState("");
+  const [segmentResult, setSegmentResult] =
+    React.useState<DialogueSegmentResult | null>(null);
+  const [segmentPreviewing, setSegmentPreviewing] = React.useState(false);
+
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const chunksRef = React.useRef<Blob[]>([]);
   const streamRef = React.useRef<MediaStream | null>(null);
+  const segmentVideoRef = React.useRef<HTMLVideoElement | null>(null);
 
   const selectedModel = React.useMemo(
     () => models.find((item) => item.id === selectedModelId) || null,
@@ -355,6 +375,135 @@ export default function EditVideoVoiceDubbingPanel({
     setVideoUrl(URL.createObjectURL(file));
     setVideoResult(null);
     setVideoStatus("");
+    setSegmentStart(0);
+    setSegmentEnd(0);
+    setSegmentSourceDuration(0);
+    setSegmentResult(null);
+    setSegmentStatus("");
+    setSegmentPreviewing(false);
+  }
+
+  function handleSegmentVideoMetadata(
+    event: React.SyntheticEvent<HTMLVideoElement>,
+  ) {
+    const duration = Number(event.currentTarget.duration);
+
+    if (!Number.isFinite(duration) || duration <= 0) return;
+
+    setSegmentSourceDuration(duration);
+    setSegmentStart(0);
+    setSegmentEnd(duration);
+    setSegmentResult(null);
+    setSegmentStatus("");
+  }
+
+  function previewDialogueSegment() {
+    const video = segmentVideoRef.current;
+
+    if (!video) {
+      setSegmentStatus("Select a video first.");
+      return;
+    }
+
+    if (
+      !Number.isFinite(segmentStart) ||
+      !Number.isFinite(segmentEnd) ||
+      segmentStart < 0 ||
+      segmentEnd <= segmentStart ||
+      segmentEnd > segmentSourceDuration + 0.05
+    ) {
+      setSegmentStatus("Choose a valid start and end time.");
+      return;
+    }
+
+    video.pause();
+    video.currentTime = segmentStart;
+    setSegmentPreviewing(true);
+    setSegmentStatus(
+      `Previewing ${segmentStart.toFixed(2)}s to ${segmentEnd.toFixed(2)}s.`,
+    );
+
+    void video.play().catch(() => {
+      setSegmentPreviewing(false);
+      setSegmentStatus("Press play on the video to preview this selection.");
+    });
+  }
+
+  function handleSegmentVideoTimeUpdate(
+    event: React.SyntheticEvent<HTMLVideoElement>,
+  ) {
+    if (!segmentPreviewing) return;
+
+    const video = event.currentTarget;
+
+    if (video.currentTime >= segmentEnd) {
+      video.pause();
+      video.currentTime = segmentEnd;
+      setSegmentPreviewing(false);
+      setSegmentStatus(
+        `Preview complete: ${segmentStart.toFixed(2)}s to ${segmentEnd.toFixed(2)}s.`,
+      );
+    }
+  }
+
+  async function cutDialogueSegment() {
+    if (!videoFile) {
+      setSegmentStatus("Select a video first.");
+      return;
+    }
+
+    if (
+      !Number.isFinite(segmentStart) ||
+      !Number.isFinite(segmentEnd) ||
+      segmentStart < 0 ||
+      segmentEnd <= segmentStart ||
+      segmentEnd > segmentSourceDuration + 0.05
+    ) {
+      setSegmentStatus("Choose a valid start and end time.");
+      return;
+    }
+
+    const form = new FormData();
+    form.append("video", videoFile, videoFile.name);
+    form.append("start", String(segmentStart));
+    form.append("end", String(segmentEnd));
+
+    setSegmentBusy(true);
+    setSegmentResult(null);
+    setSegmentStatus("Creating dialogue section...");
+
+    try {
+      const response = await fetch("/api/edit-video/dialogue-segment", {
+        method: "POST",
+        body: form,
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || data?.ok === false) {
+        throw new Error(data?.error || "Dialogue section could not be created.");
+      }
+
+      setSegmentResult({
+        jobId: String(data.jobId || ""),
+        fileName: String(data.fileName || "dialogue_segment.mp4"),
+        url: String(data.url || ""),
+        startTime: Number(data.startTime || 0),
+        endTime: Number(data.endTime || 0),
+        duration: Number(data.duration || 0),
+        sourceDuration: Number(data.sourceDuration || segmentSourceDuration),
+      });
+
+      setSegmentStatus(
+        `Dialogue section ready: ${Number(data.duration || 0).toFixed(2)} seconds.`,
+      );
+    } catch (error: any) {
+      setSegmentStatus(
+        error?.message || "Dialogue section could not be created.",
+      );
+    } finally {
+      setSegmentBusy(false);
+    }
   }
 
   function setVoiceSampleInput(file: File | null) {
@@ -711,30 +860,288 @@ export default function EditVideoVoiceDubbingPanel({
           </p>
 
           <h3 className="mt-1 text-sm font-black text-white">
-            Put the approved performance into an existing video
+            Select the dialogue section in the video
           </h3>
 
           <p className="mt-2 text-sm leading-6 text-white/60">
-            Use the approved character WAV as the master dialogue while
-            MiniMax H3 regenerates the character's mouth and facial performance.
-            Preserve the original scene audio and automatically re-stitch the
-            replacement segment into the source movie.
+            Choose the exact part of the source video that should receive the
+            approved character performance. Preview the timing before creating
+            the selected section for the next Put in Video step.
           </p>
 
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <div className="rounded-[16px] border border-white/10 bg-black/25 px-3 py-3 text-sm text-white/55">
-              Select video + dialogue timing
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className="rounded-[18px] border border-white/10 bg-black/30 p-4">
+              <label className="inline-flex cursor-pointer rounded-full border border-white/10 bg-white/5 px-5 py-2 text-sm font-semibold text-white hover:bg-white/10">
+                Select Video
+                <input
+                  type="file"
+                  accept="video/*,.mp4,.webm,.mov,.mkv"
+                  className="hidden"
+                  onChange={(event) =>
+                    setVideoInput(event.target.files?.[0] || null)
+                  }
+                />
+              </label>
+
+              {videoUrl ? (
+                <video
+                  ref={segmentVideoRef}
+                  src={videoUrl}
+                  controls
+                  preload="metadata"
+                  onLoadedMetadata={handleSegmentVideoMetadata}
+                  onTimeUpdate={handleSegmentVideoTimeUpdate}
+                  className="mt-3 max-h-[420px] w-full rounded-[18px] border border-white/10 bg-black object-contain"
+                />
+              ) : (
+                <div className="mt-3 rounded-[18px] border border-white/10 bg-black/35 px-4 py-8 text-sm text-white/45">
+                  No source video selected.
+                </div>
+              )}
             </div>
-            <div className="rounded-[16px] border border-white/10 bg-black/25 px-3 py-3 text-sm text-white/55">
-              MiniMax H3 lip-sync replacement
-            </div>
-            <div className="rounded-[16px] border border-white/10 bg-black/25 px-3 py-3 text-sm text-white/55">
-              Preserve music / ambience / SFX
-            </div>
-            <div className="rounded-[16px] border border-white/10 bg-black/25 px-3 py-3 text-sm text-white/55">
-              Conform + automatic re-stitch
+
+            <div className="rounded-[18px] border border-white/10 bg-black/30 p-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
+                    Start time · {segmentStart.toFixed(2)}s
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max={Math.max(0, segmentEnd - 0.05)}
+                    step="0.05"
+                    value={segmentStart}
+                    onChange={(event) => {
+                      const next = Math.min(
+                        Number(event.target.value),
+                        Math.max(0, segmentEnd - 0.05),
+                      );
+                      setSegmentStart(next);
+                      if (segmentVideoRef.current) {
+                        segmentVideoRef.current.currentTime = next;
+                        segmentVideoRef.current.pause();
+                      }
+                      setSegmentPreviewing(false);
+                      setSegmentResult(null);
+                      setSegmentStatus("");
+                    }}
+                    className="mt-4 w-full cursor-pointer accent-violet-500 disabled:opacity-40"
+                  />
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = Math.max(0, segmentStart - 0.5);
+                        setSegmentStart(next);
+                        if (segmentVideoRef.current) {
+                          segmentVideoRef.current.currentTime = next;
+                          segmentVideoRef.current.pause();
+                        }
+                        setSegmentPreviewing(false);
+                        setSegmentResult(null);
+                        setSegmentStatus("");
+                      }}
+                      disabled={!videoFile || segmentStart <= 0}
+                      className="min-h-11 flex-1 rounded-full border border-white/10 bg-white/5 px-3 text-sm font-black text-white disabled:opacity-40"
+                    >
+                      −0.5s
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = Math.min(
+                          segmentEnd - 0.05,
+                          segmentStart + 0.5,
+                        );
+                        setSegmentStart(next);
+                        if (segmentVideoRef.current) {
+                          segmentVideoRef.current.currentTime = next;
+                          segmentVideoRef.current.pause();
+                        }
+                        setSegmentPreviewing(false);
+                        setSegmentResult(null);
+                        setSegmentStatus("");
+                      }}
+                      disabled={!videoFile || segmentStart >= segmentEnd - 0.05}
+                      className="min-h-11 flex-1 rounded-full border border-white/10 bg-white/5 px-3 text-sm font-black text-white disabled:opacity-40"
+                    >
+                      +0.5s
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const current = Number(
+                        segmentVideoRef.current?.currentTime || 0,
+                      );
+                      const next = Math.min(
+                        current,
+                        Math.max(0, segmentEnd - 0.05),
+                      );
+                      setSegmentStart(next);
+                      setSegmentPreviewing(false);
+                      setSegmentResult(null);
+                      setSegmentStatus("");
+                    }}
+                    disabled={!videoFile}
+                    className="mt-2 text-xs font-semibold text-cyan-200 disabled:opacity-40"
+                  >
+                    Set Start to Current Frame
+                  </button>
+                </div>
+
+                <div>
+                  <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
+                    End time · {segmentEnd.toFixed(2)}s
+                  </label>
+                  <input
+                    type="range"
+                    min={Math.min(segmentSourceDuration, segmentStart + 0.05)}
+                    max={segmentSourceDuration || undefined}
+                    step="0.05"
+                    value={segmentEnd}
+                    onChange={(event) => {
+                      const next = Math.max(
+                        segmentStart + 0.05,
+                        Math.min(
+                          segmentSourceDuration,
+                          Number(event.target.value),
+                        ),
+                      );
+                      setSegmentEnd(next);
+                      if (segmentVideoRef.current) {
+                        segmentVideoRef.current.currentTime = next;
+                        segmentVideoRef.current.pause();
+                      }
+                      setSegmentPreviewing(false);
+                      setSegmentResult(null);
+                      setSegmentStatus("");
+                    }}
+                    className="mt-4 w-full cursor-pointer accent-violet-500 disabled:opacity-40"
+                  />
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = Math.max(
+                          segmentStart + 0.05,
+                          segmentEnd - 0.5,
+                        );
+                        setSegmentEnd(next);
+                        if (segmentVideoRef.current) {
+                          segmentVideoRef.current.currentTime = next;
+                          segmentVideoRef.current.pause();
+                        }
+                        setSegmentPreviewing(false);
+                        setSegmentResult(null);
+                        setSegmentStatus("");
+                      }}
+                      disabled={!videoFile || segmentEnd <= segmentStart + 0.05}
+                      className="min-h-11 flex-1 rounded-full border border-white/10 bg-white/5 px-3 text-sm font-black text-white disabled:opacity-40"
+                    >
+                      −0.5s
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = Math.min(
+                          segmentSourceDuration,
+                          segmentEnd + 0.5,
+                        );
+                        setSegmentEnd(next);
+                        if (segmentVideoRef.current) {
+                          segmentVideoRef.current.currentTime = next;
+                          segmentVideoRef.current.pause();
+                        }
+                        setSegmentPreviewing(false);
+                        setSegmentResult(null);
+                        setSegmentStatus("");
+                      }}
+                      disabled={!videoFile || segmentEnd >= segmentSourceDuration}
+                      className="min-h-11 flex-1 rounded-full border border-white/10 bg-white/5 px-3 text-sm font-black text-white disabled:opacity-40"
+                    >
+                      +0.5s
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const current = Number(
+                        segmentVideoRef.current?.currentTime || 0,
+                      );
+                      const next = Math.max(
+                        segmentStart + 0.05,
+                        Math.min(segmentSourceDuration, current),
+                      );
+                      setSegmentEnd(next);
+                      setSegmentPreviewing(false);
+                      setSegmentResult(null);
+                      setSegmentStatus("");
+                    }}
+                    disabled={!videoFile}
+                    className="mt-2 text-xs font-semibold text-cyan-200 disabled:opacity-40"
+                  >
+                    Set End to Current Frame
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-[16px] border border-white/10 bg-black/25 p-3 text-sm text-white/60">
+                Video: {segmentSourceDuration.toFixed(2)}s
+                {" · "}
+                Selection: {Math.max(0, segmentEnd - segmentStart).toFixed(2)}s
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={previewDialogueSegment}
+                  disabled={!videoFile || segmentPreviewing}
+                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-50"
+                >
+                  {segmentPreviewing ? "Previewing..." : "Preview Selection"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void cutDialogueSegment()}
+                  disabled={segmentBusy || !videoFile}
+                  className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-50 hover:bg-cyan-400/15 disabled:opacity-50"
+                >
+                  {segmentBusy ? "Creating Section..." : "Cut Section"}
+                </button>
+              </div>
+
+              {segmentStatus ? (
+                <p className="mt-3 text-sm text-white/65">{segmentStatus}</p>
+              ) : null}
             </div>
           </div>
+
+          {segmentResult?.url ? (
+            <div className="mt-4 rounded-[18px] border border-emerald-400/15 bg-emerald-400/[0.04] p-4">
+              <h4 className="text-sm font-black text-white">
+                Dialogue section ready
+              </h4>
+              <p className="mt-1 text-xs text-white/55">
+                {segmentResult.startTime.toFixed(2)}s →{" "}
+                {segmentResult.endTime.toFixed(2)}s ·{" "}
+                {segmentResult.duration.toFixed(2)}s
+              </p>
+              <video
+                src={segmentResult.url}
+                controls
+                preload="metadata"
+                className="mt-3 max-h-[420px] w-full rounded-[18px] border border-white/10 bg-black object-contain"
+              />
+              <p className="mt-3 text-xs text-cyan-100/70">
+                Ready for the next Put in Video step after this selection is approved.
+              </p>
+            </div>
+          ) : null}
         </div>
       ) : null}
 

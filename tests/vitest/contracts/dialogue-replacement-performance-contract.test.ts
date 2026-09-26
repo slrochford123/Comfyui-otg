@@ -44,9 +44,15 @@ describe("Dialogue Replacement performance conversion contract", () => {
     expect(source).toContain("Step 1: Perform the line");
     expect(source).toContain("Step 2: Convert to character voice");
     expect(source).toContain(
-      "Put the approved performance into an existing video",
+      "Select the dialogue section in the video",
     );
-    expect(source).toContain("MiniMax H3 lip-sync replacement");
-    expect(source).toContain("Conform + automatic re-stitch");
+    expect(source).toContain("Preview Selection");
+    expect(source).toContain("Cut Section");
+    expect(source).toContain(
+      'fetch("/api/edit-video/dialogue-segment"',
+    );
+    expect(source).toContain(
+      "Ready for the next Put in Video step after this selection is approved.",
+    );
   });
 });
