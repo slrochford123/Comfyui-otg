@@ -20,6 +20,21 @@ export type ComfyHistoryImageResolution = {
   checkedBackends: string[];
 };
 
+export type ComfyPromptImageStatusKind =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "missing_output"
+  | "unavailable";
+
+export type ComfyPromptImageStatusResolution =
+  ComfyHistoryImageResolution & {
+    status: ComfyPromptImageStatusKind;
+    error: string;
+    historyFound: boolean;
+  };
+
 const DEFAULT_IMAGE_GPU_URLS = [
   "http://127.0.0.1:8188",
   "http://127.0.0.1:8288",
@@ -146,6 +161,244 @@ function preferredHistoryImage(images: ComfyHistoryImagePayload[]) {
     images[0] ||
     null
   );
+}
+
+function comfyHistoryEntry(historyJson: any, promptId: string) {
+  return historyJson?.[promptId] || historyJson;
+}
+
+function comfyStatusText(entry: any) {
+  return String(entry?.status?.status_str || entry?.status || "").toLowerCase();
+}
+
+function comfyHistoryFailed(entry: any) {
+  const statusText = comfyStatusText(entry);
+  if (/error|fail|failed/.test(statusText)) return true;
+
+  const messages = Array.isArray(entry?.status?.messages)
+    ? entry.status.messages
+    : [];
+
+  return messages.some((message: any) =>
+    Array.isArray(message)
+      ? /execution_error|error|failed/i.test(String(message[0] || ""))
+      : /execution_error|error|failed/i.test(String(message || "")),
+  );
+}
+
+function comfyHistoryCompleted(entry: any) {
+  if (entry?.status?.completed === true) return true;
+  return /success|completed|complete/.test(comfyStatusText(entry));
+}
+
+function comfyFailureMessage(entry: any) {
+  const messages = Array.isArray(entry?.status?.messages)
+    ? entry.status.messages
+    : [];
+
+  for (const message of messages) {
+    if (!Array.isArray(message)) continue;
+    const kind = String(message[0] || "");
+    const payload = message[1];
+    if (!/error|failed/i.test(kind)) continue;
+
+    const exception =
+      payload?.exception_message ||
+      payload?.exception_type ||
+      payload?.node_id ||
+      "";
+    if (exception) return String(exception);
+  }
+
+  return (
+    String(entry?.status?.status_str || "").trim() ||
+    "ComfyUI reported that the prompt failed."
+  );
+}
+
+function queueIncludesPrompt(value: any, promptId: string): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => queueIncludesPrompt(item, promptId));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.values(value).some((item) =>
+      queueIncludesPrompt(item, promptId),
+    );
+  }
+
+  return String(value || "") === promptId;
+}
+
+async function fetchComfyQueueStatus(baseUrl: string, promptId: string) {
+  const result = await fetchJsonWithTimeout(`${baseUrl}/queue`, 1500);
+  if (!result.ok) {
+    return {
+      status: "unavailable" as const,
+      detail: `HTTP ${result.status}`,
+    };
+  }
+
+  const running = queueIncludesPrompt(result.json?.queue_running, promptId);
+  const pending = queueIncludesPrompt(result.json?.queue_pending, promptId);
+
+  if (running) return { status: "running" as const, detail: "running" };
+  if (pending) return { status: "pending" as const, detail: "pending" };
+  return { status: "pending" as const, detail: "not in queue" };
+}
+
+function noComfyStatusResult(args: {
+  status: ComfyPromptImageStatusKind;
+  error?: string;
+  attempts: string[];
+  checkedBackends: string[];
+  baseUrl?: string;
+}) {
+  return {
+    baseUrl: args.baseUrl || "",
+    image: null,
+    count: 0,
+    attempts: args.attempts,
+    checkedBackends: args.checkedBackends,
+    status: args.status,
+    error: args.error || "",
+    historyFound: false,
+  } satisfies ComfyPromptImageStatusResolution;
+}
+
+export async function resolveComfyPromptImageStatus(args: {
+  promptId: string;
+  filters?: ComfyHistoryImageFilters;
+  preferredBaseUrl?: string;
+  strictPreferred?: boolean;
+}): Promise<ComfyPromptImageStatusResolution> {
+  const promptId = String(args.promptId || "").trim();
+  const filters = args.filters || {};
+  const preferred = normalizeComfyBaseUrl(args.preferredBaseUrl);
+  const candidates =
+    args.strictPreferred && preferred
+      ? [preferred]
+      : candidateComfyImageBaseUrls(preferred);
+  const attempts: string[] = [];
+
+  if (!promptId) {
+    return noComfyStatusResult({
+      status: "failed",
+      error: "Missing ComfyUI prompt id.",
+      attempts,
+      checkedBackends: candidates,
+    });
+  }
+
+  for (const baseUrl of candidates) {
+    try {
+      const historyResult = await fetchJsonWithTimeout(
+        `${baseUrl}/history/${encodeURIComponent(promptId)}`,
+      );
+
+      if (!historyResult.ok) {
+        attempts.push(`${baseUrl}: history HTTP ${historyResult.status}`);
+        continue;
+      }
+
+      const entry = comfyHistoryEntry(historyResult.json, promptId);
+      const historyFound =
+        !!entry &&
+        typeof entry === "object" &&
+        Object.keys(entry).length > 0;
+      const images = extractComfyHistoryImages(historyResult.json, promptId);
+
+      if (historyFound && comfyHistoryFailed(entry)) {
+        return {
+          baseUrl,
+          image: null,
+          count: images.length,
+          attempts,
+          checkedBackends: candidates,
+          status: "failed",
+          error: comfyFailureMessage(entry),
+          historyFound,
+        };
+      }
+
+      if (images.length) {
+        attempts.push(`${baseUrl}: ${images.length} image(s)`);
+        const exact = images.filter((item) =>
+          matchesComfyHistoryImageRequest(item, filters),
+        );
+
+        if (
+          (filters.nodeId || filters.filename || filters.filenamePrefix) &&
+          !exact.length
+        ) {
+          return {
+            baseUrl,
+            image: null,
+            count: images.length,
+            attempts,
+            checkedBackends: candidates,
+            status: "missing_output",
+            error:
+              `ComfyUI completed prompt ${promptId}, but the expected image output was not found.`,
+            historyFound,
+          };
+        }
+
+        const image = preferredHistoryImage(exact.length ? exact : images);
+        if (image) {
+          return {
+            baseUrl,
+            image,
+            count: images.length,
+            attempts,
+            checkedBackends: candidates,
+            status: "completed",
+            error: "",
+            historyFound,
+          };
+        }
+      }
+
+      if (historyFound && comfyHistoryCompleted(entry)) {
+        return {
+          baseUrl,
+          image: null,
+          count: 0,
+          attempts,
+          checkedBackends: candidates,
+          status: "missing_output",
+          error:
+            `ComfyUI completed prompt ${promptId}, but no image output was found.`,
+          historyFound,
+        };
+      }
+
+      const queue = await fetchComfyQueueStatus(baseUrl, promptId);
+      attempts.push(`${baseUrl}: queue ${queue.detail}`);
+      return {
+        baseUrl,
+        image: null,
+        count: 0,
+        attempts,
+        checkedBackends: candidates,
+        status: queue.status === "running" ? "running" : "pending",
+        error: "",
+        historyFound,
+      };
+    } catch (error: any) {
+      const message = error?.name === "AbortError"
+        ? `timeout after ${HISTORY_REQUEST_TIMEOUT_MS}ms`
+        : error?.message || String(error);
+      attempts.push(`${baseUrl}: ${message}`);
+    }
+  }
+
+  return noComfyStatusResult({
+    status: "unavailable",
+    error: "Story image backend is temporarily unavailable.",
+    attempts,
+    checkedBackends: candidates,
+  });
 }
 
 export async function resolveComfyHistoryImage(args: {
