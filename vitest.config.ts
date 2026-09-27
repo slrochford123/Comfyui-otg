@@ -8,6 +8,7 @@ export default defineConfig({
     },
   },
   test: {
+    fileParallelism: false,
     exclude: [
       ...configDefaults.exclude,
       "**/.patch-backups/**",
