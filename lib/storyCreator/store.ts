@@ -1349,7 +1349,7 @@ function assertOwnedActiveProject(
   };
 }
 
-export function listStoryCreatorProjects(ownerKeyInput: unknown) {
+export function listStoryCreatorProjects(ownerKeyInput: unknown): StoryCreatorProject[] {
   const ownerKey = cleanOwnerKey(ownerKeyInput);
 
   const rows = db()
