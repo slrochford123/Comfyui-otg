@@ -64,6 +64,10 @@ describe(
         );
 
         expect(route).toContain(
+          "listPendingStoryBibleFacts",
+        );
+
+        expect(route).toContain(
           "includeSuperseded: false",
         );
 
@@ -114,6 +118,10 @@ describe(
         );
 
         expect(panel).toContain(
+          "storyBiblePendingFacts",
+        );
+
+        expect(panel).toContain(
           "Array.isArray(data?.entities)",
         );
 
@@ -153,16 +161,18 @@ describe(
     );
 
     it(
-      "keeps the Phase 2B UI read only",
+      "keeps the accepted Story Bible read route read only",
       () => {
-        expect(panel).toContain(
-          "Read only",
+        expect(route).not.toContain(
+          "createStoryBibleEntity",
         );
 
-        expect(
-          panel.replace(/\s+/g, " "),
-        ).toContain(
-          "does not write or promote canon here yet",
+        expect(route).not.toContain(
+          "addStoryBibleFact",
+        );
+
+        expect(route).not.toContain(
+          "approveStoryBibleFact",
         );
 
         expect(panel).not.toContain(

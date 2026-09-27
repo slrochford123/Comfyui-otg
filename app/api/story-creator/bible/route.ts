@@ -4,6 +4,7 @@ import { SessionInvalidError } from "@/lib/ownerKey";
 import { requireSessionUser } from "@/lib/sessionUser";
 
 import {
+  listPendingStoryBibleFacts,
   listStoryBibleEntities,
   listStoryBibleFacts,
 } from "../../../../lib/storyCreator/store";
@@ -75,11 +76,18 @@ export async function GET(request: NextRequest) {
       includeSuperseded: false,
     });
 
+    const pendingFacts =
+      listPendingStoryBibleFacts({
+        ownerKey,
+        projectId,
+      });
+
     return NextResponse.json(
       {
         ok: true,
         entities,
         facts,
+        pendingFacts,
       },
       {
         headers: {
