@@ -4,8 +4,10 @@ import {
   acquireClusterGpuLease,
   detectShawnExternalOccupancy,
   releaseClusterGpuLease,
+  SHAWN_COMFY_URL,
   SHAWN_GPU_LOCK_ID,
   SHAWN_QWEN_URL,
+  SLR_COMFY_URL,
   SLR_GPU_LOCK_ID,
   SLR_QWEN_URL,
   type ClusterGpuLease,
@@ -213,6 +215,81 @@ function leaseCanReleaseImmediatelyAfterTransportFailure(
   return DEFINITE_CONNECT_FAILURE_CODES.has(transportFailureCode(error));
 }
 
+function qwenComfyBaseUrlForNode(node: QwenClusterNode) {
+  return node === "slr" ? SLR_COMFY_URL : SHAWN_COMFY_URL;
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 5_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function qwenComfyQueueIsActive(payload: unknown) {
+  if (!payload || typeof payload !== "object") return false;
+  const queue = payload as { queue_running?: unknown; queue_pending?: unknown };
+  return (Array.isArray(queue.queue_running) && queue.queue_running.length > 0)
+    || (Array.isArray(queue.queue_pending) && queue.queue_pending.length > 0);
+}
+
+async function ensureComfyLaneFreeForQwen(node: QwenClusterNode) {
+  const baseUrl = qwenComfyBaseUrlForNode(node);
+  const queueResponse = await fetchWithTimeout(`${baseUrl}/queue`, {}, 3_000);
+  if (!queueResponse.ok) {
+    throw new QwenClusterBusyError(`${node} ComfyUI queue check failed before Enhance Prompt GPU release.`);
+  }
+
+  if (qwenComfyQueueIsActive(await queueResponse.json().catch(() => null))) {
+    throw new QwenClusterBusyError(`${node} ComfyUI is currently running or queued; Enhance Prompt will wait.`);
+  }
+
+  const freeResponse = await fetchWithTimeout(
+    `${baseUrl}/free`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ unload_models: true, free_memory: true }),
+    },
+    10_000,
+  );
+
+  if (!freeResponse.ok) {
+    throw new QwenClusterBusyError(`${node} ComfyUI /free failed before Enhance Prompt.`);
+  }
+}
+
+async function unloadQwenModel(baseUrl: string, model: string) {
+  const safeModel = String(model || "").trim();
+  if (!safeModel) return;
+
+  const response = await fetchWithTimeout(
+    `${baseUrl}/api/generate`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: safeModel,
+        prompt: "",
+        stream: false,
+        keep_alive: 0,
+      }),
+    },
+    15_000,
+  );
+
+  if (!response.ok) {
+    throw new Error(`Qwen model unload failed at ${baseUrl} for ${safeModel} (${response.status}).`);
+  }
+}
+
 export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payload: Record<string, unknown>, options: {
   requiredContextTokens?: number;
   waitMs?: number;
@@ -288,6 +365,11 @@ export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payl
 
   try {
     const routedModel = String(options.modelByNode?.[route.node] || options.model || QWEN_CLUSTER_MODEL).trim() || QWEN_CLUSTER_MODEL;
+    const forceModelUnload = payload._otgForceModelUnload === true;
+    if (forceModelUnload) {
+      await ensureComfyLaneFreeForQwen(route.node);
+      await unloadQwenModel(route.baseUrl, routedModel);
+    }
     const routedOptions: Record<string, unknown> = { ...(payload.options as Record<string, unknown> || {}), num_ctx: Math.min(requiredContext, route.contextCap) };
     delete routedOptions.num_gpu;
     const routedPayload = {
@@ -297,6 +379,7 @@ export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payl
       keep_alive: options.keepAlive ?? 0,
       options: routedOptions,
     };
+    delete (routedPayload as Record<string, unknown>)._otgForceModelUnload;
     const response = await fetch(`${route.baseUrl}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -305,6 +388,9 @@ export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payl
       signal: controller.signal,
     });
     const bytes = await response.arrayBuffer();
+    if (forceModelUnload) {
+      await unloadQwenModel(route.baseUrl, routedModel);
+    }
     responseCompleted = true;
     const headers = new Headers(response.headers);
     headers.set("x-otg-qwen-model", routedModel);

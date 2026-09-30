@@ -91,4 +91,22 @@ describe("Qwen cluster arbitration regression contract", () => {
     expect(connectFailureBlock?.[1]).not.toContain("AbortError");
     expect(connectFailureBlock?.[1]).not.toContain("ECONNRESET");
   });
+
+  it("supports forced Enhance Prompt GPU cleanup around Qwen execution", () => {
+    expect(routerSource).toContain(
+      "payload._otgForceModelUnload === true",
+    );
+
+    expect(routerSource).toContain(
+      "ensureComfyLaneFreeForQwen(route.node)",
+    );
+
+    expect(routerSource).toContain(
+      "await unloadQwenModel(route.baseUrl, routedModel)",
+    );
+
+    expect(routerSource).toContain(
+      "delete (routedPayload as Record<string, unknown>)._otgForceModelUnload",
+    );
+  });
 });

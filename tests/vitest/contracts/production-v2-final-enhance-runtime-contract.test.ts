@@ -69,10 +69,18 @@ describe(
     );
 
     it(
-      "preserves generic enhancer timeout and keep-alive behavior",
+      "forces prompt enhancement to unload Qwen models after completion",
       () => {
         expect(source).toContain(
           "promptEnhanceKeepAliveForContext(context)",
+        );
+
+        expect(source).toContain(
+          "_otgForceModelUnload: true",
+        );
+
+        expect(source).toMatch(
+          /function promptEnhanceKeepAliveForContext[\s\S]*return 0;/,
         );
 
         expect(source).toMatch(

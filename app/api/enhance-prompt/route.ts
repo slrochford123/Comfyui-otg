@@ -49,18 +49,13 @@ function promptEnhanceModelForContext(
 }
 
 function promptEnhanceKeepAliveForContext(
-  context: GenerateEnhanceContext,
+  _context: GenerateEnhanceContext,
 ) {
-  if (context.contextType === "asset") {
-    // Asset Qwen must release VRAM immediately after enhancement.
-    // The cluster GPU lease ends when the request completes, so retaining
-    // the model afterward would leave untracked VRAM resident on a GPU that
-    // may immediately be leased to ComfyUI.
-    return 0;
-  }
-
-  // Preserve the pre-Asset Generate-screen behavior exactly.
-  return process.env.PROMPT_ENHANCE_KEEP_ALIVE || 0;
+  void _context;
+  // Enhance Prompt must leave the GPU lane clean for image/video generation.
+  // The Qwen router also performs explicit pre/post unload when this route
+  // sets _otgForceModelUnload.
+  return 0;
 }
 
 function cleanText(value: unknown) {
@@ -510,6 +505,7 @@ async function qwenGenerateEnhancement(
     {
       stream: false,
       think: false,
+      _otgForceModelUnload: true,
       prompt: buildQwenEnhancePrompt(prompt, level, context),
       format: {
         type: "object",

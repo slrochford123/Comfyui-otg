@@ -216,6 +216,20 @@ describe("Generate Enhance Prompt AI contract", () => {
     );
   });
 
+  it("forces Enhance Prompt to free GPU memory before and after Qwen generation", () => {
+    expect(route).toContain(
+      "_otgForceModelUnload: true",
+    );
+
+    expect(route).toContain(
+      "promptEnhanceKeepAliveForContext(context)",
+    );
+
+    expect(route).toMatch(
+      /function promptEnhanceKeepAliveForContext[\s\S]*return 0;/,
+    );
+  });
+
   it("keeps the active Generate client failure path from replacing the prompt", () => {
     const start = app.indexOf(
       "async function handleEnhancePrompt()",

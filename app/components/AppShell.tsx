@@ -18,6 +18,10 @@ function isActive(pathname: string, href: string) {
   return pathname.startsWith(href);
 }
 
+function displayUserName(user: { username?: string | null; email?: string | null } | null | undefined) {
+  return String(user?.username || user?.email || "").trim();
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname() || "/app";
@@ -63,7 +67,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   SLR Studios <span className="slr-gradText">OTG</span>
                 </div>
                 <div className="slr-sub" style={{ margin: 0 }}>
-                  {auth.status === "authed" ? auth.user.email : ""}
+                  {auth.status === "authed" ? displayUserName(auth.user) : ""}
                 </div>
               </div>
             </div>

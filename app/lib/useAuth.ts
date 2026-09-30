@@ -10,7 +10,10 @@ function getDeviceId(): string {
 }
 import { useEffect, useState } from "react";
 
-type User = { email: string };
+type User = {
+  email: string | null;
+  username?: string | null;
+};
 
 type AuthState =
   | { status: "loading"; user: null }
@@ -52,8 +55,8 @@ async function fetchAuth(): Promise<AuthState> {
       const data = await res.json();
       const user = (data.user ?? null) as User | null;
 
-      if (user?.email) {
-        setLastAuthedEmail(user.email);
+      if (user?.email || user?.username) {
+        setLastAuthedEmail(user.email || user.username || null);
         return { status: "authed", user };
       }
       return { status: "unauthed", user: null };

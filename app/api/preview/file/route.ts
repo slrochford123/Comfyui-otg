@@ -2,6 +2,8 @@
 import fs from "node:fs/promises";
 import fssync from "node:fs";
 import path from "node:path";
+import { getOwnerContext } from "@/lib/ownerKey";
+import { getOwnerDirs } from "@/lib/paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,6 +68,15 @@ function previewRoots() {
     "C:\\AI\\ComfyUI_windows_portable\\ComfyUI\\output",
     "D:\\AI\\ComfyUI_windows_portable\\ComfyUI\\output",
   ].filter(Boolean).map((item) => path.resolve(item))));
+}
+
+async function requestOwnerPreviewRoots(req: NextRequest) {
+  try {
+    const owner = await getOwnerContext(req);
+    return [getOwnerDirs(owner.ownerKey).preview];
+  } catch {
+    return [];
+  }
 }
 
 function isAllowedAbsolutePath(filePath: string) {
@@ -141,7 +152,7 @@ async function newestFile(paths: string[]) {
   return scored[0]?.filePath || "";
 }
 
-async function resolvePreviewFile(rawName: string) {
+async function resolvePreviewFile(req: NextRequest, rawName: string) {
   const decoded = safeDecode(String(rawName || "")).replace(/\0/g, "").trim();
 
   if (!decoded) return "";
@@ -161,13 +172,22 @@ async function resolvePreviewFile(rawName: string) {
   const baseName = path.basename(cleaned);
   if (!baseName) return "";
 
-  const roots = previewRoots();
+  const ownerRoots = await requestOwnerPreviewRoots(req);
+  const roots = Array.from(new Set([...ownerRoots, ...previewRoots()]));
   const directCandidates: string[] = [];
 
   for (const root of roots) {
     directCandidates.push(path.join(root, cleaned));
     directCandidates.push(path.join(root, baseName));
   }
+
+  const ownerDirect = await newestFile(
+    ownerRoots.flatMap((root) => [
+      path.join(root, cleaned),
+      path.join(root, baseName),
+    ]),
+  );
+  if (ownerDirect) return ownerDirect;
 
   const direct = await newestFile(directCandidates);
   if (direct) return direct;
@@ -240,7 +260,7 @@ export async function GET(req: NextRequest) {
       req.nextUrl.searchParams.get("path") ||
       "";
 
-    const filePath = await resolvePreviewFile(name);
+    const filePath = await resolvePreviewFile(req, name);
 
     if (!filePath) {
       return NextResponse.json(
@@ -248,7 +268,7 @@ export async function GET(req: NextRequest) {
           ok: false,
           error: "Preview file not found.",
           name,
-          searchedRoots: previewRoots(),
+          searchedRoots: Array.from(new Set([...(await requestOwnerPreviewRoots(req)), ...previewRoots()])),
         },
         { status: 404 }
       );
@@ -327,7 +347,7 @@ export async function HEAD(req: NextRequest) {
     req.nextUrl.searchParams.get("path") ||
     "";
 
-  const filePath = await resolvePreviewFile(name);
+  const filePath = await resolvePreviewFile(req, name);
 
   if (!filePath) {
     return new NextResponse(null, { status: 404 });
