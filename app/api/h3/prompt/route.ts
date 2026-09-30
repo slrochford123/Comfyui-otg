@@ -19,6 +19,7 @@ import {
   H3_ORIENTATION_OPTIONS,
   H3_PRODUCTION_DURATION_OPTIONS,
   H3_QUALITY_OPTIONS,
+  type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
 import { enqueueProductionV2PromptOperation } from "@/lib/production/v2PromptOperations";
 
@@ -61,8 +62,8 @@ export async function POST(req: NextRequest) {
       throw new Error("Choose Text, Image, or Reference mode.");
     if (!H3_PRODUCTION_DURATION_OPTIONS.includes(durationSeconds as 5 | 10))
       throw new Error("Choose a 5- or 10-second duration.");
-    if (!H3_QUALITY_OPTIONS.includes(quality as "lq" | "hq"))
-      throw new Error("Choose LQ or HQ.");
+    if (!H3_QUALITY_OPTIONS.includes(quality as H3Quality))
+      throw new Error("Choose SH, LQ, or HQ.");
     if (!H3_ORIENTATION_OPTIONS.includes(orientation as "landscape" | "portrait"))
       throw new Error("Choose Landscape or Portrait orientation.");
     if (!originalPrompt)
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest) {
     const scene = createProductionV2Scene(1, "minimax-h3");
     scene.generationMode = mode;
     scene.durationSeconds = durationSeconds as 5 | 10;
-    scene.h3Quality = quality as "lq" | "hq";
+    scene.h3Quality = quality as H3Quality;
     scene.promptOptions = {
       ...DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS,
       visualStyle: promptBuilderVisualStyle,

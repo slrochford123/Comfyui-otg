@@ -1,8 +1,14 @@
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_PRODUCTION_V2_H3_USER_LORAS } from "../../../lib/production/h3Loras";
+import {
+  applyComfyBinaryPreviewEvent,
+  readComfyPromptProgress,
+  recordComfyPromptSubmitted,
+} from "../../../lib/comfyProgress";
 import { H3_PRODUCTION_ROUTE_KEYS } from "../../../lib/production/h3ProductionRecipes";
 import { buildH3Workflow } from "../../../lib/production/h3Workflows";
 
@@ -18,8 +24,8 @@ describe("H3 direct-generation tab contract", () => {
     expect(app).toContain('tab === "h3" ? <H3Panel />');
   });
 
-  it("keeps one 24-route workflow authority shared with Production", () => {
-    expect(H3_PRODUCTION_ROUTE_KEYS).toHaveLength(24);
+  it("keeps one 36-route workflow authority shared with Production", () => {
+    expect(H3_PRODUCTION_ROUTE_KEYS).toHaveLength(36);
     const direct = read("lib/h3DirectJobs.ts");
     expect(direct).toContain("getH3ProductionTimeEstimate");
     expect(direct).toContain("buildH3Workflow");
@@ -137,6 +143,8 @@ describe("H3 direct-generation tab contract", () => {
     expect(panel).toContain("videoClipStartSeconds");
     expect(panel).toContain('aria-label="Reference video 5-second start time"');
     expect(panel).toContain("getH3NativeDimensions(value, orientation).width");
+    expect(panel).toContain("SH · Scene Hunter");
+    expect(panel).toContain("Generate Scene Hunter");
     expect(panel).toContain('aria-label="H3 orientation"');
     expect(panel).toContain("H3_PRODUCTION_DURATION_OPTIONS.map");
     expect(panel).toContain("Up to 9 images, 3 videos, and 3 standalone audio references.");
@@ -167,6 +175,60 @@ describe("H3 direct-generation tab contract", () => {
     expect(panel).toContain("<video");
     expect(production).toContain('generationJob.approximatePreview.mimeType.startsWith("video/")');
     expect(production).toContain("<video");
+  });
+
+  it("decodes Comfy binary preview websocket frames for H3 direct jobs", () => {
+    const promptId = `prompt-${randomUUID()}`;
+    const clientId = `client-${randomUUID()}`;
+    const comfyBaseUrl = "http://127.0.0.1:8188";
+    recordComfyPromptSubmitted({
+      promptId,
+      ownerKey: "owner",
+      deviceId: "device",
+      clientId,
+      comfyBaseUrl,
+    });
+
+    const metadata = Buffer.from(JSON.stringify({
+      prompt_id: promptId,
+      image_type: "image/png",
+      step: 3,
+      max: 8,
+    }));
+    const image = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const frame = Buffer.concat([
+      Buffer.from([0, 0, 0, 4]),
+      Buffer.from([
+        (metadata.length >>> 24) & 0xff,
+        (metadata.length >>> 16) & 0xff,
+        (metadata.length >>> 8) & 0xff,
+        metadata.length & 0xff,
+      ]),
+      metadata,
+      image,
+    ]);
+
+    expect(applyComfyBinaryPreviewEvent(frame, { clientId, comfyBaseUrl })).toBe(true);
+    const preview = readComfyPromptProgress(promptId)?.approximatePreview;
+    expect(preview).toMatchObject({
+      mimeType: "image/png",
+      step: 3,
+      total: 8,
+      source: "ModelPreviewOverrideKJ",
+    });
+    expect(preview?.imageUrl).toBe(`data:image/png;base64,${image.toString("base64")}`);
+
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+    const legacyFrame = Buffer.concat([
+      Buffer.from([0, 0, 0, 1]),
+      Buffer.from([0, 0, 0, 1]),
+      jpeg,
+    ]);
+
+    expect(applyComfyBinaryPreviewEvent(legacyFrame, { clientId, comfyBaseUrl })).toBe(true);
+    const legacyPreview = readComfyPromptProgress(promptId)?.approximatePreview;
+    expect(legacyPreview?.mimeType).toBe("image/jpeg");
+    expect(legacyPreview?.imageUrl).toBe(`data:image/jpeg;base64,${jpeg.toString("base64")}`);
   });
 
   it("rehydrates the latest saved H3 job when the tab remounts", () => {

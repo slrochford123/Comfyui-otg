@@ -115,7 +115,12 @@ const selectedChoice =
   "!border-violet-300/80 !bg-violet-300/20 text-white shadow-[0_0_0_1px_rgba(196,181,253,.12),0_0_18px_rgba(139,92,246,.18)]";
 const REFERENCE_LIMIT_HELP =
   "Up to 9 images, 3 videos, and 3 standalone audio references.";
-const QUALITY_LABELS: Record<H3Quality, string> = { lq: "LQ", hq: "HQ" };
+const QUALITY_LABELS: Record<H3Quality, string> = { sh: "SH", lq: "LQ", hq: "HQ" };
+const QUALITY_DETAILS: Record<H3Quality, string> = {
+  sh: "Scene Hunter quick scene search",
+  lq: "0.6 MP native",
+  hq: "1.0 MP native",
+};
 const H3_LAST_JOB_STORAGE_KEY = "otg:h3:last-direct-job-id:v1";
 const H3_REFERENCE_VIDEO_CLIP_SECONDS = 5;
 
@@ -1510,7 +1515,7 @@ export default function H3Panel() {
             </p>
             <p className="mb-2 mt-3 text-xs font-bold text-white/50">Quality</p>
             <div
-              className="grid grid-cols-2 gap-2"
+              className="grid grid-cols-1 gap-2 sm:grid-cols-3"
               role="group"
               aria-label="H3 quality"
             >
@@ -1522,7 +1527,10 @@ export default function H3Panel() {
                   onClick={() => setQuality(value)}
                 >
                   <span className="block font-black">
-                    {QUALITY_LABELS[value]} · {getH3NativeDimensions(value, orientation).width}x{getH3NativeDimensions(value, orientation).height}
+                    {value === "sh" ? "SH · Scene Hunter" : QUALITY_LABELS[value]} · {getH3NativeDimensions(value, orientation).width}x{getH3NativeDimensions(value, orientation).height}
+                  </span>
+                  <span className="mt-1 block text-[11px] font-bold leading-4 text-white/45">
+                    {QUALITY_DETAILS[value]}
                   </span>
                 </button>
               ))}
@@ -1718,12 +1726,12 @@ export default function H3Panel() {
             onClick={() => void generate()}
           >
             {active
-              ? "Generation Running"
+              ? quality === "sh" ? "Scene Hunter Running" : "Generation Running"
               : builderPromptStale
                 ? "Use Raw Prompt or Review Builder"
                 : !canGenerate
                   ? "Add Prompt and Required Inputs"
-                : "Generate Video"}
+                : quality === "sh" ? "Generate Scene Hunter" : "Generate Video"}
           </button>
         </aside>
       </div>

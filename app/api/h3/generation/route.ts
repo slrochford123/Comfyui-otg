@@ -179,7 +179,7 @@ export async function POST(req: NextRequest) {
     const orientation = String(config.orientation || "") as H3Orientation;
     const durationSeconds = Number(config.durationSeconds) as H3ProductionDuration;
     if (!MODES.includes(mode)) throw new Error("Choose Text, Image, or Reference mode.");
-    if (!H3_QUALITY_OPTIONS.includes(quality)) throw new Error("Choose LQ or HQ.");
+    if (!H3_QUALITY_OPTIONS.includes(quality)) throw new Error("Choose SH, LQ, or HQ.");
     if (!H3_ORIENTATION_OPTIONS.includes(orientation)) throw new Error("Choose Landscape or Portrait orientation.");
     if (!H3_PRODUCTION_DURATION_OPTIONS.includes(durationSeconds)) throw new Error("Choose a 5- or 10-second duration.");
 

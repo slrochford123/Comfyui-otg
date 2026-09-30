@@ -3490,12 +3490,17 @@ export default function ProductionV2Panel() {
                   <div className="text-xs font-black uppercase text-zinc-500">Quality</div>
                   {selectedScene.model === "minimax-h3" ? (
                     <div className="mt-2" data-otg="production-v2-h3-quality-control">
-                      <div className="grid grid-cols-2 gap-2" aria-label="MiniMax H3 quality">
+                      <div className="grid grid-cols-3 gap-2" aria-label="MiniMax H3 quality">
+                        <SegmentButton active={selectedScene.h3Quality === "sh"} disabled={Boolean(readOnly)} onClick={() => updateSharedSceneInput((scene) => ({ ...scene, h3Quality: "sh" }))}>SH</SegmentButton>
                         <SegmentButton active={selectedScene.h3Quality === "lq"} disabled={Boolean(readOnly)} onClick={() => updateSharedSceneInput((scene) => ({ ...scene, h3Quality: "lq" }))}>LQ</SegmentButton>
                         <SegmentButton active={selectedScene.h3Quality === "hq"} disabled={Boolean(readOnly)} onClick={() => updateSharedSceneInput((scene) => ({ ...scene, h3Quality: "hq" }))}>HQ</SegmentButton>
                       </div>
                       <div className="mt-2 text-[10px] leading-4 text-zinc-500">
-                        {selectedScene.h3Quality === "hq" ? "1.0 MP native (1376x768)" : "0.6 MP native (1056x608)"} + RTX VSR ULTRA
+                        {selectedScene.h3Quality === "sh"
+                          ? "Scene Hunter · 0.2 MP native (608x352) quick scene search"
+                          : selectedScene.h3Quality === "hq"
+                            ? "1.0 MP native (1376x768) + RTX VSR ULTRA"
+                            : "0.6 MP native (1056x608) + RTX VSR ULTRA"}
                       </div>
                       {h3Eta ? (
                         <div className="mt-1 text-[10px] leading-4 text-zinc-500" data-otg="production-v2-h3-eta">

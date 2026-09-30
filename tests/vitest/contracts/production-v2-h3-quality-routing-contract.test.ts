@@ -25,14 +25,14 @@ describe("Production V2 H3 quality persistence and UI contract", () => {
 
   it("preserves quality through serialization and independently per scene", () => {
     let production = createProductionV2("Quality", "minimax-h3");
-    production.scenes[0].h3Quality = "hq";
+    production.scenes[0].h3Quality = "sh";
     production = addProductionV2Scene(production, "minimax-h3");
-    production.scenes[1].h3Quality = "lq";
+    production.scenes[1].h3Quality = "hq";
     production.activeSceneId = production.scenes[1].id;
 
     const loaded = normalizeProductionV2(JSON.parse(JSON.stringify(production)));
-    expect(loaded.scenes.map((scene) => scene.h3Quality)).toEqual(["hq", "lq"]);
-    expect(loaded.scenes.find((scene) => scene.id === loaded.activeSceneId)?.h3Quality).toBe("lq");
+    expect(loaded.scenes.map((scene) => scene.h3Quality)).toEqual(["sh", "hq"]);
+    expect(loaded.scenes.find((scene) => scene.id === loaded.activeSceneId)?.h3Quality).toBe("hq");
   });
 
   it("keeps H3 quality dormant and unchanged when switching to LTX", () => {
@@ -47,15 +47,17 @@ describe("Production V2 H3 quality persistence and UI contract", () => {
     expect(normalizeProductionV2DurationForModel("minimax-h3", 15)).toBe(10);
   });
 
-  it("renders the LQ/HQ control only inside the MiniMax H3 UI branch", () => {
+  it("renders the Scene Hunter/LQ/HQ control only inside the MiniMax H3 UI branch", () => {
     const panel = fs.readFileSync(
       path.join(root, "app/app/components/ProductionV2Panel.tsx"),
       "utf8",
     );
     expect(panel).toContain('data-otg="production-v2-h3-quality-control"');
     expect(panel).toMatch(/selectedScene\.model === "minimax-h3"[\s\S]{0,500}production-v2-h3-quality-control/);
+    expect(panel).toContain('h3Quality: "sh"');
     expect(panel).toContain('h3Quality: "lq"');
     expect(panel).toContain('h3Quality: "hq"');
+    expect(panel).toContain("Scene Hunter · 0.2 MP native (608x352) quick scene search");
   });
 
   it("copies the source H3 quality into Continue Scene", () => {

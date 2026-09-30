@@ -19,7 +19,7 @@ const modes: ProductionV2H3Mode[] = [
   "h3-reference-to-video",
 ];
 const durations: H3ProductionDuration[] = [5, 10];
-const qualities: H3Quality[] = ["lq", "hq"];
+const qualities: H3Quality[] = ["sh", "lq", "hq"];
 
 function build(
   backend: ProductionV2H3BackendId,
@@ -51,8 +51,8 @@ function build(
   });
 }
 
-describe("H3 exact LQ/HQ workflow integration", () => {
-  it("validates and builds every one of the 24 physical routes", () => {
+describe("H3 exact Scene Hunter/LQ/HQ workflow integration", () => {
+  it("validates and builds every one of the 36 logical routes", () => {
     let count = 0;
     for (const backend of backends) {
       for (const mode of modes) {
@@ -103,7 +103,7 @@ describe("H3 exact LQ/HQ workflow integration", () => {
         }
       }
     }
-    expect(count).toBe(24);
+    expect(count).toBe(36);
   });
 
   it("keeps the validated Comfy Kitchen preview chain attached on every H3 backend route", () => {

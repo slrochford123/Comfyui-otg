@@ -404,12 +404,74 @@ function applyComfyEvent(payload: any, context: { clientId?: string | null; comf
   }
 }
 
-function parseMessageData(data: unknown) {
-  if (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) {
-    data = data.toString("utf8");
-  } else if (data instanceof ArrayBuffer) {
-    data = Buffer.from(data).toString("utf8");
+function bufferFromBinaryMessage(data: unknown): Buffer | null {
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
   }
+  return null;
+}
+
+function previewMimeFromComfyImageType(value: number) {
+  return value === 2 ? "image/png" : "image/jpeg";
+}
+
+function numericMetadata(value: unknown) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+export function applyComfyBinaryPreviewEvent(data: unknown, context: { clientId?: string | null; comfyBaseUrl?: string | null } = {}) {
+  const buffer = bufferFromBinaryMessage(data);
+  if (!buffer || buffer.length < 8) return false;
+
+  const eventType = buffer.readUInt32BE(0);
+  let metadata: Record<string, unknown> = {};
+  let imageOffset = 8;
+  let mimeType = previewMimeFromComfyImageType(buffer.readUInt32BE(4));
+
+  if (eventType === 4) {
+    const metadataLength = buffer.readUInt32BE(4);
+    const metadataStart = 8;
+    const metadataEnd = metadataStart + metadataLength;
+    if (metadataLength < 0 || metadataEnd > buffer.length) return false;
+    try {
+      metadata = JSON.parse(buffer.subarray(metadataStart, metadataEnd).toString("utf8")) as Record<string, unknown>;
+    } catch {
+      metadata = {};
+    }
+    imageOffset = metadataEnd;
+    mimeType = String(metadata.image_type || metadata.mime || metadata.mime_type || "image/jpeg");
+  } else if (eventType !== 1) {
+    return false;
+  }
+
+  if (imageOffset >= buffer.length) return false;
+  const safeMimeType = mimeType.startsWith("image/") ? mimeType : "image/jpeg";
+  const promptId = String(metadata.prompt_id || metadata.promptId || "").trim() || findPromptForClient(context);
+  if (!promptId) return false;
+
+  const record = getOrCreateRecord(promptId);
+  const now = Date.now();
+  record.lastUpdateAt = now;
+  record.status = record.status === "complete" ? "complete" : "running";
+  record.approximatePreview = {
+    label: "Approximate Preview",
+    imageUrl: `data:${safeMimeType};base64,${buffer.subarray(imageOffset).toString("base64")}`,
+    mimeType: safeMimeType,
+    width: numericMetadata(metadata.width ?? metadata.w),
+    height: numericMetadata(metadata.height ?? metadata.h),
+    step: numericMetadata(metadata.step ?? metadata.value),
+    total: numericMetadata(metadata.total ?? metadata.steps ?? metadata.max),
+    frameCount: numericMetadata(metadata.frames ?? metadata.frame_count),
+    updatedAt: now,
+    source: "ModelPreviewOverrideKJ",
+  };
+  return true;
+}
+
+function parseMessageData(data: unknown) {
   if (typeof data === "string") {
     try {
       return JSON.parse(data);
@@ -471,6 +533,7 @@ export function ensureComfyClientProgressMonitor(args: {
   };
 
   const handleMessage = (data: unknown) => {
+    if (applyComfyBinaryPreviewEvent(data, eventContext)) return;
     const payload = parseMessageData(data);
     if (payload) applyComfyEvent(payload, eventContext);
   };
@@ -487,6 +550,7 @@ export function ensureComfyClientProgressMonitor(args: {
   };
 
   ws.onmessage = (event: any) => {
+    if (applyComfyBinaryPreviewEvent(event?.data, eventContext)) return;
     const payload = parseMessageData(event?.data);
     if (payload) applyComfyEvent(payload, eventContext);
   };

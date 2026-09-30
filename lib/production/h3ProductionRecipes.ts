@@ -2,9 +2,10 @@ export const H3_PRODUCTION_RECIPE_VERSION =
   "fasth3-b02-approx-preview-test-2026-09-22-v1" as const;
 
 export const H3_PRODUCTION_DURATION_OPTIONS = [5, 10] as const;
-export const H3_QUALITY_OPTIONS = ["lq", "hq"] as const;
+export const H3_QUALITY_OPTIONS = ["sh", "lq", "hq"] as const;
 export const H3_ORIENTATION_OPTIONS = ["landscape", "portrait"] as const;
 export const H3_NATIVE_RESOLUTIONS = {
+  sh: { megapixels: 0.2, width: 608, height: 352 },
   lq: { megapixels: 0.6, width: 1056, height: 608 },
   hq: { megapixels: 1.0, width: 1376, height: 768 },
 } as const;
@@ -28,9 +29,9 @@ export type H3ProductionRecipe = {
   durationSeconds: H3ProductionDuration;
   backend: H3ProductionBackendId;
   quality: H3Quality;
-  megapixels: 0.6 | 1.0;
-  nativeWidth: 1056 | 1376;
-  nativeHeight: 608 | 768;
+  megapixels: 0.2 | 0.6 | 1.0;
+  nativeWidth: 608 | 1056 | 1376;
+  nativeHeight: 352 | 608 | 768;
   frameCount: 124 | 243;
   steps: 8;
   turboLoraFamily: H3TurboLoraFamily;
@@ -63,28 +64,40 @@ type RouteSpec = readonly [
 ];
 
 const ROUTE_SPECS: readonly RouteSpec[] = [
+  ["rtx5060ti", "h3-text-to-video", 5, "sh", 113.756],
   ["rtx5060ti", "h3-text-to-video", 5, "lq", 113.756],
   ["rtx5060ti", "h3-text-to-video", 5, "hq", 436.559],
+  ["rtx5060ti", "h3-text-to-video", 10, "sh", 270.4],
   ["rtx5060ti", "h3-text-to-video", 10, "lq", 270.4],
   ["rtx5060ti", "h3-text-to-video", 10, "hq", 985.805],
+  ["rtx5060ti", "h3-image-to-video", 5, "sh", 95.409],
   ["rtx5060ti", "h3-image-to-video", 5, "lq", 95.409],
   ["rtx5060ti", "h3-image-to-video", 5, "hq", 153.127],
+  ["rtx5060ti", "h3-image-to-video", 10, "sh", 188.215],
   ["rtx5060ti", "h3-image-to-video", 10, "lq", 188.215],
   ["rtx5060ti", "h3-image-to-video", 10, "hq", 984.087],
+  ["rtx5060ti", "h3-reference-to-video", 5, "sh", 120.1],
   ["rtx5060ti", "h3-reference-to-video", 5, "lq", 120.1],
   ["rtx5060ti", "h3-reference-to-video", 5, "hq", 555.569],
+  ["rtx5060ti", "h3-reference-to-video", 10, "sh", 596.986],
   ["rtx5060ti", "h3-reference-to-video", 10, "lq", 596.986],
   ["rtx5060ti", "h3-reference-to-video", 10, "hq", 680.282],
+  ["rtx3090", "h3-text-to-video", 5, "sh", 119.64],
   ["rtx3090", "h3-text-to-video", 5, "lq", 119.64],
   ["rtx3090", "h3-text-to-video", 5, "hq", 188.619],
+  ["rtx3090", "h3-text-to-video", 10, "sh", 226.19],
   ["rtx3090", "h3-text-to-video", 10, "lq", 226.19],
   ["rtx3090", "h3-text-to-video", 10, "hq", 393.923],
+  ["rtx3090", "h3-image-to-video", 5, "sh", 122.396],
   ["rtx3090", "h3-image-to-video", 5, "lq", 122.396],
   ["rtx3090", "h3-image-to-video", 5, "hq", 189.68],
+  ["rtx3090", "h3-image-to-video", 10, "sh", 237.433],
   ["rtx3090", "h3-image-to-video", 10, "lq", 237.433],
   ["rtx3090", "h3-image-to-video", 10, "hq", 404.465],
+  ["rtx3090", "h3-reference-to-video", 5, "sh", 170],
   ["rtx3090", "h3-reference-to-video", 5, "lq", 170],
   ["rtx3090", "h3-reference-to-video", 5, "hq", 453.001],
+  ["rtx3090", "h3-reference-to-video", 10, "sh", 536.875],
   ["rtx3090", "h3-reference-to-video", 10, "lq", 536.875],
   ["rtx3090", "h3-reference-to-video", 10, "hq", 940.042],
 ] as const;
@@ -108,12 +121,12 @@ function recipe(spec: RouteSpec): H3ProductionRecipe {
   const [backend, mode, durationSeconds, quality, etaSeconds] = spec;
   const code = modeCode(mode);
   const routeKey = h3ProductionRouteKey(backend, mode, durationSeconds, quality);
-  const hq = quality === "hq";
+  const templateQuality = quality === "sh" ? "lq" : quality;
 
   return {
     recipeId: `h3-${backend}-${code.toLowerCase()}-${durationSeconds}s-${quality}-${mode === "h3-reference-to-video" ? "refvideo-ref2va" : "sla"}-turbo8-v1`,
     routeKey,
-    workflowFile: `comfy_workflows/internal/production-v2/h3-b02-approx-preview/${backend}_${code}_${durationSeconds}s_${quality.toUpperCase()}.api.json`,
+    workflowFile: `comfy_workflows/internal/production-v2/h3-b02-approx-preview/${backend}_${code}_${durationSeconds}s_${templateQuality.toUpperCase()}.api.json`,
     mode,
     durationSeconds,
     backend,
@@ -156,6 +169,7 @@ export const H3_PRODUCTION_ROUTE_KEYS = ROUTE_SPECS.map((spec) =>
   h3ProductionRouteKey(spec[0], spec[1], spec[2], spec[3]));
 
 export function normalizeH3Quality(value: unknown): H3Quality {
+  if (value === "sh") return "sh";
   return value === "hq" ? "hq" : "lq";
 }
 

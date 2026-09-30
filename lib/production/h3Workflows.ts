@@ -40,6 +40,8 @@ export type H3PromptGraph = Record<string, { class_type: string; inputs: Record<
 export const H3_MAX_IMAGE_REFERENCES = 9;
 export const H3_MAX_VIDEO_REFERENCES = 3;
 export const H3_MAX_AUDIO_REFERENCES = 3;
+export const H3_SH_NATIVE_WIDTH = H3_NATIVE_RESOLUTIONS.sh.width;
+export const H3_SH_NATIVE_HEIGHT = H3_NATIVE_RESOLUTIONS.sh.height;
 export const H3_LQ_NATIVE_WIDTH = H3_NATIVE_RESOLUTIONS.lq.width;
 export const H3_LQ_NATIVE_HEIGHT = H3_NATIVE_RESOLUTIONS.lq.height;
 export const H3_HQ_NATIVE_WIDTH = H3_NATIVE_RESOLUTIONS.hq.width;
@@ -378,13 +380,17 @@ export function validateH3WorkflowTemplate(
   }
 
   const conditioning = graph[contract.conditioningNodeId];
+  const templateResolution =
+    recipe.quality === "sh"
+      ? H3_NATIVE_RESOLUTIONS.lq
+      : { width: recipe.nativeWidth, height: recipe.nativeHeight };
 
   if (
-    conditioning.inputs.width !== recipe.nativeWidth
-    || conditioning.inputs.height !== recipe.nativeHeight
+    conditioning.inputs.width !== templateResolution.width
+    || conditioning.inputs.height !== templateResolution.height
   ) {
     throw new Error(
-      `Qualified H3 ${quality.toUpperCase()} native resolution must be ${recipe.nativeWidth}x${recipe.nativeHeight}.`,
+      `Qualified H3 ${quality.toUpperCase()} template resolution must be ${templateResolution.width}x${templateResolution.height}.`,
     );
   }
 
@@ -462,7 +468,7 @@ export function validateH3WorkflowTemplate(
   }
 
   if (classEntries(graph, "SpectrumApplyMiniMaxH3").length !== 0) {
-    throw new Error("Qualified LQ/HQ H3 routes must not use obsolete Spectrum attention.");
+    throw new Error("Qualified H3 routes must not use obsolete Spectrum attention.");
   }
 
   if (mode === "h3-reference-to-video") {
@@ -626,13 +632,17 @@ function assertQualifiedRecipeGraph(
 
   const contract = H3_WORKFLOW_CONTRACTS[recipe.mode];
   const conditioning = graph[contract.conditioningNodeId];
+  const templateResolution =
+    recipe.quality === "sh"
+      ? H3_NATIVE_RESOLUTIONS.lq
+      : { width: recipe.nativeWidth, height: recipe.nativeHeight };
 
   if (
-    Number(conditioning.inputs.width) !== recipe.nativeWidth
-    || Number(conditioning.inputs.height) !== recipe.nativeHeight
+    Number(conditioning.inputs.width) !== templateResolution.width
+    || Number(conditioning.inputs.height) !== templateResolution.height
   ) {
     throw new Error(
-      `H3 recipe ${recipe.recipeId} native resolution mutation failed.`,
+      `H3 recipe ${recipe.recipeId} template resolution validation failed.`,
     );
   }
 

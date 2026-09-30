@@ -1,7 +1,7 @@
 {
   "scope": "TEST only",
   "sourceRoot": "/home/shawn-rochford/AI/ComfyUI/tests/h3_b02_workflows",
-  "installedAt": "2026-09-23T17:36:14.707Z",
+  "installedAt": "2026-09-30T16:36:59.792Z",
   "runtimeDirectory": "comfy_workflows/internal/production-v2/h3-b02-approx-preview",
   "activeFamily": "FastH3_B02_T2V_I2V_REF2VA_R2V_REFERENCE_VIDEO_APPROX_PREVIEW",
   "r2vSourceRoot": "/home/shawn-rochford/AI/ComfyUI/tests/h3_b02_workflows/staged_r2v_refvideo_6700",

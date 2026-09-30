@@ -79,7 +79,9 @@ function directInput(mode: ProductionV2H3Mode) {
 }
 
 describe("H3 orientation and direct-generation contracts", () => {
-  it("maps both quality tiers to canonical landscape and swapped portrait geometry", () => {
+  it("maps all quality tiers to canonical landscape and swapped portrait geometry", () => {
+    expect(getH3NativeDimensions("sh", "landscape")).toEqual({ width: 608, height: 352 });
+    expect(getH3NativeDimensions("sh", "portrait")).toEqual({ width: 352, height: 608 });
     expect(getH3NativeDimensions("lq", "landscape")).toEqual({ width: 1056, height: 608 });
     expect(getH3NativeDimensions("lq", "portrait")).toEqual({ width: 608, height: 1056 });
     expect(getH3NativeDimensions("hq", "landscape")).toEqual({ width: 1376, height: 768 });
@@ -88,7 +90,7 @@ describe("H3 orientation and direct-generation contracts", () => {
 
   it("reuses each qualified graph route while mutating only output geometry", () => {
     for (const mode of modes) {
-      for (const quality of ["lq", "hq"] as const) {
+      for (const quality of ["sh", "lq", "hq"] as const) {
         const landscape = build(mode, quality, "landscape");
         const portrait = build(mode, quality, "portrait");
         const expected = getH3NativeDimensions(quality, "portrait");
@@ -102,7 +104,7 @@ describe("H3 orientation and direct-generation contracts", () => {
         expect(portrait.graph["41"]).toEqual(landscape.graph["41"]);
       }
     }
-    expect(H3_PRODUCTION_ROUTE_KEYS).toHaveLength(24);
+    expect(H3_PRODUCTION_ROUTE_KEYS).toHaveLength(36);
   });
 
   it("accepts raw T2V, conditioned I2V, and mapped R2V input without builder state", () => {
