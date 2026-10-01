@@ -208,6 +208,59 @@ function h3SubmitNetworkMessage(error: unknown) {
   return message || "H3 generation could not be submitted.";
 }
 
+function h3WorkflowNotice(
+  job: JobStatus | null,
+  message: string,
+): { tone: "info" | "success" | "warning" | "error"; title: string; detail: string } | null {
+  const cleanMessage = message.trim();
+  if (job) {
+    if (job.status === "completed") {
+      return {
+        tone: "success",
+        title: "Workflow completed",
+        detail: job.videoUrl
+          ? "Final video is ready below."
+          : job.statusMessage || "The workflow completed. Refresh if the final video is still saving.",
+      };
+    }
+    if (job.status === "failed") {
+      return {
+        tone: "error",
+        title: "Workflow failed",
+        detail: job.error || job.statusMessage || "The H3 workflow failed.",
+      };
+    }
+    if (job.status === "canceled") {
+      return {
+        tone: "warning",
+        title: "Workflow canceled",
+        detail: job.statusMessage || "The H3 workflow was canceled.",
+      };
+    }
+    return {
+      tone: "info",
+      title: job.promptId ? "Workflow accepted" : "Workflow submitted",
+      detail:
+        job.statusMessage ||
+        (job.promptId
+          ? "ComfyUI accepted the workflow and generation is running."
+          : "The workflow is waiting for ComfyUI acceptance."),
+    };
+  }
+  if (!cleanMessage) return null;
+  return {
+    tone: /failed|error|could not|too large|must|required|choose|add at least|enter a prompt/i.test(cleanMessage)
+      ? "error"
+      : "info",
+    title: /submitting/i.test(cleanMessage)
+      ? "Workflow submitted"
+      : /accepted|ready|saved|added|reviewed/i.test(cleanMessage)
+        ? "Workflow update"
+        : "H3 status",
+    detail: cleanMessage,
+  };
+}
+
 function VideoReferenceWindowControl({
   item,
   onChange,
@@ -503,6 +556,15 @@ export default function H3Panel() {
       && (mode !== "h3-reference-to-video" || references.length)
       && !videoReferenceTooShort,
   );
+  const workflowNotice = h3WorkflowNotice(job, message);
+  const workflowNoticeClass =
+    workflowNotice?.tone === "success"
+      ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-50"
+      : workflowNotice?.tone === "error"
+        ? "border-red-300/30 bg-red-500/10 text-red-50"
+        : workflowNotice?.tone === "warning"
+          ? "border-amber-300/30 bg-amber-300/10 text-amber-50"
+          : "border-cyan-300/30 bg-cyan-400/10 text-cyan-50";
 
   useEffect(() => {
     void fetch(`/api/h3/loras?mode=${encodeURIComponent(mode)}`, {
@@ -1768,8 +1830,40 @@ export default function H3Panel() {
                   ? "Add Prompt and Required Inputs"
                 : quality === "sh" ? "Generate Scene Hunter" : "Generate Video"}
           </button>
+          {workflowNotice ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className={`rounded-[6px] border px-4 py-3 text-sm font-semibold ${workflowNoticeClass}`}
+              data-otg="h3-workflow-status-near-generate"
+            >
+              <div className="font-black">{workflowNotice.title}</div>
+              <div className="mt-1 text-white/75">{workflowNotice.detail}</div>
+              {job?.promptId ? (
+                <div className="mt-1 break-all font-mono text-xs text-white/55">
+                  Prompt ID: {job.promptId}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </aside>
       </div>
+      {workflowNotice ? (
+        <section
+          role="status"
+          aria-live="polite"
+          className={`rounded-[6px] border px-4 py-3 text-sm font-semibold ${workflowNoticeClass}`}
+          data-otg="h3-workflow-status-above-preview"
+        >
+          <div className="font-black">{workflowNotice.title}</div>
+          <div className="mt-1 text-white/75">{workflowNotice.detail}</div>
+          {job?.promptId ? (
+            <div className="mt-1 break-all font-mono text-xs text-white/55">
+              Prompt ID: {job.promptId}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
       {job ? (
         <section className={surface}>
           <div className="flex flex-wrap items-start justify-between gap-3">
