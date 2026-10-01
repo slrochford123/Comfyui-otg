@@ -365,8 +365,15 @@ export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payl
 
   try {
     const routedModel = String(options.modelByNode?.[route.node] || options.model || QWEN_CLUSTER_MODEL).trim() || QWEN_CLUSTER_MODEL;
-    const forceModelUnload = payload._otgForceModelUnload === true;
-    if (forceModelUnload) {
+    const routedKeepAlive = options.keepAlive ?? 0;
+    const keepAliveDisablesResidency =
+      routedKeepAlive === 0 ||
+      routedKeepAlive === "0" ||
+      routedKeepAlive === "0s";
+    const unloadModelAfterRequest =
+      payload._otgForceModelUnload === true ||
+      keepAliveDisablesResidency;
+    if (unloadModelAfterRequest) {
       await ensureComfyLaneFreeForQwen(route.node);
       await unloadQwenModel(route.baseUrl, routedModel);
     }
@@ -376,7 +383,7 @@ export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payl
       ...payload,
       model: routedModel,
       stream: false,
-      keep_alive: options.keepAlive ?? 0,
+      keep_alive: routedKeepAlive,
       options: routedOptions,
     };
     delete (routedPayload as Record<string, unknown>)._otgForceModelUnload;
@@ -388,7 +395,7 @@ export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payl
       signal: controller.signal,
     });
     const bytes = await response.arrayBuffer();
-    if (forceModelUnload) {
+    if (unloadModelAfterRequest) {
       await unloadQwenModel(route.baseUrl, routedModel);
     }
     responseCompleted = true;
