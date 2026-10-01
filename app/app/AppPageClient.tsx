@@ -3010,6 +3010,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     return nextPrompt;
   }, [enhancePromptLevel, generateMediaMode, imageOperation, selectedWorkflow.id, selectedWorkflow.label, videoGenerationType]);
 
+  function safeUserFacingErrorMessage(error: unknown, fallback: string) {
+    const message = error instanceof Error ? error.message : String(error || "");
+    if (/libcublas|cuda|cudnn|library .*not found|cannot be loaded/i.test(message)) {
+      return "The optional AI helper is unavailable because the GPU runtime is not ready. Try again after the server model service is restarted.";
+    }
+    return message || fallback;
+  }
+
   const submitToComfy = useCallback(
     async (
       formData: FormData,
@@ -4462,9 +4470,13 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setPrompt(nextPrompt);
       setPromptAssessmentOpen(false);
       setPromptAssessment(null);
-      setStatusMessage("Prompt enhanced.");
+      setStatusMessage(
+        nextPrompt.trim() === prompt.trim()
+          ? "Prompt kept. The enhancer is temporarily unavailable."
+          : "Prompt enhanced.",
+      );
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Enhance Prompt failed");
+      setStatusMessage(safeUserFacingErrorMessage(error, "Enhance Prompt failed"));
     } finally {
       setEnhancing(false);
     }

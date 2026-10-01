@@ -662,6 +662,21 @@ function errorStatus(error: unknown) {
     : 502;
 }
 
+function safeEnhanceFallbackMessage(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error || "");
+  if (
+    /libcublas|cuda|cudnn|library .*not found|cannot be loaded/i.test(raw)
+  ) {
+    return "Prompt enhancer is unavailable because its GPU runtime is not ready. The original prompt was preserved.";
+  }
+
+  if (/abort|timed out|timeout/i.test(raw)) {
+    return "Prompt enhancer timed out. The original prompt was preserved.";
+  }
+
+  return "Prompt enhancer is unavailable. The original prompt was preserved.";
+}
+
 export async function POST(req: NextRequest): Promise<Response> {
   let originalPrompt = "";
 
@@ -718,20 +733,17 @@ export async function POST(req: NextRequest): Promise<Response> {
       model: enhancement.model,
     });
   } catch (error) {
-    const baseMessage =
-      error instanceof Error ? error.message : "Prompt enhancement failed.";
-    const message = baseMessage.includes("The original prompt was preserved.")
-      ? baseMessage
-      : `${baseMessage} The original prompt was preserved.`;
-
+    const message = safeEnhanceFallbackMessage(error);
     return Response.json(
       {
-        ok: false,
-        error: message,
+        ok: true,
+        enhancedPrompt: originalPrompt,
+        fallbackUsed: true,
+        warning: message,
         originalPrompt,
         prompt: originalPrompt,
       },
-      { status: errorStatus(error) },
+      { status: originalPrompt ? 200 : errorStatus(error) },
     );
   }
 }
