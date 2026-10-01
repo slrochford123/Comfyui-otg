@@ -115,6 +115,7 @@ const selectedChoice =
   "!border-violet-300/80 !bg-violet-300/20 text-white shadow-[0_0_0_1px_rgba(196,181,253,.12),0_0_18px_rgba(139,92,246,.18)]";
 const REFERENCE_LIMIT_HELP =
   "Up to 9 images, 3 videos, and 3 standalone audio references.";
+const H3_ANDROID_UPLOAD_BUDGET_BYTES = 90 * 1024 * 1024;
 const QUALITY_LABELS: Record<H3Quality, string> = { sh: "SH", lq: "LQ", hq: "HQ" };
 const QUALITY_DETAILS: Record<H3Quality, string> = {
   sh: "Scene Hunter quick scene search",
@@ -181,6 +182,30 @@ function MediaPreview({ item }: { item: MediaInput }) {
 
 function formatClipSeconds(value: number) {
   return `${Math.max(0, value).toFixed(2)}s`;
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MB`;
+  return `${(value / 1024 ** 3).toFixed(1)} GB`;
+}
+
+function h3UploadBytes(files: Array<File | null | undefined>) {
+  return files.reduce((total, file) => total + (file?.size || 0), 0);
+}
+
+function h3SubmitNetworkMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  if (/failed to fetch|networkerror|load failed|cancelled|canceled/i.test(message)) {
+    return [
+      "H3 upload could not reach the server.",
+      "On Android this usually means the selected reference files are too large for the public .win upload path or the connection dropped during upload.",
+      "Use a shorter/compressed reference video or fewer references, then try again.",
+    ].join(" ");
+  }
+  return message || "H3 generation could not be submitted.";
 }
 
 function VideoReferenceWindowControl({
@@ -892,6 +917,20 @@ export default function H3Panel() {
         `Reference videos must be at least ${H3_REFERENCE_VIDEO_CLIP_SECONDS} seconds long.`,
       );
     }
+    const uploadBytes = h3UploadBytes([
+      firstImage?.file,
+      lastImage?.file,
+      ...references.map((item) => item.file),
+    ]);
+    if (uploadBytes > H3_ANDROID_UPLOAD_BUDGET_BYTES) {
+      return setMessage(
+        [
+          `Selected H3 references total ${formatBytes(uploadBytes)}.`,
+          `Android .win uploads should stay under ${formatBytes(H3_ANDROID_UPLOAD_BUDGET_BYTES)} so the request has room for multipart overhead.`,
+          "Use a shorter/compressed reference video or fewer references, then try again.",
+        ].join(" "),
+      );
+    }
     const body = new FormData();
     body.set(
       "config",
@@ -938,7 +977,7 @@ export default function H3Panel() {
         credentials: "include",
         body,
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.job)
         throw new Error(data.error || "H3 generation could not be submitted.");
       setJob(data.job);
@@ -946,11 +985,7 @@ export default function H3Panel() {
       setNow(Date.now());
       setMessage("");
     } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "H3 generation could not be submitted.",
-      );
+      setMessage(h3SubmitNetworkMessage(error));
     }
   }
   async function retryGallerySave() {
