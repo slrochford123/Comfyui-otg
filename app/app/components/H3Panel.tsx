@@ -140,6 +140,62 @@ const QUALITY_DETAILS: Record<H3Quality, string> = {
 const H3_STUDIO_DRAFT_DB = "otg-h3-studio-draft-v1";
 const H3_STUDIO_DRAFT_STORE = "drafts";
 const H3_STUDIO_DRAFT_KEY = "current";
+const H3_STUDIO_JOB_STORAGE_KEY = "otg-h3-studio-job-v1";
+
+type H3StudioPersistedJob = {
+  version: 1;
+  savedAt: string;
+  job: JobStatus;
+};
+
+function isTerminalH3JobStatus(status: string | null | undefined) {
+  return status === "completed" || status === "failed" || status === "canceled";
+}
+
+function validStoredH3Job(value: unknown): JobStatus | null {
+  const job = (value as H3StudioPersistedJob | null)?.job;
+  if (!job || typeof job !== "object") return null;
+  if (typeof job.id !== "string" || !job.id.trim()) return null;
+  if (typeof job.status !== "string" || !job.status.trim()) return null;
+  return job as JobStatus;
+}
+
+function readPersistedH3Job() {
+  if (typeof window === "undefined") return null;
+  try {
+    return validStoredH3Job(JSON.parse(window.localStorage.getItem(H3_STUDIO_JOB_STORAGE_KEY) || "null"));
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedH3Job(job: JobStatus) {
+  if (typeof window === "undefined") return;
+  try {
+    const payload: H3StudioPersistedJob = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      job,
+    };
+    window.localStorage.setItem(H3_STUDIO_JOB_STORAGE_KEY, JSON.stringify(payload));
+  } catch {}
+}
+
+function clearPersistedH3Job() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(H3_STUDIO_JOB_STORAGE_KEY);
+  } catch {}
+}
+
+async function fetchH3JobStatus(id: string) {
+  const response = await fetch(
+    `/api/h3/generation?jobId=${encodeURIComponent(id)}`,
+    { credentials: "include", cache: "no-store" },
+  );
+  const data = await response.json().catch(() => ({}));
+  return { response, data: data as { job?: JobStatus; error?: string } };
+}
 
 function openH3StudioDraftDb() {
   if (typeof window === "undefined" || !("indexedDB" in window)) {
@@ -540,7 +596,7 @@ export default function H3Panel() {
   const [micState, setMicState] = useState<
     "idle" | "listening" | "processing" | "done" | "error"
   >("idle");
-  const [job, setJob] = useState<JobStatus | null>(null);
+  const [job, setJob] = useState<JobStatus | null>(() => readPersistedH3Job());
   const [previewFrame, setPreviewFrame] = useState({
     jobId: "",
     version: 0,
@@ -564,7 +620,10 @@ export default function H3Panel() {
   const objectUrlsRef = useRef(new Set<string>());
   const draftReadyRef = useRef(false);
   const draftRestoreAttemptedRef = useRef(false);
-  const active = Boolean(job && !["completed", "failed", "canceled"].includes(job.status));
+  const jobPersistenceReadyRef = useRef(false);
+  const jobRestoreAttemptedRef = useRef(false);
+  const restoredJobRef = useRef(job);
+  const active = Boolean(job && !isTerminalH3JobStatus(job.status));
   const estimate = useMemo(
     () =>
       getH3ProductionTimeEstimate(mode, duration, quality, job?.backend as any),
@@ -655,6 +714,37 @@ export default function H3Panel() {
         setMessage("The approved H3 LoRA catalog could not be loaded."),
       );
   }, [mode]);
+  useEffect(() => {
+    if (!jobPersistenceReadyRef.current) return;
+    if (job) writePersistedH3Job(job);
+    else clearPersistedH3Job();
+  }, [job]);
+  useEffect(() => {
+    if (jobRestoreAttemptedRef.current) return;
+    jobRestoreAttemptedRef.current = true;
+    const persisted = restoredJobRef.current;
+    jobPersistenceReadyRef.current = true;
+    if (!persisted) return;
+    let canceled = false;
+    void fetchH3JobStatus(persisted.id)
+      .then(({ response, data }) => {
+        if (canceled) return;
+        if (data.job) {
+          setJob(data.job);
+          setNow(Date.now());
+          return;
+        }
+        if (response.status === 404) {
+          clearPersistedH3Job();
+          setJob((current) => current?.id === persisted.id ? null : current);
+          setMessage((current) => current || "The saved H3 job was no longer available for this session.");
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      canceled = true;
+    };
+  }, []);
   useEffect(() => {
     if (draftRestoreAttemptedRef.current) return;
     draftRestoreAttemptedRef.current = true;
@@ -1212,13 +1302,24 @@ export default function H3Panel() {
   }
 
   async function refreshJob(id = job?.id) {
-    if (!id) return;
-    const response = await fetch(
-      `/api/h3/generation?jobId=${encodeURIComponent(id)}`,
-      { cache: "no-store" },
-    );
-    const data = await response.json().catch(() => ({}));
-    if (data.job) setJob(data.job);
+    if (!id) return null;
+    const { data } = await fetchH3JobStatus(id);
+    if (data.job) {
+      setJob(data.job);
+      return data.job;
+    }
+    return null;
+  }
+  function clearJob() {
+    if (job && !isTerminalH3JobStatus(job.status)) {
+      setMessage("Cancel the active H3 generation before clearing it.");
+      return;
+    }
+    setJob(null);
+    setPreviewFrame({ jobId: "", version: 0, contentType: "" });
+    setPreviewProgress({ jobId: "", value: 0, max: 0, node: null });
+    clearPersistedH3Job();
+    setMessage("Cleared the H3 result from this device.");
   }
   async function retry() {
     if (!job) return;
@@ -2291,6 +2392,14 @@ export default function H3Panel() {
             >
               Retry
             </button>
+            {!active ? (
+              <button
+                className={command}
+                onClick={clearJob}
+              >
+                Clear
+              </button>
+            ) : null}
           </div>
           {job.videoUrl ? (
             <div className="mt-4 min-w-0 max-w-full overflow-hidden">
