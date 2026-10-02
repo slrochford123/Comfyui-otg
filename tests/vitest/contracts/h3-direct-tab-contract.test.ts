@@ -18,8 +18,8 @@ describe("H3 direct-generation tab contract", () => {
     expect(app).toContain('tab === "h3" ? <H3Panel />');
   });
 
-  it("keeps one 24-route workflow authority shared with Production", () => {
-    expect(H3_PRODUCTION_ROUTE_KEYS).toHaveLength(24);
+  it("keeps one 36-route workflow authority shared with Production", () => {
+    expect(H3_PRODUCTION_ROUTE_KEYS).toHaveLength(36);
     const direct = read("lib/h3DirectJobs.ts");
     expect(direct).toContain("getH3ProductionTimeEstimate");
     expect(direct).toContain("buildH3Workflow");
@@ -131,13 +131,31 @@ describe("H3 direct-generation tab contract", () => {
 
   it("exposes required controls and deterministic reference limits", () => {
     const panel = read("app/app/components/H3Panel.tsx");
+    const route = read("app/api/h3/generation/route.ts");
+    const transcribeRoute = read("app/api/ollama-ai/transcribe/route.ts");
+    const referenceVideo = read("lib/h3ReferenceVideo.ts");
     expect(panel).toContain("Prompt Builder");
     expect(panel).toContain("Use Audio From Video");
     expect(panel).toContain("getH3NativeDimensions(value, orientation).width");
     expect(panel).toContain('aria-label="H3 orientation"');
     expect(panel).toContain("H3_PRODUCTION_DURATION_OPTIONS.map");
     expect(panel).toContain("Up to 9 images, 3 videos, and 3 standalone audio references.");
+    expect(panel).toContain("Five-second reference segment");
+    expect(panel).toContain("videoClipStartSeconds");
+    expect(panel).toContain("Choose the five-second segment from");
+    expect(route).toContain("buildH3ReferenceVideoTrimCommand");
+    expect(route).toContain('config.videoClipStartSeconds');
+    expect(referenceVideo).toContain('"-t"');
     expect(panel).toContain('/api/ollama-ai/transcribe');
     expect(panel).toContain('/api/enhance-prompt');
+    expect(panel).toContain('aria-label="Show final prompt audio controls"');
+    expect(panel).toContain('aria-label="Final prompt volume"');
+    expect(panel).toContain('"Pause final prompt" : "Play final prompt"');
+    expect(panel).toContain("finalPromptSpeechChunks(exactFinalPrompt)");
+    expect(panel).toContain('aria-label={');
+    expect(panel).toContain('"Record voice prompt"');
+    expect(panel).toContain('"audio/mp4"');
+    expect(transcribeRoute).toContain('process.env.WHISPER_DEVICE || "cpu"');
+    expect(transcribeRoute).toContain('device === "cpu" ? "int8" : "auto"');
   });
 });

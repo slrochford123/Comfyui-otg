@@ -107,7 +107,7 @@ let routeCount = 0;
 for (const backend of ["rtx3090", "rtx5060ti"]) {
   for (const mode of h3SceneModes) {
     for (const durationSeconds of [5, 10]) {
-      for (const h3Quality of ["lq", "hq"]) {
+      for (const h3Quality of ["sh", "lq", "hq"]) {
         assert(workflows.validateH3WorkflowTemplate(backend, mode, durationSeconds, h3Quality) === true, `${backend} ${mode} ${durationSeconds}s ${h3Quality} template validator`);
         const finalPrompt = mode === "h3-reference-to-video"
           ? `<Picture 1> <Subject 1>\n${triggeredPrompt}`
@@ -134,8 +134,8 @@ for (const backend of ["rtx3090", "rtx5060ti"]) {
           userLoras: allIndependent,
         });
         const graph = built.graph;
-        const expectedWidth = h3Quality === "lq" ? 1056 : 1376;
-        const expectedHeight = h3Quality === "lq" ? 608 : 768;
+        const expectedWidth = h3Quality === "sh" ? 608 : h3Quality === "lq" ? 1056 : 1376;
+        const expectedHeight = h3Quality === "sh" ? 352 : h3Quality === "lq" ? 608 : 768;
         const userNodes = ["70", "71", "72"];
         routeCount += 1;
 
@@ -153,12 +153,12 @@ for (const backend of ["rtx3090", "rtx5060ti"]) {
     }
   }
 }
-assert(routeCount === 24, "all 24 physical H3 LQ/HQ routes validate");
+assert(routeCount === 36, "all 36 physical H3 SH/LQ/HQ routes validate");
 
 for (const [duration, frames] of [[5, 124], [10, 243]]) {
   assert(workflows.h3FrameCountForDuration(duration) === frames, `${duration}s maps to ${frames} frames`);
 }
-assert(workflows.H3_SAMPLER_STEPS === 8 && workflows.H3_LQ_NATIVE_WIDTH === 1056 && workflows.H3_LQ_NATIVE_HEIGHT === 608 && workflows.H3_HQ_NATIVE_WIDTH === 1376 && workflows.H3_HQ_NATIVE_HEIGHT === 768, "LQ/HQ native dimensions remain locked");
+assert(workflows.H3_SAMPLER_STEPS === 8 && workflows.H3_SH_NATIVE_WIDTH === 608 && workflows.H3_SH_NATIVE_HEIGHT === 352 && workflows.H3_LQ_NATIVE_WIDTH === 1056 && workflows.H3_LQ_NATIVE_HEIGHT === 608 && workflows.H3_HQ_NATIVE_WIDTH === 1376 && workflows.H3_HQ_NATIVE_HEIGHT === 768, "SH/LQ/HQ native dimensions remain locked");
 assert(
   workflows.H3_BACKEND_PRIORITY.join(",") === "rtx5060ti,rtx3090",
   "MiniMax H3 scheduler prefers RTX 5060 Ti before RTX 3090",
@@ -329,9 +329,11 @@ assert(
   uiSource.includes('data-otg="production-v2-h3-quality-control"')
     && uiSource.includes('h3Quality: "lq"')
     && uiSource.includes('h3Quality: "hq"')
+    && uiSource.includes('h3Quality: "sh"')
+    && uiSource.includes("Scene Hunter · 0.2 MP · Fast scene search")
     && uiSource.includes("1.0 MP native (1376x768)")
     && uiSource.includes("0.6 MP native (1056x608)"),
-  "UI exposes the MiniMax H3 LQ/HQ switch and exact native tier labels",
+  "UI exposes the MiniMax H3 SH/LQ/HQ switch and exact native tier labels",
 );
 
 console.log("PASS: Production V2 H3 LoRA + RTX VSR deterministic contract suite");

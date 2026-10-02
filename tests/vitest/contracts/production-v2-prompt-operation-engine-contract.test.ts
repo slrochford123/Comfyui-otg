@@ -50,6 +50,37 @@ function scene() {
   }).scenes[0];
 }
 
+function completedChild(
+  id: string,
+  content: string,
+) {
+  return {
+    id,
+    status:
+      "completed",
+    statusMessage:
+      "Complete",
+    responseStatus:
+      200,
+    responseHeaders:
+      {
+        "x-otg-qwen-model":
+          "test-qwen",
+      },
+    responseBody:
+      JSON.stringify(
+        {
+          message:
+            {
+              content,
+            },
+        },
+      ),
+    error:
+      null,
+  } as any;
+}
+
 beforeEach(() => {
   tempRoot =
     fs.mkdtempSync(
@@ -273,6 +304,94 @@ describe(
           source,
         ).toContain(
           "buildProductionV2SceneRepairInstruction",
+        );
+      },
+    );
+
+    it(
+      "completes H3 with deterministic structure when both model attempts omit required sections",
+      async () => {
+        const inputScene =
+          scene();
+
+        inputScene.durationSeconds =
+          10;
+        inputScene.generationMode =
+          "h3-text-to-video";
+        inputScene.promptStateByMode[
+          inputScene.generationMode
+        ].userPrompt =
+          'Two children play rock paper scissors. The girl says "I win!"';
+
+        const operation =
+          createProductionV2PromptOperation(
+            "owner-a",
+            inputScene,
+          );
+
+        const dependencies = {
+          ensureJob:
+            (input: any) =>
+              completedChild(
+                input.id,
+                "summary:\nIncomplete model output.",
+              ),
+          getJob:
+            (id: string) =>
+              completedChild(
+                id,
+                "summary:\nIncomplete model output.",
+              ),
+          kickQwen:
+            () => {},
+        };
+
+        await runProductionV2PromptOperationTick(
+          dependencies,
+        );
+        await runProductionV2PromptOperationTick(
+          dependencies,
+        );
+
+        const current =
+          getProductionV2PromptOperation(
+            operation.id,
+          );
+
+        expect(
+          current?.status,
+        ).toBe(
+          "completed",
+        );
+        expect(
+          current?.statusMessage,
+        ).toBe(
+          "Scene Prompt complete with deterministic structure repair.",
+        );
+        expect(
+          current?.result?.provider,
+        ).toBe(
+          "ollama:test-qwen+deterministic-structure",
+        );
+        expect(
+          current?.result?.scenePrompt,
+        ).toContain(
+          "OVERALL SOUNDSCAPE",
+        );
+        expect(
+          current?.result?.scenePrompt,
+        ).toContain(
+          "NON-DIEGETIC MUSIC",
+        );
+        expect(
+          current?.result?.scenePrompt,
+        ).toContain(
+          'The girl says "I win!"',
+        );
+        expect(
+          current?.validation.ok,
+        ).toBe(
+          true,
         );
       },
     );

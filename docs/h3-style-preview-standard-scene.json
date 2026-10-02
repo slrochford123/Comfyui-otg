@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "status": "approved-for-test-preview-generation",
+  "durationSeconds": 5,
+  "comparisonRule": "Change only the canonical H3 visual-style instructions.",
+  "scene": "A young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+  "sound": "Quiet workshop room tone, a soft paper flutter, and no dialogue or music.",
+  "lockedSettings": [
+    "model",
+    "workflow and backend-specific equivalent graph",
+    "seed",
+    "duration",
+    "native resolution",
+    "fps",
+    "sampler and scheduler settings",
+    "subject and wardrobe",
+    "action and timing",
+    "camera movement and framing",
+    "lighting",
+    "reference configuration",
+    "sound"
+  ],
+  "fixedSeed": 47081592360421,
+  "generationSettings": {
+    "mode": "h3-text-to-video",
+    "quality": "lq",
+    "orientation": "landscape",
+    "nativeResolution": "1056x608",
+    "fps": 24,
+    "durationSeconds": 5,
+    "previewClipSeconds": 1,
+    "previewClipStartSeconds": 2
+  },
+  "review": "The automation extracts a centered one-second loop from the five-second source for first-pass review. Manually re-run any weak styles later with a different reviewed start time if needed."
+}

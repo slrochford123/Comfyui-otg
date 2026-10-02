@@ -9,6 +9,7 @@ import {
   addProductionV2Scene,
   createProductionV2,
   normalizeProductionV2,
+  preserveProductionV2ActiveSceneSelection,
   switchProductionV2SceneModel,
   switchProductionV2SceneMode,
 } from "@/lib/production/v2";
@@ -16,6 +17,94 @@ import {
 describe(
   "Production V2 scene normalization and isolation",
   () => {
+    it(
+      "preserves a free-roam Scene selection across background refreshes",
+      () => {
+        let persisted =
+          createProductionV2(
+            "Free Roam",
+            "minimax-h3",
+          );
+
+        persisted =
+          addProductionV2Scene(
+            addProductionV2Scene(
+              addProductionV2Scene(
+                persisted,
+              ),
+            ),
+          );
+
+        const sceneOneId =
+          persisted.scenes[0].id;
+
+        const locallySelected = {
+          ...persisted,
+          activeSceneId:
+            sceneOneId,
+        };
+
+        const refreshed = {
+          ...persisted,
+          activeSceneId:
+            persisted.scenes[3].id,
+        };
+
+        expect(
+          preserveProductionV2ActiveSceneSelection(
+            locallySelected,
+            refreshed,
+          ).activeSceneId,
+        ).toBe(
+          sceneOneId,
+        );
+      },
+    );
+
+    it(
+      "appends the next numbered Scene when continuing an earlier Scene",
+      () => {
+        let production =
+          createProductionV2(
+            "Branch Earlier Scene",
+            "minimax-h3",
+          );
+
+        production =
+          addProductionV2Scene(
+            addProductionV2Scene(
+              addProductionV2Scene(
+                production,
+              ),
+            ),
+          );
+
+        production = {
+          ...production,
+          activeSceneId:
+            production.scenes[0].id,
+        };
+
+        const continued =
+          addProductionV2Scene(
+            production,
+            production.scenes[0].model,
+          );
+
+        expect(
+          continued.scenes.at(-1)?.sceneNumber,
+        ).toBe(
+          5,
+        );
+
+        expect(
+          continued.activeSceneId,
+        ).toBe(
+          continued.scenes.at(-1)?.id,
+        );
+      },
+    );
+
     it(
       "normalizes persisted H3 and LTX durations to each model qualified set on load",
       () => {

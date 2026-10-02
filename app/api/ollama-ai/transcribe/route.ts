@@ -94,8 +94,14 @@ export async function POST(req: NextRequest) {
 
     const py = (process.env.WHISPER_PYTHON || "python").trim() || "python";
     const model = (process.env.WHISPER_MODEL || "small").trim() || "small";
-    const device = (process.env.WHISPER_DEVICE || "auto").trim() || "auto";
-    const computeType = (process.env.WHISPER_COMPUTE_TYPE || "auto").trim() || "auto";
+    // CPU/int8 is the portable default for browser microphone transcription.
+    // CTranslate2's `auto` device can select CUDA on machines whose driver sees
+    // a GPU even when the matching cuBLAS runtime is not installed.
+    const device = (process.env.WHISPER_DEVICE || "cpu").trim() || "cpu";
+    const computeType = (
+      process.env.WHISPER_COMPUTE_TYPE
+      || (device === "cpu" ? "int8" : "auto")
+    ).trim() || (device === "cpu" ? "int8" : "auto");
 
     const script = path.join(process.cwd(), "scripts", "whisper", "transcribe.py");
     const args: string[] = ["--audio", audioForWhisper, "--model", model, "--device", device, "--compute_type", computeType];
@@ -124,6 +130,7 @@ export async function POST(req: NextRequest) {
         "- ffmpeg on PATH (or set FFMPEG_PATH / OTG_FFMPEG_PATH)",
         "- python with faster-whisper installed (pip install faster-whisper)",
         "- scripts/whisper/transcribe.py must be present on the server",
+        "- set WHISPER_DEVICE=cpu and WHISPER_COMPUTE_TYPE=int8 when CUDA runtime libraries are unavailable",
       ].join("\n");
       return NextResponse.json(
         {

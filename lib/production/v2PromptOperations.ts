@@ -10,6 +10,7 @@ import {
 import {
   applyProductionV2DeterministicDialogueSequence,
   buildProductionPrompt,
+  buildProductionV2DeterministicScenePrompt,
   buildProductionV2SceneEnhancementInstruction,
   buildProductionV2SceneRepairInstruction,
   validateProductionV2ScenePromptForModel,
@@ -1176,6 +1177,59 @@ async function processOperation(
     if (
       !repaired.result
     ) {
+      if (
+        operation.scene.model
+        === "minimax-h3"
+      ) {
+        const deterministic =
+          completedResult(
+            operation,
+            {
+              output:
+                buildProductionV2DeterministicScenePrompt(
+                  operation.scene,
+                ),
+
+              model:
+                generation.model,
+            },
+            true,
+          );
+
+        if (
+          deterministic.result
+        ) {
+          patchOperation(
+            operation,
+            {
+              ...childField,
+
+              status:
+                "completed",
+
+              statusMessage:
+                "Scene Prompt complete with deterministic structure repair.",
+
+              validation:
+                deterministic.validation,
+
+              result:
+                {
+                  ...deterministic.result,
+
+                  provider:
+                    `${deterministic.result.provider}+deterministic-structure`,
+                },
+
+              error:
+                null,
+            },
+          );
+
+          return "completed";
+        }
+      }
+
       patchOperation(
         operation,
         {

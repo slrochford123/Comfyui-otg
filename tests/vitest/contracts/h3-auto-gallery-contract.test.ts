@@ -64,16 +64,24 @@ describe("H3 automatic Gallery persistence", () => {
   it("saves server-side immediately after a verified ComfyUI download", () => {
     const source = read("lib/h3DirectJobs.ts");
     expect(source).toMatch(/downloadH3Video[\s\S]*status: "finalizing"[\s\S]*saveH3DirectJobToGallery\(completedJob\)/);
+    expect(source).toContain('completedJob.input.quality === "sh"');
+    expect(source).toContain('statusMessage: "Scene Hunter Preview ready"');
     expect(source).toContain('statusMessage: "Video complete and saved to Gallery"');
     expect(source).toContain('requestKind: "h3-direct-auto-gallery"');
     expect(source).toContain("clearGalleryListCache()");
     expect(source).toMatch(/saveH3DirectJobToGallery\(completedJob\)[\s\S]*status: "completed"/);
   });
 
-  it("records request ownership and preserves it for retries", () => {
+  it("records request ownership and preserves media/settings while randomizing retry seed", () => {
     const route = read("app/api/h3/generation/route.ts");
     expect(route).toContain("createH3DirectJob(ownerKey, input, owner)");
-    expect(route).toContain("createH3DirectJob(ownerKey, source.input, source.galleryOwner || owner)");
+    expect(route).toContain("const retryInput = validateH3DirectInput({");
+    expect(route).toContain("...source.input,");
+    expect(route).toContain("seed: randomH3Seed()");
+    expect(route).toContain("createH3DirectJob(ownerKey, retryInput, source.galleryOwner || owner)");
+    expect(route).not.toContain("createH3DirectJob(ownerKey, source.input, source.galleryOwner || owner)");
+    expect(route).toContain('action === "upscale-scene-hunter"');
+    expect(read("lib/h3DirectJobs.ts")).toContain("promoteH3DirectSceneHunterJob");
     expect(read("lib/h3DirectJobs.ts")).toContain("galleryOwner");
   });
 

@@ -3,7 +3,11 @@ import { NextResponse } from "next/server";
 
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { validateH3LoraSelections } from "@/lib/h3LoraCatalogServer";
-import type { H3StudioReferenceDescriptor } from "@/lib/h3Studio";
+import {
+  buildH3QuotedDialogueContract,
+  type H3StudioReferenceDescriptor,
+} from "@/lib/h3Studio";
+import { resolveH3CanonicalStyle } from "@/lib/h3StyleRegistry";
 import {
   createProductionV2Scene,
   type ProductionV2GenerationMode,
@@ -30,6 +34,12 @@ const MODES: ProductionV2GenerationMode[] = [
   "h3-reference-to-video",
 ];
 
+function isH3VisualStyle(
+  value: string,
+): value is (typeof H3_VISUAL_STYLE_OPTIONS)[number] {
+  return (H3_VISUAL_STYLE_OPTIONS as readonly string[]).includes(value);
+}
+
 function noStore(payload: unknown, init?: ResponseInit) {
   return NextResponse.json(payload, {
     ...init,
@@ -54,12 +64,22 @@ export async function POST(req: NextRequest) {
       throw new Error("Choose Text, Image, or Reference mode.");
     if (!H3_PRODUCTION_DURATION_OPTIONS.includes(durationSeconds as 5 | 10))
       throw new Error("Choose a 5- or 10-second duration.");
-    if (!H3_QUALITY_OPTIONS.includes(quality as "lq" | "hq"))
-      throw new Error("Choose LQ or HQ.");
+    if (!H3_QUALITY_OPTIONS.includes(quality as "sh" | "lq" | "hq"))
+      throw new Error("Choose SH, LQ, or HQ.");
     if (!H3_ORIENTATION_OPTIONS.includes(orientation as "landscape" | "portrait"))
       throw new Error("Choose Landscape or Portrait orientation.");
     if (!originalPrompt)
       throw new Error("Write your scene before using Prompt Builder.");
+    const requestedVisualStyle = H3_VISUAL_STYLE_OPTIONS.includes(
+      body?.visualStyle,
+    )
+      ? body.visualStyle
+      : DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.visualStyle;
+    const promptBuilderVisualStyle = resolveH3CanonicalStyle(body?.stylePresetId, false)?.promptBuilderVisualStyle || requestedVisualStyle;
+    if (!isH3VisualStyle(promptBuilderVisualStyle))
+      throw new Error(
+        "Selected H3 style preset has an invalid Prompt Builder visual style.",
+      );
     const optionalLoras = validateH3LoraSelections(
       body?.loras,
       mode as any,
@@ -67,6 +87,19 @@ export async function POST(req: NextRequest) {
     const references = Array.isArray(body?.references)
       ? (body.references as H3StudioReferenceDescriptor[])
       : [];
+    const imageReferences = references.filter((item) => item.kind === "image");
+    /*
+     * Production V2's Ref2V prompt adapter models only canonical image
+     * entities. H3 Studio also accepts video-only and audio-only reference
+     * decks, so use the text adapter for prompt enhancement when there is no
+     * image entity to resolve. The H3 Studio client keeps the real Ref2V mode
+     * and composes its ordered <Video N>/<Audio N> block around the returned
+     * Scene Prompt.
+     */
+    const promptBuilderMode =
+      mode === "h3-reference-to-video" && imageReferences.length === 0
+        ? "h3-text-to-video"
+        : mode;
     const referenceLines = references.map(
       (item, index) =>
         `${item.kind} reference ${index + 1}: ${String(item.description || item.name).trim()}${item.kind === "video" && item.includeAudio ? "; use its audio" : ""}`,
@@ -75,8 +108,11 @@ export async function POST(req: NextRequest) {
       (item) =>
         `Optional H3 LoRA: ${item.label}, strength ${item.strength}${item.triggerWords.length ? `, trigger words ${item.triggerWords.join(", ")}` : ""}`,
     );
+    const quotedDialogueContract =
+      buildH3QuotedDialogueContract(originalPrompt);
     const augmentedRequest = [
       originalPrompt,
+      quotedDialogueContract,
       `Output orientation: ${orientation}.`,
       ...referenceLines,
       ...loraLines,
@@ -85,14 +121,12 @@ export async function POST(req: NextRequest) {
       .join("\n");
 
     const scene = createProductionV2Scene(1, "minimax-h3");
-    scene.generationMode = mode;
+    scene.generationMode = promptBuilderMode;
     scene.durationSeconds = durationSeconds as 5 | 10;
-    scene.h3Quality = quality as "lq" | "hq";
+    scene.h3Quality = quality as "sh" | "lq" | "hq";
     scene.promptOptions = {
       ...DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS,
-      visualStyle: H3_VISUAL_STYLE_OPTIONS.includes(body?.visualStyle)
-        ? body.visualStyle
-        : DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.visualStyle,
+      visualStyle: promptBuilderVisualStyle,
       cameraFeel: H3_CAMERA_FEEL_OPTIONS.includes(body?.cameraFeel)
         ? body.cameraFeel
         : DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.cameraFeel,
@@ -100,8 +134,8 @@ export async function POST(req: NextRequest) {
         ? body.shotFlow
         : DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.shotFlow,
     };
-    scene.promptStateByMode[mode] = {
-      ...scene.promptStateByMode[mode],
+    scene.promptStateByMode[promptBuilderMode] = {
+      ...scene.promptStateByMode[promptBuilderMode],
       userPrompt: augmentedRequest,
     };
 
@@ -118,8 +152,7 @@ export async function POST(req: NextRequest) {
       };
     }
     if (mode === "h3-reference-to-video") {
-      scene.selectedAssets = references
-        .filter((item) => item.kind === "image")
+      scene.selectedAssets = imageReferences
         .map((item, index) => ({
           assetId: `h3-studio-reference-${index + 1}`,
           snapshotName: item.name || `Reference ${index + 1}`,

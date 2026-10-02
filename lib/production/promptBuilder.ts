@@ -3,6 +3,7 @@ import {
   h3StyleProfile,
   productionV2TargetShotCount,
 } from "@/lib/production/promptOptions";
+import { h3CanonicalStylePrompt } from "@/lib/h3StyleRegistry";
 import {
   buildProductionV2LockedReferenceContext,
   resolveProductionV2H3ReferencePlan,
@@ -111,11 +112,15 @@ function stableSubjects(scene: ProductionV2Scene) {
 }
 
 function speakerBrief(scene: ProductionV2Scene) {
+  const embeddedVideoAudioSlots =
+    scene.modelState.h3.referenceToVideo.uploadedVideo?.includeAudio
+      ? 1
+      : 0;
   return productionV2H3VoiceBindings(scene).map((binding) => ({
     characterId: binding.characterId,
     subject: `<Subject ${binding.subjectSlot}>`,
     speakerId: `S${binding.speakerId}`,
-    audio: `<Audio ${binding.audioSlot}>`,
+    audio: `<Audio ${binding.audioSlot + embeddedVideoAudioSlots}>`,
     name: binding.snapshotName,
   }));
 }
@@ -254,7 +259,7 @@ ${userPrompt}
 
 SELECTED LOOK
 Visual style: ${scene.promptOptions.visualStyle}
-Mandatory visual art direction: ${h3StyleProfile(scene.promptOptions.visualStyle)}
+Mandatory visual art direction: ${h3CanonicalStylePrompt(scene.promptOptions.visualStyleId) || h3StyleProfile(scene.promptOptions.visualStyle)}
 Camera feel: ${scene.promptOptions.cameraFeel}
 Shot flow: ${effectiveFlow}
 Format: ${scene.durationSeconds} seconds, ${scene.promptOptions.aspectRatio}, ${scene.promptOptions.quality}
@@ -381,7 +386,7 @@ INVALID DRAFT
 ${cleanGeneratedPrompt(invalidPrompt)}`;
 }
 
-function deterministicScenePrompt(scene: ProductionV2Scene) {
+export function buildProductionV2DeterministicScenePrompt(scene: ProductionV2Scene) {
   const userPrompt = finish(sanitizeNamedStyleReferences(scene.promptStateByMode[scene.generationMode].userPrompt));
   const subjects = stableSubjects(scene).map((item) => item.subject).join(", ");
   const timeline = productionV2ShotTimeline(scene);
@@ -833,7 +838,7 @@ export function validateProductionV2ScenePromptForModel(
 function validatedScenePrompt(scene: ProductionV2Scene, provided?: string) {
   const scenePrompt = applyProductionV2DeterministicDialogueSequence(
     scene,
-    provided || deterministicScenePrompt(scene),
+    provided || buildProductionV2DeterministicScenePrompt(scene),
   );
   const validation = validateProductionV2ScenePrompt(scene, scenePrompt);
   if (!validation.ok) throw new Error(`Scene Prompt validation failed: ${validation.errors.join(" ")}`);

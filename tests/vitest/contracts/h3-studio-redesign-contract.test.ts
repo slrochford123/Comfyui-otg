@@ -10,8 +10,11 @@ import {
 } from "../../../lib/h3LoraCatalogServer";
 import {
   buildH3StudioLockedReferences,
+  buildH3QuotedDialogueContract,
   composeH3StudioFinalPrompt,
+  extractH3QuotedDialogue,
   h3StudioPromptFingerprint,
+  preserveH3QuotedDialogue,
 } from "../../../lib/h3Studio";
 import { buildH3Workflow } from "../../../lib/production/h3Workflows";
 
@@ -25,6 +28,36 @@ afterEach(() => {
 });
 
 describe("H3 Studio redesign contracts", () => {
+  it("preserves quoted character dialogue verbatim through Prompt Builder", () => {
+    const original = 'Maya says “We leave at sunrise.” Then Jo answers "I am ready."';
+    expect(extractH3QuotedDialogue(original).map((item) => item.text)).toEqual([
+      "We leave at sunrise.",
+      "I am ready.",
+    ]);
+    expect(buildH3QuotedDialogueContract(original)).toContain(
+      "Do not omit, summarize, paraphrase, translate, merge, or add words",
+    );
+
+    const restored = preserveH3QuotedDialogue(
+      original,
+      "Maya and Jo agree to leave together.",
+    );
+    expect(restored).toContain('“We leave at sunrise.”');
+    expect(restored).toContain('"I am ready."');
+    expect(restored.indexOf("We leave at sunrise.")).toBeLessThan(
+      restored.indexOf("I am ready."),
+    );
+  });
+
+  it("does not duplicate exact dialogue already returned by Ollama", () => {
+    const line = 'Maya says "Do not move."';
+    const generated = 'Close-up as Maya says "Do not move."';
+    expect(preserveH3QuotedDialogue(line, generated)).toBe(generated);
+    expect(
+      preserveH3QuotedDialogue('One says "Go." Then two says "Go."', 'One says "Go."'),
+    ).toBe('One says "Go."\n\nSpoken dialogue — preserve verbatim:\n"Go."');
+  });
+
   it("uses the shared durable Production Ollama operation and explicit review UI", () => {
     const panel = read("app/app/components/H3Panel.tsx");
     const route = read("app/api/h3/prompt/route.ts");
@@ -38,6 +71,22 @@ describe("H3 Studio redesign contracts", () => {
       "The optional Builder prompt changed.",
     );
     expect(panel).toContain("Use Current Raw Prompt");
+    expect(panel).toContain("preserveH3QuotedDialogue");
+    expect(panel).toContain(
+      "Dialogue inside quotation marks is preserved word-for-word",
+    );
+    expect(route).toContain("buildH3QuotedDialogueContract(originalPrompt)");
+  });
+
+  it("lets the Prompt Builder accept a video-only H3 reference deck", () => {
+    const route = read("app/api/h3/prompt/route.ts");
+    expect(route).toContain(
+      'mode === "h3-reference-to-video" && imageReferences.length === 0',
+    );
+    expect(route).toContain('? "h3-text-to-video"');
+    expect(route).toContain("scene.generationMode = promptBuilderMode");
+    expect(route).toContain("scene.promptStateByMode[promptBuilderMode]");
+    expect(route).toContain("scene.selectedAssets = imageReferences");
   });
 
   it("assembles protected image, video-audio, and standalone-audio mappings deterministically", () => {

@@ -126,6 +126,23 @@ describe(
     );
 
     it(
+      "keeps RTX 3090 first in H3 backend priority",
+      () => {
+        const workflowSource = readFileSync(
+          join(
+            process.cwd(),
+            "lib/production/h3Workflows.ts",
+          ),
+          "utf8",
+        );
+
+        expect(workflowSource).toMatch(
+          /H3_BACKEND_PRIORITY[\s\S]*"rtx3090"[\s\S]*"rtx5060ti"/,
+        );
+      },
+    );
+
+    it(
       "prefers idle compatible backends first",
       () => {
         const source =

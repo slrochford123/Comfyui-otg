@@ -14,7 +14,11 @@
     "voice-worker:once": "node -r ./scripts/register-ts-worker.cjs ./scripts/run-voice-pipeline-worker-once.ts",
     "e2e": "playwright test",
     "postinstall": "node scripts/ensure-native-deps.cjs",
-    "check:native": "node scripts/ensure-native-deps.cjs"
+    "check:native": "node scripts/ensure-native-deps.cjs",
+    "h3:style-media:validate": "node scripts/h3-style-preview-assets.mjs validate",
+    "h3:style-preview:prompts": "node scripts/h3-style-preview-runner.cjs prompts",
+    "h3:style-preview:generate": "node scripts/h3-style-preview-runner.cjs generate --resume",
+    "h3:style-preview:validate": "node scripts/h3-style-preview-runner.cjs validate"
   },
   "dependencies": {
     "@capacitor/android": "7.6.4",

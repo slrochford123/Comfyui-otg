@@ -4074,6 +4074,7 @@ function CharacterBuilder({
   const [error, setError] = useState("");
   const [step, setStep] = useState<BuilderStep>("source");
   const [expandedCharacterDescriptions, setExpandedCharacterDescriptions] = useState<Record<string, boolean>>({});
+  const [playingSavedCharacterVideoByIdV36BP8, setPlayingSavedCharacterVideoByIdV36BP8] = useState<Record<string, boolean>>({});
   const [generationPrompt, setGenerationPrompt] = useState("");
   const [stylePreset, setStylePreset] = useState<(typeof STYLE_PRESETS)[number]>("Anime");
   const [candidates, setCandidates] = useState<CandidateImage[]>([]);
@@ -12070,6 +12071,66 @@ function characterDisplayImagePathV36BP8(character: any) {
   );
 }
 
+function characterSavedVideoRefV36BP8(character: any): string {
+  const directCandidates = [
+    character?.introVideoPath,
+    character?.introVideoUrl,
+    character?.videoPath,
+    character?.videoUrl,
+    character?.previewVideoPath,
+    character?.previewVideoUrl,
+    character?.dubbedPreviewVideoPath,
+    character?.dubbedPreviewVideoUrl,
+    character?.outputVideoPath,
+    character?.outputVideoUrl,
+    character?.metadata?.introVideoPath,
+    character?.metadata?.introVideoUrl,
+    character?.metadata?.videoPath,
+    character?.metadata?.videoUrl,
+    character?.metadata?.previewVideoPath,
+    character?.metadata?.previewVideoUrl,
+    character?.metadata?.dubbedPreviewVideoPath,
+    character?.metadata?.dubbedPreviewVideoUrl,
+    character?.metadata?.outputVideoPath,
+    character?.metadata?.outputVideoUrl,
+    character?.characterVoiceProfile?.introVideoPath,
+    character?.characterVoiceProfile?.introVideoUrl,
+    character?.characterVoiceProfile?.previewVideoPath,
+    character?.characterVoiceProfile?.previewVideoUrl,
+    character?.characterVoiceProfile?.dubbedPreviewVideoPath,
+    character?.characterVoiceProfile?.dubbedPreviewVideoUrl,
+    character?.characterVoiceProfile?.outputVideoPath,
+    character?.characterVoiceProfile?.outputVideoUrl,
+  ];
+
+  for (const candidate of directCandidates) {
+    const value = String(candidate || "").trim();
+    if (value) return value;
+  }
+
+  const artifacts = [
+    ...(Array.isArray(character?.voiceModelArtifacts) ? character.voiceModelArtifacts : []),
+    ...(Array.isArray(character?.characterVoiceProfile?.voiceModelArtifacts) ? character.characterVoiceProfile.voiceModelArtifacts : []),
+  ];
+
+  for (const artifact of artifacts) {
+    const value = String(
+      artifact?.introVideoPath ||
+        artifact?.introVideoUrl ||
+        artifact?.previewVideoPath ||
+        artifact?.previewVideoUrl ||
+        artifact?.dubbedPreviewVideoPath ||
+        artifact?.dubbedPreviewVideoUrl ||
+        artifact?.outputVideoPath ||
+        artifact?.outputVideoUrl ||
+        "",
+    ).trim();
+    if (value) return value;
+  }
+
+  return "";
+}
+
 function getCandidateImageRefV36BP4B(candidate: unknown) {
   const item = (candidate || {}) as any;
   return String(
@@ -15118,11 +15179,51 @@ return (
                   ? `${description.slice(0, descriptionLimit).trimEnd()}...`
                   : description;
                 const hasVoice = characterHasCustomVoice(character);
+                const savedVideoRef = characterSavedVideoRefV36BP8(character);
+                const savedVideoSrc = savedVideoRef ? otgDisplayImageUrlV36BP8(fileUrlFor(savedVideoRef)) : "";
+                const savedCharacterPlaying = Boolean(savedVideoSrc && playingSavedCharacterVideoByIdV36BP8[characterKey]);
+                const displayImagePath = characterDisplayImagePathV36BP8(character);
 
                 return (
                   <div key={character.id || characterKey} className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
-                    {character.previewImagePath || character.imagePath ? (
-                      <img src={otgDisplayImageUrlV36BP8(fileUrlFor(characterDisplayImagePathV36BP8(character)))} alt={character.name} className="mb-3 h-52 w-full rounded-lg bg-black/30 object-contain" />
+                    {savedCharacterPlaying ? (
+                      <video
+                        key={`${characterKey}:${savedVideoSrc}`}
+                        src={savedVideoSrc}
+                        controls
+                        autoPlay
+                        playsInline
+                        preload="metadata"
+                        className="mb-3 h-52 w-full rounded-lg bg-black/30 object-contain"
+                        aria-label={`${character.name} video preview`}
+                      />
+                    ) : displayImagePath ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!savedVideoSrc) return;
+                          setPlayingSavedCharacterVideoByIdV36BP8((current) => ({
+                            ...current,
+                            [characterKey]: true,
+                          }));
+                        }}
+                        disabled={!savedVideoSrc}
+                        className={classNames(
+                          "group relative mb-3 block h-52 w-full overflow-hidden rounded-lg bg-black/30",
+                          savedVideoSrc ? "cursor-pointer border border-white/10 transition hover:border-cyan-300/60 focus:outline-none focus:ring-2 focus:ring-cyan-300/60" : "cursor-default border border-transparent",
+                        )}
+                        aria-label={savedVideoSrc ? `Play ${character.name} video` : `${character.name} character image`}
+                        title={savedVideoSrc ? "Play character video" : "No saved character video yet"}
+                      >
+                        <img src={otgDisplayImageUrlV36BP8(fileUrlFor(displayImagePath))} alt={character.name} className="h-full w-full object-contain" />
+                        {savedVideoSrc ? (
+                          <span className="absolute inset-0 flex items-center justify-center bg-black/0 transition group-hover:bg-black/20">
+                            <span className="rounded-full border border-white/30 bg-black/70 px-3 py-2 text-xs font-black uppercase tracking-[0.16em] text-white shadow-lg">
+                              Play
+                            </span>
+                          </span>
+                        ) : null}
+                      </button>
                     ) : null}
 
                     <p className="text-base font-semibold leading-snug text-zinc-100">{character.name}</p>

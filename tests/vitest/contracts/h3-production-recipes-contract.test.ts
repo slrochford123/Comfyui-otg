@@ -27,11 +27,12 @@ const modes: H3ProductionMode[] = [
   "h3-reference-to-video",
 ];
 const durations: H3ProductionDuration[] = [5, 10];
-const qualities: H3Quality[] = ["lq", "hq"];
+const qualities: H3Quality[] = ["sh", "lq", "hq"];
 
-describe("MiniMax H3 LQ/HQ production recipe matrix", () => {
-  it("accepts only the two quality tiers and defaults unknown values to LQ", () => {
-    expect(H3_QUALITY_OPTIONS).toEqual(["lq", "hq"]);
+describe("MiniMax H3 SH/LQ/HQ production recipe matrix", () => {
+  it("accepts Scene Hunter plus the two final quality tiers and defaults unknown values to LQ", () => {
+    expect(H3_QUALITY_OPTIONS).toEqual(["sh", "lq", "hq"]);
+    expect(normalizeH3Quality("sh")).toBe("sh");
     expect(normalizeH3Quality("hq")).toBe("hq");
     expect(normalizeH3Quality("lq")).toBe("lq");
     expect(normalizeH3Quality("1.2mp")).toBe("lq");
@@ -39,10 +40,10 @@ describe("MiniMax H3 LQ/HQ production recipe matrix", () => {
     expect(H3_PRODUCTION_DURATION_OPTIONS).toEqual([5, 10]);
   });
 
-  it("registers exactly 24 unique, existing, deterministic route files", () => {
-    expect(H3_PRODUCTION_ROUTE_KEYS).toHaveLength(24);
-    expect(new Set(H3_PRODUCTION_ROUTE_KEYS).size).toBe(24);
-    expect(Object.keys(H3_PRODUCTION_RECIPES)).toHaveLength(24);
+  it("registers exactly 36 unique, existing, deterministic route files", () => {
+    expect(H3_PRODUCTION_ROUTE_KEYS).toHaveLength(36);
+    expect(new Set(H3_PRODUCTION_ROUTE_KEYS).size).toBe(36);
+    expect(Object.keys(H3_PRODUCTION_RECIPES)).toHaveLength(36);
 
     for (const backend of backends) {
       for (const mode of modes) {
@@ -58,7 +59,7 @@ describe("MiniMax H3 LQ/HQ production recipe matrix", () => {
     }
   });
 
-  it("matches all 24 production graph checksums recorded in provenance", () => {
+  it("keeps the original 24 LQ/HQ production graph checksums recorded in provenance", () => {
     const provenance = JSON.parse(fs.readFileSync(
       path.join(root, "comfy_workflows/internal/production-v2/h3-lq-hq/PROVENANCE.json"),
       "utf8",
@@ -71,10 +72,14 @@ describe("MiniMax H3 LQ/HQ production recipe matrix", () => {
     }
   });
 
-  it("locks the LQ/HQ native contracts and approved SLA Turbo8 recipe", () => {
+  it("locks the SH/LQ/HQ native contracts and approved SLA Turbo8 recipe", () => {
     for (const recipe of Object.values(H3_PRODUCTION_RECIPES)) {
       expect([recipe.megapixels, recipe.nativeWidth, recipe.nativeHeight])
-        .toEqual(recipe.quality === "lq" ? [0.6, 1056, 608] : [1, 1376, 768]);
+        .toEqual(recipe.quality === "sh"
+          ? [0.2, 608, 352]
+          : recipe.quality === "lq"
+            ? [0.6, 1056, 608]
+            : [1, 1376, 768]);
       expect(recipe.frameCount).toBe(recipe.durationSeconds === 5 ? 124 : 243);
       expect(recipe.steps).toBe(8);
       expect(recipe.turboLoraStrength).toBe(1);
@@ -86,6 +91,17 @@ describe("MiniMax H3 LQ/HQ production recipe matrix", () => {
       expect(recipe.videoSigmaShift).toBe(6);
       expect(recipe.audioSigmaShift).toBe(3);
       expect(recipe.preSubmitCleanup).toBeNull();
+    }
+  });
+
+  it("sets Scene Hunter workflow selectors to exactly 0.2 MP without changing LQ/HQ selectors", () => {
+    for (const recipe of Object.values(H3_PRODUCTION_RECIPES)) {
+      const graph = JSON.parse(fs.readFileSync(path.join(root, recipe.workflowFile), "utf8")) as Record<string, any>;
+      expect(graph["20"].class_type).toBe("ResolutionSelector");
+      expect(graph["20"].inputs.multiple).toBe(32);
+      expect(graph["20"].inputs.megapixels).toBe(
+        recipe.quality === "sh" ? 0.2 : recipe.quality === "lq" ? 0.6 : 1,
+      );
     }
   });
 
@@ -112,6 +128,8 @@ describe("MiniMax H3 LQ/HQ production recipe matrix", () => {
   it("returns exact backend ETA metadata or the backend range", () => {
     expect(getH3ProductionTimeEstimate("h3-image-to-video", 5, "lq", "rtx5060ti"))
       .toEqual({ seconds: 95.409, minSeconds: 95.409, maxSeconds: 95.409 });
+    expect(getH3ProductionTimeEstimate("h3-text-to-video", 5, "sh", "rtx3090"))
+      .toEqual({ seconds: 119.64, minSeconds: 119.64, maxSeconds: 119.64 });
     expect(getH3ProductionTimeEstimate("h3-reference-to-video", 10, "hq"))
       .toEqual({ seconds: null, minSeconds: 680.282, maxSeconds: 940.042 });
   });

@@ -6,6 +6,13 @@ import {
   type ProductionV2H3UserLoraState,
 } from "@/lib/production/h3Loras";
 import {
+  DEFAULT_H3_ADVANCED_SETTINGS,
+  H3_SINGULARITY_CHECKPOINT,
+  normalizeH3AdvancedSettings,
+  resolveH3RenderSettings,
+  type H3AdvancedSettings,
+} from "@/lib/production/h3Settings";
+import {
   H3_PRODUCTION_DURATION_OPTIONS,
   H3_NATIVE_RESOLUTIONS,
   getH3NativeDimensions,
@@ -42,13 +49,15 @@ export const H3_MAX_VIDEO_REFERENCES = 3;
 export const H3_MAX_AUDIO_REFERENCES = 3;
 export const H3_LQ_NATIVE_WIDTH = H3_NATIVE_RESOLUTIONS.lq.width;
 export const H3_LQ_NATIVE_HEIGHT = H3_NATIVE_RESOLUTIONS.lq.height;
+export const H3_SH_NATIVE_WIDTH = H3_NATIVE_RESOLUTIONS.sh.width;
+export const H3_SH_NATIVE_HEIGHT = H3_NATIVE_RESOLUTIONS.sh.height;
 export const H3_HQ_NATIVE_WIDTH = H3_NATIVE_RESOLUTIONS.hq.width;
 export const H3_HQ_NATIVE_HEIGHT = H3_NATIVE_RESOLUTIONS.hq.height;
 export const H3_FPS = 24;
 export const H3_SAMPLER_STEPS = 8;
 export const H3_BACKEND_PRIORITY: readonly ProductionV2H3BackendId[] = [
-  "rtx5060ti",
   "rtx3090",
+  "rtx5060ti",
 ] as const;
 
 const WORKFLOW_ROOT = "comfy_workflows/internal/production-v2";
@@ -162,6 +171,7 @@ const H3_COMMON_REQUIRED_NODE_CLASSES = [
   "RandomNoise",
   "BasicGuider",
   "H3SLAAttention",
+  "ModelPreviewOverrideKJ",
 ] as const;
 
 /**
@@ -174,6 +184,7 @@ export const H3_REQUIRED_NODE_CLASSES = H3_COMMON_REQUIRED_NODE_CLASSES;
 export function h3RequiredNodeClassesForBackend(
   _backend: ProductionV2H3BackendId,
 ): string[] {
+  void _backend;
   return [...H3_COMMON_REQUIRED_NODE_CLASSES];
 }
 
@@ -471,7 +482,7 @@ export function validateH3WorkflowTemplate(
   }
 
   if (classEntries(graph, "SpectrumApplyMiniMaxH3").length !== 0) {
-    throw new Error("Qualified LQ/HQ H3 routes must not use obsolete Spectrum attention.");
+    throw new Error("Qualified SH/LQ/HQ H3 routes must not use obsolete Spectrum attention.");
   }
 
   const sla = oneClassNode(graph, "H3SLAAttention");
@@ -591,6 +602,7 @@ export type H3WorkflowBuildInput = {
     includeAudio: boolean;
   }>;
   userLoras?: ProductionV2H3UserLoraState;
+  h3Settings?: H3AdvancedSettings;
   optionalLoras?: Array<{
     id: string;
     label: string;
@@ -715,6 +727,66 @@ function applyQualifiedH3ProductionRecipe(
   };
 }
 
+function deleteGraphNode(graph: H3PromptGraph, nodeId: string) {
+  delete graph[nodeId];
+}
+
+function applyH3ResolvedRenderSettings(
+  graph: H3PromptGraph,
+  input: Pick<H3WorkflowBuildInput, "h3Quality" | "h3Settings">,
+  referenceCount: number,
+) {
+  const resolved = resolveH3RenderSettings(
+    input.h3Settings || DEFAULT_H3_ADVANCED_SETTINGS,
+    referenceCount,
+  );
+
+  graph["24"].inputs.steps = resolved.steps;
+  graph["24"].inputs.scheduler = resolved.scheduler;
+  graph["18"].inputs.sampler_name = resolved.sampler;
+
+  if (resolved.checkpoint !== "standard") {
+    graph["30"].inputs.unet_name = H3_SINGULARITY_CHECKPOINT;
+  }
+
+  let baseModelNodeId = "36";
+  if (!resolved.turboLora) {
+    deleteGraphNode(graph, "36");
+    baseModelNodeId = "30";
+  }
+
+  resolved.singularityLoras.forEach((lora, index) => {
+    const nodeId = String(9001 + index);
+    if (graph[nodeId]) {
+      throw new Error(`H3 Singularity LoRA node ${nodeId} collides with the workflow template.`);
+    }
+    graph[nodeId] = {
+      class_type: "LoraLoaderModelOnly",
+      inputs: {
+        model: [baseModelNodeId, 0],
+        lora_name: lora.filename,
+        strength_model: lora.strength,
+      },
+      _meta: {
+        title: `OTG H3 ${lora.label} LoRA`,
+      },
+    };
+    baseModelNodeId = nodeId;
+  });
+
+  const useFullDense = resolved.attentionPath === "full-dense" && input.h3Quality !== "hq";
+  if (useFullDense) {
+    const sla = oneClassNode(graph, "H3SLAAttention");
+    graph["32"].inputs.model = ["38", 0];
+    deleteGraphNode(graph, sla.id);
+  }
+
+  return {
+    resolved,
+    baseModelNodeId,
+  };
+}
+
 function applyH3UserLoraChain(
   graph: H3PromptGraph,
   value: ProductionV2H3UserLoraState | undefined,
@@ -759,7 +831,246 @@ function applyH3UserLoraChain(
   return selected;
 }
 
+function applyH3PreviewModelOverride(
+  graph: H3PromptGraph,
+  previewFrames: number,
+) {
+  const nodeId = "164";
+  if (graph[nodeId]) {
+    throw new Error("H3 preview model override node collides with the workflow template.");
+  }
+  const audioVae = graph["4"]?.class_type === "VAELoader" ? { audio_vae: ["4", 0] } : {};
+  graph[nodeId] = {
+    class_type: "ModelPreviewOverrideKJ",
+    inputs: {
+      max_resolution: 512,
+      jpeg_quality: 80,
+      suppress_default_preview: true,
+      preview_frames: previewFrames,
+      preview_fps: H3_FPS,
+      tiny_vae: "taeh3.safetensors",
+      model: graph["32"].inputs.model,
+      ...audioVae,
+    },
+    _meta: {
+      title: "OTG H3 Approximate Preview",
+    },
+  };
+  graph["32"].inputs.model = [nodeId, 0];
+  graph["24"].inputs.model = [nodeId, 0];
+}
+
+function applyH3RefMod(
+  graph: H3PromptGraph,
+  args: {
+    conditioningNodeId: string;
+    basicGuiderNodeId: string;
+    targetReferenceNodeId: string;
+    retention: 0.7 | 1.0;
+    guideNodeId?: string;
+  },
+) {
+  if (graph["9200"] || graph["9201"]) {
+    throw new Error("H3 RefMod nodes collide with the workflow template.");
+  }
+
+  const videoVae = graph[args.conditioningNodeId].inputs.vae;
+  graph["9200"] = {
+    class_type: "MiniMaxH3RefModExtract",
+    inputs: {
+      name: "otg_h3_refmod_reference",
+      mode: "encode",
+      concept_type: "identity",
+      background_retention: 0,
+      ref_resolution: 1024,
+      pool_h: 16,
+      pool_w: 16,
+      latent_frames: 16,
+      identity: 500,
+      merge: false,
+      motion_only: false,
+      multiplier: 1,
+      max_tokens: 0,
+      description: "OTG selected H3 visual reference",
+      save: false,
+      "refs_image.ref_image_0": [args.targetReferenceNodeId, 0],
+      vae: videoVae,
+      extraction_preset: "manual",
+      budget_policy: "truncate",
+    },
+    _meta: {
+      title: "OTG H3 RefMod Extract",
+    },
+  };
+  graph["9201"] = {
+    class_type: "MiniMaxH3RefModApply",
+    inputs: {
+      conditioning: [args.conditioningNodeId, 0],
+      mods: ["9200", 0],
+      override: false,
+      retention: args.retention,
+      curve_direction: "constant",
+      scramble_seed: -1,
+      curve_shape: "linear",
+      curve_value: 1,
+      graph_preset: "(none)",
+      scramble_mode: "shuffle",
+      scramble_keep: 1,
+      max_total_tokens: 0,
+      save_preset_as: "",
+    },
+    _meta: {
+      title: "OTG H3 RefMod Apply",
+    },
+  };
+
+  if (args.guideNodeId && graph[args.guideNodeId]?.class_type === "MiniMaxH3AddGuide") {
+    graph[args.guideNodeId].inputs.positive = ["9201", 0];
+  } else {
+    graph[args.basicGuiderNodeId].inputs.conditioning = ["9201", 0];
+  }
+}
+
+function applyH3MotionLab(
+  graph: H3PromptGraph,
+  args: {
+    conditioningNodeId: string;
+    samplerNodeId: string;
+    basicGuiderNodeId: string;
+    seedNodeId: string;
+    outputVideoNodeId: string;
+  },
+) {
+  const requiredFreeIds = ["9299", "9300", "9301", "9302", "9303", "9304", "9305", "9306", "9307", "9308", "9309", "9310", "9311"];
+  if (requiredFreeIds.some((nodeId) => graph[nodeId])) {
+    throw new Error("H3 Motion Lab nodes collide with the workflow template.");
+  }
+
+  const length = graph[args.conditioningNodeId].inputs.length;
+  const fps = graph["34"]?.inputs.fps || 24;
+  const seed = graph[args.seedNodeId].inputs.noise_seed;
+  const recoveryConditioningInputs = {
+    ...graph[args.conditioningNodeId].inputs,
+    length: ["9301", 2],
+  };
+
+  graph["9299"] = {
+    class_type: "VAEDecode",
+    inputs: { samples: [args.samplerNodeId, 0], vae: ["3", 0] },
+    _meta: { title: "OTG H3 Motion Lab Base Decode" },
+  };
+  graph["9300"] = {
+    class_type: "H3JerkOracle",
+    inputs: {
+      samples: [args.samplerNodeId, 0],
+      length,
+      q: 0.75,
+      d_max: 4,
+      ramp: true,
+      preset: "balanced (default)",
+      bridge: 8,
+      profile_mode: "value |d3| (default)",
+      abstain_below: 0,
+      fps,
+      s_per_step: 0,
+      est_steps: 20,
+      overhead_s: 6.7,
+      model_profile: "minimax-h3",
+      protect_tail: 0,
+    },
+    _meta: { title: "OTG H3 Motion Lab Jerk Oracle" },
+  };
+  graph["9301"] = {
+    class_type: "H3TimeSmear",
+    inputs: {
+      images: ["9299", 0],
+      dilation: 4,
+      hold_map: ["9300", 0],
+      expand_to_end: true,
+      fps,
+      s_per_step: 0,
+      est_steps: 20,
+      overhead_s: 6.7,
+    },
+    _meta: { title: "OTG H3 Motion Lab De-rope" },
+  };
+  graph["9302"] = {
+    class_type: "VAEEncode",
+    inputs: { pixels: ["9301", 0], vae: ["3", 0] },
+    _meta: { title: "OTG H3 Motion Lab Encode" },
+  };
+  graph["9303"] = {
+    class_type: "H3V2VInit",
+    inputs: { samples: ["9302", 0], length: 0 },
+    _meta: { title: "OTG H3 Motion Lab V2V Init" },
+  };
+  graph["9304"] = {
+    class_type: "H3InjectSchedule",
+    inputs: {
+      model: graph["24"].inputs.model,
+      scheduler: "simple",
+      total_steps: 20,
+      inject: 0.48,
+    },
+    _meta: { title: "OTG H3 Motion Lab Inject Schedule" },
+  };
+  graph["9305"] = {
+    class_type: "RandomNoise",
+    inputs: { noise_seed: seed },
+    _meta: { title: "OTG H3 Motion Lab Recovery Noise" },
+  };
+  graph["9306"] = {
+    class_type: graph[args.conditioningNodeId].class_type,
+    inputs: recoveryConditioningInputs,
+    _meta: { title: "OTG H3 Motion Lab Recovery Conditioning" },
+  };
+  graph["9307"] = {
+    class_type: "BasicGuider",
+    inputs: {
+      model: graph[args.basicGuiderNodeId].inputs.model,
+      conditioning: ["9306", 0],
+    },
+    _meta: { title: "OTG H3 Motion Lab Recovery Guider" },
+  };
+  graph["9308"] = {
+    class_type: "SamplerCustomAdvanced",
+    inputs: {
+      noise: ["9305", 0],
+      guider: ["9307", 0],
+      sampler: graph[args.samplerNodeId].inputs.sampler,
+      sigmas: ["9304", 0],
+      latent_image: ["9303", 0],
+    },
+    _meta: { title: "OTG H3 Motion Lab Recovery Sampler" },
+  };
+  graph["9309"] = {
+    class_type: "VAEDecode",
+    inputs: { samples: ["9308", 0], vae: ["3", 0] },
+    _meta: { title: "OTG H3 Motion Lab Recovery Decode" },
+  };
+  graph["9310"] = {
+    class_type: "H3ExactRecover",
+    inputs: { images: ["9309", 0], hold_map: ["9301", 1] },
+    _meta: { title: "OTG H3 Motion Lab Exact Duration Recover" },
+  };
+  graph["9311"] = {
+    class_type: "CreateVideo",
+    inputs: {
+      images: ["9310", 0],
+      fps,
+      bit_depth: 8,
+      audio: ["14", 0],
+    },
+    _meta: { title: "OTG H3 Motion Lab Final Video With Original Audio" },
+  };
+  graph[args.outputVideoNodeId].inputs.video = ["9311", 0];
+}
+
 export function buildH3Workflow(input: H3WorkflowBuildInput) {
+  const normalizedSettings = normalizeH3AdvancedSettings(
+    input.h3Settings || DEFAULT_H3_ADVANCED_SETTINGS,
+    input.references?.length || 0,
+  );
   const graph = loadH3WorkflowTemplate(
     input.backend,
     input.mode,
@@ -779,10 +1090,18 @@ export function buildH3Workflow(input: H3WorkflowBuildInput) {
 
   const {
     recipe,
-    baseModelNodeId,
   } = applyQualifiedH3ProductionRecipe(
     graph,
     input,
+  );
+
+  const {
+    resolved,
+    baseModelNodeId,
+  } = applyH3ResolvedRenderSettings(
+    graph,
+    { h3Quality: input.h3Quality, h3Settings: normalizedSettings },
+    input.references?.length || 0,
   );
 
   applyH3UserLoraChain(
@@ -790,6 +1109,10 @@ export function buildH3Workflow(input: H3WorkflowBuildInput) {
     input.userLoras,
     baseModelNodeId,
     input.optionalLoras,
+  );
+  applyH3PreviewModelOverride(
+    graph,
+    h3FrameCountForDuration(input.durationSeconds),
   );
 
   const contract = H3_WORKFLOW_CONTRACTS[input.mode];
@@ -1070,10 +1393,36 @@ export function buildH3Workflow(input: H3WorkflowBuildInput) {
             .inputs[`ref_video_audios.ref_video_audio_${index}`] = [
               componentsNodeId,
               1,
-            ];
+          ];
         }
       });
+
+      if (resolved.refModRetention !== null && references.length) {
+        const targetIndex = normalizedSettings.refMod.targetReference ?? 0;
+        const targetNodeId = referenceContract.referenceImageNodeIds[
+          Math.max(0, Math.min(references.length - 1, targetIndex))
+        ];
+        applyH3RefMod(graph, {
+          conditioningNodeId: contract.conditioningNodeId,
+          basicGuiderNodeId: referenceContract.basicGuiderNodeId,
+          targetReferenceNodeId: targetNodeId,
+          retention: resolved.refModRetention,
+          guideNodeId: continuationGuideFilename
+            ? referenceContract.continuationGuideNodeId
+            : undefined,
+        });
+      }
     }
+  }
+
+  if (resolved.motionLabInject !== null) {
+    applyH3MotionLab(graph, {
+      conditioningNodeId: contract.conditioningNodeId,
+      samplerNodeId: "21",
+      basicGuiderNodeId: "32",
+      seedNodeId: contract.seedNodeId,
+      outputVideoNodeId: contract.outputVideoNodeId,
+    });
   }
 
   return {
@@ -1086,7 +1435,7 @@ export function buildH3Workflow(input: H3WorkflowBuildInput) {
     recipeId: recipe.recipeId,
     nativeWidth: nativeDimensions.width,
     nativeHeight: nativeDimensions.height,
-    steps: recipe.steps,
+    steps: resolved.steps,
     preSubmitCleanup: recipe.preSubmitCleanup,
     frameCount:
       h3FrameCountForDuration(input.durationSeconds),

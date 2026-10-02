@@ -25,6 +25,7 @@ export type AdminGalleryItem = {
   height?: number;
   durationSeconds?: number;
   url: string;
+  thumbnailUrl?: string;
 };
 
 export type AdminGallerySourceStatus = {
@@ -322,8 +323,13 @@ async function listRemoteSource(source: AdminGallerySourceDefinition, limit: num
   return { count: finiteNonNegative(payload.count) || items.length, items, hasMore: Boolean(payload.hasMore) };
 }
 
-function toItem(source: AdminGallerySourceDefinition, value: Omit<AdminGalleryItem, "id" | "source" | "sourceLabel" | "mimeType" | "url"> & { mimeType?: string }) {
+function toItem(source: AdminGallerySourceDefinition, value: Omit<AdminGalleryItem, "id" | "source" | "sourceLabel" | "mimeType" | "url" | "thumbnailUrl"> & { mimeType?: string }) {
   const params = new URLSearchParams({ source: source.id, rel: value.rel });
+  const thumbnailParams = new URLSearchParams({
+    source: source.id,
+    rel: value.rel,
+    v: String(value.mtimeMs),
+  });
   return {
     ...value,
     id: `${source.id}:${value.rel}`,
@@ -331,6 +337,9 @@ function toItem(source: AdminGallerySourceDefinition, value: Omit<AdminGalleryIt
     sourceLabel: source.label,
     mimeType: value.mimeType || contentTypeForAdminGalleryPath(value.rel),
     url: `/api/admin/gallery-file?${params.toString()}`,
+    ...(value.kind === "video"
+      ? { thumbnailUrl: `/api/admin/gallery-thumbnail?${thumbnailParams.toString()}` }
+      : {}),
   };
 }
 

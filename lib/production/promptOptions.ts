@@ -65,6 +65,7 @@ export type ProductionV2AspectRatio = (typeof H3_ASPECT_RATIO_OPTIONS)[number];
 export type ProductionV2Quality = (typeof H3_QUALITY_OPTIONS)[number];
 
 export type ProductionV2PromptOptions = {
+  visualStyleId: string;
   visualStyle: ProductionV2VisualStyle;
   cameraFeel: ProductionV2CameraFeel;
   shotFlow: ProductionV2ShotFlow;
@@ -76,6 +77,7 @@ export type ProductionV2PromptOptions = {
 };
 
 export const DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS: ProductionV2PromptOptions = {
+  visualStyleId: "cinematic-realism",
   visualStyle: "Cinematic realism",
   cameraFeel: "Automatic cinematic camera",
   shotFlow: "Let H3 decide",

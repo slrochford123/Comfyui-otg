@@ -1,0 +1,132 @@
+{
+  "cinematic-realism": {
+    "poster": "/h3/styles/cinematic-realism/poster.webp",
+    "previewVideo": "/h3/styles/cinematic-realism/preview.mp4",
+    "previewWebm": "/h3/styles/cinematic-realism/preview.webm"
+  },
+  "live-action": {
+    "poster": "/h3/styles/live-action/poster.webp",
+    "previewVideo": "/h3/styles/live-action/preview.mp4",
+    "previewWebm": "/h3/styles/live-action/preview.webm"
+  },
+  "3d-animation": {
+    "poster": "/h3/styles/3d-animation/poster.webp",
+    "previewVideo": "/h3/styles/3d-animation/preview.mp4",
+    "previewWebm": "/h3/styles/3d-animation/preview.webm"
+  },
+  "cartoon": {
+    "poster": "/h3/styles/cartoon/poster.webp",
+    "previewVideo": "/h3/styles/cartoon/preview.mp4",
+    "previewWebm": "/h3/styles/cartoon/preview.webm"
+  },
+  "anime": {
+    "poster": "/h3/styles/anime/poster.webp",
+    "previewVideo": "/h3/styles/anime/preview.mp4",
+    "previewWebm": "/h3/styles/anime/preview.webm"
+  },
+  "illustrated": {
+    "poster": "/h3/styles/illustrated/poster.webp",
+    "previewVideo": "/h3/styles/illustrated/preview.mp4",
+    "previewWebm": "/h3/styles/illustrated/preview.webm"
+  },
+  "game-cinematic": {
+    "poster": "/h3/styles/game-cinematic/poster.webp",
+    "previewVideo": "/h3/styles/game-cinematic/preview.mp4",
+    "previewWebm": "/h3/styles/game-cinematic/preview.webm"
+  },
+  "gameplay-first-person": {
+    "poster": "/h3/styles/gameplay-first-person/poster.webp",
+    "previewVideo": "/h3/styles/gameplay-first-person/preview.mp4",
+    "previewWebm": "/h3/styles/gameplay-first-person/preview.webm"
+  },
+  "stop-motion": {
+    "poster": "/h3/styles/stop-motion/poster.webp",
+    "previewVideo": "/h3/styles/stop-motion/preview.mp4",
+    "previewWebm": "/h3/styles/stop-motion/preview.webm"
+  },
+  "mixed-live-action-and-hand-drawn-animation": {
+    "poster": "/h3/styles/mixed-live-action-and-hand-drawn-animation/poster.webp",
+    "previewVideo": "/h3/styles/mixed-live-action-and-hand-drawn-animation/preview.mp4",
+    "previewWebm": "/h3/styles/mixed-live-action-and-hand-drawn-animation/preview.webm"
+  },
+  "graphic-motion-design": {
+    "poster": "/h3/styles/graphic-motion-design/poster.webp",
+    "previewVideo": "/h3/styles/graphic-motion-design/preview.mp4",
+    "previewWebm": "/h3/styles/graphic-motion-design/preview.webm"
+  },
+  "animated-poster": {
+    "poster": "/h3/styles/animated-poster/poster.webp",
+    "previewVideo": "/h3/styles/animated-poster/preview.mp4",
+    "previewWebm": "/h3/styles/animated-poster/preview.webm"
+  },
+  "premium-product-commercial": {
+    "poster": "/h3/styles/premium-product-commercial/poster.webp",
+    "previewVideo": "/h3/styles/premium-product-commercial/preview.mp4",
+    "previewWebm": "/h3/styles/premium-product-commercial/preview.webm"
+  },
+  "visceral-cinematic-horror": {
+    "poster": "/h3/styles/visceral-cinematic-horror/poster.webp",
+    "previewVideo": "/h3/styles/visceral-cinematic-horror/preview.mp4",
+    "previewWebm": "/h3/styles/visceral-cinematic-horror/preview.webm"
+  },
+  "psychological-thriller": {
+    "poster": "/h3/styles/psychological-thriller/poster.webp",
+    "previewVideo": "/h3/styles/psychological-thriller/preview.mp4",
+    "previewWebm": "/h3/styles/psychological-thriller/preview.webm"
+  },
+  "gothic-whimsy": {
+    "poster": "/h3/styles/gothic-whimsy/poster.webp",
+    "previewVideo": "/h3/styles/gothic-whimsy/preview.mp4",
+    "previewWebm": "/h3/styles/gothic-whimsy/preview.webm"
+  },
+  "dark-fairy-tale": {
+    "poster": "/h3/styles/dark-fairy-tale/poster.webp",
+    "previewVideo": "/h3/styles/dark-fairy-tale/preview.mp4",
+    "previewWebm": "/h3/styles/dark-fairy-tale/preview.webm"
+  },
+  "cosmic-horror": {
+    "poster": "/h3/styles/cosmic-horror/poster.webp",
+    "previewVideo": "/h3/styles/cosmic-horror/preview.mp4",
+    "previewWebm": "/h3/styles/cosmic-horror/preview.webm"
+  },
+  "supernatural-mystery": {
+    "poster": "/h3/styles/supernatural-mystery/poster.webp",
+    "previewVideo": "/h3/styles/supernatural-mystery/preview.mp4",
+    "previewWebm": "/h3/styles/supernatural-mystery/preview.webm"
+  },
+  "neo-noir-crime": {
+    "poster": "/h3/styles/neo-noir-crime/poster.webp",
+    "previewVideo": "/h3/styles/neo-noir-crime/preview.mp4",
+    "previewWebm": "/h3/styles/neo-noir-crime/preview.webm"
+  },
+  "analog-found-footage": {
+    "poster": "/h3/styles/analog-found-footage/poster.webp",
+    "previewVideo": "/h3/styles/analog-found-footage/preview.mp4",
+    "previewWebm": "/h3/styles/analog-found-footage/preview.webm"
+  },
+  "retro-science-fiction": {
+    "poster": "/h3/styles/retro-science-fiction/poster.webp",
+    "previewVideo": "/h3/styles/retro-science-fiction/preview.mp4",
+    "previewWebm": "/h3/styles/retro-science-fiction/preview.webm"
+  },
+  "dystopian-future": {
+    "poster": "/h3/styles/dystopian-future/poster.webp",
+    "previewVideo": "/h3/styles/dystopian-future/preview.mp4",
+    "previewWebm": "/h3/styles/dystopian-future/preview.webm"
+  },
+  "disaster-spectacle": {
+    "poster": "/h3/styles/disaster-spectacle/poster.webp",
+    "previewVideo": "/h3/styles/disaster-spectacle/preview.mp4",
+    "previewWebm": "/h3/styles/disaster-spectacle/preview.webm"
+  },
+  "action-blockbuster": {
+    "poster": "/h3/styles/action-blockbuster/poster.webp",
+    "previewVideo": "/h3/styles/action-blockbuster/preview.mp4",
+    "previewWebm": "/h3/styles/action-blockbuster/preview.webm"
+  },
+  "pulp-adventure": {
+    "poster": "/h3/styles/pulp-adventure/poster.webp",
+    "previewVideo": "/h3/styles/pulp-adventure/preview.mp4",
+    "previewWebm": "/h3/styles/pulp-adventure/preview.webm"
+  }
+}

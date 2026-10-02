@@ -27,12 +27,12 @@ describe("Production V2 H3 quality persistence and UI contract", () => {
     let production = createProductionV2("Quality", "minimax-h3");
     production.scenes[0].h3Quality = "hq";
     production = addProductionV2Scene(production, "minimax-h3");
-    production.scenes[1].h3Quality = "lq";
+    production.scenes[1].h3Quality = "sh";
     production.activeSceneId = production.scenes[1].id;
 
     const loaded = normalizeProductionV2(JSON.parse(JSON.stringify(production)));
-    expect(loaded.scenes.map((scene) => scene.h3Quality)).toEqual(["hq", "lq"]);
-    expect(loaded.scenes.find((scene) => scene.id === loaded.activeSceneId)?.h3Quality).toBe("lq");
+    expect(loaded.scenes.map((scene) => scene.h3Quality)).toEqual(["hq", "sh"]);
+    expect(loaded.scenes.find((scene) => scene.id === loaded.activeSceneId)?.h3Quality).toBe("sh");
   });
 
   it("keeps H3 quality dormant and unchanged when switching to LTX", () => {
@@ -47,15 +47,28 @@ describe("Production V2 H3 quality persistence and UI contract", () => {
     expect(normalizeProductionV2DurationForModel("minimax-h3", 15)).toBe(10);
   });
 
-  it("renders the LQ/HQ control only inside the MiniMax H3 UI branch", () => {
+  it("renders the SH/LQ/HQ control only inside the MiniMax H3 UI branch", () => {
     const panel = fs.readFileSync(
       path.join(root, "app/app/components/ProductionV2Panel.tsx"),
       "utf8",
     );
     expect(panel).toContain('data-otg="production-v2-h3-quality-control"');
     expect(panel).toMatch(/selectedScene\.model === "minimax-h3"[\s\S]{0,500}production-v2-h3-quality-control/);
+    expect(panel).toContain('h3Quality: "sh"');
     expect(panel).toContain('h3Quality: "lq"');
     expect(panel).toContain('h3Quality: "hq"');
+    expect(panel).toContain("Scene Hunter · 0.2 MP · Fast scene search");
+  });
+
+  it("keeps Scene Hunter candidate promotion separate from retry", () => {
+    const route = fs.readFileSync(
+      path.join(root, "app/api/production/v2/generation/route.ts"),
+      "utf8",
+    );
+    expect(route).toContain('action === "scene-hunter-upscale"');
+    expect(route).toMatch(/scene-hunter-upscale[\s\S]*h3Quality:\s*"hq"[\s\S]*seed:\s*source\.payload\.seed/);
+    expect(route).toMatch(/retrySeed\([\s\S]*previous\.payload\.seed/);
+    expect(route).not.toMatch(/scene-hunter-upscale[\s\S]{0,1200}retrySeed/);
   });
 
   it("copies the source H3 quality into Continue Scene", () => {

@@ -18,6 +18,11 @@ import {
   normalizeH3Quality,
   type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
+import {
+  DEFAULT_H3_ADVANCED_SETTINGS,
+  normalizeH3AdvancedSettings,
+  type H3AdvancedSettings,
+} from "@/lib/production/h3Settings";
 
 export type ProductionV2GenerationStatus =
   | "pending"
@@ -28,6 +33,8 @@ export type ProductionV2GenerationStatus =
   | "postprocessing_waiting_for_gpu"
   | "postprocessing_submitted"
   | "postprocessing_running"
+  | "canceling"
+  | "canceled"
   | "completed"
   | "failed";
 
@@ -37,6 +44,7 @@ export type ProductionV2H3GenerationPayload = {
   promptFingerprint: string;
   durationSeconds: ProductionV2Duration;
   h3Quality: H3Quality;
+  h3Settings?: H3AdvancedSettings;
   seed: number;
   startImage: ProductionV2VisualReference | null;
   references: ProductionV2VisualReference[];
@@ -48,6 +56,7 @@ export type ProductionV2H3GenerationPayload = {
     includeAudio: boolean;
   };
   retryOfJobId?: string;
+  sceneHunterSourceJobId?: string;
 };
 
 export type ProductionV2GenerationJob = {
@@ -77,6 +86,8 @@ export type ProductionV2GenerationJob = {
   submittedAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  cancelRequestedAt: string | null;
+  canceledAt: string | null;
 };
 
 type JobRow = {
@@ -106,6 +117,8 @@ type JobRow = {
   submitted_at: string | null;
   started_at: string | null;
   completed_at: string | null;
+  cancel_requested_at: string | null;
+  canceled_at: string | null;
 };
 
 let storePathOverrideForTests: string | null = null;
@@ -168,6 +181,8 @@ function db() {
       submitted_at TEXT,
       started_at TEXT,
       completed_at TEXT
+      ,cancel_requested_at TEXT
+      ,canceled_at TEXT
     );
     CREATE INDEX IF NOT EXISTS production_v2_generation_fifo_idx
       ON production_v2_generation_jobs(status, created_at, id);
@@ -178,6 +193,8 @@ function db() {
   if (!columns.has("native_output_path")) next.exec("ALTER TABLE production_v2_generation_jobs ADD COLUMN native_output_path TEXT");
   if (!columns.has("vsr_backend")) next.exec("ALTER TABLE production_v2_generation_jobs ADD COLUMN vsr_backend TEXT");
   if (!columns.has("vsr_prompt_id")) next.exec("ALTER TABLE production_v2_generation_jobs ADD COLUMN vsr_prompt_id TEXT");
+  if (!columns.has("cancel_requested_at")) next.exec("ALTER TABLE production_v2_generation_jobs ADD COLUMN cancel_requested_at TEXT");
+  if (!columns.has("canceled_at")) next.exec("ALTER TABLE production_v2_generation_jobs ADD COLUMN canceled_at TEXT");
   connection = next;
   connectionPath = filePath;
   return next;
@@ -201,6 +218,10 @@ function fromRow(row: JobRow | undefined): ProductionV2GenerationJob | null {
     payload: {
       ...rawPayload,
       h3Quality: normalizeH3Quality(rawPayload.h3Quality),
+      h3Settings: normalizeH3AdvancedSettings(
+        rawPayload.h3Settings || DEFAULT_H3_ADVANCED_SETTINGS,
+        rawPayload.references?.length || 0,
+      ),
       userLoras: normalizeProductionV2H3UserLoras(rawPayload.userLoras),
     },
     workflowId: row.workflow_id,
@@ -217,6 +238,8 @@ function fromRow(row: JobRow | undefined): ProductionV2GenerationJob | null {
     submittedAt: row.submitted_at,
     startedAt: row.started_at,
     completedAt: row.completed_at,
+    cancelRequestedAt: row.cancel_requested_at,
+    canceledAt: row.canceled_at,
   };
 }
 
@@ -291,7 +314,7 @@ export function listWaitingProductionV2GenerationJobs(limit = 16) {
 export function listActiveProductionV2GenerationJobs(limit = 32) {
   return (db().prepare(`
     SELECT * FROM production_v2_generation_jobs
-    WHERE status IN ('submitted','running','postprocessing_waiting_for_gpu','postprocessing_submitted','postprocessing_running')
+    WHERE status IN ('submitted','running','postprocessing_waiting_for_gpu','postprocessing_submitted','postprocessing_running','canceling')
     ORDER BY submitted_at ASC, rowid ASC LIMIT ?
   `).all(Math.max(1, Math.min(100, limit))) as JobRow[]).map(fromRow).filter(Boolean) as ProductionV2GenerationJob[];
 }
@@ -372,6 +395,17 @@ export function markProductionV2GenerationNativeReady(id: string, nativeOutputPa
   return result.changes === 1 ? selectJob(id) : null;
 }
 
+export function completeProductionV2SceneHunterJob(id: string, nativeOutputPath: string) {
+  const timestamp = nowIso();
+  const result = db().prepare(`
+    UPDATE production_v2_generation_jobs
+    SET status = 'completed', status_message = 'Scene Hunter Preview ready',
+        native_output_path = ?, output_path = ?, completed_at = ?, updated_at = ?
+    WHERE id = ? AND status IN ('submitted','running') AND comfy_prompt_id IS NOT NULL
+  `).run(nativeOutputPath, nativeOutputPath, timestamp, timestamp, id);
+  return result.changes === 1 ? selectJob(id) : null;
+}
+
 export function markProductionV2GenerationVsrWaiting(id: string, message: string) {
   const timestamp = nowIso();
   db().prepare(`
@@ -421,7 +455,42 @@ export function failProductionV2GenerationJob(id: string, error: string, submiss
   db().prepare(`
     UPDATE production_v2_generation_jobs
     SET status = 'failed', status_message = 'Failed', error = ?, submission_state = ?, completed_at = ?, updated_at = ?
-    WHERE id = ? AND status != 'completed'
+    WHERE id = ? AND status NOT IN ('completed','canceling','canceled')
   `).run(error, submissionUnknown ? "unknown" : "failed", timestamp, timestamp, id);
+  return selectJob(id);
+}
+
+export function requestProductionV2GenerationCancellation(id: string, ownerKey: string) {
+  const timestamp = nowIso();
+  const cancel = db().transaction(() => {
+    const current = db().prepare(
+      "SELECT * FROM production_v2_generation_jobs WHERE id = ? AND owner_key = ?",
+    ).get(id, ownerKey) as JobRow | undefined;
+    const job = fromRow(current);
+    if (!job) return null;
+    if (job.status === "canceling" || job.status === "canceled") return job;
+    if (["completed", "failed"].includes(job.status)) return job;
+    const result = db().prepare(`
+      UPDATE production_v2_generation_jobs
+      SET status = 'canceling', status_message = 'Canceling…', cancel_requested_at = ?,
+          error = NULL, updated_at = ?
+      WHERE id = ? AND owner_key = ? AND status IN (
+        'pending','queued_waiting_for_gpu','claimed','submitted','running',
+        'postprocessing_waiting_for_gpu','postprocessing_submitted','postprocessing_running'
+      )
+    `).run(timestamp, timestamp, id, ownerKey);
+    return result.changes === 1 ? selectJob(id) : selectJob(id);
+  });
+  return cancel.immediate() as ProductionV2GenerationJob | null;
+}
+
+export function markProductionV2GenerationCanceled(id: string) {
+  const timestamp = nowIso();
+  db().prepare(`
+    UPDATE production_v2_generation_jobs
+    SET status = 'canceled', status_message = 'Canceled', error = NULL,
+        canceled_at = ?, completed_at = ?, updated_at = ?
+    WHERE id = ? AND status = 'canceling'
+  `).run(timestamp, timestamp, timestamp, id);
   return selectJob(id);
 }

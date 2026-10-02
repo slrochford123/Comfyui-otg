@@ -18,6 +18,12 @@ import {
   normalizeH3Quality,
   type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
+import {
+  DEFAULT_H3_ADVANCED_SETTINGS,
+  normalizeH3AdvancedSettings,
+  type H3AdvancedSettings,
+} from "@/lib/production/h3Settings";
+import { resolveH3CanonicalStyle } from "@/lib/h3StyleRegistry";
 
 export const PRODUCTION_V2_SCHEMA_VERSION = 2 as const;
 export const PRODUCTION_V2_MAX_SCENES = 8;
@@ -327,6 +333,9 @@ export type ProductionV2ContinuationSource = {
   sourceMediaPath: string;
   sourcePreviewUrl?: string;
   lastFramePath: string;
+  referenceClipPath?: string;
+  referenceClipStartSeconds?: number;
+  referenceClipDurationSeconds?: number;
   createdAt: string;
 };
 
@@ -419,11 +428,27 @@ export type ProductionV2AssemblyState = {
   userVerifiedAt: string | null;
 };
 
+export type ProductionV2H3UploadedVideoReference = {
+  id: string;
+  originalName: string;
+  sourcePath: string;
+  previewUrl: string;
+  durationSeconds: number;
+  clipStartSeconds: number;
+  clipDurationSeconds: 5;
+  includeAudio: boolean;
+  createdAt: string;
+};
+
 export type ProductionV2H3State = {
   lastMode: "h3-text-to-video" | "h3-image-to-video" | "h3-reference-to-video";
   userLoras: ProductionV2H3UserLoraState;
+  h3Settings: H3AdvancedSettings;
   imageToVideo: { startingImage: ProductionV2VisualReference | null };
-  referenceToVideo: { resolvedVoiceBindings: ProductionV2ResolvedVoiceBinding[] };
+  referenceToVideo: {
+    resolvedVoiceBindings: ProductionV2ResolvedVoiceBinding[];
+    uploadedVideo: ProductionV2H3UploadedVideoReference | null;
+  };
 };
 
 export type ProductionV2LtxState = {
@@ -701,13 +726,16 @@ function normalizeEntityImage(value: any): ProductionV2EntityImage {
 }
 
 function normalizePromptOptions(value: any, legacyCameraIntent = ""): ProductionV2PromptOptions {
-  const visualStyle = H3_VISUAL_STYLE_OPTIONS.includes(value?.visualStyle) ? value.visualStyle : DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.visualStyle;
+  const legacyVisualStyle = H3_VISUAL_STYLE_OPTIONS.includes(value?.visualStyle) ? value.visualStyle : DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.visualStyle;
+  const canonicalStyle = resolveH3CanonicalStyle(value?.visualStyleId || legacyVisualStyle);
+  const visualStyle = canonicalStyle?.promptBuilderVisualStyle || legacyVisualStyle;
   const cameraFeel = H3_CAMERA_FEEL_OPTIONS.includes(value?.cameraFeel)
     ? value.cameraFeel
     : H3_CAMERA_FEEL_OPTIONS.includes(legacyCameraIntent as ProductionV2PromptOptions["cameraFeel"])
       ? legacyCameraIntent as ProductionV2PromptOptions["cameraFeel"]
       : DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.cameraFeel;
   return {
+    visualStyleId: canonicalStyle?.id || DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.visualStyleId,
     visualStyle,
     cameraFeel,
     shotFlow: H3_SHOT_FLOW_OPTIONS.includes(value?.shotFlow) ? value.shotFlow : DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.shotFlow,
@@ -870,8 +898,9 @@ export function createProductionV2Scene(sceneNumber: number, model: ProductionV2
       h3: {
         lastMode: "h3-image-to-video",
         userLoras: normalizeProductionV2H3UserLoras(DEFAULT_PRODUCTION_V2_H3_USER_LORAS),
+        h3Settings: DEFAULT_H3_ADVANCED_SETTINGS,
         imageToVideo: { startingImage: null },
-        referenceToVideo: { resolvedVoiceBindings: [] },
+        referenceToVideo: { resolvedVoiceBindings: [], uploadedVideo: null },
       },
       ltx: { lastMode: "ltx-ingredients-image-to-video", ingredients: { visualIngredientLimit: LTX_V2_DEFAULT_INGREDIENT_LIMIT, sheetPreview: { status: "placeholder" } } },
     },
@@ -1095,7 +1124,23 @@ export function productionV2PromptFingerprint(scene: ProductionV2Scene) {
       sourceMediaVersionId: scene.continuation.sourceMediaVersionId,
       sourceMediaPath: scene.continuation.sourceMediaPath,
       lastFramePath: scene.continuation.lastFramePath,
+      referenceClipPath: scene.continuation.referenceClipPath || null,
+      referenceClipStartSeconds: scene.continuation.referenceClipStartSeconds ?? null,
+      referenceClipDurationSeconds: scene.continuation.referenceClipDurationSeconds ?? null,
     } : null,
+    uploadedReferenceVideo: scene.generationMode === "h3-reference-to-video"
+      ? (() => {
+          const upload = scene.modelState.h3.referenceToVideo.uploadedVideo;
+          return upload ? {
+            id: upload.id,
+            sourcePath: upload.sourcePath,
+            durationSeconds: upload.durationSeconds,
+            clipStartSeconds: upload.clipStartSeconds,
+            clipDurationSeconds: upload.clipDurationSeconds,
+            includeAudio: upload.includeAudio,
+          } : null;
+        })()
+      : null,
     userLoras: scene.model === "minimax-h3" ? scene.modelState.h3.userLoras : null,
     resolvedReferences: scene.referencePlan.modelFacingReferences.map((item) => ({
       id: item.id,
@@ -1297,7 +1342,13 @@ export function productionV2GenerationReadiness(scene: ProductionV2Scene) {
   }
   if (prompt.reviewStatus === "stale" || prompt.buildFingerprint !== fingerprint) return { ok: false, reason: "The final prompt is stale. Rebuild it." };
   if (scene.generationMode === "h3-reference-to-video") {
-    if (scene.referencePlan.status !== "planned" || !scene.referencePlan.modelFacingReferences.length) {
+    if (
+      scene.referencePlan.status !== "planned"
+      || (
+        !scene.referencePlan.modelFacingReferences.length
+        && !scene.modelState.h3.referenceToVideo.uploadedVideo
+      )
+    ) {
       return { ok: false, reason: "Resolve the ordered H3 Picture and Subject reference manifest before generation." };
     }
     try {
@@ -1343,7 +1394,13 @@ export function syncProductionV2ReferencePlan(scene: ProductionV2Scene): Product
     },
     modelState: {
       ...scene.modelState,
-      h3: { ...scene.modelState.h3, referenceToVideo: { resolvedVoiceBindings: resolvedVoiceReferences } },
+      h3: {
+        ...scene.modelState.h3,
+        referenceToVideo: {
+          ...scene.modelState.h3.referenceToVideo,
+          resolvedVoiceBindings: resolvedVoiceReferences,
+        },
+      },
     },
   };
 }
@@ -1356,6 +1413,29 @@ export function addProductionV2Scene(production: ProductionV2, model = productio
   if (production.scenes.length >= PRODUCTION_V2_MAX_SCENES) throw new Error(`A production can contain at most ${PRODUCTION_V2_MAX_SCENES} scenes.`);
   const scene = createProductionV2Scene(production.scenes.length + 1, model);
   return { ...production, activeSceneId: scene.id, scenes: [...production.scenes, scene] };
+}
+
+/*
+ * Background job refreshes return the server's last persisted active Scene.
+ * Keep the user's current free-roam selection when the refreshed payload is
+ * for the same Production and still contains that Scene.
+ */
+export function preserveProductionV2ActiveSceneSelection(
+  current: ProductionV2 | null,
+  refreshed: ProductionV2,
+): ProductionV2 {
+  if (
+    !current
+    || current.id !== refreshed.id
+    || !refreshed.scenes.some((scene) => scene.id === current.activeSceneId)
+  ) {
+    return refreshed;
+  }
+
+  return {
+    ...refreshed,
+    activeSceneId: current.activeSceneId,
+  };
 }
 
 /*
@@ -1837,6 +1917,34 @@ function normalizeVoiceBinding(value: any): ProductionV2ResolvedVoiceBinding | n
   };
 }
 
+function normalizeH3UploadedVideoReference(
+  value: any,
+): ProductionV2H3UploadedVideoReference | null {
+  const id = cleanString(value?.id);
+  const sourcePath = cleanString(value?.sourcePath);
+  const durationSeconds = Number(value?.durationSeconds);
+  const requestedStart = Number(value?.clipStartSeconds);
+  if (!id || !sourcePath || !Number.isFinite(durationSeconds) || durationSeconds < 4.9) {
+    return null;
+  }
+  const maxStartSeconds = Math.max(0, durationSeconds - 5);
+  const clipStartSeconds = Math.min(
+    maxStartSeconds,
+    Math.max(0, Number.isFinite(requestedStart) ? requestedStart : 0),
+  );
+  return {
+    id,
+    originalName: cleanString(value?.originalName, "Uploaded video"),
+    sourcePath,
+    previewUrl: cleanString(value?.previewUrl),
+    durationSeconds,
+    clipStartSeconds,
+    clipDurationSeconds: 5,
+    includeAudio: Boolean(value?.includeAudio),
+    createdAt: cleanString(value?.createdAt, new Date(0).toISOString()),
+  };
+}
+
 function normalizeReferencePlan(value: any, scene: Pick<ProductionV2Scene, "selectedCharacters" | "selectedBackground" | "selectedAssets">): ProductionV2ReferencePlan {
   const modelFacingReferences = Array.isArray(value?.modelFacingReferences)
     ? value.modelFacingReferences.map(normalizeVisual).filter(Boolean) as ProductionV2VisualReference[]
@@ -1936,6 +2044,18 @@ function normalizeProductionV2Continuation(
         value?.sourcePreviewUrl,
       ),
     lastFramePath,
+    referenceClipPath:
+      cleanOptionalString(
+        value?.referenceClipPath,
+      ),
+    referenceClipStartSeconds:
+      Number.isFinite(Number(value?.referenceClipStartSeconds))
+        ? Math.max(0, Number(value.referenceClipStartSeconds))
+        : undefined,
+    referenceClipDurationSeconds:
+      Number.isFinite(Number(value?.referenceClipDurationSeconds))
+        ? Math.max(0, Number(value.referenceClipDurationSeconds))
+        : undefined,
     createdAt:
       cleanString(
         value?.createdAt,
@@ -2219,11 +2339,20 @@ function normalizeScene(value: any, index: number, defaultModel: ProductionV2Mod
       h3: {
         lastMode: H3_MODES.includes(value?.modelState?.h3?.lastMode) ? value.modelState.h3.lastMode : "h3-image-to-video",
         userLoras: normalizeProductionV2H3UserLoras(value?.modelState?.h3?.userLoras),
+        h3Settings: normalizeH3AdvancedSettings(
+          value?.modelState?.h3?.h3Settings,
+          Array.isArray(value?.referencePlan?.modelFacingReferences)
+            ? value.referencePlan.modelFacingReferences.length
+            : 0,
+        ),
         imageToVideo: { startingImage },
         referenceToVideo: {
           resolvedVoiceBindings: Array.isArray(value?.modelState?.h3?.referenceToVideo?.resolvedVoiceBindings)
             ? value.modelState.h3.referenceToVideo.resolvedVoiceBindings.map(normalizeVoiceBinding).filter(Boolean).slice(0, 3) as ProductionV2ResolvedVoiceBinding[]
             : [],
+          uploadedVideo: normalizeH3UploadedVideoReference(
+            value?.modelState?.h3?.referenceToVideo?.uploadedVideo,
+          ),
         },
       },
       ltx: {

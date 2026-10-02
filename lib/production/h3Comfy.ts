@@ -11,7 +11,14 @@ import {
   type H3PromptGraph,
   type ProductionV2H3BackendId,
 } from "@/lib/production/h3Workflows";
+import {
+  DEFAULT_H3_ADVANCED_SETTINGS,
+  H3_SINGULARITY_CHECKPOINT,
+  resolveH3RenderSettings,
+  type H3AdvancedSettings,
+} from "@/lib/production/h3Settings";
 import { submitComfyPromptWithGpuLease } from "@/lib/workers/comfyPromptLease";
+import { runWithComfySubmissionCriticalSection } from "@/lib/workers/comfySubmissionCriticalSection";
 
 type ObjectInfo = Record<string, {
   input?: { required?: Record<string, unknown> };
@@ -30,6 +37,8 @@ export type H3BackendProbe = {
 export type H3BackendCompatibilityRequirements = {
   userLoraFilenames?: readonly string[];
   requireVsr?: boolean;
+  h3Settings?: H3AdvancedSettings;
+  referenceCount?: number;
 };
 
 export type ComfyHistoryFile = {
@@ -39,6 +48,11 @@ export type ComfyHistoryFile = {
   nodeId?: string;
 };
 
+export type H3PromptCancellationResult = {
+  outcome: "cancel-requested" | "removed-from-queue" | "already-stopped";
+  mechanism: "prompt-specific" | "guarded-interrupt" | "queue-delete";
+};
+
 const compatibilityCache = new Map<string, {
   expiresAt: number;
   missingNodes: string[];
@@ -46,7 +60,128 @@ const compatibilityCache = new Map<string, {
 }>();
 
 function clean(value: unknown) {
-  return String(value ?? "").trim();
+  if (typeof value === "string") return value.trim();
+  if (value == null) return "";
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const nested =
+      record.message
+      || record.error
+      || record.detail
+      || record.reason;
+    if (typeof nested === "string") return nested.trim();
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return Object.prototype.toString.call(value);
+    }
+  }
+  return String(value).trim();
+}
+
+function queuePromptId(entry: unknown) {
+  if (Array.isArray(entry)) return clean(entry[1]);
+  if (entry && typeof entry === "object") {
+    const record = entry as Record<string, unknown>;
+    return clean(record.prompt_id || record.promptId || record.id);
+  }
+  return "";
+}
+
+function queuePromptIds(value: unknown) {
+  return Array.isArray(value) ? value.map(queuePromptId).filter(Boolean) : [];
+}
+
+export async function getH3PromptQueueState(
+  backend: ProductionV2H3BackendId,
+  promptId: string,
+  fetcher: typeof fetch = fetch,
+) {
+  const response = await fetchWithTimeout(
+    fetcher,
+    `${H3_BACKEND_PROFILES[backend].baseUrl}/queue`,
+    {},
+    10_000,
+  );
+  if (!response.ok) throw new Error(`ComfyUI queue returned HTTP ${response.status}.`);
+  const queue = await response.json().catch(() => null) as { queue_running?: unknown; queue_pending?: unknown } | null;
+  const cleanPromptId = clean(promptId);
+  if (queuePromptIds(queue?.queue_running).includes(cleanPromptId)) return "running" as const;
+  if (queuePromptIds(queue?.queue_pending).includes(cleanPromptId)) return "pending" as const;
+  return "absent" as const;
+}
+
+export async function cancelH3Prompt(args: {
+  backend: ProductionV2H3BackendId;
+  promptId: string;
+  jobId: string;
+  workerId?: string;
+  fetcher?: typeof fetch;
+}) : Promise<H3PromptCancellationResult> {
+  const promptId = clean(args.promptId);
+  if (!promptId) throw new Error("Cannot cancel H3 generation without its ComfyUI prompt ID.");
+  const fetcher = args.fetcher || fetch;
+  const baseUrl = H3_BACKEND_PROFILES[args.backend].baseUrl;
+  const targeted = await fetchWithTimeout(
+    fetcher,
+    `${baseUrl}/api/jobs/${encodeURIComponent(promptId)}/cancel`,
+    { method: "POST" },
+    15_000,
+  );
+  if (targeted.ok) {
+    return { outcome: "cancel-requested", mechanism: "prompt-specific" };
+  }
+  if (![404, 405, 501].includes(targeted.status)) {
+    throw new Error(`ComfyUI rejected cancellation with HTTP ${targeted.status}.`);
+  }
+
+  const physicalGpu = args.backend === "rtx3090" ? "shawn-3090" : "slr-5060";
+  const guarded = await runWithComfySubmissionCriticalSection(
+    {
+      physicalGpu,
+      ownerId: `cancel:${args.jobId}`,
+      workerId: args.workerId || "h3-cancel",
+    },
+    async () => {
+      const readQueue = async () => {
+        const response = await fetchWithTimeout(fetcher, `${baseUrl}/queue`, {}, 10_000);
+        if (!response.ok) throw new Error(`ComfyUI queue returned HTTP ${response.status} during cancellation.`);
+        return response.json().catch(() => null) as Promise<{ queue_running?: unknown; queue_pending?: unknown } | null>;
+      };
+      let queue = await readQueue();
+      const pending = queuePromptIds(queue?.queue_pending);
+      if (pending.includes(promptId)) {
+        const deleted = await fetchWithTimeout(fetcher, `${baseUrl}/queue`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ delete: [promptId] }),
+        }, 10_000);
+        if (!deleted.ok) throw new Error(`ComfyUI queue removal returned HTTP ${deleted.status}.`);
+        return { outcome: "removed-from-queue", mechanism: "queue-delete" } as const;
+      }
+      if (!queuePromptIds(queue?.queue_running).includes(promptId)) {
+        return { outcome: "already-stopped", mechanism: "guarded-interrupt" } as const;
+      }
+
+      // Re-read immediately under the same application admission lock. A
+      // legacy /interrupt is global, so never send it if the exact prompt is
+      // no longer the active prompt on this backend.
+      queue = await readQueue();
+      const running = queuePromptIds(queue?.queue_running);
+      if (running.length !== 1 || running[0] !== promptId) {
+        throw new Error("Cancellation was safely refused because the active ComfyUI prompt changed.");
+      }
+      const interrupted = await fetchWithTimeout(fetcher, `${baseUrl}/interrupt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt_id: promptId }),
+      }, 10_000);
+      if (!interrupted.ok) throw new Error(`ComfyUI interrupt returned HTTP ${interrupted.status}.`);
+      return { outcome: "cancel-requested", mechanism: "guarded-interrupt" } as const;
+    },
+  );
+  if (!guarded.ok) throw new Error(guarded.error);
+  return guarded.value;
 }
 
 function abortAfter(ms: number) {
@@ -83,7 +218,33 @@ export async function inspectH3BackendCompatibility(
   const profile = H3_BACKEND_PROFILES[backend];
   const baseUrl = profile.baseUrl;
   const userLoraFilenames = [...new Set((requirements.userLoraFilenames || []).map(clean).filter(Boolean))].sort();
-  const cacheKey = `${backend}:${requirements.requireVsr ? "vsr" : "native"}:${userLoraFilenames.join("\u0000")}`;
+  const resolvedH3Settings = resolveH3RenderSettings(
+    requirements.h3Settings || DEFAULT_H3_ADVANCED_SETTINGS,
+    requirements.referenceCount || 0,
+  );
+  const optionNodeClasses = [
+    ...(resolvedH3Settings.refModRetention !== null
+      ? ["MiniMaxH3RefModExtract", "MiniMaxH3RefModApply"]
+      : []),
+    ...(resolvedH3Settings.motionLabInject !== null
+      ? ["H3JerkOracle", "H3TimeSmear", "H3V2VInit", "H3InjectSchedule", "H3ExactRecover"]
+      : []),
+  ];
+  const optionAssets: Array<readonly [string, string, string]> = [
+    ...(resolvedH3Settings.checkpoint === H3_SINGULARITY_CHECKPOINT
+      ? [["UNETLoader", "unet_name", H3_SINGULARITY_CHECKPOINT] as const]
+      : []),
+    ...resolvedH3Settings.singularityLoras.map(
+      (lora) => ["LoraLoaderModelOnly", "lora_name", lora.filename] as const,
+    ),
+  ];
+  const optionCacheKey = JSON.stringify({
+    checkpoint: resolvedH3Settings.checkpoint,
+    loras: resolvedH3Settings.singularityLoras.map((lora) => lora.filename),
+    refMod: resolvedH3Settings.refModRetention !== null,
+    motion: resolvedH3Settings.motionLabInject !== null,
+  });
+  const cacheKey = `${backend}:${requirements.requireVsr ? "vsr" : "native"}:${optionCacheKey}:${userLoraFilenames.join("\u0000")}`;
   try {
     const queueResponse = await fetchWithTimeout(fetcher, `${baseUrl}/queue`);
     if (!queueResponse.ok) throw new Error(`queue HTTP ${queueResponse.status}`);
@@ -95,6 +256,7 @@ export async function inspectH3BackendCompatibility(
       const requiredNodeClasses = [...new Set([
         ...h3RequiredNodeClassesForBackend(backend),
         ...(requirements.requireVsr ? H3_VSR_REQUIRED_NODE_CLASSES : []),
+        ...optionNodeClasses,
       ])];
 
       const infoEntries = await Promise.all(
@@ -130,7 +292,10 @@ export async function inspectH3BackendCompatibility(
         (node) => !info[node],
       );
 
-      const expectedAssets = h3ExpectedAssetChoicesForBackend(backend, userLoraFilenames);
+      const expectedAssets = [
+        ...h3ExpectedAssetChoicesForBackend(backend, userLoraFilenames),
+        ...optionAssets,
+      ];
 
       const missingAssets = expectedAssets.flatMap(
         ([node, input, expected]) =>
@@ -244,6 +409,8 @@ export async function submitH3Prompt(args: {
   graph: H3PromptGraph;
   clientId: string;
   jobId: string;
+  extraData?: unknown;
+  livePreviewEnabled?: unknown;
   workerId?: string;
   fetcher?: typeof fetch;
   preSubmitCleanup?: "free" | null;
@@ -286,11 +453,14 @@ export async function submitH3Prompt(args: {
             "application/json",
         },
         body:
-          JSON.stringify({
-            prompt: args.graph,
-            client_id:
-              args.clientId,
-          }),
+          JSON.stringify(
+            buildH3PromptSubmissionBody({
+              graph: args.graph,
+              clientId: args.clientId,
+              extraData: args.extraData,
+              livePreviewEnabled: args.livePreviewEnabled,
+            }),
+          ),
       },
     });
 
@@ -348,6 +518,37 @@ export async function submitH3Prompt(args: {
     accepted: true as const,
     promptId,
   };
+}
+
+function plainRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+export function buildH3PromptSubmissionBody(args: {
+  graph: H3PromptGraph;
+  clientId: string;
+  extraData?: unknown;
+  livePreviewEnabled?: unknown;
+}) {
+  const body: {
+    prompt: H3PromptGraph;
+    client_id: string;
+    extra_data?: Record<string, unknown>;
+  } = {
+    prompt: args.graph,
+    client_id: args.clientId,
+  };
+  const existing = plainRecord(args.extraData);
+  if (args.livePreviewEnabled === true) {
+    body.extra_data = {
+      ...(existing || {}),
+      preview_method: "latent2rgb",
+    };
+  } else if (existing) {
+    body.extra_data = { ...existing };
+  }
+  return body;
 }
 
 function collectFiles(value: unknown, nodeId?: string, out: ComfyHistoryFile[] = []) {

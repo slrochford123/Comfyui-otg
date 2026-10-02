@@ -92,6 +92,71 @@ function resolveChoice(
   );
 }
 
+function outputAssets(result: any, nodeId: string) {
+  const output = result?.outputs?.[nodeId];
+  const assets = [
+    ...(Array.isArray(output?.images) ? output.images : []),
+    ...(Array.isArray(output?.videos) ? output.videos : []),
+  ];
+
+  return assets.filter((asset) =>
+    String(asset?.type || "") === "output" &&
+    String(asset?.filename || "").trim(),
+  );
+}
+
+function findOutputAsset(
+  result: any,
+  nodeId: string,
+  extensions?: string[],
+) {
+  const assets = outputAssets(result, nodeId);
+
+  if (!extensions?.length) return assets[0] || null;
+
+  return (
+    assets.find((asset) => {
+      const filename = String(asset?.filename || "").toLowerCase();
+      return extensions.some((extension) =>
+        filename.endsWith(extension),
+      );
+    }) || null
+  );
+}
+
+function normalizedAsset(asset: any) {
+  return {
+    filename: String(asset.filename),
+    subfolder: String(asset.subfolder || ""),
+    type: "output",
+  };
+}
+
+function comfyViewUrl(asset: {
+  filename: string;
+  subfolder: string;
+  type: string;
+}) {
+  return (
+    `${COMFY_BASE}/view?filename=${encodeURIComponent(asset.filename)}` +
+    `&subfolder=${encodeURIComponent(asset.subfolder)}` +
+    `&type=${encodeURIComponent(asset.type)}`
+  );
+}
+
+function appComfyProxyUrl(asset: {
+  filename: string;
+  subfolder: string;
+  type: string;
+}) {
+  return (
+    `/api/comfy-image?filename=${encodeURIComponent(asset.filename)}` +
+    `&subfolder=${encodeURIComponent(asset.subfolder)}` +
+    `&type=${encodeURIComponent(asset.type)}` +
+    `&comfyBaseUrl=${encodeURIComponent(COMFY_BASE)}`
+  );
+}
+
 async function waitForOutput(promptId: string) {
   const deadline = Date.now() + 8 * 60 * 1000;
 
@@ -114,22 +179,23 @@ async function waitForOutput(promptId: string) {
         );
       }
 
-      const finalOutput = result?.outputs?.["70"];
-      const finalImages = Array.isArray(finalOutput?.images)
-        ? finalOutput.images
-        : [];
+      const image = findOutputAsset(result, "70", [
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+      ]);
+      const video = findOutputAsset(result, "79", [
+        ".mp4",
+        ".webm",
+        ".mov",
+      ]);
 
-      for (const image of finalImages) {
-        if (
-          String(image?.type || "") === "output" &&
-          String(image?.filename || "").trim()
-        ) {
-          return {
-            filename: String(image.filename),
-            subfolder: String(image.subfolder || ""),
-            type: "output",
-          };
-        }
+      if (image) {
+        return {
+          image: normalizedAsset(image),
+          video: video ? normalizedAsset(video) : null,
+        };
       }
 
       if (status?.completed === true) {
@@ -357,19 +423,12 @@ No extra characters.
       );
     }
 
-    const image = await waitForOutput(promptId);
+    const output = await waitForOutput(promptId);
+    const { image, video } = output;
 
-    const url =
-      `/api/comfy-image?filename=${encodeURIComponent(image.filename)}` +
-      `&subfolder=${encodeURIComponent(image.subfolder)}` +
-      `&type=${encodeURIComponent(image.type)}`;
-
-    const serverPath = path.join(
-      COMFY_ROOT,
-      "output",
-      image.subfolder,
-      image.filename,
-    );
+    const url = appComfyProxyUrl(image);
+    const serverPath = comfyViewUrl(image);
+    const videoUrl = video ? comfyViewUrl(video) : "";
 
     return NextResponse.json({
       ok: true,
@@ -379,6 +438,9 @@ No extra characters.
       serverPath,
       filename: image.filename,
       sourceName: image.filename,
+      comfyBaseUrl: COMFY_BASE,
+      videoUrl,
+      videoFilename: video?.filename || "",
     });
   } catch (error) {
     console.error("[orbitsheets-character-card]", error);

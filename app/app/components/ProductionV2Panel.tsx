@@ -1,6 +1,10 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, type ReactNode } from "react";
+import React, { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import H3AdvancedControls from "@/app/app/components/H3AdvancedControls";
+import H3StyleSelector from "@/app/app/components/H3StyleSelector";
+import { resolveH3CanonicalStyle } from "@/lib/h3StyleRegistry";
+import { normalizeH3AdvancedSettings } from "@/lib/production/h3Settings";
 
 import {
   H3_COMBAT_LORA_MODES,
@@ -12,7 +16,6 @@ import {
 import {
   H3_CAMERA_FEEL_OPTIONS,
   H3_SHOT_FLOW_OPTIONS,
-  H3_VISUAL_STYLE_OPTIONS,
   type ProductionV2PromptOptions,
 } from "@/lib/production/promptOptions";
 import {
@@ -32,6 +35,7 @@ import {
   invalidateProductionV2Prompts,
   markProductionV2SceneSaved,
   moveProductionV2AssemblyClip,
+  preserveProductionV2ActiveSceneSelection,
   productionV2DialogueDurationWarning,
   productionV2GenerationReadiness,
   productionV2LtxVisualIngredientCount,
@@ -139,12 +143,15 @@ type ProductionV2GenerationJobPayload = {
     | "postprocessing_waiting_for_gpu"
     | "postprocessing_submitted"
     | "postprocessing_running"
+    | "canceling"
+    | "canceled"
     | "completed"
     | "failed";
   statusMessage: string | null;
   backend: "rtx3090" | "rtx5060ti" | null;
   backendLabel: string | null;
   h3Quality: ProductionV2H3Quality;
+  seed?: number;
   nativeResolution: string | null;
   etaSeconds: number | null;
   etaMinSeconds: number | null;
@@ -153,8 +160,11 @@ type ProductionV2GenerationJobPayload = {
   workflowId: string | null;
   operation?: "scene-generation" | "visual-edit";
   retryOfJobId?: string | null;
+  sceneHunter?: boolean;
+  sceneHunterSourceJobId?: string | null;
   error: string | null;
   videoUrl: string | null;
+  previewEnabled?: boolean;
 };
 
 function formatH3Eta(seconds: number) {
@@ -229,6 +239,7 @@ const ACTIVE_PRODUCTION_V2_GENERATION_STATUSES = new Set<ProductionV2GenerationJ
   "postprocessing_waiting_for_gpu",
   "postprocessing_submitted",
   "postprocessing_running",
+  "canceling",
 ]);
 
 function productionV2GenerationIsActive(status: ProductionV2GenerationJobPayload["status"] | undefined) {
@@ -322,6 +333,16 @@ function mediaUrl(value: unknown) {
   if (/^(https?:|blob:|data:)/i.test(text) || text.startsWith("/api/") || text.startsWith("/characters/")) return text;
   if (text.startsWith("/")) return `/api/file?path=${encodeURIComponent(text)}`;
   return text;
+}
+
+function productionV2PosterUrl(value: unknown) {
+  const preview = mediaUrl(value);
+  if (
+    !preview.startsWith("/api/production/v2/generation/media?")
+    && !preview.startsWith("/api/production/v2/media?")
+  ) return "";
+  const separator = preview.includes("?") ? "&" : "?";
+  return `${preview}${separator}thumbnail=1`;
 }
 
 function formatUpdatedAt(value: string) {
@@ -513,6 +534,7 @@ function StageNavigator({ stage, onChange, position }: { stage: ProductionV2Stag
 function SavedSceneCard({ scene, selected, onSelect, onOpen }: { scene: ProductionV2Scene; selected: boolean; onSelect: () => void; onOpen: () => void }) {
   const version = selectedSceneVersion(scene);
   const preview = mediaUrl(version?.previewUrl || scene.generatedClip?.previewUrl || "");
+  const poster = productionV2PosterUrl(version?.previewUrl || scene.generatedClip?.previewUrl || "");
   const status = productionV2SceneCardStatus(scene);
 
   return (
@@ -530,7 +552,7 @@ function SavedSceneCard({ scene, selected, onSelect, onOpen }: { scene: Producti
         data-otg="production-v2-preview-saved-scene"
       >
         <div className="aspect-video overflow-hidden bg-zinc-950">
-          {preview ? <video src={preview} muted playsInline preload="metadata" className="pointer-events-none h-full w-full object-cover" aria-label={`Scene ${scene.sceneNumber} poster`} /> : <div className="flex h-full items-center justify-center px-2 text-center text-[10px] font-bold text-zinc-600">No media</div>}
+          {preview ? <video src={preview} poster={poster || undefined} muted playsInline preload="metadata" className="pointer-events-none h-full w-full object-cover" aria-label={`Scene ${scene.sceneNumber} poster`} /> : <div className="flex h-full items-center justify-center px-2 text-center text-[10px] font-bold text-zinc-600">No media</div>}
         </div>
         <div className="space-y-1.5 p-2">
           <div className="flex items-center justify-between gap-1"><span className="text-xs font-black text-white">Scene {scene.sceneNumber}</span><span className="rounded bg-white/[0.07] px-1.5 py-0.5 text-[9px] font-black uppercase text-zinc-300">{status}</span></div>
@@ -669,7 +691,7 @@ function StudioShell({
         <aside className="space-y-4 rounded-lg border border-white/10 bg-zinc-950/70 p-4">
           <MediaVersionSelect scene={scene} value={version?.id || ""} label={`${title} media version`} onChange={onVersionChange} />
           {kind === "visual" ? <>
-            <section className="border-t border-white/10 pt-4" data-otg="production-v2-h3-video-edit"><h3 className="text-xs font-black uppercase text-zinc-400">AI Video Edit</h3><p className="mt-2 text-xs text-zinc-500">Current source: {version ? versionLabel(version, scene.mediaVersions.indexOf(version)) : "None"}</p><label className="mt-3 block text-xs font-bold text-zinc-400">Describe your changes<textarea aria-label="AI video edit instructions" rows={4} value={editPrompt} disabled={readOnly} onChange={(event) => setEditPrompt(event.target.value)} className={`${fieldClass} mt-2 resize-y`} /></label><button type="button" className={`${productionPrimaryButton} mt-3 w-full`} disabled={Boolean(readOnly || !version || !editPrompt.trim() || productionV2GenerationIsActive(generationJob?.status))} onClick={() => void onH3Edit(version!.id, editPrompt)}>{generationJob?.operation === "visual-edit" && generationJob.status !== "completed" && generationJob.status !== "failed" ? generationJob.statusMessage || "Rendering Edit..." : "Render Edit"}</button></section>
+            <section className="border-t border-white/10 pt-4" data-otg="production-v2-h3-video-edit"><h3 className="text-xs font-black uppercase text-zinc-400">AI Video Edit</h3><p className="mt-2 text-xs text-zinc-500">Current source: {version ? versionLabel(version, scene.mediaVersions.indexOf(version)) : "None"}</p><p className="mt-2 text-[11px] font-bold text-violet-200/80">The first five seconds are cut automatically and sent to H3 for editing.</p><label className="mt-3 block text-xs font-bold text-zinc-400">Describe your changes<textarea aria-label="AI video edit instructions" rows={4} value={editPrompt} disabled={readOnly} onChange={(event) => setEditPrompt(event.target.value)} className={`${fieldClass} mt-2 resize-y`} /></label><button type="button" className={`${productionPrimaryButton} mt-3 w-full`} disabled={Boolean(readOnly || !version || !editPrompt.trim() || productionV2GenerationIsActive(generationJob?.status))} onClick={() => void onH3Edit(version!.id, editPrompt)}>{generationJob?.operation === "visual-edit" && generationJob.status !== "completed" && generationJob.status !== "failed" ? generationJob.statusMessage || "Rendering Edit..." : "Render 5-Second Edit"}</button></section>
             <section className="border-t border-white/10 pt-4" data-otg="production-v2-trim"><h3 className="text-xs font-black uppercase text-zinc-400">Trim</h3><div className="mt-2 grid grid-cols-3 gap-2 text-center text-[11px] text-zinc-500"><span>Original<br /><strong className="text-zinc-200">{duration.toFixed(2)}s</strong></span><span>In<br /><strong className="text-zinc-200">{trimStart.toFixed(2)}s</strong></span><span>Out<br /><strong className="text-zinc-200">{trimEnd.toFixed(2)}s</strong></span></div><label className="mt-3 block text-xs text-zinc-500">In point<input aria-label="Trim in point" type="range" min={0} max={Math.max(0.25, duration - 0.25)} step="0.05" value={Math.min(trimStart, Math.max(0, trimEnd - 0.25))} onChange={(event) => setTrimStart(Math.min(Number(event.target.value), trimEnd - 0.25))} className="mt-2 w-full" /></label><label className="mt-2 block text-xs text-zinc-500">Out point<input aria-label="Trim out point" type="range" min={0.25} max={duration} step="0.05" value={Math.max(trimEnd, trimStart + 0.25)} onChange={(event) => setTrimEnd(Math.max(Number(event.target.value), trimStart + 0.25))} className="mt-2 w-full" /></label><p className="mt-2 text-center text-xs font-bold text-zinc-300">Result: {Math.max(0, trimEnd - trimStart).toFixed(2)}s</p><button type="button" className={`${secondaryButton} mt-3 w-full`} disabled={Boolean(readOnly || !version || operation)} onClick={() => void postProcess("trim", { startSeconds: trimStart, endSeconds: trimEnd })}>{operation === "trim" ? "Trimming..." : "Apply Trim"}</button></section>
           </> : <>
             <section className="border-t border-white/10 pt-4" data-otg="production-v2-woosh-sfx"><h3 className="text-xs font-black uppercase text-zinc-400">Sound Effects</h3><p className="mt-2 text-xs text-zinc-500">Sony Woosh VFlow | video-to-audio</p><label className="mt-3 block text-xs font-bold text-zinc-400">Describe desired sound effects<textarea aria-label="Sound effects description" rows={4} value={sfxPrompt} disabled={readOnly} onChange={(event) => setSfxPrompt(event.target.value)} className={`${fieldClass} mt-2 resize-y`} /></label><button type="button" className={`${productionPrimaryButton} mt-3 w-full`} disabled={Boolean(readOnly || !version || operation)} onClick={() => void postProcess("woosh-sfx", { prompt: sfxPrompt, sfxVolume: 80 })}>{operation === "woosh-sfx" ? "Generating..." : "Generate Sound Effects"}</button><p className="mt-2 text-[10px] leading-4 text-amber-200/70">Public Woosh weights: CC-BY-NC, non-commercial.</p></section>
@@ -1103,6 +1125,19 @@ export default function ProductionV2Panel() {
   const [videoRefreshBusy, setVideoRefreshBusy] = useState(false);
   const [videoRetrySubmitting, setVideoRetrySubmitting] = useState(false);
   const [continueSceneSubmitting, setContinueSceneSubmitting] = useState(false);
+  const [referenceVideoBusy, setReferenceVideoBusy] = useState(false);
+  const [referenceVideoClipSelection, setReferenceVideoClipSelection] = useState({
+    key: "",
+    startSeconds: 0,
+  });
+  const [continuationClipSelection, setContinuationClipSelection] = useState({
+    key: "",
+    startSeconds: 0,
+    sourceDurationSeconds: 0,
+  });
+  const continuationPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const referenceVideoPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const referenceVideoInputRef = useRef<HTMLInputElement | null>(null);
   /*
    * OTG_PRODUCTION_V2_PROMPT_TOOLS_R10_V1
    *
@@ -1112,6 +1147,17 @@ export default function ProductionV2Panel() {
   const [promptUndo, setPromptUndo] = useState<{ sceneId: string; value: string } | null>(null);
   const [promptEnhancingLevel, setPromptEnhancingLevel] = useState<"short" | "medium" | "long" | null>(null);
   const [generationJob, setGenerationJob] = useState<ProductionV2GenerationJobPayload | null>(null);
+  const [generationPreviewFrame, setGenerationPreviewFrame] = useState({
+    jobId: "",
+    version: 0,
+    contentType: "",
+  });
+  const [generationPreviewProgress, setGenerationPreviewProgress] = useState<{
+    jobId: string;
+    value: number;
+    max: number;
+    node: string | null;
+  }>({ jobId: "", value: 0, max: 0, node: null });
   const [viewerSceneId, setViewerSceneId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -1120,6 +1166,19 @@ export default function ProductionV2Panel() {
   const selectedScene = useMemo(() => production?.scenes.find((scene) => scene.id === production.activeSceneId) || production?.scenes[0] || null, [production]);
   const productionId = production?.id || "";
   const activeSceneId = production?.activeSceneId || "";
+  const uploadedReferenceVideo = selectedScene?.modelState.h3.referenceToVideo.uploadedVideo || null;
+  const referenceVideoMaxStartSeconds = Math.max(
+    0,
+    (uploadedReferenceVideo?.durationSeconds || 5) - 5,
+  );
+  const referenceVideoStartSeconds = uploadedReferenceVideo
+    ? Math.min(
+        referenceVideoMaxStartSeconds,
+        referenceVideoClipSelection.key === uploadedReferenceVideo.id
+          ? referenceVideoClipSelection.startSeconds
+          : uploadedReferenceVideo.clipStartSeconds,
+      )
+    : 0;
   const expansionScope = production && selectedScene ? `${production.id}:${selectedScene.id}` : "";
   const expandedGroups = expandedState.scope === expansionScope ? expandedState.groups : EMPTY_EXPANDED_GROUPS;
   const currentPrompt = selectedScene?.promptStateByMode[selectedScene.generationMode] || null;
@@ -1134,6 +1193,10 @@ export default function ProductionV2Panel() {
         generationJob?.backend,
       )
     : null;
+  const h3AdvancedReferenceOptions =
+    selectedScene?.referencePlan.modelFacingReferences.map((reference, index) => ({
+      label: reference.name || `Picture ${index + 1}`,
+    })) || [];
   /*
    * Continue Scene follows the explicitly active media version.
    * selectedSceneVersion already falls back safely when no active
@@ -1142,8 +1205,30 @@ export default function ProductionV2Panel() {
   const selectedStoryboardVersion = selectedScene
     ? selectedSceneVersion(selectedScene)
     : null;
+  const continuationClipSelectionKey = selectedScene && selectedStoryboardVersion
+    ? `${selectedScene.id}:${selectedStoryboardVersion.id}`
+    : "";
+  const continuationClipSourceDurationSeconds =
+    continuationClipSelection.key === continuationClipSelectionKey
+      && continuationClipSelection.sourceDurationSeconds > 0
+      ? continuationClipSelection.sourceDurationSeconds
+      : selectedScene?.durationSeconds || 5;
+  const continuationClipMaxStartSeconds = Math.max(
+    0,
+    continuationClipSourceDurationSeconds - 5,
+  );
+  const continuationClipStartSeconds =
+    continuationClipSelection.key === continuationClipSelectionKey
+      ? Math.min(
+          continuationClipMaxStartSeconds,
+          continuationClipSelection.startSeconds,
+        )
+      : 0;
   const storyboardVideoSrc = mediaUrl(
-    selectedStoryboardVersion?.previewUrl || generationJob?.videoUrl || selectedScene?.generatedClip?.previewUrl || "",
+    selectedStoryboardVersion?.previewUrl
+      || (generationJob?.h3Quality === "sh" ? "" : generationJob?.videoUrl)
+      || selectedScene?.generatedClip?.previewUrl
+      || "",
   );
   const hasPriorVideoAttempt = Boolean(generationJob || selectedScene?.generationAttempts?.length || selectedScene?.mediaVersions?.some((version) => version.versionType === "generated"));
   const savedScenes = useMemo(() => production ? productionV2SavedScenes(production) : [], [production]);
@@ -1180,7 +1265,12 @@ export default function ProductionV2Panel() {
       const productionResponse = await fetch(`/api/production/v2?mode=load&productionId=${encodeURIComponent(productionId)}`, { credentials: "include", cache: "no-store" });
       const loaded = await readJsonResponse<{ production: ProductionV2 }>(productionResponse);
       setGenerationJob(latestJob);
-      setProduction(loaded.production);
+      setProduction((current) =>
+        preserveProductionV2ActiveSceneSelection(
+          current,
+          loaded.production,
+        ),
+      );
       const refreshedScene = loaded.production.scenes.find((scene) => scene.id === activeSceneId);
       setMessage(
         latestJob
@@ -1238,9 +1328,47 @@ export default function ProductionV2Panel() {
     }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    const trackedJobId = generationJob?.id || "";
+
+    async function loadCompletedGeneration(jobId: string) {
+      for (let attempt = 0; attempt < 10 && !cancelled; attempt += 1) {
+        const productionResponse = await fetch(`/api/production/v2?mode=load&productionId=${encodeURIComponent(productionId)}`, { credentials: "include", cache: "no-store" });
+        const loaded = await readJsonResponse<{ production: ProductionV2 }>(productionResponse);
+        const completedScene = loaded.production.scenes.find((scene) => scene.id === activeSceneId);
+        const completedMediaId = `media-${jobId}`;
+        const completedMediaIsPresent = Boolean(
+          completedScene?.mediaVersions.some(
+            (version) =>
+              version.id === completedMediaId
+              || version.metadata?.generationJobId === jobId,
+          ),
+        );
+
+        if (completedMediaIsPresent) {
+          setProduction((current) =>
+            preserveProductionV2ActiveSceneSelection(
+              current,
+              loaded.production,
+            ),
+          );
+          setMessage("Generation complete. The finished video loaded automatically.");
+          return true;
+        }
+
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 1_000);
+        });
+      }
+
+      return false;
+    }
+
     async function poll() {
       try {
-        const response = await fetch(`/api/production/v2/generation?productionId=${encodeURIComponent(productionId)}&sceneId=${encodeURIComponent(activeSceneId)}`, { credentials: "include", cache: "no-store" });
+        const statusQuery = trackedJobId
+          ? `jobId=${encodeURIComponent(trackedJobId)}`
+          : `productionId=${encodeURIComponent(productionId)}&sceneId=${encodeURIComponent(activeSceneId)}`;
+        const response = await fetch(`/api/production/v2/generation?${statusQuery}`, { credentials: "include", cache: "no-store" });
         if (response.status === 404) {
           if (!cancelled) setGenerationJob(null);
           return;
@@ -1249,12 +1377,18 @@ export default function ProductionV2Panel() {
         if (cancelled) return;
         setGenerationJob(json.job);
         if (json.job.status === "completed") {
-          const productionResponse = await fetch(`/api/production/v2?mode=load&productionId=${encodeURIComponent(productionId)}`, { credentials: "include", cache: "no-store" });
-          const loaded = await readJsonResponse<{ production: ProductionV2 }>(productionResponse);
-          if (!cancelled) setProduction(loaded.production);
+          if (json.job.h3Quality === "sh") {
+            setMessage(`Scene Hunter Preview ready. Seed ${json.job.seed ?? "saved"} · 0.2 MP.`);
+            return;
+          }
+          const loaded = await loadCompletedGeneration(json.job.id);
+          if (!loaded && !cancelled) {
+            setMessage("Generation is complete. Waiting for the finished video to become available...");
+            timer = setTimeout(poll, 3_000);
+          }
           return;
         }
-        if (json.job.status === "failed") return;
+        if (json.job.status === "failed" || json.job.status === "canceled") return;
         timer = setTimeout(poll, 3000);
       } catch (error) {
         if (!cancelled) {
@@ -1263,6 +1397,7 @@ export default function ProductionV2Panel() {
               ? error.message
               : "Could not read Production video generation status.",
           );
+          timer = setTimeout(poll, 3_000);
         }
       }
     }
@@ -1274,6 +1409,41 @@ export default function ProductionV2Panel() {
   }, [productionId, activeSceneId, generationJob?.id]);
 
   useEffect(() => {
+    if (!generationActive || !generationJob?.previewEnabled) {
+      setGenerationPreviewFrame({ jobId: "", version: 0, contentType: "" });
+      setGenerationPreviewProgress({ jobId: "", value: 0, max: 0, node: null });
+      return;
+    }
+    const source = new EventSource(`/api/h3/generation/events?jobId=${encodeURIComponent(generationJob.id)}`);
+    const onPreview = (event: MessageEvent) => {
+      try {
+        const payload = JSON.parse(event.data) as { version?: number; contentType?: string };
+        if (Number(payload.version) > 0) {
+          setGenerationPreviewFrame({
+            jobId: generationJob.id,
+            version: Number(payload.version),
+            contentType: String(payload.contentType || ""),
+          });
+        }
+      } catch {}
+    };
+    const onProgress = (event: MessageEvent) => {
+      try {
+        const payload = JSON.parse(event.data) as { value?: number; max?: number; node?: string | null };
+        setGenerationPreviewProgress({
+          jobId: generationJob.id,
+          value: Number(payload.value || 0),
+          max: Number(payload.max || 0),
+          node: payload.node == null ? null : String(payload.node),
+        });
+      } catch {}
+    };
+    source.addEventListener("preview", onPreview as EventListener);
+    source.addEventListener("progress", onProgress as EventListener);
+    return () => source.close();
+  }, [generationActive, generationJob?.id, generationJob?.previewEnabled]);
+
+  useEffect(() => {
     if (!productionId || production?.assembly.musicGeneration.status !== "generating") return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1282,7 +1452,12 @@ export default function ProductionV2Panel() {
         const response = await fetch(`/api/production/v2/music?productionId=${encodeURIComponent(productionId)}`, { credentials: "include", cache: "no-store" });
         const json = await readJsonResponse<{ production: ProductionV2; generation: ProductionV2["assembly"]["musicGeneration"] }>(response);
         if (cancelled) return;
-        setProduction(json.production);
+        setProduction((current) =>
+          preserveProductionV2ActiveSceneSelection(
+            current,
+            json.production,
+          ),
+        );
         if (json.generation.status === "generating") timer = setTimeout(pollMusic, 4_000);
         else if (json.generation.status === "ready") setMessage("MiniMax Music 3.0 track is ready for Assembly.");
         else if (json.generation.status === "failed") setMessage(json.generation.error || "MiniMax Music 3.0 generation failed.");
@@ -1404,6 +1579,102 @@ export default function ProductionV2Panel() {
 
   function updateSelectedScene(updater: (scene: ProductionV2Scene) => ProductionV2Scene) {
     setProduction((current) => current ? { ...current, scenes: current.scenes.map((scene) => scene.id === current.activeSceneId ? updater(scene) : scene) } : current);
+  }
+
+  async function uploadReferenceVideo(file: File) {
+    if (!production || !selectedScene || !file || referenceVideoBusy) return;
+    setReferenceVideoBusy(true);
+    setMessage("");
+    try {
+      /*
+       * Mode/entity edits are intentionally local until Save Production.
+       * The upload route is server-authoritative, so persist the exact
+       * current scene first; otherwise a freshly selected R2V tab can still
+       * look like I2V to the server and the returned Production can also
+       * overwrite other unsaved scene inputs.
+       */
+      const saveResponse = await fetch("/api/production/v2", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save", production }),
+      });
+      const saved = await readJsonResponse<{ production: ProductionV2 }>(saveResponse);
+      setProduction(saved.production);
+
+      const form = new FormData();
+      form.set("productionId", saved.production.id);
+      form.set("sceneId", selectedScene.id);
+      form.set("video", file);
+      const response = await fetch("/api/production/v2/reference-video", {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+      const json = await readJsonResponse<{
+        production: ProductionV2;
+        uploadedVideo: ProductionV2["scenes"][number]["modelState"]["h3"]["referenceToVideo"]["uploadedVideo"];
+      }>(response);
+      setProduction(json.production);
+      if (json.uploadedVideo) {
+        setReferenceVideoClipSelection({ key: json.uploadedVideo.id, startSeconds: json.uploadedVideo.clipStartSeconds });
+      }
+      setMessage("Video uploaded. Choose the exact five-second portion, then select Use This 5 Seconds.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not upload the reference video.");
+    } finally {
+      if (referenceVideoInputRef.current) referenceVideoInputRef.current.value = "";
+      setReferenceVideoBusy(false);
+    }
+  }
+
+  async function saveReferenceVideoWindow() {
+    if (!production || !selectedScene || !uploadedReferenceVideo || referenceVideoBusy) return;
+    setReferenceVideoBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/production/v2/reference-video", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "select-window",
+          productionId: production.id,
+          sceneId: selectedScene.id,
+          uploadId: uploadedReferenceVideo.id,
+          clipStartSeconds: referenceVideoStartSeconds,
+        }),
+      });
+      const json = await readJsonResponse<{ production: ProductionV2 }>(response);
+      setProduction(json.production);
+      setMessage(`The ${referenceVideoStartSeconds.toFixed(1)}s-${(referenceVideoStartSeconds + 5).toFixed(1)}s reference window is selected. Rebuild the Scene Prompt before generating.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save the five-second reference window.");
+    } finally {
+      setReferenceVideoBusy(false);
+    }
+  }
+
+  async function removeReferenceVideo() {
+    if (!production || !selectedScene || referenceVideoBusy) return;
+    setReferenceVideoBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/production/v2/reference-video", {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productionId: production.id, sceneId: selectedScene.id }),
+      });
+      const json = await readJsonResponse<{ production: ProductionV2 }>(response);
+      setProduction(json.production);
+      setReferenceVideoClipSelection({ key: "", startSeconds: 0 });
+      setMessage("Uploaded reference video removed from this Scene.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not remove the reference video.");
+    } finally {
+      setReferenceVideoBusy(false);
+    }
   }
 
   function updateSharedSceneInput(updater: (scene: ProductionV2Scene) => ProductionV2Scene, syncReferences = false) {
@@ -2361,6 +2632,7 @@ export default function ProductionV2Panel() {
                     ...scene.modelState.h3,
 
                     referenceToVideo: {
+                      ...scene.modelState.h3.referenceToVideo,
                       resolvedVoiceBindings:
                         json.referencePlan.resolvedVoiceReferences,
                     },
@@ -2453,6 +2725,59 @@ export default function ProductionV2Panel() {
     }
   }
 
+  async function upscaleSceneHunterCandidate() {
+    if (!production || !selectedScene || !generationJob || generationJob.h3Quality !== "sh" || generationJob.status !== "completed") return;
+    setGenerationSubmitting(true);
+    setMessage(`Upscaling Scene Hunter seed ${generationJob.seed ?? ""} at HQ...`);
+    try {
+      const response = await fetch("/api/production/v2/generation", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productionId: production.id,
+          sceneId: selectedScene.id,
+          jobId: generationJob.id,
+          action: "scene-hunter-upscale",
+        }),
+      });
+      const json = await readJsonResponse<{ job: ProductionV2GenerationJobPayload }>(response);
+      setGenerationJob(json.job);
+      setMessage(`Upscaling Scene Hunter seed ${json.job.seed ?? generationJob.seed ?? ""} at HQ...`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not upscale Scene Hunter candidate.");
+    } finally {
+      setGenerationSubmitting(false);
+    }
+  }
+
+  async function cancelVideoGeneration() {
+    if (!production || !selectedScene || !generationJob || !generationActive || generationJob.status === "canceling") return;
+    const previous = generationJob;
+    setGenerationJob({ ...generationJob, status: "canceling", statusMessage: "Canceling…" });
+    setMessage("Canceling MiniMax H3 generation…");
+    try {
+      const response = await fetch("/api/production/v2/generation", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productionId: production.id,
+          sceneId: selectedScene.id,
+          jobId: generationJob.id,
+          action: "cancel",
+        }),
+      });
+      const json = await readJsonResponse<{ job: ProductionV2GenerationJobPayload }>(response);
+      setGenerationJob(json.job);
+      setMessage(json.job.status === "canceled" ? "Generation canceled." : json.job.statusMessage || "Canceling generation…");
+      if (json.job.status === "canceled") await refreshVideoState();
+    } catch (error) {
+      setGenerationJob(previous);
+      setMessage(error instanceof Error ? error.message : "Could not cancel MiniMax H3 generation.");
+    }
+  }
+
   async function addScene() {
     if (!production || production.scenes.length >= PRODUCTION_V2_MAX_SCENES) return;
     try {
@@ -2497,7 +2822,21 @@ export default function ProductionV2Panel() {
   }
 
   function selectScene(sceneId: string) {
-    setProduction((current) => current?.scenes.some((scene) => scene.id === sceneId) ? { ...current, activeSceneId: sceneId } : current);
+    const sceneNumber =
+      production?.scenes.find((scene) => scene.id === sceneId)?.sceneNumber;
+
+    setGenerationJob(null);
+    setProduction((current) =>
+      current?.scenes.some((scene) => scene.id === sceneId)
+        ? { ...current, activeSceneId: sceneId }
+        : current,
+    );
+
+    if (sceneNumber) {
+      setMessage(
+        `Scene ${sceneNumber} selected. You can edit it or continue it into Scene ${(production?.scenes.length || 0) + 1}.`,
+      );
+    }
   }
 
   function changeStage(stage: ProductionV2Stage) {
@@ -2652,6 +2991,10 @@ export default function ProductionV2Panel() {
                   selectedScene.id,
                 versionId:
                   selectedStoryboardVersion.id,
+                continuationClipStartSeconds:
+                  selectedScene.model === "minimax-h3"
+                    ? continuationClipStartSeconds
+                    : undefined,
               }),
           },
         );
@@ -2682,7 +3025,9 @@ export default function ProductionV2Panel() {
       );
 
       setMessage(
-        `Scene ${nextScene?.sceneNumber || sourceSceneNumber + 1} created from Scene ${sourceSceneNumber} final frame.`,
+        selectedScene.model === "minimax-h3"
+          ? `Scene ${nextScene?.sceneNumber || sourceSceneNumber + 1} created from Scene ${sourceSceneNumber}. I2V uses its final frame; R2V uses the selected five-second clip.`
+          : `Scene ${nextScene?.sceneNumber || sourceSceneNumber + 1} created from Scene ${sourceSceneNumber} final frame.`,
       );
     } catch (error) {
       setMessage(
@@ -2872,19 +3217,24 @@ export default function ProductionV2Panel() {
             <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-4" data-otg="production-v2-look-controls">
               <NumberedHeading number="02" title="Choose the look" />
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                <SelectControl label="Visual style" value={selectedScene.promptOptions.visualStyle} options={H3_VISUAL_STYLE_OPTIONS} disabled={Boolean(readOnly)} onChange={(value) => updatePromptOption("visualStyle", value as ProductionV2PromptOptions["visualStyle"])} />
+                <div className="min-w-0 sm:col-span-2"><H3StyleSelector value={selectedScene.promptOptions.visualStyleId} disabled={Boolean(readOnly)} onChange={(styleId) => { const style = resolveH3CanonicalStyle(styleId); updateSharedSceneInput((scene) => ({ ...scene, promptOptions: { ...scene.promptOptions, visualStyleId: style?.id || "cinematic-realism", visualStyle: style?.promptBuilderVisualStyle || "Cinematic realism" } })); }} /></div>
                 <SelectControl label="Camera feel" value={selectedScene.promptOptions.cameraFeel} options={H3_CAMERA_FEEL_OPTIONS} disabled={Boolean(readOnly)} onChange={(value) => updatePromptOption("cameraFeel", value as ProductionV2PromptOptions["cameraFeel"])} />
                 <SelectControl label="Shot flow" value={selectedScene.promptOptions.shotFlow} options={H3_SHOT_FLOW_OPTIONS} disabled={Boolean(readOnly)} onChange={(value) => updatePromptOption("shotFlow", value as ProductionV2PromptOptions["shotFlow"])} />
                 <div>
                   <div className="text-xs font-black uppercase text-zinc-500">Quality</div>
                   {selectedScene.model === "minimax-h3" ? (
                     <div className="mt-2" data-otg="production-v2-h3-quality-control">
-                      <div className="grid grid-cols-2 gap-2" aria-label="MiniMax H3 quality">
+                      <div className="grid grid-cols-3 gap-2" aria-label="MiniMax H3 quality">
+                        <SegmentButton active={selectedScene.h3Quality === "sh"} disabled={Boolean(readOnly)} onClick={() => updateSharedSceneInput((scene) => ({ ...scene, h3Quality: "sh" }))}>SH</SegmentButton>
                         <SegmentButton active={selectedScene.h3Quality === "lq"} disabled={Boolean(readOnly)} onClick={() => updateSharedSceneInput((scene) => ({ ...scene, h3Quality: "lq" }))}>LQ</SegmentButton>
                         <SegmentButton active={selectedScene.h3Quality === "hq"} disabled={Boolean(readOnly)} onClick={() => updateSharedSceneInput((scene) => ({ ...scene, h3Quality: "hq" }))}>HQ</SegmentButton>
                       </div>
                       <div className="mt-2 text-[10px] leading-4 text-zinc-500">
-                        {selectedScene.h3Quality === "hq" ? "1.0 MP native (1376x768)" : "0.6 MP native (1056x608)"} + RTX VSR ULTRA
+                        {selectedScene.h3Quality === "sh"
+                          ? "Scene Hunter · 0.2 MP · Fast scene search"
+                          : selectedScene.h3Quality === "hq"
+                            ? "1.0 MP native (1376x768) + RTX VSR ULTRA"
+                            : "0.6 MP native (1056x608) + RTX VSR ULTRA"}
                       </div>
                       {h3Eta ? (
                         <div className="mt-1 text-[10px] leading-4 text-zinc-500" data-otg="production-v2-h3-eta">
@@ -2893,6 +3243,27 @@ export default function ProductionV2Panel() {
                             : `${formatH3Eta(h3Eta.minSeconds)}-${formatH3Eta(h3Eta.maxSeconds)}`}
                         </div>
                       ) : null}
+                      <div className="mt-5">
+                        <H3AdvancedControls
+                          variant="production"
+                          value={selectedScene.modelState.h3.h3Settings}
+                          disabled={Boolean(readOnly)}
+                          referenceOptions={h3AdvancedReferenceOptions}
+                          onChange={(next) => updateSharedSceneInput((scene) => ({
+                            ...scene,
+                            modelState: {
+                              ...scene.modelState,
+                              h3: {
+                                ...scene.modelState.h3,
+                                h3Settings: normalizeH3AdvancedSettings(
+                                  next,
+                                  scene.referencePlan.modelFacingReferences.length,
+                                ),
+                              },
+                            },
+                          }))}
+                        />
+                      </div>
                     </div>
                   ) : (
                     <div aria-label="Quality" aria-readonly="true" className="mt-2 rounded-lg border border-white/10 bg-black/25 px-3 py-2.5 text-sm font-bold text-zinc-200">
@@ -2951,6 +3322,86 @@ export default function ProductionV2Panel() {
                 </div>
               ) : (
                 <div className="mt-5 space-y-3">
+                  {isH3ReferenceToVideo ? (
+                    <div className="rounded-lg border border-cyan-300/25 bg-cyan-300/[0.05] p-4" data-otg="production-v2-uploaded-reference-video">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-black uppercase text-cyan-100">Video Reference</div>
+                          <p className="mt-1 max-w-2xl text-xs leading-5 text-zinc-500">Upload from your phone or computer. Only the exact five-second portion you select is sent to H3, regardless of the original video length.</p>
+                        </div>
+                        <button type="button" className={productionPrimaryButton} disabled={Boolean(readOnly || referenceVideoBusy)} onClick={() => referenceVideoInputRef.current?.click()}>
+                          {referenceVideoBusy ? "Working..." : uploadedReferenceVideo ? "Replace Video" : "Upload Video"}
+                        </button>
+                        <input
+                          ref={referenceVideoInputRef}
+                          type="file"
+                          accept="video/*,.mp4,.m4v,.mov,.webm,.mkv,.avi"
+                          className="hidden"
+                          disabled={Boolean(readOnly || referenceVideoBusy)}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) void uploadReferenceVideo(file);
+                          }}
+                        />
+                      </div>
+                      {uploadedReferenceVideo ? (
+                        <div className="mt-4 space-y-4">
+                          <video
+                            ref={referenceVideoPreviewRef}
+                            src={uploadedReferenceVideo.previewUrl}
+                            controls
+                            preload="metadata"
+                            playsInline
+                            className="aspect-video w-full rounded-lg bg-black object-contain"
+                            onLoadedMetadata={(event) => {
+                              event.currentTarget.currentTime = referenceVideoStartSeconds;
+                            }}
+                            onTimeUpdate={(event) => {
+                              if (event.currentTarget.currentTime >= referenceVideoStartSeconds + 5) {
+                                event.currentTarget.pause();
+                                event.currentTarget.currentTime = referenceVideoStartSeconds;
+                              }
+                            }}
+                          />
+                          <div className="break-words text-sm font-bold text-zinc-200">{uploadedReferenceVideo.originalName}</div>
+                          <div className="text-xs text-zinc-500">{uploadedReferenceVideo.durationSeconds.toFixed(1)} seconds total · {uploadedReferenceVideo.includeAudio ? "embedded audio included" : "no embedded audio"}</div>
+                          <label className="block text-xs font-black uppercase text-zinc-500">
+                            Five-second window
+                            <input
+                              aria-label="Uploaded video five-second window"
+                              type="range"
+                              min={0}
+                              max={referenceVideoMaxStartSeconds}
+                              step={0.1}
+                              value={referenceVideoStartSeconds}
+                              disabled={Boolean(readOnly || referenceVideoBusy || referenceVideoMaxStartSeconds <= 0)}
+                              onChange={(event) => {
+                                const startSeconds = Number(event.target.value);
+                                setReferenceVideoClipSelection({ key: uploadedReferenceVideo.id, startSeconds });
+                                if (referenceVideoPreviewRef.current) {
+                                  referenceVideoPreviewRef.current.pause();
+                                  referenceVideoPreviewRef.current.currentTime = startSeconds;
+                                }
+                              }}
+                              className="mt-3 w-full accent-cyan-300"
+                            />
+                          </label>
+                          <div className="text-sm font-black text-cyan-100">{referenceVideoStartSeconds.toFixed(1)}s - {(referenceVideoStartSeconds + 5).toFixed(1)}s</div>
+                          <div className="flex flex-wrap gap-2">
+                            <button type="button" className={secondaryButton} disabled={Boolean(referenceVideoBusy)} onClick={() => {
+                              const preview = referenceVideoPreviewRef.current;
+                              if (!preview) return;
+                              preview.currentTime = referenceVideoStartSeconds;
+                              void preview.play();
+                            }}>Play Selected 5 Seconds</button>
+                            <button type="button" className={productionPrimaryButton} disabled={Boolean(readOnly || referenceVideoBusy)} onClick={() => void saveReferenceVideoWindow()}>Use This 5 Seconds</button>
+                            <button type="button" className={dangerButton} disabled={Boolean(readOnly || referenceVideoBusy)} onClick={() => void removeReferenceVideo()}>Remove Video</button>
+                          </div>
+                          {selectedScene.continuation ? <p className="text-xs leading-5 text-amber-100/75">This upload replaces the inherited Continue Scene video reference. The exact final-frame continuation guide remains attached.</p> : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <ReferenceAccordion label="Characters" count={selectedScene.selectedCharacters.length} expanded={expandedGroups.has("section:characters")} onToggle={() => toggleExpanded("section:characters")}>
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">{characters.map((item) => { const selected = selectedScene.selectedCharacters.some((entry) => entry.characterId === item.id); const full = selectedScene.model === "ltx-2.5" && ingredientCount >= ingredientLimit && !selected; const key = `character:${item.id}`; return <EntityCard key={key} entityType="Character" entityId={item.id} name={item.name} image={item.defaultImage} imageLabel="Default image" perspectives={item.perspectives} selected={selected} expanded={expandedGroups.has(key)} disabled={Boolean(readOnly || full)} onSelect={() => toggleCharacter(item)} onTogglePerspectives={() => toggleExpanded(key)} />; })}</div>{!characters.length ? <p className="text-sm text-zinc-500">No saved Characters.</p> : null}
                   </ReferenceAccordion>
@@ -3110,6 +3561,17 @@ export default function ProductionV2Panel() {
                         : "Generate"}
                 </button>
                 <button type="button" className={secondaryButton} disabled={videoRefreshBusy} onClick={() => void refreshVideoState()}>{videoRefreshBusy ? "Refreshing..." : "Refresh"}</button>
+                {selectedScene.model === "minimax-h3" && generationActive ? (
+                  <button
+                    type="button"
+                    className={dangerButton}
+                    disabled={generationJob?.status === "canceling"}
+                    onClick={() => void cancelVideoGeneration()}
+                    data-otg="production-v2-video-cancel"
+                  >
+                    {generationJob?.status === "canceling" ? "Canceling…" : "Cancel Generation"}
+                  </button>
+                ) : null}
                 {selectedScene.model === "minimax-h3" ? (
                   <button
                     type="button"
@@ -3124,7 +3586,62 @@ export default function ProductionV2Panel() {
                 ) : null}
               </div>
               {generationJob ? <div className="mt-3 text-xs text-zinc-500" data-otg="production-v2-generation-provenance">Job {generationJob.id}{generationJob.promptId ? ` · Prompt ${generationJob.promptId}` : ""}{generationJob.retryOfJobId ? ` · Retry of ${generationJob.retryOfJobId}` : ""}</div> : null}
+              {generationJob?.previewEnabled && generationPreviewFrame.jobId === generationJob.id && generationPreviewFrame.version > 0 ? (
+                <figure className="mt-4 min-w-0 max-w-full overflow-hidden rounded-lg border border-violet-300/20 bg-black/40 p-2" data-otg="production-v2-h3-approximate-preview">
+                  <figcaption className="mb-2 text-xs font-black uppercase tracking-wide text-violet-200/80">Approximate Preview</figcaption>
+                  {generationPreviewFrame.contentType.startsWith("video/") ? (
+                    <video
+                      key={`${generationJob.id}-${generationPreviewFrame.version}`}
+                      src={`/api/h3/generation/preview?jobId=${encodeURIComponent(generationJob.id)}&v=${generationPreviewFrame.version}`}
+                      aria-label="Approximate in-progress H3 video preview"
+                      className="block aspect-video h-auto w-full min-w-0 max-w-full bg-black object-contain"
+                      autoPlay
+                      muted
+                      playsInline
+                      loop
+                      controls
+                    />
+                  ) : (
+                    <img src={`/api/h3/generation/preview?jobId=${encodeURIComponent(generationJob.id)}&v=${generationPreviewFrame.version}`} alt="Approximate in-progress H3 animated preview" className="block aspect-video h-auto w-full min-w-0 max-w-full bg-black object-contain" />
+                  )}
+                  <p className="mt-2 text-[11px] leading-4 text-zinc-500">
+                    {generationPreviewProgress.jobId === generationJob.id && generationPreviewProgress.max > 0
+                      ? `Preview step ${generationPreviewProgress.value} / ${generationPreviewProgress.max}${generationPreviewProgress.node ? ` · ${generationPreviewProgress.node}` : ""}`
+                      : "Waiting for sampler step updates from ComfyUI."}
+                    {" "}
+                    Early sampling previews may be noisy and can differ from the finished video.
+                  </p>
+                </figure>
+              ) : null}
               {generationJob?.error ? <div className="mt-4 rounded-lg border border-red-300/25 bg-red-300/10 px-3 py-2 text-sm text-red-100" role="alert">{generationJob.error}</div> : null}
+              {generationJob?.status === "canceled" ? <div className="mt-4 rounded-lg border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-sm text-amber-100" role="status">Canceled by user. No retry or post-processing will start automatically.</div> : null}
+              {generationJob?.h3Quality === "sh" && generationJob.status === "completed" && generationJob.videoUrl ? (
+                <div className="mt-4 rounded-lg border border-cyan-300/25 bg-cyan-300/[0.07] p-3" data-otg="production-v2-scene-hunter-candidate">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-black text-cyan-50">Scene Hunter Preview</p>
+                      <p className="mt-1 text-xs text-cyan-100/75">Seed {generationJob.seed ?? "saved"} · 0.2 MP</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className={productionPrimaryButton}
+                        disabled={generationSubmitting || generationActive || readOnly}
+                        onClick={() => void upscaleSceneHunterCandidate()}
+                      >
+                        {generationSubmitting ? "Upscaling Scene..." : "Upscale"}
+                      </button>
+                      <a className={secondaryButton} href={`${generationJob.videoUrl}${generationJob.videoUrl.includes("?") ? "&" : "?"}download=1`}>
+                        Download
+                      </a>
+                    </div>
+                  </div>
+                  <video key={generationJob.videoUrl} className="mt-3 aspect-video w-full rounded-lg bg-black" controls playsInline preload="metadata" src={generationJob.videoUrl} data-otg="production-v2-scene-hunter-preview" />
+                </div>
+              ) : null}
+              {generationJob?.sceneHunterSourceJobId && generationJob.status === "completed" ? (
+                <div className="mt-4 rounded-lg border border-emerald-300/25 bg-emerald-300/10 px-3 py-2 text-sm font-black text-emerald-50" role="status">HQ Scene Ready</div>
+              ) : null}
               {storyboardVideoSrc ? <video key={storyboardVideoSrc} className="mt-5 aspect-video w-full rounded-lg bg-black" controls playsInline preload="metadata" src={storyboardVideoSrc} data-otg="production-v2-generated-video" /> : null}
               {selectedScene.continuation ? (
                 <div
@@ -3153,8 +3670,72 @@ export default function ProductionV2Panel() {
 
           <aside className="space-y-4">
             <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-4"><div className="text-xs font-black uppercase text-zinc-500">Scene summary</div><dl className="mt-4 space-y-3 text-sm"><div className="flex justify-between gap-3"><dt className="text-zinc-500">Model</dt><dd className="font-bold text-white">{MODEL_LABELS[selectedScene.model]}</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Mode</dt><dd className="text-right font-bold text-white">{MODE_LABELS[selectedScene.generationMode]}</dd></div>{selectedScene.model === "minimax-h3" ? <div className="flex justify-between gap-3"><dt className="text-zinc-500">Quality</dt><dd className="font-bold uppercase text-white">{selectedScene.h3Quality}</dd></div> : null}<div className="flex justify-between gap-3"><dt className="text-zinc-500">Duration</dt><dd className="font-bold text-white">{selectedScene.durationSeconds}s</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Shape</dt><dd className="font-bold text-white">{selectedScene.promptOptions.aspectRatio}</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Characters</dt><dd className="font-bold text-white">{selectedScene.selectedCharacters.length}</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Background</dt><dd className="max-w-32 break-words text-right font-bold text-white">{selectedScene.selectedBackground?.snapshotName || "None"}</dd></div><div className="flex justify-between gap-3"><dt className="text-zinc-500">Assets</dt><dd className="font-bold text-white">{selectedScene.selectedAssets.length}</dd></div></dl></div>
-            <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-4"><div className="text-xs font-black uppercase text-zinc-500">Reference manifest</div>{isH3TextToVideo ? <><div className="mt-3 text-sm font-bold text-zinc-300">Prompt-only</div><div className="mt-2 text-xs leading-5 text-zinc-500">No visual or audio references are submitted for H3 Text-to-Video.</div></> : <><div className={`mt-3 text-sm font-bold ${selectedScene.referencePlan.status === "planned" ? "text-emerald-200" : "text-amber-100"}`}>{selectedScene.referencePlan.status === "planned" ? "Resolved" : "Pending build"}</div><div className="mt-2 text-xs leading-5 text-zinc-500">{selectedScene.referencePlan.modelFacingReferences.length} ordered visual references. {selectedScene.referencePlan.resolvedVoiceReferences.length} Character voices mapped automatically.</div></>}</div>
+            <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-4"><div className="text-xs font-black uppercase text-zinc-500">Reference manifest</div>{isH3TextToVideo ? <><div className="mt-3 text-sm font-bold text-zinc-300">Prompt-only</div><div className="mt-2 text-xs leading-5 text-zinc-500">No visual or audio references are submitted for H3 Text-to-Video.</div></> : <><div className={`mt-3 text-sm font-bold ${selectedScene.referencePlan.status === "planned" ? "text-emerald-200" : "text-amber-100"}`}>{selectedScene.referencePlan.status === "planned" ? "Resolved" : "Pending build"}</div><div className="mt-2 text-xs leading-5 text-zinc-500">{selectedScene.referencePlan.modelFacingReferences.length} ordered visual references. {selectedScene.referencePlan.resolvedVoiceReferences.length} Character voices mapped automatically.{isH3ReferenceToVideo ? ` ${uploadedReferenceVideo ? "One uploaded five-second video reference selected." : "No uploaded video reference."}` : ""}</div></>}</div>
             <button type="button" className={`${productionPrimaryButton} w-full`} disabled={busy || readOnly} onClick={() => void saveScene()}>{busy ? "Saving..." : "Save Scene"}</button>
+            {selectedScene.model === "minimax-h3" && selectedStoryboardVersion ? (
+              <div className="rounded-lg border border-violet-300/20 bg-violet-500/[0.07] p-4" data-otg="production-v2-continuation-clip-selector">
+                <video
+                  key={continuationClipSelectionKey}
+                  ref={continuationPreviewRef}
+                  src={storyboardVideoSrc}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  className="mb-3 aspect-video w-full rounded-lg bg-black object-contain"
+                  data-otg="production-v2-continuation-clip-preview"
+                  onLoadedMetadata={(event) => {
+                    const video = event.currentTarget;
+                    const duration = Number(video.duration);
+                    if (!Number.isFinite(duration) || duration <= 0) return;
+                    const maxStart = Math.max(0, duration - 5);
+                    const startSeconds = continuationClipSelection.key === continuationClipSelectionKey
+                      ? Math.min(maxStart, Math.max(0, continuationClipSelection.startSeconds))
+                      : 0;
+                    video.currentTime = startSeconds;
+                    setContinuationClipSelection({
+                      key: continuationClipSelectionKey,
+                      startSeconds,
+                      sourceDurationSeconds: duration,
+                    });
+                  }}
+                />
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-black uppercase text-violet-100/80">
+                    Continue R2V clip
+                  </span>
+                  <span className="text-xs font-bold text-white">
+                    {continuationClipStartSeconds.toFixed(1)}s–{Math.min(
+                      continuationClipSourceDurationSeconds,
+                      continuationClipStartSeconds + 5,
+                    ).toFixed(1)}s
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  aria-label="Continue Scene five-second reference clip start"
+                  min={0}
+                  max={continuationClipMaxStartSeconds}
+                  step={0.1}
+                  value={continuationClipStartSeconds}
+                  disabled={continuationClipMaxStartSeconds <= 0 || continueSceneSubmitting}
+                  className="mt-3 w-full accent-violet-400"
+                  onChange={(event) => {
+                    const startSeconds = Number(event.target.value);
+                    setContinuationClipSelection({
+                      key: continuationClipSelectionKey,
+                      startSeconds,
+                      sourceDurationSeconds: continuationClipSourceDurationSeconds,
+                    });
+                    if (continuationPreviewRef.current) {
+                      continuationPreviewRef.current.currentTime = startSeconds;
+                    }
+                  }}
+                />
+                <p className="mt-2 text-[11px] leading-4 text-zinc-400">
+                  Choose the five seconds transferred if the next Scene uses H3 R2V. H3 I2V continues from the exact final frame instead.
+                </p>
+              </div>
+            ) : null}
             {(selectedScene.model === "ltx-2.5" || selectedScene.model === "minimax-h3") ? (
               <button
                 type="button"
@@ -3182,7 +3763,7 @@ export default function ProductionV2Panel() {
                   ? "Preparing Continue Scene..."
                   : production.scenes.length >= PRODUCTION_V2_MAX_SCENES
                     ? "Scene limit reached"
-                    : "Continue Scene"}
+                    : `Continue Scene ${selectedScene.sceneNumber} → Scene ${production.scenes.length + 1}`}
               </button>
             ) : null}
           </aside>

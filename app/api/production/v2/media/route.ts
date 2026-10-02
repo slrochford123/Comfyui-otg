@@ -7,6 +7,7 @@ import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
 import { assertProductionV2OwnedFile, resolveProductionV2Version } from "@/lib/production/postProduction";
 import { productionV2Store } from "@/lib/production/v2Store";
+import { videoThumbnailResponse } from "@/lib/videoThumbnail";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +35,12 @@ async function serve(req: NextRequest, method: "GET" | "HEAD") {
     }
     const resolved = assertProductionV2OwnedFile(ownerKey, productionId, mediaPath);
     if (!fs.existsSync(resolved)) return NextResponse.json({ ok: false, error: "Production media not found." }, { status: 404 });
+    if (req.nextUrl.searchParams.get("thumbnail") === "1") {
+      return videoThumbnailResponse(req, resolved, {
+        method,
+        namespace: "production-v2",
+      });
+    }
     return mediaFileResponse(req, resolved, { method, cacheControl: "private, no-transform, max-age=3600" });
   } catch (error) {
     if (error instanceof SessionInvalidError) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });

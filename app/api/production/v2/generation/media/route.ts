@@ -8,6 +8,7 @@ import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
 import { getProductionV2GenerationJob } from "@/lib/production/h3GenerationJobs";
+import { videoThumbnailResponse } from "@/lib/videoThumbnail";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +25,12 @@ async function serve(req: NextRequest, method: "GET" | "HEAD") {
     const relative = path.relative(ownerRoot, resolved);
     if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || !fs.existsSync(resolved)) {
       return NextResponse.json({ ok: false, error: "Generated video path is invalid." }, { status: 404 });
+    }
+    if (req.nextUrl.searchParams.get("thumbnail") === "1") {
+      return videoThumbnailResponse(req, resolved, {
+        method,
+        namespace: "production-v2",
+      });
     }
     return mediaFileResponse(req, resolved, { method, cacheControl: "private, no-transform, max-age=3600" });
   } catch (error) {

@@ -1,8 +1,15 @@
 import crypto from "node:crypto";
+import { rm } from "node:fs/promises";
+import path from "node:path";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
+import { resolveFfmpegPath, runCmd } from "@/lib/ffmpeg";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import {
+  H3_REFERENCE_VIDEO_CLIP_SECONDS,
+  buildH3ReferenceVideoTrimCommand,
+} from "@/lib/h3ReferenceVideo";
 import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
 import {
   DEFAULT_PRODUCTION_V2_H3_USER_LORAS,
@@ -21,6 +28,7 @@ import {
   getProductionV2Ltx25GenerationJob,
 } from "@/lib/production/ltx25IngredientsJobs";
 import {
+  cancelProductionV2H3GenerationJob,
   productionV2GenerationPublicStatus,
   reconcileProductionV2GenerationJob,
   requestProductionV2H3SchedulerTick,
@@ -47,7 +55,12 @@ import {
   type ProductionV2H3State,
 } from "@/lib/production/v2";
 import { productionV2Store } from "@/lib/production/v2Store";
-import { assertProductionV2OwnedFile, resolveProductionV2Version } from "@/lib/production/postProduction";
+import {
+  assertProductionV2OwnedFile,
+  probeProductionV2Media,
+  productionV2SceneOutputRoot,
+  resolveProductionV2Version,
+} from "@/lib/production/postProduction";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,6 +85,107 @@ function retrySeed(previous: number) {
 function failure(error: unknown) {
   if (error instanceof SessionInvalidError) return noStore({ ok: false, error: "Unauthorized" }, { status: 401 });
   return noStore({ ok: false, error: error instanceof Error ? error.message : "Production video generation failed." }, { status: 500 });
+}
+
+/*
+ * Visual Studios always edits one bounded five-second excerpt. This is
+ * enforced on the server so a stale or modified client cannot send a longer
+ * video into the memory-sensitive H3 R2V workflow.
+ */
+async function prepareH3VisualEditReferenceClip(args: {
+  ownerKey: string;
+  productionId: string;
+  sceneId: string;
+  sourcePath: string;
+  requestedStartSeconds: number;
+  outputLabel: string;
+}): Promise<{
+  outputPath: string;
+  durationSeconds: typeof H3_REFERENCE_VIDEO_CLIP_SECONDS;
+}> {
+  const sourceProbe =
+    await probeProductionV2Media(
+      args.sourcePath,
+    );
+
+  if (
+    sourceProbe.durationSeconds
+    < H3_REFERENCE_VIDEO_CLIP_SECONDS - 0.1
+  ) {
+    throw new Error(
+      "H3 Reference-to-Video requires a source clip of at least five seconds.",
+    );
+  }
+
+  const outputPath =
+    path.join(
+      productionV2SceneOutputRoot(
+        args.ownerKey,
+        args.productionId,
+        args.sceneId,
+      ),
+      `${args.outputLabel}-${crypto.randomUUID()}.mp4`,
+    );
+
+  const trim =
+    buildH3ReferenceVideoTrimCommand({
+      sourcePath:
+        args.sourcePath,
+      targetPath:
+        outputPath,
+      sourceDurationSeconds:
+        sourceProbe.durationSeconds,
+      requestedStartSeconds:
+        args.requestedStartSeconds,
+    });
+
+  try {
+    const result =
+      await runCmd(
+        resolveFfmpegPath(),
+        trim.args,
+        {
+          timeoutMs:
+            20 * 60_000,
+        },
+      );
+
+    if (result.code !== 0) {
+      throw new Error(
+        `Could not prepare the five-second H3 reference clip: ${result.stderr || result.stdout}`,
+      );
+    }
+
+    const outputProbe =
+      await probeProductionV2Media(
+        outputPath,
+      );
+
+    if (
+      outputProbe.durationSeconds < H3_REFERENCE_VIDEO_CLIP_SECONDS - 0.15
+      || outputProbe.durationSeconds > H3_REFERENCE_VIDEO_CLIP_SECONDS + 0.1
+    ) {
+      throw new Error(
+        "The prepared H3 reference clip is not five seconds long.",
+      );
+    }
+
+    return {
+      outputPath,
+      durationSeconds:
+        H3_REFERENCE_VIDEO_CLIP_SECONDS,
+    };
+  } catch (error) {
+    await rm(
+      outputPath,
+      {
+        force:
+          true,
+      },
+    );
+
+    throw error;
+  }
 }
 
 export async function GET(req: NextRequest) {
@@ -269,7 +383,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   if (!isProductionFeatureEnabled()) return productionDisabledResponse();
   try {
-    const body = await req.clone().json().catch(() => null) as { productionId?: unknown; sceneId?: unknown; action?: unknown; versionId?: unknown; editPrompt?: unknown } | null;
+    const body = await req.clone().json().catch(() => null) as { productionId?: unknown; sceneId?: unknown; action?: unknown; jobId?: unknown; versionId?: unknown; editPrompt?: unknown } | null;
     const { ownerKey } = await getOwnerContext(req);
     const productionId = String(body?.productionId || "").trim();
     const sceneId = String(body?.sceneId || "").trim();
@@ -280,6 +394,44 @@ export async function POST(req: NextRequest) {
     const scene = production.scenes.find((item) => item.id === sceneId);
     if (!scene) return noStore({ ok: false, error: "Production Scene not found." }, { status: 404 });
     const action = String(body?.action || "scene-generation").trim();
+    if (action === "cancel") {
+      const jobId = String(body?.jobId || "").trim();
+      const existing = getProductionV2GenerationJob(jobId, ownerKey);
+      if (!existing || existing.productionId !== productionId || existing.sceneId !== sceneId) {
+        return noStore({ ok: false, error: "Production H3 generation job not found." }, { status: 404 });
+      }
+      const canceled = await cancelProductionV2H3GenerationJob(ownerKey, jobId);
+      return noStore({ ok: true, job: productionV2GenerationPublicStatus(canceled) }, { status: 202 });
+    }
+    if (action === "scene-hunter-upscale") {
+      const sourceJobId = String(body?.jobId || "").trim();
+      const source = getProductionV2GenerationJob(sourceJobId, ownerKey);
+      if (!source || source.productionId !== productionId || source.sceneId !== sceneId) {
+        return noStore({ ok: false, error: "Scene Hunter candidate was not found." }, { status: 404 });
+      }
+      if (source.payload.h3Quality !== "sh") {
+        return noStore({ ok: false, error: "Only Scene Hunter candidates can be upscaled." }, { status: 409 });
+      }
+      if (source.status !== "completed" || !source.outputPath) {
+        return noStore({ ok: false, error: "Scene Hunter candidate is not ready to upscale." }, { status: 409 });
+      }
+      const job = createProductionV2GenerationJob({
+        ownerKey,
+        productionId,
+        sceneId,
+        mode: source.mode,
+        payload: {
+          ...source.payload,
+          h3Quality: "hq",
+          seed: source.payload.seed,
+          sceneHunterSourceJobId: source.id,
+          retryOfJobId: undefined,
+        },
+      });
+      startProductionV2H3Scheduler();
+      requestProductionV2H3SchedulerTick();
+      return noStore({ ok: true, job: productionV2GenerationPublicStatus(job) }, { status: 202 });
+    }
     if (action === "visual-edit") {
       const versionId = String(body?.versionId || "").trim();
       const editPrompt = String(body?.editPrompt || "").trim();
@@ -288,12 +440,20 @@ export async function POST(req: NextRequest) {
       if (editPrompt.length > 4_000) return noStore({ ok: false, error: "Visual edit instructions must be 4,000 characters or fewer." }, { status: 400 });
       const selected = resolveProductionV2Version(production, sceneId, versionId);
       const mediaPath = assertProductionV2OwnedFile(ownerKey, productionId, selected.version.mediaPath);
+      const fiveSecondClip = await prepareH3VisualEditReferenceClip({
+        ownerKey,
+        productionId,
+        sceneId,
+        sourcePath: mediaPath,
+        requestedStartSeconds: 0,
+        outputLabel: "visual-edit-reference",
+      });
       const finalPrompt = [
-        "Use <Video 1> as the exact temporal and visual reference.",
+        "Use the exact five-second <Video 1> excerpt as the temporal and visual reference.",
         "Preserve the source video's subjects, action, timing, composition, and audio unless the requested edit explicitly changes them.",
         `Requested visual transformation: ${editPrompt}`,
       ].join("\n");
-      const promptFingerprint = crypto.createHash("sha256").update(JSON.stringify({ operation: "visual-edit", versionId, editPrompt })).digest("hex");
+      const promptFingerprint = crypto.createHash("sha256").update(JSON.stringify({ operation: "visual-edit", versionId, editPrompt, clipStartSeconds: 0, clipDurationSeconds: H3_REFERENCE_VIDEO_CLIP_SECONDS })).digest("hex");
       const job = createProductionV2GenerationJob({
         ownerKey,
         productionId,
@@ -303,14 +463,15 @@ export async function POST(req: NextRequest) {
           operation: "visual-edit",
           finalPrompt,
           promptFingerprint,
-          durationSeconds: scene.durationSeconds,
+          durationSeconds: fiveSecondClip.durationSeconds,
           h3Quality: scene.h3Quality,
+          h3Settings: scene.modelState.h3.h3Settings,
           seed: seed(),
           startImage: null,
           references: [],
           voices: [],
           userLoras: normalizeProductionV2H3UserLoras(DEFAULT_PRODUCTION_V2_H3_USER_LORAS),
-          videoReference: { mediaVersionId: selected.version.id, mediaPath, includeAudio: true },
+          videoReference: { mediaVersionId: selected.version.id, mediaPath: fiveSecondClip.outputPath, includeAudio: true },
         },
       });
       startProductionV2H3Scheduler();
@@ -823,6 +984,10 @@ export async function POST(req: NextRequest) {
           includeAudio: boolean;
         }
       | undefined;
+    const uploadedReferenceVideo =
+      scene.generationMode === "h3-reference-to-video"
+        ? scene.modelState.h3.referenceToVideo.uploadedVideo
+        : null;
 
     if (
       scene.continuation
@@ -897,12 +1062,46 @@ export async function POST(req: NextRequest) {
         if (
           scene.generationMode
           === "h3-reference-to-video"
+          && !uploadedReferenceVideo
         ) {
+          if (!scene.continuation.referenceClipPath) {
+            return noStore(
+              {
+                ok: false,
+                error:
+                  "This continued H3 Scene does not have a five-second reference clip. Prepare Continue Scene again.",
+              },
+              { status: 409 },
+            );
+          }
+          const continuationClipPath =
+            assertProductionV2OwnedFile(
+              ownerKey,
+              productionId,
+              scene.continuation.referenceClipPath,
+            );
+          const continuationClipProbe =
+            await probeProductionV2Media(
+              continuationClipPath,
+            );
+          if (
+            continuationClipProbe.durationSeconds
+            > H3_REFERENCE_VIDEO_CLIP_SECONDS + 0.1
+          ) {
+            return noStore(
+              {
+                ok: false,
+                error:
+                  "The continued H3 reference clip exceeds five seconds. Prepare Continue Scene again.",
+              },
+              { status: 409 },
+            );
+          }
           videoReference = {
             mediaVersionId:
               continuationSource.version.id,
             mediaPath:
-              continuationSourcePath,
+              continuationClipPath,
 
             /*
              * The previous Scene video is a visual/temporal reference.
@@ -926,6 +1125,45 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    /*
+     * A user-uploaded video is the authoritative R2V video input. For a
+     * continued Scene it replaces the inherited prior-video excerpt while
+     * retaining Continue Scene's exact final-frame guide as frame 0.
+     */
+    if (uploadedReferenceVideo) {
+      try {
+        const sourcePath = assertProductionV2OwnedFile(
+          ownerKey,
+          productionId,
+          uploadedReferenceVideo.sourcePath,
+        );
+        const sourceProbe = await probeProductionV2Media(sourcePath);
+        const fiveSecondClip = await prepareH3VisualEditReferenceClip({
+          ownerKey,
+          productionId,
+          sceneId,
+          sourcePath,
+          requestedStartSeconds: uploadedReferenceVideo.clipStartSeconds,
+          outputLabel: "uploaded-reference",
+        });
+        videoReference = {
+          mediaVersionId: uploadedReferenceVideo.id,
+          mediaPath: fiveSecondClip.outputPath,
+          includeAudio: uploadedReferenceVideo.includeAudio && sourceProbe.hasAudio,
+        };
+      } catch (error) {
+        return noStore(
+          {
+            ok: false,
+            error: error instanceof Error
+              ? error.message
+              : "The uploaded H3 reference video could not be prepared.",
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     const job =
       createProductionV2GenerationJob({
         ownerKey,
@@ -943,6 +1181,8 @@ export async function POST(req: NextRequest) {
             scene.durationSeconds,
           h3Quality:
             scene.h3Quality,
+          h3Settings:
+            scene.modelState.h3.h3Settings,
           seed: seed(),
           startImage,
           references,

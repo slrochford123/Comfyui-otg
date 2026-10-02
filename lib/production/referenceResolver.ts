@@ -173,9 +173,12 @@ export function resolveProductionV2H3ReferencePlan(
     ),
   ];
 
-  if (!candidates.length) {
+  if (
+    !candidates.length
+    && !scene.modelState.h3.referenceToVideo.uploadedVideo
+  ) {
     throw new Error(
-      "Select at least one Character, Background, or Asset reference for H3 Reference-to-Video.",
+      "Select at least one Character, Background, or Asset reference, or upload a video for H3 Reference-to-Video.",
     );
   }
 
@@ -248,6 +251,7 @@ export function resolveProductionV2H3ReferencePlan(
       h3: {
         ...scene.modelState.h3,
         referenceToVideo: {
+          ...scene.modelState.h3.referenceToVideo,
           resolvedVoiceBindings:
             resolvedVoiceReferences,
         },
@@ -276,7 +280,11 @@ function referenceDefinition(reference: ProductionV2VisualReference) {
 
 export function buildProductionV2LockedReferenceContext(scene: ProductionV2Scene) {
   if (scene.generationMode !== "h3-reference-to-video") return "";
-  if (scene.referencePlan.status !== "planned" || !scene.referencePlan.modelFacingReferences.length) {
+  const uploadedVideo = scene.modelState.h3.referenceToVideo.uploadedVideo;
+  if (
+    scene.referencePlan.status !== "planned"
+    || (!scene.referencePlan.modelFacingReferences.length && !uploadedVideo)
+  ) {
     throw new Error("Resolve the ordered H3 reference manifest before building locked reference context.");
   }
   scene.referencePlan.modelFacingReferences.forEach((reference, index) => {
@@ -285,11 +293,21 @@ export function buildProductionV2LockedReferenceContext(scene: ProductionV2Scene
       throw new Error("H3 Picture and Subject labels must match the exact ordered reference manifest.");
     }
   });
+  const embeddedVideoAudioSlots = uploadedVideo?.includeAudio ? 1 : 0;
+  const videoLines = uploadedVideo
+    ? [
+        "<Video 1> is the user-selected exact five-second visual and temporal reference excerpt.",
+        ...(uploadedVideo.includeAudio
+          ? ["<Audio 1> is the embedded audio from <Video 1>."]
+          : []),
+      ]
+    : [];
   const voiceLines = scene.referencePlan.resolvedVoiceReferences.map((binding) =>
-    `<Audio ${binding.audioSlot}> is the saved voice-timbre reference for <Subject ${binding.subjectSlot}> (S${binding.speakerId}).`,
+    `<Audio ${binding.audioSlot + embeddedVideoAudioSlots}> is the saved voice-timbre reference for <Subject ${binding.subjectSlot}> (S${binding.speakerId}).`,
   );
   return [
     "subject_definitions:",
+    ...videoLines,
     ...scene.referencePlan.modelFacingReferences.map(referenceDefinition),
     ...voiceLines,
   ].join("\n\n");

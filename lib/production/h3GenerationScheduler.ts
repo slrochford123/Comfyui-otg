@@ -1,11 +1,14 @@
 import { assertProductionV2H3StartingImage } from "@/lib/production/v2";
+import { bindH3PreviewPrompt, closeH3PreviewSession, h3LivePreviewEnabled, prepareH3PreviewSession } from "@/lib/h3PreviewBroker";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
 
 import {
+  cancelH3Prompt,
   downloadH3Video,
+  getH3PromptQueueState,
   getH3PromptHistory,
   inspectH3BackendCompatibility,
   submitH3Prompt,
@@ -16,6 +19,7 @@ import {
 import {
   claimProductionV2GenerationJob,
   completeProductionV2GenerationJob,
+  completeProductionV2SceneHunterJob,
   failProductionV2GenerationJob,
   getProductionV2GenerationJob,
   listActiveProductionV2GenerationJobs,
@@ -27,7 +31,9 @@ import {
   markProductionV2GenerationVsrSubmitted,
   markProductionV2GenerationVsrWaiting,
   markProductionV2GenerationWaiting,
+  markProductionV2GenerationCanceled,
   requeueProductionV2GenerationBeforeAcceptance,
+  requestProductionV2GenerationCancellation,
   type ProductionV2GenerationJob,
 } from "@/lib/production/h3GenerationJobs";
 import {
@@ -345,7 +351,7 @@ export function chooseProductionV2H3Backend(probes: H3BackendProbe[]): Productio
 export function applyProductionV2H3GenerationToProduction(
   production: ProductionV2,
   job: ProductionV2GenerationJob,
-  status: "generating" | "generated" | "failed",
+  status: "generating" | "generated" | "failed" | "canceled",
   outputPath?: string,
 ) {
 
@@ -474,20 +480,81 @@ export function applyProductionV2H3GenerationToProduction(
   return syncProductionV2AssemblyClips(updated);
 }
 
-function sceneStatus(job: ProductionV2GenerationJob, status: "generating" | "generated" | "failed", outputPath?: string) {
+function sceneStatus(job: ProductionV2GenerationJob, status: "generating" | "generated" | "failed" | "canceled", outputPath?: string) {
   const production = productionV2Store.load(job.ownerKey, job.productionId);
   if (!production) return;
   productionV2Store.save(job.ownerKey, applyProductionV2H3GenerationToProduction(production, job, status, outputPath));
 }
 
 export function reconcileProductionV2GenerationJob(job: ProductionV2GenerationJob) {
+  if (job.payload.h3Quality === "sh") {
+    if (job.status === "failed") {
+      sceneStatus(job, "failed");
+    } else if (job.status === "canceled") {
+      sceneStatus(job, "canceled");
+    } else if (["pending", "queued_waiting_for_gpu", "claimed", "submitted", "running", "canceling"].includes(job.status)) {
+      sceneStatus(job, "generating");
+    }
+    return;
+  }
   if (job.status === "completed" && job.outputPath) {
     sceneStatus(job, "generated", job.outputPath);
-  } else if (["pending", "queued_waiting_for_gpu", "claimed", "submitted", "running", "postprocessing_waiting_for_gpu", "postprocessing_submitted", "postprocessing_running"].includes(job.status)) {
+  } else if (["pending", "queued_waiting_for_gpu", "claimed", "submitted", "running", "postprocessing_waiting_for_gpu", "postprocessing_submitted", "postprocessing_running", "canceling"].includes(job.status)) {
     sceneStatus(job, "generating");
   } else if (job.status === "failed") {
     sceneStatus(job, "failed");
+  } else if (job.status === "canceled") {
+    sceneStatus(job, "canceled");
   }
+}
+
+async function settleProductionV2Cancellation(
+  job: ProductionV2GenerationJob,
+  attempts: number,
+) {
+  if (job.status !== "canceling") return job;
+  const promptId = job.vsrPromptId || job.comfyPromptId;
+  const backend = job.vsrPromptId ? H3_VSR_BACKEND : job.backend;
+  if (!promptId || !backend) {
+    const canceled = markProductionV2GenerationCanceled(job.id) || job;
+    if (canceled.status === "canceled") sceneStatus(canceled, "canceled");
+    return canceled;
+  }
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (await getH3PromptQueueState(backend, promptId) === "absent") {
+      const latest = getProductionV2GenerationJob(job.id, job.ownerKey) || job;
+      if (latest.status !== "canceling") return latest;
+      const canceled = markProductionV2GenerationCanceled(job.id) || latest;
+      closeH3PreviewSession(job.id);
+      if (canceled.status === "canceled") sceneStatus(canceled, "canceled");
+      return canceled;
+    }
+    if (attempt + 1 < attempts) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    const latest = getProductionV2GenerationJob(job.id, job.ownerKey);
+    if (latest && latest.status !== "canceling") return latest;
+  }
+  return getProductionV2GenerationJob(job.id, job.ownerKey) || job;
+}
+
+export async function cancelProductionV2H3GenerationJob(ownerKey: string, id: string) {
+  let job = requestProductionV2GenerationCancellation(id, ownerKey);
+  if (!job) throw new Error("Production H3 generation job was not found.");
+  if (job.status === "completed" || job.status === "failed" || job.status === "canceled") return job;
+
+  const promptId = job.vsrPromptId || job.comfyPromptId;
+  const backend = job.vsrPromptId ? H3_VSR_BACKEND : job.backend;
+  if (promptId && backend) {
+    await cancelH3Prompt({
+      backend,
+      promptId,
+      jobId: job.id,
+      workerId: "production-v2-h3-cancel",
+    });
+  }
+  job = await settleProductionV2Cancellation(job, 30);
+  return job;
 }
 
 async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: SchedulerDependencies) {
@@ -550,12 +617,9 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
     const videoReference =
       job.payload.videoReference;
 
-    if (
-      Boolean(continuationGuide)
-      !== Boolean(videoReference)
-    ) {
+    if (continuationGuide && !videoReference) {
       throw new Error(
-        "H3 R2V continuation must carry both the exact frame-0 guide and its prior video reference.",
+        "H3 R2V continuation must carry a video reference with its exact frame-0 guide.",
       );
     }
 
@@ -630,6 +694,7 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
     backend: job.backend,
     mode: job.mode,
     h3Quality: job.payload.h3Quality,
+    h3Settings: job.payload.h3Settings,
     finalPrompt: job.payload.finalPrompt,
     durationSeconds: job.payload.durationSeconds,
     seed: job.payload.seed,
@@ -642,6 +707,11 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
     includeVideoReferenceAudio: job.payload.videoReference?.includeAudio,
     userLoras: job.payload.userLoras,
   });
+  const preview = await prepareH3PreviewSession({
+    jobId: job.id,
+    ownerKey: job.ownerKey,
+    backend: job.backend,
+  }).catch(() => null);
   let submitted:
     ProductionV2GenerationJob | null =
       null;
@@ -651,7 +721,8 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
       null;
 
     const recordAcceptedPrompt =
-      (promptId: string) => {
+      async (promptId: string) => {
+        bindH3PreviewPrompt(job.id, promptId);
         try {
           submitted =
             markProductionV2GenerationSubmitted({
@@ -667,6 +738,11 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
             });
 
           if (!submitted) {
+            const current = getProductionV2GenerationJob(job.id);
+            if (current?.status === "canceling" || current?.status === "canceled") {
+              await cancelH3Prompt({ backend: job.backend!, promptId, jobId: job.id, workerId: "production-v2-h3-cancel-after-accept" });
+              return;
+            }
             durableFailure =
               failProductionV2GenerationJob(
                 job.id,
@@ -690,9 +766,11 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
     graph:
       built.graph,
     clientId:
-      `otg-production-v2-${randomUUID()}`,
+      preview?.clientId || `otg-production-v2-${randomUUID()}`,
     jobId:
       job.id,
+    livePreviewEnabled:
+      Boolean(preview),
     preSubmitCleanup:
       built.preSubmitCleanup,
     onAccepted:
@@ -732,16 +810,15 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
     !submitted
     && !durableFailure
   ) {
-    recordAcceptedPrompt(
+    await recordAcceptedPrompt(
       result.promptId,
     );
   }
 
   if (!submitted) {
-    sceneStatus(
-      durableFailure || job,
-      "failed",
-    );
+    const current = getProductionV2GenerationJob(job.id);
+    if (current?.status === "canceling" || current?.status === "canceled") return;
+    sceneStatus(durableFailure || job, "failed");
     return;
   }
 
@@ -757,7 +834,10 @@ function schedulerProbe(dependencies: SchedulerDependencies) {
 }
 
 function failActiveJob(job: ProductionV2GenerationJob, message: string) {
+  const current = getProductionV2GenerationJob(job.id);
+  if (current?.status === "canceling" || current?.status === "canceled") return;
   const failed = failProductionV2GenerationJob(job.id, message);
+  closeH3PreviewSession(job.id);
   sceneStatus(failed || job, "failed");
 }
 
@@ -790,9 +870,18 @@ async function advanceNativeH3Job(job: ProductionV2GenerationJob, dependencies: 
     failActiveJob(job, `Native H3 output download failed: ${error instanceof Error ? error.message : String(error)}`);
     return;
   }
+  if (job.payload.h3Quality === "sh") {
+    const completed = completeProductionV2SceneHunterJob(job.id, nativeOutputPath);
+    if (!completed) {
+      throw new Error("Scene Hunter output was downloaded but the candidate job could not be marked complete.");
+    }
+    closeH3PreviewSession(job.id);
+    return;
+  }
   if (!markProductionV2GenerationNativeReady(job.id, nativeOutputPath)) {
     throw new Error("Native H3 output was downloaded but its RTX VSR post-processing state could not be recorded.");
   }
+  closeH3PreviewSession(job.id);
 }
 
 async function prepareAndSubmitVsr(job: ProductionV2GenerationJob, dependencies: SchedulerDependencies) {
@@ -845,7 +934,7 @@ async function prepareAndSubmitVsr(job: ProductionV2GenerationJob, dependencies:
         null;
 
     const recordAcceptedVsrPrompt =
-      (promptId: string) => {
+      async (promptId: string) => {
         try {
           vsrSubmitted =
             markProductionV2GenerationVsrSubmitted({
@@ -855,6 +944,11 @@ async function prepareAndSubmitVsr(job: ProductionV2GenerationJob, dependencies:
             });
 
           if (!vsrSubmitted) {
+            const current = getProductionV2GenerationJob(job.id);
+            if (current?.status === "canceling" || current?.status === "canceled") {
+              await cancelH3Prompt({ backend: H3_VSR_BACKEND, promptId, jobId: job.id, workerId: "production-v2-vsr-cancel-after-accept" });
+              return;
+            }
             durableFailure =
               failProductionV2GenerationJob(
                 job.id,
@@ -932,16 +1026,15 @@ async function prepareAndSubmitVsr(job: ProductionV2GenerationJob, dependencies:
       !vsrSubmitted
       && !durableFailure
     ) {
-      recordAcceptedVsrPrompt(
+      await recordAcceptedVsrPrompt(
         result.promptId,
       );
     }
 
     if (!vsrSubmitted) {
-      sceneStatus(
-        durableFailure || job,
-        "failed",
-      );
+      const current = getProductionV2GenerationJob(job.id);
+      if (current?.status === "canceling" || current?.status === "canceled") return;
+      sceneStatus(durableFailure || job, "failed");
       return;
     }
   }
@@ -1023,6 +1116,10 @@ async function advanceVsrJob(job: ProductionV2GenerationJob, dependencies: Sched
 }
 
 async function advanceActiveJob(job: ProductionV2GenerationJob, dependencies: SchedulerDependencies) {
+  if (job.status === "canceling") {
+    await settleProductionV2Cancellation(job, 1);
+    return;
+  }
   if (job.status === "submitted" || job.status === "running") {
     await advanceNativeH3Job(job, dependencies);
     return;
@@ -1050,9 +1147,14 @@ export async function runProductionV2H3SchedulerTick(dependencies: SchedulerDepe
     try {
       const probe = schedulerProbe(dependencies);
       const userLoraFilenames = productionV2H3UserLoraFilenames(waiting.payload.userLoras);
+      const h3Requirements = {
+        userLoraFilenames,
+        h3Settings: waiting.payload.h3Settings,
+        referenceCount: waiting.payload.references.length,
+      };
       const [primaryProbe, secondaryProbe, vsrProbe] = await Promise.all([
-        probe("rtx3090", { userLoraFilenames }),
-        probe("rtx5060ti", { userLoraFilenames }),
+        probe("rtx3090", h3Requirements),
+        probe("rtx5060ti", h3Requirements),
         probe(H3_VSR_BACKEND, { requireVsr: true }),
       ]);
       if (!vsrProbe.healthy || !vsrProbe.compatible) {
@@ -1147,6 +1249,7 @@ export function productionV2GenerationPublicStatus(job: ProductionV2GenerationJo
     backend: job.backend,
     backendLabel: job.backend ? H3_BACKEND_PROFILES[job.backend].label : null,
     h3Quality: job.payload.h3Quality,
+    seed: job.payload.seed,
     nativeResolution: recipe ? `${recipe.nativeWidth}x${recipe.nativeHeight}` : null,
     etaSeconds: estimate?.seconds ?? null,
     etaMinSeconds: estimate?.minSeconds ?? null,
@@ -1163,6 +1266,9 @@ export function productionV2GenerationPublicStatus(job: ProductionV2GenerationJo
     startedAt: job.startedAt,
     completedAt: job.completedAt,
     retryOfJobId: job.payload.retryOfJobId || null,
+    sceneHunter: job.payload.h3Quality === "sh" || Boolean(job.payload.sceneHunterSourceJobId),
+    sceneHunterSourceJobId: job.payload.sceneHunterSourceJobId || null,
     videoUrl: job.status === "completed" ? `/api/production/v2/generation/media?jobId=${encodeURIComponent(job.id)}` : null,
+    previewEnabled: h3LivePreviewEnabled(),
   };
 }

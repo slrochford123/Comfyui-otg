@@ -960,6 +960,9 @@ def process_job_orbitsheets(
             "url": orbit_url,
             "serverPath": orbit_server_path,
             "filename": clean(payload.get("filename")),
+            "comfyBaseUrl": clean(payload.get("comfyBaseUrl")),
+            "videoUrl": clean(payload.get("videoUrl")),
+            "videoFilename": clean(payload.get("videoFilename")),
         }
 
         result["orbitsheetsOutput"] = orbit_output
@@ -1038,6 +1041,8 @@ def process_job_orbitsheets(
             )
 
             durable["copyMode"] = "app-image-url"
+            if clean(orbit_output.get("serverPath")).startswith(("http://", "https://")):
+                durable["sourceServerPath"] = clean(orbit_output.get("serverPath"))
 
         else:
             raise RuntimeError(
@@ -1083,6 +1088,9 @@ def process_job_orbitsheets(
         "promptId": clean(orbit_output.get("promptId")),
         "sourceOutputPath": clean(
             orbit_output.get("serverPath")
+        ),
+        "sourceVideoPath": clean(
+            orbit_output.get("videoUrl")
         ),
     }
 

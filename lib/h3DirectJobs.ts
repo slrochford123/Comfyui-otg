@@ -6,7 +6,9 @@ import { clearGalleryListCache, safeGalleryName, writeMetaForFile, type GalleryS
 import type { OwnerContext } from "@/lib/ownerKey";
 import { deviceGalleryDir, ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment, userGalleryDir } from "@/lib/paths";
 import {
+  cancelH3Prompt,
   getH3PromptHistory,
+  getH3PromptQueueState,
   inspectH3BackendCompatibility,
   submitH3Prompt,
   uploadH3Input,
@@ -17,6 +19,13 @@ import { DEFAULT_PRODUCTION_V2_H3_USER_LORAS } from "@/lib/production/h3Loras";
 import { validateH3LoraSelections, type ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
 import type { H3StudioLoraSelection } from "@/lib/h3Studio";
 import { buildH3StudioLockedReferences, composeH3StudioFinalPrompt } from "@/lib/h3Studio";
+import { bindH3PreviewPrompt, closeH3PreviewSession, prepareH3PreviewSession } from "@/lib/h3PreviewBroker";
+import { h3LivePreviewEnabled } from "@/lib/h3PreviewBroker";
+import {
+  DEFAULT_H3_ADVANCED_SETTINGS,
+  normalizeH3AdvancedSettings,
+  type H3AdvancedSettings,
+} from "@/lib/production/h3Settings";
 import {
   getH3NativeDimensions,
   getH3ProductionTimeEstimate,
@@ -42,6 +51,10 @@ export type H3DirectJobInput = {
   orientation: H3Orientation;
   durationSeconds: H3ProductionDuration;
   prompt: string;
+  rawPrompt?: string;
+  promptFingerprint?: string;
+  stylePresetId?: string;
+  h3Settings?: H3AdvancedSettings;
   seed: number;
   optionalLoras: H3StudioLoraSelection[];
   firstImage: H3DirectReference | null;
@@ -54,7 +67,7 @@ export type H3DirectJobInput = {
 export type H3DirectJob = {
   id: string;
   ownerKey: string;
-  status: "queued" | "preparing" | "submitted" | "running" | "finalizing" | "completed" | "failed";
+  status: "queued" | "preparing" | "submitted" | "running" | "canceling" | "canceled" | "finalizing" | "completed" | "failed";
   statusMessage: string;
   input: H3DirectJobInput;
   backend: ProductionV2H3BackendId | null;
@@ -67,10 +80,15 @@ export type H3DirectJob = {
   galleryFileName: string | null;
   galleryScope: "user" | "device" | null;
   galleryError: string | null;
+  sceneHunterSourceJobId?: string | null;
+  sceneHunterPromotedJobId?: string | null;
+  sceneHunterPromotedAt?: string | null;
   error: string | null;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  cancelRequestedAt: string | null;
+  canceledAt: string | null;
   queueRemaining: number | null;
   progressPercent: number | null;
   currentNode: string | null;
@@ -140,6 +158,10 @@ export async function createH3DirectJob(
       ...input,
       quality: normalizeH3Quality(input.quality),
       orientation: normalizeH3Orientation(input.orientation),
+      h3Settings: normalizeH3AdvancedSettings(
+        input.h3Settings || DEFAULT_H3_ADVANCED_SETTINGS,
+        input.images.length,
+      ),
       optionalLoras: input.optionalLoras,
     },
     backend: null,
@@ -152,16 +174,51 @@ export async function createH3DirectJob(
     galleryFileName: null,
     galleryScope: null,
     galleryError: null,
+    sceneHunterSourceJobId: null,
+    sceneHunterPromotedJobId: null,
+    sceneHunterPromotedAt: null,
     error: null,
     createdAt: now,
     startedAt: null,
     completedAt: null,
+    cancelRequestedAt: null,
+    canceledAt: null,
     queueRemaining: null,
     progressPercent: 0,
     currentNode: null,
   };
   await writeJob(job);
   return job;
+}
+
+export async function promoteH3DirectSceneHunterJob(
+  ownerKey: string,
+  id: string,
+  galleryOwner: H3DirectJob["galleryOwner"] = null,
+) {
+  const source = await getH3DirectJob(ownerKey, id);
+  if (!source) throw new Error("Scene Hunter candidate was not found.");
+  if (source.input.quality !== "sh") throw new Error("Only Scene Hunter candidates can be upscaled.");
+  if (source.status !== "completed" || !source.outputPath) {
+    throw new Error("Scene Hunter candidate is not ready to upscale.");
+  }
+  if (source.sceneHunterPromotedJobId) {
+    const existing = await getH3DirectJob(ownerKey, source.sceneHunterPromotedJobId);
+    if (existing) return existing;
+  }
+  const promoted = await createH3DirectJob(
+    ownerKey,
+    { ...source.input, quality: "hq" },
+    galleryOwner || source.galleryOwner,
+  );
+  await updateJob(ownerKey, promoted.id, {
+    sceneHunterSourceJobId: source.id,
+  });
+  await updateJob(ownerKey, source.id, {
+    sceneHunterPromotedJobId: promoted.id,
+    sceneHunterPromotedAt: new Date().toISOString(),
+  });
+  return (await getH3DirectJob(ownerKey, promoted.id)) || promoted;
 }
 
 function gallerySourceForJob(job: H3DirectJob): GallerySource {
@@ -237,6 +294,7 @@ export async function saveH3DirectJobToGallery(
         width: dimensions.width,
         height: dimensions.height,
         durationSeconds: job.input.durationSeconds,
+        stylePresetId: job.input.stylePresetId || "none",
         backend: job.backend,
         workflowFile: job.workflowFile,
       },
@@ -292,10 +350,21 @@ async function uploadReference(job: H3DirectJob, backend: ProductionV2H3BackendI
 }
 
 async function execute(job: H3DirectJob) {
+  const stopIfCanceled = async () => {
+    const current = await getH3DirectJob(job.ownerKey, job.id);
+    if (current?.status === "canceling" || current?.status === "canceled") {
+      throw new DOMException("H3 generation was canceled.", "AbortError");
+    }
+  };
+  await stopIfCanceled();
   const optionalLoras: ResolvedH3OptionalLora[] = validateH3LoraSelections(job.input.optionalLoras, job.input.mode).resolved;
   validateRequiredLoraTriggers(job.input, optionalLoras);
   const userLoraFilenames = optionalLoras.map((lora) => lora.filename);
-  const probes = await Promise.all(H3_BACKEND_PRIORITY.map((backend) => inspectH3BackendCompatibility(backend, { userLoraFilenames })));
+  const probes = await Promise.all(H3_BACKEND_PRIORITY.map((backend) => inspectH3BackendCompatibility(backend, {
+    userLoraFilenames,
+    h3Settings: job.input.h3Settings,
+    referenceCount: job.input.images.length,
+  })));
   const backend = chooseProductionV2H3Backend(probes);
   if (!backend) {
     const details = probes.map((probe) => `${probe.backend}: ${probe.reason}`).join("; ");
@@ -309,6 +378,8 @@ async function execute(job: H3DirectJob) {
     startedAt: new Date().toISOString(),
   });
 
+  await stopIfCanceled();
+
   const [firstImageFilename, lastImageFilename] = await Promise.all([
     job.input.firstImage ? uploadReference(job, backend, job.input.firstImage, "image", "first") : Promise.resolve(""),
     job.input.lastImage ? uploadReference(job, backend, job.input.lastImage, "image", "last") : Promise.resolve(""),
@@ -316,6 +387,8 @@ async function execute(job: H3DirectJob) {
   const imageFilenames = await Promise.all(job.input.images.map((item, index) => uploadReference(job, backend, item, "image", `picture_${index + 1}`)));
   const videoFilenames = await Promise.all(job.input.videos.map((item, index) => uploadReference(job, backend, item, "video", `video_${index + 1}`)));
   const audioFilenames = await Promise.all(job.input.audios.map((item, index) => uploadReference(job, backend, item, "audio", `audio_${index + 1}`)));
+
+  await stopIfCanceled();
 
   const references = job.input.images.map((item, index) => ({
     id: `direct-picture-${index + 1}`,
@@ -356,27 +429,43 @@ async function execute(job: H3DirectJob) {
       includeAudio: item.includeAudio === true,
     })),
     userLoras: DEFAULT_PRODUCTION_V2_H3_USER_LORAS,
+    h3Settings: job.input.h3Settings,
     optionalLoras,
   });
+  const preview = await prepareH3PreviewSession({
+    jobId: job.id,
+    ownerKey: job.ownerKey,
+    backend,
+  }).catch(() => null);
 
   const submitted = await submitH3Prompt({
     backend,
     graph: built.graph,
-    clientId: `otg-h3-direct-${crypto.randomUUID()}`,
+    clientId: preview?.clientId || `otg-h3-direct-${crypto.randomUUID()}`,
     jobId: job.id,
+    livePreviewEnabled: Boolean(preview),
     workerId: "h3-direct",
+    onAccepted: async (promptId) => {
+      bindH3PreviewPrompt(job.id, promptId);
+      const current = await getH3DirectJob(job.ownerKey, job.id);
+      if (!current || current.status === "canceling" || current.status === "canceled") {
+        await cancelH3Prompt({ backend, promptId, jobId: job.id, workerId: "h3-direct-cancel-after-accept" });
+        throw new DOMException("H3 generation was canceled during submission.", "AbortError");
+      }
+      await updateJob(job.ownerKey, job.id, {
+        status: "submitted",
+        statusMessage: "Accepted by ComfyUI",
+        promptId,
+        workflowId: built.workflowId,
+        workflowFile: built.workflowFile,
+        progressPercent: 2,
+      });
+    },
   });
   if (!submitted.accepted) throw new Error(submitted.error);
-  await updateJob(job.ownerKey, job.id, {
-    status: "submitted",
-    statusMessage: "Accepted by ComfyUI",
-    promptId: submitted.promptId,
-    workflowId: built.workflowId,
-    workflowFile: built.workflowFile,
-    progressPercent: 2,
-  });
 
   for (;;) {
+    await stopIfCanceled();
     const history = await getH3PromptHistory(backend, submitted.promptId);
     if (history.state === "failed") throw new Error("MiniMax H3 failed in ComfyUI. Review the ComfyUI history for the full node traceback.");
     if (history.state === "completed" && history.video) {
@@ -388,12 +477,24 @@ async function execute(job: H3DirectJob) {
         sceneId: job.id,
         generationJobId: job.id,
       });
+      await stopIfCanceled();
       const completedJob = await updateJob(job.ownerKey, job.id, {
         status: "finalizing",
-        statusMessage: "Video complete; saving to Gallery",
+        statusMessage: job.input.quality === "sh"
+          ? "Scene Hunter Preview ready"
+          : "Video complete; saving to Gallery",
         outputPath,
         completedAt: new Date().toISOString(),
       });
+      if (completedJob.input.quality === "sh") {
+        await updateJob(job.ownerKey, job.id, {
+          status: "completed",
+          statusMessage: "Scene Hunter Preview ready",
+          galleryStatus: "pending",
+        });
+        closeH3PreviewSession(job.id);
+        return;
+      }
       try {
         await saveH3DirectJobToGallery(completedJob);
         await updateJob(job.ownerKey, job.id, {
@@ -408,6 +509,7 @@ async function execute(job: H3DirectJob) {
           galleryError: error instanceof Error ? error.message : String(error),
         });
       }
+      closeH3PreviewSession(job.id);
       return;
     }
     const current = await getH3DirectJob(job.ownerKey, job.id);
@@ -424,14 +526,139 @@ export function startH3DirectJob(job: H3DirectJob) {
   state().running.add(job.id);
   void execute(job)
     .catch(async (error) => {
+      const current = await getH3DirectJob(job.ownerKey, job.id);
+      if (current?.status === "canceling") return;
+      if (current?.status === "canceled" || (error instanceof DOMException && error.name === "AbortError")) {
+        if (current?.status !== "canceled") {
+          await updateJob(job.ownerKey, job.id, {
+            status: "canceled",
+            statusMessage: "Canceled",
+            error: null,
+            completedAt: new Date().toISOString(),
+            canceledAt: new Date().toISOString(),
+          }).catch(() => undefined);
+        }
+        return;
+      }
       await updateJob(job.ownerKey, job.id, {
         status: "failed",
         statusMessage: "Generation failed",
-        error: error instanceof Error ? error.message : String(error),
+        error: errorToMessage(error),
         completedAt: new Date().toISOString(),
       }).catch(() => undefined);
     })
-    .finally(() => state().running.delete(job.id));
+    .finally(() => {
+      state().running.delete(job.id);
+      closeH3PreviewSession(job.id);
+    });
+}
+
+function errorToMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    for (const key of ["message", "error", "detail", "reason"]) {
+      if (typeof record[key] === "string" && record[key]) return record[key];
+    }
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return Object.prototype.toString.call(error);
+    }
+  }
+  return String(error);
+}
+
+async function settleH3DirectCancellation(
+  ownerKey: string,
+  id: string,
+  attempts: number,
+) {
+  let current = await getH3DirectJob(ownerKey, id);
+  if (!current || current.status !== "canceling") return current;
+  if (!current.backend || !current.promptId) {
+    const canceledAt = new Date().toISOString();
+    return updateJob(ownerKey, id, {
+      status: "canceled",
+      statusMessage: "Canceled",
+      completedAt: canceledAt,
+      canceledAt,
+      error: null,
+    });
+  }
+  const backend = current.backend;
+  const promptId = current.promptId;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (await getH3PromptQueueState(backend, promptId) === "absent") {
+      const latest = await getH3DirectJob(ownerKey, id);
+      if (!latest || latest.status !== "canceling") return latest;
+      const canceledAt = new Date().toISOString();
+      const canceled = await updateJob(ownerKey, id, {
+        status: "canceled",
+        statusMessage: "Canceled",
+        completedAt: canceledAt,
+        canceledAt,
+        error: null,
+      });
+      closeH3PreviewSession(id);
+      return canceled;
+    }
+    if (attempt + 1 < attempts) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    current = (await getH3DirectJob(ownerKey, id)) || current;
+    if (current.status !== "canceling") return current;
+  }
+  return current;
+}
+
+export async function reconcileH3DirectCancellation(ownerKey: string, id: string) {
+  return settleH3DirectCancellation(ownerKey, id, 1);
+}
+
+export async function cancelH3DirectJob(ownerKey: string, id: string) {
+  const current = await getH3DirectJob(ownerKey, id);
+  if (!current) throw new Error("H3 direct-generation job was not found.");
+  if (current.status === "canceled") return current;
+  if (current.status === "canceling") {
+    const settled = await settleH3DirectCancellation(ownerKey, id, 1);
+    if (settled?.status === "canceling") {
+      void settleH3DirectCancellation(ownerKey, id, 120).catch(() => undefined);
+    }
+    return settled || current;
+  }
+  if (["completed", "failed", "finalizing"].includes(current.status)) {
+    throw new Error("This H3 generation can no longer be canceled.");
+  }
+  const cancelRequestedAt = new Date().toISOString();
+  const canceling = await updateJob(ownerKey, id, {
+    status: "canceling",
+    statusMessage: "Canceling…",
+    cancelRequestedAt,
+    error: null,
+  });
+  if (!canceling.backend || !canceling.promptId) {
+    const canceledAt = new Date().toISOString();
+    return updateJob(ownerKey, id, {
+      status: "canceled",
+      statusMessage: "Canceled",
+      completedAt: canceledAt,
+      canceledAt,
+      error: null,
+    });
+  }
+  await cancelH3Prompt({
+    backend: canceling.backend,
+    promptId: canceling.promptId,
+    jobId: canceling.id,
+    workerId: "h3-direct-cancel",
+  });
+  const settled = await settleH3DirectCancellation(ownerKey, id, 30);
+  if (settled?.status === "canceling") {
+    void settleH3DirectCancellation(ownerKey, id, 120).catch(() => undefined);
+  }
+  return settled || canceling;
 }
 
 export function h3DirectPublicStatus(job: H3DirectJob) {
@@ -450,6 +677,10 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
     orientation,
     durationSeconds: job.input.durationSeconds,
     prompt: promptWithReferences(job.input),
+    seed: job.input.seed,
+    rawPrompt: job.input.rawPrompt || job.input.prompt,
+    promptFingerprint: job.input.promptFingerprint || null,
+    stylePresetId: job.input.stylePresetId || "none",
     backend: job.backend,
     backendLabel: job.backend ? H3_BACKEND_PROFILES[job.backend].label : null,
     workflowId: job.workflowId,
@@ -476,6 +707,10 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
       ? `/api/h3/generation/thumbnail?jobId=${encodeURIComponent(job.id)}`
       : null,
     galleryError: job.galleryError || null,
+    sceneHunter: job.input.quality === "sh" || Boolean(job.sceneHunterSourceJobId),
+    sceneHunterSourceJobId: job.sceneHunterSourceJobId,
+    sceneHunterPromotedJobId: job.sceneHunterPromotedJobId,
+    previewEnabled: h3LivePreviewEnabled(),
   };
 }
 
@@ -491,5 +726,11 @@ export function validateH3DirectInput(input: H3DirectJobInput) {
   if (input.audios.length > H3_MAX_AUDIO_REFERENCES) throw new Error(`H3 supports at most ${H3_MAX_AUDIO_REFERENCES} audio references.`);
   const optionalLoras = validateH3LoraSelections(input.optionalLoras, input.mode).resolved;
   validateRequiredLoraTriggers(input, optionalLoras);
-  return input;
+  return {
+    ...input,
+    h3Settings: normalizeH3AdvancedSettings(
+      input.h3Settings || DEFAULT_H3_ADVANCED_SETTINGS,
+      input.images.length,
+    ),
+  };
 }

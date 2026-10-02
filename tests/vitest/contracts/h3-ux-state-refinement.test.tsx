@@ -98,11 +98,15 @@ describe("H3 simplified builder and destructive separation", () => {
     render(<H3Panel />);
     const details = screen.getByText("Choose the Look").closest("details")!;
     fireEvent.click(screen.getByText("Choose the Look"));
-    expect(within(details).getAllByRole("combobox")).toHaveLength(3);
+    expect(within(details).getAllByRole("combobox")).toHaveLength(2);
     expect(within(details).queryAllByRole("textbox")).toHaveLength(0);
-    expect(within(details).getByText("Visual Style")).toBeTruthy();
+    expect(within(details).getByText("Style Art")).toBeTruthy();
     expect(within(details).getByText("Camera Feel")).toBeTruthy();
     expect(within(details).getByText("Shot Flow")).toBeTruthy();
+    fireEvent.click(within(details).getByRole("button", { name: "Change Style" }));
+    const selector = screen.getByRole("dialog", { name: "Choose H3 visual style" });
+    expect(within(selector).getByRole("searchbox", { name: "Search visual styles" })).toBeTruthy();
+    expect(within(selector).getByRole("combobox", { name: "Filter styles by category" })).toBeTruthy();
   });
 
   it("does not issue a delete request when the confirmation is canceled", async () => {

@@ -25,6 +25,7 @@ type Item = {
   height?: number;
   durationSeconds?: number;
   url: string;
+  thumbnailUrl?: string;
 };
 type Payload = { ok: boolean; items?: Item[]; sources?: Source[]; statuses?: Status[]; hasMore?: boolean; error?: string };
 
@@ -130,6 +131,10 @@ export default function AdminGallerySourcesPanel() {
     }
   }, [load]);
 
+  const downloadItem = useCallback((item: Item) => {
+    window.location.assign(`${item.url}&download=1`);
+  }, []);
+
   return (
     <section className="space-y-4">
       <div className="rounded-[28px] border border-white/10 bg-black/45 p-5">
@@ -187,7 +192,7 @@ export default function AdminGallerySourcesPanel() {
 
       <div className={viewMode === "list" ? "space-y-3" : viewMode === "grid" ? "grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-5" : "grid gap-4 md:grid-cols-2 xl:grid-cols-3"}>
         {visibleItems.map((item) => (
-          <MediaCard key={item.id} item={item} compact={viewMode === "grid"} list={viewMode === "list"} deleting={deletingId === item.id} onOpen={() => setViewerId(item.id)} onDelete={() => void deleteItem(item)} />
+          <MediaCard key={item.id} item={item} compact={viewMode === "grid"} list={viewMode === "list"} deleting={deletingId === item.id} onOpen={() => setViewerId(item.id)} onDownload={() => downloadItem(item)} onDelete={() => void deleteItem(item)} />
         ))}
       </div>
 
@@ -201,13 +206,13 @@ export default function AdminGallerySourcesPanel() {
   );
 }
 
-function MediaCard({ item, compact, list, deleting, onOpen, onDelete }: { item: Item; compact: boolean; list: boolean; deleting: boolean; onOpen: () => void; onDelete: () => void }) {
+function MediaCard({ item, compact, list, deleting, onOpen, onDownload, onDelete }: { item: Item; compact: boolean; list: boolean; deleting: boolean; onOpen: () => void; onDownload: () => void; onDelete: () => void }) {
   const disabledReason = "This Standard Gallery action is disabled because Full Gallery items are filesystem-backed and have no normal Gallery record.";
   return (
     <article className={`overflow-hidden rounded-[24px] border border-white/10 bg-black/35 ${list ? "flex flex-col gap-3 p-3 md:flex-row md:items-center" : "p-3"}`}>
       <button type="button" onClick={onOpen} className={list ? "min-w-0 flex-1 text-left" : "block w-full text-left"}>
         {!list ? <div className={compact ? "aspect-square overflow-hidden rounded-[18px] bg-black/60" : "aspect-[4/3] overflow-hidden rounded-[18px] bg-black/60"}>
-          {item.kind === "video" ? <video src={item.url} muted playsInline preload="metadata" className="h-full w-full object-contain" /> : <img src={item.url} alt={item.name} loading="lazy" className="h-full w-full object-contain" />}
+          {item.kind === "video" ? <video src={item.url} poster={item.thumbnailUrl} muted playsInline preload="metadata" className="h-full w-full object-contain" /> : <img src={item.url} alt={item.name} loading="lazy" className="h-full w-full object-contain" />}
         </div> : null}
         <div className={list ? "" : "mt-3"}>
           <div className="flex flex-wrap items-start justify-between gap-2"><span className="break-all font-semibold text-white/90">{item.name}</span><SourceBadge label={item.sourceLabel} /></div>
@@ -216,7 +221,7 @@ function MediaCard({ item, compact, list, deleting, onOpen, onDelete }: { item: 
         </div>
       </button>
       <div className={`flex flex-wrap gap-2 ${list ? "md:shrink-0" : "mt-3"}`}>
-        <a href={`${item.url}&download=1`} download={item.name} className={actionClass}>Download</a>
+        <button type="button" onClick={onDownload} className={actionClass}>Download</button>
         <button type="button" disabled title={disabledReason} className={disabledActionClass}><IconHeart />Heart</button>
         {item.kind === "image" ? <><button type="button" disabled title={disabledReason} className={disabledActionClass}>Edit</button><button type="button" disabled title={disabledReason} className={disabledActionClass}>Animate</button><button type="button" disabled title={disabledReason} className={disabledActionClass}>Characters</button></> : <button type="button" disabled title={disabledReason} className={disabledActionClass}>Extend</button>}
         <button type="button" disabled title={disabledReason} className={disabledActionClass}>Rename</button>
@@ -241,7 +246,7 @@ function MixedMediaViewer({ item, index, total, canPrev, canNext, onPrev, onNext
       </div>
       <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[18px] border border-white/10 bg-black/65" onTouchStart={(event) => { const point = event.changedTouches[0]; if (point) touch.current = { x: point.clientX, y: point.clientY }; }} onTouchEnd={(event) => { const start = touch.current; touch.current = null; const point = event.changedTouches[0]; if (!start || !point) return; const dx = point.clientX - start.x; const dy = point.clientY - start.y; if (Math.abs(dx) >= 60 && Math.abs(dx) > Math.abs(dy)) dx < 0 ? onNext() : onPrev(); }}>
         {canPrev ? <button type="button" onClick={onPrev} aria-label="Previous item" className="absolute left-2 top-1/2 z-10 -translate-y-1/2 rounded-full border border-white/10 bg-black/55 px-3 py-3 text-white">{"<"}</button> : null}
-        {item.kind === "video" ? <video key={item.id} src={item.url} className="max-h-[78dvh] w-full object-contain" controls autoPlay playsInline preload="metadata" /> : <img key={item.id} src={item.url} alt={item.name} className="max-h-[78dvh] w-full object-contain" />}
+        {item.kind === "video" ? <video key={item.id} src={item.url} poster={item.thumbnailUrl} className="max-h-[78dvh] w-full object-contain" controls autoPlay playsInline preload="metadata" /> : <img key={item.id} src={item.url} alt={item.name} className="max-h-[78dvh] w-full object-contain" />}
         {canNext ? <button type="button" onClick={onNext} aria-label="Next item" className="absolute right-2 top-1/2 z-10 -translate-y-1/2 rounded-full border border-white/10 bg-black/55 px-3 py-3 text-white">{">"}</button> : null}
       </div>
       {total > 1 ? <div className="text-center text-xs text-white/45">Swipe left or right, or use the arrow keys, to move through the gallery without closing the viewer.</div> : null}

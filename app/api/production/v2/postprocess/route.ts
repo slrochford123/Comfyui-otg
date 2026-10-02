@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { resolveFfmpegPath, runCmd } from "@/lib/ffmpeg";
+import { buildH3ReferenceVideoTrimCommand } from "@/lib/h3ReferenceVideo";
 import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
 import {
   adjustProductionV2Volume,
@@ -80,6 +82,52 @@ function appendDerived(args: {
   const saved = productionV2Store.save(args.ownerKey, syncProductionV2AssemblyClips({ ...production, lifecycleStage: "editing", scenes }));
   const scene = saved.scenes.find((item) => item.id === args.sceneId)!;
   return { production: saved, version: scene.mediaVersions.find((item) => item.id === versionId)! };
+}
+
+async function prepareH3ContinuationReferenceClip(args: {
+  ownerKey: string;
+  productionId: string;
+  targetSceneId: string;
+  sourcePath: string;
+  requestedStartSeconds: number;
+}) {
+  const sourceProbe = await probeProductionV2Media(args.sourcePath);
+  const outputPath = path.join(
+    productionV2SceneOutputRoot(
+      args.ownerKey,
+      args.productionId,
+      args.targetSceneId,
+    ),
+    `continuation-reference-${randomUUID()}.mp4`,
+  );
+  const trim = buildH3ReferenceVideoTrimCommand({
+    sourcePath: args.sourcePath,
+    targetPath: outputPath,
+    sourceDurationSeconds: sourceProbe.durationSeconds,
+    requestedStartSeconds: args.requestedStartSeconds,
+  });
+  try {
+    const result = await runCmd(resolveFfmpegPath(), trim.args, {
+      timeoutMs: 20 * 60_000,
+    });
+    if (result.code !== 0) {
+      throw new Error(
+        `Could not prepare the five-second H3 continuation clip: ${result.stderr || result.stdout}`,
+      );
+    }
+    const outputProbe = await probeProductionV2Media(outputPath);
+    if (outputProbe.durationSeconds > 5.1) {
+      throw new Error("The prepared H3 continuation clip exceeds five seconds.");
+    }
+    return {
+      outputPath,
+      startSeconds: trim.clip.startSeconds,
+      durationSeconds: outputProbe.durationSeconds,
+    };
+  } catch (error) {
+    await rm(outputPath, { force: true });
+    throw error;
+  }
 }
 
 /*
@@ -450,6 +498,19 @@ export async function POST(req: NextRequest) {
             lastFramePath,
         });
 
+      const referenceClip =
+        sourceScene.model === "minimax-h3"
+          ? await prepareH3ContinuationReferenceClip({
+              ownerKey,
+              productionId,
+              targetSceneId: targetScene.id,
+              sourcePath,
+              requestedStartSeconds: finite(
+                body?.continuationClipStartSeconds ?? 0,
+              ),
+            })
+          : null;
+
       const now =
         new Date().toISOString();
 
@@ -466,6 +527,12 @@ export async function POST(req: NextRequest) {
           version.previewUrl,
         lastFramePath:
           extracted.outputPath,
+        referenceClipPath:
+          referenceClip?.outputPath,
+        referenceClipStartSeconds:
+          referenceClip?.startSeconds,
+        referenceClipDurationSeconds:
+          referenceClip?.durationSeconds,
         createdAt:
           now,
       };

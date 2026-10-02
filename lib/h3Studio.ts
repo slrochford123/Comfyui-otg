@@ -12,6 +12,8 @@ export type H3StudioReferenceDescriptor = {
   name: string;
   description: string;
   includeAudio?: boolean;
+  clipStartSeconds?: number;
+  clipDurationSeconds?: number;
 };
 
 export type H3StudioLoraSelection = {
@@ -40,6 +42,64 @@ export type H3StudioPromptContext = {
 
 function clean(value: unknown) {
   return String(value ?? "").trim();
+}
+
+type H3QuotedDialogue = {
+  text: string;
+  quoted: string;
+};
+
+export function extractH3QuotedDialogue(value: unknown): H3QuotedDialogue[] {
+  const prompt = String(value ?? "");
+  const matches: H3QuotedDialogue[] = [];
+  const pattern = /"([^"\r\n]+)"|“([^”\r\n]+)”|‘([^’\r\n]+)’/gu;
+  for (const match of prompt.matchAll(pattern)) {
+    const text = String(match[1] ?? match[2] ?? match[3] ?? "").trim();
+    if (!text) continue;
+    matches.push({ text, quoted: String(match[0]) });
+  }
+  return matches;
+}
+
+export function buildH3QuotedDialogueContract(value: unknown) {
+  const dialogue = extractH3QuotedDialogue(value);
+  if (!dialogue.length) return "";
+  return [
+    "IMMUTABLE QUOTED DIALOGUE CONTRACT:",
+    "Every quoted line below must appear in the finished Scene Prompt word-for-word, in quotation marks, and in this exact order.",
+    "Do not omit, summarize, paraphrase, translate, merge, or add words to these spoken lines.",
+    ...dialogue.map((item, index) => `${index + 1}. ${item.quoted}`),
+  ].join("\n");
+}
+
+export function preserveH3QuotedDialogue(
+  originalPrompt: unknown,
+  generatedPrompt: unknown,
+) {
+  const original = extractH3QuotedDialogue(originalPrompt);
+  const generated = clean(generatedPrompt);
+  if (!original.length) return generated;
+
+  const available = new Map<string, number>();
+  for (const item of extractH3QuotedDialogue(generated)) {
+    available.set(item.text, (available.get(item.text) || 0) + 1);
+  }
+
+  const missing = original.filter((item) => {
+    const count = available.get(item.text) || 0;
+    if (count <= 0) return true;
+    available.set(item.text, count - 1);
+    return false;
+  });
+  if (!missing.length) return generated;
+
+  const dialogueBlock = [
+    "Spoken dialogue — preserve verbatim:",
+    ...missing.map((item) => item.quoted),
+  ].join("\n");
+  return [generated, dialogueBlock]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 export function buildH3StudioLockedReferences(
@@ -123,6 +183,8 @@ export function h3StudioPromptFingerprint(context: H3StudioPromptContext) {
       name: clean(reference.name),
       description: clean(reference.description),
       includeAudio: reference.includeAudio === true,
+      clipStartSeconds: Number(reference.clipStartSeconds || 0),
+      clipDurationSeconds: Number(reference.clipDurationSeconds || 0),
     })),
     loras: context.loras.map((lora) => ({
       id: lora.id,

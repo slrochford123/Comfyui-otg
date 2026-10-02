@@ -1,0 +1,527 @@
+{
+  "cinematic-realism": {
+    "styleId": "cinematic-realism",
+    "styleName": "Cinematic realism",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-8eb2a81e-b7eb-4630-99b5-74be6660201a",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nNaturalistic production design with physically accurate materials, motivated practical lighting, nuanced skin and surface texture, cinematic contrast, controlled depth of field and believable environmental interaction. Movement carries real weight and inertia; avoid synthetic gloss and generic stock-video polish.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/cinematic-realism/source-5s.mp4",
+    "updatedAt": "2026-09-22T09:51:49.447Z",
+    "media": {
+      "poster": "/h3/styles/cinematic-realism/poster.webp",
+      "previewVideo": "/h3/styles/cinematic-realism/preview.mp4",
+      "previewWebm": "/h3/styles/cinematic-realism/preview.webm"
+    }
+  },
+  "live-action": {
+    "styleId": "live-action",
+    "styleName": "Live action",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-b2e38a23-4bad-4099-b572-c8e82c1ae56d",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nGrounded live-action photography with authentic locations, practical light sources, natural exposure roll-off, convincing wardrobe and props, restrained color grading, human micro-expressions and realistic lens behavior. Preserve physical plausibility and documentary-level environmental detail.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/live-action/source-5s.mp4",
+    "updatedAt": "2026-09-22T09:54:22.292Z",
+    "backend": "rtx5060ti",
+    "promptId": "9120d2f9-bdd0-4282-8e25-9e3d69e68f10",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-b2e38a23-4bad-4099-b572-c8e82c1ae56d/generations/h3-direct-b2e38a23-4bad-4099-b572-c8e82c1ae56d.mp4",
+    "media": {
+      "poster": "/h3/styles/live-action/poster.webp",
+      "previewVideo": "/h3/styles/live-action/preview.mp4",
+      "previewWebm": "/h3/styles/live-action/preview.webm"
+    }
+  },
+  "3d-animation": {
+    "styleId": "3d-animation",
+    "styleName": "3D animation",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-fa91067f-034b-4a71-9a57-dc7b56a7b93f",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nPremium feature-quality 3D animation with appealing sculpted forms, expressive facial rigs, detailed materials, soft global illumination, controlled subsurface scattering and confident animated posing. Motion uses readable anticipation, follow-through, squash and stretch without becoming weightless.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/3d-animation/source-5s.mp4",
+    "updatedAt": "2026-09-22T09:56:42.929Z",
+    "backend": "rtx5060ti",
+    "promptId": "ce450c2c-9dc0-47fb-9b3e-d0f2c5137f91",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-fa91067f-034b-4a71-9a57-dc7b56a7b93f/generations/h3-direct-fa91067f-034b-4a71-9a57-dc7b56a7b93f.mp4",
+    "media": {
+      "poster": "/h3/styles/3d-animation/poster.webp",
+      "previewVideo": "/h3/styles/3d-animation/preview.mp4",
+      "previewWebm": "/h3/styles/3d-animation/preview.webm"
+    }
+  },
+  "cartoon": {
+    "styleId": "cartoon",
+    "styleName": "Cartoon",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-d46966dc-f675-4bfe-9de8-beed994aab2f",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nBold graphic cartoon design with clean silhouettes, expressive shape language, simplified but intentional backgrounds, punchy color separation and highly readable poses. Use elastic timing, visual exaggeration and crisp comedic reactions while keeping character construction consistent.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/cartoon/source-5s.mp4",
+    "updatedAt": "2026-09-22T09:59:03.536Z",
+    "backend": "rtx5060ti",
+    "promptId": "564f0a02-46b3-48d9-bb83-5ffa0c45e978",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-d46966dc-f675-4bfe-9de8-beed994aab2f/generations/h3-direct-d46966dc-f675-4bfe-9de8-beed994aab2f.mp4",
+    "media": {
+      "poster": "/h3/styles/cartoon/poster.webp",
+      "previewVideo": "/h3/styles/cartoon/preview.mp4",
+      "previewWebm": "/h3/styles/cartoon/preview.webm"
+    }
+  },
+  "anime": {
+    "styleId": "anime",
+    "styleName": "Anime",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-939000b1-bbe1-4cc3-a370-bf88ceeac592",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nPolished cinematic anime with precise linework, controlled cel shading, expressive eyes, dynamic perspective, atmospheric painted backgrounds, speed accents and dramatic color scripting. Use held poses punctuated by fluid bursts of action and carefully composed emotional close-ups.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/anime/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:01:24.196Z",
+    "backend": "rtx5060ti",
+    "promptId": "8bed7794-490a-4966-974e-1db9b1605a66",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-939000b1-bbe1-4cc3-a370-bf88ceeac592/generations/h3-direct-939000b1-bbe1-4cc3-a370-bf88ceeac592.mp4",
+    "media": {
+      "poster": "/h3/styles/anime/poster.webp",
+      "previewVideo": "/h3/styles/anime/preview.mp4",
+      "previewWebm": "/h3/styles/anime/preview.webm"
+    }
+  },
+  "illustrated": {
+    "styleId": "illustrated",
+    "styleName": "Illustrated",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-31003071-aca9-485c-9c82-a0dacbfa14f9",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nLiving editorial illustration with visible authored linework, layered pigment or brush texture, selective detail, designed negative space and sophisticated color harmony. Motion should feel like the illustration has come alive while preserving its handmade surface and graphic composition.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/illustrated/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:03:44.830Z",
+    "backend": "rtx5060ti",
+    "promptId": "7975f9e9-871d-4549-aff6-5f8a8c62be9a",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-31003071-aca9-485c-9c82-a0dacbfa14f9/generations/h3-direct-31003071-aca9-485c-9c82-a0dacbfa14f9.mp4",
+    "media": {
+      "poster": "/h3/styles/illustrated/poster.webp",
+      "previewVideo": "/h3/styles/illustrated/preview.mp4",
+      "previewWebm": "/h3/styles/illustrated/preview.webm"
+    }
+  },
+  "game-cinematic": {
+    "styleId": "game-cinematic",
+    "styleName": "Game cinematic",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-c3665851-e0ef-4bf9-9546-3700c5e8f6e5",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nHigh-end real-time game cinematic with detailed characters and environments, volumetric atmosphere, dramatic rim lighting, physically based materials, heroic composition and responsive action animation. Camera and editing feel authored for a premium narrative cutscene.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/game-cinematic/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:06:05.453Z",
+    "backend": "rtx5060ti",
+    "promptId": "14deafb9-3fbf-4ae3-9e36-e9b46e334e59",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-c3665851-e0ef-4bf9-9546-3700c5e8f6e5/generations/h3-direct-c3665851-e0ef-4bf9-9546-3700c5e8f6e5.mp4",
+    "media": {
+      "poster": "/h3/styles/game-cinematic/poster.webp",
+      "previewVideo": "/h3/styles/game-cinematic/preview.mp4",
+      "previewWebm": "/h3/styles/game-cinematic/preview.webm"
+    }
+  },
+  "gameplay-first-person": {
+    "styleId": "gameplay-first-person",
+    "styleName": "Gameplay / first-person",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-91270f63-2176-41b5-b0f1-298c17e68850",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nImmersive first-person gameplay presentation with stable player geography, responsive head and weapon motion, readable environmental navigation, game-authentic lighting and tactile interaction. Camera acceleration, recoil and impacts remain controlled enough to preserve spatial clarity.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/gameplay-first-person/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:08:26.077Z",
+    "backend": "rtx5060ti",
+    "promptId": "80ecdc88-2e94-448d-a7f7-de018d152ca0",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-91270f63-2176-41b5-b0f1-298c17e68850/generations/h3-direct-91270f63-2176-41b5-b0f1-298c17e68850.mp4",
+    "media": {
+      "poster": "/h3/styles/gameplay-first-person/poster.webp",
+      "previewVideo": "/h3/styles/gameplay-first-person/preview.mp4",
+      "previewWebm": "/h3/styles/gameplay-first-person/preview.webm"
+    }
+  },
+  "stop-motion": {
+    "styleId": "stop-motion",
+    "styleName": "Stop motion",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-1cd7d0e3-796c-4a90-8f1a-0c0713e436dd",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nHandcrafted stop-motion production with tactile puppets, miniature sets, visible fabric, clay, wood or paper texture, practical miniature lighting, shallow macro depth of field and intentionally stepped frame-by-frame movement. Include tiny puppet-settle imperfections while avoiding smooth CGI motion.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/stop-motion/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:10:46.728Z",
+    "backend": "rtx5060ti",
+    "promptId": "39901fb3-79c0-4998-9b92-5b0a6fbd48c3",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-1cd7d0e3-796c-4a90-8f1a-0c0713e436dd/generations/h3-direct-1cd7d0e3-796c-4a90-8f1a-0c0713e436dd.mp4",
+    "media": {
+      "poster": "/h3/styles/stop-motion/poster.webp",
+      "previewVideo": "/h3/styles/stop-motion/preview.mp4",
+      "previewWebm": "/h3/styles/stop-motion/preview.webm"
+    }
+  },
+  "mixed-live-action-and-hand-drawn-animation": {
+    "styleId": "mixed-live-action-and-hand-drawn-animation",
+    "styleName": "Mixed live action and hand-drawn animation",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-57cf0725-9d45-4838-81bc-cb1afc16290d",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nLive-action photography integrated with expressive hand-drawn marks that wrap around surfaces, cast light, react to movement and inhabit the same perspective. Preserve natural footage texture while animated lines, paint and symbols retain visible human variation.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/mixed-live-action-and-hand-drawn-animation/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:13:07.410Z",
+    "backend": "rtx5060ti",
+    "promptId": "cf851b14-fa1a-443a-b723-241c0aa836ca",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-57cf0725-9d45-4838-81bc-cb1afc16290d/generations/h3-direct-57cf0725-9d45-4838-81bc-cb1afc16290d.mp4",
+    "media": {
+      "poster": "/h3/styles/mixed-live-action-and-hand-drawn-animation/poster.webp",
+      "previewVideo": "/h3/styles/mixed-live-action-and-hand-drawn-animation/preview.mp4",
+      "previewWebm": "/h3/styles/mixed-live-action-and-hand-drawn-animation/preview.webm"
+    }
+  },
+  "graphic-motion-design": {
+    "styleId": "graphic-motion-design",
+    "styleName": "Graphic motion design",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-8fa34b5a-e3e8-4c0c-830f-5ef07ef281a5",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nPrecision motion design with bold typography, geometric systems, controlled grids, clean masking, deliberate transitions and rhythmically choreographed shape animation. Every movement reinforces hierarchy and composition; surfaces remain crisp and production-ready.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/graphic-motion-design/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:15:28.033Z",
+    "backend": "rtx5060ti",
+    "promptId": "ff7bb603-4829-4d65-ba5f-5366b2657d09",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-8fa34b5a-e3e8-4c0c-830f-5ef07ef281a5/generations/h3-direct-8fa34b5a-e3e8-4c0c-830f-5ef07ef281a5.mp4",
+    "media": {
+      "poster": "/h3/styles/graphic-motion-design/poster.webp",
+      "previewVideo": "/h3/styles/graphic-motion-design/preview.mp4",
+      "previewWebm": "/h3/styles/graphic-motion-design/preview.webm"
+    }
+  },
+  "animated-poster": {
+    "styleId": "animated-poster",
+    "styleName": "Animated poster",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-4af7cb75-9a55-4606-b199-09929b061ee2",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nA striking poster composition that evolves through restrained parallax, animated lighting, atmospheric particles, moving type and one memorable visual transformation. Maintain a strong hero layout and finish on a clean, readable key art frame.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/animated-poster/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:17:48.727Z",
+    "backend": "rtx5060ti",
+    "promptId": "96c07311-ffb6-4e82-8016-cc4bcb8d8e7d",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-4af7cb75-9a55-4606-b199-09929b061ee2/generations/h3-direct-4af7cb75-9a55-4606-b199-09929b061ee2.mp4",
+    "media": {
+      "poster": "/h3/styles/animated-poster/poster.webp",
+      "previewVideo": "/h3/styles/animated-poster/preview.mp4",
+      "previewWebm": "/h3/styles/animated-poster/preview.webm"
+    }
+  },
+  "premium-product-commercial": {
+    "styleId": "premium-product-commercial",
+    "styleName": "Premium product commercial",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-ebb3b073-b314-4a25-ad07-1cb7bad1918c",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nLuxury commercial photography with immaculate product geometry, controlled studio reflections, refined material rendering, macro detail, elegant camera motion and sculpted highlight falloff. Interactions showcase function and craftsmanship without inventing labels, features or claims.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/premium-product-commercial/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:20:09.400Z",
+    "backend": "rtx5060ti",
+    "promptId": "925428da-5710-470e-85b5-e026745c27a9",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-ebb3b073-b314-4a25-ad07-1cb7bad1918c/generations/h3-direct-ebb3b073-b314-4a25-ad07-1cb7bad1918c.mp4",
+    "media": {
+      "poster": "/h3/styles/premium-product-commercial/poster.webp",
+      "previewVideo": "/h3/styles/premium-product-commercial/preview.mp4",
+      "previewWebm": "/h3/styles/premium-product-commercial/preview.webm"
+    }
+  },
+  "visceral-cinematic-horror": {
+    "styleId": "visceral-cinematic-horror",
+    "styleName": "Visceral cinematic horror",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-d5152270-9a49-4a8d-9e2c-8b4c50ee1403",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nTactile cinematic horror with oppressive darkness, sickly practical light, damp and decayed surfaces, uncomfortable proximity, deep negative space and brief fragments of disturbing detail. Withhold the threat before revealing it; use imperfect handheld movement, abrupt stillness and low-frequency physical sound rather than constant spectacle.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/visceral-cinematic-horror/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:22:29.982Z",
+    "backend": "rtx5060ti",
+    "promptId": "ad02cc4e-b5d7-4d5e-8549-ee01b9972ddf",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-d5152270-9a49-4a8d-9e2c-8b4c50ee1403/generations/h3-direct-d5152270-9a49-4a8d-9e2c-8b4c50ee1403.mp4",
+    "media": {
+      "poster": "/h3/styles/visceral-cinematic-horror/poster.webp",
+      "previewVideo": "/h3/styles/visceral-cinematic-horror/preview.mp4",
+      "previewWebm": "/h3/styles/visceral-cinematic-horror/preview.webm"
+    }
+  },
+  "psychological-thriller": {
+    "styleId": "psychological-thriller",
+    "styleName": "Psychological thriller",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-fbebd4d7-13ae-4df2-926a-5de2260afbe7",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nControlled psychological-thriller imagery with compressed space, reflections, frames within frames, symmetrical compositions that gradually destabilize, muted color contaminated by one recurring accent and slow invasive camera movement. Emphasize uncertain perception, micro-expressions, off-screen implication and subjective sound.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/psychological-thriller/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:24:50.609Z",
+    "backend": "rtx5060ti",
+    "promptId": "3c1af559-e07b-4e73-a96a-dc23ca0734a8",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-fbebd4d7-13ae-4df2-926a-5de2260afbe7/generations/h3-direct-fbebd4d7-13ae-4df2-926a-5de2260afbe7.mp4",
+    "media": {
+      "poster": "/h3/styles/psychological-thriller/poster.webp",
+      "previewVideo": "/h3/styles/psychological-thriller/preview.mp4",
+      "previewWebm": "/h3/styles/psychological-thriller/preview.webm"
+    }
+  },
+  "gothic-whimsy": {
+    "styleId": "gothic-whimsy",
+    "styleName": "Gothic whimsy",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-f95f2c83-72a1-4e25-9195-611b65bb03f8",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nPlayfully macabre storybook gothic design with crooked architecture, elongated silhouettes, spindly trees, theatrical miniature-like sets, moonlit fog and handcrafted surface imperfections. Use charcoal, bone-white and faded jewel tones, angular compositions and expressive movement that balances childlike wonder with elegant unease; avoid direct imitation of any named filmmaker.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/gothic-whimsy/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:27:11.272Z",
+    "backend": "rtx5060ti",
+    "promptId": "3b0b3b3b-8db3-40b2-942c-e1d4a41b5433",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-f95f2c83-72a1-4e25-9195-611b65bb03f8/generations/h3-direct-f95f2c83-72a1-4e25-9195-611b65bb03f8.mp4",
+    "media": {
+      "poster": "/h3/styles/gothic-whimsy/poster.webp",
+      "previewVideo": "/h3/styles/gothic-whimsy/preview.mp4",
+      "previewWebm": "/h3/styles/gothic-whimsy/preview.webm"
+    }
+  },
+  "dark-fairy-tale": {
+    "styleId": "dark-fairy-tale",
+    "styleName": "Dark fairy tale",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-c4795b59-2fcd-45e1-89a7-5f2e786cc0be",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nLush but threatening folklore imagery with ancient forests, worn storybook textures, candlelit chiaroscuro, jewel-toned shadows, weathered costumes and beautiful objects carrying subtle danger. Frame the world with mythic scale, enchanted atmosphere and a constant tension between wonder and menace.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/dark-fairy-tale/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:29:31.935Z",
+    "backend": "rtx5060ti",
+    "promptId": "ce391611-1339-4e82-afea-98346ddec272",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-c4795b59-2fcd-45e1-89a7-5f2e786cc0be/generations/h3-direct-c4795b59-2fcd-45e1-89a7-5f2e786cc0be.mp4",
+    "media": {
+      "poster": "/h3/styles/dark-fairy-tale/poster.webp",
+      "previewVideo": "/h3/styles/dark-fairy-tale/preview.mp4",
+      "previewWebm": "/h3/styles/dark-fairy-tale/preview.webm"
+    }
+  },
+  "cosmic-horror": {
+    "styleId": "cosmic-horror",
+    "styleName": "Cosmic horror",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-4a9148d0-c231-4cb4-b468-514e2b15fa7e",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nOverwhelming cosmic-horror scale with tiny human figures, impossible geometry, ancient nonhuman structures, distorted horizons, starless voids and light behaving in physically unsettling ways. Reveal incomprehensible forms only partially; emphasize awe, insignificance and deep subsonic resonance over conventional monsters.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/cosmic-horror/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:31:57.566Z",
+    "backend": "rtx5060ti",
+    "promptId": "f9bc52c6-3998-4960-98f4-d1795ed61ed2",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-4a9148d0-c231-4cb4-b468-514e2b15fa7e/generations/h3-direct-4a9148d0-c231-4cb4-b468-514e2b15fa7e.mp4",
+    "media": {
+      "poster": "/h3/styles/cosmic-horror/poster.webp",
+      "previewVideo": "/h3/styles/cosmic-horror/preview.mp4",
+      "previewWebm": "/h3/styles/cosmic-horror/preview.webm"
+    }
+  },
+  "supernatural-mystery": {
+    "styleId": "supernatural-mystery",
+    "styleName": "Supernatural mystery",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-f13b14a1-6306-4ee1-88d9-e13f9ec5d970",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nAtmospheric supernatural mystery with ordinary locations disturbed by one impossible detail, cool nocturnal color, pools of practical light, drifting haze, reflective surfaces and patient observational framing. Build evidence gradually through environmental changes, reactions and suggestive off-screen sound.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/supernatural-mystery/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:34:18.167Z",
+    "backend": "rtx5060ti",
+    "promptId": "541f1075-e0f8-4508-82d3-b465d0cd55da",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-f13b14a1-6306-4ee1-88d9-e13f9ec5d970/generations/h3-direct-f13b14a1-6306-4ee1-88d9-e13f9ec5d970.mp4",
+    "media": {
+      "poster": "/h3/styles/supernatural-mystery/poster.webp",
+      "previewVideo": "/h3/styles/supernatural-mystery/preview.mp4",
+      "previewWebm": "/h3/styles/supernatural-mystery/preview.webm"
+    }
+  },
+  "neo-noir-crime": {
+    "styleId": "neo-noir-crime",
+    "styleName": "Neo-noir crime",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-797d4eb0-f024-4f54-b856-568fd7b4f46d",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nModern neo-noir crime photography with hard directional light, deep blacks, wet streets, sodium and neon color contrast, glass reflections, smoke and morally charged close-ups. Use long lenses, oblique framing and deliberate urban camera moves with restrained, dangerous energy.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/neo-noir-crime/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:36:38.783Z",
+    "backend": "rtx5060ti",
+    "promptId": "b751fef1-70b3-48fa-9532-041ee841917d",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-797d4eb0-f024-4f54-b856-568fd7b4f46d/generations/h3-direct-797d4eb0-f024-4f54-b856-568fd7b4f46d.mp4",
+    "media": {
+      "poster": "/h3/styles/neo-noir-crime/poster.webp",
+      "previewVideo": "/h3/styles/neo-noir-crime/preview.mp4",
+      "previewWebm": "/h3/styles/neo-noir-crime/preview.webm"
+    }
+  },
+  "analog-found-footage": {
+    "styleId": "analog-found-footage",
+    "styleName": "Analog found footage",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-409f5896-6116-4854-9b39-f817c33abd70",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nDegraded consumer-video authenticity with imperfect autofocus, sensor noise, clipped highlights, rolling exposure, timestamp-era color, nervous reframing and accidental obstructions. Events must feel captured rather than staged; preserve plausible operator behavior and unsettling off-camera audio without decorative digital glitch overload.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/analog-found-footage/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:38:59.410Z",
+    "backend": "rtx5060ti",
+    "promptId": "ed143746-fb62-494c-ae9a-96c3055c0b06",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-409f5896-6116-4854-9b39-f817c33abd70/generations/h3-direct-409f5896-6116-4854-9b39-f817c33abd70.mp4",
+    "media": {
+      "poster": "/h3/styles/analog-found-footage/poster.webp",
+      "previewVideo": "/h3/styles/analog-found-footage/preview.mp4",
+      "previewWebm": "/h3/styles/analog-found-footage/preview.webm"
+    }
+  },
+  "retro-science-fiction": {
+    "styleId": "retro-science-fiction",
+    "styleName": "Retro science fiction",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-8f3dbb24-30ec-4a7f-ac47-eddc9259b321",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nTactile retro-futurism built from practical miniatures, painted control panels, CRT displays, analog switches, brushed metal, colored instrument light and optimistic mid-century industrial design. Combine clean graphic shapes with visible model-making detail and period-authentic optical effects.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/retro-science-fiction/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:41:20.074Z",
+    "backend": "rtx5060ti",
+    "promptId": "ca6f1ef7-84e0-406f-ae7e-3a4d118986f7",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-8f3dbb24-30ec-4a7f-ac47-eddc9259b321/generations/h3-direct-8f3dbb24-30ec-4a7f-ac47-eddc9259b321.mp4",
+    "media": {
+      "poster": "/h3/styles/retro-science-fiction/poster.webp",
+      "previewVideo": "/h3/styles/retro-science-fiction/preview.mp4",
+      "previewWebm": "/h3/styles/retro-science-fiction/preview.webm"
+    }
+  },
+  "dystopian-future": {
+    "styleId": "dystopian-future",
+    "styleName": "Dystopian future",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-679a2b1f-a07e-4d7b-9e66-c9012b3f00cf",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nSevere dystopian worldbuilding with monumental surveillance architecture, dense infrastructure, polluted atmosphere, utilitarian clothing, harsh industrial lighting and controlled institutional color. Contrast overwhelming systems with vulnerable human-scale details and credible environmental wear.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/dystopian-future/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:43:40.706Z",
+    "backend": "rtx5060ti",
+    "promptId": "76cb1a0f-7e1d-4950-a724-a9fad11d0203",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-679a2b1f-a07e-4d7b-9e66-c9012b3f00cf/generations/h3-direct-679a2b1f-a07e-4d7b-9e66-c9012b3f00cf.mp4",
+    "media": {
+      "poster": "/h3/styles/dystopian-future/poster.webp",
+      "previewVideo": "/h3/styles/dystopian-future/preview.mp4",
+      "previewWebm": "/h3/styles/dystopian-future/preview.webm"
+    }
+  },
+  "disaster-spectacle": {
+    "styleId": "disaster-spectacle",
+    "styleName": "Disaster spectacle",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-a4755048-cc18-4d85-b839-a8253478f296",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nLarge-scale disaster cinema with clearly established geography, escalating structural failure, credible mass and debris physics, atmospheric depth, human reaction inserts and wide shots that communicate enormous scale. Destruction unfolds as connected cause and effect rather than random visual noise.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/disaster-spectacle/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:46:01.484Z",
+    "backend": "rtx5060ti",
+    "promptId": "69ba653c-dd65-4a30-97e9-8ddca77691c5",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-a4755048-cc18-4d85-b839-a8253478f296/generations/h3-direct-a4755048-cc18-4d85-b839-a8253478f296.mp4",
+    "media": {
+      "poster": "/h3/styles/disaster-spectacle/poster.webp",
+      "previewVideo": "/h3/styles/disaster-spectacle/preview.mp4",
+      "previewWebm": "/h3/styles/disaster-spectacle/preview.webm"
+    }
+  },
+  "action-blockbuster": {
+    "styleId": "action-blockbuster",
+    "styleName": "Action blockbuster",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-3d49a885-1620-440e-a53e-89b82456987c",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nPremium action-blockbuster imagery with strong chase geography, bold silhouettes, dynamic parallax, practical-feeling impacts, readable stunt motion, aggressive but motivated camera placement and escalating shot scale. Maintain screen direction and physical continuity through every cut.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/action-blockbuster/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:48:22.125Z",
+    "backend": "rtx5060ti",
+    "promptId": "5de4153a-516d-4298-b9f9-e33c4fc60cbb",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-3d49a885-1620-440e-a53e-89b82456987c/generations/h3-direct-3d49a885-1620-440e-a53e-89b82456987c.mp4",
+    "media": {
+      "poster": "/h3/styles/action-blockbuster/poster.webp",
+      "previewVideo": "/h3/styles/action-blockbuster/preview.mp4",
+      "previewWebm": "/h3/styles/action-blockbuster/preview.webm"
+    }
+  },
+  "pulp-adventure": {
+    "styleId": "pulp-adventure",
+    "styleName": "Pulp adventure",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-d855e0c8-1fc8-462b-92eb-e5d37ac2ad7f",
+    "status": "published",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nColorful pulp-adventure energy with exotic practical locations, weathered maps and machinery, heroic silhouettes, golden light, dangerous terrain and bold serialized storytelling. Camera movement feels athletic and optimistic; action favors ingenious escapes and tactile set pieces.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/pulp-adventure/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:50:44.235Z",
+    "backend": "rtx5060ti",
+    "promptId": "d4e2a805-e012-4e80-acda-d18061ed7c14",
+    "workflowId": "h3-rtx5060ti-t2v-5s-lq-sla-turbo8-v1",
+    "workflowFile": "comfy_workflows/internal/production-v2/h3-lq-hq/rtx5060ti_T2V_5s_LQ.api.json",
+    "completedOutputPath": "/home/shawn-rochford/AI/runtime/test/data/productions-v2/h3-style-preview-assets/h3-direct/scenes/h3-direct-d855e0c8-1fc8-462b-92eb-e5d37ac2ad7f/generations/h3-direct-d855e0c8-1fc8-462b-92eb-e5d37ac2ad7f.mp4",
+    "media": {
+      "poster": "/h3/styles/pulp-adventure/poster.webp",
+      "previewVideo": "/h3/styles/pulp-adventure/preview.mp4",
+      "previewWebm": "/h3/styles/pulp-adventure/preview.webm"
+    }
+  },
+  "romantic-fantasy": {
+    "styleId": "romantic-fantasy",
+    "styleName": "Romantic fantasy",
+    "origin": "prompt-builder",
+    "jobId": "h3-direct-f8d70533-5e97-4e72-b3d6-fe812ff48488",
+    "status": "submitted",
+    "prompt": "VISUAL STYLE — APPLY CONSISTENTLY THROUGHOUT THE ENTIRE VIDEO:\nLuminous romantic fantasy with ethereal natural light, flowing fabric, enchanted landscapes, delicate particles, elegant production design and intimate expressive close-ups. Use graceful camera movement and rich color transitions to make emotional connection feel physically present in the environment.\n\nVIDEO CONTENT:\nA young adult artisan in a plain blue work jacket stands at a wooden workbench and lifts a small red paper windmill into a shaft of soft window light. The windmill turns once as the artisan smiles naturally. A slow, steady waist-high camera push moves from a medium-wide composition to a medium shot. The workshop background, subject identity, wardrobe, prop, action, camera path, composition, neutral daylight, timing, and sound remain identical for every style.",
+    "sourceClipPath": "/home/shawn-rochford/AI/runtime/test/data/h3-style-previews/source/romantic-fantasy/source-5s.mp4",
+    "updatedAt": "2026-09-22T10:50:44.237Z"
+  }
+}

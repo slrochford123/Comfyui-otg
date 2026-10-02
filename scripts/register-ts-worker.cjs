@@ -8,7 +8,15 @@ const originalResolveFilename = Module._resolveFilename;
 
 Module._resolveFilename = function resolveFilename(request, parent, isMain, options) {
   if (request.startsWith("@/")) {
-    return originalResolveFilename.call(this, path.join(repoRoot, request.slice(2)), parent, isMain, options);
+    const resolved = path.join(repoRoot, request.slice(2));
+    if (!path.extname(resolved)) {
+      for (const extension of [".ts", ".tsx", ".js", ".jsx"]) {
+        if (fs.existsSync(`${resolved}${extension}`)) return `${resolved}${extension}`;
+      }
+      if (fs.existsSync(path.join(resolved, "index.ts"))) return path.join(resolved, "index.ts");
+      if (fs.existsSync(path.join(resolved, "index.tsx"))) return path.join(resolved, "index.tsx");
+    }
+    return originalResolveFilename.call(this, resolved, parent, isMain, options);
   }
   return originalResolveFilename.call(this, request, parent, isMain, options);
 };
