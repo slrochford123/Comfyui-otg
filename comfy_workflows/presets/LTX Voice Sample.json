@@ -618,16 +618,14 @@
   "384": {
     "inputs": {
       "filename_prefix": "audio/otg_ltx_voice",
-      "quality": "320k",
-      "audioUI": "",
       "audio": [
         "354",
         0
       ]
     },
-    "class_type": "SaveAudioMP3",
+    "class_type": "SaveAudio",
     "_meta": {
-      "title": "Save Audio (MP3)"
+      "title": "Save Audio (WAV)"
     }
   }
 }

@@ -368,8 +368,9 @@ def patch_workflow(
     set_input(graph, "359", "value", True)
 
     save_audio = node(graph, "384")
-    save_audio["inputs"]["quality"] = "320k"
-    save_audio["inputs"]["filename_prefix"] = filename_prefix
+    save_audio["class_type"] = "SaveAudio"
+    save_audio["_meta"] = {"title": "Save Audio (WAV)"}
+    save_audio["inputs"] = {"filename_prefix": filename_prefix, "audio": save_audio.get("inputs", {}).get("audio", ["354", 0])}
     if save_audio["inputs"].get("audio") != ["354", 0]:
         save_audio["inputs"]["audio"] = ["354", 0]
 
@@ -737,7 +738,7 @@ def process_one(args: argparse.Namespace) -> int:
             if is_unnatural
             else f"audio/otg_ltx_voice_{job_id}"
         )
-        output_name = "unnatural-ltx-voice.mp3" if is_unnatural else "ltx-voice.mp3"
+        output_name = "unnatural-ltx-voice.wav" if is_unnatural else "ltx-voice.wav"
         preset_id = clean(job_input.get("presetId"))
         preset_name = clean(job_input.get("presetName"))
         preset_category = clean(job_input.get("presetCategory"))
@@ -850,7 +851,7 @@ def process_one(args: argparse.Namespace) -> int:
             headers,
             job_id,
             85,
-            "LTX Voice MP3 generated. Uploading the playable sample.",
+            "LTX Voice WAV generated. Uploading the playable sample.",
             {
                 "provider": provider,
                 "adapter": adapter,
@@ -1510,7 +1511,7 @@ def process_one_failover(args: argparse.Namespace) -> int:
             write_json(patched_workflow_path, graph)
             active_args = args
 
-        output_extension = ".flac" if using_fallback else ".mp3"
+        output_extension = ".wav"
         sample_path = work_dir / (f"unnatural-ltx-voice{output_extension}" if is_unnatural else f"ltx-voice{output_extension}")
 
         checkpoint(args, headers, job_id, 28, "LTX workflow validated before submission.", {**metadata, "currentStage": "workflow_patched", "patchedWorkflowPath": str(patched_workflow_path)})

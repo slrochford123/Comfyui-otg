@@ -186,7 +186,12 @@ function patchProviderWorkflow(input: {
   workflow["429"].inputs.noise_seed = input.seed;
   workflow["421"].inputs.noise_seed =
     (input.seed + 104_729) % 900_000_000_000_000;
-  workflow["455"].inputs.filename_prefix = input.outputPrefix;
+  workflow["455"].class_type = "SaveAudio";
+  workflow["455"]._meta = { title: "Save Audio (WAV)" };
+  workflow["455"].inputs = {
+    filename_prefix: input.outputPrefix,
+    audio: workflow["455"].inputs.audio || ["417", 0],
+  };
 
   return workflow;
 }
@@ -522,7 +527,7 @@ export async function POST(req: NextRequest) {
     const targetId = selected.targetId;
     const prepared = selected.prepared;
 
-    const ext = path.extname(output.filename || "") || ".mp3";
+    const ext = path.extname(output.filename || "") || ".wav";
     const outputName = `voice_creator_${generation.provider}_${preset.id}_${Date.now()}${ext}`;
     const absOutput = path.join(voicesOutputsDir(voiceId), outputName);
     writeBinaryFile(absOutput, bytes);
