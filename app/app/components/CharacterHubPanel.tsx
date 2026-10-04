@@ -1178,6 +1178,7 @@ function CharacterCreateSetup({
 
   async function pollCharacterReferenceCompletionV1(jobId: string) {
     const deadline = Date.now() + 45 * 60 * 1000;
+    let zeroProgressQueuedSince = Date.now();
 
     while (Date.now() < deadline) {
       const ownerId = getCharacterHubDeviceId();
@@ -1192,6 +1193,14 @@ function CharacterCreateSetup({
       const json = await response.json().catch(() => null);
 
       if (!response.ok || !json?.ok || !json?.job) {
+        if (response.status === 404) {
+          setCharacterCompletionJobId("");
+          setCharacterCompletionProgress(0);
+          throw new Error(
+            "Saved Character Card job was not found on the server. The processed source image is still saved; press Create Character Card to queue a fresh job.",
+          );
+        }
+
         throw new Error(
           json?.error || `Character reference status failed (${response.status}).`,
         );
@@ -1204,6 +1213,27 @@ function CharacterCreateSetup({
       setCreateMessage(
         `${String(job.message || "Building Character references...")} ${progress}%`,
       );
+
+      if ((status === "queued" || status === "interrupted") && progress <= 0) {
+        if (Date.now() - zeroProgressQueuedSince > CHARACTER_COMPLETION_STALLED_QUEUE_MS) {
+          await fetch(
+            `/api/characters/completion/${encodeURIComponent(jobId)}`,
+            {
+              method: "DELETE",
+              credentials: "include",
+              headers: { "x-otg-device-id": ownerId },
+            },
+          ).catch(() => null);
+
+          setCharacterCompletionJobId("");
+          setCharacterCompletionProgress(0);
+          throw new Error(
+            "Character Card job stayed queued at 0% and Worker Manager did not claim it. The processed source image is still saved; press Create Character Card again to queue a fresh job.",
+          );
+        }
+      } else {
+        zeroProgressQueuedSince = Date.now();
+      }
 
       if (status === "completed") {
         const refs = job?.result?.characterReferences as
@@ -1561,10 +1591,15 @@ function CharacterCreateSetup({
 
       await pollCharacterReferenceCompletionV1(jobId);
     } catch (error: any) {
+      const message = error?.message || String(error);
+      const retryableStall =
+        /processed source image is still saved|queue a fresh job/i.test(message);
       setCharacterCardStatus("error");
-      setCreateError(error?.message || String(error));
+      setCreateError(message);
       setCreateMessage(
-        "Character Card generation stopped. The source, job ID, and completed checkpoints remain saved for Resume.",
+        retryableStall
+          ? "Character Card generation stopped before Worker Manager started. The source image is preserved; press Create Character Card to retry."
+          : "Character Card generation stopped. The source, job ID, and completed checkpoints remain saved for Resume.",
       );
     } finally {
       characterCardInFlightRef.current = false;
@@ -2919,6 +2954,7 @@ function getCharacterHubDeviceId() {
 // OTG_CHARACTER_MOBILE_GENERATION_PERSISTENCE_PHASE10_UI
 const CHARACTER_CREATE_PERSISTENCE_KEY = "otg_character_create_pending_v2";
 const CHARACTER_CREATE_PERSISTENCE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+const CHARACTER_COMPLETION_STALLED_QUEUE_MS = 2 * 60 * 1000;
 
 function characterCreatePersistenceKey(ownerKey: string) {
   const normalized = String(ownerKey || "").trim().toLowerCase();

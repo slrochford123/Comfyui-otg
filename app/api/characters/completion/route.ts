@@ -7,12 +7,30 @@ import {
   listCharacterCompletionJobs,
 } from "@/lib/jobs/characterCompletionJobs";
 import { expectedWorkerToken } from "@/lib/jobs/workerAuth";
+import { enqueueWorkerLifecycleCommand } from "@/lib/workers/workerLifecycleStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function jsonError(error: string, status = 400) {
   return NextResponse.json({ ok: false, error }, { status, headers: withNoStore() });
+}
+
+function enqueueCharacterCompletionWorker(jobId: string) {
+  try {
+    const command = enqueueWorkerLifecycleCommand({
+      workerId: "character-completion",
+      action: "ensure-running",
+      requestedBy: "characters/completion",
+      dryRun: false,
+      reason: "Character Card completion job is queued and needs Worker Manager.",
+      jobId,
+      leaseSeconds: 300,
+    });
+    return command.ok ? command.command : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -32,6 +50,7 @@ export async function POST(req: NextRequest) {
         ok: true,
         job: created.job,
         reused: created.reused,
+        workerCommand: enqueueCharacterCompletionWorker(created.job.jobId),
       },
       { status: created.reused ? 200 : 202, headers: withNoStore() },
     );
