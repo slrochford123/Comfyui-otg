@@ -254,7 +254,9 @@ export async function getGallerySourcesForRequest(req: NextRequest): Promise<{
       username: owner.username,
       deviceId: owner.deviceId,
     });
+    return { owner, sources };
   }
+
   sources.push({
     scope: "device",
     dir: deviceGalleryDir(owner.deviceId),

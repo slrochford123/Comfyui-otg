@@ -26,8 +26,11 @@ function ensureDir(p: string) {
 
 function resolveCandidateDirs(username: string | null, deviceId: string) {
   const dirs: string[] = [];
-  if (username) dirs.push(userGalleryDir(username));
-  if (deviceId) dirs.push(deviceGalleryDir(deviceId));
+  if (username) {
+    dirs.push(userGalleryDir(username));
+  } else if (deviceId) {
+    dirs.push(deviceGalleryDir(deviceId));
+  }
   return Array.from(new Set(dirs));
 }
 

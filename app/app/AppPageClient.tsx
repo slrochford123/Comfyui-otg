@@ -33,6 +33,7 @@ import {
   type VideoGenerationType,
 } from "@/lib/videoGenerateWorkflows";
 import VideoLoraPanel, { shouldShowVideoLoraPanel, type VideoLoraSelectionValue } from "./components/VideoLoraPanel";
+import { profileStorageKey } from "@/lib/client/profileStorage";
 
 const PanelLoading = () => (
   <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 text-sm text-white/60">
@@ -1052,11 +1053,11 @@ function galleryOriginalFileUrl(item: GalleryItem) {
 }
 
 
-function readPersistedState(): PersistedGenerateState | null {
+function readPersistedState(storageKey = APP_STATE_KEY): PersistedGenerateState | null {
   if (typeof window === "undefined") return null;
 
   try {
-    const raw = window.localStorage.getItem(APP_STATE_KEY);
+    const raw = window.localStorage.getItem(storageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? (parsed as PersistedGenerateState) : null;
@@ -1484,6 +1485,12 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
       "",
     ).trim();
   }, [initialUser?.username, whoamiQuery.data, whoamiQuery.error]);
+
+
+  const appStateStorageKey = useMemo(
+    () => profileStorageKey(APP_STATE_KEY, authenticatedOwnerKey || "guest"),
+    [authenticatedOwnerKey],
+  );
 
   const workflowsQuery = useQuery({
     queryKey: ["otg", "workflows"],
@@ -2311,7 +2318,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   );
 
   useEffect(() => {
-    const persisted = readPersistedState();
+    const persisted = readPersistedState(appStateStorageKey);
     if (persisted) {
       if (persisted.tab && Object.prototype.hasOwnProperty.call(APP_TAB_LABELS, persisted.tab)) {
         setTab(!PRODUCTION_FEATURE_ENABLED && persisted.tab === "storyboard" ? "generate" : persisted.tab);
@@ -2406,7 +2413,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     } catch {
       // ignore
     }
-  }, []);
+  }, [appStateStorageKey]);
 
   useEffect(() => {
     try {
@@ -2426,7 +2433,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         galleryViewMode,
         galleryItemsPerPage,
       };
-      window.localStorage.setItem(APP_STATE_KEY, JSON.stringify(nextState));
+      window.localStorage.setItem(appStateStorageKey, JSON.stringify(nextState));
     } catch {
       // ignore
     }
@@ -2445,6 +2452,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     recentGenerateStyleIds,
     galleryViewMode,
     galleryItemsPerPage,
+    appStateStorageKey,
   ]);
 
   useEffect(() => {
@@ -3254,6 +3262,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     galleryFilter,
     gallerySort,
     galleryItemsPerPage,
+    appStateStorageKey,
   ]);
 
   useEffect(() => {
@@ -4671,7 +4680,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
   function handleSettingsClearLocalState() {
     try {
-      window.localStorage.removeItem(APP_STATE_KEY);
+      window.localStorage.removeItem(appStateStorageKey);
       setSettingsLocalMessage("Local UI state cleared. Server files and Gallery were not deleted.");
       setStatusMessage("Local UI state cleared.");
     } catch (error) {
@@ -7309,8 +7318,8 @@ async function handleAskAi() {
             </p>
           </div>
         ) : null}
-        {tab === "storyboard" ? <ProductionV2Panel /> : null}
-        {tab === "h3" ? <H3Panel /> : null}
+        {tab === "storyboard" ? <ProductionV2Panel key={authenticatedOwnerKey || "production-account-unavailable"} /> : null}
+        {tab === "h3" ? <H3Panel key={authenticatedOwnerKey || "h3-account-unavailable"} authenticatedOwnerKey={authenticatedOwnerKey} /> : null}
         {tab === "characters" ? (
           <CharactersPanel
             key={authenticatedOwnerKey || "character-account-unavailable"}

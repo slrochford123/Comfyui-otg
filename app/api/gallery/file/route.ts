@@ -56,80 +56,31 @@ async function fileExists(filePath: string) {
   }
 }
 
-function candidateRoots() {
-  const roots = [
-    process.env.OTG_DATA_DIR,
-    process.env.DATA_DIR,
-    path.join(process.cwd(), "data"),
-    path.join(process.cwd(), "public"),
-    path.join(process.cwd(), ".next"),
-    "E:\\Renders\\ComfyUI",
-    "E:\\Renders",
-    "C:\\AI\\Comfyui\\output",
-    "C:\\AI\\ComfyUI\\output",
-    "C:\\AI\\Comfyui\\ComfyUI\\output",
-    "C:\\AI\\ComfyUI\\ComfyUI\\output",
-  ];
-
-  return Array.from(
-    new Set(
-      roots
-        .map((root) => String(root || "").trim())
-        .filter(Boolean)
-    )
-  );
+function isInsideRoot(root: string, candidate: string) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedCandidate = path.resolve(candidate);
+  const relative = path.relative(resolvedRoot, resolvedCandidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-async function findByName(root: string, wantedName: string, maxFiles = 25000) {
-  let checked = 0;
-  const stack = [root];
-
-  while (stack.length) {
-    const current = stack.pop();
-    if (!current) continue;
-
-    let entries: Array<{
-      name: string;
-      isDirectory(): boolean;
-      isFile(): boolean;
-    }>;
-
-    try {
-      entries = await fs.readdir(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-
-    for (const entry of entries) {
-      const fullPath = path.join(current, entry.name);
-
-      if (entry.isDirectory()) {
-        stack.push(fullPath);
-        continue;
-      }
-
-      checked += 1;
-      if (checked > maxFiles) return "";
-
-      if (!entry.isFile()) continue;
-      if (entry.name === wantedName) return fullPath;
-    }
-  }
-
-  return "";
-}
 
 async function resolveGalleryFile(req: NextRequest) {
   const url = req.nextUrl;
   const directPath = String(url.searchParams.get("path") || "").trim();
   const rawName = String(url.searchParams.get("name") || "").trim();
   const scopeHint = String(url.searchParams.get("scope") || "").trim();
+  const { sources } = await getGallerySourcesForRequest(req);
 
   if (directPath) {
     const normalized = path.normalize(directPath);
     const ext = path.extname(normalized).toLowerCase();
 
-    if (MEDIA_EXTENSIONS.has(ext) && path.isAbsolute(normalized) && (await fileExists(normalized))) {
+    if (
+      MEDIA_EXTENSIONS.has(ext) &&
+      path.isAbsolute(normalized) &&
+      sources.some((source) => isInsideRoot(source.dir, normalized)) &&
+      (await fileExists(normalized))
+    ) {
       return normalized;
     }
   }
@@ -141,29 +92,9 @@ async function resolveGalleryFile(req: NextRequest) {
   const wantedExt = path.extname(wantedName).toLowerCase();
   if (!MEDIA_EXTENSIONS.has(wantedExt)) return "";
 
-  try {
-    const { sources } = await getGallerySourcesForRequest(req);
-    const item = resolveGalleryItemByName({ sources, name: wantedName, scopeHint });
-    if (item?.path && (await fileExists(item.path))) {
-      return item.path;
-    }
-  } catch (error) {
-    if (error instanceof SessionInvalidError) throw error;
-  }
-
-  for (const root of candidateRoots()) {
-    const directCandidate = path.join(root, wantedName);
-
-    if (await fileExists(directCandidate)) {
-      return directCandidate;
-    }
-
-    if (url.searchParams.get("legacySearch") !== "1") {
-      continue;
-    }
-
-    const found = await findByName(root, wantedName);
-    if (found) return found;
+  const item = resolveGalleryItemByName({ sources, name: wantedName, scopeHint });
+  if (item?.path && (await fileExists(item.path))) {
+    return item.path;
   }
 
   return "";

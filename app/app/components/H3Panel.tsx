@@ -38,6 +38,7 @@ import {
   H3_SHOT_FLOW_OPTIONS,
 } from "@/lib/production/promptOptions";
 import type { ProductionV2H3Mode } from "@/lib/production/h3Workflows";
+import { normalizeProfileStorageOwner, profileStorageKey } from "@/lib/client/profileStorage";
 
 type Mode = ProductionV2H3Mode;
 type MediaKind = "image" | "video" | "audio";
@@ -142,6 +143,10 @@ const H3_STUDIO_DRAFT_STORE = "drafts";
 const H3_STUDIO_DRAFT_KEY = "current";
 const H3_STUDIO_JOB_STORAGE_KEY = "otg-h3-studio-job-v1";
 
+type H3PanelProps = {
+  authenticatedOwnerKey?: string;
+};
+
 type H3StudioPersistedJob = {
   version: 1;
   savedAt: string;
@@ -160,16 +165,16 @@ function validStoredH3Job(value: unknown): JobStatus | null {
   return job as JobStatus;
 }
 
-function readPersistedH3Job() {
+function readPersistedH3Job(storageKey: string) {
   if (typeof window === "undefined") return null;
   try {
-    return validStoredH3Job(JSON.parse(window.localStorage.getItem(H3_STUDIO_JOB_STORAGE_KEY) || "null"));
+    return validStoredH3Job(JSON.parse(window.localStorage.getItem(storageKey) || "null"));
   } catch {
     return null;
   }
 }
 
-function writePersistedH3Job(job: JobStatus) {
+function writePersistedH3Job(storageKey: string, job: JobStatus) {
   if (typeof window === "undefined") return;
   try {
     const payload: H3StudioPersistedJob = {
@@ -177,14 +182,14 @@ function writePersistedH3Job(job: JobStatus) {
       savedAt: new Date().toISOString(),
       job,
     };
-    window.localStorage.setItem(H3_STUDIO_JOB_STORAGE_KEY, JSON.stringify(payload));
+    window.localStorage.setItem(storageKey, JSON.stringify(payload));
   } catch {}
 }
 
-function clearPersistedH3Job() {
+function clearPersistedH3Job(storageKey: string) {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.removeItem(H3_STUDIO_JOB_STORAGE_KEY);
+    window.localStorage.removeItem(storageKey);
   } catch {}
 }
 
@@ -211,12 +216,12 @@ function openH3StudioDraftDb() {
   });
 }
 
-async function readH3StudioDraft() {
+async function readH3StudioDraft(storageKey: string) {
   const db = await openH3StudioDraftDb();
   if (!db) return null;
   return new Promise<H3StudioPersistedDraft | null>((resolve) => {
     const tx = db.transaction(H3_STUDIO_DRAFT_STORE, "readonly");
-    const request = tx.objectStore(H3_STUDIO_DRAFT_STORE).get(H3_STUDIO_DRAFT_KEY);
+    const request = tx.objectStore(H3_STUDIO_DRAFT_STORE).get(storageKey || H3_STUDIO_DRAFT_KEY);
     request.onerror = () => resolve(null);
     request.onsuccess = () => resolve((request.result || null) as H3StudioPersistedDraft | null);
     tx.oncomplete = () => db.close();
@@ -224,12 +229,12 @@ async function readH3StudioDraft() {
   });
 }
 
-async function writeH3StudioDraft(draft: H3StudioPersistedDraft) {
+async function writeH3StudioDraft(storageKey: string, draft: H3StudioPersistedDraft) {
   const db = await openH3StudioDraftDb();
   if (!db) return;
   await new Promise<void>((resolve) => {
     const tx = db.transaction(H3_STUDIO_DRAFT_STORE, "readwrite");
-    tx.objectStore(H3_STUDIO_DRAFT_STORE).put(draft, H3_STUDIO_DRAFT_KEY);
+    tx.objectStore(H3_STUDIO_DRAFT_STORE).put(draft, storageKey || H3_STUDIO_DRAFT_KEY);
     tx.oncomplete = () => {
       db.close();
       resolve();
@@ -545,7 +550,19 @@ function GalleryPicker({
   );
 }
 
-export default function H3Panel() {
+export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
+  const storageOwnerKey = useMemo(
+    () => normalizeProfileStorageOwner(authenticatedOwnerKey),
+    [authenticatedOwnerKey],
+  );
+  const h3JobStorageKey = useMemo(
+    () => profileStorageKey(H3_STUDIO_JOB_STORAGE_KEY, storageOwnerKey),
+    [storageOwnerKey],
+  );
+  const h3DraftStorageKey = useMemo(
+    () => profileStorageKey(H3_STUDIO_DRAFT_KEY, storageOwnerKey),
+    [storageOwnerKey],
+  );
   const [mode, setMode] = useState<Mode>("h3-text-to-video");
   const [quality, setQuality] = useState<H3Quality>("lq");
   const [h3Settings, setH3Settings] =
@@ -596,7 +613,7 @@ export default function H3Panel() {
   const [micState, setMicState] = useState<
     "idle" | "listening" | "processing" | "done" | "error"
   >("idle");
-  const [job, setJob] = useState<JobStatus | null>(() => readPersistedH3Job());
+  const [job, setJob] = useState<JobStatus | null>(() => readPersistedH3Job(h3JobStorageKey));
   const [previewFrame, setPreviewFrame] = useState({
     jobId: "",
     version: 0,
@@ -716,9 +733,9 @@ export default function H3Panel() {
   }, [mode]);
   useEffect(() => {
     if (!jobPersistenceReadyRef.current) return;
-    if (job) writePersistedH3Job(job);
-    else clearPersistedH3Job();
-  }, [job]);
+    if (job) writePersistedH3Job(h3JobStorageKey, job);
+    else clearPersistedH3Job(h3JobStorageKey);
+  }, [h3JobStorageKey, job]);
   useEffect(() => {
     if (jobRestoreAttemptedRef.current) return;
     jobRestoreAttemptedRef.current = true;
@@ -735,7 +752,7 @@ export default function H3Panel() {
           return;
         }
         if (response.status === 404) {
-          clearPersistedH3Job();
+          clearPersistedH3Job(h3JobStorageKey);
           setJob((current) => current?.id === persisted.id ? null : current);
           setMessage((current) => current || "The saved H3 job was no longer available for this session.");
         }
@@ -744,12 +761,12 @@ export default function H3Panel() {
     return () => {
       canceled = true;
     };
-  }, []);
+  }, [h3JobStorageKey]);
   useEffect(() => {
     if (draftRestoreAttemptedRef.current) return;
     draftRestoreAttemptedRef.current = true;
     let canceled = false;
-    void readH3StudioDraft()
+    void readH3StudioDraft(h3DraftStorageKey)
       .then((draft) => {
         if (canceled || !draft) return;
         const nextMode = MODE_OPTIONS.some((item) => item.id === draft.mode)
@@ -800,7 +817,7 @@ export default function H3Panel() {
     return () => {
       canceled = true;
     };
-  }, []);
+  }, [h3DraftStorageKey]);
   useEffect(() => {
     if (!draftReadyRef.current) return;
     const draft: H3StudioPersistedDraft = {
@@ -823,10 +840,10 @@ export default function H3Panel() {
       selectedLoras,
     };
     const timer = setTimeout(() => {
-      void writeH3StudioDraft(draft);
+      void writeH3StudioDraft(h3DraftStorageKey, draft);
     }, 350);
     const flush = () => {
-      void writeH3StudioDraft(draft);
+      void writeH3StudioDraft(h3DraftStorageKey, draft);
     };
     document.addEventListener("visibilitychange", flush);
     window.addEventListener("pagehide", flush);
@@ -854,6 +871,7 @@ export default function H3Panel() {
     references,
     selectedLoras,
     refModReferenceOptions.length,
+    h3DraftStorageKey,
   ]);
   useEffect(() => {
     if (!active) return;
@@ -1318,7 +1336,7 @@ export default function H3Panel() {
     setJob(null);
     setPreviewFrame({ jobId: "", version: 0, contentType: "" });
     setPreviewProgress({ jobId: "", value: 0, max: 0, node: null });
-    clearPersistedH3Job();
+    clearPersistedH3Job(h3JobStorageKey);
     setMessage("Cleared the H3 result from this device.");
   }
   async function retry() {

@@ -2,6 +2,8 @@
 import fs from "node:fs/promises";
 import fssync from "node:fs";
 import path from "node:path";
+import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { getOwnerDirs } from "@/lib/paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,41 +44,16 @@ function safeDecode(value: string) {
   }
 }
 
-function previewRoots() {
-  const cwd = process.cwd();
-
-  return Array.from(new Set([
-    process.env.OTG_PREVIEW_DIR || "",
-    process.env.OTG_OUTPUT_DIR || "",
-    process.env.OTG_DATA_ROOT || "",
-    process.env.COMFYUI_OUTPUT_DIR || "",
-    process.env.COMFY_OUTPUT_DIR || "",
-    path.join(cwd, "data", "preview"),
-    path.join(cwd, "data", "previews"),
-    path.join(cwd, "data", "output"),
-    path.join(cwd, "data", "outputs"),
-    path.join(cwd, "outputs"),
-    path.join(cwd, "output"),
-    path.join(cwd, "public"),
-    path.join(cwd, "public", "preview"),
-    path.join(cwd, "public", "previews"),
-    path.join(cwd, "public", "outputs"),
-    process.env.OTG_LEGACY_PREVIEW_DIR || "",
-    "C:\\AI\\ComfyUI\\output",
-    "C:\\AI\\ComfyUI_windows_portable\\ComfyUI\\output",
-    "D:\\AI\\ComfyUI_windows_portable\\ComfyUI\\output",
-  ].filter(Boolean).map((item) => path.resolve(item))));
+function isInsideRoot(root: string, candidate: string) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedCandidate = path.resolve(candidate);
+  const relative = path.relative(resolvedRoot, resolvedCandidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function isAllowedAbsolutePath(filePath: string) {
-  const resolved = path.resolve(filePath).toLowerCase();
-  const roots = previewRoots().map((root) => root.toLowerCase());
-
-  return (
-    roots.some((root) => resolved === root || resolved.startsWith(root + path.sep)) ||
-    resolved.startsWith("c:\\ai\\") ||
-    resolved.startsWith("d:\\ai\\")
-  );
+function previewRootsForOwner(ownerKey: string) {
+  const dirs = getOwnerDirs(ownerKey || "local");
+  return Array.from(new Set([dirs.preview].filter(Boolean).map((item) => path.resolve(item))));
 }
 
 async function fileExists(filePath: string) {
@@ -141,12 +118,12 @@ async function newestFile(paths: string[]) {
   return scored[0]?.filePath || "";
 }
 
-async function resolvePreviewFile(rawName: string) {
+async function resolvePreviewFile(rawName: string, roots: string[]) {
   const decoded = safeDecode(String(rawName || "")).replace(/\0/g, "").trim();
 
   if (!decoded) return "";
 
-  if (path.isAbsolute(decoded) && isAllowedAbsolutePath(decoded) && await fileExists(decoded)) {
+  if (path.isAbsolute(decoded) && roots.some((root) => isInsideRoot(root, decoded)) && await fileExists(decoded)) {
     return path.normalize(decoded);
   }
 
@@ -161,7 +138,6 @@ async function resolvePreviewFile(rawName: string) {
   const baseName = path.basename(cleaned);
   if (!baseName) return "";
 
-  const roots = previewRoots();
   const directCandidates: string[] = [];
 
   for (const root of roots) {
@@ -240,7 +216,9 @@ export async function GET(req: NextRequest) {
       req.nextUrl.searchParams.get("path") ||
       "";
 
-    const filePath = await resolvePreviewFile(name);
+    const owner = await getOwnerContext(req);
+    const roots = previewRootsForOwner(owner.ownerKey);
+    const filePath = await resolvePreviewFile(name, roots);
 
     if (!filePath) {
       return NextResponse.json(
@@ -248,7 +226,7 @@ export async function GET(req: NextRequest) {
           ok: false,
           error: "Preview file not found.",
           name,
-          searchedRoots: previewRoots(),
+          searchedRoots: roots,
         },
         { status: 404 }
       );
@@ -310,6 +288,9 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error: any) {
+    if (error instanceof SessionInvalidError) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
     return NextResponse.json(
       {
         ok: false,
@@ -327,19 +308,28 @@ export async function HEAD(req: NextRequest) {
     req.nextUrl.searchParams.get("path") ||
     "";
 
-  const filePath = await resolvePreviewFile(name);
+  try {
+    const owner = await getOwnerContext(req);
+    const roots = previewRootsForOwner(owner.ownerKey);
+    const filePath = await resolvePreviewFile(name, roots);
 
   if (!filePath) {
-    return new NextResponse(null, { status: 404 });
+      return new NextResponse(null, { status: 404 });
+    }
+
+    const stat = await fs.stat(filePath);
+
+    return new NextResponse(null, {
+      status: 200,
+      headers: {
+        ...commonHeaders(filePath, stat.size),
+        "Content-Length": String(stat.size),
+      },
+    });
+  } catch (error) {
+    if (error instanceof SessionInvalidError) {
+      return new NextResponse(null, { status: 401 });
+    }
+    return new NextResponse(null, { status: 500 });
   }
-
-  const stat = await fs.stat(filePath);
-
-  return new NextResponse(null, {
-    status: 200,
-    headers: {
-      ...commonHeaders(filePath, stat.size),
-      "Content-Length": String(stat.size),
-    },
-  });
 }

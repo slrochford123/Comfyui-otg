@@ -47,6 +47,7 @@ function characterDisplayImagePathV36BP6(character: any) {
 
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { profileStorageKey } from "@/lib/client/profileStorage";
 import {
   appendGeneratedBackgroundCandidateFifo,
   replaceBackgroundCandidate,
@@ -3953,6 +3954,10 @@ function characterHasCustomVoice(character: CharacterRecord) {
       profile?.baseSamplePath
   );
 }
+function characterGeneratorOptionStorageKey(ownerKey: string) {
+  return profileStorageKey("otg-character-generator-option", ownerKey || "guest");
+}
+
 type CharactersPanelProps = {
   initialBackgroundStudioOpen?: boolean;
   onBackgroundStudioClose?: () => void;
@@ -3982,14 +3987,14 @@ function CharacterBuilder({
   const [characters, setCharacters] = useState<CharacterRecord[]>([]);
   const [selectedCharacterGeneratorOption, setSelectedCharacterGeneratorOption] = useState<CharacterGeneratorOptionId>(() => {
     if (typeof window === "undefined") return "ernie";
-    const stored = window.localStorage.getItem("otg-character-generator-option");
+    const stored = window.localStorage.getItem(characterGeneratorOptionStorageKey(authenticatedOwnerKey));
     return stored === "zturbo" || stored === "krea2" || stored === "boogu" ? (stored as CharacterGeneratorOptionId) : "ernie";
   });
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem("otg-character-generator-option", selectedCharacterGeneratorOption);
-  }, [selectedCharacterGeneratorOption]);
+    window.localStorage.setItem(characterGeneratorOptionStorageKey(authenticatedOwnerKey), selectedCharacterGeneratorOption);
+  }, [authenticatedOwnerKey, selectedCharacterGeneratorOption]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

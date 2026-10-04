@@ -86,6 +86,7 @@ function otgProductionClipVideoRef(value: any, index?: number) {
 }
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { profileStorageKey } from "@/lib/client/profileStorage";
 import QwenSceneBuilderPanel from "./QwenSceneBuilderPanel";
 
 import type { ProductionAnimateMode } from "./ProductionAnimateModeSwitch";
@@ -1056,9 +1057,10 @@ function StageShell({ stage, active }: { stage: ProductionStage; active: Product
   );
 }
 
-export default function StoryboardPanel() {
-  
-
+export default function StoryboardPanel({ authenticatedOwnerKey = "" }: { authenticatedOwnerKey?: string } = {}) {
+  const productionDraftStorageKey = useMemo(() => profileStorageKey(DRAFT_STORAGE_KEY, authenticatedOwnerKey || "guest"), [authenticatedOwnerKey]);
+  const productionManualSaveStorageKey = useMemo(() => profileStorageKey(PRODUCTION_MANUAL_SAVE_KEY, authenticatedOwnerKey || "guest"), [authenticatedOwnerKey]);
+  const productionAutosaveStorageKey = useMemo(() => profileStorageKey(PRODUCTION_AUTOSAVE_KEY, authenticatedOwnerKey || "guest"), [authenticatedOwnerKey]);
   function getStoryboardPromptKeyV33(fallback: string): string {
     return fallback;
   }
@@ -3721,8 +3723,8 @@ useEffect(() => {
         scenes: nextScenes,
       };
       const snapshot = JSON.stringify(snapshotManifest, null, 2);
-      window.localStorage.setItem(PRODUCTION_AUTOSAVE_KEY, snapshot);
-      window.localStorage.setItem(DRAFT_STORAGE_KEY, snapshot);
+      window.localStorage.setItem(productionAutosaveStorageKey, snapshot);
+      window.localStorage.setItem(productionDraftStorageKey, snapshot);
       setLastSavedAt(savedAt);
       setSaveState((current) => (current === "saved" ? "saved" : "autosaved"));
       const imageSlots = nextScenes.reduce((sum, scene) => sum + Number(scene?.imageCount || 0), 0);
@@ -3753,12 +3755,12 @@ useEffect(() => {
   }
 
   function persistProductionDraftSnapshot(snapshot: string, savedAt: string, mode: "manual" | "auto") {
-    const storageKey = mode === "manual" ? PRODUCTION_MANUAL_SAVE_KEY : PRODUCTION_AUTOSAVE_KEY;
+    const storageKey = mode === "manual" ? productionManualSaveStorageKey : productionAutosaveStorageKey;
     window.localStorage.setItem(storageKey, snapshot);
 
     // Keep the legacy draft key as an autosave compatibility mirror only.
     if (mode === "auto") {
-      window.localStorage.setItem(DRAFT_STORAGE_KEY, snapshot);
+      window.localStorage.setItem(productionDraftStorageKey, snapshot);
       setLastSavedAt(savedAt);
       setSaveState((current) => (current === "saved" ? "saved" : "autosaved"));
     } else {
@@ -3819,8 +3821,8 @@ useEffect(() => {
       const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
       if (savedTheme === "light" || savedTheme === "dark") setTheme(savedTheme);
 
-      const manualMeta = productionStoredSaveMeta(PRODUCTION_MANUAL_SAVE_KEY);
-      const autoMeta = productionStoredSaveMeta(PRODUCTION_AUTOSAVE_KEY) || productionStoredSaveMeta(DRAFT_STORAGE_KEY);
+      const manualMeta = productionStoredSaveMeta(productionManualSaveStorageKey);
+      const autoMeta = productionStoredSaveMeta(productionAutosaveStorageKey) || productionStoredSaveMeta(productionDraftStorageKey);
 
       if (manualMeta) {
         setProjectTitle(manualMeta.projectTitle);
@@ -5496,7 +5498,7 @@ function buildCompiledScenePrompt(lines: string[]) {
 
   function continueFromAutosave() {
     try {
-      const autoMeta = productionStoredSaveMeta(PRODUCTION_AUTOSAVE_KEY) || productionStoredSaveMeta(DRAFT_STORAGE_KEY);
+      const autoMeta = productionStoredSaveMeta(productionAutosaveStorageKey) || productionStoredSaveMeta(productionDraftStorageKey);
       if (!autoMeta) {
         setNotice("No autosave is available yet. Start a new production or load a manual save.");
         return;
@@ -5510,13 +5512,13 @@ function buildCompiledScenePrompt(lines: string[]) {
 
   function loadManualProduction() {
     try {
-      const manualMeta = productionStoredSaveMeta(PRODUCTION_MANUAL_SAVE_KEY);
+      const manualMeta = productionStoredSaveMeta(productionManualSaveStorageKey);
       if (!manualMeta) {
         setNotice("No manual save is available yet. Use Save Project inside the production pipeline first.");
         return;
       }
 
-      const autoMeta = productionStoredSaveMeta(PRODUCTION_AUTOSAVE_KEY) || productionStoredSaveMeta(DRAFT_STORAGE_KEY);
+      const autoMeta = productionStoredSaveMeta(productionAutosaveStorageKey) || productionStoredSaveMeta(productionDraftStorageKey);
       const autoTime = autoMeta?.savedAt ? new Date(autoMeta.savedAt).getTime() : 0;
       const manualTime = manualMeta.savedAt ? new Date(manualMeta.savedAt).getTime() : 0;
 
@@ -11190,7 +11192,7 @@ function handleRenderedEditReplacementResponse(
 
     try {
       window.localStorage.setItem(
-        DRAFT_STORAGE_KEY,
+        productionDraftStorageKey,
         JSON.stringify(
           {
             schemaVersion: 1,
@@ -11315,7 +11317,7 @@ function handleRenderedEditReplacementResponse(
 
       try {
         window.localStorage.setItem(
-          DRAFT_STORAGE_KEY,
+          productionDraftStorageKey,
           JSON.stringify(
             {
               schemaVersion: 1,
@@ -11537,7 +11539,7 @@ function handleRenderedEditReplacementResponse(
 
       try {
         window.localStorage.setItem(
-          DRAFT_STORAGE_KEY,
+          productionDraftStorageKey,
           JSON.stringify(
             {
               schemaVersion: 1,
@@ -15887,7 +15889,7 @@ function renderProductionStageNavigation() {
   }
 
   if (productionHomeMode === "load") {
-    const manualMeta = typeof window !== "undefined" ? productionStoredSaveMeta(PRODUCTION_MANUAL_SAVE_KEY) : null;
+    const manualMeta = typeof window !== "undefined" ? productionStoredSaveMeta(productionManualSaveStorageKey) : null;
     return renderProductionHomeShell(
       "Load Production",
       <div className="rounded-[18px] border border-white/10 bg-black/20 p-4">
