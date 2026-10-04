@@ -136,8 +136,9 @@ def patch_workflow(graph: Dict[str, Any], job_id: str, prompt: str, filename_pre
     set_input(graph, "358", "value", 10)
     set_input(graph, "359", "value", True)
     save_audio = node(graph, "384")
-    save_audio["inputs"]["quality"] = "320k"
-    save_audio["inputs"]["filename_prefix"] = filename_prefix
+    save_audio["class_type"] = "SaveAudio"
+    save_audio["_meta"] = {"title": "Save Audio (WAV)"}
+    save_audio["inputs"] = {"filename_prefix": filename_prefix, "audio": save_audio.get("inputs", {}).get("audio", ["354", 0])}
     graph.pop("__otg", None)
 
 
@@ -282,7 +283,7 @@ def process_one(args: argparse.Namespace) -> int:
         is_unnatural = provider == "unnatural_ltx" or clean(job_input.get("voiceMode")) == "unnatural_voice" or clean(job_input.get("source")) == "unnatural_voice_preset"
         adapter = "ltx_unnatural_voice_sample" if is_unnatural else "ltx_audio_voice_sample"
         filename_prefix = f"audio/otg_unnatural_voice_{job_id}" if is_unnatural else f"audio/otg_ltx_voice_{job_id}"
-        output_name = "unnatural-ltx-voice.mp3" if is_unnatural else "ltx-voice.mp3"
+        output_name = "unnatural-ltx-voice.wav" if is_unnatural else "ltx-voice.wav"
         preset_id = clean(job_input.get("presetId"))
         preset_name = clean(job_input.get("presetName"))
         preset_category = clean(job_input.get("presetCategory"))
