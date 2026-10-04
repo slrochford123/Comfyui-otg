@@ -25,8 +25,11 @@ export async function POST(req: NextRequest) {
     }
 
     const dirs: string[] = [];
-    if (owner?.username) dirs.push(userGalleryDir(owner.username));
-    if (owner?.deviceId) dirs.push(deviceGalleryDir(owner.deviceId));
+    if (owner?.username) {
+      dirs.push(userGalleryDir(owner.username));
+    } else if (owner?.deviceId) {
+      dirs.push(deviceGalleryDir(owner.deviceId));
+    }
 
     let scanned = 0;
     let repaired = 0;

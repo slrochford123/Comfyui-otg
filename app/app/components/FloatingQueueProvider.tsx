@@ -8,6 +8,7 @@ import React, {
   useMemo,
   useState,
 } from 'react';
+import { profileStorageKey, resolveBrowserProfileStorageOwner } from '@/lib/client/profileStorage';
 
 export type QueueStatus = 'queued' | 'running' | 'complete' | 'error';
 
@@ -45,10 +46,22 @@ export function FloatingQueueProvider({ children }: { children: React.ReactNode 
   const [items, setItems] = useState<QueueItem[]>([]);
   const [isOpen, setOpen] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const [storageKey, setStorageKey] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
+    void resolveBrowserProfileStorageOwner().then((ownerKey) => {
+      if (!cancelled) setStorageKey(profileStorageKey(STORAGE_KEY, ownerKey));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!storageKey) return;
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
+      const raw = window.localStorage.getItem(storageKey);
       const parsed = raw ? (JSON.parse(raw) as QueueItem[]) : [];
       setItems(Array.isArray(parsed) ? parsed : []);
     } catch {
@@ -56,16 +69,16 @@ export function FloatingQueueProvider({ children }: { children: React.ReactNode 
     } finally {
       setHydrated(true);
     }
-  }, []);
+  }, [storageKey]);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !storageKey) return;
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+      window.localStorage.setItem(storageKey, JSON.stringify(items));
     } catch {
       // ignore
     }
-  }, [hydrated, items]);
+  }, [hydrated, items, storageKey]);
 
   useEffect(() => {
     if (items.some((item) => shouldAutoOpen(item.status))) {
@@ -113,11 +126,11 @@ export function FloatingQueueProvider({ children }: { children: React.ReactNode 
   const clearAll = useCallback(() => {
     setItems([]);
     try {
-      window.localStorage.removeItem(STORAGE_KEY);
+      if (storageKey) window.localStorage.removeItem(storageKey);
     } catch {
       // ignore
     }
-  }, []);
+  }, [storageKey]);
 
   const value = useMemo(
     () => ({ items, add, update, remove, clearAll, isOpen, setOpen }),

@@ -35,6 +35,7 @@ import {
   H3_VISUAL_STYLE_OPTIONS,
 } from "@/lib/production/promptOptions";
 import type { ProductionV2H3Mode } from "@/lib/production/h3Workflows";
+import { normalizeProfileStorageOwner, profileStorageKey } from "@/lib/client/profileStorage";
 
 type Mode = ProductionV2H3Mode;
 type MediaKind = "image" | "video" | "audio";
@@ -126,6 +127,10 @@ const H3_LAST_JOB_STORAGE_KEY = "otg:h3:last-direct-job-id:v1";
 const H3_PERSISTED_JOB_STORAGE_KEY = "otg:h3:persisted-direct-job:v1";
 const H3_REFERENCE_VIDEO_CLIP_SECONDS = 5;
 
+type H3PanelProps = {
+  authenticatedOwnerKey?: string;
+};
+
 type H3PersistedJob = {
   version: 1;
   savedAt: string;
@@ -144,18 +149,18 @@ function validStoredH3Job(value: unknown): JobStatus | null {
   return job as JobStatus;
 }
 
-function readPersistedH3Job() {
+function readPersistedH3Job(storageKey: string) {
   if (typeof window === "undefined") return null;
   try {
     return validStoredH3Job(
-      JSON.parse(window.localStorage.getItem(H3_PERSISTED_JOB_STORAGE_KEY) || "null"),
+      JSON.parse(window.localStorage.getItem(storageKey) || "null"),
     );
   } catch {
     return null;
   }
 }
 
-function writePersistedH3Job(job: JobStatus) {
+function writePersistedH3Job(storageKey: string, job: JobStatus) {
   if (typeof window === "undefined") return;
   try {
     const payload: H3PersistedJob = {
@@ -163,25 +168,25 @@ function writePersistedH3Job(job: JobStatus) {
       savedAt: new Date().toISOString(),
       job,
     };
-    window.localStorage.setItem(H3_PERSISTED_JOB_STORAGE_KEY, JSON.stringify(payload));
+    window.localStorage.setItem(storageKey, JSON.stringify(payload));
   } catch {}
 }
 
-function clearPersistedH3Job() {
+function clearPersistedH3Job(storageKey: string) {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.removeItem(H3_PERSISTED_JOB_STORAGE_KEY);
+    window.localStorage.removeItem(storageKey);
   } catch {}
 }
 
-function readRememberedH3JobId() {
+function readRememberedH3JobId(storageKey: string) {
   if (typeof window === "undefined") return "";
-  return window.localStorage.getItem(H3_LAST_JOB_STORAGE_KEY) || "";
+  return window.localStorage.getItem(storageKey) || "";
 }
 
-function rememberH3Job(job: Pick<JobStatus, "id"> | null | undefined) {
+function rememberH3Job(storageKey: string, job: Pick<JobStatus, "id"> | null | undefined) {
   if (typeof window === "undefined" || !job?.id) return;
-  window.localStorage.setItem(H3_LAST_JOB_STORAGE_KEY, job.id);
+  window.localStorage.setItem(storageKey, job.id);
 }
 
 async function fetchH3JobStatus(id: string) {
@@ -496,7 +501,19 @@ function GalleryPicker({
   );
 }
 
-export default function H3Panel() {
+export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
+  const storageOwnerKey = useMemo(
+    () => normalizeProfileStorageOwner(authenticatedOwnerKey),
+    [authenticatedOwnerKey],
+  );
+  const h3JobStorageKey = useMemo(
+    () => profileStorageKey(H3_PERSISTED_JOB_STORAGE_KEY, storageOwnerKey),
+    [storageOwnerKey],
+  );
+  const h3LastJobStorageKey = useMemo(
+    () => profileStorageKey(H3_LAST_JOB_STORAGE_KEY, storageOwnerKey),
+    [storageOwnerKey],
+  );
   const [mode, setMode] = useState<Mode>("h3-text-to-video");
   const [quality, setQuality] = useState<H3Quality>("lq");
   const [duration, setDuration] = useState<5 | 10>(5);
@@ -543,7 +560,7 @@ export default function H3Panel() {
   const [micState, setMicState] = useState<
     "idle" | "listening" | "processing" | "done" | "error"
   >("idle");
-  const [job, setJob] = useState<JobStatus | null>(() => readPersistedH3Job());
+  const [job, setJob] = useState<JobStatus | null>(() => readPersistedH3Job(h3JobStorageKey));
   const [message, setMessage] = useState("");
   const [now, setNow] = useState(Date.now());
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -625,9 +642,9 @@ export default function H3Panel() {
           : "border-cyan-300/30 bg-cyan-400/10 text-cyan-50";
 
   useEffect(() => {
-    if (job) writePersistedH3Job(job);
-    else clearPersistedH3Job();
-  }, [job]);
+    if (job) writePersistedH3Job(h3JobStorageKey, job);
+    else clearPersistedH3Job(h3JobStorageKey);
+  }, [h3JobStorageKey, job]);
 
   useEffect(() => {
     void fetch(`/api/h3/loras?mode=${encodeURIComponent(mode)}`, {
@@ -673,7 +690,7 @@ export default function H3Panel() {
   useEffect(() => {
     let cancelled = false;
     async function restoreLatestJob() {
-      const rememberedId = readRememberedH3JobId();
+      const rememberedId = readRememberedH3JobId(h3LastJobStorageKey);
       const urls = [
         "/api/h3/generation",
         rememberedId ? `/api/h3/generation?jobId=${encodeURIComponent(rememberedId)}` : "",
@@ -688,7 +705,7 @@ export default function H3Panel() {
         if (cancelled) return;
         if (response.ok && data.job) {
           setJob(data.job);
-          rememberH3Job(data.job);
+          rememberH3Job(h3LastJobStorageKey, data.job);
           setNow(Date.now());
           return;
         }
@@ -698,7 +715,7 @@ export default function H3Panel() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [h3LastJobStorageKey]);
   useEffect(
     () => () => {
       streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -990,12 +1007,12 @@ export default function H3Panel() {
     const { response, data } = await fetchH3JobStatus(id);
     if (data.job) {
       setJob(data.job);
-      rememberH3Job(data.job);
+      rememberH3Job(h3LastJobStorageKey, data.job);
       return data.job;
     }
     if (response.status === 404) {
       setJob((current) => (current?.id === id ? null : current));
-      clearPersistedH3Job();
+      clearPersistedH3Job(h3JobStorageKey);
       setMessage((current) => current || "The saved H3 job is no longer available for this session.");
     }
     return null;
@@ -1006,7 +1023,7 @@ export default function H3Panel() {
       return;
     }
     setJob(null);
-    clearPersistedH3Job();
+    clearPersistedH3Job(h3JobStorageKey);
     setMessage("Cleared the H3 result from this device.");
   }
   async function retry() {
@@ -1021,7 +1038,7 @@ export default function H3Panel() {
     if (!response.ok || !data.job)
       return setMessage(data.error || "Retry failed.");
     setJob(data.job);
-    rememberH3Job(data.job);
+    rememberH3Job(h3LastJobStorageKey, data.job);
     setNow(Date.now());
   }
   async function cancelGeneration() {
@@ -1036,7 +1053,7 @@ export default function H3Panel() {
     const data = await response.json().catch(() => ({}));
     if (data.job) {
       setJob(data.job);
-      rememberH3Job(data.job);
+      rememberH3Job(h3LastJobStorageKey, data.job);
     }
     setMessage(response.ok ? "H3 generation canceled." : data.error || "Could not cancel H3 generation.");
   }
@@ -1118,7 +1135,7 @@ export default function H3Panel() {
       if (!response.ok || !data.job)
         throw new Error(data.error || "H3 generation could not be submitted.");
       setJob(data.job);
-      rememberH3Job(data.job);
+      rememberH3Job(h3LastJobStorageKey, data.job);
       setNow(Date.now());
       setMessage("");
     } catch (error) {

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { mediaFileResponse, contentTypeForMedia } from "@/lib/mediaResponse";
+import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { OTG_DATA_ROOT, deviceGalleryDir, getOwnerDirs, safeSegment, userGalleryDir } from "@/lib/paths";
 
 function sanitizeFilename(name: string) {
   const trimmed = String(name || "").trim();
@@ -10,34 +12,42 @@ function sanitizeFilename(name: string) {
   return base.replace(/[\r\n\\/:*?"<>|]+/g, "_");
 }
 
-function uniqueStrings(values: Array<string | null | undefined>) {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const value of values) {
-    const raw = String(value || "").trim();
-    if (!raw) continue;
-    const key = process.platform === "win32" ? raw.toLowerCase() : raw;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(raw);
-  }
-  return out;
+function isInsideRoot(root: string, candidate: string) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedCandidate = path.resolve(candidate);
+  const relative = path.relative(resolvedRoot, resolvedCandidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function configuredExtraAllowedRoots(dataRoot: string) {
-  const envRoots = String(process.env.OTG_GALLERY_IMPORT_ROOTS || "")
-    .split(/[;\n,]+/)
-    .map((v) => v.trim())
-    .filter(Boolean);
+function ownerAllowedRoots(owner: Awaited<ReturnType<typeof getOwnerContext>>) {
+  const ownerSafe = safeSegment(owner.ownerKey || "local");
+  const roots = [
+    getOwnerDirs(owner.ownerKey).inbox,
+    getOwnerDirs(owner.ownerKey).gallery,
+    getOwnerDirs(owner.ownerKey).preview,
+    owner.username ? userGalleryDir(owner.username) : deviceGalleryDir(owner.deviceId),
+    path.join(OTG_DATA_ROOT, "assets", ownerSafe),
+    path.join(OTG_DATA_ROOT, "backgrounds", ownerSafe),
+    path.join(OTG_DATA_ROOT, "characters", ownerSafe),
+    path.join(OTG_DATA_ROOT, "edit-video", ownerSafe),
+    path.join(OTG_DATA_ROOT, "edit_video", "music", ownerSafe),
+    path.join(OTG_DATA_ROOT, "edit_video_jobs", ownerSafe),
+    path.join(OTG_DATA_ROOT, "edit_video_dub_voice_jobs", ownerSafe),
+    path.join(OTG_DATA_ROOT, "extract_audio_jobs", ownerSafe),
+    path.join(OTG_DATA_ROOT, "h3-direct", ownerSafe),
+    path.join(OTG_DATA_ROOT, "production_storyboard_sync", ownerSafe),
+    path.join(OTG_DATA_ROOT, "productions", ownerSafe),
+    path.join(OTG_DATA_ROOT, "productions-v2", ownerSafe),
+    path.join(OTG_DATA_ROOT, "uploads", "characters", ownerSafe),
+    path.join(OTG_DATA_ROOT, "uploads", "voices", ownerSafe),
+    path.join(OTG_DATA_ROOT, "voice_dub_jobs", ownerSafe),
+    path.join(OTG_DATA_ROOT, "voice_gallery", ownerSafe),
+    path.join(OTG_DATA_ROOT, "voice_tts_jobs", ownerSafe),
+    path.join(OTG_DATA_ROOT, "voices", "users", ownerSafe),
+    path.join(OTG_DATA_ROOT, "worker-artifacts", ownerSafe),
+  ];
 
-  return uniqueStrings([
-    process.env.COMFY_OUTPUT_DIR || null,
-    process.env.ADMIN_GALLERY_ROOT || null,
-    ...envRoots,
-    "E:/Renders/ComfyUI",
-  ])
-    .map((p) => path.resolve(p))
-    .filter((p) => p && p !== path.resolve(dataRoot));
+  return Array.from(new Set(roots.map((root) => path.resolve(root))));
 }
 
 export async function GET(req: NextRequest) {
@@ -50,19 +60,8 @@ export async function GET(req: NextRequest) {
     }
 
     const resolved = path.resolve(requestedPath);
-
-    const dataRoot = process.env.OTG_DATA_DIR || path.join(process.cwd(), "data");
-
-    const allowedRoots = [
-      dataRoot,
-      path.join(dataRoot, "tmp"),
-      ...configuredExtraAllowedRoots(dataRoot),
-    ].map((p) => path.resolve(p));
-
-    const allowed = allowedRoots.some((root) => {
-      const rel = path.relative(root, resolved);
-      return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
-    });
+    const owner = await getOwnerContext(req);
+    const allowed = ownerAllowedRoots(owner).some((root) => isInsideRoot(root, resolved));
 
     if (!allowed) {
       return NextResponse.json(
@@ -86,6 +85,9 @@ export async function GET(req: NextRequest) {
       contentType: contentTypeForMedia(resolved),
     });
   } catch (err: any) {
+    if (err instanceof SessionInvalidError) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
     return NextResponse.json(
       { ok: false, error: err?.message || "Unknown error" },
       { status: 500 }
