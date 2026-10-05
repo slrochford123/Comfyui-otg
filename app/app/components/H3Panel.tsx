@@ -52,6 +52,36 @@ type MediaInput = H3StudioReferenceDescriptor & {
   clipStartSeconds?: number;
   clipDurationSeconds?: number;
 };
+type H3GenerationConfig = {
+  mode: Mode;
+  quality: H3Quality;
+  orientation: H3Orientation;
+  durationSeconds: 5 | 10;
+  prompt: string;
+  stylePresetId: string;
+  h3Settings: H3AdvancedSettings;
+  optionalLoras: H3StudioLoraSelection[];
+  imageDescriptions: string[];
+  videoDescriptions: string[];
+  audioDescriptions: string[];
+  videoAudioFlags: boolean[];
+  videoClipStartSeconds: number[];
+};
+type H3StagedUploadDescriptor = {
+  id: string;
+  kind: MediaKind;
+  name: string;
+  type: string;
+  size: number;
+  complete: boolean;
+};
+type H3StagedGenerationPayload = {
+  firstImage?: H3StagedUploadDescriptor;
+  lastImage?: H3StagedUploadDescriptor;
+  referenceImages: H3StagedUploadDescriptor[];
+  referenceVideos: H3StagedUploadDescriptor[];
+  referenceAudios: H3StagedUploadDescriptor[];
+};
 type JobStatus = {
   id: string;
   status: string;
@@ -123,6 +153,8 @@ const selectedChoice =
 const REFERENCE_LIMIT_HELP =
   "Up to 9 images, 3 videos, and 3 standalone audio references.";
 const H3_ANDROID_UPLOAD_BUDGET_BYTES = 90 * 1024 * 1024;
+const H3_STAGED_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
+const H3_STAGED_UPLOAD_MAX_BYTES = 512 * 1024 * 1024;
 const QUALITY_LABELS: Record<H3Quality, string> = { sh: "SH", lq: "LQ", hq: "HQ" };
 const QUALITY_DETAILS: Record<H3Quality, string> = {
   sh: "Scene Hunter quick scene search",
@@ -263,6 +295,16 @@ function formatBytes(value: number) {
 
 function h3UploadBytes(files: Array<File | null | undefined>) {
   return files.reduce((total, file) => total + (file?.size || 0), 0);
+}
+
+function isAndroidUploadRuntime() {
+  if (typeof navigator === "undefined") return false;
+  return /\bAndroid\b/i.test(navigator.userAgent || "");
+}
+
+function h3UploadId() {
+  return globalThis.crypto?.randomUUID?.()
+    || `h3-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function h3SubmitNetworkMessage(error: unknown) {
@@ -1070,6 +1112,234 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     }
     setMessage(response.ok ? "H3 generation canceled." : data.error || "Could not cancel H3 generation.");
   }
+  function h3GenerationConfig(): H3GenerationConfig {
+    return {
+      mode,
+      quality,
+      orientation,
+      durationSeconds: duration,
+      prompt: generationPrompt,
+      stylePresetId,
+      h3Settings: normalizeH3AdvancedSettings(
+        h3Settings,
+        refModReferenceOptions.length,
+      ),
+      optionalLoras: selectedLoras,
+      imageDescriptions: references
+        .filter((item) => item.kind === "image")
+        .map((item) => item.description),
+      videoDescriptions: references
+        .filter((item) => item.kind === "video")
+        .map((item) => item.description),
+      audioDescriptions: references
+        .filter((item) => item.kind === "audio")
+        .map((item) => item.description),
+      videoAudioFlags: references
+        .filter((item) => item.kind === "video")
+        .map((item) => Boolean(item.includeAudio)),
+      videoClipStartSeconds: references
+        .filter((item) => item.kind === "video")
+        .map((item) => item.clipStartSeconds || 0),
+    };
+  }
+  function appendH3GenerationFiles(body: FormData) {
+    if (firstImage) body.append("firstImage", firstImage.file);
+    if (lastImage) body.append("lastImage", lastImage.file);
+    references
+      .filter((item) => item.kind === "image")
+      .forEach((item) => body.append("referenceImages", item.file));
+    references
+      .filter((item) => item.kind === "video")
+      .forEach((item) => body.append("referenceVideos", item.file));
+    references
+      .filter((item) => item.kind === "audio")
+      .forEach((item) => body.append("referenceAudios", item.file));
+  }
+  async function uploadH3StagedFile(
+    file: File,
+    kind: MediaKind,
+    label: string,
+  ): Promise<H3StagedUploadDescriptor> {
+    const uploadId =
+      h3UploadId();
+
+    const chunkCount =
+      Math.max(
+        1,
+        Math.ceil(
+          file.size / H3_STAGED_UPLOAD_CHUNK_BYTES,
+        ),
+      );
+
+    let lastUpload:
+      H3StagedUploadDescriptor
+      | null =
+      null;
+
+    for (
+      let chunkIndex = 0;
+      chunkIndex < chunkCount;
+      chunkIndex += 1
+    ) {
+      const start =
+        chunkIndex
+        * H3_STAGED_UPLOAD_CHUNK_BYTES;
+
+      const end =
+        Math.min(
+          file.size,
+          start
+          + H3_STAGED_UPLOAD_CHUNK_BYTES,
+        );
+
+      const chunk =
+        file.slice(
+          start,
+          end,
+          file.type || "application/octet-stream",
+        );
+
+      const body =
+        new FormData();
+
+      body.set("uploadId", uploadId);
+      body.set("kind", kind);
+      body.set("name", file.name);
+      body.set("type", file.type || "");
+      body.set("size", String(file.size));
+      body.set("chunkIndex", String(chunkIndex));
+      body.set("chunkCount", String(chunkCount));
+      body.set("chunk", chunk, file.name || `${kind}-${chunkIndex}`);
+
+      setMessage(
+        `Uploading ${label} ${chunkIndex + 1}/${chunkCount} (${formatBytes(end)} of ${formatBytes(file.size)}).`,
+      );
+
+      const response =
+        await fetch(
+          "/api/h3/generation/upload",
+          {
+            method: "POST",
+            credentials: "include",
+            body,
+          },
+        );
+
+      const data =
+        await response
+          .json()
+          .catch(
+            () => ({}),
+          );
+
+      if (
+        !response.ok
+        || !data.upload
+      ) {
+        throw new Error(
+          data.error
+          || `Could not upload ${label}.`,
+        );
+      }
+
+      lastUpload =
+        data.upload;
+    }
+
+    if (
+      !lastUpload?.complete
+    ) {
+      throw new Error(
+        `Could not finish uploading ${label}.`,
+      );
+    }
+
+    return lastUpload;
+  }
+  async function uploadH3StagedReferences(): Promise<H3StagedGenerationPayload> {
+    const staged: H3StagedGenerationPayload = {
+      referenceImages: [],
+      referenceVideos: [],
+      referenceAudios: [],
+    };
+
+    if (firstImage) {
+      staged.firstImage =
+        await uploadH3StagedFile(
+          firstImage.file,
+          "image",
+          "the first image",
+        );
+    }
+
+    if (lastImage) {
+      staged.lastImage =
+        await uploadH3StagedFile(
+          lastImage.file,
+          "image",
+          "the last image",
+        );
+    }
+
+    const imageReferences =
+      references.filter(
+        (item) => item.kind === "image",
+      );
+
+    for (
+      let index = 0;
+      index < imageReferences.length;
+      index += 1
+    ) {
+      staged.referenceImages.push(
+        await uploadH3StagedFile(
+          imageReferences[index].file,
+          "image",
+          `image reference ${index + 1}`,
+        ),
+      );
+    }
+
+    const videoReferences =
+      references.filter(
+        (item) => item.kind === "video",
+      );
+
+    for (
+      let index = 0;
+      index < videoReferences.length;
+      index += 1
+    ) {
+      staged.referenceVideos.push(
+        await uploadH3StagedFile(
+          videoReferences[index].file,
+          "video",
+          `video reference ${index + 1}`,
+        ),
+      );
+    }
+
+    const audioReferences =
+      references.filter(
+        (item) => item.kind === "audio",
+      );
+
+    for (
+      let index = 0;
+      index < audioReferences.length;
+      index += 1
+    ) {
+      staged.referenceAudios.push(
+        await uploadH3StagedFile(
+          audioReferences[index].file,
+          "audio",
+          `audio reference ${index + 1}`,
+        ),
+      );
+    }
+
+    return staged;
+  }
   async function generate() {
     if (builderPromptStale)
       return setMessage("The optional Builder prompt changed. Use your current raw prompt or review the Builder result again.");
@@ -1089,7 +1359,24 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       lastImage?.file,
       ...references.map((item) => item.file),
     ]);
-    if (uploadBytes > H3_ANDROID_UPLOAD_BUDGET_BYTES) {
+    const useStagedUpload =
+      uploadBytes > 0
+      && isAndroidUploadRuntime();
+
+    if (
+      useStagedUpload
+      && uploadBytes > H3_STAGED_UPLOAD_MAX_BYTES
+    ) {
+      return setMessage(
+        [
+          `Selected H3 references total ${formatBytes(uploadBytes)}.`,
+          `Android staged H3 uploads support up to ${formatBytes(H3_STAGED_UPLOAD_MAX_BYTES)}.`,
+          "Use a shorter/compressed reference video or fewer references, then try again.",
+        ].join(" "),
+      );
+    }
+
+    if (!useStagedUpload && uploadBytes > H3_ANDROID_UPLOAD_BUDGET_BYTES) {
       return setMessage(
         [
           `Selected H3 references total ${formatBytes(uploadBytes)}.`,
@@ -1098,56 +1385,36 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         ].join(" "),
       );
     }
-    const body = new FormData();
-    body.set(
-      "config",
-      JSON.stringify({
-        mode,
-        quality,
-        orientation,
-        durationSeconds: duration,
-        prompt: generationPrompt,
-        stylePresetId,
-        h3Settings: normalizeH3AdvancedSettings(
-          h3Settings,
-          refModReferenceOptions.length,
-        ),
-        optionalLoras: selectedLoras,
-        imageDescriptions: references
-          .filter((item) => item.kind === "image")
-          .map((item) => item.description),
-        videoDescriptions: references
-          .filter((item) => item.kind === "video")
-          .map((item) => item.description),
-        audioDescriptions: references
-          .filter((item) => item.kind === "audio")
-          .map((item) => item.description),
-        videoAudioFlags: references
-          .filter((item) => item.kind === "video")
-          .map((item) => item.includeAudio),
-        videoClipStartSeconds: references
-          .filter((item) => item.kind === "video")
-          .map((item) => item.clipStartSeconds || 0),
-      }),
+    const config = h3GenerationConfig();
+    setMessage(
+      useStagedUpload
+        ? "Preparing H3 media upload..."
+        : "Submitting the H3 prompt...",
     );
-    if (firstImage) body.append("firstImage", firstImage.file);
-    if (lastImage) body.append("lastImage", lastImage.file);
-    references
-      .filter((item) => item.kind === "image")
-      .forEach((item) => body.append("referenceImages", item.file));
-    references
-      .filter((item) => item.kind === "video")
-      .forEach((item) => body.append("referenceVideos", item.file));
-    references
-      .filter((item) => item.kind === "audio")
-      .forEach((item) => body.append("referenceAudios", item.file));
-    setMessage("Submitting the H3 prompt...");
     try {
-      const response = await fetch("/api/h3/generation", {
-        method: "POST",
-        credentials: "include",
-        body,
-      });
+      const response = useStagedUpload
+        ? await fetch("/api/h3/generation", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              config,
+              staged: await uploadH3StagedReferences(),
+            }),
+          })
+        : await (async () => {
+            const body = new FormData();
+            body.set(
+              "config",
+              JSON.stringify(config),
+            );
+            appendH3GenerationFiles(body);
+            return fetch("/api/h3/generation", {
+              method: "POST",
+              credentials: "include",
+              body,
+            });
+          })();
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.job)
         throw new Error(data.error || "H3 generation could not be submitted.");
