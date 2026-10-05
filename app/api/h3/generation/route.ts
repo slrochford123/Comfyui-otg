@@ -16,6 +16,7 @@ import {
   type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
 import type { ProductionV2H3Mode } from "@/lib/production/h3Workflows";
+import { normalizeH3AdvancedSettings } from "@/lib/production/h3Settings";
 import { ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import { isAcceptedH3MediaFile, supportedH3MediaExtensions, type H3InputMediaKind } from "@/lib/h3MediaTypes";
 import {
@@ -204,6 +205,10 @@ export async function POST(req: NextRequest) {
       orientation,
       durationSeconds,
       prompt: finalPrompt,
+      h3Settings: normalizeH3AdvancedSettings(
+        config.h3Settings,
+        images.length,
+      ),
       seed: Number.isSafeInteger(Number(config.seed)) && Number(config.seed) >= 0 ? Number(config.seed) : crypto.randomBytes(6).readUIntBE(0, 6),
       optionalLoras: Array.isArray(config.optionalLoras) ? config.optionalLoras as any : [],
       firstImage: firstFiles[0] || null,

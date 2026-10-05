@@ -7,10 +7,19 @@ import {
   H3_BACKEND_PROFILES,
   H3_VSR_REQUIRED_NODE_CLASSES,
   h3ExpectedAssetChoicesForBackend,
+  h3NativeCheckpointForBackend,
+  h3TurboLoraForMode,
   h3RequiredNodeClassesForBackend,
   type H3PromptGraph,
   type ProductionV2H3BackendId,
+  type ProductionV2H3Mode,
 } from "@/lib/production/h3Workflows";
+import {
+  DEFAULT_H3_ADVANCED_SETTINGS,
+  H3_SINGULARITY_CHECKPOINT,
+  resolveH3RenderSettings,
+  type H3AdvancedSettings,
+} from "@/lib/production/h3Settings";
 import {
   ensureComfyClientProgressMonitor,
   recordComfyPromptSubmitted,
@@ -38,6 +47,10 @@ export type H3BackendProbe = {
 export type H3BackendCompatibilityRequirements = {
   userLoraFilenames?: readonly string[];
   requireVsr?: boolean;
+  h3Settings?: H3AdvancedSettings;
+  referenceCount?: number;
+
+  mode?: ProductionV2H3Mode;
 };
 
 export type ComfyHistoryFile = {
@@ -97,7 +110,111 @@ export async function inspectH3BackendCompatibility(
   const profile = H3_BACKEND_PROFILES[backend];
   const baseUrl = profile.baseUrl;
   const userLoraFilenames = [...new Set((requirements.userLoraFilenames || []).map(clean).filter(Boolean))].sort();
-  const cacheKey = `${backend}:${requirements.requireVsr ? "vsr" : "native"}:${userLoraFilenames.join("\u0000")}`;
+  const resolvedH3Settings = resolveH3RenderSettings(
+    requirements.h3Settings || DEFAULT_H3_ADVANCED_SETTINGS,
+    requirements.referenceCount || 0,
+  );
+
+  const optionNodeClasses = [
+    ...(resolvedH3Settings.refModRetention !== null
+      ? ["MiniMaxH3RefModExtract", "MiniMaxH3RefModApply"]
+      : []),
+    ...(resolvedH3Settings.motionLabInject !== null
+      ? [
+          "H3JerkOracle",
+          "H3TimeSmear",
+          "H3V2VInit",
+          "H3InjectSchedule",
+          "H3ExactRecover",
+        ]
+      : []),
+  ];
+
+  const selectedAdvancedCheckpoint =
+    resolvedH3Settings.checkpoint
+      === H3_SINGULARITY_CHECKPOINT
+      ? H3_SINGULARITY_CHECKPOINT
+      : (
+          resolvedH3Settings.settings.renderMode
+            === "native"
+          && requirements.mode
+        )
+        ? h3NativeCheckpointForBackend(
+            backend,
+            requirements.mode,
+          )
+        : null;
+
+  const selectedAdvancedTurboLora =
+    resolvedH3Settings.settings.renderMode
+      === "turbo"
+    && resolvedH3Settings.settings.checkpointMode
+      === "singularity"
+    && requirements.mode
+      ? h3TurboLoraForMode(
+          requirements.mode,
+        )
+      : null;
+
+  const optionAssets: Array<
+    readonly [string, string, string]
+  > = [
+    ...(selectedAdvancedCheckpoint
+      ? [
+          [
+            "UNETLoader",
+            "unet_name",
+            selectedAdvancedCheckpoint,
+          ] as const,
+        ]
+      : []),
+
+    ...(selectedAdvancedTurboLora
+      ? [
+          [
+            "LoraLoaderModelOnly",
+            "lora_name",
+            selectedAdvancedTurboLora,
+          ] as const,
+        ]
+      : []),
+
+    ...resolvedH3Settings.singularityLoras.map(
+      (lora) =>
+        [
+          "LoraLoaderModelOnly",
+          "lora_name",
+          lora.filename,
+        ] as const,
+    ),
+  ];
+
+  const optionCacheKey = JSON.stringify({
+    mode: requirements.mode || null,
+
+    renderMode:
+      resolvedH3Settings.settings.renderMode,
+
+    checkpoint:
+      selectedAdvancedCheckpoint
+      || resolvedH3Settings.checkpoint,
+
+    turboLora:
+      selectedAdvancedTurboLora,
+
+    loras:
+      resolvedH3Settings.singularityLoras.map(
+        (lora) => lora.filename,
+      ),
+
+    refMod:
+      resolvedH3Settings.refModRetention !== null,
+
+    motion:
+      resolvedH3Settings.motionLabInject !== null,
+  });
+
+  const cacheKey = `${backend}:${requirements.requireVsr ? "vsr" : "native"}:${optionCacheKey}:${userLoraFilenames.join("\u0000")}`;
   try {
     const queueResponse = await fetchWithTimeout(fetcher, `${baseUrl}/queue`);
     if (!queueResponse.ok) throw new Error(`queue HTTP ${queueResponse.status}`);
@@ -109,6 +226,7 @@ export async function inspectH3BackendCompatibility(
       const requiredNodeClasses = [...new Set([
         ...h3RequiredNodeClassesForBackend(backend),
         ...(requirements.requireVsr ? H3_VSR_REQUIRED_NODE_CLASSES : []),
+          ...optionNodeClasses,
       ])];
 
       const infoEntries = await Promise.all(
@@ -144,8 +262,19 @@ export async function inspectH3BackendCompatibility(
         (node) => !info[node],
       );
 
-      const expectedAssets = h3ExpectedAssetChoicesForBackend(backend, userLoraFilenames);
+      const expectedAssets = [
 
+        ...h3ExpectedAssetChoicesForBackend(
+
+          backend,
+
+          userLoraFilenames,
+
+        ),
+
+        ...optionAssets,
+
+      ];
       const missingAssets = expectedAssets.flatMap(
         ([node, input, expected]) =>
           choices(info, node, input).includes(expected)

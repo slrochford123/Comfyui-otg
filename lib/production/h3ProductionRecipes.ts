@@ -43,7 +43,7 @@ export type H3ProductionRecipe = {
   audioSigmaShift: 3;
   fps: 24;
   nativeAudio: true;
-  attentionPath: "comfy_kitchen";
+  attentionPath: "sla";
   referenceImageSize: "match" | null;
   submissionCriticalSection: true;
   preSubmitCleanup: null;
@@ -145,7 +145,7 @@ function recipe(spec: RouteSpec): H3ProductionRecipe {
     audioSigmaShift: 3,
     fps: 24,
     nativeAudio: true,
-    attentionPath: "comfy_kitchen",
+    attentionPath: "sla",
     referenceImageSize: mode === "h3-reference-to-video" ? "match" : null,
     submissionCriticalSection: true,
     preSubmitCleanup: null,

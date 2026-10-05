@@ -21,6 +21,14 @@ function isInsideRoot(root: string, candidate: string) {
 
 function ownerAllowedRoots(owner: Awaited<ReturnType<typeof getOwnerContext>>) {
   const ownerSafe = safeSegment(owner.ownerKey || "local");
+
+  // Character Hub has legacy/persistent owner media stored one level
+  // above OTG_DATA_ROOT when OTG_DATA_ROOT is /var/lib/otg/data.
+  // Keep this owner-scoped; never allow /var/lib/otg wholesale.
+  const persistentRoot = path.resolve(
+    process.env.OTG_PERSISTENT_DATA_ROOT || "/var/lib/otg"
+  );
+
   const roots = [
     getOwnerDirs(owner.ownerKey).inbox,
     getOwnerDirs(owner.ownerKey).gallery,
@@ -39,6 +47,10 @@ function ownerAllowedRoots(owner: Awaited<ReturnType<typeof getOwnerContext>>) {
     path.join(OTG_DATA_ROOT, "productions", ownerSafe),
     path.join(OTG_DATA_ROOT, "productions-v2", ownerSafe),
     path.join(OTG_DATA_ROOT, "uploads", "characters", ownerSafe),
+
+    // Legacy/persistent Character Hub media.
+    path.join(persistentRoot, "uploads", "characters", ownerSafe),
+    path.join(persistentRoot, "background_removal", ownerSafe),
     path.join(OTG_DATA_ROOT, "uploads", "voices", ownerSafe),
     path.join(OTG_DATA_ROOT, "voice_dub_jobs", ownerSafe),
     path.join(OTG_DATA_ROOT, "voice_gallery", ownerSafe),

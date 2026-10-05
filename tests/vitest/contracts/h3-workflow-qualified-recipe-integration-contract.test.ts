@@ -89,16 +89,12 @@ describe("H3 exact Scene Hunter/LQ/HQ workflow integration", () => {
             }
             expect(built.graph["38"].inputs.shift_video).toBe(recipe.videoSigmaShift);
             expect(built.graph["38"].inputs.shift_audio).toBe(3);
-            expect(built.graph["41"].class_type).toBe(mode === "h3-reference-to-video" ? "H3SLAAttention" : "ModelAttentionBackend");
-            if (mode === "h3-reference-to-video") {
-              expect(built.graph["41"].inputs.engine).toBe("comfy_kitchen");
-            } else {
-              expect(built.graph["41"].inputs.attention).toBe("comfy kitchen attention");
-            }
+            expect(built.graph["41"].class_type).toBe("H3SLAAttention");
+            expect(built.graph["41"].inputs.engine).toBe("comfy_kitchen");
             expect(built.graph["164"].class_type).toBe("ModelPreviewOverrideKJ");
             expect(built.graph["164"].inputs.tiny_vae).toBe("taeh3.safetensors");
             expect(Object.values(built.graph).some((node) => node.class_type === "SpectrumApplyMiniMaxH3")).toBe(false);
-            expect(Object.values(built.graph).some((node) => node.class_type === "H3SLAAttention")).toBe(mode === "h3-reference-to-video");
+            expect(Object.values(built.graph).some((node) => node.class_type === "H3SLAAttention")).toBe(true);
           }
         }
       }

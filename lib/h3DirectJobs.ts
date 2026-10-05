@@ -32,6 +32,11 @@ import {
   type H3ProductionDuration,
   type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
+import {
+  DEFAULT_H3_ADVANCED_SETTINGS,
+  normalizeH3AdvancedSettings,
+  type H3AdvancedSettings,
+} from "@/lib/production/h3Settings";
 import { buildH3Workflow, H3_BACKEND_PRIORITY, H3_BACKEND_PROFILES, H3_MAX_AUDIO_REFERENCES, H3_MAX_IMAGE_REFERENCES, H3_MAX_VIDEO_REFERENCES, type ProductionV2H3BackendId, type ProductionV2H3Mode } from "@/lib/production/h3Workflows";
 
 export type H3DirectReference = {
@@ -47,6 +52,7 @@ export type H3DirectJobInput = {
   orientation: H3Orientation;
   durationSeconds: H3ProductionDuration;
   prompt: string;
+  h3Settings?: H3AdvancedSettings;
   seed: number;
   optionalLoras: H3StudioLoraSelection[];
   firstImage: H3DirectReference | null;
@@ -202,6 +208,10 @@ export async function createH3DirectJob(
       ...input,
       quality: normalizeH3Quality(input.quality),
       orientation: normalizeH3Orientation(input.orientation),
+      h3Settings: normalizeH3AdvancedSettings(
+        input.h3Settings || DEFAULT_H3_ADVANCED_SETTINGS,
+        input.images.length,
+      ),
       optionalLoras: input.optionalLoras,
     },
     backend: null,
@@ -384,7 +394,24 @@ async function execute(job: H3DirectJob) {
     });
   } else {
     const userLoraFilenames = optionalLoras.map((lora) => lora.filename);
-    const probes = await Promise.all(H3_BACKEND_PRIORITY.map((candidate) => inspectH3BackendCompatibility(candidate, { userLoraFilenames })));
+    const probes = await Promise.all(
+
+      H3_BACKEND_PRIORITY.map((candidate) =>
+
+        inspectH3BackendCompatibility(candidate, {
+
+          userLoraFilenames,
+            mode: persisted.input.mode,
+
+          h3Settings: persisted.input.h3Settings,
+
+          referenceCount: persisted.input.images.length,
+
+        }),
+
+      ),
+
+    );
     backend = chooseProductionV2H3Backend(probes);
     if (!backend) {
       const details = probes.map((probe) => `${probe.backend}: ${probe.reason}`).join("; ");
@@ -446,6 +473,7 @@ async function execute(job: H3DirectJob) {
         includeAudio: item.includeAudio === true,
       })),
       userLoras: DEFAULT_PRODUCTION_V2_H3_USER_LORAS,
+      h3Settings: job.input.h3Settings,
       optionalLoras,
     });
 

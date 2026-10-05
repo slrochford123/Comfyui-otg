@@ -93,7 +93,7 @@ describe("MiniMax H3 Scene Hunter/LQ/HQ production recipe matrix", () => {
       expect(recipe.steps).toBe(8);
       expect(recipe.turboLoraStrength).toBe(1);
       expect(recipe.turboLoraFamily).toBe(recipe.mode === "h3-reference-to-video" ? "ref2va" : "none");
-      expect(recipe.attentionPath).toBe("comfy_kitchen");
+      expect(recipe.attentionPath).toBe("sla");
       expect(recipe.spectrumEnabled).toBe(false);
       expect(recipe.videoSigmaShift).toBe(recipe.mode === "h3-reference-to-video" ? 6 : 10);
       expect(recipe.audioSigmaShift).toBe(3);

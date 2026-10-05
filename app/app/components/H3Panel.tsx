@@ -18,7 +18,13 @@ import {
   resolveH3StylePreset,
 } from "@/lib/h3StylePresets";
 import { H3StylePresetPicker } from "./H3StylePresetPicker";
+import H3AdvancedControls from "./H3AdvancedControls";
 import VideoSnapshotPicker from "./VideoSnapshotPicker";
+import {
+  DEFAULT_H3_ADVANCED_SETTINGS,
+  normalizeH3AdvancedSettings,
+  type H3AdvancedSettings,
+} from "@/lib/production/h3Settings";
 import {
   getH3NativeDimensions,
   getH3ProductionTimeEstimate,
@@ -516,6 +522,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   );
   const [mode, setMode] = useState<Mode>("h3-text-to-video");
   const [quality, setQuality] = useState<H3Quality>("lq");
+  const [h3Settings, setH3Settings] =
+    useState<H3AdvancedSettings>(DEFAULT_H3_ADVANCED_SETTINGS);
   const [duration, setDuration] = useState<5 | 10>(5);
   const [orientation, setOrientation] =
     useState<H3Orientation>("landscape");
@@ -585,6 +593,11 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       clipDurationSeconds,
     }),
   );
+  const refModReferenceOptions = references
+    .filter((item) => item.kind === "image")
+    .map((item, index) => ({
+      label: item.name || `Picture ${index + 1}`,
+    }));
   const videoReferences = references.filter((item) => item.kind === "video");
   const videoReferenceTooShort = videoReferences.some(
     (item) =>
@@ -1095,6 +1108,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         durationSeconds: duration,
         prompt: generationPrompt,
         stylePresetId,
+        h3Settings: normalizeH3AdvancedSettings(
+          h3Settings,
+          refModReferenceOptions.length,
+        ),
         optionalLoras: selectedLoras,
         imageDescriptions: references
           .filter((item) => item.kind === "image")
@@ -1779,10 +1796,29 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
             <summary className="cursor-pointer text-sm font-black">
               LoRAs and Creative Controls
             </summary>
+            <div
+              className="mt-4"
+              data-otg="h3-advanced-controls-panel"
+            >
+              <H3AdvancedControls
+                value={h3Settings}
+                onChange={setH3Settings}
+                referenceOptions={refModReferenceOptions}
+                disabled={active}
+              />
+            </div>
+
             <div className="mt-4 rounded-[6px] border border-cyan-300/25 bg-cyan-300/10 p-3">
-              <p className="text-sm font-black">MiniMax H3 Turbo 8-step</p>
+              <p className="text-sm font-black">
+                {h3Settings.renderMode === "native"
+                  ? "MiniMax H3 Native · 20-step"
+                  : "MiniMax H3 Turbo · 8-step"}
+              </p>
               <p className="text-xs text-white/60">
-                Required | strength 1.0 | locked
+                {h3Settings.checkpointMode === "singularity"
+                  ? `Singularity · Realism On · Combat ${h3Settings.combatLoraEnabled ? "On" : "Off"}`
+                  : "Standard model"}{" "}
+                · SLA attention
               </p>
             </div>
             <div className="mt-4">
