@@ -32,10 +32,13 @@ import { ComfyGpuBusyError, submitComfyPromptWith5060Lease } from "@/lib/workers
 import { freshProductionSeed } from "@/lib/production/randomSeed";
 import {
   IMAGE_LORA_ADULT_ACK_VERSION,
+  QWEN21_IMAGE_EDIT_WORKFLOW_ID,
   applyEditImageReferences,
   applyImageLoraSelections,
   applyLockedImageSize,
+  applyQwen21ImageEditExactPrompt,
   imageModelById,
+  isQwen21ImageEditWorkflowId,
 } from "@/lib/imageGenerateWorkflows";
 import {
   VIDEO_GENERATE_FPS,
@@ -3288,6 +3291,66 @@ function applyCharacterReferenceBackendModelsV1(
   }
 }
 
+function isGenerateQwen21EditRequest(body: any) {
+  const workflowId = String(
+    body?.workflowId || body?.preset || "",
+  ).trim();
+
+  const requestMarker = [
+    body?.requestKind,
+    body?.sourceType,
+  ]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .join(" ");
+
+  return (
+    isQwen21ImageEditWorkflowId(workflowId) ||
+    requestMarker.includes("generate-qwen21-image-edit")
+  );
+}
+
+function bindGenerateQwen21EditExactPrompt(
+  graph: Record<string, any>,
+  body: any,
+) {
+  if (!isGenerateQwen21EditRequest(body)) return false;
+
+  const workflowId = String(
+    body?.workflowId || body?.preset || "",
+  ).trim();
+
+  if (
+    workflowId &&
+    !isQwen21ImageEditWorkflowId(workflowId)
+  ) {
+    throw new Error(
+      `Generate Edit Image must use ${QWEN21_IMAGE_EDIT_WORKFLOW_ID}.`,
+    );
+  }
+
+  const exactPositive =
+    typeof body?.positivePrompt === "string"
+      ? body.positivePrompt
+      : typeof body?.prompt === "string"
+        ? body.prompt
+        : "";
+
+  const exactNegative =
+    typeof body?.negativePrompt === "string"
+      ? body.negativePrompt
+      : typeof body?.neg === "string"
+        ? body.neg
+        : "";
+
+  applyQwen21ImageEditExactPrompt(
+    graph,
+    exactPositive,
+    exactNegative,
+  );
+
+  return true;
+}
+
 function applyEditImageOverrides(graph: any, body: any) {
   if (!graph || typeof graph !== "object") return;
 
@@ -4257,13 +4320,21 @@ export async function POST(req: NextRequest) {
   applyCharacterReferenceInternalInputV1(graph, body);
 
   const editImageWorkflow = isEditImageWorkflow(body, graph);
+  const generateQwen21Edit =
+    isGenerateQwen21EditRequest(body);
+
   if (editImageWorkflow && !productionQwenStoryboardWorkflow) {
     applyEditImageOverrides(graph, body);
   }
 
-  if (positive || negative) {
+  // TextEncodeQwenImage21 node 474 produces positive, negative, and latent
+  // outputs from one node. The generic setTextEncodes() inference sees that
+  // same node as both positive and negative and can overwrite `prompt` with
+  // the negative prompt. Never run that generic mutation on Qwen 2.1 edits.
+  if ((positive || negative) && !generateQwen21Edit) {
     setTextEncodes(graph, positive, negative, otgMeta);
   }
+
   assertCharacterCandidateEditContract(graph, body);
 
   const krea2TurboWorkflow = isKrea2TurboWorkflow(body, graph);
@@ -4510,6 +4581,12 @@ export async function POST(req: NextRequest) {
     }
   } catch {
     // ignore
+  }
+
+  // Final authority immediately before the graph is sent to ComfyUI.
+  // Nothing after this point may reinterpret the Generate Edit Image prompt.
+  if (generateQwen21Edit) {
+    bindGenerateQwen21EditExactPrompt(graph, body);
   }
 
   try {

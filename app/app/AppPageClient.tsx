@@ -3476,15 +3476,25 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setStatusMessage("This video workflow is not installed in TEST yet. Choose a ready workflow or provide its JSON.");
       return;
     }
-    const styledPrompt = composeGeneratePrompt(prompt, activeGenerateStylePreset);
-    const hasSelectedSceneCharacters = selectedSceneCharacterIdentities.length > 0;
+    // Generate -> Edit Image is an instruction-following path.
+    // The exact text entered by the user must reach Qwen Image Edit 2.1.
+    // Do not prepend style presets or character-continuity text.
+    const exactEditPrompt = isEditImageWorkflowSelected ? prompt : "";
+    const styledPrompt = isEditImageWorkflowSelected
+      ? exactEditPrompt
+      : composeGeneratePrompt(prompt, activeGenerateStylePreset);
+    const hasSelectedSceneCharacters =
+      !isEditImageWorkflowSelected &&
+      selectedSceneCharacterIdentities.length > 0;
     if (hasSelectedSceneCharacters && missingLockedSceneCharacterDescriptions.length) {
       setStatusMessage(MISSING_LOCKED_CHARACTER_DESCRIPTION_MESSAGE);
       return;
     }
-    const finalPrompt = hasSelectedSceneCharacters
-      ? injectCharacterContinuityPrompt(styledPrompt, characterContinuityPrompt)
-      : styledPrompt;
+    const finalPrompt = isEditImageWorkflowSelected
+      ? exactEditPrompt
+      : hasSelectedSceneCharacters
+        ? injectCharacterContinuityPrompt(styledPrompt, characterContinuityPrompt)
+        : styledPrompt;
     const relayLocalPromptsForSubmit = promptRelayLocalPrompts.trim();
     if (!isVideoUpscalerWorkflowSelected && !finalPrompt.trim()) {
       setStatusMessage("Enter a prompt first.");
@@ -3598,6 +3608,17 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         body.delete("durationSeconds");
         body.set("requestKind", "image");
       }
+
+      if (isEditImageWorkflowSelected) {
+        // Send the user's instruction verbatim through an explicit Qwen 2.1
+        // Edit Image request contract. `prompt` and `positivePrompt` are
+        // deliberately identical.
+        body.set("prompt", exactEditPrompt);
+        body.set("positivePrompt", exactEditPrompt);
+        body.set("requestKind", "generate-qwen21-image-edit");
+        body.set("sourceType", "generate-qwen21-image-edit");
+      }
+
       if (isAnimateImageWorkflowSelected) {
         body.set("width", orientation === "portrait" ? "720" : "1280");
         body.set("height", orientation === "portrait" ? "1280" : "720");

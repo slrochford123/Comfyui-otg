@@ -25,6 +25,15 @@ export type ImageLoraSelection = { name: string; strength?: number };
 export const IMAGE_LORA_MAX_SELECTIONS = 3;
 export const IMAGE_LORA_ADULT_ACK_VERSION = "image-lora-adult-v1";
 
+export const QWEN21_IMAGE_EDIT_WORKFLOW_ID =
+  "presets/image_qwen_image_2_1_image_edit";
+
+export const QWEN21_IMAGE_EDIT_MODELS = {
+  unet: "qwen_image_2.1_int8_convrot.safetensors",
+  clip: "qwen3vl_8b_int8_convrot.safetensors",
+  vae: "qwen_image_2.1_vae_bf16.safetensors",
+} as const;
+
 export const LOCKED_IMAGE_SIZES: Record<ImageOrientation, { width: number; height: number }> = {
   landscape: { width: 1280, height: 720 },
   portrait: { width: 720, height: 1280 },
@@ -54,7 +63,7 @@ export const IMAGE_MODELS: ImageModelDefinition[] = [
     optionalLoras: [],
   },
   {
-    id: "presets/image_qwen_image_2_1_image_edit",
+    id: QWEN21_IMAGE_EDIT_WORKFLOW_ID,
     label: "Qwen Image Edit 2.1",
     operation: "edit",
     maxInputImages: 3,
@@ -77,6 +86,127 @@ export function imageModelsForOperation(operation: ImageOperation) {
 
 export function imageModelById(id: string | null | undefined) {
   return IMAGE_MODELS.find((model) => model.id === String(id || "")) || null;
+}
+
+export function isQwen21ImageEditWorkflowId(
+  id: string | null | undefined,
+) {
+  return (
+    String(id || "").trim().toLowerCase() ===
+    QWEN21_IMAGE_EDIT_WORKFLOW_ID.toLowerCase()
+  );
+}
+
+export function applyQwen21ImageEditExactPrompt(
+  graph: Record<string, any>,
+  positivePrompt: string,
+  negativePrompt = "",
+) {
+  if (!graph || typeof graph !== "object") {
+    throw new Error("Qwen Image Edit 2.1 graph is missing.");
+  }
+
+  const expectedNodes = [
+    ["451", "UNETLoader"],
+    ["453", "CLIPLoader"],
+    ["454", "VAELoader"],
+    ["469", "QwenImage21Cache"],
+    ["470", "LoadImage"],
+    ["474", "TextEncodeQwenImage21"],
+    ["458", "KSampler"],
+    ["457", "VAEDecode"],
+    ["461", "SaveImageAdvanced"],
+  ] as const;
+
+  for (const [nodeId, classType] of expectedNodes) {
+    if (String(graph?.[nodeId]?.class_type || "") !== classType) {
+      throw new Error(
+        `Qwen Image Edit 2.1 workflow contract mismatch at node ${nodeId}; expected ${classType}.`,
+      );
+    }
+  }
+
+  const modelChecks = [
+    [
+      graph?.["451"]?.inputs?.unet_name,
+      QWEN21_IMAGE_EDIT_MODELS.unet,
+      "UNET",
+    ],
+    [
+      graph?.["453"]?.inputs?.clip_name,
+      QWEN21_IMAGE_EDIT_MODELS.clip,
+      "CLIP",
+    ],
+    [
+      graph?.["454"]?.inputs?.vae_name,
+      QWEN21_IMAGE_EDIT_MODELS.vae,
+      "VAE",
+    ],
+  ] as const;
+
+  for (const [actual, expected, label] of modelChecks) {
+    if (String(actual || "") !== expected) {
+      throw new Error(
+        `Qwen Image Edit 2.1 ${label} mismatch; expected ${expected}.`,
+      );
+    }
+  }
+
+  const sampler = graph["458"];
+  const positiveLink = sampler.inputs?.positive;
+  const negativeLink = sampler.inputs?.negative;
+  const latentLink = sampler.inputs?.latent_image;
+
+  if (
+    !Array.isArray(positiveLink) ||
+    String(positiveLink[0]) !== "474" ||
+    Number(positiveLink[1]) !== 0
+  ) {
+    throw new Error(
+      "Qwen Image Edit 2.1 positive conditioning must come from node 474 output 0.",
+    );
+  }
+
+  if (
+    !Array.isArray(negativeLink) ||
+    String(negativeLink[0]) !== "474" ||
+    Number(negativeLink[1]) !== 1
+  ) {
+    throw new Error(
+      "Qwen Image Edit 2.1 negative conditioning must come from node 474 output 1.",
+    );
+  }
+
+  if (
+    !Array.isArray(latentLink) ||
+    String(latentLink[0]) !== "474" ||
+    Number(latentLink[1]) !== 2
+  ) {
+    throw new Error(
+      "Qwen Image Edit 2.1 latent input must come from node 474 output 2.",
+    );
+  }
+
+  // Intentionally do NOT trim, rewrite, enhance, prefix, or otherwise
+  // transform the user's edit instruction.
+  graph["474"].inputs.prompt = positivePrompt;
+  graph["474"].inputs.negative_prompt = negativePrompt;
+
+  sampler.inputs.steps = 25;
+  sampler.inputs.cfg = 1;
+  sampler.inputs.sampler_name = "euler";
+  sampler.inputs.scheduler = "simple";
+  sampler.inputs.denoise = 1;
+
+  graph["461"].inputs.filename_prefix = "Edit_Image";
+
+  return {
+    promptNodeId: "474",
+    samplerNodeId: "458",
+    outputNodeId: "461",
+    positivePrompt,
+    negativePrompt,
+  };
 }
 
 function safeLoraStrength(value: unknown, fallback: number) {
