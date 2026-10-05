@@ -158,7 +158,15 @@ describe(
         );
 
         expect(picker).toContain(
-          "anchor.download = file.name",
+          "/api/snapshot-download",
+        );
+
+        expect(picker).toContain(
+          'credentials: "include"',
+        );
+
+        expect(picker).toContain(
+          "anchor.download =\n    file.name",
         );
 
         expect(picker).not.toMatch(

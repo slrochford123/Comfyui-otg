@@ -202,36 +202,78 @@ async function canvasPng(
   );
 }
 
-function downloadFile(
+async function downloadFile(
   file: File,
 ) {
-  const url =
-    URL.createObjectURL(
-      file,
+  const form =
+    new FormData();
+
+  form.set(
+    "snapshot",
+    file,
+    file.name,
+  );
+
+  form.set(
+    "name",
+    file.name,
+  );
+
+  const response =
+    await fetch(
+      "/api/snapshot-download",
+      {
+        method: "POST",
+        body: form,
+        credentials: "include",
+        cache: "no-store",
+      },
     );
+
+  const payload =
+    await response
+      .json()
+      .catch(
+        () => ({}),
+      );
+
+  const downloadUrl =
+    typeof payload?.downloadUrl
+    === "string"
+      ? payload.downloadUrl
+      : "";
+
+  if (
+    !response.ok
+    || !downloadUrl
+  ) {
+    throw new Error(
+      typeof payload?.error === "string"
+        ? payload.error
+        : "Could not prepare the snapshot download.",
+    );
+  }
 
   const anchor =
     document.createElement(
       "a",
     );
 
-  anchor.href = url;
-  anchor.download = file.name;
-  anchor.rel = "noopener";
+  anchor.href =
+    downloadUrl;
+
+  anchor.download =
+    file.name;
+
+  anchor.rel =
+    "noopener";
+
   document.body.appendChild(
     anchor,
   );
+
   anchor.click();
   anchor.remove();
-
-  window.setTimeout(
-    () => {
-      URL.revokeObjectURL(
-        url,
-      );
-    },
-    0,
-  );
 }
 
 function snapshotDimensions(
@@ -629,13 +671,21 @@ export default function VideoSnapshotPicker({
       return;
     }
 
-    downloadFile(
-      result.file,
-    );
+    try {
+      await downloadFile(
+        result.file,
+      );
 
-    setMessage(
-      `Downloaded snapshot ${result.file.name}.`,
-    );
+      setMessage(
+        `Download started for ${result.file.name}.`,
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not download the snapshot.",
+      );
+    }
   }
 
   if (!open) {
