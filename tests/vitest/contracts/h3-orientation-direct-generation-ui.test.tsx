@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import H3Panel from "../../../app/app/components/H3Panel";
 
 beforeEach(() => {
+  window.localStorage.clear();
   vi.stubGlobal("fetch", vi.fn(async () => new Response(
     JSON.stringify({ ok: true, entries: [], maxSelections: 3 }),
     { status: 200, headers: { "Content-Type": "application/json" } },
@@ -187,5 +188,36 @@ describe("H3 orientation and optional Builder UI", () => {
       target: { files: [new File(["image"], "hero.png", { type: "image/png" })] },
     });
     expect(screen.getByRole("button", { name: "Generate Video" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("persists H3 prompt and controls until the user resets the generator", async () => {
+    render(<H3Panel authenticatedOwnerKey="persist-contract" />);
+    writePrompt();
+    fireEvent.click(screen.getByRole("button", { name: "Portrait" }));
+    fireEvent.click(screen.getByRole("button", { name: "10 sec" }));
+
+    await waitFor(() => {
+      expect(window.localStorage.length).toBeGreaterThan(0);
+    });
+
+    cleanup();
+    render(<H3Panel authenticatedOwnerKey="persist-contract" />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText("Describe the scene, action, camera, dialogue, and sound."),
+      ).toHaveProperty("value", "Two samurai fight in moonlight.");
+    });
+
+    expect(screen.getByRole("button", { name: "Portrait" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "10 sec" }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset H3 Generator" }));
+
+    expect(
+      screen.getByPlaceholderText("Describe the scene, action, camera, dialogue, and sound."),
+    ).toHaveProperty("value", "");
+    expect(screen.getByRole("button", { name: "Landscape" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "5 sec" }).getAttribute("aria-pressed")).toBe("true");
   });
 });

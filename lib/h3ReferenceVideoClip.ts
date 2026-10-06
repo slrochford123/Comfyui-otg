@@ -180,3 +180,81 @@ export async function trimH3ReferenceVideoClip(args: {
       outputInfo.fps,
   };
 }
+
+export async function extractH3ReferenceVideoPromptFrame(args: {
+  inputPath: string;
+  outputDir: string;
+  outputPrefix: string;
+  startSeconds: number;
+}) {
+  const inputPath = path.resolve(args.inputPath);
+  const outputDir = path.resolve(args.outputDir);
+  ensureDir(outputDir);
+
+  const info = await probeVideoInfo(inputPath);
+  const duration = finiteNumber(info.durationSeconds, 0);
+
+  if (duration < H3_REFERENCE_VIDEO_CLIP_SECONDS - 0.05) {
+    throw new Error(
+      `Reference video must be at least ${H3_REFERENCE_VIDEO_CLIP_SECONDS} seconds long.`,
+    );
+  }
+
+  const maxStart = Math.max(0, duration - H3_REFERENCE_VIDEO_CLIP_SECONDS);
+  const startSeconds = Math.min(
+    Math.max(0, finiteNumber(args.startSeconds, 0)),
+    maxStart,
+  );
+
+  const outputPath = path.join(
+    outputDir,
+    `${safeSegment(args.outputPrefix || "h3-reference-video")}_prompt_frame_${startSeconds.toFixed(2).replace(".", "p")}.jpg`,
+  );
+
+  const ffmpeg = resolveFfmpegPath();
+  const ffmpegArgs = [
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-ss",
+    startSeconds.toFixed(3),
+    "-i",
+    inputPath,
+    "-frames:v",
+    "1",
+    "-vf",
+    [
+      "scale=min(768\\,iw):min(768\\,ih):force_original_aspect_ratio=decrease",
+      "setsar=1",
+    ].join(","),
+    "-q:v",
+    "3",
+    outputPath,
+  ];
+
+  const result = await runCmd(ffmpeg, ffmpegArgs, {
+    timeoutMs: 90_000,
+  });
+
+  if (
+    result.code !== 0
+    || !fs.existsSync(outputPath)
+    || fs.statSync(outputPath).size < 1
+  ) {
+    throw new Error(
+      result.stderr
+      || result.stdout
+      || "Could not extract a prompt-builder frame from the H3 reference video.",
+    );
+  }
+
+  return {
+    outputPath,
+    startSeconds,
+    durationSeconds:
+      H3_REFERENCE_VIDEO_CLIP_SECONDS,
+    sourceDurationSeconds:
+      duration,
+  };
+}

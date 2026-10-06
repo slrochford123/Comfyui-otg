@@ -58,6 +58,12 @@ export async function POST(req: NextRequest) {
     const quality = String(body?.quality || "");
     const orientation = String(body?.orientation || "");
     const originalPrompt = String(body?.originalPrompt || "").trim();
+    const references = Array.isArray(body?.references)
+      ? (body.references as H3StudioReferenceDescriptor[])
+      : [];
+    const hasVideoReference =
+      mode === "h3-reference-to-video"
+      && references.some((item) => item.kind === "video");
     if (!MODES.includes(mode))
       throw new Error("Choose Text, Image, or Reference mode.");
     if (!H3_PRODUCTION_DURATION_OPTIONS.includes(durationSeconds as 5 | 10))
@@ -66,7 +72,7 @@ export async function POST(req: NextRequest) {
       throw new Error("Choose SH, LQ, or HQ.");
     if (!H3_ORIENTATION_OPTIONS.includes(orientation as "landscape" | "portrait"))
       throw new Error("Choose Landscape or Portrait orientation.");
-    if (!originalPrompt)
+    if (!originalPrompt && !hasVideoReference)
       throw new Error("Write your scene before using Prompt Builder.");
 
     const requestedVisualStyle = H3_VISUAL_STYLE_OPTIONS.includes(
@@ -89,9 +95,6 @@ export async function POST(req: NextRequest) {
       body?.loras,
       mode as any,
     ).resolved;
-    const references = Array.isArray(body?.references)
-      ? (body.references as H3StudioReferenceDescriptor[])
-      : [];
     const referenceLines = references.map(
       (item, index) =>
         `${item.kind} reference ${index + 1}: ${String(item.description || item.name).trim()}${item.kind === "video" && item.includeAudio ? "; use its audio" : ""}`,

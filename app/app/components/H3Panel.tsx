@@ -42,6 +42,18 @@ import {
 } from "@/lib/production/promptOptions";
 import type { ProductionV2H3Mode } from "@/lib/production/h3Workflows";
 import { normalizeProfileStorageOwner, profileStorageKey } from "@/lib/client/profileStorage";
+import {
+  clearPersistedH3InputState,
+  clearPersistedH3MediaFiles,
+  mediaStorageKey,
+  readPersistedH3InputState,
+  readPersistedH3MediaFiles,
+  writePersistedH3InputState,
+  writePersistedH3MediaFiles,
+  type PersistedH3InputState,
+  type PersistedH3MediaMeta,
+  type PersistedH3MediaRecord,
+} from "./h3InputPersistence";
 
 type Mode = ProductionV2H3Mode;
 type MediaKind = "image" | "video" | "audio";
@@ -163,6 +175,7 @@ const QUALITY_DETAILS: Record<H3Quality, string> = {
 };
 const H3_LAST_JOB_STORAGE_KEY = "otg:h3:last-direct-job-id:v1";
 const H3_PERSISTED_JOB_STORAGE_KEY = "otg:h3:persisted-direct-job:v1";
+const H3_INPUT_STORAGE_KEY = "otg:h3:generator-inputs:v1";
 const H3_REFERENCE_VIDEO_CLIP_SECONDS = 5;
 
 type H3PanelProps = {
@@ -310,6 +323,185 @@ function isAndroidUploadRuntime() {
 function h3UploadId() {
   return globalThis.crypto?.randomUUID?.()
     || `h3-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function h3FileSignature(
+  item: MediaInput | null | undefined,
+) {
+  return item
+    ? [
+        item.id,
+        item.kind,
+        item.file.name,
+        item.file.type,
+        item.file.size,
+        item.file.lastModified,
+      ].join(":")
+    : "";
+}
+
+function normalizePersistedMode(
+  value: unknown,
+): Mode {
+  const mode =
+    String(
+      value || "",
+    );
+
+  return MODE_OPTIONS.some(
+    (item) => item.id === mode,
+  )
+    ? mode as Mode
+    : "h3-text-to-video";
+}
+
+function normalizePersistedQuality(
+  value: unknown,
+): H3Quality {
+  return H3_QUALITY_OPTIONS.includes(
+    value as H3Quality,
+  )
+    ? value as H3Quality
+    : "lq";
+}
+
+function normalizePersistedDuration(
+  value: unknown,
+): 5 | 10 {
+  return value === 10
+    ? 10
+    : 5;
+}
+
+function normalizePersistedOrientation(
+  value: unknown,
+): H3Orientation {
+  return H3_ORIENTATION_OPTIONS.includes(
+    value as H3Orientation,
+  )
+    ? value as H3Orientation
+    : "landscape";
+}
+
+function normalizePersistedPromptSource(
+  value: unknown,
+): "direct" | "builder" {
+  return value === "builder"
+    ? "builder"
+    : "direct";
+}
+
+function normalizePersistedEnhancementLevel(
+  value: unknown,
+): "short" | "medium" | "long" {
+  return value === "short" || value === "long"
+    ? value
+    : "medium";
+}
+
+function h3MediaMeta(
+  storageKey: string,
+  slot: string,
+  item: MediaInput | null,
+): PersistedH3MediaMeta | null {
+  if (!item) return null;
+
+  return {
+    id:
+      item.id,
+    kind:
+      item.kind,
+    storageKey:
+      mediaStorageKey(
+        storageKey,
+        slot,
+      ),
+    name:
+      item.file.name || item.name,
+    type:
+      item.file.type || "",
+    size:
+      item.file.size,
+    lastModified:
+      item.file.lastModified || Date.now(),
+    description:
+      item.description || "",
+    includeAudio:
+      item.includeAudio,
+    sourceDurationSeconds:
+      item.sourceDurationSeconds,
+    clipStartSeconds:
+      item.clipStartSeconds,
+    clipDurationSeconds:
+      item.clipDurationSeconds,
+  };
+}
+
+function h3InputMediaRecords(
+  storageKey: string,
+  firstImage: MediaInput | null,
+  lastImage: MediaInput | null,
+  references: MediaInput[],
+): PersistedH3MediaRecord[] {
+  const records: PersistedH3MediaRecord[] = [];
+
+  if (firstImage) {
+    records.push(
+      {
+        key:
+          mediaStorageKey(
+            storageKey,
+            "first-image",
+          ),
+        file:
+          firstImage.file,
+      },
+    );
+  }
+
+  if (lastImage) {
+    records.push(
+      {
+        key:
+          mediaStorageKey(
+            storageKey,
+            "last-image",
+          ),
+        file:
+          lastImage.file,
+      },
+    );
+  }
+
+  references.forEach(
+    (item) => {
+      records.push(
+        {
+          key:
+            mediaStorageKey(
+              storageKey,
+              `reference-${item.id}`,
+            ),
+          file:
+            item.file,
+        },
+      );
+    },
+  );
+
+  return records;
+}
+
+function h3PersistedMediaMetas(
+  state: PersistedH3InputState,
+) {
+  return [
+    state.firstImage,
+    state.lastImage,
+    ...state.references,
+  ].filter(
+    (item): item is PersistedH3MediaMeta => Boolean(item),
+  );
 }
 
 function h3SubmitNetworkMessage(error: unknown) {
@@ -567,6 +759,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     () => profileStorageKey(H3_LAST_JOB_STORAGE_KEY, storageOwnerKey),
     [storageOwnerKey],
   );
+  const h3InputStorageKey = useMemo(
+    () => profileStorageKey(H3_INPUT_STORAGE_KEY, storageOwnerKey),
+    [storageOwnerKey],
+  );
   const [mode, setMode] = useState<Mode>("h3-text-to-video");
   const [quality, setQuality] = useState<H3Quality>("lq");
   const [h3Settings, setH3Settings] =
@@ -623,6 +819,16 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const chunksRef = useRef<Blob[]>([]);
   const cancelRecordingRef = useRef(false);
   const objectUrlsRef = useRef(new Set<string>());
+  const promptVideoUploadCacheRef = useRef(
+    new Map<
+      string,
+      {
+        signature: string;
+        upload: H3StagedUploadDescriptor;
+      }
+    >(),
+  );
+  const [inputStateHydrated, setInputStateHydrated] = useState(false);
   const active = Boolean(job && !isTerminalH3JobStatus(job.status));
   const estimate = useMemo(
     () =>
@@ -678,6 +884,12 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     && (!reviewedFingerprint || reviewedFingerprint !== currentFingerprint);
   const generationPrompt =
     promptSource === "builder" ? scenePrompt : originalPrompt;
+  const hasReferenceVideo =
+    mode === "h3-reference-to-video"
+    && references.some((item) => item.kind === "video");
+  const canBuildPrompt =
+    Boolean(originalPrompt.trim())
+    || hasReferenceVideo;
   const lockedReferences = buildH3StudioLockedReferences(promptContext);
   const exactFinalPrompt = composeH3StudioFinalPrompt(
     lockedReferences,
@@ -700,11 +912,237 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         : workflowNotice?.tone === "warning"
           ? "border-amber-300/30 bg-amber-300/10 text-amber-50"
           : "border-cyan-300/30 bg-cyan-400/10 text-cyan-50";
+  const mediaFileSignature = useMemo(
+    () => [
+      h3FileSignature(firstImage),
+      h3FileSignature(lastImage),
+      ...references.map(h3FileSignature),
+    ].join("|"),
+    [
+      firstImage,
+      lastImage,
+      references,
+    ],
+  );
 
   useEffect(() => {
     if (job) writePersistedH3Job(h3JobStorageKey, job);
     else clearPersistedH3Job(h3JobStorageKey);
   }, [h3JobStorageKey, job]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function restoreInputs() {
+      setInputStateHydrated(false);
+      promptVideoUploadCacheRef.current.clear();
+
+      const stored =
+        readPersistedH3InputState(
+          h3InputStorageKey,
+        );
+
+      if (!stored) {
+        releaseAllMedia();
+        setInputStateHydrated(true);
+        return;
+      }
+
+      const metas =
+        h3PersistedMediaMetas(
+          stored,
+        );
+
+      const files =
+        await readPersistedH3MediaFiles(
+          metas,
+        );
+
+      if (cancelled) return;
+
+      releaseAllMedia();
+      setMode(normalizePersistedMode(stored.mode));
+      setQuality(normalizePersistedQuality(stored.quality));
+      setH3Settings(
+        normalizeH3AdvancedSettings(
+          stored.h3Settings,
+          stored.references.filter((item) => item.kind === "image").length,
+        ),
+      );
+      setDuration(normalizePersistedDuration(stored.duration));
+      setOrientation(normalizePersistedOrientation(stored.orientation));
+      setOriginalPrompt(stored.originalPrompt || "");
+      setUndoPrompt(stored.undoPrompt || "");
+      setScenePrompt(stored.scenePrompt || "");
+      setSuggestion(stored.suggestion || "");
+      setSuggestionDraft(stored.suggestionDraft || "");
+      setReviewedFingerprint(stored.reviewedFingerprint || "");
+      setPromptSource(normalizePersistedPromptSource(stored.promptSource));
+      setVisualStyle(
+        H3_VISUAL_STYLE_OPTIONS.includes(stored.visualStyle as any)
+          ? stored.visualStyle
+          : DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.visualStyle,
+      );
+      setStylePresetId(
+        resolveH3StylePreset(stored.stylePresetId)?.id || "none",
+      );
+      setCameraFeel(
+        H3_CAMERA_FEEL_OPTIONS.includes(stored.cameraFeel as any)
+          ? stored.cameraFeel
+          : DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.cameraFeel,
+      );
+      setShotFlow(
+        H3_SHOT_FLOW_OPTIONS.includes(stored.shotFlow as any)
+          ? stored.shotFlow
+          : DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.shotFlow,
+      );
+      setSelectedLoras(
+        Array.isArray(stored.selectedLoras)
+          ? stored.selectedLoras
+              .map((item) => ({
+                id: String(item.id || "").trim(),
+                strength: Number(item.strength),
+              }))
+              .filter((item) => item.id && Number.isFinite(item.strength))
+          : [],
+      );
+      setEnhancementLevel(
+        normalizePersistedEnhancementLevel(
+          stored.enhancementLevel,
+        ),
+      );
+      setFirstImage(
+        stored.firstImage
+          ? mediaFromPersisted(
+              stored.firstImage,
+              files.get(stored.firstImage.storageKey),
+            )
+          : null,
+      );
+      setLastImage(
+        stored.lastImage
+          ? mediaFromPersisted(
+              stored.lastImage,
+              files.get(stored.lastImage.storageKey),
+            )
+          : null,
+      );
+      setReferences(
+        stored.references
+          .map((item) =>
+            mediaFromPersisted(
+              item,
+              files.get(item.storageKey),
+            ),
+          )
+          .filter((item): item is MediaInput => Boolean(item)),
+      );
+      setMessage("Restored your saved H3 generator inputs.");
+      setInputStateHydrated(true);
+    }
+
+    void restoreInputs();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [h3InputStorageKey]);
+
+  useEffect(() => {
+    if (!inputStateHydrated) return;
+
+    writePersistedH3InputState(
+      h3InputStorageKey,
+      {
+        version: 1,
+        savedAt: new Date().toISOString(),
+        mode,
+        quality,
+        h3Settings,
+        duration,
+        orientation,
+        originalPrompt,
+        undoPrompt,
+        scenePrompt,
+        suggestion,
+        suggestionDraft,
+        reviewedFingerprint,
+        promptSource,
+        visualStyle,
+        stylePresetId,
+        cameraFeel,
+        shotFlow,
+        selectedLoras,
+        enhancementLevel,
+        firstImage:
+          h3MediaMeta(
+            h3InputStorageKey,
+            "first-image",
+            firstImage,
+          ),
+        lastImage:
+          h3MediaMeta(
+            h3InputStorageKey,
+            "last-image",
+            lastImage,
+          ),
+        references:
+          references.map((item) =>
+            h3MediaMeta(
+              h3InputStorageKey,
+              `reference-${item.id}`,
+              item,
+            ),
+          ).filter(
+            (item): item is PersistedH3MediaMeta => Boolean(item),
+          ),
+      },
+    );
+  }, [
+    inputStateHydrated,
+    h3InputStorageKey,
+    mode,
+    quality,
+    h3Settings,
+    duration,
+    orientation,
+    originalPrompt,
+    undoPrompt,
+    scenePrompt,
+    suggestion,
+    suggestionDraft,
+    reviewedFingerprint,
+    promptSource,
+    visualStyle,
+    stylePresetId,
+    cameraFeel,
+    shotFlow,
+    selectedLoras,
+    enhancementLevel,
+    firstImage,
+    lastImage,
+    references,
+  ]);
+
+  useEffect(() => {
+    if (!inputStateHydrated) return;
+
+    void writePersistedH3MediaFiles(
+      h3InputStorageKey,
+      h3InputMediaRecords(
+        h3InputStorageKey,
+        firstImage,
+        lastImage,
+        references,
+      ),
+    ).catch(
+      () => undefined,
+    );
+  }, [
+    inputStateHydrated,
+    h3InputStorageKey,
+    mediaFileSignature,
+  ]);
 
   useEffect(() => {
     void fetch(`/api/h3/loras?mode=${encodeURIComponent(mode)}`, {
@@ -784,6 +1222,54 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     [],
   );
 
+  function releaseAllMedia() {
+    objectUrlsRef.current.forEach((url) => {
+      URL.revokeObjectURL(url);
+    });
+    objectUrlsRef.current.clear();
+  }
+
+  function mediaFromPersisted(
+    meta: PersistedH3MediaMeta,
+    file: File | undefined,
+  ): MediaInput | null {
+    if (!file) return null;
+
+    const url =
+      URL.createObjectURL(
+        file,
+      );
+
+    objectUrlsRef.current.add(
+      url,
+    );
+
+    return {
+      id:
+        meta.id,
+      kind:
+        meta.kind,
+      file,
+      url,
+      name:
+        meta.name || file.name,
+      description:
+        meta.description || "",
+      includeAudio:
+        meta.includeAudio === true,
+      sourceDurationSeconds:
+        meta.sourceDurationSeconds,
+      clipStartSeconds:
+        meta.kind === "video"
+          ? Number(meta.clipStartSeconds || 0)
+          : undefined,
+      clipDurationSeconds:
+        meta.kind === "video"
+          ? H3_REFERENCE_VIDEO_CLIP_SECONDS
+          : undefined,
+    };
+  }
+
   function media(file: File, kind: MediaKind): MediaInput {
     const url = URL.createObjectURL(file);
     objectUrlsRef.current.add(url);
@@ -828,9 +1314,44 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   function removeReference(id: string) {
     setReferences((current) => {
       release(current.find((item) => item.id === id) || null);
+      promptVideoUploadCacheRef.current.delete(id);
       return current.filter((item) => item.id !== id);
     });
   }
+
+  function resetH3Inputs() {
+    releaseAllMedia();
+    promptVideoUploadCacheRef.current.clear();
+    setMode("h3-text-to-video");
+    setQuality("lq");
+    setH3Settings(DEFAULT_H3_ADVANCED_SETTINGS);
+    setDuration(5);
+    setOrientation("landscape");
+    setOriginalPrompt("");
+    setUndoPrompt("");
+    setScenePrompt("");
+    setSuggestion("");
+    setSuggestionDraft("");
+    setReviewedFingerprint("");
+    setPromptSource("direct");
+    setVisualStyle(DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.visualStyle);
+    setStylePresetId("none");
+    setCameraFeel(DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.cameraFeel);
+    setShotFlow(DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.shotFlow);
+    setFirstImage(null);
+    setLastImage(null);
+    setReferences([]);
+    setSelectedLoras([]);
+    setEnhancementLevel("medium");
+    setMessage("H3 generator inputs reset.");
+    clearPersistedH3InputState(h3InputStorageKey);
+    void clearPersistedH3MediaFiles(
+      h3InputStorageKey,
+    ).catch(
+      () => undefined,
+    );
+  }
+
   function referenceMoveTarget(index: number, delta: number) {
     const kind = references[index]?.kind;
     const matching = references
@@ -916,21 +1437,256 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
   }
+
+  async function ensurePromptVideoUpload(
+    item: MediaInput,
+    index: number,
+  ) {
+    const signature =
+      h3FileSignature(
+        item,
+      );
+
+    const cached =
+      promptVideoUploadCacheRef.current.get(
+        item.id,
+      );
+
+    if (
+      cached
+      && cached.signature === signature
+    ) {
+      return cached.upload;
+    }
+
+    const upload =
+      await uploadH3StagedFile(
+        item.file,
+        "video",
+        `Prompt Builder video reference ${index + 1}`,
+      );
+
+    promptVideoUploadCacheRef.current.set(
+      item.id,
+      {
+        signature,
+        upload,
+      },
+    );
+
+    return upload;
+  }
+
+  async function describePromptVideoFrame(
+    item: MediaInput,
+    index: number,
+  ) {
+    const upload =
+      await ensurePromptVideoUpload(
+        item,
+        index,
+      );
+
+    setMessage(
+      `Preparing first-frame context for video reference ${index + 1}...`,
+    );
+
+    const response =
+      await fetch(
+        "/api/h3/prompt/video-reference",
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(
+            {
+              reference:
+                upload,
+              name:
+                item.name,
+              clipStartSeconds:
+                item.clipStartSeconds || 0,
+              clipDurationSeconds:
+                H3_REFERENCE_VIDEO_CLIP_SECONDS,
+            },
+          ),
+        },
+      );
+
+    const data =
+      await response
+        .json()
+        .catch(
+          () => ({}),
+        );
+
+    if (
+      !response.ok
+      || !data.descriptor
+    ) {
+      throw new Error(
+        data.error
+        || `Could not describe video reference ${index + 1}.`,
+      );
+    }
+
+    const start =
+      Number(
+        data.frame?.startSeconds
+        ?? item.clipStartSeconds
+        ?? 0,
+      );
+
+    return [
+      `First frame of selected ${H3_REFERENCE_VIDEO_CLIP_SECONDS}-second video window ${start.toFixed(2)}s-${(start + H3_REFERENCE_VIDEO_CLIP_SECONDS).toFixed(2)}s:`,
+      String(
+        data.descriptor,
+      ).trim(),
+    ].join(
+      " ",
+    );
+  }
+
+  async function promptReferencesWithVideoFrames() {
+    if (
+      mode !== "h3-reference-to-video"
+    ) {
+      return descriptors;
+    }
+
+    const videos =
+      references.filter(
+        (item) => item.kind === "video",
+      );
+
+    if (!videos.length) {
+      return descriptors;
+    }
+
+    const promptDescriptions =
+      new Map<string, string>();
+
+    const emptyDescriptionUpdates:
+      Array<{
+        id: string;
+        description: string;
+      }> = [];
+
+    for (
+      let index = 0;
+      index < videos.length;
+      index += 1
+    ) {
+      const item =
+        videos[index];
+
+      const frameDescription =
+        await describePromptVideoFrame(
+          item,
+          index,
+        );
+
+      const existing =
+        item.description.trim();
+
+      const promptDescription =
+        existing
+          ? `${existing} ${frameDescription}`
+          : frameDescription;
+
+      promptDescriptions.set(
+        item.id,
+        promptDescription,
+      );
+
+      if (!existing) {
+        emptyDescriptionUpdates.push(
+          {
+            id:
+              item.id,
+            description:
+              frameDescription,
+          },
+        );
+      }
+    }
+
+    if (
+      emptyDescriptionUpdates.length
+    ) {
+      setReferences(
+        (current) =>
+          current.map(
+            (item) => {
+              const update =
+                emptyDescriptionUpdates.find(
+                  (candidate) => candidate.id === item.id,
+                );
+
+              return update
+                ? {
+                    ...item,
+                    description:
+                      update.description,
+                  }
+                : item;
+            },
+          ),
+      );
+    }
+
+    return descriptors.map(
+      (item) => {
+        const description =
+          promptDescriptions.get(
+            item.id,
+          );
+
+        return description
+          ? {
+              ...item,
+              description,
+            }
+          : item;
+      },
+    );
+  }
+
   async function buildPrompt() {
-    if (!originalPrompt.trim())
-      return setMessage("Write your scene before using Prompt Builder.");
+    if (!canBuildPrompt)
+      return setMessage(
+        mode === "h3-reference-to-video"
+          ? "Add a video reference or write a scene before using Prompt Builder."
+          : "Write your scene before using Prompt Builder.",
+      );
     if (mode === "h3-image-to-video" && !firstImage)
       return setMessage(
         "Choose a First Image before building the Image prompt.",
       );
     setBuilding(true);
-    setMessage("Sending the scene to the shared Production Ollama engine...");
+    setMessage(
+      mode === "h3-reference-to-video"
+        ? "Preparing H3 reference context for Prompt Builder..."
+        : "Sending the scene to the shared Production Ollama engine...",
+    );
     try {
+      const promptReferences =
+        await promptReferencesWithVideoFrames();
+
+      setMessage("Sending the scene to the shared Production Ollama engine...");
+
       const response = await fetch("/api/h3/prompt", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...promptContext, loras: selectedLoras }),
+        body: JSON.stringify({
+          ...promptContext,
+          references:
+            promptReferences,
+          loras: selectedLoras,
+        }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.pollUrl)
@@ -1523,6 +2279,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                     ? "Builder prompt selected"
                     : originalPrompt.trim()
                       ? "Direct prompt ready"
+                      : hasReferenceVideo
+                        ? "Video reference ready"
                       : "Prompt required"}
               </span>
             </div>
@@ -2436,6 +3194,25 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           ) : null}
         </section>
       ) : null}
+      <section className={surface}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase text-white/45">
+              Generator Reset
+            </p>
+            <p className="mt-1 text-sm text-white/55">
+              Clears saved H3 prompts, controls, images, video references, audio references, and LoRAs on this device.
+            </p>
+          </div>
+          <button
+            type="button"
+            className={command}
+            onClick={resetH3Inputs}
+          >
+            Reset H3 Generator
+          </button>
+        </div>
+      </section>
       <VideoSnapshotPicker
         open={Boolean(snapshotTarget)}
         onClose={() => setSnapshotTarget("")}

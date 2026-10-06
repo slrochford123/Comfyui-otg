@@ -15,6 +15,7 @@ import H3LoraAdminPanel from "../../../app/app/components/H3LoraAdminPanel";
 import H3Panel from "../../../app/app/components/H3Panel";
 
 beforeEach(() => {
+  window.localStorage.clear();
   vi.stubGlobal(
     "fetch",
     vi.fn(
