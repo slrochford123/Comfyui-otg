@@ -6,6 +6,10 @@ import { ensureDir, safeSegment } from "@/lib/paths";
 import { probeVideoInfo } from "@/lib/videoFrame";
 
 export const H3_REFERENCE_VIDEO_CLIP_SECONDS = 5;
+export const H3_REFERENCE_VIDEO_MAX_FPS = 24;
+export const H3_REFERENCE_VIDEO_MAX_WIDTH = 1376;
+export const H3_REFERENCE_VIDEO_MAX_HEIGHT = 768;
+export const H3_REFERENCE_VIDEO_DURATION_TOLERANCE_SECONDS = 0.08;
 
 function finiteNumber(value: unknown, fallback = 0) {
   const next = Number(value);
@@ -18,6 +22,8 @@ export async function trimH3ReferenceVideoClip(args: {
   outputPrefix: string;
   startSeconds: number;
   includeAudio?: boolean;
+  maxWidth?: number;
+  maxHeight?: number;
 }) {
   const inputPath = path.resolve(args.inputPath);
   const outputDir = path.resolve(args.outputDir);
@@ -37,6 +43,33 @@ export async function trimH3ReferenceVideoClip(args: {
     Math.max(0, finiteNumber(args.startSeconds, 0)),
     maxStart,
   );
+  const maxWidth =
+    Math.max(
+      2,
+      Math.floor(
+        finiteNumber(
+          args.maxWidth,
+          H3_REFERENCE_VIDEO_MAX_WIDTH,
+        ),
+      ),
+    );
+  const maxHeight =
+    Math.max(
+      2,
+      Math.floor(
+        finiteNumber(
+          args.maxHeight,
+          H3_REFERENCE_VIDEO_MAX_HEIGHT,
+        ),
+      ),
+    );
+  const videoFilter =
+    [
+      `scale=min(${maxWidth}\\,iw):min(${maxHeight}\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2`,
+      "setsar=1",
+      `fps=${H3_REFERENCE_VIDEO_MAX_FPS}`,
+      "format=yuv420p",
+    ].join(",");
 
   const outputPath = path.join(
     outputDir,
@@ -57,6 +90,8 @@ export async function trimH3ReferenceVideoClip(args: {
     H3_REFERENCE_VIDEO_CLIP_SECONDS.toFixed(3),
     "-map",
     "0:v:0",
+    "-vf",
+    videoFilter,
     ...(args.includeAudio === false ? [] : ["-map", "0:a:0?"]),
     "-c:v",
     "libx264",
@@ -88,10 +123,60 @@ export async function trimH3ReferenceVideoClip(args: {
     );
   }
 
+  const outputInfo =
+    await probeVideoInfo(
+      outputPath,
+    );
+
+  if (
+    !outputInfo.width
+    || !outputInfo.height
+  ) {
+    throw new Error(
+      "The prepared H3 reference clip has no decodable video stream.",
+    );
+  }
+
+  if (
+    outputInfo.width > maxWidth
+    || outputInfo.height > maxHeight
+  ) {
+    throw new Error(
+      `The prepared H3 reference clip exceeded ${maxWidth}x${maxHeight}.`,
+    );
+  }
+
+  if (
+    outputInfo.fps
+    && outputInfo.fps
+      > H3_REFERENCE_VIDEO_MAX_FPS + 0.5
+  ) {
+    throw new Error(
+      `The prepared H3 reference clip exceeded ${H3_REFERENCE_VIDEO_MAX_FPS} fps.`,
+    );
+  }
+
+  if (
+    outputInfo.durationSeconds
+    && outputInfo.durationSeconds
+      > H3_REFERENCE_VIDEO_CLIP_SECONDS
+        + H3_REFERENCE_VIDEO_DURATION_TOLERANCE_SECONDS
+  ) {
+    throw new Error(
+      `The prepared H3 reference clip exceeded ${H3_REFERENCE_VIDEO_CLIP_SECONDS} seconds.`,
+    );
+  }
+
   return {
     outputPath,
     startSeconds,
     durationSeconds: H3_REFERENCE_VIDEO_CLIP_SECONDS,
     sourceDurationSeconds: duration,
+    width:
+      outputInfo.width,
+    height:
+      outputInfo.height,
+    fps:
+      outputInfo.fps,
   };
 }

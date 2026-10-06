@@ -8,12 +8,24 @@ export type VideoProbeInfo = {
   durationSeconds: number | null;
   width: number | null;
   height: number | null;
+  fps: number | null;
   codec: string | null;
 };
 
 function toFiniteNumber(value: unknown): number | null {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function parseFrameRate(value: unknown): number | null {
+  const raw = String(value || "").trim();
+  if (!raw || raw === "0/0") return null;
+  if (!raw.includes("/")) return toFiniteNumber(raw);
+  const [left, right] = raw.split("/", 2).map(Number);
+  if (!Number.isFinite(left) || !Number.isFinite(right) || right === 0) {
+    return null;
+  }
+  return left / right;
 }
 
 export async function probeVideoInfo(filePath: string): Promise<VideoProbeInfo> {
@@ -42,12 +54,16 @@ export async function probeVideoInfo(filePath: string): Promise<VideoProbeInfo> 
   const durationSeconds = toFiniteNumber(parsed?.format?.duration) ?? toFiniteNumber(videoStream?.duration) ?? null;
   const width = toFiniteNumber(videoStream?.width);
   const height = toFiniteNumber(videoStream?.height);
+  const fps =
+    parseFrameRate(videoStream?.avg_frame_rate)
+    ?? parseFrameRate(videoStream?.r_frame_rate);
   const codec = videoStream?.codec_name ? String(videoStream.codec_name) : null;
 
   return {
     durationSeconds,
     width,
     height,
+    fps,
     codec,
   };
 }

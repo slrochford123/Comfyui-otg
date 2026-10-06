@@ -11,6 +11,7 @@ import {
   H3_ORIENTATION_OPTIONS,
   H3_PRODUCTION_DURATION_OPTIONS,
   H3_QUALITY_OPTIONS,
+  getH3NativeDimensions,
   type H3Orientation,
   type H3ProductionDuration,
   type H3Quality,
@@ -52,6 +53,10 @@ type H3StagedGenerationMedia = {
   referenceVideos?: unknown;
   referenceAudios?: unknown;
 };
+type H3ReferenceVideoClipBounds = {
+  maxWidth: number;
+  maxHeight: number;
+};
 
 function noStore(payload: unknown, init?: ResponseInit) {
   return NextResponse.json(payload, { ...init, headers: { "Cache-Control": "private, no-store", ...(init?.headers || {}) } });
@@ -71,6 +76,18 @@ function numbers(value: unknown) {
   return Array.isArray(value)
     ? value.map((item) => Number(item)).map((item) => Number.isFinite(item) ? item : 0)
     : [];
+}
+
+function h3ReferenceVideoClipBounds(config: Record<string, unknown>): H3ReferenceVideoClipBounds {
+  const quality = String(config.quality || "") as H3Quality;
+  const orientation = String(config.orientation || "") as H3Orientation;
+  if (!H3_QUALITY_OPTIONS.includes(quality)) throw new Error("Choose SH, LQ, or HQ.");
+  if (!H3_ORIENTATION_OPTIONS.includes(orientation)) throw new Error("Choose Landscape or Portrait orientation.");
+  const dimensions = getH3NativeDimensions(quality, orientation);
+  return {
+    maxWidth: dimensions.width,
+    maxHeight: dimensions.height,
+  };
 }
 
 async function saveMediaBytes(
@@ -151,6 +168,7 @@ async function toH3Reference(
   notes: string[],
   audioFlags: boolean[] = [],
   videoClipStarts: number[] = [],
+  videoClipBounds?: H3ReferenceVideoClipBounds,
 ): Promise<H3DirectReference> {
   if (category !== "video") {
     return {
@@ -167,6 +185,8 @@ async function toH3Reference(
     outputPrefix: `${path.parse(saved.name).name || `video-${index + 1}`}`,
     startSeconds: videoClipStarts[index] || 0,
     includeAudio,
+    maxWidth: videoClipBounds?.maxWidth,
+    maxHeight: videoClipBounds?.maxHeight,
   });
 
   return {
@@ -189,11 +209,12 @@ async function fileList(
   notes: string[],
   audioFlags: boolean[] = [],
   videoClipStarts: number[] = [],
+  videoClipBounds?: H3ReferenceVideoClipBounds,
 ) {
   const files = form.getAll(key).filter((item): item is File => item instanceof File && item.size > 0);
   return Promise.all(files.map(async (file, index): Promise<H3DirectReference> => {
     const saved = await saveFile(ownerKey, requestId, file, category, index);
-    return toH3Reference(saved, category, index, notes, audioFlags, videoClipStarts);
+    return toH3Reference(saved, category, index, notes, audioFlags, videoClipStarts, videoClipBounds);
   }));
 }
 
@@ -205,6 +226,7 @@ async function stagedList(
   notes: string[],
   audioFlags: boolean[] = [],
   videoClipStarts: number[] = [],
+  videoClipBounds?: H3ReferenceVideoClipBounds,
 ) {
   const uploads = Array.isArray(values)
     ? values
@@ -214,7 +236,7 @@ async function stagedList(
 
   return Promise.all(uploads.map(async (value, index): Promise<H3DirectReference> => {
     const saved = await saveStagedFile(ownerKey, requestId, value, category, index);
-    return toH3Reference(saved, category, index, notes, audioFlags, videoClipStarts);
+    return toH3Reference(saved, category, index, notes, audioFlags, videoClipStarts, videoClipBounds);
   }));
 }
 
@@ -304,12 +326,16 @@ async function stagedMedia(
   const audioDescriptions = descriptions(config.audioDescriptions);
   const videoAudioFlags = Array.isArray(config.videoAudioFlags) ? config.videoAudioFlags.map(Boolean) : [];
   const videoClipStarts = numbers(config.videoClipStartSeconds);
+  const videoClipBounds =
+    h3ReferenceVideoClipBounds(
+      config,
+    );
 
   return {
     firstFiles: await stagedList(staged.firstImage, ownerKey, requestId, "image", [""]),
     lastFiles: await stagedList(staged.lastImage, ownerKey, requestId, "image", [""]),
     images: await stagedList(staged.referenceImages, ownerKey, requestId, "image", imageDescriptions),
-    videos: await stagedList(staged.referenceVideos, ownerKey, requestId, "video", videoDescriptions, videoAudioFlags, videoClipStarts),
+    videos: await stagedList(staged.referenceVideos, ownerKey, requestId, "video", videoDescriptions, videoAudioFlags, videoClipStarts, videoClipBounds),
     audios: await stagedList(staged.referenceAudios, ownerKey, requestId, "audio", audioDescriptions),
   };
 }
@@ -325,12 +351,16 @@ async function multipartMedia(
   const audioDescriptions = descriptions(config.audioDescriptions);
   const videoAudioFlags = Array.isArray(config.videoAudioFlags) ? config.videoAudioFlags.map(Boolean) : [];
   const videoClipStarts = numbers(config.videoClipStartSeconds);
+  const videoClipBounds =
+    h3ReferenceVideoClipBounds(
+      config,
+    );
 
   return {
     firstFiles: await fileList(form, "firstImage", ownerKey, requestId, "image", [""]),
     lastFiles: await fileList(form, "lastImage", ownerKey, requestId, "image", [""]),
     images: await fileList(form, "referenceImages", ownerKey, requestId, "image", imageDescriptions),
-    videos: await fileList(form, "referenceVideos", ownerKey, requestId, "video", videoDescriptions, videoAudioFlags, videoClipStarts),
+    videos: await fileList(form, "referenceVideos", ownerKey, requestId, "video", videoDescriptions, videoAudioFlags, videoClipStarts, videoClipBounds),
     audios: await fileList(form, "referenceAudios", ownerKey, requestId, "audio", audioDescriptions),
   };
 }

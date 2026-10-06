@@ -261,20 +261,25 @@ function choiceClass(selected: boolean) {
 function MediaPreview({ item }: { item: MediaInput }) {
   if (item.kind === "image")
     return (
-      <img
-        src={item.url}
-        alt={item.name}
-        className="aspect-video w-full rounded-[6px] bg-black object-contain"
-      />
+      <div className="relative aspect-video w-full min-w-0 overflow-hidden rounded-[6px] bg-black">
+        <img
+          src={item.url}
+          alt={item.name}
+          className="absolute inset-0 h-full w-full max-w-full object-contain"
+        />
+      </div>
     );
   if (item.kind === "video")
     return (
-      <video
-        src={item.url}
-        controls
-        preload="metadata"
-        className="aspect-video w-full rounded-[6px] bg-black object-contain"
-      />
+      <div className="relative aspect-video w-full min-w-0 overflow-hidden rounded-[6px] bg-black">
+        <video
+          src={item.url}
+          controls
+          playsInline
+          preload="metadata"
+          className="absolute inset-0 h-full w-full max-w-full object-contain"
+        />
+      </div>
     );
   return (
     <audio src={item.url} controls preload="metadata" className="w-full" />
@@ -1844,7 +1849,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                 {references.map((item, index) => (
                   <article
                     key={item.id}
-                    className="rounded-[6px] border border-white/10 bg-black/30 p-3"
+                    className="min-w-0 overflow-hidden rounded-[6px] border border-white/10 bg-black/30 p-3"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
