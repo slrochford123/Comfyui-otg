@@ -25,6 +25,29 @@ afterEach(() => {
 });
 
 describe("H3 Studio redesign contracts", () => {
+  it("keeps special H3 Studio modes out of the legacy production matrix", () => {
+    const panel = read("app/app/components/H3Panel.tsx");
+    const recipes = read("lib/production/h3ProductionRecipes.ts");
+    const workflows = read("lib/production/h3Workflows.ts");
+
+    expect(panel).toContain('type Mode = ProductionV2H3Mode');
+    expect(panel).toContain('type H3StudioMode = Mode | "h3-realism" | "h3-body-swap"');
+    expect(panel).toContain('id: "h3-realism"');
+    expect(panel).toContain('id: "h3-body-swap"');
+    expect(panel).toContain("grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5");
+    expect(panel).toContain('data-otg="h3-special-mode-quarantine"');
+    expect(panel).toContain('/api/h3/special/realism/generation');
+    expect(panel).toContain('/api/h3/special/body-swap/generation');
+    expect(panel).toContain("if (!legacyModeActive)");
+    expect(panel).toContain("cannot call the legacy H3 Prompt Builder");
+    expect(panel).toContain("cannot call the legacy generation route");
+    expect(panel).toContain("setCatalog([])");
+    expect(recipes).not.toContain("h3-realism");
+    expect(recipes).not.toContain("h3-body-swap");
+    expect(workflows).not.toContain("h3-realism");
+    expect(workflows).not.toContain("h3-body-swap");
+  });
+
   it("uses the shared durable Production Ollama operation and explicit review UI", () => {
     const panel = read("app/app/components/H3Panel.tsx");
     const route = read("app/api/h3/prompt/route.ts");

@@ -40,6 +40,17 @@ import {
   H3_SHOT_FLOW_OPTIONS,
   H3_VISUAL_STYLE_OPTIONS,
 } from "@/lib/production/promptOptions";
+import {
+  compileH3RealismPrompt,
+  H3_REALISM_LIMITS,
+  H3_REALISM_PRESETS,
+  H3_REALISM_SPEED_LORAS,
+  normalizeH3RealismLoras,
+  validateH3RealismReferences,
+  type H3RealismPresetId,
+  type H3RealismSpeedLoraId,
+} from "@/lib/h3SpecialModes/realism";
+import { compileH3BodySwapPrompt } from "@/lib/h3SpecialModes/bodySwap";
 import type { ProductionV2H3Mode } from "@/lib/production/h3Workflows";
 import { normalizeProfileStorageOwner, profileStorageKey } from "@/lib/client/profileStorage";
 import {
@@ -56,6 +67,7 @@ import {
 } from "./h3InputPersistence";
 
 type Mode = ProductionV2H3Mode;
+type H3StudioMode = Mode | "h3-realism" | "h3-body-swap";
 type MediaKind = "image" | "video" | "audio";
 type MediaInput = H3StudioReferenceDescriptor & {
   file: File;
@@ -94,11 +106,15 @@ type H3StagedGenerationPayload = {
   referenceVideos: H3StagedUploadDescriptor[];
   referenceAudios: H3StagedUploadDescriptor[];
 };
+type H3StagedBodySwapPayload = {
+  sourceVideo?: H3StagedUploadDescriptor;
+  replacementImage?: H3StagedUploadDescriptor;
+};
 type JobStatus = {
   id: string;
   status: string;
   statusMessage: string;
-  mode: Mode;
+  mode: H3StudioMode;
   quality: H3Quality;
   orientation: H3Orientation;
   durationSeconds: 5 | 10;
@@ -139,7 +155,7 @@ type JobStatus = {
   galleryError: string | null;
 };
 
-const MODE_OPTIONS: Array<{ id: Mode; label: string; detail: string }> = [
+const MODE_OPTIONS: Array<{ id: H3StudioMode; label: string; detail: string }> = [
   { id: "h3-text-to-video", label: "Text", detail: "Create from a prompt" },
   {
     id: "h3-image-to-video",
@@ -151,7 +167,25 @@ const MODE_OPTIONS: Array<{ id: Mode; label: string; detail: string }> = [
     label: "Reference",
     detail: "Guide with images, video, and audio",
   },
+  {
+    id: "h3-realism",
+    label: "Realism",
+    detail: "Structured reference realism",
+  },
+  {
+    id: "h3-body-swap",
+    label: "Body Swap",
+    detail: "Replace a tracked person",
+  },
 ];
+const LEGACY_H3_MODES: Mode[] = [
+  "h3-text-to-video",
+  "h3-image-to-video",
+  "h3-reference-to-video",
+];
+function isLegacyH3Mode(value: H3StudioMode): value is Mode {
+  return LEGACY_H3_MODES.includes(value as Mode);
+}
 const surface =
   "rounded-[8px] border border-white/10 bg-[#090b15]/90 p-4 shadow-[0_18px_45px_rgba(0,0,0,.22)]";
 const field =
@@ -241,12 +275,56 @@ function rememberH3Job(storageKey: string, job: Pick<JobStatus, "id"> | null | u
 }
 
 async function fetchH3JobStatus(id: string) {
-  const response = await fetch(
-    `/api/h3/generation?jobId=${encodeURIComponent(id)}`,
-    { cache: "no-store", credentials: "include" },
-  );
-  const data = await response.json().catch(() => ({}));
-  return { response, data: data as { job?: JobStatus; error?: string } };
+  for (const url of h3JobStatusUrls(id)) {
+    const response = await fetch(url, {
+      cache: "no-store",
+      credentials: "include",
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok || response.status !== 404) {
+      return { response, data: data as { job?: JobStatus; error?: string } };
+    }
+  }
+  const response = new Response(null, { status: 404 });
+  return { response, data: { error: "H3 generation job not found." } as { job?: JobStatus; error?: string } };
+}
+
+function h3GenerationEndpointFor(jobOrId?: Pick<JobStatus, "id" | "mode"> | string | null) {
+  const id = typeof jobOrId === "string" ? jobOrId : jobOrId?.id || "";
+  const mode = typeof jobOrId === "string" ? "" : jobOrId?.mode || "";
+  if (mode === "h3-body-swap" || id.startsWith("h3-body-swap-")) {
+    return "/api/h3/special/body-swap/generation";
+  }
+  return mode === "h3-realism" || id.startsWith("h3-realism-")
+    ? "/api/h3/special/realism/generation"
+    : "/api/h3/generation";
+}
+
+function h3GalleryEndpointFor(job: Pick<JobStatus, "id" | "mode">) {
+  const generationEndpoint = h3GenerationEndpointFor(job);
+  if (generationEndpoint === "/api/h3/special/realism/generation") {
+    return "/api/h3/special/realism/generation/gallery";
+  }
+  if (generationEndpoint === "/api/h3/special/body-swap/generation") {
+    return "/api/h3/special/body-swap/generation/gallery";
+  }
+  return "/api/h3/generation/gallery";
+}
+
+function h3JobStatusUrls(id?: string) {
+  const endpoints = [
+    "/api/h3/generation",
+    "/api/h3/special/realism/generation",
+    "/api/h3/special/body-swap/generation",
+  ];
+  if (!id) return endpoints;
+  const primary = `${h3GenerationEndpointFor(id)}?jobId=${encodeURIComponent(id)}`;
+  return [
+    primary,
+    ...endpoints
+      .filter((endpoint) => endpoint !== h3GenerationEndpointFor(id))
+      .map((endpoint) => `${endpoint}?jobId=${encodeURIComponent(id)}`),
+  ];
 }
 
 function formatDuration(seconds: number) {
@@ -348,8 +426,8 @@ function normalizePersistedMode(
       value || "",
     );
 
-  return MODE_OPTIONS.some(
-    (item) => item.id === mode,
+  return LEGACY_H3_MODES.includes(
+    mode as Mode,
   )
     ? mode as Mode
     : "h3-text-to-video";
@@ -764,6 +842,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     [storageOwnerKey],
   );
   const [mode, setMode] = useState<Mode>("h3-text-to-video");
+  const [studioMode, setStudioMode] =
+    useState<H3StudioMode>("h3-text-to-video");
   const [quality, setQuality] = useState<H3Quality>("lq");
   const [h3Settings, setH3Settings] =
     useState<H3AdvancedSettings>(DEFAULT_H3_ADVANCED_SETTINGS);
@@ -789,6 +869,31 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const [shotFlow, setShotFlow] = useState<string>(
     DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.shotFlow,
   );
+  const [realismPrompt, setRealismPrompt] = useState("");
+  const [realismReferences, setRealismReferences] = useState<MediaInput[]>([]);
+  const [realismPreset, setRealismPreset] =
+    useState<H3RealismPresetId>("balanced");
+  const [realismSpeedLora, setRealismSpeedLora] =
+    useState<H3RealismSpeedLoraId>(
+      H3_REALISM_PRESETS.balanced.speedLora,
+    );
+  const [realismPeopleEnabled, setRealismPeopleEnabled] = useState(true);
+  const [realismSeedMode, setRealismSeedMode] =
+    useState<"random" | "fixed">("random");
+  const [realismSeed, setRealismSeed] = useState("");
+  const [realismExpertEdit, setRealismExpertEdit] = useState(false);
+  const [realismCompiledPromptDraft, setRealismCompiledPromptDraft] =
+    useState("");
+  const [bodySwapSourceVideo, setBodySwapSourceVideo] =
+    useState<MediaInput | null>(null);
+  const [bodySwapReplacementImage, setBodySwapReplacementImage] =
+    useState<MediaInput | null>(null);
+  const [bodySwapSelector, setBodySwapSelector] = useState("person");
+  const [bodySwapPrompt, setBodySwapPrompt] = useState("");
+  const [bodySwapPreserveAudio, setBodySwapPreserveAudio] = useState(true);
+  const [bodySwapSeedMode, setBodySwapSeedMode] =
+    useState<"random" | "fixed">("random");
+  const [bodySwapSeed, setBodySwapSeed] = useState("");
   const [firstImage, setFirstImage] = useState<MediaInput | null>(null);
   const [lastImage, setLastImage] = useState<MediaInput | null>(null);
   const [references, setReferences] = useState<MediaInput[]>([]);
@@ -830,6 +935,18 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   );
   const [inputStateHydrated, setInputStateHydrated] = useState(false);
   const active = Boolean(job && !isTerminalH3JobStatus(job.status));
+  const legacyModeActive = isLegacyH3Mode(studioMode);
+  const specialModeLabel =
+    MODE_OPTIONS.find((item) => item.id === studioMode)?.label || "H3";
+  const realismLoras = useMemo(
+    () =>
+      normalizeH3RealismLoras({
+        preset: realismPreset,
+        speedLora: realismSpeedLora,
+        peopleRealismEnabled: realismPeopleEnabled,
+      }),
+    [realismPreset, realismSpeedLora, realismPeopleEnabled],
+  );
   const estimate = useMemo(
     () =>
       getH3ProductionTimeEstimate(mode, duration, quality, job?.backend as any),
@@ -885,23 +1002,111 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const generationPrompt =
     promptSource === "builder" ? scenePrompt : originalPrompt;
   const hasReferenceVideo =
-    mode === "h3-reference-to-video"
+    legacyModeActive
+    && mode === "h3-reference-to-video"
     && references.some((item) => item.kind === "video");
   const canBuildPrompt =
-    Boolean(originalPrompt.trim())
-    || hasReferenceVideo;
+    legacyModeActive
+    && (Boolean(originalPrompt.trim()) || hasReferenceVideo);
   const lockedReferences = buildH3StudioLockedReferences(promptContext);
   const exactFinalPrompt = composeH3StudioFinalPrompt(
     lockedReferences,
     generationPrompt,
   );
   const nativeDimensions = getH3NativeDimensions(quality, orientation);
+  const realismCompiledPrompt = useMemo(() => {
+    if (!realismPrompt.trim()) return "";
+    try {
+      return compileH3RealismPrompt({
+        prompt: realismPrompt,
+        durationSeconds: duration,
+        orientation,
+        references: realismReferences.map((item) => ({
+          kind: item.kind,
+          name: item.name,
+          description: item.description,
+          durationSeconds: item.sourceDurationSeconds,
+        })),
+        loras: realismLoras,
+      });
+    } catch {
+      return "";
+    }
+  }, [
+    realismPrompt,
+    duration,
+    orientation,
+    realismReferences,
+    realismLoras,
+  ]);
+  const finalRealismPrompt =
+    realismExpertEdit && realismCompiledPromptDraft.trim()
+      ? realismCompiledPromptDraft
+      : realismCompiledPrompt;
+  const realismReferenceCounts = {
+    image: realismReferences.filter((item) => item.kind === "image").length,
+    video: realismReferences.filter((item) => item.kind === "video").length,
+    audio: realismReferences.filter((item) => item.kind === "audio").length,
+  };
+  const realismReferenceLimitMessage = useMemo(() => {
+    try {
+      validateH3RealismReferences(
+        realismReferences.map((item) => ({
+          kind: item.kind,
+          name: item.name,
+          description: item.description,
+          durationSeconds: item.sourceDurationSeconds,
+        })),
+      );
+      return "";
+    } catch (error) {
+      return error instanceof Error
+        ? error.message
+        : "Realism reference limits are invalid.";
+    }
+  }, [realismReferences]);
+  const bodySwapCompiledPrompt = useMemo(
+    () =>
+      compileH3BodySwapPrompt({
+        prompt: bodySwapPrompt,
+        selector: bodySwapSelector,
+        preserveOriginalAudio: bodySwapPreserveAudio,
+      }),
+    [bodySwapPrompt, bodySwapSelector, bodySwapPreserveAudio],
+  );
   const canGenerate = Boolean(
-    generationPrompt.trim()
+    legacyModeActive
+      && generationPrompt.trim()
       && !builderPromptStale
       && (mode !== "h3-image-to-video" || firstImage)
       && (mode !== "h3-reference-to-video" || references.length)
       && !videoReferenceTooShort,
+  );
+  const canGenerateRealism = Boolean(
+    studioMode === "h3-realism"
+      && realismPrompt.trim()
+      && finalRealismPrompt.trim()
+      && !realismReferenceLimitMessage
+      && (
+        realismSeedMode === "random"
+        || (
+          Number.isSafeInteger(Number(realismSeed))
+          && Number(realismSeed) >= 0
+        )
+      ),
+  );
+  const canGenerateBodySwap = Boolean(
+    studioMode === "h3-body-swap"
+      && bodySwapSourceVideo
+      && bodySwapReplacementImage
+      && bodySwapSelector.trim()
+      && (
+        bodySwapSeedMode === "random"
+        || (
+          Number.isSafeInteger(Number(bodySwapSeed))
+          && Number(bodySwapSeed) >= 0
+        )
+      ),
   );
   const workflowNotice = h3WorkflowNotice(job, message);
   const workflowNoticeClass =
@@ -961,7 +1166,9 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       if (cancelled) return;
 
       releaseAllMedia();
-      setMode(normalizePersistedMode(stored.mode));
+      const restoredMode = normalizePersistedMode(stored.mode);
+      setMode(restoredMode);
+      setStudioMode(restoredMode);
       setQuality(normalizePersistedQuality(stored.quality));
       setH3Settings(
         normalizeH3AdvancedSettings(
@@ -1145,6 +1352,12 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   ]);
 
   useEffect(() => {
+    if (!legacyModeActive) {
+      setCatalog([]);
+      setMaxLoras(0);
+      setSelectedLoras([]);
+      return;
+    }
     void fetch(`/api/h3/loras?mode=${encodeURIComponent(mode)}`, {
       cache: "no-store",
     })
@@ -1174,7 +1387,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       .catch(() =>
         setMessage("The approved H3 LoRA catalog could not be loaded."),
       );
-  }, [mode]);
+  }, [legacyModeActive, mode]);
   useEffect(() => {
     if (!active) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -1190,8 +1403,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     async function restoreLatestJob() {
       const rememberedId = readRememberedH3JobId(h3LastJobStorageKey);
       const urls = [
-        "/api/h3/generation",
-        rememberedId ? `/api/h3/generation?jobId=${encodeURIComponent(rememberedId)}` : "",
+        ...h3JobStatusUrls(),
+        ...(rememberedId ? h3JobStatusUrls(rememberedId) : []),
       ].filter(Boolean);
       for (const url of urls) {
         const response = await fetch(url, {
@@ -1300,11 +1513,74 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     release(current);
     setter(media(file, "image"));
   }
+  function replaceMedia(
+    current: MediaInput | null,
+    file: File,
+    kind: MediaKind,
+    setter: (item: MediaInput | null) => void,
+  ) {
+    release(current);
+    setter(media(file, kind));
+  }
   function addReference(kind: MediaKind, file: File) {
     const limit = kind === "image" ? 9 : 3;
     if (references.filter((item) => item.kind === kind).length >= limit)
       return setMessage(`H3 supports at most ${limit} ${kind} references.`);
     setReferences((current) => [...current, media(file, kind)]);
+  }
+  function addRealismReference(kind: MediaKind, file: File) {
+    const next = [...realismReferences, media(file, kind)];
+    try {
+      validateH3RealismReferences(
+        next.map((item) => ({
+          kind: item.kind,
+          name: item.name,
+          description: item.description,
+          durationSeconds: item.sourceDurationSeconds,
+        })),
+      );
+      setRealismReferences(next);
+      setMessage("");
+    } catch (error) {
+      release(next[next.length - 1]);
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Realism reference limit exceeded.",
+      );
+    }
+  }
+  function updateRealismReference(id: string, patch: Partial<MediaInput>) {
+    setRealismReferences((current) =>
+      current.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    );
+  }
+  function removeRealismReference(id: string) {
+    setRealismReferences((current) => {
+      release(current.find((item) => item.id === id) || null);
+      return current.filter((item) => item.id !== id);
+    });
+  }
+  function applyRealismPreset(id: H3RealismPresetId) {
+    const preset = H3_REALISM_PRESETS[id] || H3_REALISM_PRESETS.balanced;
+    setRealismPreset(preset.id);
+    setRealismSpeedLora(preset.speedLora);
+    setRealismPeopleEnabled(preset.peopleRealismEnabled);
+  }
+  function selectStudioMode(nextMode: H3StudioMode) {
+    setStudioMode(nextMode);
+    if (isLegacyH3Mode(nextMode)) {
+      setMode(nextMode);
+      setMessage("");
+      return;
+    }
+    setSelectedLoras([]);
+    setPromptSource("direct");
+    setMessage(
+      nextMode === "h3-realism"
+        ? "Realism uses its dedicated TEST workflow adapter and will not call the legacy H3 route."
+        : `${MODE_OPTIONS.find((item) => item.id === nextMode)?.label || "This mode"} is isolated while its dedicated adapter is being prepared.`,
+    );
   }
   function updateReference(id: string, patch: Partial<MediaInput>) {
     setReferences((current) =>
@@ -1323,6 +1599,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     releaseAllMedia();
     promptVideoUploadCacheRef.current.clear();
     setMode("h3-text-to-video");
+    setStudioMode("h3-text-to-video");
     setQuality("lq");
     setH3Settings(DEFAULT_H3_ADVANCED_SETTINGS);
     setDuration(5);
@@ -1338,6 +1615,20 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     setStylePresetId("none");
     setCameraFeel(DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.cameraFeel);
     setShotFlow(DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.shotFlow);
+    setRealismPrompt("");
+    setRealismReferences([]);
+    applyRealismPreset("balanced");
+    setRealismSeedMode("random");
+    setRealismSeed("");
+    setRealismExpertEdit(false);
+    setRealismCompiledPromptDraft("");
+    setBodySwapSourceVideo(null);
+    setBodySwapReplacementImage(null);
+    setBodySwapSelector("person");
+    setBodySwapPrompt("");
+    setBodySwapPreserveAudio(true);
+    setBodySwapSeedMode("random");
+    setBodySwapSeed("");
     setFirstImage(null);
     setLastImage(null);
     setReferences([]);
@@ -1655,6 +1946,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   }
 
   async function buildPrompt() {
+    if (!legacyModeActive)
+      return setMessage(
+        `${specialModeLabel} will use its own prompt compiler and cannot call the legacy H3 Prompt Builder.`,
+      );
     if (!canBuildPrompt)
       return setMessage(
         mode === "h3-reference-to-video"
@@ -1844,7 +2139,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   }
   async function retry() {
     if (!job) return;
-    const response = await fetch("/api/h3/generation", {
+    const response = await fetch(h3GenerationEndpointFor(job), {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -1860,7 +2155,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   async function cancelGeneration() {
     if (!job || !active) return;
     setMessage("Canceling H3 generation...");
-    const response = await fetch("/api/h3/generation", {
+    const response = await fetch(h3GenerationEndpointFor(job), {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -1915,6 +2210,73 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     references
       .filter((item) => item.kind === "audio")
       .forEach((item) => body.append("referenceAudios", item.file));
+  }
+  function h3RealismGenerationConfig() {
+    return {
+      mode: "h3-realism",
+      quality,
+      orientation,
+      durationSeconds: duration,
+      prompt: realismPrompt,
+      compiledPromptOverride:
+        realismExpertEdit && finalRealismPrompt.trim()
+          ? finalRealismPrompt
+          : "",
+      loraSettings: {
+        preset: realismPreset,
+        speedLora: realismSpeedLora,
+        peopleRealismEnabled: realismPeopleEnabled,
+      },
+      seed:
+        realismSeedMode === "fixed"
+          ? Number(realismSeed)
+          : undefined,
+      imageDescriptions: realismReferences
+        .filter((item) => item.kind === "image")
+        .map((item) => item.description),
+      videoDescriptions: realismReferences
+        .filter((item) => item.kind === "video")
+        .map((item) => item.description),
+      audioDescriptions: realismReferences
+        .filter((item) => item.kind === "audio")
+        .map((item) => item.description),
+      videoDurations: realismReferences
+        .filter((item) => item.kind === "video")
+        .map((item) => item.sourceDurationSeconds || null),
+      audioDurations: realismReferences
+        .filter((item) => item.kind === "audio")
+        .map((item) => item.sourceDurationSeconds || null),
+    };
+  }
+  function appendH3RealismGenerationFiles(body: FormData) {
+    realismReferences
+      .filter((item) => item.kind === "image")
+      .forEach((item) => body.append("referenceImages", item.file));
+    realismReferences
+      .filter((item) => item.kind === "video")
+      .forEach((item) => body.append("referenceVideos", item.file));
+    realismReferences
+      .filter((item) => item.kind === "audio")
+      .forEach((item) => body.append("referenceAudios", item.file));
+  }
+  function h3BodySwapGenerationConfig() {
+    return {
+      mode: "h3-body-swap",
+      quality,
+      orientation,
+      durationSeconds: duration,
+      prompt: bodySwapPrompt,
+      selector: bodySwapSelector,
+      preserveOriginalAudio: bodySwapPreserveAudio,
+      seed:
+        bodySwapSeedMode === "fixed"
+          ? Number(bodySwapSeed)
+          : undefined,
+    };
+  }
+  function appendH3BodySwapGenerationFiles(body: FormData) {
+    if (bodySwapSourceVideo) body.append("sourceVideo", bodySwapSourceVideo.file);
+    if (bodySwapReplacementImage) body.append("replacementImage", bodySwapReplacementImage.file);
   }
   async function uploadH3StagedFile(
     file: File,
@@ -2101,7 +2463,243 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
 
     return staged;
   }
+  async function uploadH3StagedRealismReferences(): Promise<H3StagedGenerationPayload> {
+    const staged: H3StagedGenerationPayload = {
+      referenceImages: [],
+      referenceVideos: [],
+      referenceAudios: [],
+    };
+
+    const imageReferences = realismReferences.filter((item) => item.kind === "image");
+    for (let index = 0; index < imageReferences.length; index += 1) {
+      staged.referenceImages.push(
+        await uploadH3StagedFile(
+          imageReferences[index].file,
+          "image",
+          `Realism image reference ${index + 1}`,
+        ),
+      );
+    }
+
+    const videoReferences = realismReferences.filter((item) => item.kind === "video");
+    for (let index = 0; index < videoReferences.length; index += 1) {
+      staged.referenceVideos.push(
+        await uploadH3StagedFile(
+          videoReferences[index].file,
+          "video",
+          `Realism video reference ${index + 1}`,
+        ),
+      );
+    }
+
+    const audioReferences = realismReferences.filter((item) => item.kind === "audio");
+    for (let index = 0; index < audioReferences.length; index += 1) {
+      staged.referenceAudios.push(
+        await uploadH3StagedFile(
+          audioReferences[index].file,
+          "audio",
+          `Realism audio reference ${index + 1}`,
+        ),
+      );
+    }
+
+    return staged;
+  }
+  async function uploadH3StagedBodySwapMedia(): Promise<H3StagedBodySwapPayload> {
+    const staged: H3StagedBodySwapPayload = {};
+
+    if (bodySwapSourceVideo) {
+      staged.sourceVideo =
+        await uploadH3StagedFile(
+          bodySwapSourceVideo.file,
+          "video",
+          "Body Swap source video",
+        );
+    }
+
+    if (bodySwapReplacementImage) {
+      staged.replacementImage =
+        await uploadH3StagedFile(
+          bodySwapReplacementImage.file,
+          "image",
+          "Body Swap replacement image",
+        );
+    }
+
+    return staged;
+  }
+  async function generateRealism() {
+    if (!realismPrompt.trim())
+      return setMessage("Enter a Realism prompt before generating.");
+    if (realismReferenceLimitMessage)
+      return setMessage(realismReferenceLimitMessage);
+    if (
+      realismSeedMode === "fixed"
+      && (
+        !Number.isSafeInteger(Number(realismSeed))
+        || Number(realismSeed) < 0
+      )
+    ) {
+      return setMessage("Enter a non-negative whole-number Realism seed.");
+    }
+
+    const uploadBytes = h3UploadBytes(realismReferences.map((item) => item.file));
+    const useStagedUpload =
+      uploadBytes > 0
+      && isAndroidUploadRuntime();
+
+    if (
+      useStagedUpload
+      && uploadBytes > H3_STAGED_UPLOAD_MAX_BYTES
+    ) {
+      return setMessage(
+        [
+          `Selected Realism references total ${formatBytes(uploadBytes)}.`,
+          `Android staged H3 uploads support up to ${formatBytes(H3_STAGED_UPLOAD_MAX_BYTES)}.`,
+          "Use shorter/compressed references or fewer references, then try again.",
+        ].join(" "),
+      );
+    }
+
+    if (!useStagedUpload && uploadBytes > H3_ANDROID_UPLOAD_BUDGET_BYTES) {
+      return setMessage(
+        [
+          `Selected Realism references total ${formatBytes(uploadBytes)}.`,
+          `Android .win uploads should stay under ${formatBytes(H3_ANDROID_UPLOAD_BUDGET_BYTES)} so the request has room for multipart overhead.`,
+          "Use shorter/compressed references or fewer references, then try again.",
+        ].join(" "),
+      );
+    }
+
+    const config = h3RealismGenerationConfig();
+    setMessage(
+      useStagedUpload
+        ? "Preparing H3 Realism media upload..."
+        : "Submitting the H3 Realism prompt...",
+    );
+    try {
+      const response = useStagedUpload
+        ? await fetch("/api/h3/special/realism/generation", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              config,
+              staged: await uploadH3StagedRealismReferences(),
+            }),
+          })
+        : await (async () => {
+            const body = new FormData();
+            body.set("config", JSON.stringify(config));
+            appendH3RealismGenerationFiles(body);
+            return fetch("/api/h3/special/realism/generation", {
+              method: "POST",
+              credentials: "include",
+              body,
+            });
+          })();
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.job)
+        throw new Error(data.error || "H3 Realism generation could not be submitted.");
+      setJob(data.job);
+      rememberH3Job(h3LastJobStorageKey, data.job);
+      setNow(Date.now());
+      setMessage("");
+    } catch (error) {
+      setMessage(h3SubmitNetworkMessage(error));
+    }
+  }
+  async function generateBodySwap() {
+    if (!bodySwapSourceVideo)
+      return setMessage("Choose a Body Swap source video.");
+    if (!bodySwapReplacementImage)
+      return setMessage("Choose a Body Swap replacement image.");
+    if (!bodySwapSelector.trim())
+      return setMessage("Describe the target person to track.");
+    if (
+      bodySwapSeedMode === "fixed"
+      && (
+        !Number.isSafeInteger(Number(bodySwapSeed))
+        || Number(bodySwapSeed) < 0
+      )
+    ) {
+      return setMessage("Enter a non-negative whole-number Body Swap seed.");
+    }
+
+    const uploadBytes = h3UploadBytes([
+      bodySwapSourceVideo.file,
+      bodySwapReplacementImage.file,
+    ]);
+    const useStagedUpload =
+      uploadBytes > 0
+      && isAndroidUploadRuntime();
+
+    if (
+      useStagedUpload
+      && uploadBytes > H3_STAGED_UPLOAD_MAX_BYTES
+    ) {
+      return setMessage(
+        [
+          `Selected Body Swap files total ${formatBytes(uploadBytes)}.`,
+          `Android staged H3 uploads support up to ${formatBytes(H3_STAGED_UPLOAD_MAX_BYTES)}.`,
+          "Use a shorter/compressed source video, then try again.",
+        ].join(" "),
+      );
+    }
+
+    if (!useStagedUpload && uploadBytes > H3_ANDROID_UPLOAD_BUDGET_BYTES) {
+      return setMessage(
+        [
+          `Selected Body Swap files total ${formatBytes(uploadBytes)}.`,
+          `Android .win uploads should stay under ${formatBytes(H3_ANDROID_UPLOAD_BUDGET_BYTES)} so the request has room for multipart overhead.`,
+          "Use a shorter/compressed source video, then try again.",
+        ].join(" "),
+      );
+    }
+
+    const config = h3BodySwapGenerationConfig();
+    setMessage(
+      useStagedUpload
+        ? "Preparing Body Swap media upload..."
+        : "Submitting the Body Swap prompt...",
+    );
+    try {
+      const response = useStagedUpload
+        ? await fetch("/api/h3/special/body-swap/generation", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              config,
+              staged: await uploadH3StagedBodySwapMedia(),
+            }),
+          })
+        : await (async () => {
+            const body = new FormData();
+            body.set("config", JSON.stringify(config));
+            appendH3BodySwapGenerationFiles(body);
+            return fetch("/api/h3/special/body-swap/generation", {
+              method: "POST",
+              credentials: "include",
+              body,
+            });
+          })();
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.job)
+        throw new Error(data.error || "H3 Body Swap generation could not be submitted.");
+      setJob(data.job);
+      rememberH3Job(h3LastJobStorageKey, data.job);
+      setNow(Date.now());
+      setMessage("");
+    } catch (error) {
+      setMessage(h3SubmitNetworkMessage(error));
+    }
+  }
   async function generate() {
+    if (!legacyModeActive)
+      return setMessage(
+        `${specialModeLabel} is waiting for its dedicated H3 adapter and cannot call the legacy generation route.`,
+      );
     if (builderPromptStale)
       return setMessage("The optional Builder prompt changed. Use your current raw prompt or review the Builder result again.");
     if (!generationPrompt.trim())
@@ -2189,7 +2787,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   }
   async function retryGallerySave() {
     if (!job) return;
-    const response = await fetch("/api/h3/generation/gallery", {
+    const response = await fetch(h3GalleryEndpointFor(job), {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -2214,6 +2812,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       }),
     );
     setMode("h3-reference-to-video");
+    setStudioMode("h3-reference-to-video");
     setPromptSource("direct");
     setMessage(
       "Result added as a video reference. Your raw prompt can generate directly; Prompt Builder remains optional.",
@@ -2233,7 +2832,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         <h1 className="mt-1 text-3xl font-black text-white">H3 Studio</h1>
         <p className="mt-1 text-sm text-white/58">Create with MiniMax H3</p>
         <div
-          className="mt-5 grid grid-cols-3 gap-2"
+          className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"
           role="tablist"
           aria-label="H3 generation mode"
         >
@@ -2241,9 +2840,9 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
             <button
               key={option.id}
               role="tab"
-              aria-selected={mode === option.id}
-              onClick={() => setMode(option.id)}
-              className={`min-h-20 rounded-[6px] border p-2 text-left transition ${choiceClass(mode === option.id)}`}
+              aria-selected={studioMode === option.id}
+              onClick={() => selectStudioMode(option.id)}
+              className={`min-h-20 rounded-[6px] border p-2 text-left transition ${choiceClass(studioMode === option.id)}`}
             >
               <span className="block text-sm font-black text-white">
                 {option.label}
@@ -2262,6 +2861,415 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       ) : null}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(300px,.75fr)]">
         <main className="space-y-4">
+          {studioMode === "h3-realism" ? (
+            <>
+              <section className={surface} data-otg="h3-realism-workspace">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase text-violet-200/75">
+                      01 / Realism Prompt
+                    </p>
+                    <h2 className="mt-1 text-lg font-black">
+                      Natural language in, H3 structure out
+                    </h2>
+                  </div>
+                  <span className="rounded-full bg-cyan-300/15 px-2 py-1 text-[11px] font-bold text-cyan-100">
+                    Dedicated TEST mode
+                  </span>
+                </div>
+                <textarea
+                  id="h3-realism-prompt"
+                  rows={5}
+                  className={`${field} mt-3 resize-y text-base leading-6`}
+                  value={realismPrompt}
+                  onChange={(event) => {
+                    setRealismPrompt(event.target.value);
+                    setRealismCompiledPromptDraft("");
+                  }}
+                  placeholder="Example: the man walks into the cafe to buy a drink"
+                />
+                <details className="mt-4 rounded-[6px] border border-white/10 p-3">
+                  <summary className="cursor-pointer text-sm font-black">
+                    View Compiled Prompt
+                  </summary>
+                  <div className="mt-3 text-xs text-white/45">
+                    The People Realism trigger is added automatically when that
+                    LoRA is enabled.
+                  </div>
+                  <label className="mt-3 flex items-center gap-2 text-sm text-white/70">
+                    <input
+                      type="checkbox"
+                      checked={realismExpertEdit}
+                      onChange={(event) => {
+                        setRealismExpertEdit(event.target.checked);
+                        setRealismCompiledPromptDraft(
+                          event.target.checked
+                            ? finalRealismPrompt
+                            : "",
+                        );
+                      }}
+                    />
+                    Expert edit compiled prompt for this submission
+                  </label>
+                  <textarea
+                    rows={14}
+                    className={`${field} mt-3 resize-y font-mono text-xs leading-5`}
+                    value={
+                      realismExpertEdit
+                        ? realismCompiledPromptDraft
+                        : finalRealismPrompt
+                    }
+                    readOnly={!realismExpertEdit}
+                    onChange={(event) =>
+                      setRealismCompiledPromptDraft(event.target.value)
+                    }
+                    placeholder="Compiled prompt will appear after you enter a Realism prompt."
+                  />
+                </details>
+              </section>
+              <section className={surface}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase text-violet-200/75">
+                      02 / Realism References
+                    </p>
+                    <h2 className="mt-1 text-lg font-black">
+                      Add only the references you need
+                    </h2>
+                    <p className="text-xs text-white/45">
+                      Max {H3_REALISM_LIMITS.maxImages} images,{" "}
+                      {H3_REALISM_LIMITS.maxVideos} videos,{" "}
+                      {H3_REALISM_LIMITS.maxAudios} audio,{" "}
+                      {H3_REALISM_LIMITS.maxCombinedReferences} combined.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {(["image", "video", "audio"] as const).map((kind) => (
+                      <label key={kind} className={`${command} cursor-pointer`}>
+                        + {kind[0].toUpperCase() + kind.slice(1)}
+                        <input
+                          hidden
+                          type="file"
+                          accept={H3_MEDIA_ACCEPT[kind]}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) addRealismReference(kind, file);
+                            event.currentTarget.value = "";
+                          }}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  {realismReferences.map((item, index) => (
+                    <article
+                      key={item.id}
+                      className="min-w-0 overflow-hidden rounded-[6px] border border-white/10 bg-black/30 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-black uppercase text-cyan-200">
+                            {item.kind} reference {index + 1}
+                          </p>
+                          <p className="truncate text-xs text-white/45">
+                            {item.name}
+                          </p>
+                        </div>
+                        <button
+                          className={command}
+                          onClick={() => removeRealismReference(item.id)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <div className="mt-3">
+                        <MediaPreview item={item} />
+                      </div>
+                      <input
+                        className={`${field} mt-3`}
+                        value={item.description}
+                        onChange={(event) =>
+                          updateRealismReference(item.id, {
+                            description: event.target.value,
+                          })
+                        }
+                        placeholder="Identity, continuity, motion, pace, ambience"
+                      />
+                      {item.kind !== "image" ? (
+                        <label className="mt-3 block text-xs text-white/55">
+                          Approx. duration seconds
+                          <input
+                            className={`${field} mt-1`}
+                            type="number"
+                            min={item.kind === "video" ? H3_REALISM_LIMITS.minVideoSeconds : 0}
+                            max={H3_REALISM_LIMITS.maxVideoSeconds}
+                            step="0.1"
+                            value={item.sourceDurationSeconds ?? ""}
+                            onChange={(event) =>
+                              updateRealismReference(item.id, {
+                                sourceDurationSeconds:
+                                  event.target.value === ""
+                                    ? undefined
+                                    : Number(event.target.value),
+                              })
+                            }
+                          />
+                        </label>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+                {!realismReferences.length ? (
+                  <div className="mt-4 rounded-[6px] border border-dashed border-white/15 py-8 text-center text-sm text-white/35">
+                    Add image, video, or audio references only when this shot
+                    needs them.
+                  </div>
+                ) : null}
+                {realismReferenceLimitMessage ? (
+                  <div className="mt-4 rounded-[6px] border border-red-300/30 bg-red-500/10 p-3 text-sm text-red-50">
+                    {realismReferenceLimitMessage}
+                  </div>
+                ) : null}
+              </section>
+              <details className={surface} open>
+                <summary className="cursor-pointer text-sm font-black">
+                  LoRA Guide and Advanced
+                </summary>
+                <div className="mt-4 grid gap-2 md:grid-cols-4">
+                  {(Object.values(H3_REALISM_PRESETS) as Array<
+                    (typeof H3_REALISM_PRESETS)[H3RealismPresetId]
+                  >).map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      aria-pressed={realismPreset === preset.id}
+                      className={`${command} text-left ${choiceClass(realismPreset === preset.id)}`}
+                      onClick={() => applyRealismPreset(preset.id)}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <label className="text-xs text-white/55">
+                    Speed LoRA
+                    <select
+                      className={`${field} mt-1`}
+                      value={realismSpeedLora}
+                      onChange={(event) =>
+                        setRealismSpeedLora(
+                          event.target.value as H3RealismSpeedLoraId,
+                        )
+                      }
+                    >
+                      {Object.values(H3_REALISM_SPEED_LORAS).map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2 pt-6 text-sm text-white/70">
+                    <input
+                      type="checkbox"
+                      checked={realismPeopleEnabled}
+                      onChange={(event) =>
+                        setRealismPeopleEnabled(event.target.checked)
+                      }
+                    />
+                    People Realism LoRA with automatic r34l1sm trigger
+                  </label>
+                </div>
+                <div className="mt-4 rounded-[6px] border border-amber-300/25 bg-amber-300/10 p-3 text-xs leading-5 text-amber-50">
+                  One speed LoRA only. People Realism may combine with one
+                  speed LoRA. SH/LQ are TEST draft modes for this workflow;
+                  HQ is closest to the supplied workflow target.
+                </div>
+              </details>
+            </>
+          ) : studioMode === "h3-body-swap" ? (
+            <>
+              <section className={surface} data-otg="h3-body-swap-workspace">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase text-violet-200/75">
+                      01 / Body Swap Inputs
+                    </p>
+                    <h2 className="mt-1 text-lg font-black">
+                      Single-person SAM3 body replacement
+                    </h2>
+                    <p className="mt-1 text-xs text-white/45">
+                      First milestone: one tracked target, one replacement image.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-cyan-300/15 px-2 py-1 text-[11px] font-bold text-cyan-100">
+                    TEST single-person
+                  </span>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <article className="min-w-0 overflow-hidden rounded-[6px] border border-white/10 bg-black/30 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h3 className="font-black">Source Video</h3>
+                        <p className="text-xs text-white/45">
+                          Provides scene, camera, motion, and original audio
+                        </p>
+                      </div>
+                      {bodySwapSourceVideo ? (
+                        <button
+                          className={command}
+                          onClick={() => {
+                            release(bodySwapSourceVideo);
+                            setBodySwapSourceVideo(null);
+                          }}
+                        >
+                          Remove
+                        </button>
+                      ) : null}
+                    </div>
+                    {bodySwapSourceVideo ? (
+                      <div className="mt-3">
+                        <MediaPreview item={bodySwapSourceVideo} />
+                      </div>
+                    ) : (
+                      <div className="mt-3 flex aspect-video items-center justify-center rounded-[6px] border border-dashed border-white/15 text-sm text-white/35">
+                        No source video selected
+                      </div>
+                    )}
+                    <label className={`${command} mt-3 inline-flex cursor-pointer`}>
+                      Upload Source Video
+                      <input
+                        hidden
+                        type="file"
+                        accept={H3_MEDIA_ACCEPT.video}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) replaceMedia(bodySwapSourceVideo, file, "video", setBodySwapSourceVideo);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                    </label>
+                  </article>
+                  <article className="min-w-0 overflow-hidden rounded-[6px] border border-white/10 bg-black/30 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h3 className="font-black">Replacement Image</h3>
+                        <p className="text-xs text-white/45">
+                          Authoritative identity for the inserted person
+                        </p>
+                      </div>
+                      {bodySwapReplacementImage ? (
+                        <button
+                          className={command}
+                          onClick={() => {
+                            release(bodySwapReplacementImage);
+                            setBodySwapReplacementImage(null);
+                          }}
+                        >
+                          Remove
+                        </button>
+                      ) : null}
+                    </div>
+                    {bodySwapReplacementImage ? (
+                      <div className="mt-3">
+                        <MediaPreview item={bodySwapReplacementImage} />
+                      </div>
+                    ) : (
+                      <div className="mt-3 flex aspect-video items-center justify-center rounded-[6px] border border-dashed border-white/15 text-sm text-white/35">
+                        No replacement image selected
+                      </div>
+                    )}
+                    <label className={`${command} mt-3 inline-flex cursor-pointer`}>
+                      Upload Replacement Image
+                      <input
+                        hidden
+                        type="file"
+                        accept={H3_MEDIA_ACCEPT.image}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (file) replaceMedia(bodySwapReplacementImage, file, "image", setBodySwapReplacementImage);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                    </label>
+                  </article>
+                </div>
+              </section>
+              <section className={surface}>
+                <p className="text-xs font-black uppercase text-violet-200/75">
+                  02 / Target and Prompt
+                </p>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <label className="text-xs text-white/55">
+                    Target selector
+                    <input
+                      className={`${field} mt-1`}
+                      value={bodySwapSelector}
+                      onChange={(event) => setBodySwapSelector(event.target.value)}
+                      placeholder="person"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 pt-6 text-sm text-white/70">
+                    <input
+                      type="checkbox"
+                      checked={bodySwapPreserveAudio}
+                      onChange={(event) =>
+                        setBodySwapPreserveAudio(event.target.checked)
+                      }
+                    />
+                    Preserve Original Audio
+                  </label>
+                </div>
+                <textarea
+                  rows={4}
+                  className={`${field} mt-3 resize-y text-sm leading-6`}
+                  value={bodySwapPrompt}
+                  onChange={(event) => setBodySwapPrompt(event.target.value)}
+                  placeholder="Optional instruction, e.g. keep the walk natural and match the coat movement"
+                />
+                <details className="mt-4 rounded-[6px] border border-white/10 p-3">
+                  <summary className="cursor-pointer text-sm font-black">
+                    View Compiled Prompt
+                  </summary>
+                  <textarea
+                    readOnly
+                    rows={14}
+                    className={`${field} mt-3 resize-y font-mono text-xs leading-5`}
+                    value={bodySwapCompiledPrompt}
+                  />
+                </details>
+                <div className="mt-4 rounded-[6px] border border-amber-300/25 bg-amber-300/10 p-3 text-xs leading-5 text-amber-50">
+                  Multi-person Body Swap is not advertised yet. This path keeps
+                  SAM3 at max_objects=1 and track index 0 until single-person
+                  tests are stable.
+                </div>
+              </section>
+            </>
+          ) : !legacyModeActive ? (
+            <section
+              className={surface}
+              data-otg="h3-special-mode-quarantine"
+            >
+              <p className="text-xs font-black uppercase text-violet-200/75">
+                01 / {specialModeLabel}
+              </p>
+              <h2 className="mt-1 text-lg font-black">
+                Dedicated workflow adapter pending
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-white/60">
+                {specialModeLabel} is separated from the standard Text, Image,
+                and Reference generation routes. This prevents the new workflow
+                from falling through into the legacy H3 Prompt Builder, LoRA
+                catalog, or generation API before its adapter is validated.
+              </p>
+              <div className="mt-4 rounded-[6px] border border-cyan-300/25 bg-cyan-300/10 p-3 text-sm text-cyan-50">
+                Legacy H3 modes are unchanged. Use Text, Image, or Reference
+                for the existing production routes while this TEST mode is wired.
+              </div>
+            </section>
+          ) : (
+            <>
           <section className={surface}>
             <div className="flex items-center justify-between">
               <div>
@@ -2743,8 +3751,266 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               </div>
             </details>
           ) : null}
+            </>
+          )}
         </main>
         <aside className="space-y-4 xl:sticky xl:top-4 xl:self-start">
+          {studioMode === "h3-realism" ? (
+            <section className={surface} data-otg="h3-realism-controls">
+              <p className="text-xs font-black uppercase text-violet-200/75">
+                Realism Controls
+              </p>
+              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+                Quality
+              </p>
+              <div
+                className="grid grid-cols-3 gap-2"
+                role="group"
+                aria-label="Realism quality"
+              >
+                {H3_QUALITY_OPTIONS.map((value) => (
+                  <button
+                    key={value}
+                    aria-pressed={quality === value}
+                    className={`${command} ${choiceClass(quality === value)}`}
+                    onClick={() => setQuality(value)}
+                  >
+                    {QUALITY_LABELS[value]}
+                    <span className="mt-1 block text-[11px] font-bold leading-4 text-white/45">
+                      {getH3NativeDimensions(value, orientation).width}x{getH3NativeDimensions(value, orientation).height}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+                Duration
+              </p>
+              <div
+                className="grid grid-cols-2 gap-2"
+                role="group"
+                aria-label="Realism duration"
+              >
+                {H3_PRODUCTION_DURATION_OPTIONS.map((value) => (
+                  <button
+                    key={value}
+                    aria-pressed={duration === value}
+                    className={`${command} ${choiceClass(duration === value)}`}
+                    onClick={() => setDuration(value)}
+                  >
+                    {value} sec
+                  </button>
+                ))}
+              </div>
+              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+                Orientation
+              </p>
+              <div
+                className="grid grid-cols-2 gap-2"
+                role="group"
+                aria-label="Realism orientation"
+              >
+                {H3_ORIENTATION_OPTIONS.map((value) => (
+                  <button
+                    key={value}
+                    aria-pressed={orientation === value}
+                    className={`${command} ${choiceClass(orientation === value)}`}
+                    onClick={() => setOrientation(value)}
+                  >
+                    {value === "landscape" ? "Landscape" : "Portrait"}
+                  </button>
+                ))}
+              </div>
+              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+                Seed
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {(["random", "fixed"] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={realismSeedMode === value}
+                    className={`${command} ${choiceClass(realismSeedMode === value)}`}
+                    onClick={() => setRealismSeedMode(value)}
+                  >
+                    {value === "random" ? "Random" : "Explicit"}
+                  </button>
+                ))}
+              </div>
+              {realismSeedMode === "fixed" ? (
+                <input
+                  className={`${field} mt-2`}
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={realismSeed}
+                  onChange={(event) => setRealismSeed(event.target.value)}
+                  placeholder="Seed"
+                />
+              ) : null}
+              <div className="mt-4 rounded-[6px] border border-white/10 bg-black/30 p-3 text-sm text-white/60">
+                <span className="font-semibold text-white/80">
+                  References:
+                </span>{" "}
+                {realismReferenceCounts.image} image /{" "}
+                {realismReferenceCounts.video} video /{" "}
+                {realismReferenceCounts.audio} audio
+                <br />
+                <span className="font-semibold text-white/80">
+                  Compiled:
+                </span>{" "}
+                {finalRealismPrompt ? "ready" : "waiting for prompt"}
+              </div>
+              <button
+                className={`${command} ${primary} mt-4 min-h-14 w-full text-base`}
+                disabled={!canGenerateRealism || active}
+                onClick={() => void generateRealism()}
+              >
+                {active ? "Generation Running" : "Generate Realism"}
+              </button>
+            </section>
+          ) : studioMode === "h3-body-swap" ? (
+            <section className={surface} data-otg="h3-body-swap-controls">
+              <p className="text-xs font-black uppercase text-violet-200/75">
+                Body Swap Controls
+              </p>
+              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+                Quality
+              </p>
+              <div
+                className="grid grid-cols-3 gap-2"
+                role="group"
+                aria-label="Body Swap quality"
+              >
+                {H3_QUALITY_OPTIONS.map((value) => (
+                  <button
+                    key={value}
+                    aria-pressed={quality === value}
+                    className={`${command} ${choiceClass(quality === value)}`}
+                    onClick={() => setQuality(value)}
+                  >
+                    {QUALITY_LABELS[value]}
+                    <span className="mt-1 block text-[11px] font-bold leading-4 text-white/45">
+                      {QUALITY_DETAILS[value]}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+                Duration
+              </p>
+              <div
+                className="grid grid-cols-2 gap-2"
+                role="group"
+                aria-label="Body Swap duration"
+              >
+                {H3_PRODUCTION_DURATION_OPTIONS.map((value) => (
+                  <button
+                    key={value}
+                    aria-pressed={duration === value}
+                    className={`${command} ${choiceClass(duration === value)}`}
+                    onClick={() => setDuration(value)}
+                  >
+                    {value} sec
+                  </button>
+                ))}
+              </div>
+              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+                Orientation
+              </p>
+              <div
+                className="grid grid-cols-2 gap-2"
+                role="group"
+                aria-label="Body Swap orientation"
+              >
+                {H3_ORIENTATION_OPTIONS.map((value) => (
+                  <button
+                    key={value}
+                    aria-pressed={orientation === value}
+                    className={`${command} ${choiceClass(orientation === value)}`}
+                    onClick={() => setOrientation(value)}
+                  >
+                    {value === "landscape" ? "Landscape" : "Portrait"}
+                  </button>
+                ))}
+              </div>
+              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+                Seed
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {(["random", "fixed"] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={bodySwapSeedMode === value}
+                    className={`${command} ${choiceClass(bodySwapSeedMode === value)}`}
+                    onClick={() => setBodySwapSeedMode(value)}
+                  >
+                    {value === "random" ? "Random" : "Explicit"}
+                  </button>
+                ))}
+              </div>
+              {bodySwapSeedMode === "fixed" ? (
+                <input
+                  className={`${field} mt-2`}
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={bodySwapSeed}
+                  onChange={(event) => setBodySwapSeed(event.target.value)}
+                  placeholder="Seed"
+                />
+              ) : null}
+              <div className="mt-4 rounded-[6px] border border-white/10 bg-black/30 p-3 text-sm text-white/60">
+                <span className="font-semibold text-white/80">
+                  Source:
+                </span>{" "}
+                {bodySwapSourceVideo ? "ready" : "missing"}
+                <br />
+                <span className="font-semibold text-white/80">
+                  Replacement:
+                </span>{" "}
+                {bodySwapReplacementImage ? "ready" : "missing"}
+                <br />
+                <span className="font-semibold text-white/80">
+                  Audio:
+                </span>{" "}
+                {bodySwapPreserveAudio ? "preserve original" : "render silent"}
+                <br />
+                <span className="text-xs">
+                  First TEST adapter keeps the source video dimensions from the
+                  imported graph; duration controls the 24 fps frame cap.
+                </span>
+              </div>
+              <button
+                className={`${command} ${primary} mt-4 min-h-14 w-full text-base`}
+                disabled={!canGenerateBodySwap || active}
+                onClick={() => void generateBodySwap()}
+              >
+                {active ? "Generation Running" : "Generate Body Swap"}
+              </button>
+            </section>
+          ) : !legacyModeActive ? (
+            <section className={surface}>
+              <p className="text-xs font-black uppercase text-violet-200/75">
+                Safety Gate
+              </p>
+              <h2 className="mt-1 text-lg font-black">
+                {specialModeLabel} cannot submit yet
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-white/60">
+                The TEST tab is visible, but Generate is intentionally disabled
+                until a dedicated special-mode route validates inputs and builds
+                the correct ComfyUI workflow.
+              </p>
+              <button
+                className={`${command} mt-4 min-h-14 w-full text-base`}
+                disabled
+              >
+                Dedicated Adapter Required
+              </button>
+            </section>
+          ) : (
+            <>
           <section className={surface}>
             <p className="text-xs font-black uppercase text-violet-200/75">
               03 / Output
@@ -3004,6 +4270,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               ) : null}
             </div>
           ) : null}
+            </>
+          )}
         </aside>
       </div>
       {workflowNotice ? (

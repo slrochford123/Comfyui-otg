@@ -21,7 +21,8 @@ describe("H3 direct-generation tab contract", () => {
     const app = read("app/app/AppPageClient.tsx");
     expect(nav).toContain('| "h3"');
     expect(nav).toContain('{ id: "h3", label: "H3" }');
-    expect(app).toContain('tab === "h3" ? <H3Panel />');
+    expect(app).toContain('tab === "h3" ? <H3Panel');
+    expect(app).toContain('authenticatedOwnerKey={authenticatedOwnerKey}');
   });
 
   it("keeps one 36-route workflow authority shared with Production", () => {
@@ -238,8 +239,8 @@ describe("H3 direct-generation tab contract", () => {
 
     expect(panel).toContain("H3_LAST_JOB_STORAGE_KEY");
     expect(panel).toContain('"/api/h3/generation"');
-    expect(panel).toContain("readRememberedH3JobId()");
-    expect(panel).toContain("rememberH3Job(data.job)");
+    expect(panel).toContain("readRememberedH3JobId(h3LastJobStorageKey)");
+    expect(panel).toContain("rememberH3Job(h3LastJobStorageKey, data.job)");
     expect(route).toContain("getLatestH3DirectJob(ownerKey)");
     expect(route).toContain("ensureH3DirectJobRunner(job)");
     expect(jobs).toContain("export async function getLatestH3DirectJob");

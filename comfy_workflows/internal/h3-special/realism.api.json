@@ -1,0 +1,695 @@
+{
+  "14": {
+    "inputs": {
+      "audio": "None"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "15": {
+    "inputs": {
+      "audio": "h3-direct-26216a05-b8eb-4f3a-97d4-1152d10a5137_video_1.mp4"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "19": {
+    "inputs": {
+      "image": "None"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "23": {
+    "inputs": {
+      "image": "None"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "25": {
+    "inputs": {
+      "video": "11.mp4",
+      "force_rate": 0,
+      "custom_width": 0,
+      "custom_height": 0,
+      "frame_load_cap": 0,
+      "skip_first_frames": 0,
+      "select_every_nth": 1,
+      "format": "AnimateDiff"
+    },
+    "class_type": "VHS_LoadVideo",
+    "_meta": {
+      "title": "Load Video (Upload) 🎥🅥🅗🅢"
+    }
+  },
+  "26": {
+    "inputs": {
+      "video": "11.mp4",
+      "force_rate": 0,
+      "custom_width": 0,
+      "custom_height": 0,
+      "frame_load_cap": 0,
+      "skip_first_frames": 0,
+      "select_every_nth": 1,
+      "format": "AnimateDiff"
+    },
+    "class_type": "VHS_LoadVideo",
+    "_meta": {
+      "title": "Load Video (Upload) 🎥🅥🅗🅢"
+    }
+  },
+  "27": {
+    "inputs": {
+      "video": "11.mp4",
+      "force_rate": 0,
+      "custom_width": 0,
+      "custom_height": 0,
+      "frame_load_cap": 0,
+      "skip_first_frames": 0,
+      "select_every_nth": 1,
+      "format": "AnimateDiff"
+    },
+    "class_type": "VHS_LoadVideo",
+    "_meta": {
+      "title": "Load Video (Upload) 🎥🅥🅗🅢"
+    }
+  },
+  "36": {
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "37": {
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "38": {
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "43": {
+    "inputs": {
+      "image": "None"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "48": {
+    "inputs": {
+      "audio": "ElevenLabs_2026-08-21T08_47_06_Hannah - All-American, bright, natural_pvc_sp99_s30_sb100_se48_b_m2.mp3"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "49": {
+    "inputs": {
+      "image": "b8c6bebb92f9c105adf253da7c22c4fb42470dade4168880fd2669dafa2e9659.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "51": {
+    "inputs": {
+      "image": "Qwen21_Character_Card_00020.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "53": {
+    "inputs": {
+      "lora_name": "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+      "strength_model": 1,
+      "model": [
+        "192",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "58": {
+    "inputs": {
+      "model": [
+        "337",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch",
+    "_meta": {
+      "title": "MiniMax H3 Mem Eff Sage Attention Patch"
+    }
+  },
+  "115": {
+    "inputs": {
+      "samples": [
+        "144",
+        1
+      ],
+      "vae": [
+        "37",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeAudio",
+    "_meta": {
+      "title": "VAE Decode Audio"
+    }
+  },
+  "116": {
+    "inputs": {
+      "samples": [
+        "144",
+        1
+      ],
+      "vae": [
+        "36",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "139": {
+    "inputs": {
+      "av_latent": [
+        "226",
+        1
+      ]
+    },
+    "class_type": "LTXVSeparateAVLatent",
+    "_meta": {
+      "title": "Separate AV Latent"
+    }
+  },
+  "140": {
+    "inputs": {
+      "model_name": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+      "mode": "scale by multiplier",
+      "mode.scale": 2,
+      "align": 32,
+      "enable_temporal_chunking": true,
+      "force_unload": false,
+      "device": "cuda",
+      "precision": "fp16",
+      "latent": [
+        "139",
+        0
+      ]
+    },
+    "class_type": "MinimaxH3LatentUpscaler3D",
+    "_meta": {
+      "title": "Minimax H3 Latent Upscaler (3D)"
+    }
+  },
+  "142": {
+    "inputs": {
+      "video_latent": [
+        "140",
+        0
+      ],
+      "audio_latent": [
+        "139",
+        1
+      ]
+    },
+    "class_type": "LTXVConcatAVLatent",
+    "_meta": {
+      "title": "Concat AV Latent"
+    }
+  },
+  "144": {
+    "inputs": {
+      "noise": [
+        "256",
+        0
+      ],
+      "guider": [
+        "223",
+        0
+      ],
+      "sampler": [
+        "255",
+        0
+      ],
+      "sigmas": [
+        "289",
+        1
+      ],
+      "latent_image": [
+        "142",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "192": {
+    "inputs": {
+      "unet_name": "Minimax-h3_Singularity_ref2va_v1.3_int8.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "199": {
+    "inputs": {
+      "image": "None"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "200": {
+    "inputs": {
+      "image": "None"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "201": {
+    "inputs": {
+      "image": "None"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "214": {
+    "inputs": {
+      "frame_rate": 8,
+      "loop_count": 0,
+      "filename_prefix": "AnimateDiff",
+      "format": "image/gif",
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "116",
+        0
+      ],
+      "audio": [
+        "115",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "223": {
+    "inputs": {
+      "model": [
+        "332",
+        0
+      ],
+      "conditioning": [
+        "265",
+        0
+      ]
+    },
+    "class_type": "BasicGuider",
+    "_meta": {
+      "title": "Basic Guider"
+    }
+  },
+  "226": {
+    "inputs": {
+      "noise": [
+        "256",
+        0
+      ],
+      "guider": [
+        "223",
+        0
+      ],
+      "sampler": [
+        "332",
+        1
+      ],
+      "sigmas": [
+        "332",
+        2
+      ],
+      "latent_image": [
+        "265",
+        1
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "250": {
+    "inputs": {
+      "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+      "values.a": [
+        "259",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "252": {
+    "inputs": {
+      "aspect_ratio": "9:16 (Portrait Widescreen)",
+      "megapixels": 1,
+      "multiple": 24
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "Resolution - keep megapixels at 1.0"
+    }
+  },
+  "253": {
+    "inputs": {
+      "samples": [
+        "226",
+        1
+      ],
+      "vae": [
+        "36",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "254": {
+    "inputs": {
+      "samples": [
+        "226",
+        1
+      ],
+      "vae": [
+        "37",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeAudio",
+    "_meta": {
+      "title": "VAE Decode Audio"
+    }
+  },
+  "255": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "256": {
+    "inputs": {
+      "noise_seed": 582033331274894
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "259": {
+    "inputs": {
+      "value": 8
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Video Duration (sec)"
+    }
+  },
+  "261": {
+    "inputs": {
+      "scheduler": "beta",
+      "steps": 12,
+      "denoise": 1,
+      "model": [
+        "58",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "263": {
+    "inputs": {
+      "UNKNOWN": "r34l1sm\n\nsubject_definitions:\n<Subject 1> is the young woman from <Picture 1>: long coral-orange braided hair with dark roots and loose straight lengths, dark almond eyes, winged black eyeliner, glossy coral-red lips, a silver ear cuff, wearing her black leather jacket with the jeweled brooch at the chest. Her face, hair and makeup must match <Picture 1> exactly, never changing to any other style. She is the only person in the video.\n\nsummary:\n[reference generation] The target video is a 10-second widescreen 16:9 head-to-shoulders close-up of <Subject 1> speaking in a soft ASMR whisper straight to camera, seated at her home studio desk at night. One continuous locked-off shot, made to showcase real close-up skin texture and playful facial micro-expressions: an eye-roll, a lean-in toward the lens, a slow retreat back. She is playful and a little mischievous.\n\nretention_analysis:\n<Subject 1>: fully_preserved - same face, hair color, makeup and outfit throughout; only her head, eyes, mouth and expressions move.\n<Subject 1>'s skin: fully_preserved - dry matte natural surface with visible pores for the whole video.\n\ndetailed_description:\nFraming: widescreen 16:9, head-to-shoulders close-up, the top of <Subject 1>'s head near the top edge of frame, chin, neck, shoulders and the brooch at her collarbone all visible, her head and shoulders occupying the center of the frame with a little warm dark space on each side, eye-level camera, lens very close. She sits at her desk in a cozy home studio at night: behind her, softly blurred dark wooden bookshelves, the dim glow of a large monitor out of focus to one side, a warm lamp reduced to a small bokeh glow far in the background. Her face is lit by a large, soft, diffused key light from camera-left, like a big softbox, gentle falloff on the right cheek, flattering and even.\n\nHer skin is the star of this shot: real unretouched skin with a dry natural matte surface with no shine at all, visible fine pores, fine peach-fuzz catching the light, faint freckles and slight natural unevenness, absolutely no glossy sheen, no dewy wet look, no oily highlights, no specular shine on the nose or forehead, not airbrushed, not plastic, not waxy. Individual eyelashes crisp, natural moisture in her eyes, her lips with a soft gloss.\n\nThe camera stays completely still on a locked tripod; the background stays exactly the same, only <Subject 1> moves. She looks straight into the lens, close, conspiratorial, lips almost touching the microphone, speaking in a soft ASMR whisper, breathy and intimate at a slow, unhurried tempo. Her performance is a chain of playful micro-expressions, each one growing out of the line she is speaking, without any pause or cut: as she says that her skin \"doesn't look real enough\" her eyes briefly drift upward in one single, subtle eye-roll, then drop straight back into the lens with a small amused huff. As she starts inviting the viewer to explore how to get better skin, she leans her face noticeably closer toward the camera until her face nearly fills the frame, the soft light sliding across her cheek and nose pores at this closest distance, holding it there for a beat with widened, mischievous eyes. Then she slowly settles back to her original framing distance, relaxing her shoulders, a knowing little smirk forming as she delivers the punchline about this not being a skincare ad, and she ends holding that sly smile to the last frame, blinking naturally along the way. She speaks ONLY the scripted lines below, silent between them, accurate lip sync:\n<d>[English, soft ASMR whisper, breathy, close-mic, playful] A lot of viewers complain in the comments... my skin doesn't look real enough. So today, let's explore how to get better skin. And no, this is not a skincare ad.</d>\n\noverall_soundscape:\nVery quiet room tone of a home studio at night, no reverb. <Subject 1>'s voice extremely close to the microphone: a soft breathy ASMR whisper, warm young-woman voice, light playful rasp, intimate consonants, the last line slightly softer and conspiratorial. Speaking English.\n\nnon_diegetic_music:\nNone.\n"
+    },
+    "_meta": {}
+  },
+  "264": {
+    "inputs": {
+      "frame_rate": 8,
+      "loop_count": 0,
+      "filename_prefix": "AnimateDiff",
+      "format": "image/gif",
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "253",
+        0
+      ],
+      "audio": [
+        "254",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "265": {
+    "inputs": {
+      "prompt": [
+        "263",
+        0
+      ],
+      "width": [
+        "252",
+        0
+      ],
+      "height": [
+        "252",
+        1
+      ],
+      "length": [
+        "250",
+        1
+      ],
+      "ref_image_size": "max",
+      "clip": [
+        "38",
+        0
+      ],
+      "vae": [
+        "36",
+        0
+      ],
+      "audio_vae": [
+        "37",
+        0
+      ],
+      "ref_images.ref_image_0": [
+        "51",
+        0
+      ],
+      "ref_images.ref_image_1": [
+        "49",
+        0
+      ],
+      "ref_images.ref_image_2": [
+        "331",
+        0
+      ],
+      "ref_images.ref_image_3": [
+        "43",
+        0
+      ],
+      "ref_images.ref_image_4": [
+        "19",
+        0
+      ],
+      "ref_images.ref_image_5": [
+        "23",
+        0
+      ],
+      "ref_images.ref_image_6": [
+        "199",
+        0
+      ],
+      "ref_videos.ref_video_0": [
+        "27",
+        0
+      ],
+      "ref_videos.ref_video_1": [
+        "25",
+        0
+      ],
+      "ref_videos.ref_video_2": [
+        "26",
+        0
+      ],
+      "ref_audios.ref_audio_0": [
+        "48",
+        0
+      ],
+      "ref_audios.ref_audio_1": [
+        "14",
+        0
+      ],
+      "ref_audios.ref_audio_2": [
+        "15",
+        0
+      ],
+      "ref_images.ref_image_7": [
+        "200",
+        0
+      ],
+      "ref_images.ref_image_8": [
+        "201",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3ReferenceToVideo",
+    "_meta": {
+      "title": "MiniMax H3 Reference to Video"
+    }
+  },
+  "289": {
+    "inputs": {
+      "step": 8,
+      "sigmas": [
+        "261",
+        0
+      ]
+    },
+    "class_type": "SplitSigmas",
+    "_meta": {
+      "title": "SplitSigmas"
+    }
+  },
+  "331": {
+    "inputs": {
+      "image": "Image_20260324221548_35_8.jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "332": {
+    "inputs": {
+      "UNKNOWN": 8,
+      "UNKNOWN_1": 12,
+      "UNKNOWN_2": 3,
+      "UNKNOWN_3": "dual_clock_euler",
+      "UNKNOWN_4": "beta",
+      "model": [
+        "58",
+        0
+      ],
+      "av_latent": [
+        "265",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "* SET YOUR STEPS HERE - Dual Clock (steps / shift_audio)"
+    }
+  },
+  "335": {
+    "inputs": {
+      "lora_name": "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+      "strength_model": 1,
+      "model": [
+        "53",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "336": {
+    "inputs": {
+      "lora_name": "minimax_h3_turbo_v4_step600_ema_comfyui.safetensors",
+      "strength_model": 1,
+      "model": [
+        "335",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "337": {
+    "inputs": {
+      "lora_name": "minimax-h3-people.safetensors",
+      "strength_model": 0.8000000000000002,
+      "model": [
+        "336",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  }
+}

@@ -1,0 +1,469 @@
+{
+  "92": {
+    "inputs": {
+      "filename_prefix": "minimax-h3-swap",
+      "format": "auto",
+      "format.codec": "auto",
+      "codec": "auto",
+      "video": [
+        "130",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "119": {
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE (Video)"
+    }
+  },
+  "120": {
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE (Audio)"
+    }
+  },
+  "121": {
+    "inputs": {
+      "samples": [
+        "125",
+        0
+      ],
+      "vae": [
+        "120",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeAudio",
+    "_meta": {
+      "title": "VAE Decode Audio"
+    }
+  },
+  "122": {
+    "inputs": {
+      "samples": [
+        "125",
+        0
+      ],
+      "vae": [
+        "119",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "123": {
+    "inputs": {
+      "sampler_name": "res_multistep"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "124": {
+    "inputs": {
+      "scheduler": "simple",
+      "steps": 4,
+      "denoise": 1,
+      "model": [
+        "179",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "125": {
+    "inputs": {
+      "noise": [
+        "129",
+        0
+      ],
+      "guider": [
+        "126",
+        0
+      ],
+      "sampler": [
+        "123",
+        0
+      ],
+      "sigmas": [
+        "124",
+        0
+      ],
+      "latent_image": [
+        "136",
+        1
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "126": {
+    "inputs": {
+      "model": [
+        "179",
+        0
+      ],
+      "conditioning": [
+        "136",
+        0
+      ]
+    },
+    "class_type": "BasicGuider",
+    "_meta": {
+      "title": "Basic Guider"
+    }
+  },
+  "127": {
+    "inputs": {
+      "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "128": {
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "129": {
+    "inputs": {
+      "noise_seed": 42
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "Seed"
+    }
+  },
+  "130": {
+    "inputs": {
+      "fps": 24,
+      "bit_depth": 8,
+      "color_space": "sRGB",
+      "codec": "none",
+      "images": [
+        "122",
+        0
+      ],
+      "audio": [
+        "121",
+        0
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "131": {
+    "inputs": {
+      "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+      "values.a": [
+        "159",
+        7
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "136": {
+    "inputs": {
+      "prompt": [
+        "138",
+        0
+      ],
+      "width": [
+        "159",
+        8
+      ],
+      "height": [
+        "159",
+        9
+      ],
+      "length": [
+        "131",
+        1
+      ],
+      "ref_image_size": "match",
+      "clip": [
+        "128",
+        0
+      ],
+      "vae": [
+        "119",
+        0
+      ],
+      "audio_vae": [
+        "120",
+        0
+      ],
+      "ref_images.ref_image_0": [
+        "164",
+        0
+      ],
+      "ref_videos.ref_video_0": [
+        "171",
+        0
+      ],
+      "ref_video_audios.ref_video_audio_0": [
+        "704",
+        0
+      ],
+      "ref_audios.ref_audio_0": [
+        "704",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3ReferenceToVideo",
+    "_meta": {
+      "title": "MiniMax H3 Reference to Video"
+    }
+  },
+  "138": {
+    "inputs": {
+      "value": "subject_definitions:\n<Subject 1> is the individual whose visual identity, facial features, skin tone, hairstyle, body build, and attire are strictly derived from <Picture 1>.\n<Video 1> is the source video providing the scene environment, camera motion, perspective, and lighting. It contains a dynamic solid black silhouette mask that designates the exact spatial coordinates, scale, and movement bounds where <Subject 1> must be placed.\n\nsummary:\n[video inpainting + subject replacement + reference synthesis] The target video synthesizes <Subject 1> (from <Picture 1>) directly into the black masked area of <Video 1>. The solid black mask is completely eliminated and replaced by <Subject 1>, who seamlessly integrates into the environment, matching the position, scale, lighting, and camera motion of <Video 1>.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - identity, facial anatomy, hair, and wardrobe originate entirely from <Picture 1>.\n<Video 1>: background_preserved - all non-masked surroundings, camera trajectory, depth of field, and ambient lighting are retained 1:1; the black masked region is completely replaced and filled by <Subject 1>.\n\ndetailed_description:\nThe target video matches the cinematography, camera motion, frame rate, lens characteristics, and color grading of <Video 1>.\n[Shot 1] <Subject 1> is synthesized precisely within the area occupied by the black mask in <Video 1>. The black mask functions as the spatial footprint and scale reference: <Subject 1> fills this designated space continuously from the first to the final frame, replacing the black silhouette entirely. Their attire, hair, and facial appearance from <Picture 1> are fully rendered and illuminated by the ambient and directional light sources present in <Video 1>.   Seamless edge blending, ambient light wrap, contact shadows, and realistic occlusion ensure natural integration with the surrounding unmasked background, leaving no residual black borders or artifacts.\n\noverall_soundscape:\nComplete ambient silence. No dialogue, no speech, no vocals.\n\nnon_diegetic_music:\nN/A\n"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Prompt"
+    }
+  },
+  "159": {
+    "inputs": {
+      "video_info": [
+        "720",
+        3
+      ]
+    },
+    "class_type": "VHS_VideoInfo",
+    "_meta": {
+      "title": "Video Info 🎥🅥🅗🅢"
+    }
+  },
+  "164": {
+    "inputs": {
+      "image": "131267753_434035667620244_7767725255824360512_n.jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "171": {
+    "inputs": {
+      "x": 0,
+      "y": 0,
+      "resize_source": false,
+      "destination": [
+        "720",
+        0
+      ],
+      "source": [
+        "176",
+        0
+      ],
+      "mask": [
+        "717",
+        0
+      ]
+    },
+    "class_type": "ImageCompositeMasked",
+    "_meta": {
+      "title": "Image Composite Masked"
+    }
+  },
+  "176": {
+    "inputs": {
+      "width": [
+        "159",
+        8
+      ],
+      "height": [
+        "159",
+        9
+      ],
+      "batch_size": 1,
+      "color": 0
+    },
+    "class_type": "EmptyImage",
+    "_meta": {
+      "title": "Empty Image"
+    }
+  },
+  "178": {
+    "inputs": {
+      "lora_name": "MiniMax-H3/Acceleration/minimax_h3_fl2v_lightx2v_turbo_4step_v0.1_comfy.safetensors",
+      "strength_model": 1,
+      "model": [
+        "127",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "179": {
+    "inputs": {
+      "attention": "comfy kitchen attention",
+      "model": [
+        "178",
+        0
+      ]
+    },
+    "class_type": "ModelAttentionBackend",
+    "_meta": {
+      "title": "Model Attention Backend"
+    }
+  },
+  "704": {
+    "inputs": {
+      "volume": -100,
+      "audio": [
+        "720",
+        2
+      ]
+    },
+    "class_type": "AudioAdjustVolume",
+    "_meta": {
+      "title": "Adjust Audio Volume"
+    }
+  },
+  "714": {
+    "inputs": {
+      "ckpt_name": "sam3.1_multiplex_fp16.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load SAM3 model"
+    }
+  },
+  "715": {
+    "inputs": {
+      "text": "person",
+      "clip": [
+        "714",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Select Character from Video Prompt"
+    }
+  },
+  "716": {
+    "inputs": {
+      "detection_threshold": 0.5,
+      "max_objects": 1,
+      "detect_interval": 1,
+      "images": [
+        "720",
+        0
+      ],
+      "model": [
+        "714",
+        0
+      ],
+      "conditioning": [
+        "715",
+        0
+      ]
+    },
+    "class_type": "SAM3_VideoTrack",
+    "_meta": {
+      "title": "Run SAM3 Video Track"
+    }
+  },
+  "717": {
+    "inputs": {
+      "object_indices": "0",
+      "track_data": [
+        "716",
+        0
+      ]
+    },
+    "class_type": "SAM3_TrackToMask",
+    "_meta": {
+      "title": "SAM3 Track to Mask"
+    }
+  },
+  "720": {
+    "inputs": {
+      "video": "11.mp4",
+      "force_rate": 0,
+      "custom_width": 0,
+      "custom_height": 0,
+      "frame_load_cap": 0,
+      "skip_first_frames": 0,
+      "select_every_nth": 1,
+      "format": "AnimateDiff"
+    },
+    "class_type": "VHS_LoadVideo",
+    "_meta": {
+      "title": "Load Video (Upload) 🎥🅥🅗🅢"
+    }
+  },
+  "722": {
+    "inputs": {
+      "filename_prefix": "minimax-h3-mask",
+      "format": "auto",
+      "format.codec": "auto",
+      "codec": "auto",
+      "video": [
+        "723",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "723": {
+    "inputs": {
+      "fps": 24,
+      "bit_depth": 8,
+      "color_space": "sRGB",
+      "codec": "none",
+      "images": [
+        "171",
+        0
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  }
+}
