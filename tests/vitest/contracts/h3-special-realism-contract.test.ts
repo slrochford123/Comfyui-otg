@@ -213,8 +213,10 @@ describe("H3 Realism special mode contract", () => {
 
     expect(built.workflowId).toBe("h3-realism-special");
     expect(built.workflowFile).toBe("comfy_workflows/internal/h3-special/realism.api.json");
-    expect(built.graph["263"].inputs?.UNKNOWN).toContain("subject_definitions:");
-    expect(built.graph["263"].inputs?.UNKNOWN).toContain(H3_REALISM_PEOPLE_TRIGGER);
+    expect(built.graph["263"].class_type).toBe("PrimitiveStringMultiline");
+    expect(built.graph["263"].inputs?.value).toContain("subject_definitions:");
+    expect(built.graph["263"].inputs?.value).toContain(H3_REALISM_PEOPLE_TRIGGER);
+    expect(Object.values(built.graph).every((node) => Boolean(node.class_type))).toBe(true);
     expect(built.graph["265"].inputs?.width).toBe(352);
     expect(built.graph["265"].inputs?.height).toBe(608);
     expect(built.graph["265"].inputs?.length).toBe(124);
@@ -233,9 +235,17 @@ describe("H3 Realism special mode contract", () => {
     expect(built.graph["336"]).toBeUndefined();
     expect(built.graph["337"].inputs?.model).toEqual(["53", 0]);
     expect(built.graph["58"].inputs?.model).toEqual(["337", 0]);
+    expect(built.graph["332"].class_type).toBe("MiniMaxH3SigmaShift");
+    expect(built.graph["332"].inputs?.model).toEqual(["58", 0]);
+    expect(built.graph["332"].inputs?.shift_video).toBe(12);
+    expect(built.graph["332"].inputs?.shift_audio).toBe(3);
     expect(built.graph["261"].inputs?.steps).toBe(12);
+    expect(built.graph["261"].inputs?.model).toEqual(["332", 0]);
     expect(built.graph["289"].inputs?.step).toBe(8);
-    expect(built.graph["214"].inputs?.filename_prefix).toBe("contract/realism");
+    expect(built.graph["223"].inputs?.model).toEqual(["332", 0]);
+    expect(built.graph["226"].inputs?.sampler).toEqual(["255", 0]);
+    expect(built.graph["226"].inputs?.sigmas).toEqual(["261", 0]);
+    expect(built.graph["214"]).toBeUndefined();
     expect(built.graph["264"].inputs?.filename_prefix).toBe("contract/realism");
     expect(built.graph["264"].inputs?.frame_rate).toBe(24);
     expect(built.graph["264"].inputs?.format).toBe("video/h264-mp4");

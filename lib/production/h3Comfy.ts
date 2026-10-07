@@ -344,8 +344,8 @@ export function resolveProductionV2MediaPath(value: unknown) {
   return candidates.find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile()) || "";
 }
 
-export async function uploadH3Input(args: {
-  backend: ProductionV2H3BackendId;
+export async function uploadH3InputToBaseUrl(args: {
+  baseUrl: string;
   sourcePath: string;
   mediaType: "image" | "audio" | "video";
   uploadName: string;
@@ -357,7 +357,7 @@ export async function uploadH3Input(args: {
   const extension = path.extname(absolutePath).toLowerCase();
   const filename = `${safeSegment(args.uploadName)}${extension}`;
   const fetcher = args.fetcher || fetch;
-  const baseUrl = H3_BACKEND_PROFILES[args.backend].baseUrl;
+  const baseUrl = args.baseUrl.replace(/\/+$/, "");
   const endpoints = args.mediaType === "audio"
     ? [["/upload/image", "image"], ["/upload/audio", "audio"], ["/upload/audio", "image"], ["/upload/image", "audio"]] as const
     : [["/upload/image", "image"]] as const;
@@ -382,8 +382,24 @@ export async function uploadH3Input(args: {
   throw new Error(`Could not upload H3 ${args.mediaType} input: ${failures.join("; ")}`);
 }
 
-export async function submitH3Prompt(args: {
+export async function uploadH3Input(args: {
   backend: ProductionV2H3BackendId;
+  sourcePath: string;
+  mediaType: "image" | "audio" | "video";
+  uploadName: string;
+  fetcher?: typeof fetch;
+}) {
+  return uploadH3InputToBaseUrl({
+    baseUrl: H3_BACKEND_PROFILES[args.backend].baseUrl,
+    sourcePath: args.sourcePath,
+    mediaType: args.mediaType,
+    uploadName: args.uploadName,
+    fetcher: args.fetcher,
+  });
+}
+
+export async function submitH3PromptToBaseUrl(args: {
+  baseUrl: string;
   graph: H3PromptGraph;
   clientId: string;
   jobId: string;
@@ -398,12 +414,11 @@ export async function submitH3Prompt(args: {
 }) {
   const fetcher =
     args.fetcher || fetch;
+  const baseUrl = args.baseUrl.replace(/\/+$/, "");
 
   ensureComfyClientProgressMonitor({
     comfyBaseUrl:
-      H3_BACKEND_PROFILES[
-        args.backend
-      ].baseUrl,
+      baseUrl,
     clientId:
       args.clientId,
     idleTimeoutMs:
@@ -411,9 +426,7 @@ export async function submitH3Prompt(args: {
   });
   await waitForComfyClientProgressMonitor({
     comfyBaseUrl:
-      H3_BACKEND_PROFILES[
-        args.backend
-      ].baseUrl,
+      baseUrl,
     clientId:
       args.clientId,
     timeoutMs:
@@ -425,9 +438,7 @@ export async function submitH3Prompt(args: {
   const response =
     await submitComfyPromptWithGpuLease({
       baseUrl:
-        H3_BACKEND_PROFILES[
-          args.backend
-        ].baseUrl,
+        baseUrl,
       workerId:
         args.workerId
         || "production-v2-h3",
@@ -523,9 +534,7 @@ export async function submitH3Prompt(args: {
     clientId:
       args.clientId,
     comfyBaseUrl:
-      H3_BACKEND_PROFILES[
-        args.backend
-      ].baseUrl,
+      baseUrl,
     totalNodes:
       Object.keys(args.graph).length,
   });
@@ -534,6 +543,34 @@ export async function submitH3Prompt(args: {
     accepted: true as const,
     promptId,
   };
+}
+
+export async function submitH3Prompt(args: {
+  backend: ProductionV2H3BackendId;
+  graph: H3PromptGraph;
+  clientId: string;
+  jobId: string;
+  ownerKey?: string | null;
+  deviceId?: string | null;
+  workerId?: string;
+  fetcher?: typeof fetch;
+  preSubmitCleanup?: "free" | null;
+  onAccepted?: (
+    promptId: string,
+  ) => Promise<void> | void;
+}) {
+  return submitH3PromptToBaseUrl({
+    baseUrl: H3_BACKEND_PROFILES[args.backend].baseUrl,
+    graph: args.graph,
+    clientId: args.clientId,
+    jobId: args.jobId,
+    ownerKey: args.ownerKey,
+    deviceId: args.deviceId,
+    workerId: args.workerId,
+    fetcher: args.fetcher,
+    preSubmitCleanup: args.preSubmitCleanup,
+    onAccepted: args.onAccepted,
+  });
 }
 
 function collectFiles(value: unknown, nodeId?: string, out: ComfyHistoryFile[] = []) {
@@ -549,13 +586,13 @@ function collectFiles(value: unknown, nodeId?: string, out: ComfyHistoryFile[] =
   return out;
 }
 
-export async function getH3PromptHistory(
-  backend: ProductionV2H3BackendId,
+export async function getH3PromptHistoryFromBaseUrl(
+  baseUrl: string,
   promptId: string,
   fetcher: typeof fetch = fetch,
   outputNodeId = "5",
 ) {
-  const response = await fetchWithTimeout(fetcher, `${H3_BACKEND_PROFILES[backend].baseUrl}/history/${encodeURIComponent(promptId)}`, {}, 15_000);
+  const response = await fetchWithTimeout(fetcher, `${baseUrl.replace(/\/+$/, "")}/history/${encodeURIComponent(promptId)}`, {}, 15_000);
   if (!response.ok) throw new Error(`ComfyUI history returned HTTP ${response.status}.`);
   const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
   const entry = payload?.[promptId] as Record<string, unknown> | undefined;
@@ -569,8 +606,22 @@ export async function getH3PromptHistory(
   return { state: status?.completed ? "failed" as const : "running" as const, entry, video: null };
 }
 
-export async function downloadH3Video(args: {
-  backend: ProductionV2H3BackendId;
+export async function getH3PromptHistory(
+  backend: ProductionV2H3BackendId,
+  promptId: string,
+  fetcher: typeof fetch = fetch,
+  outputNodeId = "5",
+) {
+  return getH3PromptHistoryFromBaseUrl(
+    H3_BACKEND_PROFILES[backend].baseUrl,
+    promptId,
+    fetcher,
+    outputNodeId,
+  );
+}
+
+export async function downloadH3VideoFromBaseUrl(args: {
+  baseUrl: string;
   file: ComfyHistoryFile;
   ownerKey: string;
   productionId: string;
@@ -579,7 +630,7 @@ export async function downloadH3Video(args: {
   artifactSuffix?: string;
   fetcher?: typeof fetch;
 }) {
-  const url = new URL(`${H3_BACKEND_PROFILES[args.backend].baseUrl}/view`);
+  const url = new URL(`${args.baseUrl.replace(/\/+$/, "")}/view`);
   url.searchParams.set("filename", path.basename(args.file.filename));
   url.searchParams.set("subfolder", args.file.subfolder);
   url.searchParams.set("type", args.file.type || "output");
@@ -603,4 +654,26 @@ export async function downloadH3Video(args: {
   );
   await fsp.writeFile(target, Buffer.from(await response.arrayBuffer()));
   return target;
+}
+
+export async function downloadH3Video(args: {
+  backend: ProductionV2H3BackendId;
+  file: ComfyHistoryFile;
+  ownerKey: string;
+  productionId: string;
+  sceneId: string;
+  generationJobId: string;
+  artifactSuffix?: string;
+  fetcher?: typeof fetch;
+}) {
+  return downloadH3VideoFromBaseUrl({
+    baseUrl: H3_BACKEND_PROFILES[args.backend].baseUrl,
+    file: args.file,
+    ownerKey: args.ownerKey,
+    productionId: args.productionId,
+    sceneId: args.sceneId,
+    generationJobId: args.generationJobId,
+    artifactSuffix: args.artifactSuffix,
+    fetcher: args.fetcher,
+  });
 }

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  getH3NativeDimensions,
   type H3Orientation,
   type H3ProductionDuration,
   type H3Quality,
@@ -82,9 +83,13 @@ function setPrompt(graph: Record<string, ComfyGraphNode>, prompt: string) {
 function setInputs(graph: Record<string, ComfyGraphNode>, input: H3BodySwapWorkflowInput) {
   if (!input.sourceVideoFilename.trim()) throw new Error("Body Swap source video upload is required.");
   if (!input.replacementImageFilename.trim()) throw new Error("Body Swap replacement image upload is required.");
-  assertNode(graph, SOURCE_VIDEO_NODE_ID, "VHS_LoadVideo").inputs!.video = input.sourceVideoFilename;
-  assertNode(graph, SOURCE_VIDEO_NODE_ID, "VHS_LoadVideo").inputs!.force_rate = 24;
-  assertNode(graph, SOURCE_VIDEO_NODE_ID, "VHS_LoadVideo").inputs!.frame_load_cap = FRAME_COUNTS[input.durationSeconds];
+  const dimensions = getH3NativeDimensions(input.quality, input.orientation);
+  const sourceVideo = assertNode(graph, SOURCE_VIDEO_NODE_ID, "VHS_LoadVideo");
+  sourceVideo.inputs!.video = input.sourceVideoFilename;
+  sourceVideo.inputs!.force_rate = 24;
+  sourceVideo.inputs!.custom_width = dimensions.width;
+  sourceVideo.inputs!.custom_height = dimensions.height;
+  sourceVideo.inputs!.frame_load_cap = FRAME_COUNTS[input.durationSeconds];
   assertNode(graph, REPLACEMENT_IMAGE_NODE_ID, "LoadImage").inputs!.image = input.replacementImageFilename;
   assertNode(graph, SELECTOR_NODE_ID, "CLIPTextEncode").inputs!.text = input.selector;
   const track = assertNode(graph, SAM_TRACK_NODE_ID, "SAM3_VideoTrack");

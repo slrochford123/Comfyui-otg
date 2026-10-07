@@ -32,6 +32,8 @@ describe("H3 Body Swap special mode contract", () => {
     expect(route).toContain("validateH3BodySwapJobInput");
     expect(jobs).toContain("remuxOriginalAudio");
     expect(jobs).toContain('"1:a?"');
+    expect(jobs).toContain("RTX 3090 Comfy Kitchen");
+    expect(jobs).toContain("http://100.75.162.64:8188");
     expect(jobs).toContain('sourceType: "h3-body-swap-generation"');
   });
 
@@ -89,6 +91,8 @@ describe("H3 Body Swap special mode contract", () => {
     expect(built.workflowFile).toBe("comfy_workflows/internal/h3-special/body-swap.api.json");
     expect(built.graph["720"].inputs?.video).toBe("source-upload.mp4");
     expect(built.graph["720"].inputs?.force_rate).toBe(24);
+    expect(built.graph["720"].inputs?.custom_width).toBe(608);
+    expect(built.graph["720"].inputs?.custom_height).toBe(352);
     expect(built.graph["720"].inputs?.frame_load_cap).toBe(124);
     expect(built.graph["164"].inputs?.image).toBe("replacement-upload.png");
     expect(built.graph["715"].inputs?.text).toBe("person");
@@ -101,5 +105,24 @@ describe("H3 Body Swap special mode contract", () => {
     expect(built.graph["92"].inputs?.filename_prefix).toBe("contract/body-swap");
     expect(built.graph["722"].inputs?.filename_prefix).toBe("contract/body-swap_mask");
     expect(built.compiledPrompt).toContain("single-person body swap");
+  });
+
+  it("adapts Body Swap source video dimensions for portrait H3 quality", () => {
+    const built = buildH3BodySwapWorkflow({
+      sourceVideoFilename: "source-upload.mp4",
+      replacementImageFilename: "replacement-upload.png",
+      prompt: "keep the posture natural",
+      selector: "person",
+      quality: "sh",
+      orientation: "portrait",
+      durationSeconds: 5,
+      seed: 42,
+      outputPrefix: "contract/body-swap-portrait",
+      preserveOriginalAudio: true,
+    });
+
+    expect(built.graph["720"].inputs?.custom_width).toBe(352);
+    expect(built.graph["720"].inputs?.custom_height).toBe(608);
+    expect(built.graph["720"].inputs?.frame_load_cap).toBe(124);
   });
 });

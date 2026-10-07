@@ -56,13 +56,16 @@ const SEED_NODE_ID = "256";
 const SCHEDULER_NODE_ID = "261";
 const SPLIT_SIGMAS_NODE_ID = "289";
 const DUAL_CLOCK_NODE_ID = "332";
+const GUIDER_NODE_ID = "223";
+const PRIMARY_SAMPLER_NODE_ID = "226";
+const SAMPLER_SELECT_NODE_ID = "255";
 const BASE_MODEL_NODE_ID = "192";
 const LOCAL_REALISM_SINGULARITY_CHECKPOINT =
   "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors";
 const ACTIVE_SPEED_LORA_NODE_ID = "53";
 const PEOPLE_LORA_NODE_ID = "337";
 const ATTENTION_PATCH_NODE_ID = "58";
-const OUTPUT_NODE_IDS = ["214", "264"] as const;
+const OUTPUT_NODE_IDS = ["264"] as const;
 const SPEED_LORA_NODE_IDS = ["53", "335", "336"] as const;
 const IMAGE_NODE_IDS = ["51", "49", "331", "43", "19", "23", "199", "200", "201"] as const;
 const VIDEO_NODE_IDS = ["27", "25", "26"] as const;
@@ -92,10 +95,24 @@ function assertNode(
 
 function setPrompt(graph: Record<string, ComfyGraphNode>, prompt: string) {
   const node = assertNode(graph, PROMPT_NODE_ID);
-  const inputKey = Object.prototype.hasOwnProperty.call(node.inputs, "value")
-    ? "value"
-    : "UNKNOWN";
-  node.inputs![inputKey] = prompt;
+  if (!node.class_type) {
+    node.class_type = "PrimitiveStringMultiline";
+    node._meta = { ...(node._meta || {}), title: "Compiled MiniMax H3 prompt" };
+  }
+  if (node.class_type === "PrimitiveStringMultiline" || node.class_type === "PrimitiveString") {
+    delete node.inputs!.UNKNOWN;
+    node.inputs!.value = prompt;
+    return;
+  }
+  if (Object.prototype.hasOwnProperty.call(node.inputs, "value")) {
+    node.inputs!.value = prompt;
+    return;
+  }
+  if (Object.prototype.hasOwnProperty.call(node.inputs, "text")) {
+    node.inputs!.text = prompt;
+    return;
+  }
+  node.inputs!.UNKNOWN = prompt;
 }
 
 function setDimensions(
@@ -201,11 +218,23 @@ function applyExclusiveLoras(
 
   const passOneSteps = Math.max(6, loras.steps);
   const totalSteps = passOneSteps + 4;
-  assertNode(graph, SCHEDULER_NODE_ID, "BasicScheduler").inputs!.steps = totalSteps;
+  const clock = assertNode(graph, DUAL_CLOCK_NODE_ID);
+  clock.class_type = "MiniMaxH3SigmaShift";
+  clock.inputs = {
+    model: [ATTENTION_PATCH_NODE_ID, 0],
+    shift_video: totalSteps,
+    shift_audio: 3,
+  };
+  clock._meta = { ...(clock._meta || {}), title: "ModelSamplingMiniMaxH3" };
+
+  const scheduler = assertNode(graph, SCHEDULER_NODE_ID, "BasicScheduler");
+  scheduler.inputs!.steps = totalSteps;
+  scheduler.inputs!.model = [DUAL_CLOCK_NODE_ID, 0];
   assertNode(graph, SPLIT_SIGMAS_NODE_ID, "SplitSigmas").inputs!.step = passOneSteps;
-  const dualClock = assertNode(graph, DUAL_CLOCK_NODE_ID);
-  dualClock.inputs!.UNKNOWN = passOneSteps;
-  dualClock.inputs!.UNKNOWN_1 = totalSteps;
+  assertNode(graph, GUIDER_NODE_ID, "BasicGuider").inputs!.model = [DUAL_CLOCK_NODE_ID, 0];
+  const primarySampler = assertNode(graph, PRIMARY_SAMPLER_NODE_ID, "SamplerCustomAdvanced");
+  primarySampler.inputs!.sampler = [SAMPLER_SELECT_NODE_ID, 0];
+  primarySampler.inputs!.sigmas = [SCHEDULER_NODE_ID, 0];
 
   return loras;
 }
@@ -216,6 +245,7 @@ function setOutputPrefix(
 ) {
   const prefix = outputPrefix.trim();
   if (!prefix) throw new Error("Realism output prefix is required.");
+  delete graph["214"];
   OUTPUT_NODE_IDS.forEach((nodeId) => {
     const node = assertNode(graph, nodeId, "VHS_VideoCombine");
     node.inputs!.filename_prefix = prefix;

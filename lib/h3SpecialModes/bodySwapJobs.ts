@@ -8,7 +8,12 @@ import { resolveFfmpegPath, runCmd } from "@/lib/ffmpeg";
 import { clearGalleryListCache, safeGalleryName, writeMetaForFile, type GallerySource } from "@/lib/gallery";
 import type { OwnerContext } from "@/lib/ownerKey";
 import { deviceGalleryDir, ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment, userGalleryDir } from "@/lib/paths";
-import { downloadH3Video, getH3PromptHistory, submitH3Prompt, uploadH3Input } from "@/lib/production/h3Comfy";
+import {
+  downloadH3VideoFromBaseUrl,
+  getH3PromptHistoryFromBaseUrl,
+  submitH3PromptToBaseUrl,
+  uploadH3InputToBaseUrl,
+} from "@/lib/production/h3Comfy";
 import {
   getH3NativeDimensions,
   getH3ProductionTimeEstimate,
@@ -18,7 +23,6 @@ import {
   type H3ProductionDuration,
   type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
-import { H3_BACKEND_PROFILES, type ProductionV2H3BackendId } from "@/lib/production/h3Workflows";
 import { validateH3BodySwapRequest } from "@/lib/h3SpecialModes/bodySwap";
 import { buildH3BodySwapWorkflow, type H3BodySwapBuiltWorkflow } from "@/lib/h3SpecialModes/bodySwapWorkflow";
 
@@ -54,7 +58,7 @@ export type H3BodySwapJob = {
   status: "queued" | "preparing" | "submitted" | "running" | "finalizing" | "completed" | "failed" | "canceling" | "canceled";
   statusMessage: string;
   input: H3BodySwapJobInput;
-  backend: ProductionV2H3BackendId | null;
+  backend: H3BodySwapBackendId | null;
   clientId: string | null;
   promptId: string | null;
   workflowId: string | null;
@@ -76,7 +80,7 @@ export type H3BodySwapJob = {
 };
 
 export type H3BodySwapBackendProbe = {
-  backend: ProductionV2H3BackendId;
+  backend: H3BodySwapBackendId;
   healthy: boolean;
   compatible: boolean;
   idle: boolean;
@@ -87,10 +91,28 @@ export type H3BodySwapBackendProbe = {
 
 const GLOBAL_KEY = "__otgH3BodySwapJobs";
 const OUTPUT_NODE_ID = "92";
-const H3_BODY_SWAP_BACKEND_PRIORITY: readonly ProductionV2H3BackendId[] = ["rtx3090"] as const;
+type H3BodySwapBackendId = "rtx3090-comfy-kitchen";
+const H3_BODY_SWAP_BACKEND_PROFILES = {
+  "rtx3090-comfy-kitchen": {
+    id: "rtx3090-comfy-kitchen",
+    label: "RTX 3090 Comfy Kitchen",
+    baseUrl: process.env.OTG_H3_BODY_SWAP_3090_COMFY_URL || "http://100.75.162.64:8188",
+    etaBackend: "rtx3090" as const,
+  },
+} as const satisfies Record<string, {
+  id: H3BodySwapBackendId;
+  label: string;
+  baseUrl: string;
+  etaBackend: "rtx3090";
+}>;
+const H3_BODY_SWAP_BACKEND_PRIORITY: readonly H3BodySwapBackendId[] = ["rtx3090-comfy-kitchen"] as const;
 const globalState = globalThis as typeof globalThis & {
   [GLOBAL_KEY]?: { running: Set<string> };
 };
+
+function bodySwapBackendProfile(backend: H3BodySwapBackendId) {
+  return H3_BODY_SWAP_BACKEND_PROFILES[backend];
+}
 
 function state() {
   globalState[GLOBAL_KEY] ||= { running: new Set<string>() };
@@ -227,7 +249,7 @@ export async function cancelH3BodySwapJob(ownerKey: string, id: string) {
     error: null,
   });
   if (current.backend) {
-    await fetch(`${H3_BACKEND_PROFILES[current.backend].baseUrl}/interrupt`, {
+    await fetch(`${bodySwapBackendProfile(current.backend).baseUrl}/interrupt`, {
       method: "POST",
       cache: "no-store",
     }).catch(() => undefined);
@@ -401,11 +423,11 @@ function expectedAssets(built: H3BodySwapBuiltWorkflow) {
 }
 
 export async function inspectH3BodySwapBackendCompatibility(
-  backend: ProductionV2H3BackendId,
+  backend: H3BodySwapBackendId,
   built: H3BodySwapBuiltWorkflow,
   fetcher: typeof fetch = fetch,
 ): Promise<H3BodySwapBackendProbe> {
-  const profile = H3_BACKEND_PROFILES[backend];
+  const profile = bodySwapBackendProfile(backend);
   try {
     const queueResponse = await fetchWithTimeout(fetcher, `${profile.baseUrl}/queue`);
     if (!queueResponse.ok) throw new Error(`queue HTTP ${queueResponse.status}`);
@@ -468,16 +490,17 @@ export async function inspectH3BodySwapBackendCompatibility(
   }
 }
 
-async function uploadBodySwapInputs(job: H3BodySwapJob, backend: ProductionV2H3BackendId) {
+async function uploadBodySwapInputs(job: H3BodySwapJob, backend: H3BodySwapBackendId) {
+  const profile = bodySwapBackendProfile(backend);
   const [sourceVideoFilename, replacementImageFilename] = await Promise.all([
-    uploadH3Input({
-      backend,
+    uploadH3InputToBaseUrl({
+      baseUrl: profile.baseUrl,
       sourcePath: job.input.sourceVideo.path,
       mediaType: "video",
       uploadName: `${job.id}_source_video`,
     }),
-    uploadH3Input({
-      backend,
+    uploadH3InputToBaseUrl({
+      baseUrl: profile.baseUrl,
       sourcePath: job.input.replacementImage.path,
       mediaType: "image",
       uploadName: `${job.id}_replacement_image`,
@@ -527,9 +550,10 @@ async function remuxOriginalAudio(job: H3BodySwapJob, visualPath: string) {
 async function submitNewBodySwapPrompt(job: H3BodySwapJob) {
   const backendProbes: H3BodySwapBackendProbe[] = [];
   for (const backend of H3_BODY_SWAP_BACKEND_PRIORITY) {
+    const profile = bodySwapBackendProfile(backend);
     await updateJob(job.ownerKey, job.id, {
       status: "preparing",
-      statusMessage: `Preparing Body Swap inputs for ${H3_BACKEND_PROFILES[backend].label}`,
+      statusMessage: `Preparing Body Swap inputs for ${profile.label}`,
       backend,
       startedAt: new Date().toISOString(),
     });
@@ -552,8 +576,8 @@ async function submitNewBodySwapPrompt(job: H3BodySwapJob) {
     if (!probe.compatible) continue;
 
     const clientId = `otg-h3-body-swap-${crypto.randomUUID()}`;
-    const submitted = await submitH3Prompt({
-      backend,
+    const submitted = await submitH3PromptToBaseUrl({
+      baseUrl: profile.baseUrl,
       graph: built.graph as any,
       clientId,
       jobId: job.id,
@@ -590,9 +614,10 @@ async function execute(job: H3BodySwapJob) {
   let promptId = persisted.promptId;
 
   if (backend && promptId) {
+    const profile = bodySwapBackendProfile(backend);
     if (persisted.clientId) {
       ensureComfyClientProgressMonitor({
-        comfyBaseUrl: H3_BACKEND_PROFILES[backend].baseUrl,
+        comfyBaseUrl: profile.baseUrl,
         clientId: persisted.clientId,
         idleTimeoutMs: 90 * 60_000,
       });
@@ -601,7 +626,7 @@ async function execute(job: H3BodySwapJob) {
         ownerKey: persisted.ownerKey,
         deviceId: persisted.galleryOwner?.deviceId || "",
         clientId: persisted.clientId,
-        comfyBaseUrl: H3_BACKEND_PROFILES[backend].baseUrl,
+        comfyBaseUrl: profile.baseUrl,
       });
     }
     persisted = await updateJob(job.ownerKey, job.id, {
@@ -616,15 +641,16 @@ async function execute(job: H3BodySwapJob) {
   }
 
   if (!backend || !promptId) throw new Error("H3 Body Swap generation could not be resumed because backend or prompt ID is missing.");
+  const activeProfile = bodySwapBackendProfile(backend);
 
   for (;;) {
     const current = await getH3BodySwapJob(job.ownerKey, job.id);
     if (current?.status === "canceling" || current?.status === "canceled") return;
-    const history = await getH3PromptHistory(backend, promptId, fetch, OUTPUT_NODE_ID);
+    const history = await getH3PromptHistoryFromBaseUrl(activeProfile.baseUrl, promptId, fetch, OUTPUT_NODE_ID);
     if (history.state === "failed") throw new Error("MiniMax H3 Body Swap failed in ComfyUI. Review the ComfyUI history for the full node traceback.");
     if (history.state === "completed" && history.video) {
-      const visualPath = await downloadH3Video({
-        backend,
+      const visualPath = await downloadH3VideoFromBaseUrl({
+        baseUrl: activeProfile.baseUrl,
         file: history.video,
         ownerKey: job.ownerKey,
         productionId: "h3-body-swap",
@@ -654,7 +680,7 @@ async function execute(job: H3BodySwapJob) {
       }
       return;
     }
-    const estimate = getH3ProductionTimeEstimate("h3-reference-to-video", job.input.durationSeconds, job.input.quality, backend);
+    const estimate = getH3ProductionTimeEstimate("h3-reference-to-video", job.input.durationSeconds, job.input.quality, activeProfile.etaBackend);
     const elapsed = current?.startedAt ? (Date.now() - Date.parse(current.startedAt)) / 1000 : 0;
     const progressPercent = Math.max(2, Math.min(95, Math.round((elapsed / Math.max(1, estimate.seconds || estimate.maxSeconds)) * 100)));
     await updateJob(job.ownerKey, job.id, { status: "running", statusMessage: "Generating Body Swap in ComfyUI", progressPercent });
@@ -688,7 +714,8 @@ export function h3BodySwapPublicStatus(job: H3BodySwapJob) {
     normalizeH3Quality(job.input.quality),
     orientation,
   );
-  const estimate = getH3ProductionTimeEstimate("h3-reference-to-video", job.input.durationSeconds, job.input.quality, job.backend);
+  const profile = job.backend ? bodySwapBackendProfile(job.backend) : null;
+  const estimate = getH3ProductionTimeEstimate("h3-reference-to-video", job.input.durationSeconds, job.input.quality, profile?.etaBackend || null);
   const progress = readComfyPromptProgress(job.promptId);
   return {
     id: job.id,
@@ -700,7 +727,7 @@ export function h3BodySwapPublicStatus(job: H3BodySwapJob) {
     durationSeconds: job.input.durationSeconds,
     prompt: job.compiledPrompt || job.input.compiledPromptOverride || job.input.prompt,
     backend: job.backend,
-    backendLabel: job.backend ? H3_BACKEND_PROFILES[job.backend].label : null,
+    backendLabel: profile?.label || null,
     workflowId: job.workflowId,
     workflowFile: job.workflowFile,
     nativeResolution: `${nativeDimensions.width}x${nativeDimensions.height}`,
