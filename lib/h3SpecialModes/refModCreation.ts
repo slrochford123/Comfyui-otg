@@ -5,6 +5,7 @@ import { OTG_DATA_ROOT, ensureDir, safeJoin, safeSegment } from "@/lib/paths";
 
 export type H3RefModCreateKind = "character" | "motion" | "audio";
 export type H3RefModAudioCategory = "music" | "ambience" | "sound_fx";
+export type H3RefModMotionType = "subject" | "camera_scene";
 
 export type H3RefModCreateSource = {
   path: string;
@@ -21,6 +22,9 @@ export type H3RefModCreateConfigInput = {
   description?: unknown;
   characterId?: unknown;
   audioCategory?: unknown;
+  motionType?: unknown;
+  isolateSubject?: unknown;
+  alphaIsolationConfirmed?: unknown;
   replace?: unknown;
 };
 
@@ -32,6 +36,9 @@ export type H3RefModCreateConfig = {
   description: string;
   characterId: string;
   audioCategory: H3RefModAudioCategory | null;
+  motionType: H3RefModMotionType | null;
+  isolateSubject: boolean;
+  alphaIsolationConfirmed: boolean;
   replace: boolean;
 };
 
@@ -49,6 +56,12 @@ export type H3RefModSidecar = {
   characterId?: string | null;
   description?: string;
   savedPath?: string | null;
+  motionType?: H3RefModMotionType | null;
+  isolationEnabled?: boolean;
+  alphaGenerator?: "ltx-2.5-alpha-gen" | null;
+  sourceClipPath?: string | null;
+  isolatedDerivativePath?: string | null;
+  alphaWorkflow?: string | null;
   sourceAssets: Array<{
     name: string;
     kind: "image" | "video" | "audio";
@@ -63,6 +76,7 @@ export const H3_REFMOD_CREATE_LIMITS = {
   characterMinImages: 4,
   characterMaxImages: 8,
   motionMaxSeconds: 30,
+  motionIsolationRecommendedMaxSeconds: 6,
   audioMaxSeconds: 30,
   audioRecommendedMinSeconds: 5,
   audioRecommendedMaxSeconds: 15,
@@ -85,6 +99,16 @@ function normalizeAudioCategory(value: unknown): H3RefModAudioCategory {
   if (raw === "music" || raw === "music_style") return "music";
   if (raw === "sound_fx" || raw === "sound effect" || raw === "sound-effect" || raw === "sfx") return "sound_fx";
   return "ambience";
+}
+
+function normalizeMotionType(value: unknown): H3RefModMotionType {
+  const raw = clean(value).toLowerCase();
+  if (raw === "camera_scene" || raw === "camera-scene" || raw === "camera" || raw === "scene") return "camera_scene";
+  return "subject";
+}
+
+function normalizeBoolean(value: unknown) {
+  return value === true || clean(value).toLowerCase() === "true";
 }
 
 export function isSafeRefModBaseName(value: unknown) {
@@ -112,6 +136,11 @@ export function normalizeH3RefModCreateConfig(input: H3RefModCreateConfigInput) 
     throw new Error("RefMod name must be a simple file-safe name without slashes or extension.");
   }
   const audioCategory = kind === "audio" ? normalizeAudioCategory(input.audioCategory) : null;
+  const motionType = kind === "motion" ? normalizeMotionType(input.motionType) : null;
+  const isolateSubject = kind === "motion"
+    && motionType === "subject"
+    && input.isolateSubject !== false
+    && clean(input.isolateSubject).toLowerCase() !== "false";
   const subfolder = h3RefModSubfolderForKind(kind, audioCategory);
   return {
     kind,
@@ -121,6 +150,9 @@ export function normalizeH3RefModCreateConfig(input: H3RefModCreateConfigInput) 
     description: clean(input.description).slice(0, 2000),
     characterId: clean(input.characterId).slice(0, 128),
     audioCategory,
+    motionType,
+    isolateSubject,
+    alphaIsolationConfirmed: normalizeBoolean(input.alphaIsolationConfirmed),
     replace: input.replace === true || clean(input.replace).toLowerCase() === "true",
   } satisfies H3RefModCreateConfig;
 }
@@ -145,6 +177,13 @@ export function validateH3RefModCreateSources(
     const duration = sources[0].durationSeconds;
     if (Number.isFinite(duration) && Number(duration) > H3_REFMOD_CREATE_LIMITS.motionMaxSeconds) {
       throw new Error(`Motion RefMod source videos must be ${H3_REFMOD_CREATE_LIMITS.motionMaxSeconds} seconds or shorter.`);
+    }
+    if (
+      config.isolateSubject
+      && Number.isFinite(duration)
+      && Number(duration) > H3_REFMOD_CREATE_LIMITS.motionIsolationRecommendedMaxSeconds
+    ) {
+      throw new Error(`Subject Motion isolation is limited to ${H3_REFMOD_CREATE_LIMITS.motionIsolationRecommendedMaxSeconds} seconds in TEST.`);
     }
   } else {
     if (sources.length !== 1 || sources[0]?.kind !== "audio") {

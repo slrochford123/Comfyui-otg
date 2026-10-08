@@ -95,6 +95,7 @@ type H3GenerationConfig = {
   prompt: string;
   stylePresetId: string;
   h3Settings: H3AdvancedSettings;
+  rifeInterpolation60Fps: boolean;
   optionalLoras: H3StudioLoraSelection[];
   imageDescriptions: string[];
   videoDescriptions: string[];
@@ -135,6 +136,9 @@ type JobStatus = {
   workflowId: string | null;
   workflowFile: string | null;
   nativeResolution: string | null;
+  nativeFps?: number;
+  finalFps?: number;
+  rifeInterpolation60Fps?: boolean;
   etaSeconds: number | null;
   etaMinSeconds: number;
   etaMaxSeconds: number;
@@ -918,6 +922,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const [quality, setQuality] = useState<H3Quality>("lq");
   const [h3Settings, setH3Settings] =
     useState<H3AdvancedSettings>(DEFAULT_H3_ADVANCED_SETTINGS);
+  const [rifeInterpolation60Fps, setRifeInterpolation60Fps] = useState(false);
   const [duration, setDuration] = useState<5 | 10>(5);
   const [orientation, setOrientation] =
     useState<H3Orientation>("landscape");
@@ -977,6 +982,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const [refModsSeed, setRefModsSeed] = useState("");
   const [refModCreateKind, setRefModCreateKind] =
     useState<"character" | "motion" | "audio">("character");
+  const [refModCreateMotionType, setRefModCreateMotionType] =
+    useState<"subject" | "camera_scene">("subject");
+  const [refModCreateIsolateSubject, setRefModCreateIsolateSubject] =
+    useState(true);
   const [refModCreateName, setRefModCreateName] = useState("");
   const [refModCreateDescription, setRefModCreateDescription] = useState("");
   const [refModCreateAudioCategory, setRefModCreateAudioCategory] =
@@ -1219,6 +1228,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   }, [
     refModCreateName,
     refModCreateKind,
+    refModCreateMotionType,
+    refModCreateIsolateSubject,
     refModCreateImages.length,
     refModCreateVideo,
     refModCreateAudio,
@@ -1326,6 +1337,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       setMode(restoredMode);
       setStudioMode(restoredMode);
       setQuality(normalizePersistedQuality(stored.quality));
+      setRifeInterpolation60Fps(stored.rifeInterpolation60Fps === true);
       setH3Settings(
         normalizeH3AdvancedSettings(
           stored.h3Settings,
@@ -1422,6 +1434,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         mode,
         quality,
         h3Settings,
+        rifeInterpolation60Fps,
         duration,
         orientation,
         originalPrompt,
@@ -1467,6 +1480,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     mode,
     quality,
     h3Settings,
+    rifeInterpolation60Fps,
     duration,
     orientation,
     originalPrompt,
@@ -2384,6 +2398,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         h3Settings,
         refModReferenceOptions.length,
       ),
+      rifeInterpolation60Fps,
       optionalLoras: selectedLoras,
       imageDescriptions: references
         .filter((item) => item.kind === "image")
@@ -2426,6 +2441,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         realismExpertEdit && finalRealismPrompt.trim()
           ? finalRealismPrompt
           : "",
+      rifeInterpolation60Fps,
       loraSettings: {
         preset: realismPreset,
         speedLora: realismSpeedLora,
@@ -2472,6 +2488,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       prompt: bodySwapPrompt,
       selector: bodySwapSelector,
       preserveOriginalAudio: bodySwapPreserveAudio,
+      rifeInterpolation60Fps,
       seed:
         bodySwapSeedMode === "fixed"
           ? Number(bodySwapSeed)
@@ -2491,6 +2508,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       prompt: refModsPrompt,
       refMods: refModSlots,
       turbo: refModsTurbo,
+      rifeInterpolation60Fps,
       seed:
         refModsSeedMode === "fixed"
           ? Number(refModsSeed)
@@ -2562,6 +2580,11 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       name: refModCreateName.trim(),
       description: refModCreateDescription,
       audioCategory: refModCreateAudioCategory,
+      motionType: refModCreateMotionType,
+      isolateSubject:
+        refModCreateKind === "motion"
+        && refModCreateMotionType === "subject"
+        && refModCreateIsolateSubject,
       replace: refModCreateReplace,
     }));
     if (refModCreateKind === "character") {
@@ -3153,6 +3176,48 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     );
   }
 
+  function renderRife60FpsControl() {
+    return (
+      <div
+        className="mt-4 rounded-[6px] border border-white/10 bg-black/30 p-3"
+        data-otg="h3-rife-60fps-control"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase text-white/50">
+              60 FPS (RIFE)
+            </p>
+            <p className="mt-1 text-xs leading-5 text-white/50">
+              Interpolates the finished video to 60 FPS. H3 still renders natively at 24 FPS.
+            </p>
+          </div>
+          <div
+            className="grid min-w-32 grid-cols-2 gap-1"
+            role="group"
+            aria-label="60 FPS RIFE interpolation"
+          >
+            <button
+              type="button"
+              aria-pressed={!rifeInterpolation60Fps}
+              className={`${command} px-2 py-2 text-xs ${choiceClass(!rifeInterpolation60Fps)}`}
+              onClick={() => setRifeInterpolation60Fps(false)}
+            >
+              OFF
+            </button>
+            <button
+              type="button"
+              aria-pressed={rifeInterpolation60Fps}
+              className={`${command} px-2 py-2 text-xs ${choiceClass(rifeInterpolation60Fps)}`}
+              onClick={() => setRifeInterpolation60Fps(true)}
+            >
+              ON
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="mx-auto max-w-7xl space-y-4 pb-28 pt-8 md:pt-0"
@@ -3704,9 +3769,14 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                     <select
                       className={`${field} mt-1`}
                       value={refModCreateKind}
-                      onChange={(event) =>
-                        setRefModCreateKind(event.target.value as "character" | "motion" | "audio")
-                      }
+                      onChange={(event) => {
+                        const next = event.target.value as "character" | "motion" | "audio";
+                        setRefModCreateKind(next);
+                        if (next === "motion") {
+                          setRefModCreateMotionType("subject");
+                          setRefModCreateIsolateSubject(true);
+                        }
+                      }}
                     >
                       <option value="character">Character</option>
                       <option value="motion">Motion</option>
@@ -3737,6 +3807,39 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                         <option value="sound_fx">Sound Effect</option>
                       </select>
                     </label>
+                  ) : null}
+                  {refModCreateKind === "motion" ? (
+                    <>
+                      <label className="text-xs text-white/55">
+                        Motion Type
+                        <select
+                          className={`${field} mt-1`}
+                          value={refModCreateMotionType}
+                          onChange={(event) => {
+                            const next = event.target.value as "subject" | "camera_scene";
+                            setRefModCreateMotionType(next);
+                            setRefModCreateIsolateSubject(next === "subject");
+                          }}
+                        >
+                          <option value="subject">Subject Motion</option>
+                          <option value="camera_scene">Camera / Scene Motion</option>
+                        </select>
+                      </label>
+                      <label className={`flex items-center gap-2 text-xs font-bold ${refModCreateMotionType === "camera_scene" ? "text-white/35" : "text-white/60"}`}>
+                        <input
+                          type="checkbox"
+                          checked={refModCreateMotionType === "subject" && refModCreateIsolateSubject}
+                          disabled={refModCreateMotionType === "camera_scene"}
+                          onChange={(event) => setRefModCreateIsolateSubject(event.target.checked)}
+                        />
+                        Isolate Subject
+                      </label>
+                      <div className="text-xs leading-5 text-white/45">
+                        {refModCreateMotionType === "camera_scene"
+                          ? "Camera/scene RefMods need the surrounding scene to preserve camera motion."
+                          : "Subject Motion can use LTX 2.5 Alpha Gen first, then create the Motion RefMod from the isolated RGB subject clip."}
+                      </div>
+                    </>
                   ) : null}
                   <label className="text-xs text-white/55 md:col-span-3">
                     Description
@@ -4586,6 +4689,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   </button>
                 ))}
               </div>
+              {renderRife60FpsControl()}
               <p className="mb-2 mt-4 text-xs font-bold text-white/50">
                 Seed
               </p>
@@ -4699,6 +4803,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   </button>
                 ))}
               </div>
+              {renderRife60FpsControl()}
               <p className="mb-2 mt-4 text-xs font-bold text-white/50">
                 Seed
               </p>
@@ -4817,6 +4922,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   </button>
                 ))}
               </div>
+              {renderRife60FpsControl()}
               <p className="mb-2 mt-4 text-xs font-bold text-white/50">
                 Turbo
               </p>
@@ -4969,6 +5075,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                 </button>
               ))}
             </div>
+            {renderRife60FpsControl()}
             <div className="mt-4 rounded-[6px] border border-white/10 bg-black/30 p-3 text-sm text-white/60">
               <span className="font-semibold text-white/80">Canvas:</span>{" "}
               {nativeDimensions.width}x{nativeDimensions.height}

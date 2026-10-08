@@ -61,6 +61,9 @@ export type H3RefModLibraryEntry = {
   createdAt?: string | null;
   modifiedAt?: string | null;
   characterId?: string | null;
+  motionType?: "subject" | "camera_scene" | null;
+  isolationEnabled?: boolean;
+  alphaGenerator?: string | null;
 };
 
 export type H3RefModsRequestInput = {
@@ -71,6 +74,7 @@ export type H3RefModsRequestInput = {
   prompt?: unknown;
   refMods?: unknown;
   turbo?: unknown;
+  rifeInterpolation60Fps?: unknown;
   seed?: unknown;
 };
 
@@ -368,6 +372,7 @@ export function validateH3RefModsRequest(input: H3RefModsRequestInput) {
     prompt,
     refMods,
     turbo: input.turbo !== false,
+    rifeInterpolation60Fps: input.rifeInterpolation60Fps === true || clean(input.rifeInterpolation60Fps).toLowerCase() === "true",
     seed,
     compiledPrompt: compileH3RefModsPrompt({ prompt, refMods }),
   };

@@ -37,6 +37,12 @@ import {
   normalizeH3AdvancedSettings,
   type H3AdvancedSettings,
 } from "@/lib/production/h3Settings";
+import {
+  applyH3Rife60FpsFinalization,
+  h3FinalFpsForRife,
+  H3_RIFE_NATIVE_FPS,
+  normalizeH3RifeInterpolation60Fps,
+} from "@/lib/h3RifeFinalization";
 import { buildH3Workflow, H3_BACKEND_PRIORITY, H3_BACKEND_PROFILES, H3_MAX_AUDIO_REFERENCES, H3_MAX_IMAGE_REFERENCES, H3_MAX_VIDEO_REFERENCES, type ProductionV2H3BackendId, type ProductionV2H3Mode } from "@/lib/production/h3Workflows";
 
 export type H3DirectReference = {
@@ -53,6 +59,7 @@ export type H3DirectJobInput = {
   durationSeconds: H3ProductionDuration;
   prompt: string;
   h3Settings?: H3AdvancedSettings;
+  rifeInterpolation60Fps?: boolean;
   seed: number;
   optionalLoras: H3StudioLoraSelection[];
   firstImage: H3DirectReference | null;
@@ -212,6 +219,7 @@ export async function createH3DirectJob(
         input.h3Settings || DEFAULT_H3_ADVANCED_SETTINGS,
         input.images.length,
       ),
+      rifeInterpolation60Fps: normalizeH3RifeInterpolation60Fps(input.rifeInterpolation60Fps),
       optionalLoras: input.optionalLoras,
     },
     backend: null,
@@ -310,6 +318,9 @@ export async function saveH3DirectJobToGallery(
         width: dimensions.width,
         height: dimensions.height,
         durationSeconds: job.input.durationSeconds,
+        nativeFps: H3_RIFE_NATIVE_FPS,
+        finalFps: h3FinalFpsForRife(job.input.rifeInterpolation60Fps),
+        rifeInterpolation60Fps: job.input.rifeInterpolation60Fps === true,
         backend: job.backend,
         workflowFile: job.workflowFile,
       },
@@ -406,6 +417,7 @@ async function execute(job: H3DirectJob) {
           h3Settings: persisted.input.h3Settings,
 
           referenceCount: persisted.input.images.length,
+          requireRife60Fps: persisted.input.rifeInterpolation60Fps === true,
 
         }),
 
@@ -509,7 +521,7 @@ async function execute(job: H3DirectJob) {
     const history = await getH3PromptHistory(backend, promptId);
     if (history.state === "failed") throw new Error("MiniMax H3 failed in ComfyUI. Review the ComfyUI history for the full node traceback.");
     if (history.state === "completed" && history.video) {
-      const outputPath = await downloadH3Video({
+      let outputPath = await downloadH3Video({
         backend,
         file: history.video,
         ownerKey: job.ownerKey,
@@ -517,6 +529,17 @@ async function execute(job: H3DirectJob) {
         sceneId: job.id,
         generationJobId: job.id,
       });
+      const rifeResult = await applyH3Rife60FpsFinalization({
+        enabled: job.input.rifeInterpolation60Fps,
+        backend,
+        sourceVideoPath: outputPath,
+        ownerKey: job.ownerKey,
+        productionId: "h3-direct",
+        sceneId: job.id,
+        generationJobId: job.id,
+        outputPrefix: `otg_h3_direct_rife/${safeSegment(job.id)}`,
+      });
+      if (rifeResult) outputPath = rifeResult.outputPath;
       const completedJob = await updateJob(job.ownerKey, job.id, {
         status: "finalizing",
         statusMessage: "Video complete; saving to Gallery",
@@ -583,6 +606,9 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
     quality: job.input.quality,
     orientation,
     durationSeconds: job.input.durationSeconds,
+    nativeFps: H3_RIFE_NATIVE_FPS,
+    finalFps: h3FinalFpsForRife(job.input.rifeInterpolation60Fps),
+    rifeInterpolation60Fps: job.input.rifeInterpolation60Fps === true,
     prompt: promptWithReferences(job.input),
     backend: job.backend,
     backendLabel: job.backend ? H3_BACKEND_PROFILES[job.backend].label : null,
@@ -615,6 +641,7 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
 }
 
 export function validateH3DirectInput(input: H3DirectJobInput) {
+  input.rifeInterpolation60Fps = normalizeH3RifeInterpolation60Fps(input.rifeInterpolation60Fps);
   if (!input.prompt.trim()) throw new Error("Enter a prompt before generating.");
   if (!H3_ORIENTATION_OPTIONS.includes(input.orientation)) {
     throw new Error("Choose Landscape or Portrait orientation.");

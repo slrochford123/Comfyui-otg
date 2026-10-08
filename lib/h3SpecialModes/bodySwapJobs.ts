@@ -23,8 +23,15 @@ import {
   type H3ProductionDuration,
   type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
+import {
+  applyH3Rife60FpsFinalization,
+  h3FinalFpsForRife,
+  H3_RIFE_NATIVE_FPS,
+  normalizeH3RifeInterpolation60Fps,
+} from "@/lib/h3RifeFinalization";
 import { validateH3BodySwapRequest } from "@/lib/h3SpecialModes/bodySwap";
 import { buildH3BodySwapWorkflow, type H3BodySwapBuiltWorkflow } from "@/lib/h3SpecialModes/bodySwapWorkflow";
+import { H3_BACKEND_PROFILES } from "@/lib/production/h3Workflows";
 
 type ObjectInfo = Record<string, {
   input?: {
@@ -47,6 +54,7 @@ export type H3BodySwapJobInput = {
   selector: string;
   compiledPromptOverride?: string;
   preserveOriginalAudio: boolean;
+  rifeInterpolation60Fps?: boolean;
   seed: number;
   sourceVideo: H3BodySwapMedia;
   replacementImage: H3BodySwapMedia;
@@ -198,6 +206,7 @@ export function validateH3BodySwapJobInput(input: H3BodySwapJobInput) {
     prompt: normalized.prompt,
     selector: normalized.selector,
     preserveOriginalAudio: normalized.preserveOriginalAudio,
+    rifeInterpolation60Fps: normalizeH3RifeInterpolation60Fps(input.rifeInterpolation60Fps),
   };
 }
 
@@ -335,6 +344,9 @@ export async function saveH3BodySwapJobToGallery(
         width: dimensions.width,
         height: dimensions.height,
         durationSeconds: job.input.durationSeconds,
+        nativeFps: H3_RIFE_NATIVE_FPS,
+        finalFps: h3FinalFpsForRife(job.input.rifeInterpolation60Fps),
+        rifeInterpolation60Fps: job.input.rifeInterpolation60Fps === true,
         backend: job.backend,
         workflowFile: job.workflowFile,
         preserveOriginalAudio: job.input.preserveOriginalAudio,
@@ -657,7 +669,18 @@ async function execute(job: H3BodySwapJob) {
         sceneId: job.id,
         generationJobId: job.id,
       });
-      const outputPath = await remuxOriginalAudio(job, visualPath);
+      let outputPath = await remuxOriginalAudio(job, visualPath);
+      const rifeResult = await applyH3Rife60FpsFinalization({
+        enabled: job.input.rifeInterpolation60Fps,
+        baseUrl: H3_BACKEND_PROFILES.rtx3090.baseUrl,
+        sourceVideoPath: outputPath,
+        ownerKey: job.ownerKey,
+        productionId: "h3-body-swap",
+        sceneId: job.id,
+        generationJobId: job.id,
+        outputPrefix: `otg_h3_body_swap_rife/${safeSegment(job.id)}`,
+      });
+      if (rifeResult) outputPath = rifeResult.outputPath;
       const completedJob = await updateJob(job.ownerKey, job.id, {
         status: "finalizing",
         statusMessage: "Body Swap video complete; saving to Gallery",
@@ -725,6 +748,9 @@ export function h3BodySwapPublicStatus(job: H3BodySwapJob) {
     quality: job.input.quality,
     orientation,
     durationSeconds: job.input.durationSeconds,
+    nativeFps: H3_RIFE_NATIVE_FPS,
+    finalFps: h3FinalFpsForRife(job.input.rifeInterpolation60Fps),
+    rifeInterpolation60Fps: job.input.rifeInterpolation60Fps === true,
     prompt: job.compiledPrompt || job.input.compiledPromptOverride || job.input.prompt,
     backend: job.backend,
     backendLabel: profile?.label || null,

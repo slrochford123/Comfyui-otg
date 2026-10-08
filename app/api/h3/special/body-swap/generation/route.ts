@@ -147,6 +147,7 @@ function readH3BodySwapGenerationConfig(config: Record<string, unknown>) {
     selector: String(config.selector || "person").trim() || "person",
     compiledPromptOverride: String(config.compiledPromptOverride || "").trim(),
     preserveOriginalAudio: config.preserveOriginalAudio !== false,
+    rifeInterpolation60Fps: config.rifeInterpolation60Fps === true,
     seed: Number.isSafeInteger(Number(config.seed)) && Number(config.seed) >= 0 ? Number(config.seed) : crypto.randomBytes(6).readUIntBE(0, 6),
   };
 }

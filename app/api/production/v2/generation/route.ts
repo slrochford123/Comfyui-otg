@@ -328,6 +328,7 @@ export async function POST(req: NextRequest) {
           promptFingerprint,
           durationSeconds: scene.durationSeconds,
           h3Quality: scene.h3Quality,
+          rifeInterpolation60Fps: scene.modelState.h3.rifeInterpolation60Fps,
           seed: seed(),
           startImage: null,
           references: [],
@@ -972,6 +973,8 @@ export async function POST(req: NextRequest) {
             scene.durationSeconds,
           h3Quality:
             scene.h3Quality,
+          rifeInterpolation60Fps:
+            scene.modelState.h3.rifeInterpolation60Fps,
           seed: seed(),
           startImage,
           references,

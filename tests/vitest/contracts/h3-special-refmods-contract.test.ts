@@ -18,6 +18,11 @@ import {
   validateH3RefModCreateRequest,
 } from "../../../lib/h3SpecialModes/refModCreation";
 import {
+  H3_LTX_ALPHA_GENERATOR_ID,
+  H3_LTX_ALPHA_REQUIRED_NODE_CLASSES,
+  inspectH3LtxAlphaCompatibility,
+} from "../../../lib/h3SpecialModes/ltxAlphaMotion";
+import {
   buildH3RefModAudioPackWorkflow,
   buildH3RefModVisualPackWorkflow,
 } from "../../../lib/h3SpecialModes/refModCreationWorkflow";
@@ -245,6 +250,49 @@ describe("H3 Ref Mods special mode contract", () => {
         [{ path: "/tmp/a.mp4", name: "a.mp4", kind: "video", durationSeconds: 31 }],
       ),
     ).toThrow("30 seconds or shorter");
+  });
+
+  it("records Motion RefMod subject/camera isolation intent without mutating source clips", async () => {
+    const subject = validateH3RefModCreateRequest(
+      {
+        kind: "motion",
+        name: "walk_subject",
+        motionType: "subject",
+        isolateSubject: true,
+      },
+      [{ path: "/tmp/source.mp4", name: "source.mp4", kind: "video", durationSeconds: 4 }],
+    );
+    expect(subject.config.motionType).toBe("subject");
+    expect(subject.config.isolateSubject).toBe(true);
+
+    const camera = validateH3RefModCreateRequest(
+      {
+        kind: "motion",
+        name: "orbit_camera",
+        motionType: "camera_scene",
+        isolateSubject: true,
+      },
+      [{ path: "/tmp/source.mp4", name: "source.mp4", kind: "video", durationSeconds: 4 }],
+    );
+    expect(camera.config.motionType).toBe("camera_scene");
+    expect(camera.config.isolateSubject).toBe(false);
+
+    expect(() =>
+      validateH3RefModCreateRequest(
+        { kind: "motion", name: "too_long_isolated", isolateSubject: true },
+        [{ path: "/tmp/source.mp4", name: "source.mp4", kind: "video", durationSeconds: 7 }],
+      ),
+    ).toThrow("Subject Motion isolation is limited to 6 seconds");
+
+    const unavailable = await inspectH3LtxAlphaCompatibility("");
+    expect(unavailable.compatible).toBe(false);
+    expect(unavailable.missingNodes).toEqual([...H3_LTX_ALPHA_REQUIRED_NODE_CLASSES]);
+    expect(H3_LTX_ALPHA_GENERATOR_ID).toBe("ltx-2.5-alpha-gen");
+
+    const jobs = read("lib/h3SpecialModes/refModCreationJobs.ts");
+    expect(jobs).toContain("LTX 2.5 Alpha Generation is unavailable on this backend");
+    expect(jobs).toContain("isolatedDerivativePath");
+    expect(jobs).not.toContain("grayscale alpha matte directly");
   });
 
   it("builds dedicated RefMod creator workflows without mutating standard H3 recipes", () => {

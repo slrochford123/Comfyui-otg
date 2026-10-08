@@ -31,6 +31,11 @@ import {
   submitH3PromptToBaseUrl,
 } from "@/lib/production/h3Comfy";
 import {
+  applyH3Rife60FpsFinalization,
+  h3FinalFpsForRife,
+  H3_RIFE_NATIVE_FPS,
+} from "@/lib/h3RifeFinalization";
+import {
   H3_BACKEND_PROFILES,
   type ProductionV2H3BackendId,
 } from "@/lib/production/h3Workflows";
@@ -51,6 +56,7 @@ export type H3RefModsJobInput = {
   prompt: string;
   refMods: ReturnType<typeof validateH3RefModsRequest>["refMods"];
   turbo: boolean;
+  rifeInterpolation60Fps: boolean;
   seed: number;
   compiledPrompt: string;
 };
@@ -171,6 +177,7 @@ export function validateH3RefModsJobInput(input: H3RefModsRequestInput): H3RefMo
     prompt: normalized.prompt,
     refMods: normalized.refMods,
     turbo: normalized.turbo,
+    rifeInterpolation60Fps: normalized.rifeInterpolation60Fps,
     seed,
     compiledPrompt: normalized.compiledPrompt,
   };
@@ -308,6 +315,9 @@ export async function saveH3RefModsJobToGallery(
         width: dimensions.width,
         height: dimensions.height,
         durationSeconds: job.input.durationSeconds,
+        nativeFps: H3_RIFE_NATIVE_FPS,
+        finalFps: h3FinalFpsForRife(job.input.rifeInterpolation60Fps),
+        rifeInterpolation60Fps: job.input.rifeInterpolation60Fps === true,
         turbo: job.input.turbo,
         backend: job.backend,
         backendUrl: job.backendUrl,
@@ -412,7 +422,7 @@ async function execute(job: H3RefModsJob) {
     const history = await getH3PromptHistoryFromBaseUrl(persisted.backendUrl, promptId);
     if (history.state === "failed") throw new Error("MiniMax H3 Ref Mods failed in ComfyUI. Review the ComfyUI history for the full node traceback.");
     if (history.state === "completed" && history.video) {
-      const outputPath = await downloadH3VideoFromBaseUrl({
+      let outputPath = await downloadH3VideoFromBaseUrl({
         baseUrl: persisted.backendUrl,
         file: history.video,
         ownerKey: job.ownerKey,
@@ -420,6 +430,17 @@ async function execute(job: H3RefModsJob) {
         sceneId: job.id,
         generationJobId: job.id,
       });
+      const rifeResult = await applyH3Rife60FpsFinalization({
+        enabled: job.input.rifeInterpolation60Fps,
+        baseUrl: persisted.backendUrl,
+        sourceVideoPath: outputPath,
+        ownerKey: job.ownerKey,
+        productionId: "h3-refmods",
+        sceneId: job.id,
+        generationJobId: job.id,
+        outputPrefix: `otg_h3_refmods_rife/${safeSegment(job.id)}`,
+      });
+      if (rifeResult) outputPath = rifeResult.outputPath;
       const completedJob = await updateJob(job.ownerKey, job.id, {
         status: "finalizing",
         statusMessage: "Video complete; saving to Gallery",
@@ -484,6 +505,7 @@ export function retryH3RefModsJob(source: H3RefModsJob) {
     prompt: source.input.prompt,
     refMods: source.input.refMods,
     turbo: source.input.turbo,
+    rifeInterpolation60Fps: source.input.rifeInterpolation60Fps,
     seed: crypto.randomBytes(6).readUIntBE(0, 6),
   }, source.galleryOwner);
 }
@@ -501,6 +523,9 @@ export function h3RefModsPublicStatus(job: H3RefModsJob) {
     quality: job.input.quality,
     orientation,
     durationSeconds: job.input.durationSeconds,
+    nativeFps: H3_RIFE_NATIVE_FPS,
+    finalFps: h3FinalFpsForRife(job.input.rifeInterpolation60Fps),
+    rifeInterpolation60Fps: job.input.rifeInterpolation60Fps === true,
     prompt: job.input.compiledPrompt || compileH3RefModsPrompt({
       prompt: job.input.prompt,
       refMods: job.input.refMods,

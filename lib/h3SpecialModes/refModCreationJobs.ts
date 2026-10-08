@@ -10,6 +10,12 @@ import {
   uploadH3InputToBaseUrl,
 } from "@/lib/production/h3Comfy";
 import {
+  H3_LTX_ALPHA_GENERATOR_ID,
+  H3_LTX_ALPHA_WORKFLOW_FILE,
+  assertH3LtxAlphaAvailable,
+  inspectH3LtxAlphaCompatibility,
+} from "@/lib/h3SpecialModes/ltxAlphaMotion";
+import {
   readH3RefModSidecar,
   validateH3RefModCreateRequest,
   writeH3RefModSidecar,
@@ -205,6 +211,17 @@ async function buildWorkflow(job: H3RefModCreateJob) {
     });
   }
 
+  if (config.kind === "motion" && config.isolateSubject) {
+    const compatibility = await inspectH3LtxAlphaCompatibility(job.backendUrl);
+    if (!compatibility.compatible) {
+      throw new Error(
+        `LTX 2.5 Alpha Generation is unavailable on this backend. Missing nodes: ${compatibility.missingNodes.join(", ") || "none"}.`,
+      );
+    }
+    await assertH3LtxAlphaAvailable(job.backendUrl);
+    throw new Error("LTX 2.5 Alpha Generation is available, but the TEST adapter has not validated the alpha-output mapping yet. Use Original Clip for this Motion RefMod until the alpha graph is physically qualified.");
+  }
+
   const folder = await uploadVisualSources(job);
   return buildH3RefModVisualPackWorkflow({
     folder,
@@ -353,6 +370,12 @@ async function runJob(job: H3RefModCreateJob) {
       characterId: job.input.config.characterId || null,
       description: job.input.config.description,
       savedPath: history.savedPath || null,
+      motionType: job.input.config.motionType,
+      isolationEnabled: job.input.config.isolateSubject,
+      alphaGenerator: job.input.config.isolateSubject ? H3_LTX_ALPHA_GENERATOR_ID : null,
+      sourceClipPath: job.input.config.kind === "motion" ? job.input.sources[0]?.path || null : null,
+      isolatedDerivativePath: null,
+      alphaWorkflow: job.input.config.isolateSubject ? H3_LTX_ALPHA_WORKFLOW_FILE : null,
       sourceAssets: job.input.sources,
     });
 

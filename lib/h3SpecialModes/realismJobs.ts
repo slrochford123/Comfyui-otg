@@ -18,6 +18,12 @@ import {
   type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
 import { H3_BACKEND_PROFILES, type ProductionV2H3BackendId } from "@/lib/production/h3Workflows";
+import {
+  applyH3Rife60FpsFinalization,
+  h3FinalFpsForRife,
+  H3_RIFE_NATIVE_FPS,
+  normalizeH3RifeInterpolation60Fps,
+} from "@/lib/h3RifeFinalization";
 import { validateH3RealismRequest, type H3RealismLoraSettingsInput } from "@/lib/h3SpecialModes/realism";
 import { buildH3RealismWorkflow, type H3RealismBuiltWorkflow } from "@/lib/h3SpecialModes/realismWorkflow";
 
@@ -43,6 +49,7 @@ export type H3RealismJobInput = {
   durationSeconds: H3ProductionDuration;
   prompt: string;
   compiledPromptOverride?: string;
+  rifeInterpolation60Fps?: boolean;
   seed: number;
   references: H3RealismReference[];
   loraSettings?: H3RealismLoraSettingsInput;
@@ -181,6 +188,7 @@ export function validateH3RealismJobInput(input: H3RealismJobInput) {
     orientation: normalized.orientation,
     durationSeconds: normalized.durationSeconds,
     prompt: normalized.prompt,
+    rifeInterpolation60Fps: normalizeH3RifeInterpolation60Fps(input.rifeInterpolation60Fps),
     references: input.references,
     loraSettings: input.loraSettings,
   };
@@ -320,6 +328,9 @@ export async function saveH3RealismJobToGallery(
         width: dimensions.width,
         height: dimensions.height,
         durationSeconds: job.input.durationSeconds,
+        nativeFps: H3_RIFE_NATIVE_FPS,
+        finalFps: h3FinalFpsForRife(job.input.rifeInterpolation60Fps),
+        rifeInterpolation60Fps: job.input.rifeInterpolation60Fps === true,
         backend: job.backend,
         workflowFile: job.workflowFile,
       },
@@ -590,7 +601,7 @@ async function execute(job: H3RealismJob) {
     const history = await getH3PromptHistory(backend, promptId, fetch, OUTPUT_NODE_ID);
     if (history.state === "failed") throw new Error("MiniMax H3 Realism failed in ComfyUI. Review the ComfyUI history for the full node traceback.");
     if (history.state === "completed" && history.video) {
-      const outputPath = await downloadH3Video({
+      let outputPath = await downloadH3Video({
         backend,
         file: history.video,
         ownerKey: job.ownerKey,
@@ -598,6 +609,17 @@ async function execute(job: H3RealismJob) {
         sceneId: job.id,
         generationJobId: job.id,
       });
+      const rifeResult = await applyH3Rife60FpsFinalization({
+        enabled: job.input.rifeInterpolation60Fps,
+        backend,
+        sourceVideoPath: outputPath,
+        ownerKey: job.ownerKey,
+        productionId: "h3-realism",
+        sceneId: job.id,
+        generationJobId: job.id,
+        outputPrefix: `otg_h3_realism_rife/${safeSegment(job.id)}`,
+      });
+      if (rifeResult) outputPath = rifeResult.outputPath;
       const completedJob = await updateJob(job.ownerKey, job.id, {
         status: "finalizing",
         statusMessage: "Video complete; saving to Gallery",
@@ -664,6 +686,9 @@ export function h3RealismPublicStatus(job: H3RealismJob) {
     quality: job.input.quality,
     orientation,
     durationSeconds: job.input.durationSeconds,
+    nativeFps: H3_RIFE_NATIVE_FPS,
+    finalFps: h3FinalFpsForRife(job.input.rifeInterpolation60Fps),
+    rifeInterpolation60Fps: job.input.rifeInterpolation60Fps === true,
     prompt: job.compiledPrompt || job.input.compiledPromptOverride || job.input.prompt,
     backend: job.backend,
     backendLabel: job.backend ? H3_BACKEND_PROFILES[job.backend].label : null,

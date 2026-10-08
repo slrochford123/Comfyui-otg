@@ -27,6 +27,7 @@ export type PersistedH3InputState = {
   mode: string;
   quality: string;
   h3Settings: H3AdvancedSettings;
+  rifeInterpolation60Fps?: boolean;
   duration: 5 | 10;
   orientation: string;
   originalPrompt: string;

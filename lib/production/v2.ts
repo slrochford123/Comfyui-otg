@@ -421,6 +421,7 @@ export type ProductionV2AssemblyState = {
 
 export type ProductionV2H3State = {
   lastMode: "h3-text-to-video" | "h3-image-to-video" | "h3-reference-to-video";
+  rifeInterpolation60Fps: boolean;
   userLoras: ProductionV2H3UserLoraState;
   imageToVideo: { startingImage: ProductionV2VisualReference | null };
   referenceToVideo: {
@@ -872,6 +873,7 @@ export function createProductionV2Scene(sceneNumber: number, model: ProductionV2
     modelState: {
       h3: {
         lastMode: "h3-image-to-video",
+        rifeInterpolation60Fps: false,
         userLoras: normalizeProductionV2H3UserLoras(DEFAULT_PRODUCTION_V2_H3_USER_LORAS),
         imageToVideo: { startingImage: null },
         referenceToVideo: {
@@ -2230,6 +2232,7 @@ function normalizeScene(value: any, index: number, defaultModel: ProductionV2Mod
     modelState: {
       h3: {
         lastMode: H3_MODES.includes(value?.modelState?.h3?.lastMode) ? value.modelState.h3.lastMode : "h3-image-to-video",
+        rifeInterpolation60Fps: value?.modelState?.h3?.rifeInterpolation60Fps === true,
         userLoras: normalizeProductionV2H3UserLoras(value?.modelState?.h3?.userLoras),
         imageToVideo: { startingImage },
         referenceToVideo: {

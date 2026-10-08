@@ -47,6 +47,9 @@ export async function GET() {
           if (sidecar) {
             normalized.sourceType = "otg-created";
             normalized.characterId = sidecar.characterId || null;
+            normalized.motionType = sidecar.motionType || null;
+            normalized.isolationEnabled = sidecar.isolationEnabled === true;
+            normalized.alphaGenerator = sidecar.alphaGenerator || null;
             normalized.createdAt ||= sidecar.createdAt;
             normalized.modifiedAt ||= sidecar.updatedAt;
           }

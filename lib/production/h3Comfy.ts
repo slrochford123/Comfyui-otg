@@ -47,6 +47,7 @@ export type H3BackendProbe = {
 export type H3BackendCompatibilityRequirements = {
   userLoraFilenames?: readonly string[];
   requireVsr?: boolean;
+  requireRife60Fps?: boolean;
   h3Settings?: H3AdvancedSettings;
   referenceCount?: number;
 
@@ -214,7 +215,7 @@ export async function inspectH3BackendCompatibility(
       resolvedH3Settings.motionLabInject !== null,
   });
 
-  const cacheKey = `${backend}:${requirements.requireVsr ? "vsr" : "native"}:${optionCacheKey}:${userLoraFilenames.join("\u0000")}`;
+  const cacheKey = `${backend}:${requirements.requireVsr ? "vsr" : "native"}:${requirements.requireRife60Fps ? "rife60" : "rife-off"}:${optionCacheKey}:${userLoraFilenames.join("\u0000")}`;
   try {
     const queueResponse = await fetchWithTimeout(fetcher, `${baseUrl}/queue`);
     if (!queueResponse.ok) throw new Error(`queue HTTP ${queueResponse.status}`);
@@ -226,6 +227,11 @@ export async function inspectH3BackendCompatibility(
       const requiredNodeClasses = [...new Set([
         ...h3RequiredNodeClassesForBackend(backend),
         ...(requirements.requireVsr ? H3_VSR_REQUIRED_NODE_CLASSES : []),
+        ...(requirements.requireRife60Fps ? [
+          "VHS_LoadVideo",
+          "RIFE_FPS_Resample",
+          "VHS_VideoCombine",
+        ] : []),
           ...optionNodeClasses,
       ])];
 
@@ -273,6 +279,14 @@ export async function inspectH3BackendCompatibility(
         ),
 
         ...optionAssets,
+
+        ...(requirements.requireRife60Fps ? [
+          [
+            "RIFE_FPS_Resample",
+            "ckpt_name",
+            "rife47.pth",
+          ] as const,
+        ] : []),
 
       ];
       const missingAssets = expectedAssets.flatMap(

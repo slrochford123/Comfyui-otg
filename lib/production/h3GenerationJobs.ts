@@ -39,6 +39,7 @@ export type ProductionV2H3GenerationPayload = {
   durationSeconds: ProductionV2Duration;
   h3Quality: H3Quality;
   seed: number;
+  rifeInterpolation60Fps?: boolean;
   startImage: ProductionV2VisualReference | null;
   references: ProductionV2VisualReference[];
   voices: ProductionV2ResolvedVoiceBinding[];
@@ -204,6 +205,7 @@ function fromRow(row: JobRow | undefined): ProductionV2GenerationJob | null {
     payload: {
       ...rawPayload,
       h3Quality: normalizeH3Quality(rawPayload.h3Quality),
+      rifeInterpolation60Fps: rawPayload.rifeInterpolation60Fps === true,
       userLoras: normalizeProductionV2H3UserLoras(rawPayload.userLoras),
     },
     workflowId: row.workflow_id,

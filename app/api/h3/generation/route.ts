@@ -276,6 +276,7 @@ function readH3GenerationConfig(
     durationSeconds,
     finalPrompt,
     h3Settings: config.h3Settings,
+    rifeInterpolation60Fps: config.rifeInterpolation60Fps === true,
     seed: Number.isSafeInteger(Number(config.seed)) && Number(config.seed) >= 0 ? Number(config.seed) : crypto.randomBytes(6).readUIntBE(0, 6),
     optionalLoras: Array.isArray(config.optionalLoras) ? config.optionalLoras as any : [],
   };
@@ -302,6 +303,7 @@ async function startGenerationJob(
       generation.h3Settings,
       media.images.length,
     ),
+    rifeInterpolation60Fps: generation.rifeInterpolation60Fps,
     seed: generation.seed,
     optionalLoras: generation.optionalLoras,
     firstImage: media.firstFiles[0] || null,

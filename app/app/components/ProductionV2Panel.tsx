@@ -151,6 +151,9 @@ type ProductionV2GenerationJobPayload = {
   backendLabel: string | null;
   h3Quality: ProductionV2H3Quality;
   nativeResolution: string | null;
+  nativeFps?: number;
+  finalFps?: number;
+  rifeInterpolation60Fps?: boolean;
   etaSeconds: number | null;
   etaMinSeconds: number | null;
   etaMaxSeconds: number | null;
@@ -3509,6 +3512,32 @@ export default function ProductionV2Panel() {
                             : `${formatH3Eta(h3Eta.minSeconds)}-${formatH3Eta(h3Eta.maxSeconds)}`}
                         </div>
                       ) : null}
+                      <label className="mt-3 flex items-start gap-3 rounded-lg border border-white/10 bg-black/25 p-3 text-xs font-bold text-zinc-200" data-otg="production-v2-h3-rife-60fps">
+                        <input
+                          type="checkbox"
+                          checked={selectedScene.modelState.h3.rifeInterpolation60Fps}
+                          disabled={readOnly}
+                          onChange={(event) =>
+                            updateSharedSceneInput((scene) => ({
+                              ...scene,
+                              modelState: {
+                                ...scene.modelState,
+                                h3: {
+                                  ...scene.modelState.h3,
+                                  rifeInterpolation60Fps: event.target.checked,
+                                },
+                              },
+                            }))
+                          }
+                          className="mt-0.5 h-4 w-4 accent-violet-300"
+                        />
+                        <span>
+                          <span className="block">60 FPS (RIFE)</span>
+                          <span className="mt-1 block font-normal text-zinc-500">
+                            Interpolates the finished video to 60 FPS. H3 still renders natively at 24 FPS.
+                          </span>
+                        </span>
+                      </label>
                     </div>
                   ) : (
                     <div aria-label="Quality" aria-readonly="true" className="mt-2 rounded-lg border border-white/10 bg-black/25 px-3 py-2.5 text-sm font-bold text-zinc-200">
