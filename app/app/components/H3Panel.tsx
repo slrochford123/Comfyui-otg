@@ -251,7 +251,7 @@ function refModDefaultStrength(category: H3RefModCategory) {
 function createRefModSlot(entry?: H3RefModLibraryEntry): H3RefModSlot {
   const category = entry?.category || "character";
   return {
-    id: `refmod-${crypto.randomUUID()}`,
+    id: `refmod-${h3UploadId()}`,
     name: entry?.name || "",
     category,
     sourceKind: entry?.kind || "unknown",
