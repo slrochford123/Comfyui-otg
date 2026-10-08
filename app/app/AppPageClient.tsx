@@ -326,6 +326,7 @@ const APP_UI_MODE_KEY = "otg:test:ui-mode:v1";
 const APP_USER_CACHE_KEY = "otg:test:last-user:v1";
 const APP_NOTIFICATION_HISTORY_KEY = "otg:test:android-notified-completions:v1";
 const APP_NOTIFICATION_CHANNEL_ID = "otg-generation-complete";
+const H3_REFMOD_USE_IN_H3_EVENT = "otg:h3:use-refmod";
 
 const APP_FONT_SCALE_OPTIONS: { id: AppFontScale; label: string; rootSize: string; description: string }[] = [
   { id: "small", label: "Small", rootSize: "14px", description: "More content on screen." },
@@ -1791,6 +1792,12 @@ useEffect(() => {
   useEffect(() => {
     if (tab === "settings" && isAdmin) void loadAdminImageLoras();
   }, [isAdmin, loadAdminImageLoras, tab]);
+
+  useEffect(() => {
+    const handler = () => setTab("h3");
+    window.addEventListener(H3_REFMOD_USE_IN_H3_EVENT, handler);
+    return () => window.removeEventListener(H3_REFMOD_USE_IN_H3_EVENT, handler);
+  }, []);
 
   const updateDescribePreview = useCallback((file: File | null) => {
     if (describePreviewUrlRef.current) {

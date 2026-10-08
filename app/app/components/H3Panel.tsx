@@ -385,6 +385,28 @@ function h3GalleryEndpointFor(job: Pick<JobStatus, "id" | "mode">) {
   return "/api/h3/generation/gallery";
 }
 
+const H3_REFMOD_PENDING_SELECTION_KEY = "otg:h3:pending-refmod-selection:v1";
+const H3_REFMOD_USE_IN_H3_EVENT = "otg:h3:use-refmod";
+
+function storePendingRefModSelection(entry: H3RefModLibraryEntry) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(H3_REFMOD_PENDING_SELECTION_KEY, JSON.stringify(entry));
+  window.dispatchEvent(new CustomEvent(H3_REFMOD_USE_IN_H3_EVENT, { detail: entry }));
+}
+
+function takePendingRefModSelection() {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(H3_REFMOD_PENDING_SELECTION_KEY);
+  if (!raw) return null;
+  window.localStorage.removeItem(H3_REFMOD_PENDING_SELECTION_KEY);
+  try {
+    const parsed = JSON.parse(raw) as H3RefModLibraryEntry;
+    return parsed?.name ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function h3JobStatusUrls(id?: string) {
   const endpoints = [
     "/api/h3/generation",
@@ -976,6 +998,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const [refModLibraryStatus, setRefModLibraryStatus] =
     useState<"idle" | "loading" | "ready" | "error">("idle");
   const [refModLibraryMessage, setRefModLibraryMessage] = useState("");
+  const [refModPickerOpen, setRefModPickerOpen] = useState(false);
+  const [refModPickerFilter, setRefModPickerFilter] =
+    useState<"all" | H3RefModCategory>("all");
+  const [refModPickerSearch, setRefModPickerSearch] = useState("");
   const [refModsTurbo, setRefModsTurbo] = useState(true);
   const [refModsSeedMode, setRefModsSeedMode] =
     useState<"random" | "fixed">("random");
@@ -1187,6 +1213,15 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       return "";
     }
   }, [refModsPrompt, refModSlots]);
+  const filteredRefModLibrary = useMemo(() => {
+    const search = refModPickerSearch.trim().toLowerCase();
+    return refModLibrary.filter((entry) => {
+      const categoryMatch =
+        refModPickerFilter === "all" || entry.category === refModPickerFilter;
+      const haystack = `${entry.name} ${entry.category} ${entry.kind} ${entry.description || ""}`.toLowerCase();
+      return categoryMatch && (!search || haystack.includes(search));
+    });
+  }, [refModLibrary, refModPickerFilter, refModPickerSearch]);
   const refModsWarningMessages = refModSlots.flatMap(refModSlotWarnings);
   const refModsValidationMessage = useMemo(() => {
     try {
@@ -1589,6 +1624,21 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       cancelled = true;
     };
   }, [studioMode, refModLibraryStatus]);
+  useEffect(() => {
+    function consume(entry: H3RefModLibraryEntry | null) {
+      if (!entry?.name) return;
+      setStudioMode("h3-refmods");
+      setRefModLibraryStatus("idle");
+      addRefModSlot(entry);
+      setMessage(`Added ${entry.name} to Ref Mods.`);
+    }
+    consume(takePendingRefModSelection());
+    const handler = (event: Event) => {
+      consume((event as CustomEvent<H3RefModLibraryEntry>).detail || takePendingRefModSelection());
+    };
+    window.addEventListener(H3_REFMOD_USE_IN_H3_EVENT, handler);
+    return () => window.removeEventListener(H3_REFMOD_USE_IN_H3_EVENT, handler);
+  }, []);
   useEffect(() => {
     if (!active) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -3684,266 +3734,26 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   />
                 </details>
               </section>
-              <section className={surface}>
-                <div className="flex flex-wrap items-start justify-between gap-3">
+              <section className={surface} data-otg="h3-refmods-selected-slots">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-xs font-black uppercase text-violet-200/75">
-                      02 / RefMod Library
+                      02 / Selected RefMods
                     </p>
                     <h2 className="mt-1 text-lg font-black">
-                      Characters, Motion, Audio, Bundles, All
+                      Slots 1-8
                     </h2>
                     <p className="mt-1 text-xs text-white/45">
-                      {refModLibraryStatus === "loading"
-                        ? "Scanning installed ComfyUI RefMods..."
-                        : refModLibraryMessage || "Library loads from the registered ComfyUI RefMod root."}
+                      Create and manage RefMods in Characters → Ref Mod Gallery. H3 only selects and generates.
                     </p>
                   </div>
                   <button
                     type="button"
                     className={command}
                     onClick={() => {
+                      setRefModPickerOpen(true);
                       setRefModLibraryStatus("idle");
-                      setRefModLibraryMessage("");
                     }}
-                  >
-                    Refresh
-                  </button>
-                </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  {refModLibrary.map((entry) => (
-                    <article
-                      key={entry.id}
-                      className="min-w-0 rounded-[6px] border border-white/10 bg-black/30 p-3"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-black text-white">
-                            {entry.name}
-                          </p>
-                          <p className="text-xs text-white/45">
-                            {categoryLabel(entry.category)} · {entry.kind} · {entry.tokens ?? "?"} tokens
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          className={command}
-                          onClick={() => addRefModSlot(entry)}
-                        >
-                          Add
-                        </button>
-                      </div>
-                      {entry.description ? (
-                        <p className="mt-2 line-clamp-2 text-xs text-white/55">
-                          {entry.description}
-                        </p>
-                      ) : null}
-                    </article>
-                  ))}
-                </div>
-                {!refModLibrary.length ? (
-                  <div className="mt-4 rounded-[6px] border border-dashed border-white/15 py-8 text-center text-sm text-white/35">
-                    No installed RefMods are visible yet. The bundled example should appear when the backend library endpoint is reachable.
-                  </div>
-                ) : null}
-              </section>
-              <section className={surface} data-otg="h3-refmods-create">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-black uppercase text-violet-200/75">
-                      Create RefMod
-                    </p>
-                    <h2 className="mt-1 text-lg font-black">
-                      Character, Motion, or Audio
-                    </h2>
-                  </div>
-                  {refModCreateJob ? (
-                    <span className="rounded-full bg-black/30 px-2 py-1 text-[11px] font-bold text-white/60">
-                      {refModCreateJob.status}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-3">
-                  <label className="text-xs text-white/55">
-                    Type
-                    <select
-                      className={`${field} mt-1`}
-                      value={refModCreateKind}
-                      onChange={(event) => {
-                        const next = event.target.value as "character" | "motion" | "audio";
-                        setRefModCreateKind(next);
-                        if (next === "motion") {
-                          setRefModCreateMotionType("subject");
-                          setRefModCreateIsolateSubject(true);
-                        }
-                      }}
-                    >
-                      <option value="character">Character</option>
-                      <option value="motion">Motion</option>
-                      <option value="audio">Audio</option>
-                    </select>
-                  </label>
-                  <label className="text-xs text-white/55 md:col-span-2">
-                    Name
-                    <input
-                      className={`${field} mt-1`}
-                      value={refModCreateName}
-                      onChange={(event) => setRefModCreateName(event.target.value)}
-                      placeholder="isabella_refmod"
-                    />
-                  </label>
-                  {refModCreateKind === "audio" ? (
-                    <label className="text-xs text-white/55">
-                      Audio category
-                      <select
-                        className={`${field} mt-1`}
-                        value={refModCreateAudioCategory}
-                        onChange={(event) =>
-                          setRefModCreateAudioCategory(event.target.value as "music" | "ambience" | "sound_fx")
-                        }
-                      >
-                        <option value="music">Music</option>
-                        <option value="ambience">Ambience</option>
-                        <option value="sound_fx">Sound Effect</option>
-                      </select>
-                    </label>
-                  ) : null}
-                  {refModCreateKind === "motion" ? (
-                    <>
-                      <label className="text-xs text-white/55">
-                        Motion Type
-                        <select
-                          className={`${field} mt-1`}
-                          value={refModCreateMotionType}
-                          onChange={(event) => {
-                            const next = event.target.value as "subject" | "camera_scene";
-                            setRefModCreateMotionType(next);
-                            setRefModCreateIsolateSubject(next === "subject");
-                          }}
-                        >
-                          <option value="subject">Subject Motion</option>
-                          <option value="camera_scene">Camera / Scene Motion</option>
-                        </select>
-                      </label>
-                      <label className={`flex items-center gap-2 text-xs font-bold ${refModCreateMotionType === "camera_scene" ? "text-white/35" : "text-white/60"}`}>
-                        <input
-                          type="checkbox"
-                          checked={refModCreateMotionType === "subject" && refModCreateIsolateSubject}
-                          disabled={refModCreateMotionType === "camera_scene"}
-                          onChange={(event) => setRefModCreateIsolateSubject(event.target.checked)}
-                        />
-                        Isolate Subject
-                      </label>
-                      <div className="text-xs leading-5 text-white/45">
-                        {refModCreateMotionType === "camera_scene"
-                          ? "Camera/scene RefMods need the surrounding scene to preserve camera motion."
-                          : "Subject Motion can use LTX 2.5 Alpha Gen first, then create the Motion RefMod from the isolated RGB subject clip."}
-                      </div>
-                    </>
-                  ) : null}
-                  <label className="text-xs text-white/55 md:col-span-3">
-                    Description
-                    <input
-                      className={`${field} mt-1`}
-                      value={refModCreateDescription}
-                      onChange={(event) => setRefModCreateDescription(event.target.value)}
-                      placeholder="Identity, motion, ambience, or source notes"
-                    />
-                  </label>
-                </div>
-                {refModCreateKind === "character" ? (
-                  <label className="mt-4 block text-xs text-white/55">
-                    Character images
-                    <input
-                      className={`${field} mt-1`}
-                      type="file"
-                      accept={H3_MEDIA_ACCEPT.image}
-                      multiple
-                      onChange={(event) =>
-                        setRefModCreateImages(Array.from(event.target.files || []))
-                      }
-                    />
-                    <span className="mt-2 block text-white/40">
-                      {refModCreateImages.length ? `${refModCreateImages.length} selected` : "4-8 images, same outfit, simple background."}
-                    </span>
-                  </label>
-                ) : refModCreateKind === "motion" ? (
-                  <label className="mt-4 block text-xs text-white/55">
-                    Motion video
-                    <input
-                      className={`${field} mt-1`}
-                      type="file"
-                      accept={H3_MEDIA_ACCEPT.video}
-                      onChange={(event) =>
-                        setRefModCreateVideo(event.target.files?.[0] || null)
-                      }
-                    />
-                    <span className="mt-2 block text-white/40">
-                      {refModCreateVideo?.name || "One short clip, ideally 2-4 seconds."}
-                    </span>
-                  </label>
-                ) : (
-                  <label className="mt-4 block text-xs text-white/55">
-                    Audio clip
-                    <input
-                      className={`${field} mt-1`}
-                      type="file"
-                      accept={H3_MEDIA_ACCEPT.audio}
-                      onChange={(event) =>
-                        setRefModCreateAudio(event.target.files?.[0] || null)
-                      }
-                    />
-                    <span className="mt-2 block text-white/40">
-                      {refModCreateAudio?.name || "5-15 seconds is the practical starting range."}
-                    </span>
-                  </label>
-                )}
-                <label className="mt-4 flex items-center gap-2 text-xs font-bold text-white/60">
-                  <input
-                    type="checkbox"
-                    checked={refModCreateReplace}
-                    onChange={(event) => setRefModCreateReplace(event.target.checked)}
-                  />
-                  Replace an existing RefMod with this name
-                </label>
-                {refModCreateValidationMessage ? (
-                  <div className="mt-4 rounded-[6px] border border-amber-300/25 bg-amber-300/10 p-3 text-sm text-amber-50">
-                    {refModCreateValidationMessage}
-                  </div>
-                ) : null}
-                {refModCreateJob ? (
-                  <div className="mt-4 rounded-[6px] border border-white/10 bg-black/30 p-3 text-sm text-white/60">
-                    <div className="font-bold text-white/80">
-                      {refModCreateJob.libraryName}
-                    </div>
-                    <div>{refModCreateJob.statusMessage}</div>
-                    {refModCreateJob.promptId ? <div>Prompt {refModCreateJob.promptId}</div> : null}
-                    {refModCreateJob.error ? <div className="text-red-100">{refModCreateJob.error}</div> : null}
-                  </div>
-                ) : null}
-                <button
-                  type="button"
-                  className={`${command} ${primary} mt-4 min-h-12 w-full`}
-                  disabled={Boolean(refModCreateValidationMessage)}
-                  onClick={() => void createRefMod()}
-                >
-                  Create RefMod
-                </button>
-              </section>
-              <section className={surface}>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-black uppercase text-violet-200/75">
-                      03 / Selected RefMods
-                    </p>
-                    <h2 className="mt-1 text-lg font-black">
-                      Slots 1-8
-                    </h2>
-                  </div>
-                  <button
-                    type="button"
-                    className={command}
-                    onClick={() => addRefModSlot()}
                   >
                     Add RefMod
                   </button>
@@ -4101,7 +3911,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                 </div>
                 {!refModSlots.length ? (
                   <div className="mt-4 rounded-[6px] border border-dashed border-white/15 py-8 text-center text-sm text-white/35">
-                    Add a RefMod from the library or enter a saved RefMod name manually.
+                    Use Add RefMod to choose from the shared Characters Ref Mod Gallery.
                   </div>
                 ) : null}
                 {refModsValidationMessage ? (
@@ -4114,6 +3924,97 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   </div>
                 ) : null}
               </section>
+              {refModPickerOpen ? (
+                <div className="fixed inset-0 z-50 flex items-end bg-black/70 p-3 sm:items-center sm:justify-center">
+                  <section className="max-h-[88vh] w-full max-w-4xl overflow-hidden rounded-[18px] border border-white/15 bg-zinc-950 shadow-2xl" data-otg="h3-refmods-picker">
+                    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 p-4">
+                      <div>
+                        <p className="text-xs font-black uppercase text-violet-200/75">
+                          Ref Mod Picker
+                        </p>
+                        <h2 className="mt-1 text-lg font-black text-white">
+                          Add RefMod to next slot
+                        </h2>
+                        <p className="mt-1 text-xs text-white/45">
+                          {refModLibraryStatus === "loading"
+                            ? "Loading RefMods..."
+                            : refModLibraryStatus === "error"
+                              ? "Could not load RefMod library. Retry."
+                              : refModLibraryMessage || "Shared with Characters → Ref Mod Gallery."}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button type="button" className={command} onClick={() => setRefModLibraryStatus("idle")}>
+                          Retry
+                        </button>
+                        <button type="button" className={command} onClick={() => setRefModPickerOpen(false)}>
+                          Close
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-3 overflow-y-auto p-4">
+                      <input
+                        className={field}
+                        value={refModPickerSearch}
+                        onChange={(event) => setRefModPickerSearch(event.target.value)}
+                        placeholder="Search RefMods"
+                      />
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                        {(["all", "character", "motion", "audio", "bundle"] as Array<"all" | H3RefModCategory>).map((filter) => (
+                          <button
+                            key={filter}
+                            type="button"
+                            className={`${command} ${choiceClass(refModPickerFilter === filter)}`}
+                            onClick={() => setRefModPickerFilter(filter)}
+                          >
+                            {filter === "all" ? "All" : categoryLabel(filter)}
+                          </button>
+                        ))}
+                      </div>
+                      {refModLibraryStatus === "loading" ? (
+                        <div className="rounded-[6px] border border-white/10 p-6 text-center text-sm text-white/50">
+                          Loading RefMods...
+                        </div>
+                      ) : refModLibraryStatus === "error" ? (
+                        <div className="rounded-[6px] border border-red-300/30 bg-red-500/10 p-4 text-sm text-red-50">
+                          Could not load RefMod library. Retry. {refModLibraryMessage}
+                        </div>
+                      ) : filteredRefModLibrary.length ? (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {filteredRefModLibrary.map((entry) => (
+                            <article key={entry.id} className="rounded-[6px] border border-white/10 bg-black/30 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-black text-white">{entry.name}</p>
+                                  <p className="text-xs text-white/45">
+                                    {categoryLabel(entry.category)} · {entry.kind}
+                                    {entry.category === "motion" ? ` · ${entry.motionType === "camera_scene" ? "Camera Motion" : "Subject Motion"}${entry.isolationEnabled ? " · Isolated" : " · Original"}` : ""}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  className={command}
+                                  onClick={() => {
+                                    addRefModSlot(entry);
+                                    setRefModPickerOpen(false);
+                                  }}
+                                >
+                                  Add to Slot
+                                </button>
+                              </div>
+                              {entry.description ? <p className="mt-2 line-clamp-2 text-xs text-white/55">{entry.description}</p> : null}
+                            </article>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="rounded-[6px] border border-dashed border-white/15 p-6 text-center text-sm text-white/35">
+                          No RefMods created yet.
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                </div>
+              ) : null}
             </>
           ) : !legacyModeActive ? (
             <section

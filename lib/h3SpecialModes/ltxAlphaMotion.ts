@@ -1,3 +1,5 @@
+import type { H3PromptGraph } from "@/lib/production/h3Workflows";
+
 export const H3_LTX_ALPHA_GENERATOR_ID = "ltx-2.5-alpha-gen" as const;
 export const H3_LTX_ALPHA_WORKFLOW_FILE = "LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled.json";
 export const H3_LTX_ALPHA_LORA_NAME = "ltx-2.5-22b-ic-lora-alpha-gen-0.9.safetensors";
@@ -15,10 +17,9 @@ export const H3_LTX_ALPHA_REQUIRED_NODE_CLASSES = [
   "LTXICLoRALoaderModelOnly",
   "LTXVConditioning",
   "LTXAddVideoICLoRAGuide",
-  "LTXVImgToVideoInplace",
+  "EmptyLTXVLatentVideo",
+  "LTXVEmptyLatentAudio",
   "LTXVConcatAVLatent",
-  "LTXVSetAudioRefTokens",
-  "VAEEncodeAudio",
   "LTXVCropGuides",
   "LTXVSeparateAVLatent",
   "SamplerCustomAdvanced",
@@ -27,12 +28,29 @@ export const H3_LTX_ALPHA_REQUIRED_NODE_CLASSES = [
   "CFGGuider",
   "RandomNoise",
   "VAEDecodeTiled",
-  "LTXVAudioVAEDecode",
   "GetVideoComponents",
+  "CLIPTextEncode",
   "CreateVideo",
   "SaveVideo",
   "LoadVideo",
 ] as const;
+
+export type H3LtxAlphaWorkflowInput = {
+  videoFilename: string;
+  width: number;
+  height: number;
+  frames: number;
+  fps: number;
+  seed: number;
+  outputPrefix: string;
+};
+
+export type H3LtxAlphaBuiltWorkflow = {
+  workflowId: "ltx-2.5-alpha-gen";
+  workflowFile: typeof H3_LTX_ALPHA_WORKFLOW_FILE;
+  graph: H3PromptGraph;
+  outputNodeId: "25";
+};
 
 type ObjectInfo = Record<string, unknown>;
 type ComboNodeInfo = {
@@ -139,4 +157,77 @@ export async function assertH3LtxAlphaAvailable(baseUrl: string) {
     );
   }
   return compatibility;
+}
+
+function positiveInteger(value: unknown, fallback: number) {
+  const number = Math.round(Number(value));
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+export function normalizeH3LtxAlphaFrameCount(value: unknown) {
+  const frames = positiveInteger(value, 81);
+  const clamped = Math.min(Math.max(frames, 9), 145);
+  return clamped % 8 === 1 ? clamped : clamped - ((clamped - 1) % 8);
+}
+
+export function buildH3LtxAlphaWorkflow(input: H3LtxAlphaWorkflowInput): H3LtxAlphaBuiltWorkflow {
+  const width = positiveInteger(input.width, 608);
+  const height = positiveInteger(input.height, 352);
+  const frames = normalizeH3LtxAlphaFrameCount(input.frames);
+  const fps = positiveInteger(input.fps, 24);
+  const seed = positiveInteger(input.seed, 42424402);
+  const videoFilename = clean(input.videoFilename);
+  const outputPrefix = clean(input.outputPrefix);
+  if (!videoFilename) throw new Error("LTX Alpha source video is required.");
+  if (!outputPrefix) throw new Error("LTX Alpha output prefix is required.");
+
+  const graph: H3PromptGraph = {
+    "1": { class_type: "LoadVideo", inputs: { file: videoFilename } },
+    "2": { class_type: "GetVideoComponents", inputs: { video: ["1", 0] } },
+    "3": { class_type: "VAELoader", inputs: { vae_name: H3_LTX_ALPHA_MODEL_ASSETS.audioVae } },
+    "4": { class_type: "VAELoader", inputs: { vae_name: H3_LTX_ALPHA_MODEL_ASSETS.videoVae } },
+    "5": { class_type: "UNETLoader", inputs: { unet_name: H3_LTX_ALPHA_MODEL_ASSETS.diffusionModel, weight_dtype: "default" } },
+    "6": { class_type: "CLIPLoader", inputs: { clip_name: H3_LTX_ALPHA_MODEL_ASSETS.textEncoder, type: "ltxv", device: "default" } },
+    "7": { class_type: "LTXICLoRALoaderModelOnly", inputs: { model: ["5", 0], lora_name: H3_LTX_ALPHA_LORA_NAME, strength_model: 1.0 } },
+    "8": { class_type: "CLIPTextEncode", inputs: { text: "", clip: ["6", 0] } },
+    "9": { class_type: "CLIPTextEncode", inputs: { text: "", clip: ["6", 0] } },
+    "10": { class_type: "LTXVConditioning", inputs: { positive: ["8", 0], negative: ["9", 0], frame_rate: fps } },
+    "11": { class_type: "EmptyLTXVLatentVideo", inputs: { width, height, length: frames, batch_size: 1 } },
+    "13": {
+      class_type: "LTXAddVideoICLoRAGuide",
+      inputs: {
+        positive: ["10", 0],
+        negative: ["10", 1],
+        vae: ["4", 0],
+        latent: ["11", 0],
+        image: ["2", 0],
+        frame_idx: 0,
+        strength: 1.0,
+        latent_downscale_factor: ["7", 1],
+        crop: "disabled",
+        use_tiled_encode: false,
+        tile_size: 256,
+        tile_overlap: 64,
+      },
+    },
+    "14": { class_type: "LTXVEmptyLatentAudio", inputs: { frames_number: frames, frame_rate: fps, batch_size: 1, audio_vae: ["3", 0] } },
+    "15": { class_type: "LTXVConcatAVLatent", inputs: { video_latent: ["13", 2], audio_latent: ["14", 0] } },
+    "16": { class_type: "CFGGuider", inputs: { model: ["7", 0], positive: ["13", 0], negative: ["13", 1], cfg: 1.0 } },
+    "17": { class_type: "KSamplerSelect", inputs: { sampler_name: "euler_ancestral" } },
+    "18": { class_type: "ManualSigmas", inputs: { sigmas: "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0" } },
+    "19": { class_type: "RandomNoise", inputs: { noise_seed: seed } },
+    "20": { class_type: "SamplerCustomAdvanced", inputs: { noise: ["19", 0], guider: ["16", 0], sampler: ["17", 0], sigmas: ["18", 0], latent_image: ["15", 0] } },
+    "21": { class_type: "LTXVSeparateAVLatent", inputs: { av_latent: ["20", 0] } },
+    "22": { class_type: "LTXVCropGuides", inputs: { positive: ["13", 0], negative: ["13", 1], latent: ["21", 0] } },
+    "23": { class_type: "VAEDecodeTiled", inputs: { samples: ["22", 2], vae: ["4", 0], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 8 } },
+    "24": { class_type: "CreateVideo", inputs: { images: ["23", 0], fps, bit_depth: 8, codec: "h264" } },
+    "25": { class_type: "SaveVideo", inputs: { video: ["24", 0], filename_prefix: outputPrefix, format: "auto", codec: "auto" } },
+  };
+
+  return {
+    workflowId: H3_LTX_ALPHA_GENERATOR_ID,
+    workflowFile: H3_LTX_ALPHA_WORKFLOW_FILE,
+    graph,
+    outputNodeId: "25",
+  };
 }

@@ -23,7 +23,9 @@ import {
   H3_LTX_ALPHA_MODEL_ASSETS,
   H3_LTX_ALPHA_REQUIRED_NODE_CLASSES,
   H3_LTX_ALPHA_WORKFLOW_FILE,
+  buildH3LtxAlphaWorkflow,
   inspectH3LtxAlphaCompatibility,
+  normalizeH3LtxAlphaFrameCount,
 } from "../../../lib/h3SpecialModes/ltxAlphaMotion";
 import {
   buildH3RefModAudioPackWorkflow,
@@ -49,10 +51,30 @@ describe("H3 Ref Mods special mode contract", () => {
     expect(panel).toContain('data-otg="h3-refmods-workspace"');
     expect(panel).toContain("/api/h3/special/refmods/library");
     expect(panel).toContain("/api/h3/special/refmods/generation");
-    expect(panel).toContain("/api/h3/special/refmods/create");
-    expect(panel).toContain('data-otg="h3-refmods-create"');
+    expect(panel).toContain('data-otg="h3-refmods-picker"');
+    expect(panel).toContain('data-otg="h3-refmods-selected-slots"');
+    expect(panel).not.toContain('data-otg="h3-refmods-create"');
+    expect(panel).toContain("Create and manage RefMods in Characters");
     expect(H3_PRODUCTION_ROUTE_KEYS.some((key) => key.includes("refmods"))).toBe(false);
     expect(read("lib/production/h3Workflows.ts")).not.toContain("h3-refmods");
+  });
+
+  it("moves RefMod asset management into Characters and keeps H3 picker-only", () => {
+    const characters = read("app/app/components/CharacterHubPanel.tsx");
+    const panel = read("app/app/components/H3Panel.tsx");
+    expect(characters).toContain('| "refmod-gallery"');
+    expect(characters).toContain('data-otg="character-refmod-gallery"');
+    expect(characters).toContain('data-otg="refmod-gallery-create"');
+    expect(characters).toContain('data-otg="refmod-create-wizard"');
+    expect(characters).toContain('data-otg="refmod-character-creator"');
+    expect(characters).toContain('data-otg="refmod-motion-creator"');
+    expect(characters).toContain('data-otg="refmod-audio-creator"');
+    expect(characters).toContain("Could not load RefMod library. Retry.");
+    expect(characters).toContain("No RefMods created yet.");
+    expect(characters).toContain("Loading RefMods...");
+    expect(characters).toContain("Use in H3");
+    expect(panel).not.toContain("Upload 4-8 images. 8 recommended.");
+    expect(panel).not.toContain("Create Audio RefMod");
   });
 
   it("preserves imported source workflows and records missing generation sources separately", () => {
@@ -296,6 +318,7 @@ describe("H3 Ref Mods special mode contract", () => {
     expect(H3_LTX_ALPHA_WORKFLOW_FILE).toBe("LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled.json");
     expect(H3_LTX_ALPHA_GENERATOR_ID).toBe("ltx-2.5-alpha-gen");
     expect(H3_LTX_ALPHA_REQUIRED_NODE_CLASSES).toContain("LTXICLoRALoaderModelOnly");
+    expect(H3_LTX_ALPHA_REQUIRED_NODE_CLASSES).not.toContain("LTXVImgToVideoInplace");
     expect(H3_LTX_ALPHA_REQUIRED_NODE_CLASSES).not.toContain("GetNode");
     expect(H3_LTX_ALPHA_REQUIRED_NODE_CLASSES).not.toContain("SetNode");
 
@@ -304,6 +327,30 @@ describe("H3 Ref Mods special mode contract", () => {
     expect(jobs).toContain("Missing assets");
     expect(jobs).toContain("isolatedDerivativePath");
     expect(jobs).not.toContain("grayscale alpha matte directly");
+  });
+
+  it("builds the official Alpha Gen compute graph with empty prompt and no RGB-preserve wrapper", () => {
+    expect(normalizeH3LtxAlphaFrameCount(96)).toBe(89);
+    expect(normalizeH3LtxAlphaFrameCount(122)).toBe(121);
+    const built = buildH3LtxAlphaWorkflow({
+      videoFilename: "source.mp4",
+      width: 960,
+      height: 544,
+      frames: 96,
+      fps: 24,
+      seed: 1234,
+      outputPrefix: "otg_alpha/test",
+    });
+    const classes = Object.values(built.graph).map((node: any) => node.class_type);
+    expect(classes).toContain("LTXICLoRALoaderModelOnly");
+    expect(classes).toContain("LTXAddVideoICLoRAGuide");
+    expect(classes).not.toContain("LTXVImgToVideoInplace");
+    expect(built.graph["7"].inputs.lora_name).toBe(H3_LTX_ALPHA_LORA_NAME);
+    expect(built.graph["7"].inputs.strength_model).toBe(1.0);
+    expect(built.graph["13"].inputs.strength).toBe(1.0);
+    expect(built.graph["8"].inputs.text).toBe("");
+    expect(built.graph["9"].inputs.text).toBe("");
+    expect(built.graph["11"].inputs.length).toBe(89);
   });
 
   it("builds dedicated RefMod creator workflows without mutating standard H3 recipes", () => {

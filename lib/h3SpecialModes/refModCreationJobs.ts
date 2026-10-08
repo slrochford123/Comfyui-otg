@@ -3,9 +3,11 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 
+import { resolveFfmpegPath, resolveFfprobePath, runCmd } from "@/lib/ffmpeg";
 import type { OwnerContext } from "@/lib/ownerKey";
 import { OTG_DATA_ROOT, ensureDir, safeJoin, safeSegment } from "@/lib/paths";
 import {
+  downloadH3VideoFromBaseUrl,
   submitH3PromptToBaseUrl,
   uploadH3InputToBaseUrl,
 } from "@/lib/production/h3Comfy";
@@ -13,7 +15,9 @@ import {
   H3_LTX_ALPHA_GENERATOR_ID,
   H3_LTX_ALPHA_WORKFLOW_FILE,
   assertH3LtxAlphaAvailable,
+  buildH3LtxAlphaWorkflow,
   inspectH3LtxAlphaCompatibility,
+  normalizeH3LtxAlphaFrameCount,
 } from "@/lib/h3SpecialModes/ltxAlphaMotion";
 import {
   readH3RefModSidecar,
@@ -47,6 +51,9 @@ export type H3RefModCreateJob = {
   workflowFile: string | null;
   libraryName: string;
   savedPath: string | null;
+  alphaMattePath?: string | null;
+  isolatedDerivativePath?: string | null;
+  originalSourcePath?: string | null;
   galleryOwner: Pick<OwnerContext, "ownerKey" | "username" | "deviceId" | "scope"> | null;
   error: string | null;
   createdAt: string;
@@ -58,6 +65,12 @@ type HistoryState = {
   state: "pending" | "running" | "completed" | "failed";
   error?: string;
   savedPath?: string | null;
+  video?: {
+    filename: string;
+    subfolder: string;
+    type: string;
+    nodeId?: string;
+  } | null;
 };
 
 const GLOBAL_KEY = "__otgH3RefModCreateJobs";
@@ -97,6 +110,28 @@ async function updateJob(ownerKey: string, id: string, patch: Partial<H3RefModCr
 
 function clean(value: unknown) {
   return String(value ?? "").trim();
+}
+
+function collectHistoryFiles(
+  value: unknown,
+  nodeId = "",
+): Array<{ filename: string; subfolder: string; type: string; nodeId?: string }> {
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) return value.flatMap((item) => collectHistoryFiles(item, nodeId));
+  const record = value as Record<string, unknown>;
+  const nextNodeId = typeof record.node_id === "string" ? record.node_id : nodeId;
+  const direct = typeof record.filename === "string"
+    ? [{
+        filename: record.filename,
+        subfolder: typeof record.subfolder === "string" ? record.subfolder : "",
+        type: typeof record.type === "string" ? record.type : "output",
+        nodeId: nextNodeId,
+      }]
+    : [];
+  return [
+    ...direct,
+    ...Object.values(record).flatMap((item) => collectHistoryFiles(item, nextNodeId)),
+  ];
 }
 
 export async function getH3RefModCreateJob(ownerKey: string, id: string) {
@@ -158,6 +193,9 @@ export async function createH3RefModCreateJob(
     workflowFile: null,
     libraryName: normalized.config.libraryName,
     savedPath: null,
+    alphaMattePath: null,
+    isolatedDerivativePath: null,
+    originalSourcePath: null,
     galleryOwner,
     error: null,
     createdAt: now,
@@ -193,6 +231,169 @@ async function uploadVisualSources(job: H3RefModCreateJob) {
   return subfolder;
 }
 
+async function probeVideoShape(filePath: string) {
+  const result = await runCmd(
+    resolveFfprobePath(),
+    [
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=width,height,r_frame_rate,nb_frames,duration",
+      "-of",
+      "json",
+      filePath,
+    ],
+    { timeoutMs: 20_000 },
+  );
+  if (result.code !== 0) {
+    throw new Error(`Could not inspect video for Alpha isolation: ${result.stderr || result.stdout || "ffprobe failed"}`);
+  }
+  const parsed = JSON.parse(result.stdout || "{}");
+  const stream = parsed?.streams?.[0] || {};
+  const [num, den] = String(stream.r_frame_rate || "24/1").split("/").map(Number);
+  const fps = Number.isFinite(num / den) && den ? Math.round(num / den) : 24;
+  const duration = Number(stream.duration || 0);
+  const frames = Number(stream.nb_frames || 0) || Math.max(9, Math.round(duration * fps));
+  return {
+    width: Number(stream.width || 608),
+    height: Number(stream.height || 352),
+    fps: fps || 24,
+    frames: normalizeH3LtxAlphaFrameCount(frames),
+  };
+}
+
+async function waitForAlphaCompletion(args: {
+  baseUrl: string;
+  promptId: string;
+  ownerKey: string;
+  jobId: string;
+}) {
+  const started = Date.now();
+  while (Date.now() - started < 45 * 60_000) {
+    const history = await readPromptHistory(args.baseUrl, args.promptId);
+    if (history.state === "failed") throw new Error(history.error || "LTX Alpha Generation failed.");
+    if (history.state === "completed" && history.video) {
+      return downloadH3VideoFromBaseUrl({
+        baseUrl: args.baseUrl,
+        file: history.video,
+        ownerKey: args.ownerKey,
+        productionId: "h3-special",
+        sceneId: "refmods-alpha",
+        generationJobId: args.jobId,
+        artifactSuffix: "alpha-matte",
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  throw new Error("Timed out waiting for LTX Alpha Generation.");
+}
+
+async function createIsolatedRgbDerivative(args: {
+  sourcePath: string;
+  mattePath: string;
+  outputPath: string;
+  width: number;
+  height: number;
+  fps: number;
+}) {
+  ensureDir(path.dirname(args.outputPath));
+  const result = await runCmd(
+    resolveFfmpegPath(),
+    [
+      "-y",
+      "-i",
+      args.sourcePath,
+      "-i",
+      args.mattePath,
+      "-filter_complex",
+      `[1:v]format=gray,scale=${args.width}:${args.height}[mask];[0:v]scale=${args.width}:${args.height},format=rgba[src];[src][mask]alphamerge[fg];color=c=gray:s=${args.width}x${args.height}:r=${args.fps}[bg];[bg][fg]overlay=shortest=1,format=yuv420p[v]`,
+      "-map",
+      "[v]",
+      "-an",
+      "-r",
+      String(args.fps),
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "+faststart",
+      args.outputPath,
+    ],
+    { timeoutMs: 10 * 60_000 },
+  );
+  if (result.code !== 0) {
+    throw new Error(`Could not create isolated RGB subject preview: ${result.stderr || result.stdout || "ffmpeg failed"}`);
+  }
+  return args.outputPath;
+}
+
+async function isolateMotionSource(job: H3RefModCreateJob) {
+  const source = job.input.sources[0];
+  const shape = await probeVideoShape(source.path);
+  const uploaded = await uploadH3InputToBaseUrl({
+    baseUrl: job.backendUrl,
+    sourcePath: source.path,
+    mediaType: "video",
+    uploadName: `${job.id}-alpha-source`,
+  });
+  const built = buildH3LtxAlphaWorkflow({
+    videoFilename: uploaded,
+    width: shape.width,
+    height: shape.height,
+    frames: shape.frames,
+    fps: shape.fps,
+    seed: Math.floor(Date.now() % 1_000_000_000),
+    outputPrefix: `otg_alpha/${safeSegment(job.id)}-matte`,
+  });
+  const submitted = await submitH3PromptToBaseUrl({
+    baseUrl: job.backendUrl,
+    graph: built.graph,
+    clientId: `otg-${job.id}-alpha`,
+    jobId: `${job.id}-alpha`,
+    ownerKey: job.ownerKey,
+    deviceId: job.galleryOwner?.deviceId || "",
+    workerId: "h3-refmod-alpha",
+    preSubmitCleanup: null,
+  });
+  if (!submitted.accepted) throw new Error(submitted.error || "ComfyUI rejected LTX Alpha Generation.");
+  const mattePath = await waitForAlphaCompletion({
+    baseUrl: job.backendUrl,
+    promptId: submitted.promptId,
+    ownerKey: job.ownerKey,
+    jobId: job.id,
+  });
+  const isolatedPath = safeJoin(
+    OTG_DATA_ROOT,
+    "h3-special",
+    "refmods",
+    safeSegment(job.ownerKey),
+    "alpha",
+    safeSegment(job.id),
+    "isolated-rgb.mp4",
+  );
+  await createIsolatedRgbDerivative({
+    sourcePath: source.path,
+    mattePath,
+    outputPath: isolatedPath,
+    width: shape.width,
+    height: shape.height,
+    fps: shape.fps,
+  });
+  return {
+    source: {
+      ...source,
+      path: isolatedPath,
+      name: `${path.parse(source.name || "motion").name}-isolated.mp4`,
+    },
+    mattePath,
+    isolatedPath,
+    originalSourcePath: source.path,
+  };
+}
+
 async function buildWorkflow(job: H3RefModCreateJob) {
   const { config, sources } = job.input;
   if (config.kind === "audio") {
@@ -219,7 +420,20 @@ async function buildWorkflow(job: H3RefModCreateJob) {
       );
     }
     await assertH3LtxAlphaAvailable(job.backendUrl);
-    throw new Error("LTX 2.5 Alpha Generation is available, but the TEST adapter has not validated the alpha-output mapping yet. Use Original Clip for this Motion RefMod until the alpha graph is physically qualified.");
+    await updateJob(job.ownerKey, job.id, {
+      status: "running",
+      statusMessage: "Generating isolation with LTX 2.5 Alpha Gen",
+    });
+    const isolated = await isolateMotionSource(job);
+    job.input.sources = [isolated.source];
+    job = await updateJob(job.ownerKey, job.id, {
+      input: job.input,
+      alphaMattePath: isolated.mattePath,
+      isolatedDerivativePath: isolated.isolatedPath,
+      originalSourcePath: isolated.originalSourcePath,
+      status: "preparing",
+      statusMessage: "Isolation ready; creating Motion RefMod from isolated RGB",
+    });
   }
 
   const folder = await uploadVisualSources(job);
@@ -229,7 +443,7 @@ async function buildWorkflow(job: H3RefModCreateJob) {
     subfolder: config.subfolder,
     kind: config.kind,
     description: config.description,
-    sourceCount: sources.length,
+    sourceCount: job.input.sources.length,
   });
 }
 
@@ -286,7 +500,10 @@ async function readPromptHistory(baseUrl: string, promptId: string): Promise<His
     };
   }
   const savedPath = selectH3RefModSavedPathFromHistoryEntry(entry);
-  if (status?.completed) return { state: "completed", savedPath };
+  const video = collectHistoryFiles(entry.outputs || entry)
+    .find((file) => /\.(mp4|webm|mov|m4v|mkv)$/i.test(file.filename))
+    || null;
+  if (status?.completed) return { state: "completed", savedPath, video };
   return { state: "running" };
 }
 
@@ -318,6 +535,7 @@ async function runJob(job: H3RefModCreateJob) {
     }
 
     const built = await buildWorkflow(job);
+    job = await getH3RefModCreateJob(job.ownerKey, job.id) || job;
     const clientId = `otg-${job.id}`;
     await updateJob(job.ownerKey, job.id, {
       status: "preparing",
@@ -373,8 +591,8 @@ async function runJob(job: H3RefModCreateJob) {
       motionType: job.input.config.motionType,
       isolationEnabled: job.input.config.isolateSubject,
       alphaGenerator: job.input.config.isolateSubject ? H3_LTX_ALPHA_GENERATOR_ID : null,
-      sourceClipPath: job.input.config.kind === "motion" ? job.input.sources[0]?.path || null : null,
-      isolatedDerivativePath: null,
+      sourceClipPath: job.input.config.kind === "motion" ? job.originalSourcePath || job.input.sources[0]?.path || null : null,
+      isolatedDerivativePath: job.isolatedDerivativePath || null,
       alphaWorkflow: job.input.config.isolateSubject ? H3_LTX_ALPHA_WORKFLOW_FILE : null,
       sourceAssets: job.input.sources,
     });
@@ -383,6 +601,9 @@ async function runJob(job: H3RefModCreateJob) {
       status: "completed",
       statusMessage: "RefMod created and registered",
       savedPath: history.savedPath || null,
+      alphaMattePath: job.alphaMattePath || null,
+      isolatedDerivativePath: job.isolatedDerivativePath || null,
+      originalSourcePath: job.originalSourcePath || null,
       completedAt,
     });
   } catch (error) {

@@ -43,6 +43,7 @@ function ownerAllowedRoots(owner: Awaited<ReturnType<typeof getOwnerContext>>) {
     path.join(OTG_DATA_ROOT, "edit_video_dub_voice_jobs", ownerSafe),
     path.join(OTG_DATA_ROOT, "extract_audio_jobs", ownerSafe),
     path.join(OTG_DATA_ROOT, "h3-direct", ownerSafe),
+    path.join(OTG_DATA_ROOT, "h3-special", "refmods", ownerSafe),
     path.join(OTG_DATA_ROOT, "production_storyboard_sync", ownerSafe),
     path.join(OTG_DATA_ROOT, "productions", ownerSafe),
     path.join(OTG_DATA_ROOT, "productions-v2", ownerSafe),

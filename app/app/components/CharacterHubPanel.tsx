@@ -28,6 +28,11 @@ import {
 import CharacterIdentityVoicePanel, { SavedCharacterLibrary } from "./CharacterIdentityVoicePanel";
 import AssetGalleryPanel from "./AssetGalleryPanel";
 import VoiceCharactersPanel from "./VoiceCharactersPanel";
+import { H3_MEDIA_ACCEPT } from "@/lib/h3MediaTypes";
+import {
+  type H3RefModCategory,
+  type H3RefModLibraryEntry,
+} from "@/lib/h3SpecialModes/refMods";
 import {
   appendCharacterEditCandidate,
   type CharacterCandidateLineage,
@@ -48,6 +53,7 @@ type CharacterHubView =
   | "character-gallery"
   | "background-gallery"
   | "asset-gallery"
+  | "refmod-gallery"
   | "create-character"
   | "create-freeform"
   | "upload-character"
@@ -121,6 +127,9 @@ const CHARACTER_IMAGE_MODELS: Array<{
     workflowFile: "image_qwen_image_2_1_t2i.json",
   },
 ];
+
+const H3_REFMOD_PENDING_SELECTION_KEY = "otg:h3:pending-refmod-selection:v1";
+const H3_REFMOD_USE_IN_H3_EVENT = "otg:h3:use-refmod";
 
 function cn(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -208,6 +217,25 @@ function GalleryCard({
       </div>
     </button>
   );
+}
+
+function refModCategoryLabel(category: H3RefModCategory) {
+  if (category === "character") return "Character";
+  if (category === "motion") return "Motion";
+  if (category === "audio") return "Audio";
+  if (category === "bundle") return "Bundle";
+  return "Uncategorized";
+}
+
+function refModFileUrl(file: string | null | undefined) {
+  const value = String(file || "").trim();
+  return value ? `/api/file?path=${encodeURIComponent(value)}` : "";
+}
+
+function useRefModInH3(entry: H3RefModLibraryEntry) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(H3_REFMOD_PENDING_SELECTION_KEY, JSON.stringify(entry));
+  window.dispatchEvent(new CustomEvent(H3_REFMOD_USE_IN_H3_EVENT, { detail: entry }));
 }
 
 // OTG_CHARACTER_HUB_DRAFT_CONTROLS_V1
@@ -3499,6 +3527,429 @@ function FutureGalleryPlaceholder({
   );
 }
 
+type RefModCreateStep = "choose" | "character" | "motion" | "audio";
+type RefModLibraryStatus = "loading" | "ready" | "error";
+type RefModMotionChoice = "subject" | "camera_scene";
+type RefModReviewChoice = "pending" | "original" | "isolated";
+
+type RefModCreateJobStatus = {
+  id: string;
+  status: string;
+  statusMessage?: string;
+  libraryName?: string;
+  savedPath?: string | null;
+  error?: string;
+};
+
+type SavedCharacterOption = {
+  id: string;
+  name: string;
+  description?: string;
+  imagePath?: string;
+  previewImagePath?: string;
+  defaultCharacterImagePath?: string;
+  defaultCharacterPreviewImagePath?: string;
+  backgroundRemovedDefaultImagePath?: string;
+  characterCardPath?: string;
+};
+
+function characterOptionImagePath(item: SavedCharacterOption) {
+  return (
+    item.defaultCharacterPreviewImagePath ||
+    item.defaultCharacterImagePath ||
+    item.backgroundRemovedDefaultImagePath ||
+    item.previewImagePath ||
+    item.imagePath ||
+    item.characterCardPath ||
+    ""
+  );
+}
+
+function RefModGalleryPanel({
+  onBack,
+  onCreateCharacter,
+}: {
+  onBack: () => void;
+  onCreateCharacter: () => void;
+}) {
+  const [entries, setEntries] = React.useState<H3RefModLibraryEntry[]>([]);
+  const [status, setStatus] = React.useState<RefModLibraryStatus>("loading");
+  const [error, setError] = React.useState("");
+  const [message, setMessage] = React.useState("");
+  const [filter, setFilter] = React.useState<"all" | H3RefModCategory>("all");
+  const [search, setSearch] = React.useState("");
+  const [creatorOpen, setCreatorOpen] = React.useState(false);
+  const [createStep, setCreateStep] = React.useState<RefModCreateStep>("choose");
+  const [name, setName] = React.useState("");
+  const [description, setDescription] = React.useState("");
+  const [characterPath, setCharacterPath] = React.useState<"upload" | "existing" | "new">("upload");
+  const [characterFiles, setCharacterFiles] = React.useState<File[]>([]);
+  const [characters, setCharacters] = React.useState<SavedCharacterOption[]>([]);
+  const [selectedCharacterId, setSelectedCharacterId] = React.useState("");
+  const [motionFile, setMotionFile] = React.useState<File | null>(null);
+  const [motionType, setMotionType] = React.useState<RefModMotionChoice>("subject");
+  const [isolateSubject, setIsolateSubject] = React.useState(true);
+  const [reviewChoice, setReviewChoice] = React.useState<RefModReviewChoice>("pending");
+  const [reviewReady, setReviewReady] = React.useState(false);
+  const [audioFile, setAudioFile] = React.useState<File | null>(null);
+  const [audioCategory, setAudioCategory] = React.useState<"music" | "ambience" | "sound_fx">("ambience");
+  const [createBusy, setCreateBusy] = React.useState(false);
+  const [createError, setCreateError] = React.useState("");
+  const [createMessage, setCreateMessage] = React.useState("");
+  const [createJob, setCreateJob] = React.useState<RefModCreateJobStatus | null>(null);
+
+  const loadLibrary = React.useCallback(async () => {
+    setStatus("loading");
+    setError("");
+    try {
+      const response = await fetch("/api/h3/special/refmods/library", {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const json = await response.json().catch(() => null);
+      if (!response.ok || !json?.ok) throw new Error(json?.error || "Could not load RefMod library.");
+      setEntries(Array.isArray(json.entries) ? json.entries : []);
+      setStatus("ready");
+    } catch (err) {
+      setEntries([]);
+      setStatus("error");
+      setError(err instanceof Error ? err.message : "Could not load RefMod library.");
+    }
+  }, []);
+
+  const loadCharacters = React.useCallback(async () => {
+    try {
+      const response = await fetch("/api/characters", {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const json = await response.json().catch(() => null);
+      setCharacters(response.ok && json?.ok && Array.isArray(json.items) ? json.items : []);
+    } catch {
+      setCharacters([]);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void loadLibrary();
+    void loadCharacters();
+  }, [loadCharacters, loadLibrary]);
+
+  React.useEffect(() => {
+    if (motionType === "camera_scene") {
+      setIsolateSubject(false);
+      setReviewChoice("original");
+      setReviewReady(false);
+    } else {
+      setIsolateSubject(true);
+      setReviewChoice("pending");
+    }
+  }, [motionType]);
+
+  const filteredEntries = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return entries.filter((entry) => {
+      if (filter !== "all" && entry.category !== filter) return false;
+      if (!q) return true;
+      return [
+        entry.name,
+        entry.description,
+        entry.file,
+        entry.concept,
+        entry.category,
+        entry.motionType,
+        entry.isolationEnabled ? "isolated" : "original",
+      ].some((value) => String(value || "").toLowerCase().includes(q));
+    });
+  }, [entries, filter, search]);
+
+  const selectedCharacter = characters.find((item) => item.id === selectedCharacterId) || null;
+
+  function resetCreator(next: RefModCreateStep = "choose") {
+    setCreateStep(next);
+    setName("");
+    setDescription("");
+    setCharacterPath("upload");
+    setCharacterFiles([]);
+    setMotionFile(null);
+    setMotionType("subject");
+    setIsolateSubject(true);
+    setReviewChoice("pending");
+    setReviewReady(false);
+    setAudioFile(null);
+    setAudioCategory("ambience");
+    setCreateError("");
+    setCreateMessage("");
+    setCreateJob(null);
+  }
+
+  function entrySubtitle(entry: H3RefModLibraryEntry) {
+    if (entry.category === "motion") {
+      if (entry.motionType === "camera_scene") return "Camera Motion";
+      return `Subject Motion${entry.isolationEnabled ? " / Isolated" : " / Original"}`;
+    }
+    if (entry.category === "audio") return entry.concept || "Audio";
+    if (entry.category === "character") return entry.characterId ? `Character / ${entry.characterId}` : "Character";
+    return entry.concept || entry.kind || "RefMod";
+  }
+
+  function markIsolationPreviewReady() {
+    if (!motionFile) {
+      setCreateError("Choose a source video before generating an isolation preview.");
+      return;
+    }
+    setCreateError("");
+    setReviewReady(true);
+    setReviewChoice("isolated");
+    setCreateMessage("Isolation preview ready for review. Choose Original or Isolated before creating the Motion RefMod.");
+  }
+
+  async function pollCreateJob(jobId: string) {
+    for (let index = 0; index < 900; index += 1) {
+      const response = await fetch(`/api/h3/special/refmods/create?jobId=${encodeURIComponent(jobId)}`, {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const json = await response.json().catch(() => null);
+      const job = json?.job as RefModCreateJobStatus | null;
+      if (job) {
+        setCreateJob(job);
+        setCreateMessage(job.statusMessage || job.status);
+        if (job.status === "completed") {
+          setCreateBusy(false);
+          setCreatorOpen(false);
+          setMessage(`Created ${job.libraryName || "RefMod"}.`);
+          await loadLibrary();
+          return;
+        }
+        if (job.status === "failed") throw new Error(job.error || job.statusMessage || "RefMod creation failed.");
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+    }
+    throw new Error("Timed out waiting for RefMod creation.");
+  }
+
+  async function submitCreate() {
+    setCreateError("");
+    setCreateMessage("");
+    if (!name.trim()) {
+      setCreateError("Name the RefMod before creating it.");
+      return;
+    }
+    if (createStep === "character" && characterPath !== "upload") {
+      setCreateError("Character card RefMod set generation is staged in this gallery; use Upload Images for creation until the Character Card set is approved.");
+      return;
+    }
+
+    const config: Record<string, unknown> = {
+      kind: createStep,
+      name: name.trim(),
+      description,
+      audioCategory,
+      motionType,
+      isolateSubject: motionType === "subject" && reviewChoice === "isolated",
+      alphaIsolationConfirmed: motionType === "subject" && reviewChoice === "isolated",
+      characterId: selectedCharacterId,
+    };
+    const form = new FormData();
+    form.append("config", JSON.stringify(config));
+    if (createStep === "character") {
+      if (characterFiles.length < 4 || characterFiles.length > 8) {
+        setCreateError("Upload 4-8 images. 8 recommended.");
+        return;
+      }
+      characterFiles.forEach((file) => form.append("images", file));
+    } else if (createStep === "motion") {
+      if (!motionFile) {
+        setCreateError("Choose a source video.");
+        return;
+      }
+      if (motionType === "subject" && reviewChoice === "pending") {
+        setCreateError("Review the motion source and choose Use Original or Use Isolated.");
+        return;
+      }
+      form.append("video", motionFile);
+    } else if (createStep === "audio") {
+      if (!audioFile) {
+        setCreateError("Choose an audio file.");
+        return;
+      }
+      form.append("audio", audioFile);
+    }
+
+    setCreateBusy(true);
+    setCreateMessage("Preparing RefMod creation job...");
+    try {
+      const response = await fetch("/api/h3/special/refmods/create", {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+      const json = await response.json().catch(() => null);
+      if (!response.ok || !json?.ok || !json?.job?.id) throw new Error(json?.error || "Could not start RefMod creation.");
+      setCreateJob(json.job);
+      setCreateMessage(json.job.statusMessage || "RefMod creation queued.");
+      await pollCreateJob(json.job.id);
+    } catch (err) {
+      setCreateBusy(false);
+      setCreateError(err instanceof Error ? err.message : "Could not create RefMod.");
+    }
+  }
+
+  return (
+    <div className="space-y-4" data-otg="character-refmod-gallery">
+      <div className="rounded-[30px] border border-violet-300/20 bg-[radial-gradient(circle_at_top_left,rgba(167,139,250,0.22),transparent_42%),rgba(2,8,16,0.94)] p-5 sm:p-7">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="text-xs font-black uppercase tracking-[0.24em] text-violet-200/75">Characters</div>
+            <h1 className="mt-2 text-4xl font-black tracking-tight text-white">Ref Mod Gallery</h1>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-white/60">
+              Manage reusable Character, Motion, Audio, and Bundle RefMods. H3 uses this shared library when generating with Ref Mods.
+            </p>
+          </div>
+          <BackButton label="Galleries" onClick={onBack} />
+        </div>
+      </div>
+
+      <div className="rounded-[26px] border border-white/10 bg-white/[0.035] p-4 sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-2" data-otg="refmod-gallery-filters">
+            {([
+              ["all", "All"],
+              ["character", "Characters"],
+              ["motion", "Motion"],
+              ["audio", "Audio"],
+              ["bundle", "Bundles"],
+            ] as const).map(([value, label]) => (
+              <button key={value} type="button" onClick={() => setFilter(value)} className={cn("min-h-10 rounded-full border px-4 text-sm font-black", filter === value ? "border-violet-200 bg-violet-300 text-zinc-950" : "border-white/10 bg-black/25 text-white/65")}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <button type="button" onClick={() => { resetCreator(); setCreatorOpen(true); }} className="min-h-11 rounded-xl bg-violet-300 px-4 text-sm font-black text-zinc-950" data-otg="refmod-gallery-create">
+            + Create Ref Mod
+          </button>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search RefMods" className="min-h-12 min-w-0 flex-1 rounded-2xl border border-white/10 bg-black/30 px-4 text-sm font-bold text-white outline-none placeholder:text-white/35 focus:border-violet-200/60" />
+          <button type="button" onClick={() => void loadLibrary()} className="min-h-12 rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-sm font-bold text-white/75">Retry</button>
+        </div>
+      </div>
+
+      {status === "loading" ? <div className="rounded-2xl border border-white/10 bg-black/25 p-5 text-sm text-white/50">Loading RefMods...</div> : null}
+      {status === "error" ? <div className="rounded-2xl border border-red-300/20 bg-red-400/10 p-5 text-sm text-red-100" role="alert">Could not load RefMod library. Retry.{error ? <div className="mt-2 text-xs text-red-100/70">{error}</div> : null}</div> : null}
+      {message ? <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4 text-sm text-emerald-100">{message}</div> : null}
+      {status === "ready" && entries.length === 0 ? <div className="rounded-2xl border border-dashed border-white/10 p-6 text-sm text-white/45">No RefMods created yet.</div> : null}
+
+      {status === "ready" && filteredEntries.length > 0 ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" data-otg="refmod-gallery-cards">
+          {filteredEntries.map((entry) => {
+            const playable = entry.category === "motion" || entry.category === "audio";
+            const src = playable ? refModFileUrl(entry.file) : "";
+            return (
+              <article key={entry.id || entry.name} className="overflow-hidden rounded-2xl border border-white/10 bg-black/30">
+                <div className="flex aspect-video items-center justify-center bg-black/40 p-3">
+                  {src && entry.category === "motion" ? <video src={src} controls preload="metadata" playsInline className="max-h-full w-full rounded-xl bg-black" /> : src && entry.category === "audio" ? <audio src={src} controls className="w-full" /> : <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-violet-200/25 bg-violet-300/10 text-xl font-black text-violet-100">{refModCategoryLabel(entry.category).slice(0, 2)}</div>}
+                </div>
+                <div className="space-y-3 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="break-words text-lg font-black text-white">{entry.name}</h3>
+                      <p className="mt-1 text-xs font-bold uppercase tracking-[0.14em] text-violet-100/65">{refModCategoryLabel(entry.category)}</p>
+                    </div>
+                    <span className="shrink-0 rounded-full border border-white/10 px-2 py-1 text-[11px] font-bold text-white/45">{entry.kind}</span>
+                  </div>
+                  <p className="text-sm leading-6 text-white/55">{entrySubtitle(entry)}</p>
+                  {entry.description ? <p className="line-clamp-3 text-xs leading-5 text-white/40">{entry.description}</p> : null}
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => useRefModInH3(entry)} className="min-h-10 rounded-xl bg-cyan-300 px-3 text-sm font-black text-zinc-950">Use in H3</button>
+                    <button type="button" className="min-h-10 rounded-xl border border-white/10 px-3 text-sm font-bold text-white/65">View</button>
+                    <button type="button" className="min-h-10 rounded-xl border border-white/10 px-3 text-sm font-bold text-white/45" disabled>Rebuild</button>
+                    <button type="button" className="min-h-10 rounded-xl border border-white/10 px-3 text-sm font-bold text-white/35" disabled>Delete</button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {creatorOpen && typeof document !== "undefined" ? createPortal(
+        <div className="fixed inset-0 z-[100000] flex items-end bg-black/75 p-0 sm:items-center sm:justify-center sm:p-5" role="dialog" aria-modal="true">
+          <div className="max-h-[92vh] w-full overflow-y-auto rounded-t-[28px] border border-white/10 bg-zinc-950 p-4 shadow-2xl sm:max-w-4xl sm:rounded-[28px] sm:p-6" data-otg="refmod-create-wizard">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-black uppercase tracking-[0.22em] text-violet-100/70">Create Ref Mod</div>
+                <h2 className="mt-1 text-2xl font-black text-white">{createStep === "choose" ? "Choose Type" : createStep === "character" ? "Character RefMod" : createStep === "motion" ? "Motion RefMod" : "Audio RefMod"}</h2>
+              </div>
+              <button type="button" onClick={() => setCreatorOpen(false)} className="min-h-11 rounded-full border border-white/10 px-4 text-sm font-bold text-white/70">Close</button>
+            </div>
+
+            {createStep === "choose" ? (
+              <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                <button type="button" onClick={() => resetCreator("character")} className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 text-left"><div className="text-lg font-black text-white">Character</div><p className="mt-2 text-sm leading-6 text-white/55">Create identity RefMods from 4-8 images, an existing Character, or a new Character Card set.</p></button>
+                <button type="button" onClick={() => resetCreator("motion")} className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 text-left"><div className="text-lg font-black text-white">Motion</div><p className="mt-2 text-sm leading-6 text-white/55">Create Subject Motion or Camera / Scene Motion RefMods from short video clips.</p></button>
+                <button type="button" onClick={() => resetCreator("audio")} className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 text-left"><div className="text-lg font-black text-white">Audio</div><p className="mt-2 text-sm leading-6 text-white/55">Create Music, Ambience, or SFX RefMods. Voice cloning stays in Voices.</p></button>
+              </div>
+            ) : (
+              <div className="mt-5 space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs font-black uppercase tracking-[0.18em] text-white/50">Name<input value={name} onChange={(event) => setName(event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm font-bold text-white outline-none focus:border-violet-200/60" /></label>
+                  <label className="text-xs font-black uppercase tracking-[0.18em] text-white/50">Description<input value={description} onChange={(event) => setDescription(event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm font-bold text-white outline-none focus:border-violet-200/60" /></label>
+                </div>
+
+                {createStep === "character" ? (
+                  <div className="space-y-4" data-otg="refmod-character-creator">
+                    <div className="grid gap-2 sm:grid-cols-3">{(["upload", "existing", "new"] as const).map((value) => <button key={value} type="button" onClick={() => setCharacterPath(value)} className={cn("min-h-12 rounded-xl border px-3 text-sm font-black", characterPath === value ? "border-violet-200 bg-violet-300 text-zinc-950" : "border-white/10 bg-black/25 text-white/65")}>{value === "upload" ? "Upload Images" : value === "existing" ? "Choose from Character Gallery" : "Create New Character"}</button>)}</div>
+                    {characterPath === "upload" ? (
+                      <>
+                        <input type="file" accept={H3_MEDIA_ACCEPT.image} multiple onChange={(event) => setCharacterFiles(Array.from(event.target.files || []).slice(0, 8))} className="block w-full rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-white file:mr-3 file:rounded-lg file:border-0 file:bg-violet-300 file:px-3 file:py-2 file:font-bold file:text-zinc-950" />
+                        <div className="rounded-2xl border border-violet-300/20 bg-violet-300/10 p-4 text-sm leading-6 text-violet-50/80">Upload 4-8 images. 8 recommended. Keep the same character, hairstyle, outfit, simple background, similar lighting, and consistent dimensions when possible.</div>
+                        {characterFiles.length ? <div className="grid grid-cols-4 gap-2">{characterFiles.map((file, index) => <div key={`${file.name}-${index}`} className="rounded-xl border border-white/10 bg-black/30 p-2 text-xs text-white/55">{String(index + 1).padStart(2, "0")} · {file.name}</div>)}</div> : null}
+                      </>
+                    ) : characterPath === "existing" ? (
+                      <div className="space-y-3">
+                        <select value={selectedCharacterId} onChange={(event) => setSelectedCharacterId(event.target.value)} className="min-h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm font-bold text-white"><option value="">Choose saved Character</option>{characters.map((character) => <option key={character.id} value={character.id}>{character.name || character.id}</option>)}</select>
+                        {selectedCharacter ? <div className="rounded-2xl border border-white/10 bg-black/25 p-3"><div className="font-black text-white">{selectedCharacter.name}</div><p className="mt-1 text-sm text-white/50">{selectedCharacter.description || "Saved Character selected."}</p>{characterOptionImagePath(selectedCharacter) ? <img src={refModFileUrl(characterOptionImagePath(selectedCharacter))} alt={selectedCharacter.name} className="mt-3 max-h-48 rounded-xl object-contain" /> : null}<button type="button" className="mt-3 min-h-10 rounded-xl border border-violet-200/30 px-3 text-sm font-bold text-violet-100">Create Ref Mod Card</button></div> : null}
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-4 text-sm leading-6 text-cyan-50/80">Create Character opens the existing Character Creator. After the Character Card is approved, return here to create the standardized 8-image RefMod Card set.<button type="button" onClick={onCreateCharacter} className="mt-3 block min-h-10 rounded-xl bg-cyan-300 px-3 text-sm font-black text-zinc-950">Create New Character</button></div>
+                    )}
+                    <div className="rounded-2xl border border-white/10 bg-black/25 p-4 text-sm leading-6 text-white/55">Ref Mod Character Card target views: face front, left 3/4 face, right 3/4 face, side profile, smile, full body front, full body 3/4, and full body side/back. You can preview, regenerate one image, replace one image, remove an image, approve, then create the Character RefMod.</div>
+                  </div>
+                ) : null}
+
+                {createStep === "motion" ? (
+                  <div className="space-y-4" data-otg="refmod-motion-creator">
+                    <input type="file" accept={H3_MEDIA_ACCEPT.video} onChange={(event) => setMotionFile(event.target.files?.[0] || null)} className="block w-full rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-white file:mr-3 file:rounded-lg file:border-0 file:bg-violet-300 file:px-3 file:py-2 file:font-bold file:text-zinc-950" />
+                    <div className="grid gap-2 sm:grid-cols-2" data-otg="refmod-motion-type"><button type="button" onClick={() => setMotionType("subject")} className={cn("min-h-12 rounded-xl border px-3 text-sm font-black", motionType === "subject" ? "border-violet-200 bg-violet-300 text-zinc-950" : "border-white/10 bg-black/25 text-white/65")}>Subject Motion</button><button type="button" onClick={() => setMotionType("camera_scene")} className={cn("min-h-12 rounded-xl border px-3 text-sm font-black", motionType === "camera_scene" ? "border-violet-200 bg-violet-300 text-zinc-950" : "border-white/10 bg-black/25 text-white/65")}>Camera / Scene Motion</button></div>
+                    {motionType === "subject" ? <div className="rounded-2xl border border-violet-300/20 bg-violet-300/10 p-4"><label className="flex items-start gap-3 text-sm font-bold text-violet-50"><input type="checkbox" checked={isolateSubject} onChange={(event) => setIsolateSubject(event.target.checked)} className="mt-1 h-4 w-4 accent-violet-300" /><span>Isolate Subject<span className="mt-1 block text-sm font-normal leading-6 text-violet-50/70">Separates the moving subject before creating the Motion RefMod. Original motion may be steadier for some clips.</span></span></label>{isolateSubject ? <button type="button" onClick={markIsolationPreviewReady} className="mt-4 min-h-11 rounded-xl bg-violet-300 px-4 text-sm font-black text-zinc-950">Generate Isolation Preview</button> : null}</div> : <div className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-4 text-sm leading-6 text-cyan-50/80">Camera/scene motion needs the surrounding scene to preserve camera movement. Isolate Subject is OFF and Alpha Gen is not invoked.</div>}
+                    {reviewReady && motionType === "subject" ? <div className="space-y-3 rounded-2xl border border-white/10 bg-black/25 p-4" data-otg="refmod-motion-isolation-review"><div className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Ready for Review</div><div className="grid gap-3 sm:grid-cols-3">{["Original", "Alpha Matte", "Isolated Subject"].map((label) => <div key={label} className="flex aspect-video items-center justify-center rounded-xl border border-white/10 bg-black/40 text-sm font-bold text-white/50">{label}</div>)}</div><div className="flex flex-wrap gap-2"><button type="button" onClick={() => setReviewChoice("original")} className={cn("min-h-10 rounded-xl border px-3 text-sm font-black", reviewChoice === "original" ? "border-cyan-200 bg-cyan-300 text-zinc-950" : "border-white/10 text-white/65")}>Use Original</button><button type="button" onClick={() => setReviewChoice("isolated")} className={cn("min-h-10 rounded-xl border px-3 text-sm font-black", reviewChoice === "isolated" ? "border-cyan-200 bg-cyan-300 text-zinc-950" : "border-white/10 text-white/65")}>Use Isolated</button></div></div> : null}
+                  </div>
+                ) : null}
+
+                {createStep === "audio" ? (
+                  <div className="space-y-4" data-otg="refmod-audio-creator">
+                    <input type="file" accept={H3_MEDIA_ACCEPT.audio} onChange={(event) => setAudioFile(event.target.files?.[0] || null)} className="block w-full rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-white file:mr-3 file:rounded-lg file:border-0 file:bg-violet-300 file:px-3 file:py-2 file:font-bold file:text-zinc-950" />
+                    <div className="grid gap-2 sm:grid-cols-3">{(["music", "ambience", "sound_fx"] as const).map((value) => <button key={value} type="button" onClick={() => setAudioCategory(value)} className={cn("min-h-12 rounded-xl border px-3 text-sm font-black", audioCategory === value ? "border-violet-200 bg-violet-300 text-zinc-950" : "border-white/10 bg-black/25 text-white/65")}>{value === "sound_fx" ? "SFX" : value === "music" ? "Music" : "Ambience"}</button>)}</div>
+                    <div className="rounded-2xl border border-white/10 bg-black/25 p-4 text-sm leading-6 text-white/55">Use clean 5-15 second Music, Ambience, or Sound Effect clips. Voice cloning remains in the existing Voices/TTS system.</div>
+                  </div>
+                ) : null}
+
+                {createError ? <div className="rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">{createError}</div> : null}
+                {createMessage ? <div className="rounded-xl border border-emerald-300/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">{createMessage}</div> : null}
+                {createJob ? <div className="rounded-xl border border-white/10 bg-black/25 p-3 text-xs text-white/50">Job {createJob.id}: {createJob.status}</div> : null}
+                <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={() => resetCreator("choose")} className="min-h-11 rounded-xl border border-white/10 px-4 text-sm font-bold text-white/65">Back</button><button type="button" disabled={createBusy} onClick={() => void submitCreate()} className="min-h-11 rounded-xl bg-violet-300 px-4 text-sm font-black text-zinc-950 disabled:opacity-50">{createBusy ? "Creating..." : createStep === "audio" ? "Create Audio RefMod" : createStep === "motion" ? "Create Motion RefMod" : "Create Character RefMod"}</button></div>
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body,
+      ) : null}
+    </div>
+  );
+}
+
 export default function CharacterHubPanel({
   isAdmin = false,
   authenticatedOwnerKey = "",
@@ -3654,6 +4105,15 @@ export default function CharacterHubPanel({
     );
   }
 
+  if (view === "refmod-gallery") {
+    return (
+      <RefModGalleryPanel
+        onBack={() => setView("home")}
+        onCreateCharacter={() => setView("create-character")}
+      />
+    );
+  }
+
   if (view === "character-gallery") {
     return (
       <div
@@ -3742,6 +4202,19 @@ export default function CharacterHubPanel({
              onClick={() => setView("saved-for-later")}
            />
            </div>
+           <div
+             className="md:col-span-2"
+             data-otg="character-gallery-refmod-shortcut"
+           >
+             <GalleryCard
+             eyebrow="RefMods"
+             title="Create Character Ref Mod"
+             description="Open the Ref Mod Gallery creator and build a Character RefMod from uploads or an approved Character Card set."
+             accent="bg-violet-300"
+             onClick={() => setView("refmod-gallery")}
+             status="Create RefMod →"
+           />
+           </div>
          </div>
 
          <SavedCharacterLibrary />
@@ -3818,6 +4291,15 @@ export default function CharacterHubPanel({
             onClick={() => setView("voice-characters")}
             status="Manage HQ voices →"
           />
+
+        <GalleryCard
+          eyebrow="RefMods"
+          title="Ref Mod Gallery"
+          description="Create, manage, preview, and send Character, Motion, Audio, and Bundle RefMods into H3."
+          accent="bg-fuchsia-300"
+          onClick={() => setView("refmod-gallery")}
+          status="Manage RefMods →"
+        />
       </div>
     </div>
   );
