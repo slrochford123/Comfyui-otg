@@ -1,0 +1,503 @@
+{
+  "id": "03409dc8-1aeb-4e47-99b6-e6146008c78e",
+  "revision": 0,
+  "last_node_id": 10,
+  "last_link_id": 3,
+  "nodes": [
+    {
+      "id": 4,
+      "type": "VAELoader",
+      "pos": [
+        27,
+        440
+      ],
+      "size": [
+        420,
+        60
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "vae_name",
+          "name": "vae_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "vae_name"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "VAE",
+          "name": "VAE",
+          "type": "VAE",
+          "slot_index": 0,
+          "links": [
+            2
+          ]
+        }
+      ],
+      "title": "H3 Audio VAE",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.0",
+        "Node name for S&R": "VAELoader",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "vae_name": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "minimax_h3_audio_vae_fp32.safetensors"
+      ],
+      "widgets_values_named": {
+        "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+      },
+      "color": "#A74646FF",
+      "bgcolor": "#C65353FF"
+    },
+    {
+      "id": 7,
+      "type": "MiniMaxH3RefModSave",
+      "pos": [
+        1047,
+        75
+      ],
+      "size": [
+        400,
+        120
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "mods",
+          "name": "mods",
+          "type": "H3_REF_MODS",
+          "link": 3
+        },
+        {
+          "localized_name": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "subfolder",
+          "name": "subfolder",
+          "type": "STRING",
+          "widget": {
+            "name": "subfolder"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "mods",
+          "name": "mods",
+          "type": "H3_REF_MODS",
+          "slot_index": 0,
+          "links": null
+        },
+        {
+          "localized_name": "saved_paths",
+          "name": "saved_paths",
+          "type": "STRING",
+          "slot_index": 1,
+          "links": null
+        }
+      ],
+      "title": "SAVE REFMOD (models/refmods/<subfolder>)",
+      "properties": {
+        "cnr_id": "ComfyUI-MiniMaxH3Mod",
+        "ver": "22ca77e247375dd47fc7340286b5f391887d3410",
+        "Node name for S&R": "MiniMaxH3RefModSave",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "filename_prefix": true,
+            "subfolder": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "",
+        "audio"
+      ],
+      "widgets_values_named": {
+        "filename_prefix": "",
+        "subfolder": "audio"
+      },
+      "color": "#AD3500FF",
+      "bgcolor": "#CC3E00FF"
+    },
+    {
+      "id": 5,
+      "type": "MiniMaxH3RefModAudioExtract",
+      "pos": [
+        522,
+        75
+      ],
+      "size": [
+        450,
+        470
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 1
+        },
+        {
+          "localized_name": "audio_vae",
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": 2
+        },
+        {
+          "localized_name": "name",
+          "name": "name",
+          "type": "STRING",
+          "widget": {
+            "name": "name"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "max_seconds",
+          "name": "max_seconds",
+          "type": "FLOAT",
+          "widget": {
+            "name": "max_seconds"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "max_tokens",
+          "name": "max_tokens",
+          "type": "INT",
+          "widget": {
+            "name": "max_tokens"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "budget_policy",
+          "name": "budget_policy",
+          "type": "COMBO",
+          "widget": {
+            "name": "budget_policy"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "concept_type",
+          "name": "concept_type",
+          "type": "COMBO",
+          "widget": {
+            "name": "concept_type"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "description",
+          "name": "description",
+          "type": "STRING",
+          "widget": {
+            "name": "description"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "subfolder",
+          "name": "subfolder",
+          "type": "STRING",
+          "widget": {
+            "name": "subfolder"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "save",
+          "name": "save",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "save"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "H3_REF_MODS",
+          "name": "H3_REF_MODS",
+          "type": "H3_REF_MODS",
+          "slot_index": 0,
+          "links": [
+            3
+          ]
+        }
+      ],
+      "title": "CREATE REFMOD (name it here)",
+      "properties": {
+        "cnr_id": "ComfyUI-MiniMaxH3Mod",
+        "ver": "22ca77e247375dd47fc7340286b5f391887d3410",
+        "Node name for S&R": "MiniMaxH3RefModAudioExtract",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "name": true,
+            "max_seconds": true,
+            "max_tokens": true,
+            "budget_policy": true,
+            "concept_type": true,
+            "description": true,
+            "subfolder": true,
+            "save": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "audio_reference_v1",
+        30,
+        5120,
+        "error",
+        "ambience",
+        "",
+        "",
+        false
+      ],
+      "widgets_values_named": {
+        "name": "audio_reference_v1",
+        "max_seconds": 30,
+        "max_tokens": 5120,
+        "budget_policy": "error",
+        "concept_type": "ambience",
+        "description": "",
+        "subfolder": "",
+        "save": false
+      },
+      "color": "#A74646FF",
+      "bgcolor": "#C65353FF"
+    },
+    {
+      "id": 2,
+      "type": "LoadAudio",
+      "pos": [
+        27,
+        75
+      ],
+      "size": [
+        420,
+        230
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "audio",
+          "name": "audio",
+          "type": "COMBO",
+          "widget": {
+            "name": "audio"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "audioUI",
+          "name": "audioUI",
+          "type": "AUDIO_UI",
+          "widget": {
+            "name": "audioUI"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "choose file to upload",
+          "name": "upload",
+          "type": "AUDIOUPLOAD",
+          "widget": {
+            "name": "upload"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "AUDIO",
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "slot_index": 0,
+          "links": [
+            1
+          ]
+        }
+      ],
+      "title": "AUDIO FILE (first 30 seconds used)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.34.0",
+        "Node name for S&R": "LoadAudio",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "audio": true,
+            "audioUI": true,
+            "upload": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "",
+        null
+      ],
+      "widgets_values_named": {
+        "audio": "",
+        "upload": null
+      },
+      "color": "#011401FF",
+      "bgcolor": "#033303FF"
+    },
+    {
+      "id": 10,
+      "type": "MarkdownNote",
+      "pos": [
+        -740,
+        30
+      ],
+      "size": [
+        700,
+        860
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "READ ME",
+      "properties": {
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "# [READ ME] RefMod Audio Pack (MiniMax H3)\n\n## What this does\nSaves a sound as a **RefMod** you can load in the **MM RefMod T2V** workflow, so the same music, ambience or sound effect shows up across many videos.\n\n**Voice cloning does not work reliably yet.** The node author's own tests could not copy a speaker's voice. Music and ambience do work. For a fixed character voice, keep using your TTS voice clone.\n\n## Picking the audio\n1. Use a **clean** clip: one sound only, no talking over the music, no clicks or silence at the start.\n2. Only the **first 30 seconds** are used (`max_seconds`). Trim the file so the part you want comes first.\n3. 5 to 15 seconds of clean audio is a good starting point. Longer is not automatically better.\n\n## How to use\n1. **AUDIO FILE:** click upload and choose your file.\n2. **CREATE REFMOD:** type a name in `name` (for example `lofi_beat`). `concept_type` is only a label, pick whatever fits.\n3. **SAVE REFMOD:** `subfolder` = `audio` saves it to `models/refmods/audio/<name>`.\n4. **Queue.**\n5. In the T2V workflow: click **Refresh RefMods**, then **+ Add RefMod** on the CHARACTER REFMOD node and pick it. Describe the sound in your prompt too (for example `non_diegetic_music: lo-fi beat playing in the background`).\n\n## Good to know\nAudio costs about 80 tokens per second. If you raise `max_seconds` past about 60, also raise `max_tokens` (5120), or it stops with a budget error.\n\n## Links\n- **YouTube:** [youtube.com/@lora-tech](https://www.youtube.com/@lora-tech)\n- **Discord (community, support, 1 on 1 coaching):** [discord.gg/2bqQXKxsxg](https://discord.gg/2bqQXKxsxg)\n- **Patreon:** [patreon.com/LoRAtech](https://www.patreon.com/LoRAtech)\n"
+      ],
+      "widgets_values_named": {
+        "text": "# [READ ME] RefMod Audio Pack (MiniMax H3)\n\n## What this does\nSaves a sound as a **RefMod** you can load in the **MM RefMod T2V** workflow, so the same music, ambience or sound effect shows up across many videos.\n\n**Voice cloning does not work reliably yet.** The node author's own tests could not copy a speaker's voice. Music and ambience do work. For a fixed character voice, keep using your TTS voice clone.\n\n## Picking the audio\n1. Use a **clean** clip: one sound only, no talking over the music, no clicks or silence at the start.\n2. Only the **first 30 seconds** are used (`max_seconds`). Trim the file so the part you want comes first.\n3. 5 to 15 seconds of clean audio is a good starting point. Longer is not automatically better.\n\n## How to use\n1. **AUDIO FILE:** click upload and choose your file.\n2. **CREATE REFMOD:** type a name in `name` (for example `lofi_beat`). `concept_type` is only a label, pick whatever fits.\n3. **SAVE REFMOD:** `subfolder` = `audio` saves it to `models/refmods/audio/<name>`.\n4. **Queue.**\n5. In the T2V workflow: click **Refresh RefMods**, then **+ Add RefMod** on the CHARACTER REFMOD node and pick it. Describe the sound in your prompt too (for example `non_diegetic_music: lo-fi beat playing in the background`).\n\n## Good to know\nAudio costs about 80 tokens per second. If you raise `max_seconds` past about 60, also raise `max_tokens` (5120), or it stops with a budget error.\n\n## Links\n- **YouTube:** [youtube.com/@lora-tech](https://www.youtube.com/@lora-tech)\n- **Discord (community, support, 1 on 1 coaching):** [discord.gg/2bqQXKxsxg](https://discord.gg/2bqQXKxsxg)\n- **Patreon:** [patreon.com/LoRAtech](https://www.patreon.com/LoRAtech)\n"
+      },
+      "color": "#27060600",
+      "bgcolor": "#460A0A00"
+    }
+  ],
+  "links": [
+    [
+      1,
+      2,
+      0,
+      5,
+      0,
+      "AUDIO"
+    ],
+    [
+      2,
+      4,
+      0,
+      5,
+      1,
+      "VAE"
+    ],
+    [
+      3,
+      5,
+      0,
+      7,
+      0,
+      "H3_REF_MODS"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "USER INPUTS/CONTROL PANEL",
+      "bounding": [
+        0,
+        0,
+        475,
+        345
+      ],
+      "color": "#25B825FF",
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "Models",
+      "bounding": [
+        0,
+        365,
+        475,
+        180
+      ],
+      "color": "#27133EFF",
+      "flags": {}
+    },
+    {
+      "id": 3,
+      "title": "Create RefMod",
+      "bounding": [
+        495,
+        0,
+        505,
+        585
+      ],
+      "color": "#937B01FF",
+      "flags": {}
+    },
+    {
+      "id": 4,
+      "title": "Save RefMod",
+      "bounding": [
+        1020,
+        0,
+        455,
+        260
+      ],
+      "color": "#F96641FF",
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.8,
+      "offset": [
+        800,
+        80
+      ]
+    },
+    "workflowRendererVersion": "LG",
+    "ue_links": []
+  },
+  "version": 0.4
+}

@@ -51,6 +51,17 @@ import {
   type H3RealismSpeedLoraId,
 } from "@/lib/h3SpecialModes/realism";
 import { compileH3BodySwapPrompt } from "@/lib/h3SpecialModes/bodySwap";
+import {
+  compileH3RefModsPrompt,
+  H3_REFMOD_LIMITS,
+  normalizeH3RefModSlots,
+  refModSlotWarnings,
+  type H3RefModCategory,
+  type H3RefModComponents,
+  type H3RefModLibraryEntry,
+  type H3RefModSlot,
+  type H3RefModSourceKind,
+} from "@/lib/h3SpecialModes/refMods";
 import type { ProductionV2H3Mode } from "@/lib/production/h3Workflows";
 import { normalizeProfileStorageOwner, profileStorageKey } from "@/lib/client/profileStorage";
 import {
@@ -67,7 +78,7 @@ import {
 } from "./h3InputPersistence";
 
 type Mode = ProductionV2H3Mode;
-type H3StudioMode = Mode | "h3-realism" | "h3-body-swap";
+type H3StudioMode = Mode | "h3-realism" | "h3-body-swap" | "h3-refmods";
 type MediaKind = "image" | "video" | "audio";
 type MediaInput = H3StudioReferenceDescriptor & {
   file: File;
@@ -177,6 +188,11 @@ const MODE_OPTIONS: Array<{ id: H3StudioMode; label: string; detail: string }> =
     label: "Body Swap",
     detail: "Replace a tracked person",
   },
+  {
+    id: "h3-refmods",
+    label: "Ref Mods",
+    detail: "Reuse saved H3 references",
+  },
 ];
 const LEGACY_H3_MODES: Mode[] = [
   "h3-text-to-video",
@@ -208,6 +224,39 @@ const QUALITY_DETAILS: Record<H3Quality, string> = {
   hq: "1.0 MP native",
 };
 const H3_LAST_JOB_STORAGE_KEY = "otg:h3:last-direct-job-id:v1";
+
+function refModDefaultStrength(category: H3RefModCategory) {
+  return category === "character" ? 0.9 : 1;
+}
+
+function createRefModSlot(entry?: H3RefModLibraryEntry): H3RefModSlot {
+  const category = entry?.category || "character";
+  return {
+    id: `refmod-${crypto.randomUUID()}`,
+    name: entry?.name || "",
+    category,
+    sourceKind: entry?.kind || "unknown",
+    strength: refModDefaultStrength(category),
+    components: "Auto",
+    visualStrength: 1,
+    audioStrength: 1,
+    copies: 1,
+    description: entry?.description || "",
+    characterId: entry?.characterId || "",
+  };
+}
+
+function categoryLabel(category: H3RefModCategory) {
+  return category === "character"
+    ? "Character"
+    : category === "motion"
+      ? "Motion"
+      : category === "audio"
+        ? "Audio"
+        : category === "bundle"
+          ? "Bundle"
+          : "Uncategorized";
+}
 const H3_PERSISTED_JOB_STORAGE_KEY = "otg:h3:persisted-direct-job:v1";
 const H3_INPUT_STORAGE_KEY = "otg:h3:generator-inputs:v1";
 const H3_REFERENCE_VIDEO_CLIP_SECONDS = 5;
@@ -295,6 +344,9 @@ function h3GenerationEndpointFor(jobOrId?: Pick<JobStatus, "id" | "mode"> | stri
   if (mode === "h3-body-swap" || id.startsWith("h3-body-swap-")) {
     return "/api/h3/special/body-swap/generation";
   }
+  if (mode === "h3-refmods" || id.startsWith("h3-refmods-")) {
+    return "/api/h3/special/refmods/generation";
+  }
   return mode === "h3-realism" || id.startsWith("h3-realism-")
     ? "/api/h3/special/realism/generation"
     : "/api/h3/generation";
@@ -316,6 +368,7 @@ function h3JobStatusUrls(id?: string) {
     "/api/h3/generation",
     "/api/h3/special/realism/generation",
     "/api/h3/special/body-swap/generation",
+    "/api/h3/special/refmods/generation",
   ];
   if (!id) return endpoints;
   const primary = `${h3GenerationEndpointFor(id)}?jobId=${encodeURIComponent(id)}`;
@@ -894,6 +947,16 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const [bodySwapSeedMode, setBodySwapSeedMode] =
     useState<"random" | "fixed">("random");
   const [bodySwapSeed, setBodySwapSeed] = useState("");
+  const [refModsPrompt, setRefModsPrompt] = useState("");
+  const [refModSlots, setRefModSlots] = useState<H3RefModSlot[]>([]);
+  const [refModLibrary, setRefModLibrary] = useState<H3RefModLibraryEntry[]>([]);
+  const [refModLibraryStatus, setRefModLibraryStatus] =
+    useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [refModLibraryMessage, setRefModLibraryMessage] = useState("");
+  const [refModsTurbo, setRefModsTurbo] = useState(true);
+  const [refModsSeedMode, setRefModsSeedMode] =
+    useState<"random" | "fixed">("random");
+  const [refModsSeed, setRefModsSeed] = useState("");
   const [firstImage, setFirstImage] = useState<MediaInput | null>(null);
   const [lastImage, setLastImage] = useState<MediaInput | null>(null);
   const [references, setReferences] = useState<MediaInput[]>([]);
@@ -1074,6 +1137,40 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       }),
     [bodySwapPrompt, bodySwapSelector, bodySwapPreserveAudio],
   );
+  const refModsCompiledPrompt = useMemo(() => {
+    if (!refModsPrompt.trim() || !refModSlots.length) return "";
+    try {
+      return compileH3RefModsPrompt({
+        prompt: refModsPrompt,
+        refMods: refModSlots,
+      });
+    } catch {
+      return "";
+    }
+  }, [refModsPrompt, refModSlots]);
+  const refModsWarningMessages = refModSlots.flatMap(refModSlotWarnings);
+  const refModsValidationMessage = useMemo(() => {
+    try {
+      normalizeH3RefModSlots(refModSlots);
+      if (refModSlots.length > H3_REFMOD_LIMITS.maxRefMods) {
+        return `Use at most ${H3_REFMOD_LIMITS.maxRefMods} RefMods.`;
+      }
+      if (
+        refModsSeedMode === "fixed"
+        && (
+          !Number.isSafeInteger(Number(refModsSeed))
+          || Number(refModsSeed) < 0
+        )
+      ) {
+        return "Enter a non-negative whole-number Ref Mods seed.";
+      }
+      return "";
+    } catch (error) {
+      return error instanceof Error
+        ? error.message
+        : "Ref Mods settings are invalid.";
+    }
+  }, [refModSlots, refModsSeedMode, refModsSeed]);
   const canGenerate = Boolean(
     legacyModeActive
       && generationPrompt.trim()
@@ -1107,6 +1204,13 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           && Number(bodySwapSeed) >= 0
         )
       ),
+  );
+  const canGenerateRefMods = Boolean(
+    studioMode === "h3-refmods"
+      && refModsPrompt.trim()
+      && refModSlots.length
+      && refModsCompiledPrompt.trim()
+      && !refModsValidationMessage,
   );
   const workflowNotice = h3WorkflowNotice(job, message);
   const workflowNoticeClass =
@@ -1389,6 +1493,37 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       );
   }, [legacyModeActive, mode]);
   useEffect(() => {
+    if (studioMode !== "h3-refmods" || refModLibraryStatus !== "idle") return;
+    let cancelled = false;
+    setRefModLibraryStatus("loading");
+    void fetch("/api/h3/special/refmods/library", {
+      cache: "no-store",
+      credentials: "include",
+    })
+      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (cancelled) return;
+        if (!ok || !data.ok) throw new Error(data.error || "Could not read RefMod library.");
+        setRefModLibrary(Array.isArray(data.entries) ? data.entries : []);
+        setRefModLibraryStatus("ready");
+        setRefModLibraryMessage(
+          `${Array.isArray(data.entries) ? data.entries.length : 0} RefMods found.`,
+        );
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setRefModLibraryStatus("error");
+        setRefModLibraryMessage(
+          error instanceof Error
+            ? error.message
+            : "Could not read RefMod library.",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [studioMode, refModLibraryStatus]);
+  useEffect(() => {
     if (!active) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -1579,6 +1714,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     setMessage(
       nextMode === "h3-realism"
         ? "Realism uses its dedicated TEST workflow adapter and will not call the legacy H3 route."
+        : nextMode === "h3-refmods"
+          ? "Ref Mods is isolated from legacy H3 while its dedicated T2V adapter is validated."
         : `${MODE_OPTIONS.find((item) => item.id === nextMode)?.label || "This mode"} is isolated while its dedicated adapter is being prepared.`,
     );
   }
@@ -1629,6 +1766,11 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     setBodySwapPreserveAudio(true);
     setBodySwapSeedMode("random");
     setBodySwapSeed("");
+    setRefModsPrompt("");
+    setRefModSlots([]);
+    setRefModsTurbo(true);
+    setRefModsSeedMode("random");
+    setRefModsSeed("");
     setFirstImage(null);
     setLastImage(null);
     setReferences([]);
@@ -2278,6 +2420,84 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     if (bodySwapSourceVideo) body.append("sourceVideo", bodySwapSourceVideo.file);
     if (bodySwapReplacementImage) body.append("replacementImage", bodySwapReplacementImage.file);
   }
+  function h3RefModsGenerationConfig() {
+    return {
+      mode: "h3-refmods",
+      quality,
+      orientation,
+      durationSeconds: duration,
+      prompt: refModsPrompt,
+      refMods: refModSlots,
+      turbo: refModsTurbo,
+      seed:
+        refModsSeedMode === "fixed"
+          ? Number(refModsSeed)
+          : undefined,
+    };
+  }
+  function addRefModSlot(entry?: H3RefModLibraryEntry) {
+    setRefModSlots((current) => {
+      if (current.length >= H3_REFMOD_LIMITS.maxRefMods) {
+        setMessage(`Use at most ${H3_REFMOD_LIMITS.maxRefMods} RefMods.`);
+        return current;
+      }
+      return [...current, createRefModSlot(entry)];
+    });
+  }
+  function updateRefModSlot(id: string, patch: Partial<H3RefModSlot>) {
+    setRefModSlots((current) =>
+      current.map((slot) =>
+        slot.id === id
+          ? {
+              ...slot,
+              ...patch,
+              strength: patch.strength === undefined ? slot.strength : Number(patch.strength),
+              visualStrength: patch.visualStrength === undefined ? slot.visualStrength : Number(patch.visualStrength),
+              audioStrength: patch.audioStrength === undefined ? slot.audioStrength : Number(patch.audioStrength),
+              copies: patch.copies === undefined ? slot.copies : Number(patch.copies),
+            }
+          : slot,
+      ),
+    );
+  }
+  function removeRefModSlot(id: string) {
+    setRefModSlots((current) => current.filter((slot) => slot.id !== id));
+  }
+  function moveRefModSlot(id: string, direction: -1 | 1) {
+    setRefModSlots((current) => {
+      const index = current.findIndex((slot) => slot.id === id);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= current.length) return current;
+      const copy = [...current];
+      const [slot] = copy.splice(index, 1);
+      copy.splice(nextIndex, 0, slot);
+      return copy;
+    });
+  }
+  async function generateRefMods() {
+    if (!canGenerateRefMods) {
+      return setMessage(refModsValidationMessage || "Add a prompt and at least one RefMod.");
+    }
+    setMessage("Validating Ref Mods request...");
+    try {
+      const response = await fetch("/api/h3/special/refmods/generation", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config: h3RefModsGenerationConfig() }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.job) {
+        throw new Error(data.error || "H3 Ref Mods generation could not be submitted.");
+      }
+      setJob(data.job);
+      rememberH3Job(h3LastJobStorageKey, data.job);
+      setNow(Date.now());
+      setMessage("");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "H3 Ref Mods generation could not be submitted.");
+    }
+  }
   async function uploadH3StagedFile(
     file: File,
     kind: MediaKind,
@@ -2832,7 +3052,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         <h1 className="mt-1 text-3xl font-black text-white">H3 Studio</h1>
         <p className="mt-1 text-sm text-white/58">Create with MiniMax H3</p>
         <div
-          className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"
+          className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"
           role="tablist"
           aria-label="H3 generation mode"
         >
@@ -3244,6 +3464,293 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   SAM3 at max_objects=1 and track index 0 until single-person
                   tests are stable.
                 </div>
+              </section>
+            </>
+          ) : studioMode === "h3-refmods" ? (
+            <>
+              <section className={surface} data-otg="h3-refmods-workspace">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase text-violet-200/75">
+                      01 / Ref Mods Prompt
+                    </p>
+                    <h2 className="mt-1 text-lg font-black">
+                      Saved H3 references in deterministic slot order
+                    </h2>
+                    <p className="mt-1 text-xs text-white/45">
+                      Up to {H3_REFMOD_LIMITS.maxRefMods} RefMods. Slot order controls subject/reference mapping.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-cyan-300/15 px-2 py-1 text-[11px] font-bold text-cyan-100">
+                    TEST quarantined
+                  </span>
+                </div>
+                <textarea
+                  rows={5}
+                  className={`${field} mt-3 resize-y text-base leading-6`}
+                  value={refModsPrompt}
+                  onChange={(event) => setRefModsPrompt(event.target.value)}
+                  placeholder="Example: Isabella and Mika are sitting together at a cafe talking."
+                />
+                <details className="mt-4 rounded-[6px] border border-white/10 p-3">
+                  <summary className="cursor-pointer text-sm font-black">
+                    View Compiled Prompt
+                  </summary>
+                  <textarea
+                    readOnly
+                    rows={14}
+                    className={`${field} mt-3 resize-y font-mono text-xs leading-5`}
+                    value={refModsCompiledPrompt}
+                    placeholder="Compiled prompt will appear after you enter a prompt and add at least one RefMod."
+                  />
+                </details>
+              </section>
+              <section className={surface}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase text-violet-200/75">
+                      02 / RefMod Library
+                    </p>
+                    <h2 className="mt-1 text-lg font-black">
+                      Characters, Motion, Audio, Bundles, All
+                    </h2>
+                    <p className="mt-1 text-xs text-white/45">
+                      {refModLibraryStatus === "loading"
+                        ? "Scanning installed ComfyUI RefMods..."
+                        : refModLibraryMessage || "Library loads from the registered ComfyUI RefMod root."}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className={command}
+                    onClick={() => {
+                      setRefModLibraryStatus("idle");
+                      setRefModLibraryMessage("");
+                    }}
+                  >
+                    Refresh
+                  </button>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  {refModLibrary.map((entry) => (
+                    <article
+                      key={entry.id}
+                      className="min-w-0 rounded-[6px] border border-white/10 bg-black/30 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black text-white">
+                            {entry.name}
+                          </p>
+                          <p className="text-xs text-white/45">
+                            {categoryLabel(entry.category)} · {entry.kind} · {entry.tokens ?? "?"} tokens
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className={command}
+                          onClick={() => addRefModSlot(entry)}
+                        >
+                          Add
+                        </button>
+                      </div>
+                      {entry.description ? (
+                        <p className="mt-2 line-clamp-2 text-xs text-white/55">
+                          {entry.description}
+                        </p>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+                {!refModLibrary.length ? (
+                  <div className="mt-4 rounded-[6px] border border-dashed border-white/15 py-8 text-center text-sm text-white/35">
+                    No installed RefMods are visible yet. The bundled example should appear when the backend library endpoint is reachable.
+                  </div>
+                ) : null}
+              </section>
+              <section className={surface}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase text-violet-200/75">
+                      03 / Selected RefMods
+                    </p>
+                    <h2 className="mt-1 text-lg font-black">
+                      Slots 1-8
+                    </h2>
+                  </div>
+                  <button
+                    type="button"
+                    className={command}
+                    onClick={() => addRefModSlot()}
+                  >
+                    Add RefMod
+                  </button>
+                </div>
+                <div className="mt-4 grid gap-3">
+                  {refModSlots.map((slot, index) => (
+                    <article
+                      key={slot.id}
+                      className="rounded-[6px] border border-white/10 bg-black/30 p-3"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-black uppercase text-cyan-200">
+                            Slot {index + 1}
+                          </p>
+                          <p className="text-sm font-bold text-white/80">
+                            {slot.name || "Choose a RefMod"}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button type="button" className={command} onClick={() => moveRefModSlot(slot.id, -1)}>
+                            Up
+                          </button>
+                          <button type="button" className={command} onClick={() => moveRefModSlot(slot.id, 1)}>
+                            Down
+                          </button>
+                          <button type="button" className={command} onClick={() => removeRefModSlot(slot.id)}>
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid gap-3 md:grid-cols-3">
+                        <label className="text-xs text-white/55 md:col-span-2">
+                          Library name
+                          <input
+                            className={`${field} mt-1`}
+                            value={slot.name}
+                            onChange={(event) => updateRefModSlot(slot.id, { name: event.target.value })}
+                            placeholder="characters/isabella"
+                          />
+                        </label>
+                        <label className="text-xs text-white/55">
+                          Type
+                          <select
+                            className={`${field} mt-1`}
+                            value={slot.category}
+                            onChange={(event) =>
+                              updateRefModSlot(slot.id, {
+                                category: event.target.value as H3RefModCategory,
+                                strength: refModDefaultStrength(event.target.value as H3RefModCategory),
+                              })
+                            }
+                          >
+                            {(["character", "motion", "audio", "bundle", "uncategorized"] as H3RefModCategory[]).map((value) => (
+                              <option key={value} value={value}>
+                                {categoryLabel(value)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="text-xs text-white/55">
+                          Components
+                          <select
+                            className={`${field} mt-1`}
+                            value={slot.components}
+                            onChange={(event) =>
+                              updateRefModSlot(slot.id, {
+                                components: event.target.value as H3RefModComponents,
+                              })
+                            }
+                          >
+                            {(["Auto", "All", "Visual", "Audio"] as H3RefModComponents[]).map((value) => (
+                              <option key={value} value={value}>{value}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="text-xs text-white/55">
+                          Overall strength
+                          <input
+                            className={`${field} mt-1`}
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            value={slot.strength}
+                            onChange={(event) => updateRefModSlot(slot.id, { strength: Number(event.target.value) })}
+                          />
+                        </label>
+                        <label className="text-xs text-white/55">
+                          Source kind
+                          <select
+                            className={`${field} mt-1`}
+                            value={slot.sourceKind}
+                            onChange={(event) =>
+                              updateRefModSlot(slot.id, {
+                                sourceKind: event.target.value as H3RefModSourceKind,
+                              })
+                            }
+                          >
+                            {(["unknown", "image", "video", "audio", "bundle"] as H3RefModSourceKind[]).map((value) => (
+                              <option key={value} value={value}>{value}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="text-xs text-white/55">
+                          Visual strength
+                          <input
+                            className={`${field} mt-1`}
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            value={slot.visualStrength}
+                            onChange={(event) => updateRefModSlot(slot.id, { visualStrength: Number(event.target.value) })}
+                          />
+                        </label>
+                        <label className="text-xs text-white/55">
+                          Audio strength
+                          <input
+                            className={`${field} mt-1`}
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            value={slot.audioStrength}
+                            onChange={(event) => updateRefModSlot(slot.id, { audioStrength: Number(event.target.value) })}
+                          />
+                        </label>
+                        <label className="text-xs text-white/55">
+                          Copies
+                          <input
+                            className={`${field} mt-1`}
+                            type="number"
+                            min={1}
+                            max={10}
+                            step={1}
+                            value={slot.copies}
+                            onChange={(event) => updateRefModSlot(slot.id, { copies: Number(event.target.value) })}
+                          />
+                        </label>
+                      </div>
+                      <input
+                        className={`${field} mt-3`}
+                        value={slot.description}
+                        onChange={(event) => updateRefModSlot(slot.id, { description: event.target.value })}
+                        placeholder="Identity, motion, ambience, or bundle notes"
+                      />
+                      {refModSlotWarnings(slot).map((warning) => (
+                        <div key={warning} className="mt-2 rounded-[6px] border border-amber-300/25 bg-amber-300/10 p-2 text-xs text-amber-50">
+                          {warning}
+                        </div>
+                      ))}
+                    </article>
+                  ))}
+                </div>
+                {!refModSlots.length ? (
+                  <div className="mt-4 rounded-[6px] border border-dashed border-white/15 py-8 text-center text-sm text-white/35">
+                    Add a RefMod from the library or enter a saved RefMod name manually.
+                  </div>
+                ) : null}
+                {refModsValidationMessage ? (
+                  <div className="mt-4 rounded-[6px] border border-red-300/30 bg-red-500/10 p-3 text-sm text-red-50">
+                    {refModsValidationMessage}
+                  </div>
+                ) : refModsWarningMessages.length ? (
+                  <div className="mt-4 rounded-[6px] border border-amber-300/25 bg-amber-300/10 p-3 text-sm text-amber-50">
+                    {refModsWarningMessages[0]}
+                  </div>
+                ) : null}
               </section>
             </>
           ) : !legacyModeActive ? (
@@ -3987,6 +4494,134 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                 onClick={() => void generateBodySwap()}
               >
                 {active ? "Generation Running" : "Generate Body Swap"}
+              </button>
+            </section>
+          ) : studioMode === "h3-refmods" ? (
+            <section className={surface} data-otg="h3-refmods-controls">
+              <p className="text-xs font-black uppercase text-violet-200/75">
+                Ref Mods Controls
+              </p>
+              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+                Quality
+              </p>
+              <div
+                className="grid grid-cols-3 gap-2"
+                role="group"
+                aria-label="Ref Mods quality"
+              >
+                {H3_QUALITY_OPTIONS.map((value) => (
+                  <button
+                    key={value}
+                    aria-pressed={quality === value}
+                    className={`${command} ${choiceClass(quality === value)}`}
+                    onClick={() => setQuality(value)}
+                  >
+                    {QUALITY_LABELS[value]}
+                  </button>
+                ))}
+              </div>
+              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+                Duration
+              </p>
+              <div
+                className="grid grid-cols-2 gap-2"
+                role="group"
+                aria-label="Ref Mods duration"
+              >
+                {H3_PRODUCTION_DURATION_OPTIONS.map((value) => (
+                  <button
+                    key={value}
+                    aria-pressed={duration === value}
+                    className={`${command} ${choiceClass(duration === value)}`}
+                    onClick={() => setDuration(value)}
+                  >
+                    {value} sec
+                  </button>
+                ))}
+              </div>
+              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+                Orientation
+              </p>
+              <div
+                className="grid grid-cols-2 gap-2"
+                role="group"
+                aria-label="Ref Mods orientation"
+              >
+                {H3_ORIENTATION_OPTIONS.map((value) => (
+                  <button
+                    key={value}
+                    aria-pressed={orientation === value}
+                    className={`${command} ${choiceClass(orientation === value)}`}
+                    onClick={() => setOrientation(value)}
+                  >
+                    {value === "landscape" ? "Landscape" : "Portrait"}
+                  </button>
+                ))}
+              </div>
+              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+                Turbo
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {([true, false] as const).map((value) => (
+                  <button
+                    key={String(value)}
+                    type="button"
+                    aria-pressed={refModsTurbo === value}
+                    className={`${command} ${choiceClass(refModsTurbo === value)}`}
+                    onClick={() => setRefModsTurbo(value)}
+                  >
+                    {value ? "Turbo" : "Native"}
+                  </button>
+                ))}
+              </div>
+              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+                Seed
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {(["random", "fixed"] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={refModsSeedMode === value}
+                    className={`${command} ${choiceClass(refModsSeedMode === value)}`}
+                    onClick={() => setRefModsSeedMode(value)}
+                  >
+                    {value === "random" ? "Random" : "Explicit"}
+                  </button>
+                ))}
+              </div>
+              {refModsSeedMode === "fixed" ? (
+                <input
+                  className={`${field} mt-2`}
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={refModsSeed}
+                  onChange={(event) => setRefModsSeed(event.target.value)}
+                  placeholder="Seed"
+                />
+              ) : null}
+              <div className="mt-4 rounded-[6px] border border-white/10 bg-black/30 p-3 text-sm text-white/60">
+                <span className="font-semibold text-white/80">
+                  RefMods:
+                </span>{" "}
+                {refModSlots.length} / {H3_REFMOD_LIMITS.maxRefMods}
+                <br />
+                <span className="font-semibold text-white/80">
+                  Compiled:
+                </span>{" "}
+                {refModsCompiledPrompt ? "ready" : "waiting for prompt"}
+                <br />
+                <span className="text-xs">
+                  Generation stays quarantined until the RefMod T2V API graph is present.
+                </span>
+              </div>
+              <button
+                className={`${command} ${primary} mt-4 min-h-14 w-full text-base`}
+                disabled={!canGenerateRefMods || active}
+                onClick={() => void generateRefMods()}
+              >
+                {active ? "Generation Running" : "Generate Ref Mods"}
               </button>
             </section>
           ) : !legacyModeActive ? (

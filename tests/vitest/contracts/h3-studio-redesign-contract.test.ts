@@ -31,21 +31,25 @@ describe("H3 Studio redesign contracts", () => {
     const workflows = read("lib/production/h3Workflows.ts");
 
     expect(panel).toContain('type Mode = ProductionV2H3Mode');
-    expect(panel).toContain('type H3StudioMode = Mode | "h3-realism" | "h3-body-swap"');
+    expect(panel).toContain('type H3StudioMode = Mode | "h3-realism" | "h3-body-swap" | "h3-refmods"');
     expect(panel).toContain('id: "h3-realism"');
     expect(panel).toContain('id: "h3-body-swap"');
-    expect(panel).toContain("grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5");
+    expect(panel).toContain('id: "h3-refmods"');
+    expect(panel).toContain("grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6");
     expect(panel).toContain('data-otg="h3-special-mode-quarantine"');
     expect(panel).toContain('/api/h3/special/realism/generation');
     expect(panel).toContain('/api/h3/special/body-swap/generation');
+    expect(panel).toContain('/api/h3/special/refmods/generation');
     expect(panel).toContain("if (!legacyModeActive)");
     expect(panel).toContain("cannot call the legacy H3 Prompt Builder");
     expect(panel).toContain("cannot call the legacy generation route");
     expect(panel).toContain("setCatalog([])");
     expect(recipes).not.toContain("h3-realism");
     expect(recipes).not.toContain("h3-body-swap");
+    expect(recipes).not.toContain("h3-refmods");
     expect(workflows).not.toContain("h3-realism");
     expect(workflows).not.toContain("h3-body-swap");
+    expect(workflows).not.toContain("h3-refmods");
   });
 
   it("uses the shared durable Production Ollama operation and explicit review UI", () => {
