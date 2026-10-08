@@ -1794,7 +1794,16 @@ useEffect(() => {
   }, [isAdmin, loadAdminImageLoras, tab]);
 
   useEffect(() => {
-    const handler = () => setTab("h3");
+    const handler = (event: Event) => {
+      setTab("h3");
+      const detail = (event as CustomEvent).detail;
+      if (detail?.__otgForwarded) return;
+      window.setTimeout(() => {
+        window.dispatchEvent(new CustomEvent(H3_REFMOD_USE_IN_H3_EVENT, {
+          detail: { ...(detail || {}), __otgForwarded: true },
+        }));
+      }, 100);
+    };
     window.addEventListener(H3_REFMOD_USE_IN_H3_EVENT, handler);
     return () => window.removeEventListener(H3_REFMOD_USE_IN_H3_EVENT, handler);
   }, []);
