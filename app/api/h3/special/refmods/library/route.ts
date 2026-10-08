@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { NextResponse } from "next/server";
 
 import { normalizeH3RefModLibraryEntry } from "@/lib/h3SpecialModes/refMods";
+import { readH3RefModSidecar } from "@/lib/h3SpecialModes/refModCreation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,6 +42,13 @@ export async function GET() {
             normalized.sizeBytes = stat.size;
             normalized.createdAt = stat.birthtime.toISOString();
             normalized.modifiedAt = stat.mtime.toISOString();
+          }
+          const sidecar = readH3RefModSidecar(normalized.name);
+          if (sidecar) {
+            normalized.sourceType = "otg-created";
+            normalized.characterId = sidecar.characterId || null;
+            normalized.createdAt ||= sidecar.createdAt;
+            normalized.modifiedAt ||= sidecar.updatedAt;
           }
           return normalized;
         })

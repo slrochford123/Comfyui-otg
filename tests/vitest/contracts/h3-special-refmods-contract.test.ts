@@ -11,6 +11,16 @@ import {
   reorderH3RefMods,
   validateH3RefModsRequest,
 } from "../../../lib/h3SpecialModes/refMods";
+import {
+  h3RefModSidecarPath,
+  isSafeRefModBaseName,
+  normalizeH3RefModCreateConfig,
+  validateH3RefModCreateRequest,
+} from "../../../lib/h3SpecialModes/refModCreation";
+import {
+  buildH3RefModAudioPackWorkflow,
+  buildH3RefModVisualPackWorkflow,
+} from "../../../lib/h3SpecialModes/refModCreationWorkflow";
 import { H3_PRODUCTION_ROUTE_KEYS } from "../../../lib/production/h3ProductionRecipes";
 
 const root = process.cwd();
@@ -25,6 +35,8 @@ describe("H3 Ref Mods special mode contract", () => {
     expect(panel).toContain('data-otg="h3-refmods-workspace"');
     expect(panel).toContain("/api/h3/special/refmods/library");
     expect(panel).toContain("/api/h3/special/refmods/generation");
+    expect(panel).toContain("/api/h3/special/refmods/create");
+    expect(panel).toContain('data-otg="h3-refmods-create"');
     expect(H3_PRODUCTION_ROUTE_KEYS.some((key) => key.includes("refmods"))).toBe(false);
     expect(read("lib/production/h3Workflows.ts")).not.toContain("h3-refmods");
   });
@@ -148,5 +160,63 @@ describe("H3 Ref Mods special mode contract", () => {
         refMods: Array.from({ length: 9 }, (_, index) => ({ name: `mod-${index}` })),
       }),
     ).toThrow("at most 8 RefMods");
+  });
+
+  it("validates RefMod creation names, source counts, and sidecar paths", () => {
+    expect(isSafeRefModBaseName("isabella_refmod")).toBe(true);
+    expect(isSafeRefModBaseName("characters/isabella")).toBe(false);
+    const character = normalizeH3RefModCreateConfig({
+      kind: "character",
+      name: "isabella_refmod",
+      characterId: "char-1",
+    });
+    expect(character.libraryName).toBe("characters/isabella_refmod");
+    expect(h3RefModSidecarPath(character.libraryName)).toContain("h3-special/refmods/registry/characters/isabella_refmod.json");
+    expect(() =>
+      validateH3RefModCreateRequest(
+        { kind: "character", name: "too_few" },
+        [{ path: "/tmp/1.png", name: "1.png", kind: "image" }],
+      ),
+    ).toThrow("4-8 images");
+    expect(() =>
+      validateH3RefModCreateRequest(
+        { kind: "motion", name: "walk" },
+        [{ path: "/tmp/a.mp4", name: "a.mp4", kind: "video", durationSeconds: 31 }],
+      ),
+    ).toThrow("30 seconds or shorter");
+  });
+
+  it("builds dedicated RefMod creator workflows without mutating standard H3 recipes", () => {
+    const visual = buildH3RefModVisualPackWorkflow({
+      folder: "otg_refmods/job-1",
+      name: "isabella_refmod",
+      subfolder: "characters",
+      kind: "character",
+      sourceCount: 8,
+      description: "canonical image set",
+    });
+    expect(visual.workflowId).toBe("h3-refmod-visual-pack");
+    expect(visual.libraryName).toBe("characters/isabella_refmod");
+    expect(visual.graph["1"].inputs.vae_name).toBe("minimax_h3_video_vae_fp16.safetensors");
+    expect(visual.graph["2"].class_type).toBe("MiniMaxH3RefModFolderLoader");
+    expect(visual.graph["2"].inputs.folder).toBe("otg_refmods/job-1");
+    expect(visual.graph["2"].inputs.max_items).toBe(8);
+    expect(visual.graph["3"].inputs.concept_type).toBe("identity");
+    expect(visual.graph["3"].inputs.save).toBe(false);
+    expect(visual.graph["4"].inputs.subfolder).toBe("characters");
+
+    const audio = buildH3RefModAudioPackWorkflow({
+      audioFilename: "beat.wav",
+      name: "lofi_beat",
+      subfolder: "audio",
+      audioCategory: "music",
+      description: "lo-fi beat",
+    });
+    expect(audio.workflowId).toBe("h3-refmod-audio-pack");
+    expect(audio.graph["1"].class_type).toBe("LoadAudio");
+    expect(audio.graph["2"].inputs.vae_name).toBe("minimax_h3_audio_vae_fp32.safetensors");
+    expect(audio.graph["3"].inputs.concept_type).toBe("music_style");
+    expect(audio.graph["3"].inputs.save).toBe(false);
+    expect(audio.graph["4"].inputs.subfolder).toBe("audio");
   });
 });

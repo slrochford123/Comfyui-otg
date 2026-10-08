@@ -165,6 +165,21 @@ type JobStatus = {
   galleryUrl: string | null;
   galleryError: string | null;
 };
+type RefModCreateJobStatus = {
+  id: string;
+  status: string;
+  statusMessage: string;
+  backendUrl: string;
+  promptId: string | null;
+  workflowId: string | null;
+  workflowFile: string | null;
+  libraryName: string;
+  savedPath: string | null;
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+};
 
 const MODE_OPTIONS: Array<{ id: H3StudioMode; label: string; detail: string }> = [
   { id: "h3-text-to-video", label: "Text", detail: "Create from a prompt" },
@@ -957,6 +972,18 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const [refModsSeedMode, setRefModsSeedMode] =
     useState<"random" | "fixed">("random");
   const [refModsSeed, setRefModsSeed] = useState("");
+  const [refModCreateKind, setRefModCreateKind] =
+    useState<"character" | "motion" | "audio">("character");
+  const [refModCreateName, setRefModCreateName] = useState("");
+  const [refModCreateDescription, setRefModCreateDescription] = useState("");
+  const [refModCreateAudioCategory, setRefModCreateAudioCategory] =
+    useState<"music" | "ambience" | "sound_fx">("ambience");
+  const [refModCreateReplace, setRefModCreateReplace] = useState(false);
+  const [refModCreateImages, setRefModCreateImages] = useState<File[]>([]);
+  const [refModCreateVideo, setRefModCreateVideo] = useState<File | null>(null);
+  const [refModCreateAudio, setRefModCreateAudio] = useState<File | null>(null);
+  const [refModCreateJob, setRefModCreateJob] =
+    useState<RefModCreateJobStatus | null>(null);
   const [firstImage, setFirstImage] = useState<MediaInput | null>(null);
   const [lastImage, setLastImage] = useState<MediaInput | null>(null);
   const [references, setReferences] = useState<MediaInput[]>([]);
@@ -1171,6 +1198,28 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         : "Ref Mods settings are invalid.";
     }
   }, [refModSlots, refModsSeedMode, refModsSeed]);
+  const refModCreateValidationMessage = useMemo(() => {
+    if (!refModCreateName.trim()) return "Name the RefMod before creating it.";
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(refModCreateName.trim())) {
+      return "Use a file-safe RefMod name without spaces, slashes, or extension.";
+    }
+    if (refModCreateKind === "character") {
+      if (refModCreateImages.length < 4 || refModCreateImages.length > 8) {
+        return "Character RefMods require 4-8 images.";
+      }
+    } else if (refModCreateKind === "motion") {
+      if (!refModCreateVideo) return "Choose one motion video clip.";
+    } else if (!refModCreateAudio) {
+      return "Choose one audio clip.";
+    }
+    return "";
+  }, [
+    refModCreateName,
+    refModCreateKind,
+    refModCreateImages.length,
+    refModCreateVideo,
+    refModCreateAudio,
+  ]);
   const canGenerate = Boolean(
     legacyModeActive
       && generationPrompt.trim()
@@ -1533,6 +1582,16 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     const timer = setInterval(() => void refreshJob(job.id), 4000);
     return () => clearInterval(timer);
   }, [active, job?.id]);
+  useEffect(() => {
+    const jobId = refModCreateJob?.id;
+    const running = Boolean(
+      refModCreateJob
+        && !["completed", "failed"].includes(refModCreateJob.status),
+    );
+    if (!running || !jobId) return;
+    const timer = setInterval(() => void refreshRefModCreateJob(jobId), 4000);
+    return () => clearInterval(timer);
+  }, [refModCreateJob?.id, refModCreateJob?.status]);
   useEffect(() => {
     let cancelled = false;
     async function restoreLatestJob() {
@@ -2473,6 +2532,58 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       copy.splice(nextIndex, 0, slot);
       return copy;
     });
+  }
+  async function refreshRefModCreateJob(id = refModCreateJob?.id) {
+    if (!id) return;
+    const response = await fetch(
+      `/api/h3/special/refmods/create?jobId=${encodeURIComponent(id)}`,
+      { cache: "no-store", credentials: "include" },
+    );
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data.job) {
+      setRefModCreateJob(data.job);
+      if (data.job.status === "completed") {
+        setRefModLibraryStatus("idle");
+        setRefModLibraryMessage(`Created ${data.job.libraryName}.`);
+      }
+    }
+  }
+  async function createRefMod() {
+    if (refModCreateValidationMessage) {
+      setMessage(refModCreateValidationMessage);
+      return;
+    }
+    const form = new FormData();
+    form.append("config", JSON.stringify({
+      kind: refModCreateKind,
+      name: refModCreateName.trim(),
+      description: refModCreateDescription,
+      audioCategory: refModCreateAudioCategory,
+      replace: refModCreateReplace,
+    }));
+    if (refModCreateKind === "character") {
+      refModCreateImages.forEach((file) => form.append("images", file));
+    } else if (refModCreateKind === "motion" && refModCreateVideo) {
+      form.append("video", refModCreateVideo);
+    } else if (refModCreateKind === "audio" && refModCreateAudio) {
+      form.append("audio", refModCreateAudio);
+    }
+    setMessage("Submitting RefMod creation workflow...");
+    try {
+      const response = await fetch("/api/h3/special/refmods/create", {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.job) {
+        throw new Error(data.error || "RefMod creation could not be submitted.");
+      }
+      setRefModCreateJob(data.job);
+      setMessage("");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "RefMod creation could not be submitted.");
+    }
   }
   async function generateRefMods() {
     if (!canGenerateRefMods) {
@@ -3567,6 +3678,151 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                     No installed RefMods are visible yet. The bundled example should appear when the backend library endpoint is reachable.
                   </div>
                 ) : null}
+              </section>
+              <section className={surface} data-otg="h3-refmods-create">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase text-violet-200/75">
+                      Create RefMod
+                    </p>
+                    <h2 className="mt-1 text-lg font-black">
+                      Character, Motion, or Audio
+                    </h2>
+                  </div>
+                  {refModCreateJob ? (
+                    <span className="rounded-full bg-black/30 px-2 py-1 text-[11px] font-bold text-white/60">
+                      {refModCreateJob.status}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <label className="text-xs text-white/55">
+                    Type
+                    <select
+                      className={`${field} mt-1`}
+                      value={refModCreateKind}
+                      onChange={(event) =>
+                        setRefModCreateKind(event.target.value as "character" | "motion" | "audio")
+                      }
+                    >
+                      <option value="character">Character</option>
+                      <option value="motion">Motion</option>
+                      <option value="audio">Audio</option>
+                    </select>
+                  </label>
+                  <label className="text-xs text-white/55 md:col-span-2">
+                    Name
+                    <input
+                      className={`${field} mt-1`}
+                      value={refModCreateName}
+                      onChange={(event) => setRefModCreateName(event.target.value)}
+                      placeholder="isabella_refmod"
+                    />
+                  </label>
+                  {refModCreateKind === "audio" ? (
+                    <label className="text-xs text-white/55">
+                      Audio category
+                      <select
+                        className={`${field} mt-1`}
+                        value={refModCreateAudioCategory}
+                        onChange={(event) =>
+                          setRefModCreateAudioCategory(event.target.value as "music" | "ambience" | "sound_fx")
+                        }
+                      >
+                        <option value="music">Music</option>
+                        <option value="ambience">Ambience</option>
+                        <option value="sound_fx">Sound Effect</option>
+                      </select>
+                    </label>
+                  ) : null}
+                  <label className="text-xs text-white/55 md:col-span-3">
+                    Description
+                    <input
+                      className={`${field} mt-1`}
+                      value={refModCreateDescription}
+                      onChange={(event) => setRefModCreateDescription(event.target.value)}
+                      placeholder="Identity, motion, ambience, or source notes"
+                    />
+                  </label>
+                </div>
+                {refModCreateKind === "character" ? (
+                  <label className="mt-4 block text-xs text-white/55">
+                    Character images
+                    <input
+                      className={`${field} mt-1`}
+                      type="file"
+                      accept={H3_MEDIA_ACCEPT.image}
+                      multiple
+                      onChange={(event) =>
+                        setRefModCreateImages(Array.from(event.target.files || []))
+                      }
+                    />
+                    <span className="mt-2 block text-white/40">
+                      {refModCreateImages.length ? `${refModCreateImages.length} selected` : "4-8 images, same outfit, simple background."}
+                    </span>
+                  </label>
+                ) : refModCreateKind === "motion" ? (
+                  <label className="mt-4 block text-xs text-white/55">
+                    Motion video
+                    <input
+                      className={`${field} mt-1`}
+                      type="file"
+                      accept={H3_MEDIA_ACCEPT.video}
+                      onChange={(event) =>
+                        setRefModCreateVideo(event.target.files?.[0] || null)
+                      }
+                    />
+                    <span className="mt-2 block text-white/40">
+                      {refModCreateVideo?.name || "One short clip, ideally 2-4 seconds."}
+                    </span>
+                  </label>
+                ) : (
+                  <label className="mt-4 block text-xs text-white/55">
+                    Audio clip
+                    <input
+                      className={`${field} mt-1`}
+                      type="file"
+                      accept={H3_MEDIA_ACCEPT.audio}
+                      onChange={(event) =>
+                        setRefModCreateAudio(event.target.files?.[0] || null)
+                      }
+                    />
+                    <span className="mt-2 block text-white/40">
+                      {refModCreateAudio?.name || "5-15 seconds is the practical starting range."}
+                    </span>
+                  </label>
+                )}
+                <label className="mt-4 flex items-center gap-2 text-xs font-bold text-white/60">
+                  <input
+                    type="checkbox"
+                    checked={refModCreateReplace}
+                    onChange={(event) => setRefModCreateReplace(event.target.checked)}
+                  />
+                  Replace an existing RefMod with this name
+                </label>
+                {refModCreateValidationMessage ? (
+                  <div className="mt-4 rounded-[6px] border border-amber-300/25 bg-amber-300/10 p-3 text-sm text-amber-50">
+                    {refModCreateValidationMessage}
+                  </div>
+                ) : null}
+                {refModCreateJob ? (
+                  <div className="mt-4 rounded-[6px] border border-white/10 bg-black/30 p-3 text-sm text-white/60">
+                    <div className="font-bold text-white/80">
+                      {refModCreateJob.libraryName}
+                    </div>
+                    <div>{refModCreateJob.statusMessage}</div>
+                    {refModCreateJob.promptId ? <div>Prompt {refModCreateJob.promptId}</div> : null}
+                    {refModCreateJob.error ? <div className="text-red-100">{refModCreateJob.error}</div> : null}
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  className={`${command} ${primary} mt-4 min-h-12 w-full`}
+                  disabled={Boolean(refModCreateValidationMessage)}
+                  onClick={() => void createRefMod()}
+                >
+                  Create RefMod
+                </button>
               </section>
               <section className={surface}>
                 <div className="flex flex-wrap items-center justify-between gap-3">

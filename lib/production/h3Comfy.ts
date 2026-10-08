@@ -349,6 +349,7 @@ export async function uploadH3InputToBaseUrl(args: {
   sourcePath: string;
   mediaType: "image" | "audio" | "video";
   uploadName: string;
+  subfolder?: string;
   fetcher?: typeof fetch;
 }) {
   const absolutePath = resolveProductionV2MediaPath(args.sourcePath);
@@ -367,6 +368,7 @@ export async function uploadH3InputToBaseUrl(args: {
     body.append(field, new Blob([bytes]), filename);
     body.append("type", "input");
     body.append("overwrite", "true");
+    if (args.subfolder) body.append("subfolder", args.subfolder);
     const response = await fetchWithTimeout(fetcher, `${baseUrl}${endpoint}`, { method: "POST", body }, 60_000);
     const text = await response.text().catch(() => "");
     if (!response.ok) {
