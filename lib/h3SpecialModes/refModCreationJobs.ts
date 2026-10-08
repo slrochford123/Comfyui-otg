@@ -215,7 +215,7 @@ async function buildWorkflow(job: H3RefModCreateJob) {
     const compatibility = await inspectH3LtxAlphaCompatibility(job.backendUrl);
     if (!compatibility.compatible) {
       throw new Error(
-        `LTX 2.5 Alpha Generation is unavailable on this backend. Missing nodes: ${compatibility.missingNodes.join(", ") || "none"}.`,
+        `LTX 2.5 Alpha Generation is unavailable on this backend. Missing nodes: ${compatibility.missingNodes.join(", ") || "none"}. Missing assets: ${compatibility.missingAssets.join(", ") || "none"}.`,
       );
     }
     await assertH3LtxAlphaAvailable(job.backendUrl);

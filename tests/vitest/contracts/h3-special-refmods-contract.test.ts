@@ -19,7 +19,10 @@ import {
 } from "../../../lib/h3SpecialModes/refModCreation";
 import {
   H3_LTX_ALPHA_GENERATOR_ID,
+  H3_LTX_ALPHA_LORA_NAME,
+  H3_LTX_ALPHA_MODEL_ASSETS,
   H3_LTX_ALPHA_REQUIRED_NODE_CLASSES,
+  H3_LTX_ALPHA_WORKFLOW_FILE,
   inspectH3LtxAlphaCompatibility,
 } from "../../../lib/h3SpecialModes/ltxAlphaMotion";
 import {
@@ -287,10 +290,18 @@ describe("H3 Ref Mods special mode contract", () => {
     const unavailable = await inspectH3LtxAlphaCompatibility("");
     expect(unavailable.compatible).toBe(false);
     expect(unavailable.missingNodes).toEqual([...H3_LTX_ALPHA_REQUIRED_NODE_CLASSES]);
+    expect(unavailable.missingAssets).toContain(H3_LTX_ALPHA_LORA_NAME);
+    expect(unavailable.missingAssets).toContain(H3_LTX_ALPHA_MODEL_ASSETS.diffusionModel);
+    expect(unavailable.workflowFile).toBe(H3_LTX_ALPHA_WORKFLOW_FILE);
+    expect(H3_LTX_ALPHA_WORKFLOW_FILE).toBe("LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled.json");
     expect(H3_LTX_ALPHA_GENERATOR_ID).toBe("ltx-2.5-alpha-gen");
+    expect(H3_LTX_ALPHA_REQUIRED_NODE_CLASSES).toContain("LTXICLoRALoaderModelOnly");
+    expect(H3_LTX_ALPHA_REQUIRED_NODE_CLASSES).not.toContain("GetNode");
+    expect(H3_LTX_ALPHA_REQUIRED_NODE_CLASSES).not.toContain("SetNode");
 
     const jobs = read("lib/h3SpecialModes/refModCreationJobs.ts");
     expect(jobs).toContain("LTX 2.5 Alpha Generation is unavailable on this backend");
+    expect(jobs).toContain("Missing assets");
     expect(jobs).toContain("isolatedDerivativePath");
     expect(jobs).not.toContain("grayscale alpha matte directly");
   });
