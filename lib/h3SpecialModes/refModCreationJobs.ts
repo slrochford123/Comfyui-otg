@@ -231,6 +231,25 @@ function collectStrings(value: unknown, out: string[] = []) {
   return out;
 }
 
+export function selectH3RefModSavedPathFromHistoryEntry(entry: Record<string, unknown>) {
+  const outputStrings = collectStrings(entry.outputs);
+  const allStrings = collectStrings(entry);
+  const candidates = [
+    ...outputStrings,
+    ...allStrings,
+  ]
+    .map((item) => item.trim())
+    .filter((item, index, items) =>
+      item.endsWith(".safetensors")
+      && items.indexOf(item) === index,
+    );
+
+  return candidates.find((item) => /(^|[/\\])refmods([/\\]|$)/i.test(item))
+    || candidates.find((item) => /[/\\]/.test(item))
+    || candidates[0]
+    || null;
+}
+
 async function readPromptHistory(baseUrl: string, promptId: string): Promise<HistoryState> {
   const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/history/${encodeURIComponent(promptId)}`, {
     cache: "no-store",
@@ -249,9 +268,7 @@ async function readPromptHistory(baseUrl: string, promptId: string): Promise<His
       error: JSON.stringify(executionError || status).slice(0, 1000),
     };
   }
-  const savedPath = collectStrings(entry)
-    .map((item) => item.trim())
-    .find((item) => item.endsWith(".safetensors")) || null;
+  const savedPath = selectH3RefModSavedPathFromHistoryEntry(entry);
   if (status?.completed) return { state: "completed", savedPath };
   return { state: "running" };
 }

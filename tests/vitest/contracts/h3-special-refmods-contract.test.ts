@@ -22,6 +22,9 @@ import {
   buildH3RefModVisualPackWorkflow,
 } from "../../../lib/h3SpecialModes/refModCreationWorkflow";
 import {
+  selectH3RefModSavedPathFromHistoryEntry,
+} from "../../../lib/h3SpecialModes/refModCreationJobs";
+import {
   buildH3RefModsT2VWorkflow,
 } from "../../../lib/h3SpecialModes/refModsWorkflow";
 import { H3_PRODUCTION_ROUTE_KEYS } from "../../../lib/production/h3ProductionRecipes";
@@ -276,5 +279,32 @@ describe("H3 Ref Mods special mode contract", () => {
     expect(audio.graph["3"].inputs.concept_type).toBe("music_style");
     expect(audio.graph["3"].inputs.save).toBe(false);
     expect(audio.graph["4"].inputs.subfolder).toBe("audio");
+  });
+
+  it("prefers the RefMod save output path over model asset filenames in creation history", () => {
+    const saved = selectH3RefModSavedPathFromHistoryEntry({
+      prompt: {
+        "1": {
+          class_type: "VAELoader",
+          inputs: { vae_name: "minimax_h3_video_vae_fp16.safetensors" },
+        },
+      },
+      outputs: {
+        "3": {
+          text: [
+            JSON.stringify({
+              saved_paths: [],
+              name: "isabella",
+            }),
+          ],
+        },
+        "4": {
+          text: [
+            "/home/shawn-rochford/AI/ComfyUI/models/refmods/characters/isabella.safetensors",
+          ],
+        },
+      },
+    });
+    expect(saved).toBe("/home/shawn-rochford/AI/ComfyUI/models/refmods/characters/isabella.safetensors");
   });
 });
