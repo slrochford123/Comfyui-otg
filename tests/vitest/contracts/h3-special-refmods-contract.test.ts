@@ -21,6 +21,9 @@ import {
   buildH3RefModAudioPackWorkflow,
   buildH3RefModVisualPackWorkflow,
 } from "../../../lib/h3SpecialModes/refModCreationWorkflow";
+import {
+  buildH3RefModsT2VWorkflow,
+} from "../../../lib/h3SpecialModes/refModsWorkflow";
 import { H3_PRODUCTION_ROUTE_KEYS } from "../../../lib/production/h3ProductionRecipes";
 
 const root = process.cwd();
@@ -148,8 +151,9 @@ describe("H3 Ref Mods special mode contract", () => {
 
   it("rejects malformed generation requests before Comfy submission", () => {
     const route = read("app/api/h3/special/refmods/generation/route.ts");
-    expect(route).toContain("validateH3RefModsRequest");
-    expect(route).toContain("quarantined until the dedicated RefMod T2V API workflow");
+    expect(route).toContain("createH3RefModsJob");
+    expect(route).toContain("startH3RefModsJob");
+    expect(route).not.toContain("quarantined until the dedicated RefMod T2V API workflow");
     expect(() =>
       validateH3RefModsRequest({
         mode: "h3-refmods",
@@ -160,6 +164,60 @@ describe("H3 Ref Mods special mode contract", () => {
         refMods: Array.from({ length: 9 }, (_, index) => ({ name: `mod-${index}` })),
       }),
     ).toThrow("at most 8 RefMods");
+  });
+
+  it("builds a dedicated RefMods T2V workflow with loader slots and text encoder wiring", () => {
+    const compiled = compileH3RefModsPrompt({
+      prompt: "Isabella smiles at the camera.",
+      refMods: normalizeH3RefModSlots([
+        {
+          name: "characters/isabella",
+          category: "character",
+          sourceKind: "video",
+          strength: 0.9,
+          components: "All",
+          visualStrength: 1,
+          audioStrength: 1,
+        },
+      ]),
+    });
+    const built = buildH3RefModsT2VWorkflow({
+      backend: "rtx3090",
+      quality: "sh",
+      orientation: "landscape",
+      durationSeconds: 5,
+      prompt: compiled,
+      refMods: normalizeH3RefModSlots([
+        {
+          name: "characters/isabella",
+          category: "character",
+          sourceKind: "video",
+          strength: 0.9,
+          components: "All",
+          visualStrength: 1,
+          audioStrength: 1,
+        },
+      ]),
+      turbo: true,
+      seed: 424242,
+      outputPrefix: "otg_h3_refmods/test",
+    });
+    expect(built.workflowId).toBe("h3-refmods-t2v");
+    expect(built.workflowFile).toContain("minimax_h3_t2v_rtx3090.json");
+    expect(built.nativeWidth).toBe(608);
+    expect(built.nativeHeight).toBe(352);
+    expect(built.graph["9400"].class_type).toBe("MiniMaxH3RefModsLoader");
+    expect(built.graph["9400"].inputs.mod_1).toBe("characters/isabella");
+    expect(built.graph["9400"].inputs.strength_1).toBe(0.9);
+    expect(built.graph["9400"].inputs.components_1).toBe("All");
+    expect(built.graph["9401"].class_type).toBe("MiniMaxH3RefModTextEncode");
+    expect(built.graph["9401"].inputs.mods).toEqual(["9400", 0]);
+    expect(built.graph["9401"].inputs.vae).toEqual(["3", 0]);
+    expect(built.graph["32"].inputs.conditioning).toEqual(["9401", 0]);
+    expect(built.graph["21"].inputs.latent_image).toEqual(["39", 1]);
+    expect(built.graph["39"].inputs.width).toBe(608);
+    expect(built.graph["39"].inputs.height).toBe(352);
+    expect(built.graph["39"].inputs.prompt).toBe(compiled);
   });
 
   it("validates RefMod creation names, source counts, and sidecar paths", () => {

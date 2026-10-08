@@ -375,6 +375,9 @@ function h3GalleryEndpointFor(job: Pick<JobStatus, "id" | "mode">) {
   if (generationEndpoint === "/api/h3/special/body-swap/generation") {
     return "/api/h3/special/body-swap/generation/gallery";
   }
+  if (generationEndpoint === "/api/h3/special/refmods/generation") {
+    return "/api/h3/special/refmods/generation/gallery";
+  }
   return "/api/h3/generation/gallery";
 }
 
@@ -3593,7 +3596,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                     </p>
                   </div>
                   <span className="rounded-full bg-cyan-300/15 px-2 py-1 text-[11px] font-bold text-cyan-100">
-                    TEST quarantined
+                    TEST adapter
                   </span>
                 </div>
                 <textarea
@@ -4869,7 +4872,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                 {refModsCompiledPrompt ? "ready" : "waiting for prompt"}
                 <br />
                 <span className="text-xs">
-                  Generation stays quarantined until the RefMod T2V API graph is present.
+                  Uses the validated RefMod T2V adapter on the RTX 3090 test backend.
                 </span>
               </div>
               <button
