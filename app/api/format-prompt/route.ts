@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
 import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
+import {
+  appendProtectedDialogueBlock,
+  detectProtectedDialogue,
+  ensureProtectedDialogueInOutput,
+} from "@/lib/promptDialogue";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -282,6 +287,8 @@ function buildSystemInstruction(mode: FormatMode, styleLabel: string, stylePromp
     "Aim for roughly 4 to 8 descriptive sentences in the compiled prompt.",
     "Use camera language naturally and clearly.",
     "Keep the user's core subject, action, and intent.",
+    "Preserve user-supplied spoken dialogue exactly, even when the user did not type quotation marks.",
+    "Do not invent dialogue when none is supplied.",
     "Do not mention starter image, first frame, source image, continuity lock, uploaded image, or any internal builder instructions.",
     "Do not output meta-explanations or implementation notes. Output only the final usable prompt inside the JSON schema.",
     styleLines,
@@ -292,6 +299,8 @@ function buildSystemInstruction(mode: FormatMode, styleLabel: string, stylePromp
 }
 
 function buildUserInstruction(prompt: string, mode: FormatMode, schema: Record<string, unknown>) {
+  const protectedPrompt = appendProtectedDialogueBlock(prompt);
+  const dialogue = detectProtectedDialogue(prompt);
   if (mode === "video_i2v") {
     return [
       "The user wants an image-to-video prompt for LTX 2.3.",
@@ -301,8 +310,11 @@ function buildUserInstruction(prompt: string, mode: FormatMode, schema: Record<s
       "Return JSON only.",
       "Schema:",
       buildSchemaPrompt(schema),
+      dialogue.hasDialogue
+        ? "The prompt includes protected dialogue. Preserve the exact quoted lines in order."
+        : "No protected dialogue was supplied. Do not invent dialogue.",
       "User prompt:",
-      prompt,
+      protectedPrompt,
     ].join("\n\n");
   }
 
@@ -313,8 +325,11 @@ function buildUserInstruction(prompt: string, mode: FormatMode, schema: Record<s
     "Return JSON only.",
     "Schema:",
     buildSchemaPrompt(schema),
+    dialogue.hasDialogue
+      ? "The prompt includes protected dialogue. Preserve the exact quoted lines in order."
+      : "No protected dialogue was supplied. Do not invent dialogue.",
     "User prompt:",
-    prompt,
+    protectedPrompt,
   ].join("\n\n");
 }
 
@@ -377,7 +392,7 @@ function compileFormattedPrompt(mode: FormatMode, structured: PromptFormatRespon
 }
 
 function heuristicFormatPrompt(prompt: string, mode: FormatMode) {
-  const original = normalizeDialoguePunctuation(prompt);
+  const original = normalizeDialoguePunctuation(ensureProtectedDialogueInOutput(prompt, prompt));
   if (!original) return "";
 
   if (mode === "video_i2v") {
@@ -496,7 +511,10 @@ export async function POST(req: NextRequest) {
 
       rawText = readMessageContent(response.data);
       structured = parseStructuredOutput(rawText);
-      formattedPrompt = compileFormattedPrompt(mode, structured);
+      formattedPrompt = ensureProtectedDialogueInOutput(
+        prompt,
+        compileFormattedPrompt(mode, structured),
+      );
     } catch {
       structured = null;
       rawText = "";
@@ -508,7 +526,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (isWeakFormattedPrompt(prompt, formattedPrompt)) {
-      formattedPrompt = sanitizeFormattedPrompt(mode, normalizeDialoguePunctuation(normalizeSentence(prompt)));
+      formattedPrompt = sanitizeFormattedPrompt(mode, ensureProtectedDialogueInOutput(prompt, normalizeDialoguePunctuation(normalizeSentence(prompt))));
     }
 
     return NextResponse.json(

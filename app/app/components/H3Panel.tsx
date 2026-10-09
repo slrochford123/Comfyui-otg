@@ -19,6 +19,7 @@ import {
 } from "@/lib/h3StylePresets";
 import { H3StylePresetPicker } from "./H3StylePresetPicker";
 import H3AdvancedControls from "./H3AdvancedControls";
+import SpeechInputButton from "./SpeechInputButton";
 import VideoSnapshotPicker from "./VideoSnapshotPicker";
 import {
   DEFAULT_H3_ADVANCED_SETTINGS,
@@ -4117,27 +4118,12 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   ? "Building with Ollama..."
                   : "AI Prompt Builder · Optional"}
               </button>
-              <button
+              <SpeechInputButton
+                label="Dictate H3 prompt"
                 className={command}
-                disabled={micState === "processing"}
-                onClick={() => void mic()}
-              >
-                {micState === "listening"
-                  ? "Stop Mic"
-                  : micState === "processing"
-                    ? "Processing..."
-                    : "Mic"}
-              </button>
-              {micState === "listening" ? (
-                <button className={command} onClick={cancelMic}>
-                  Cancel
-                </button>
-              ) : null}
-              {micState === "error" ? (
-                <button className={command} onClick={() => void mic()}>
-                  Retry Mic
-                </button>
-              ) : null}
+                onStatus={setMessage}
+                onTranscript={(text) => replaceOriginal([originalPrompt.trim(), text].filter(Boolean).join("\n"))}
+              />
             </div>
           </section>
           <details className={surface}>

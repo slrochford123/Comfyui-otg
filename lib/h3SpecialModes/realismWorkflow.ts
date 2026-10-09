@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import {
   getH3NativeDimensions,
   normalizeH3Orientation,
@@ -299,6 +300,7 @@ export function buildH3RealismWorkflow(
   setSeed(graph, input.seed);
   pruneReferenceSlots(graph, input.references || []);
   setOutputPrefix(graph, input.outputPrefix);
+  ensureTerminalVideoPreviewNode(graph);
 
   return {
     workflowId: "h3-realism-special",

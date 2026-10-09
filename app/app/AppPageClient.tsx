@@ -6,6 +6,8 @@ import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useSt
 import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
+import MediaPreviewPanel from "./components/MediaPreviewPanel";
+import SpeechInputButton from "./components/SpeechInputButton";
 import type { GalleryActionKind } from "./components/GalleryWorkspace";
 import {
   APP_COLOR_MODE_KEY,
@@ -4483,6 +4485,30 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     setStatusMessage("Prompt cleared.");
   }
 
+  function handleClearLatestPreview() {
+    setLatestPreviewUrl("");
+    setLatestPreviewName("");
+    setLatestPreviewKind("");
+    setLatestPreviewMeta(null);
+    setStatusMessage("Preview cleared. Prompt and settings were kept.");
+  }
+
+  function handleResetGenerateWorkspace() {
+    pushPromptUndoSnapshot(prompt);
+    setPrompt("");
+    setNegativePrompt("");
+    setWorkflowId("");
+    setUploadedFileName("");
+    setActiveGenerateStyleId("");
+    setDurationSeconds(5);
+    setOrientation("landscape");
+    handleClearLatestPreview();
+    try {
+      window.localStorage.removeItem(appStateStorageKey);
+    } catch {}
+    setStatusMessage("Generate workspace reset.");
+  }
+
   function handleUndoPrompt() {
     setPromptUndoStack((prev) => {
       if (!prev.length) return prev;
@@ -6289,24 +6315,15 @@ async function handleAskAi() {
                     </button>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void handleMicClick("generate", (text) => {
-                      pushPromptUndoSnapshot(prompt);
-                      setPrompt((prev) => appendPromptText(prev, text));
-                    })
-                  }
-                  className={cn(
-                    "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
-                    recordingTarget === "generate"
-                      ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
-                      : "border-white/10 bg-white/5 hover:bg-white/10"
-                  )}
-                  disabled={transcribingTarget === "generate"}
-                >
-                  <IconMic />
-                </button>
+                <SpeechInputButton
+                  label="Dictate generation prompt"
+                  className="inline-flex h-12 min-w-12 items-center justify-center rounded-full border border-white/10 bg-white/5 px-3 text-xs font-black text-white transition hover:bg-white/10"
+                  onStatus={setStatusMessage}
+                  onTranscript={(text) => {
+                    pushPromptUndoSnapshot(prompt);
+                    setPrompt((prev) => appendPromptText(prev, text));
+                  }}
+                />
                 <GhostButton onClick={handleClearPrompt} disabled={!prompt}>
                   Clear
                 </GhostButton>
@@ -6859,38 +6876,20 @@ async function handleAskAi() {
               </Card>
 
               <Card title="Preview">
-                <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/45">
-                  <div className="aspect-[16/9] bg-black/60">
-                    {latestPreviewUrl ? (
-                      latestPreviewKind === "video" ? (
-                        <video src={latestPreviewUrl} className="h-full w-full object-contain" controls playsInline muted />
-                      ) : (
-                        <img src={latestPreviewUrl} alt={latestPreviewName || "Latest generated content"} className="h-full w-full object-contain" />
-                      )
-                    ) : (
-                      <div className="flex h-full items-center justify-center px-6 text-center text-white/45">
-                        Preview will appear here after ComfyUI finishes creating content.
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-white/60">
-                  <div className="min-w-0 space-y-1">
-                    <div className="truncate">{latestPreviewName || "No completed output yet"}</div>
-                    <div className="text-xs text-white/45">
-                      {latestPreviewKind === "image" && latestPreviewMeta
-                        ? `Generated image: ${latestPreviewMeta.width} x ${latestPreviewMeta.height}${latestPreviewMeta.height > latestPreviewMeta.width ? " - portrait" : " - landscape"}`
-                        : latestPreviewKind === "video"
-                          ? "Latest generated video."
-                          : "Generate content to update this preview."}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <GhostButton onClick={() => void refreshLatestContent(true)} disabled={progressStatus === "running"}>
-                      Refresh preview
-                    </GhostButton>
-                  </div>
-                </div>
+                <MediaPreviewPanel
+                  url={latestPreviewUrl}
+                  kind={latestPreviewKind}
+                  name={latestPreviewName}
+                  meta={latestPreviewKind === "image" && latestPreviewMeta
+                    ? `Generated image: ${latestPreviewMeta.width} x ${latestPreviewMeta.height}${latestPreviewMeta.height > latestPreviewMeta.width ? " - portrait" : " - landscape"}`
+                    : latestPreviewKind === "video"
+                      ? "Latest generated video."
+                      : "Generate content to update this preview."}
+                  onRefresh={() => void refreshLatestContent(true)}
+                  refreshing={progressStatus === "running"}
+                  onClear={handleClearLatestPreview}
+                  onReset={handleResetGenerateWorkspace}
+                />
               </Card>
             </div>
 
@@ -7332,35 +7331,14 @@ async function handleAskAi() {
                         }}
                       />
 
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void handleMicClick(
-                            "ask",
-                            (text) =>
-                              setAskInput(
-                                (prev) =>
-                                  appendPromptText(
-                                    prev,
-                                    text
-                                  )
-                              )
-                          )
+                      <SpeechInputButton
+                        label="Dictate Story Helper message"
+                        className="inline-flex h-12 min-w-12 items-center justify-center rounded-full border border-white/10 bg-white/5 px-3 text-xs font-black text-white transition hover:bg-white/10"
+                        onStatus={setStatusMessage}
+                        onTranscript={(text) =>
+                          setAskInput((prev) => appendPromptText(prev, text))
                         }
-                        className={cn(
-                          "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
-                          recordingTarget ===
-                            "ask"
-                            ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
-                            : "border-white/10 bg-white/5 hover:bg-white/10"
-                        )}
-                        disabled={
-                          transcribingTarget ===
-                          "ask"
-                        }
-                      >
-                        <IconMic />
-                      </button>
+                      />
 
                       <GhostButton
                         onClick={

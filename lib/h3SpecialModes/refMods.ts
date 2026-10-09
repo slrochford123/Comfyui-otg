@@ -6,6 +6,7 @@ import {
   type H3ProductionDuration,
   type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
+import { appendProtectedDialogueBlock, detectProtectedDialogue } from "@/lib/promptDialogue";
 
 export type H3RefModCategory =
   | "character"
@@ -64,6 +65,10 @@ export type H3RefModLibraryEntry = {
   motionType?: "subject" | "camera_scene" | null;
   isolationEnabled?: boolean;
   alphaGenerator?: string | null;
+  sourceClipPath?: string | null;
+  isolatedDerivativePath?: string | null;
+  alphaMattePath?: string | null;
+  previewPath?: string | null;
 };
 
 export type H3RefModsRequestInput = {
@@ -288,6 +293,8 @@ function visualLabel(slot: H3RefModSlot, visualIndex: number) {
 export function compileH3RefModsPrompt(input: H3RefModsCompileInput) {
   const prompt = clean(input.prompt);
   if (!prompt) throw new Error("Enter a Ref Mods prompt.");
+  const protectedPrompt = appendProtectedDialogueBlock(prompt);
+  const protectedDialogue = detectProtectedDialogue(prompt);
   const refMods = normalizeH3RefModSlots(input.refMods);
   if (!refMods.length) throw new Error("Add at least one RefMod.");
 
@@ -333,11 +340,14 @@ export function compileH3RefModsPrompt(input: H3RefModsCompileInput) {
     "subject_definitions:",
     ...subjectLines,
     "summary:",
-    prompt,
+    protectedPrompt,
     "retention_analysis:",
     ...retentionLines,
     "detailed_description:",
     "Preserve the user's exact intent and dialogue. Follow the loaded RefMods in slot order, keep identity mappings deterministic, and avoid adding unrequested people or actions.",
+    protectedDialogue.hasDialogue
+      ? "Protected dialogue is present. Preserve each quoted line, speaker, delivery, and ordering exactly."
+      : "No protected dialogue was supplied. Do not invent spoken dialogue.",
     "overall_soundscape:",
     ...soundLines,
     "non_diegetic_music:",

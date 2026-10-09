@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import {
   getH3NativeDimensions,
   type H3Orientation,
@@ -147,6 +148,8 @@ export function buildH3RefModsT2VWorkflow(
   if (!Array.isArray(samplerNode.inputs.latent_image) || samplerNode.inputs.latent_image[0] !== "39") {
     throw new Error("H3 Ref Mods T2V base latent wiring is not the expected MiniMaxH3ImageToVideo output.");
   }
+
+  ensureTerminalVideoPreviewNode(graph);
 
   return {
     workflowId: "h3-refmods-t2v",

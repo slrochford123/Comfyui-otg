@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import {
   getH3NativeDimensions,
   type H3Orientation,
@@ -150,6 +151,7 @@ export function buildH3BodySwapWorkflow(
   setSampling(graph);
   preserveWorkflowSilencePath(graph);
   setOutputPrefix(graph, input.outputPrefix);
+  ensureTerminalVideoPreviewNode(graph);
 
   return {
     workflowId: "h3-body-swap-single-person",

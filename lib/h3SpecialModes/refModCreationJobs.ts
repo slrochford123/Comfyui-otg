@@ -604,6 +604,7 @@ async function runJob(job: H3RefModCreateJob) {
       alphaGenerator: job.input.config.isolateSubject ? H3_LTX_ALPHA_GENERATOR_ID : null,
       sourceClipPath: job.input.config.kind === "motion" ? job.originalSourcePath || job.input.sources[0]?.path || null : null,
       isolatedDerivativePath: job.isolatedDerivativePath || null,
+      alphaMattePath: job.alphaMattePath || null,
       alphaWorkflow: job.input.config.isolateSubject ? H3_LTX_ALPHA_WORKFLOW_FILE : null,
       sourceAssets: job.input.sources,
     });
