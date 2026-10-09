@@ -3697,6 +3697,27 @@ function RefModGalleryPanel({
     );
   }
 
+  function primaryCreateLabel() {
+    if (createBusy) return "Creating...";
+    if (createStep === "audio") return "Create Audio RefMod";
+    if (createStep === "motion") return "Create Motion RefMod";
+    if (createStep === "character" && characterPath === "existing") return "Create Ref Mod Card";
+    if (createStep === "character" && characterPath === "new") return "Create New Character";
+    return "Create Character RefMod";
+  }
+
+  function handlePrimaryCreateAction() {
+    if (createStep === "character" && characterPath === "existing") {
+      useSelectedCharacterForRefModCard();
+      return;
+    }
+    if (createStep === "character" && characterPath === "new") {
+      onCreateCharacter();
+      return;
+    }
+    void submitCreate();
+  }
+
   function resetCreator(next: RefModCreateStep = "choose") {
     setCreateStep(next);
     setName("");
@@ -3924,7 +3945,7 @@ function RefModGalleryPanel({
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
                 <button type="button" onClick={() => resetCreator("character")} className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 text-left"><div className="text-lg font-black text-white">Character</div><p className="mt-2 text-sm leading-6 text-white/55">Create identity RefMods from 4-8 images, an existing Character, or a new Character Card set.</p></button>
                 <button type="button" onClick={() => resetCreator("motion")} className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 text-left"><div className="text-lg font-black text-white">Motion</div><p className="mt-2 text-sm leading-6 text-white/55">Create Subject Motion or Camera / Scene Motion RefMods from short video clips.</p></button>
-                <button type="button" onClick={() => resetCreator("audio")} className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 text-left"><div className="text-lg font-black text-white">Audio</div><p className="mt-2 text-sm leading-6 text-white/55">Create Music, Ambience, or SFX RefMods. Voice cloning stays in Voices.</p></button>
+                <button type="button" onClick={() => resetCreator("audio")} className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 text-left"><div className="text-lg font-black text-white">Audio</div><p className="mt-2 text-sm leading-6 text-white/55">Create Music, Ambience, or SFX RefMods. Character voices stay in Voices.</p></button>
               </div>
             ) : (
               <div className="mt-5 space-y-4">
@@ -3967,14 +3988,14 @@ function RefModGalleryPanel({
                   <div className="space-y-4" data-otg="refmod-audio-creator">
                     <input type="file" accept={H3_MEDIA_ACCEPT.audio} onChange={(event) => setAudioFile(event.target.files?.[0] || null)} className="block w-full rounded-xl border border-white/10 bg-black/30 p-3 text-sm text-white file:mr-3 file:rounded-lg file:border-0 file:bg-violet-300 file:px-3 file:py-2 file:font-bold file:text-zinc-950" />
                     <div className="grid gap-2 sm:grid-cols-3">{(["music", "ambience", "sound_fx"] as const).map((value) => <button key={value} type="button" onClick={() => setAudioCategory(value)} className={cn("min-h-12 rounded-xl border px-3 text-sm font-black", audioCategory === value ? "border-violet-200 bg-violet-300 text-zinc-950" : "border-white/10 bg-black/25 text-white/65")}>{value === "sound_fx" ? "SFX" : value === "music" ? "Music" : "Ambience"}</button>)}</div>
-                    <div className="rounded-2xl border border-white/10 bg-black/25 p-4 text-sm leading-6 text-white/55">Use clean 5-15 second Music, Ambience, or Sound Effect clips. Voice cloning remains in the existing Voices/TTS system.</div>
+                    <div className="rounded-2xl border border-white/10 bg-black/25 p-4 text-sm leading-6 text-white/55">Use clean 5-15 second Music, Ambience, or Sound Effect clips. Character voice work remains in the existing Voices/TTS system.</div>
                   </div>
                 ) : null}
 
                 {createError ? <div className="rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">{createError}</div> : null}
                 {createMessage ? <div className="rounded-xl border border-emerald-300/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">{createMessage}</div> : null}
                 {createJob ? <div className="rounded-xl border border-white/10 bg-black/25 p-3 text-xs text-white/50">Job {createJob.id}: {createJob.status}</div> : null}
-                <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={() => resetCreator("choose")} className="min-h-11 rounded-xl border border-white/10 px-4 text-sm font-bold text-white/65">Back</button><button type="button" disabled={createBusy} onClick={() => void submitCreate()} className="min-h-11 rounded-xl bg-violet-300 px-4 text-sm font-black text-zinc-950 disabled:opacity-50">{createBusy ? "Creating..." : createStep === "audio" ? "Create Audio RefMod" : createStep === "motion" ? "Create Motion RefMod" : "Create Character RefMod"}</button></div>
+                <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={() => resetCreator("choose")} className="min-h-11 rounded-xl border border-white/10 px-4 text-sm font-bold text-white/65">Back</button><button type="button" disabled={createBusy} onClick={handlePrimaryCreateAction} className="min-h-11 rounded-xl bg-violet-300 px-4 text-sm font-black text-zinc-950 disabled:opacity-50">{primaryCreateLabel()}</button></div>
               </div>
             )}
           </div>

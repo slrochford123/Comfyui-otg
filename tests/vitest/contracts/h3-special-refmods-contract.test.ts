@@ -78,6 +78,12 @@ describe("H3 Ref Mods special mode contract", () => {
     expect(characters).toContain("setCharacterPath(\"existing\")");
     expect(characters).toContain("setSelectedCharacterId(initialCharacter.id)");
     expect(characters).toContain("useSelectedCharacterForRefModCard");
+    expect(characters).toContain("primaryCreateLabel");
+    expect(characters).toContain("handlePrimaryCreateAction");
+    expect(characters).toContain("Create Ref Mod Card");
+    expect(characters).toContain("Character voices stay in Voices.");
+    expect(characters).not.toContain("Voice cloning stays in Voices.");
+    expect(characters).not.toContain("Voice cloning remains in the existing Voices/TTS system.");
     expect(characters).toContain("onCreateCharacterRefMod={openCharacterRefModCreator}");
     const savedCharacters = read("app/app/components/CharacterIdentityVoicePanel.tsx");
     expect(savedCharacters).toContain("onCreateCharacterRefMod?:");
