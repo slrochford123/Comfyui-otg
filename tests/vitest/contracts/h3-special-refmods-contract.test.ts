@@ -73,6 +73,15 @@ describe("H3 Ref Mods special mode contract", () => {
     expect(characters).toContain("No RefMods created yet.");
     expect(characters).toContain("Loading RefMods...");
     expect(characters).toContain("Use in H3");
+    expect(characters).toContain("initialCharacter");
+    expect(characters).toContain("setCharacterPath(\"existing\")");
+    expect(characters).toContain("setSelectedCharacterId(initialCharacter.id)");
+    expect(characters).toContain("useSelectedCharacterForRefModCard");
+    expect(characters).toContain("onCreateCharacterRefMod={openCharacterRefModCreator}");
+    const savedCharacters = read("app/app/components/CharacterIdentityVoicePanel.tsx");
+    expect(savedCharacters).toContain("onCreateCharacterRefMod?:");
+    expect(savedCharacters).toContain("Create Character Ref Mod");
+    expect(savedCharacters).toContain("onClick={() => onCreateCharacterRefMod(item)}");
     expect(panel).not.toContain("Upload 4-8 images. 8 recommended.");
     expect(panel).not.toContain("Create Audio RefMod");
   });

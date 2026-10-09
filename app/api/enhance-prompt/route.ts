@@ -52,6 +52,7 @@ function promptEnhanceKeepAliveForContext(
   _context: GenerateEnhanceContext,
 ) {
   void _context;
+  // Asset Qwen must release VRAM immediately after enhancement.
   // Enhance Prompt must leave the GPU lane clean for image/video generation.
   // The Qwen router also performs explicit pre/post unload when this route
   // sets _otgForceModelUnload.

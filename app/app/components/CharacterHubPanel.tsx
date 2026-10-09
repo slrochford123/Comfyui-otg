@@ -3568,9 +3568,13 @@ function characterOptionImagePath(item: SavedCharacterOption) {
 function RefModGalleryPanel({
   onBack,
   onCreateCharacter,
+  initialCharacter,
+  onInitialCharacterConsumed,
 }: {
   onBack: () => void;
   onCreateCharacter: () => void;
+  initialCharacter?: SavedCharacterOption | null;
+  onInitialCharacterConsumed?: () => void;
 }) {
   const [entries, setEntries] = React.useState<H3RefModLibraryEntry[]>([]);
   const [status, setStatus] = React.useState<RefModLibraryStatus>("loading");
@@ -3636,6 +3640,23 @@ function RefModGalleryPanel({
   }, [loadCharacters, loadLibrary]);
 
   React.useEffect(() => {
+    if (!initialCharacter) return;
+    setCreatorOpen(true);
+    setCreateStep("character");
+    setCharacterPath("existing");
+    setSelectedCharacterId(initialCharacter.id);
+    setName(initialCharacter.name ? `${initialCharacter.name} RefMod` : "");
+    setDescription(initialCharacter.description || "");
+    setCreateError("");
+    setCreateMessage("Character selected from Character Gallery. Create or upload the reviewed RefMod Card image set from here.");
+    setCharacters((current) => {
+      if (current.some((item) => item.id === initialCharacter.id)) return current;
+      return [initialCharacter, ...current];
+    });
+    onInitialCharacterConsumed?.();
+  }, [initialCharacter, onInitialCharacterConsumed]);
+
+  React.useEffect(() => {
     if (motionType === "camera_scene") {
       setIsolateSubject(false);
       setReviewChoice("original");
@@ -3664,6 +3685,17 @@ function RefModGalleryPanel({
   }, [entries, filter, search]);
 
   const selectedCharacter = characters.find((item) => item.id === selectedCharacterId) || null;
+
+  function useSelectedCharacterForRefModCard() {
+    if (!selectedCharacter) {
+      setCreateError("Choose a saved Character first.");
+      return;
+    }
+    setCreateError("");
+    setCreateMessage(
+      `${selectedCharacter.name || "Saved Character"} is associated with this RefMod Card. Review the standardized 8-image set, then use Upload Images here to create the Character RefMod.`,
+    );
+  }
 
   function resetCreator(next: RefModCreateStep = "choose") {
     setCreateStep(next);
@@ -3910,7 +3942,7 @@ function RefModGalleryPanel({
                     ) : characterPath === "existing" ? (
                       <div className="space-y-3">
                         <select value={selectedCharacterId} onChange={(event) => setSelectedCharacterId(event.target.value)} className="min-h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm font-bold text-white"><option value="">Choose saved Character</option>{characters.map((character) => <option key={character.id} value={character.id}>{character.name || character.id}</option>)}</select>
-                        {selectedCharacter ? <div className="rounded-2xl border border-white/10 bg-black/25 p-3"><div className="font-black text-white">{selectedCharacter.name}</div><p className="mt-1 text-sm text-white/50">{selectedCharacter.description || "Saved Character selected."}</p>{characterOptionImagePath(selectedCharacter) ? <img src={refModFileUrl(characterOptionImagePath(selectedCharacter))} alt={selectedCharacter.name} className="mt-3 max-h-48 rounded-xl object-contain" /> : null}<button type="button" className="mt-3 min-h-10 rounded-xl border border-violet-200/30 px-3 text-sm font-bold text-violet-100">Create Ref Mod Card</button></div> : null}
+                        {selectedCharacter ? <div className="rounded-2xl border border-white/10 bg-black/25 p-3"><div className="font-black text-white">{selectedCharacter.name}</div><p className="mt-1 text-sm text-white/50">{selectedCharacter.description || "Saved Character selected."}</p>{characterOptionImagePath(selectedCharacter) ? <img src={refModFileUrl(characterOptionImagePath(selectedCharacter))} alt={selectedCharacter.name} className="mt-3 max-h-48 rounded-xl object-contain" /> : null}<button type="button" onClick={useSelectedCharacterForRefModCard} className="mt-3 min-h-10 rounded-xl border border-violet-200/30 px-3 text-sm font-bold text-violet-100">Create Ref Mod Card</button></div> : null}
                       </div>
                     ) : (
                       <div className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-4 text-sm leading-6 text-cyan-50/80">Create Character opens the existing Character Creator. After the Character Card is approved, return here to create the standardized 8-image RefMod Card set.<button type="button" onClick={onCreateCharacter} className="mt-3 block min-h-10 rounded-xl bg-cyan-300 px-3 text-sm font-black text-zinc-950">Create New Character</button></div>
@@ -3959,6 +3991,13 @@ export default function CharacterHubPanel({
     reusableSavedCandidate,
     setReusableSavedCandidate,
   ] = React.useState<CharacterCreateCandidate | null>(null);
+  const [refModInitialCharacter, setRefModInitialCharacter] =
+    React.useState<SavedCharacterOption | null>(null);
+
+  function openCharacterRefModCreator(character: SavedCharacterOption) {
+    setRefModInitialCharacter(character);
+    setView("refmod-gallery");
+  }
 
   if (view === "legacy") {
     if (!isAdmin) {
@@ -4110,6 +4149,8 @@ export default function CharacterHubPanel({
       <RefModGalleryPanel
         onBack={() => setView("home")}
         onCreateCharacter={() => setView("create-character")}
+        initialCharacter={refModInitialCharacter}
+        onInitialCharacterConsumed={() => setRefModInitialCharacter(null)}
       />
     );
   }
@@ -4217,7 +4258,7 @@ export default function CharacterHubPanel({
            </div>
          </div>
 
-         <SavedCharacterLibrary />
+         <SavedCharacterLibrary onCreateCharacterRefMod={openCharacterRefModCreator} />
       </div>
     );
   }

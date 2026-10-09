@@ -283,7 +283,11 @@ function VoicePlayButton({ url }: { url: string }) {
   );
 }
 
-export function SavedCharacterLibrary() {
+export function SavedCharacterLibrary({
+  onCreateCharacterRefMod,
+}: {
+  onCreateCharacterRefMod?: (character: SavedCharacterRecord) => void;
+} = {}) {
   const [items, setItems] = React.useState<SavedCharacterRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
@@ -422,6 +426,15 @@ export function SavedCharacterLibrary() {
                     </span>
                     <div className="flex items-center gap-2">
                       <VoicePlayButton url={audioUrl} />
+                      {onCreateCharacterRefMod ? (
+                        <button
+                          type="button"
+                          onClick={() => onCreateCharacterRefMod(item)}
+                          className="rounded-full border border-violet-300/45 bg-violet-300/10 px-3 py-1.5 text-xs font-bold text-violet-100 transition hover:bg-violet-300/20"
+                        >
+                          Create Character Ref Mod
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => void deleteCharacter(item.id, item.name)}
