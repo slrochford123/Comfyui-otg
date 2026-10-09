@@ -94,7 +94,7 @@ export type H3RealismBackendProbe = {
 
 const GLOBAL_KEY = "__otgH3RealismJobs";
 const OUTPUT_NODE_ID = "264";
-const H3_REALISM_BACKEND_PRIORITY: readonly ProductionV2H3BackendId[] = ["rtx3090"] as const;
+const H3_REALISM_BACKEND_PRIORITY: readonly ProductionV2H3BackendId[] = ["rtx3090", "rtx5060ti"] as const;
 const globalState = globalThis as typeof globalThis & {
   [GLOBAL_KEY]?: { running: Set<string> };
 };

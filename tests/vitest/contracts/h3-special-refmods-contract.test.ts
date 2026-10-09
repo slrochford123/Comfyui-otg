@@ -334,6 +334,7 @@ describe("H3 Ref Mods special mode contract", () => {
     expect(H3_LTX_ALPHA_WORKFLOW_FILE).toBe("LTX-2.5_V2V_ICLoRA_Single_Stage_Distilled.json");
     expect(H3_LTX_ALPHA_GENERATOR_ID).toBe("ltx-2.5-alpha-gen");
     expect(H3_LTX_ALPHA_REQUIRED_NODE_CLASSES).toContain("LTXICLoRALoaderModelOnly");
+    expect(H3_LTX_ALPHA_REQUIRED_NODE_CLASSES).toContain("VHS_LoadVideo");
     expect(H3_LTX_ALPHA_REQUIRED_NODE_CLASSES).not.toContain("LTXVImgToVideoInplace");
     expect(H3_LTX_ALPHA_REQUIRED_NODE_CLASSES).not.toContain("GetNode");
     expect(H3_LTX_ALPHA_REQUIRED_NODE_CLASSES).not.toContain("SetNode");
@@ -367,6 +368,26 @@ describe("H3 Ref Mods special mode contract", () => {
     expect(built.graph["8"].inputs.text).toBe("");
     expect(built.graph["9"].inputs.text).toBe("");
     expect(built.graph["11"].inputs.length).toBe(89);
+  });
+
+  it("caps the 5060 Alpha path at the physically qualified conservative profile", () => {
+    const built = buildH3LtxAlphaWorkflow({
+      videoFilename: "source.mp4",
+      width: 1376,
+      height: 768,
+      frames: 145,
+      fps: 24,
+      seed: 1234,
+      outputPrefix: "otg_alpha/test-5060",
+      profile: "rtx5060ti-conservative",
+    });
+    expect(built.graph["1"].class_type).toBe("VHS_LoadVideo");
+    expect(built.graph["1"].inputs.custom_width).toBe(608);
+    expect(built.graph["1"].inputs.custom_height).toBe(352);
+    expect(built.graph["1"].inputs.frame_load_cap).toBe(81);
+    expect(built.graph["1"].inputs.force_rate).toBe(24);
+    expect(built.graph["13"].inputs.image).toEqual(["1", 0]);
+    expect(Object.values(built.graph).map((node: any) => node.class_type)).not.toContain("LTXVImgToVideoInplace");
   });
 
   it("builds dedicated RefMod creator workflows without mutating standard H3 recipes", () => {

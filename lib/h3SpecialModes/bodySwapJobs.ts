@@ -99,7 +99,7 @@ export type H3BodySwapBackendProbe = {
 
 const GLOBAL_KEY = "__otgH3BodySwapJobs";
 const OUTPUT_NODE_ID = "92";
-type H3BodySwapBackendId = "rtx3090-comfy-kitchen";
+type H3BodySwapBackendId = "rtx3090-comfy-kitchen" | "rtx5060ti";
 const H3_BODY_SWAP_BACKEND_PROFILES = {
   "rtx3090-comfy-kitchen": {
     id: "rtx3090-comfy-kitchen",
@@ -107,13 +107,19 @@ const H3_BODY_SWAP_BACKEND_PROFILES = {
     baseUrl: process.env.OTG_H3_BODY_SWAP_3090_COMFY_URL || "http://100.75.162.64:8188",
     etaBackend: "rtx3090" as const,
   },
+  rtx5060ti: {
+    id: "rtx5060ti",
+    label: "RTX 5060 Ti",
+    baseUrl: process.env.OTG_H3_BODY_SWAP_5060TI_COMFY_URL || H3_BACKEND_PROFILES.rtx5060ti.baseUrl,
+    etaBackend: "rtx5060ti" as const,
+  },
 } as const satisfies Record<string, {
   id: H3BodySwapBackendId;
   label: string;
   baseUrl: string;
-  etaBackend: "rtx3090";
+  etaBackend: "rtx3090" | "rtx5060ti";
 }>;
-const H3_BODY_SWAP_BACKEND_PRIORITY: readonly H3BodySwapBackendId[] = ["rtx3090-comfy-kitchen"] as const;
+const H3_BODY_SWAP_BACKEND_PRIORITY: readonly H3BodySwapBackendId[] = ["rtx3090-comfy-kitchen", "rtx5060ti"] as const;
 const globalState = globalThis as typeof globalThis & {
   [GLOBAL_KEY]?: { running: Set<string> };
 };
@@ -672,7 +678,7 @@ async function execute(job: H3BodySwapJob) {
       let outputPath = await remuxOriginalAudio(job, visualPath);
       const rifeResult = await applyH3Rife60FpsFinalization({
         enabled: job.input.rifeInterpolation60Fps,
-        baseUrl: H3_BACKEND_PROFILES.rtx3090.baseUrl,
+        baseUrl: activeProfile.baseUrl,
         sourceVideoPath: outputPath,
         ownerKey: job.ownerKey,
         productionId: "h3-body-swap",

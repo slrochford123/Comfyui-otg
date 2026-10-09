@@ -16,7 +16,9 @@ import { H3_BACKEND_PROFILES, type H3PromptGraph, type ProductionV2H3BackendId }
 export const H3_RIFE_NATIVE_FPS = 24;
 export const H3_RIFE_TARGET_FPS = 60;
 export const H3_RIFE_TARGET_MODEL = "rife47.pth";
+export const H3_RIFE_5060_TARGET_MODEL = "flownet.pkl";
 export const H3_RIFE_UNAVAILABLE_MESSAGE = "60 FPS interpolation is unavailable on this backend.";
+export type H3RifeImplementation = "fps-resample" | "rife-interpolation";
 
 type ObjectInfo = Record<string, {
   input?: {
@@ -45,7 +47,7 @@ export type H3RifeCompatibility = {
   compatible: boolean;
   missingNodes: string[];
   missingAssets: string[];
-  method: "RIFE_FPS_Resample";
+  method: H3RifeImplementation;
 };
 
 function clean(value: unknown) {
@@ -96,11 +98,40 @@ export function h3FinalFpsForRife(enabled: unknown) {
     : H3_RIFE_NATIVE_FPS;
 }
 
-export function buildH3Rife60FpsWorkflow(input: H3Rife60FpsWorkflowInput) {
+export function h3RifeImplementationForBackend(
+  backendOrBaseUrl?: ProductionV2H3BackendId | string | null,
+): H3RifeImplementation {
+  const value = clean(backendOrBaseUrl).replace(/\/+$/, "");
+  if (value === "rtx5060ti" || value === H3_BACKEND_PROFILES.rtx5060ti.baseUrl) {
+    return "rife-interpolation";
+  }
+  return "fps-resample";
+}
+
+export function h3RifeRequiredNodesForBackend(
+  backendOrBaseUrl?: ProductionV2H3BackendId | string | null,
+) {
+  return h3RifeImplementationForBackend(backendOrBaseUrl) === "rife-interpolation"
+    ? ["VHS_LoadVideo", "RIFEInterpolation", "VHS_VideoCombine"]
+    : ["VHS_LoadVideo", "RIFE_FPS_Resample", "VHS_VideoCombine"];
+}
+
+export function h3RifeExpectedAssetsForBackend(
+  backendOrBaseUrl?: ProductionV2H3BackendId | string | null,
+): Array<readonly [string, string, string]> {
+  return h3RifeImplementationForBackend(backendOrBaseUrl) === "rife-interpolation"
+    ? [["RIFEInterpolation", "model_name", H3_RIFE_5060_TARGET_MODEL] as const]
+    : [["RIFE_FPS_Resample", "ckpt_name", H3_RIFE_TARGET_MODEL] as const];
+}
+
+export function buildH3Rife60FpsWorkflow(
+  input: H3Rife60FpsWorkflowInput & { backend?: ProductionV2H3BackendId | string | null },
+) {
   const videoFilename = clean(input.videoFilename);
   if (!videoFilename) throw new Error("RIFE source video filename is required.");
   const outputPrefix = clean(input.outputPrefix).replace(/[^a-zA-Z0-9_./-]/g, "_");
   if (!outputPrefix) throw new Error("RIFE output prefix is required.");
+  const method = h3RifeImplementationForBackend(input.backend);
 
   const graph: H3PromptGraph = {
     "1": {
@@ -116,7 +147,19 @@ export function buildH3Rife60FpsWorkflow(input: H3Rife60FpsWorkflowInput) {
       },
       _meta: { title: "Load completed H3 video at native timing" },
     },
-    "2": {
+    "2": method === "rife-interpolation" ? {
+      class_type: "RIFEInterpolation",
+      inputs: {
+        images: ["1", 0],
+        source_fps: H3_RIFE_NATIVE_FPS,
+        target_fps: H3_RIFE_TARGET_FPS,
+        scale: 1,
+        model_name: H3_RIFE_5060_TARGET_MODEL,
+        batch_size: 8,
+        use_fp16: true,
+      },
+      _meta: { title: "RIFE exact 24 FPS to 60 FPS" },
+    } : {
       class_type: "RIFE_FPS_Resample",
       inputs: {
         ckpt_name: H3_RIFE_TARGET_MODEL,
@@ -161,15 +204,21 @@ export function buildH3Rife60FpsWorkflow(input: H3Rife60FpsWorkflowInput) {
 
   return {
     workflowId: "h3-rife-60fps" as const,
-    workflowFile: "comfy_workflows/internal/h3-finalization/rife-60fps.api.json",
+    workflowFile: method === "rife-interpolation"
+      ? "comfy_workflows/internal/h3-finalization/rife-60fps-rifeinterpolation.api.json"
+      : "comfy_workflows/internal/h3-finalization/rife-60fps.api.json",
     outputNodeId: "3",
     graph,
   };
 }
 
-export async function inspectH3Rife60FpsCompatibility(baseUrl: string): Promise<H3RifeCompatibility> {
+export async function inspectH3Rife60FpsCompatibility(
+  baseUrl: string,
+  backend?: ProductionV2H3BackendId | null,
+): Promise<H3RifeCompatibility> {
   const base = baseUrl.replace(/\/+$/, "");
-  const requiredNodes = ["VHS_LoadVideo", "RIFE_FPS_Resample", "VHS_VideoCombine"];
+  const method = h3RifeImplementationForBackend(backend || base);
+  const requiredNodes = h3RifeRequiredNodesForBackend(backend || base);
   const entries = await Promise.all(
     requiredNodes.map(async (node) => {
       const payload = await fetchJsonWithTimeout<ObjectInfo>(`${base}/object_info/${encodeURIComponent(node)}`);
@@ -184,14 +233,17 @@ export async function inspectH3Rife60FpsCompatibility(baseUrl: string): Promise<
       ),
   ) as ObjectInfo;
   const missingNodes = requiredNodes.filter((node) => !info[node]);
-  const missingAssets = choices(info, "RIFE_FPS_Resample", "ckpt_name").includes(H3_RIFE_TARGET_MODEL)
-    ? []
-    : [H3_RIFE_TARGET_MODEL];
+  const missingAssets = h3RifeExpectedAssetsForBackend(backend || base).flatMap(
+    ([node, input, expected]) =>
+      choices(info, node, input).includes(expected)
+        ? []
+        : [expected],
+  );
   return {
     compatible: !missingNodes.length && !missingAssets.length,
     missingNodes,
     missingAssets,
-    method: "RIFE_FPS_Resample",
+    method,
   };
 }
 
@@ -284,7 +336,7 @@ export async function applyH3Rife60FpsFinalization(args: {
     || (args.backend ? H3_BACKEND_PROFILES[args.backend].baseUrl : "");
   if (!baseUrl) throw new Error(H3_RIFE_UNAVAILABLE_MESSAGE);
 
-  const compatibility = await inspectH3Rife60FpsCompatibility(baseUrl);
+  const compatibility = await inspectH3Rife60FpsCompatibility(baseUrl, args.backend);
   if (!compatibility.compatible) {
     throw new Error(
       `${H3_RIFE_UNAVAILABLE_MESSAGE} Missing nodes: ${compatibility.missingNodes.join(", ") || "none"}; missing assets: ${compatibility.missingAssets.join(", ") || "none"}.`,
@@ -301,6 +353,7 @@ export async function applyH3Rife60FpsFinalization(args: {
   const built = buildH3Rife60FpsWorkflow({
     videoFilename: uploaded,
     outputPrefix: args.outputPrefix || `otg_h3_rife/${safeSegment(args.generationJobId)}`,
+    backend: args.backend || baseUrl,
   });
   const clientId = `otg-h3-rife-${crypto.randomUUID()}`;
   const submitted = await submitH3PromptToBaseUrl({

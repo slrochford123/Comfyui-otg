@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildH3Rife60FpsWorkflow,
+  h3RifeExpectedAssetsForBackend,
+  h3RifeRequiredNodesForBackend,
   h3FinalFpsForRife,
+  H3_RIFE_5060_TARGET_MODEL,
   H3_RIFE_NATIVE_FPS,
   H3_RIFE_TARGET_FPS,
   H3_RIFE_TARGET_MODEL,
@@ -38,13 +41,14 @@ describe("H3 RIFE 60 FPS finalization contract", () => {
     expect(productionPanel).toContain('data-otg="production-v2-h3-rife-60fps"');
   });
 
-  it("keeps native H3 workflow FPS at 24 and builds a real RIFE FPS-resample graph", () => {
+  it("keeps native H3 workflow FPS at 24 and builds a real 3090 RIFE FPS-resample graph", () => {
     const h3Workflows = read("lib/production/h3Workflows.ts");
     expect(h3Workflows).toContain("graph[\"34\"].inputs.fps !== 24");
 
     const built = buildH3Rife60FpsWorkflow({
       videoFilename: "finished.mp4",
       outputPrefix: "otg_h3_rife/test",
+      backend: "rtx3090",
     });
     expect(built.workflowId).toBe("h3-rife-60fps");
     expect(built.graph["2"].class_type).toBe("RIFE_FPS_Resample");
@@ -53,6 +57,28 @@ describe("H3 RIFE 60 FPS finalization contract", () => {
     expect(built.graph["2"].inputs.fps_out).toBe(H3_RIFE_TARGET_FPS);
     expect(built.graph["3"].inputs.frame_rate).toBe(H3_RIFE_TARGET_FPS);
     expect(JSON.stringify(built.graph)).not.toContain("CreateVideo fps = 60");
+  });
+
+  it("uses the qualified RIFEInterpolation implementation on the RTX 5060 Ti", () => {
+    expect(h3RifeRequiredNodesForBackend("rtx5060ti")).toEqual([
+      "VHS_LoadVideo",
+      "RIFEInterpolation",
+      "VHS_VideoCombine",
+    ]);
+    expect(h3RifeExpectedAssetsForBackend("rtx5060ti")).toEqual([
+      ["RIFEInterpolation", "model_name", H3_RIFE_5060_TARGET_MODEL],
+    ]);
+    const built = buildH3Rife60FpsWorkflow({
+      videoFilename: "finished.mp4",
+      outputPrefix: "otg_h3_rife/test-5060",
+      backend: "rtx5060ti",
+    });
+    expect(built.graph["2"].class_type).toBe("RIFEInterpolation");
+    expect(built.graph["2"].inputs.source_fps).toBe(H3_RIFE_NATIVE_FPS);
+    expect(built.graph["2"].inputs.target_fps).toBe(H3_RIFE_TARGET_FPS);
+    expect(built.graph["2"].inputs.model_name).toBe(H3_RIFE_5060_TARGET_MODEL);
+    expect(built.graph["2"].inputs.use_fp16).toBe(true);
+    expect(built.graph["3"].inputs.frame_rate).toBe(H3_RIFE_TARGET_FPS);
   });
 
   it("carries the setting through every H3 request family", () => {

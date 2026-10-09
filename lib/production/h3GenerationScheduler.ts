@@ -1079,7 +1079,7 @@ async function advanceVsrJob(job: ProductionV2GenerationJob, dependencies: Sched
     try {
       const rifeResult = await applyH3Rife60FpsFinalization({
         enabled: true,
-        baseUrl: H3_BACKEND_PROFILES.rtx3090.baseUrl,
+        backend: job.backend || undefined,
         sourceVideoPath: finalOutputPath,
         ownerKey: job.ownerKey,
         productionId: job.productionId,
@@ -1134,20 +1134,17 @@ export async function runProductionV2H3SchedulerTick(dependencies: SchedulerDepe
     try {
       const probe = schedulerProbe(dependencies);
       const userLoraFilenames = productionV2H3UserLoraFilenames(waiting.payload.userLoras);
-      const [primaryProbe, secondaryProbe, vsrProbe, rifeProbe] = await Promise.all([
-        probe("rtx3090", { userLoraFilenames }),
-        probe("rtx5060ti", { userLoraFilenames }),
+      const h3Requirements = {
+        userLoraFilenames,
+        requireRife60Fps: waiting.payload.rifeInterpolation60Fps === true,
+      };
+      const [primaryProbe, secondaryProbe, vsrProbe] = await Promise.all([
+        probe("rtx3090", h3Requirements),
+        probe("rtx5060ti", h3Requirements),
         probe(H3_VSR_BACKEND, { requireVsr: true }),
-        waiting.payload.rifeInterpolation60Fps
-          ? probe("rtx3090", { requireRife60Fps: true })
-          : Promise.resolve(null),
       ]);
       if (!vsrProbe.healthy || !vsrProbe.compatible) {
         markProductionV2GenerationWaiting(waiting.id, "Waiting for a compatible RTX VSR ULTRA 1080p backend");
-        continue;
-      }
-      if (rifeProbe && (!rifeProbe.healthy || !rifeProbe.compatible)) {
-        markProductionV2GenerationWaiting(waiting.id, "Waiting for a compatible RIFE 60 FPS backend");
         continue;
       }
       const probes = [primaryProbe, secondaryProbe];

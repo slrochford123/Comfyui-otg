@@ -33,6 +33,7 @@ export const H3_LTX_ALPHA_REQUIRED_NODE_CLASSES = [
   "CreateVideo",
   "SaveVideo",
   "LoadVideo",
+  "VHS_LoadVideo",
 ] as const;
 
 export type H3LtxAlphaWorkflowInput = {
@@ -43,6 +44,7 @@ export type H3LtxAlphaWorkflowInput = {
   fps: number;
   seed: number;
   outputPrefix: string;
+  profile?: "default" | "rtx5060ti-conservative";
 };
 
 export type H3LtxAlphaBuiltWorkflow = {
@@ -164,6 +166,13 @@ function positiveInteger(value: unknown, fallback: number) {
   return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
+export const H3_LTX_ALPHA_5060_PROFILE = {
+  width: 608,
+  height: 352,
+  frames: 81,
+  fps: 24,
+} as const;
+
 export function normalizeH3LtxAlphaFrameCount(value: unknown) {
   const frames = positiveInteger(value, 81);
   const clamped = Math.min(Math.max(frames, 9), 145);
@@ -171,10 +180,11 @@ export function normalizeH3LtxAlphaFrameCount(value: unknown) {
 }
 
 export function buildH3LtxAlphaWorkflow(input: H3LtxAlphaWorkflowInput): H3LtxAlphaBuiltWorkflow {
-  const width = positiveInteger(input.width, 608);
-  const height = positiveInteger(input.height, 352);
-  const frames = normalizeH3LtxAlphaFrameCount(input.frames);
-  const fps = positiveInteger(input.fps, 24);
+  const use5060Profile = input.profile === "rtx5060ti-conservative";
+  const width = use5060Profile ? H3_LTX_ALPHA_5060_PROFILE.width : positiveInteger(input.width, 608);
+  const height = use5060Profile ? H3_LTX_ALPHA_5060_PROFILE.height : positiveInteger(input.height, 352);
+  const frames = use5060Profile ? H3_LTX_ALPHA_5060_PROFILE.frames : normalizeH3LtxAlphaFrameCount(input.frames);
+  const fps = use5060Profile ? H3_LTX_ALPHA_5060_PROFILE.fps : positiveInteger(input.fps, 24);
   const seed = positiveInteger(input.seed, 42424402);
   const videoFilename = clean(input.videoFilename);
   const outputPrefix = clean(input.outputPrefix);
@@ -182,8 +192,24 @@ export function buildH3LtxAlphaWorkflow(input: H3LtxAlphaWorkflowInput): H3LtxAl
   if (!outputPrefix) throw new Error("LTX Alpha output prefix is required.");
 
   const graph: H3PromptGraph = {
-    "1": { class_type: "LoadVideo", inputs: { file: videoFilename } },
-    "2": { class_type: "GetVideoComponents", inputs: { video: ["1", 0] } },
+    "1": use5060Profile
+      ? {
+        class_type: "VHS_LoadVideo",
+        inputs: {
+          video: videoFilename,
+          force_rate: fps,
+          custom_width: width,
+          custom_height: height,
+          frame_load_cap: frames,
+          skip_first_frames: 0,
+          select_every_nth: 1,
+          format: "LTXV",
+        },
+      }
+      : { class_type: "LoadVideo", inputs: { file: videoFilename } },
+    ...(use5060Profile ? {} : {
+      "2": { class_type: "GetVideoComponents", inputs: { video: ["1", 0] } },
+    }),
     "3": { class_type: "VAELoader", inputs: { vae_name: H3_LTX_ALPHA_MODEL_ASSETS.audioVae } },
     "4": { class_type: "VAELoader", inputs: { vae_name: H3_LTX_ALPHA_MODEL_ASSETS.videoVae } },
     "5": { class_type: "UNETLoader", inputs: { unet_name: H3_LTX_ALPHA_MODEL_ASSETS.diffusionModel, weight_dtype: "default" } },
@@ -200,7 +226,7 @@ export function buildH3LtxAlphaWorkflow(input: H3LtxAlphaWorkflowInput): H3LtxAl
         negative: ["10", 1],
         vae: ["4", 0],
         latent: ["11", 0],
-        image: ["2", 0],
+        image: use5060Profile ? ["1", 0] : ["2", 0],
         frame_idx: 0,
         strength: 1.0,
         latent_downscale_factor: ["7", 1],

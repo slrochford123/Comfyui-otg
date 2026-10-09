@@ -12,6 +12,7 @@ import {
   uploadH3InputToBaseUrl,
 } from "@/lib/production/h3Comfy";
 import {
+  H3_LTX_ALPHA_5060_PROFILE,
   H3_LTX_ALPHA_GENERATOR_ID,
   H3_LTX_ALPHA_WORKFLOW_FILE,
   assertH3LtxAlphaAvailable,
@@ -32,6 +33,7 @@ import {
   buildH3RefModVisualPackWorkflow,
   type H3RefModCreationBuiltWorkflow,
 } from "@/lib/h3SpecialModes/refModCreationWorkflow";
+import { H3_BACKEND_PROFILES } from "@/lib/production/h3Workflows";
 
 export type H3RefModCreateJobInput = {
   config: H3RefModCreateConfig;
@@ -77,6 +79,12 @@ const GLOBAL_KEY = "__otgH3RefModCreateJobs";
 const DEFAULT_REFMOD_CREATE_URL =
   process.env.OTG_H3_REFMODS_COMFY_URL
   || "http://100.75.162.64:8189";
+
+function alphaProfileForBackendUrl(baseUrl: string) {
+  return baseUrl.replace(/\/+$/, "") === H3_BACKEND_PROFILES.rtx5060ti.baseUrl
+    ? H3_LTX_ALPHA_5060_PROFILE
+    : null;
+}
 
 const globalState = globalThis as typeof globalThis & {
   [GLOBAL_KEY]?: { running: Set<string> };
@@ -333,6 +341,8 @@ async function createIsolatedRgbDerivative(args: {
 async function isolateMotionSource(job: H3RefModCreateJob) {
   const source = job.input.sources[0];
   const shape = await probeVideoShape(source.path);
+  const alphaProfile = alphaProfileForBackendUrl(job.backendUrl);
+  const alphaShape = alphaProfile || shape;
   const uploaded = await uploadH3InputToBaseUrl({
     baseUrl: job.backendUrl,
     sourcePath: source.path,
@@ -341,12 +351,13 @@ async function isolateMotionSource(job: H3RefModCreateJob) {
   });
   const built = buildH3LtxAlphaWorkflow({
     videoFilename: uploaded,
-    width: shape.width,
-    height: shape.height,
-    frames: shape.frames,
-    fps: shape.fps,
+    width: alphaShape.width,
+    height: alphaShape.height,
+    frames: alphaShape.frames,
+    fps: alphaShape.fps,
     seed: Math.floor(Date.now() % 1_000_000_000),
     outputPrefix: `otg_alpha/${safeSegment(job.id)}-matte`,
+    profile: alphaProfile ? "rtx5060ti-conservative" : "default",
   });
   const submitted = await submitH3PromptToBaseUrl({
     baseUrl: job.backendUrl,
@@ -378,9 +389,9 @@ async function isolateMotionSource(job: H3RefModCreateJob) {
     sourcePath: source.path,
     mattePath,
     outputPath: isolatedPath,
-    width: shape.width,
-    height: shape.height,
-    fps: shape.fps,
+    width: alphaShape.width,
+    height: alphaShape.height,
+    fps: alphaShape.fps,
   });
   return {
     source: {

@@ -71,6 +71,20 @@ function clean(value: unknown) {
   return String(value ?? "").trim();
 }
 
+function h3RifeRequiredNodeClassesForProbe(backend: ProductionV2H3BackendId) {
+  return backend === "rtx5060ti"
+    ? ["VHS_LoadVideo", "RIFEInterpolation", "VHS_VideoCombine"]
+    : ["VHS_LoadVideo", "RIFE_FPS_Resample", "VHS_VideoCombine"];
+}
+
+function h3RifeExpectedAssetsForProbe(
+  backend: ProductionV2H3BackendId,
+): Array<readonly [string, string, string]> {
+  return backend === "rtx5060ti"
+    ? [["RIFEInterpolation", "model_name", "flownet.pkl"] as const]
+    : [["RIFE_FPS_Resample", "ckpt_name", "rife47.pth"] as const];
+}
+
 function abortAfter(ms: number) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
@@ -227,11 +241,7 @@ export async function inspectH3BackendCompatibility(
       const requiredNodeClasses = [...new Set([
         ...h3RequiredNodeClassesForBackend(backend),
         ...(requirements.requireVsr ? H3_VSR_REQUIRED_NODE_CLASSES : []),
-        ...(requirements.requireRife60Fps ? [
-          "VHS_LoadVideo",
-          "RIFE_FPS_Resample",
-          "VHS_VideoCombine",
-        ] : []),
+        ...(requirements.requireRife60Fps ? h3RifeRequiredNodeClassesForProbe(backend) : []),
           ...optionNodeClasses,
       ])];
 
@@ -280,13 +290,7 @@ export async function inspectH3BackendCompatibility(
 
         ...optionAssets,
 
-        ...(requirements.requireRife60Fps ? [
-          [
-            "RIFE_FPS_Resample",
-            "ckpt_name",
-            "rife47.pth",
-          ] as const,
-        ] : []),
+        ...(requirements.requireRife60Fps ? h3RifeExpectedAssetsForProbe(backend) : []),
 
       ];
       const missingAssets = expectedAssets.flatMap(

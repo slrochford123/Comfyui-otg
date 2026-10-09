@@ -28,6 +28,7 @@ import {
 import {
   downloadH3VideoFromBaseUrl,
   getH3PromptHistoryFromBaseUrl,
+  inspectH3BackendCompatibility,
   submitH3PromptToBaseUrl,
 } from "@/lib/production/h3Comfy";
 import {
@@ -36,6 +37,7 @@ import {
   H3_RIFE_NATIVE_FPS,
 } from "@/lib/h3RifeFinalization";
 import {
+  H3_BACKEND_PRIORITY,
   H3_BACKEND_PROFILES,
   type ProductionV2H3BackendId,
 } from "@/lib/production/h3Workflows";
@@ -89,10 +91,9 @@ export type H3RefModsJob = {
 };
 
 const GLOBAL_KEY = "__otgH3RefModsJobs";
-const H3_REFMODS_BACKEND: ProductionV2H3BackendId = "rtx3090";
 const H3_REFMODS_BASE_URL =
   process.env.OTG_H3_REFMODS_COMFY_URL
-  || H3_BACKEND_PROFILES[H3_REFMODS_BACKEND].baseUrl;
+  || "";
 
 const globalState = globalThis as typeof globalThis & {
   [GLOBAL_KEY]?: { running: Set<string> };
@@ -101,6 +102,82 @@ const globalState = globalThis as typeof globalThis & {
 function state() {
   globalState[GLOBAL_KEY] ||= { running: new Set<string>() };
   return globalState[GLOBAL_KEY];
+}
+
+async function selectH3RefModsBackend() {
+  if (H3_REFMODS_BASE_URL) {
+    const forcedBaseUrl = H3_REFMODS_BASE_URL.replace(/\/+$/, "");
+    const backend = (Object.keys(H3_BACKEND_PROFILES) as ProductionV2H3BackendId[])
+      .find((candidate) => H3_BACKEND_PROFILES[candidate].baseUrl === forcedBaseUrl) || "rtx3090";
+    return { backend, baseUrl: forcedBaseUrl };
+  }
+  const probes = await Promise.all(
+    H3_BACKEND_PRIORITY.map((backend) => inspectH3BackendCompatibility(backend)),
+  );
+  const byId = new Map(probes.map((probe) => [probe.backend, probe]));
+  const backend =
+    H3_BACKEND_PRIORITY.find((candidate) => {
+      const probe = byId.get(candidate);
+      return probe?.healthy && probe.compatible && probe.idle;
+    })
+    || H3_BACKEND_PRIORITY.find((candidate) => {
+      const probe = byId.get(candidate);
+      return probe?.healthy && probe.compatible;
+    });
+  if (!backend) {
+    const details = probes.map((probe) => `${probe.backend}: ${probe.reason}`).join("; ");
+    throw new Error(`No compatible H3 RefMods GPU is available. ${details}`);
+  }
+  return { backend, baseUrl: H3_BACKEND_PROFILES[backend].baseUrl };
+}
+
+function refModChoicesFromObjectInfo(info: unknown) {
+  const node = (info && typeof info === "object"
+    ? (info as Record<string, unknown>).MiniMaxH3RefModsLoader
+    : null) as { input?: { required?: Record<string, unknown>; optional?: Record<string, unknown> } } | null;
+  const descriptor =
+    node?.input?.required?.mod_1
+    ?? node?.input?.optional?.mod_1;
+  if (!Array.isArray(descriptor)) return [];
+  const first = descriptor[0];
+  if (Array.isArray(first)) return first.map((item) => String(item || "").trim()).filter(Boolean);
+  if (first && typeof first === "object" && Array.isArray((first as { options?: unknown }).options)) {
+    return ((first as { options: unknown[] }).options).map((item) => String(item || "").trim()).filter(Boolean);
+  }
+  const second = descriptor[1];
+  if (second && typeof second === "object" && Array.isArray((second as { options?: unknown }).options)) {
+    return ((second as { options: unknown[] }).options).map((item) => String(item || "").trim()).filter(Boolean);
+  }
+  return [];
+}
+
+async function missingRefModsForBackend(baseUrl: string, refMods: H3RefModsJobInput["refMods"]) {
+  const required = [...new Set(refMods.map((slot) => slot.name).filter(Boolean))];
+  if (!required.length) return [];
+  const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/object_info/MiniMaxH3RefModsLoader`, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) return required;
+  const choices = new Set(refModChoicesFromObjectInfo(await response.json().catch(() => null)));
+  return required.filter((name) => !choices.has(name));
+}
+
+async function selectH3RefModsBackendForSlots(refMods: H3RefModsJobInput["refMods"]) {
+  const selected = await selectH3RefModsBackend();
+  const selectedMissing = await missingRefModsForBackend(selected.baseUrl, refMods);
+  if (!selectedMissing.length) return selected;
+
+  for (const backend of H3_BACKEND_PRIORITY) {
+    if (backend === selected.backend) continue;
+    const baseUrl = H3_BACKEND_PROFILES[backend].baseUrl;
+    const missing = await missingRefModsForBackend(baseUrl, refMods).catch(() => selectedMissing);
+    if (!missing.length) return { backend, baseUrl };
+  }
+
+  throw new Error(
+    `No compatible H3 RefMods GPU can see the selected RefMods. Missing on ${selected.backend}: ${selectedMissing.join(", ")}.`,
+  );
 }
 
 function jobsDir(ownerKey: string) {
@@ -195,10 +272,10 @@ export async function createH3RefModsJob(
     id,
     ownerKey,
     status: "queued",
-    statusMessage: "Waiting for the RTX 3090 H3 Ref Mods GPU",
+    statusMessage: "Waiting for an H3 Ref Mods GPU",
     input: normalized,
     backend: null,
-    backendUrl: H3_REFMODS_BASE_URL,
+    backendUrl: H3_REFMODS_BASE_URL || H3_BACKEND_PROFILES.rtx3090.baseUrl,
     clientId: null,
     promptId: null,
     workflowId: null,
@@ -371,15 +448,22 @@ async function execute(job: H3RefModsJob) {
       error: null,
     });
   } else {
+    const selected = await selectH3RefModsBackendForSlots(persisted.input.refMods);
     await updateJob(job.ownerKey, job.id, {
       status: "preparing",
-      statusMessage: "Preparing RefMods T2V workflow for RTX 3090",
-      backend: H3_REFMODS_BACKEND,
+      statusMessage: `Preparing RefMods T2V workflow for ${H3_BACKEND_PROFILES[selected.backend].label}`,
+      backend: selected.backend,
+      backendUrl: selected.baseUrl,
       startedAt: new Date().toISOString(),
     });
+    persisted = await getH3RefModsJob(job.ownerKey, job.id) || {
+      ...persisted,
+      backend: selected.backend,
+      backendUrl: selected.baseUrl,
+    };
 
     const built = buildH3RefModsT2VWorkflow({
-      backend: H3_REFMODS_BACKEND,
+      backend: selected.backend,
       quality: persisted.input.quality,
       orientation: persisted.input.orientation,
       durationSeconds: persisted.input.durationSeconds,
@@ -392,7 +476,7 @@ async function execute(job: H3RefModsJob) {
 
     const clientId = `otg-h3-refmods-${crypto.randomUUID()}`;
     const submitted = await submitH3PromptToBaseUrl({
-      baseUrl: persisted.backendUrl,
+      baseUrl: selected.baseUrl,
       graph: built.graph,
       clientId,
       jobId: job.id,
@@ -464,7 +548,12 @@ async function execute(job: H3RefModsJob) {
       }
       return;
     }
-    const estimate = getH3ProductionTimeEstimate("h3-text-to-video", job.input.durationSeconds, job.input.quality, H3_REFMODS_BACKEND);
+    const estimate = getH3ProductionTimeEstimate(
+      "h3-text-to-video",
+      job.input.durationSeconds,
+      job.input.quality,
+      job.backend || "rtx3090",
+    );
     const elapsed = current?.startedAt ? (Date.now() - Date.parse(current.startedAt)) / 1000 : 0;
     const progressPercent = Math.max(2, Math.min(95, Math.round((elapsed / Math.max(1, estimate.seconds || estimate.maxSeconds)) * 100)));
     await updateJob(job.ownerKey, job.id, {
