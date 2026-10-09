@@ -47,13 +47,24 @@ function addDenoPreview(
   return true;
 }
 
+function sortedNodeEntries(graph: ComfyVideoPreviewGraph) {
+  return Object.entries(graph).sort(([left], [right]) => {
+    const leftNumber = Number(left);
+    const rightNumber = Number(right);
+    if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+      return leftNumber - rightNumber;
+    }
+    return left.localeCompare(right);
+  });
+}
+
 export function ensureTerminalVideoPreviewNode(
   graph: ComfyVideoPreviewGraph,
   preferredNodeId = 9800,
 ) {
   if (hasTerminalPreview(graph)) return graph;
 
-  for (const node of Object.values(graph)) {
+  for (const [, node] of sortedNodeEntries(graph)) {
     if (node?.class_type !== "SaveVideo") continue;
     const sourceId = linkTarget(node.inputs?.video);
     const source = sourceId ? graph[sourceId] : null;
@@ -62,13 +73,16 @@ export function ensureTerminalVideoPreviewNode(
     }
   }
 
-  for (const node of Object.values(graph)) {
-    if (node?.class_type === "VHS_VideoCombine" && addDenoPreview(graph, node.inputs || {}, preferredNodeId)) {
+  const vhsNodes = sortedNodeEntries(graph)
+    .filter(([, node]) => node?.class_type === "VHS_VideoCombine" && Array.isArray(node.inputs?.images));
+  const savedVhsNodes = vhsNodes.filter(([, node]) => node.inputs?.save_output !== false);
+  for (const [, node] of (savedVhsNodes.length ? savedVhsNodes : vhsNodes).reverse()) {
+    if (addDenoPreview(graph, node.inputs || {}, preferredNodeId)) {
       return graph;
     }
   }
 
-  for (const node of Object.values(graph)) {
+  for (const [, node] of sortedNodeEntries(graph)) {
     if (node?.class_type === "CreateVideo" && addDenoPreview(graph, node.inputs || {}, preferredNodeId)) {
       return graph;
     }

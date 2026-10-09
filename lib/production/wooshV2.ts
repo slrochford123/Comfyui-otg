@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { resolveFfmpegPath, runCmd } from "@/lib/ffmpeg";
+import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import { safeJoin, safeSegment } from "@/lib/paths";
 import { downloadH3Video, getH3PromptHistory, submitH3Prompt, uploadH3Input } from "@/lib/production/h3Comfy";
 import { H3_BACKEND_PROFILES, type H3PromptGraph } from "@/lib/production/h3Workflows";
@@ -110,6 +111,7 @@ export async function generateProductionV2WooshSfx(args: {
     seed,
     filenamePrefix: `otg_production_v2/woosh/${safeSegment(operationId)}`,
   });
+  ensureTerminalVideoPreviewNode(built.graph);
   const submitted = await submitH3Prompt({ backend: PRODUCTION_V2_WOOSH_BACKEND, graph: built.graph, clientId: `otg-production-v2-woosh-${randomUUID()}`, jobId: operationId });
   if (!submitted.accepted) throw new Error(submitted.error);
   const output = await waitForWoosh(submitted.promptId);

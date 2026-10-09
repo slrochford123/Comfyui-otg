@@ -5,6 +5,7 @@ import fs from "fs/promises";
 import path from "path";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 import { freshProductionSeed } from "@/lib/production/randomSeed";
+import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 
 
 // OTG_PRODUCTION_ANIMATE_BACKEND_EXACT_PROMPT_V29
@@ -430,6 +431,7 @@ function buildPreparedSegments(body: AnimateRequestBody, fps: number) {
 }
 
 async function queueComfyWorkflow(workflow: WorkflowGraph) {
+  ensureTerminalVideoPreviewNode(workflow);
   const clientId = `otg-production-animate-${Date.now()}`;
   const baseUrl = comfyUrl();
   logComfyRouting(

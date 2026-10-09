@@ -162,8 +162,8 @@
       "id": "presets/Production IA2V Lip Sync",
       "label": "Production IA2V Lip Sync",
       "type": "preset",
-      "path": "presets/Production IA2V Lip Sync.json",
-      "file": "presets/Production IA2V Lip Sync.json",
+      "path": "internal/production/production_ltx23_ia2v_lipsync_api_template.json",
+      "file": "internal/production/production_ltx23_ia2v_lipsync_api_template.json",
       "tags": [
         "production",
         "video",
