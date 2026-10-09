@@ -71,6 +71,7 @@ describe("H3 Ref Mods special mode contract", () => {
     expect(characters).toContain('data-otg="refmod-audio-creator"');
     expect(characters).toContain("Could not load RefMod library. Retry.");
     expect(characters).toContain("No RefMods created yet.");
+    expect(characters).toContain("No RefMods match this filter.");
     expect(characters).toContain("Loading RefMods...");
     expect(characters).toContain("Use in H3");
     expect(characters).toContain("initialCharacter");

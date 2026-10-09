@@ -3872,6 +3872,9 @@ function RefModGalleryPanel({
       {status === "error" ? <div className="rounded-2xl border border-red-300/20 bg-red-400/10 p-5 text-sm text-red-100" role="alert">Could not load RefMod library. Retry.{error ? <div className="mt-2 text-xs text-red-100/70">{error}</div> : null}</div> : null}
       {message ? <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4 text-sm text-emerald-100">{message}</div> : null}
       {status === "ready" && entries.length === 0 ? <div className="rounded-2xl border border-dashed border-white/10 p-6 text-sm text-white/45">No RefMods created yet.</div> : null}
+      {status === "ready" && entries.length > 0 && filteredEntries.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-white/10 p-6 text-sm text-white/45">No RefMods match this filter.</div>
+      ) : null}
 
       {status === "ready" && filteredEntries.length > 0 ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" data-otg="refmod-gallery-cards">
