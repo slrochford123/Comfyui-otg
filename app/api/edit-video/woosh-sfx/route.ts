@@ -5,7 +5,6 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { configuredVideoComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
-import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import { getGallerySourcesForRequest, resolveGalleryItemByName } from "@/lib/gallery";
 import { ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import { getFfmpegVersion, resolveFfmpegPath, resolveFfprobePath, runCmd } from "@/lib/ffmpeg";
@@ -622,7 +621,6 @@ export async function POST(req: NextRequest) {
       seed,
       filenamePrefix: prefixBase,
     });
-    ensureTerminalVideoPreviewNode(graph);
 
     const submit = await submitComfyPromptWith5060Lease({
       baseUrl: comfyBaseUrl,

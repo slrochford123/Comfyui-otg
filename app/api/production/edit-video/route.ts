@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
-import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 
 export const runtime = "nodejs";
@@ -157,7 +156,6 @@ function patchPrompt(prompt: any, args: {
 }
 
 async function queueComfyPrompt(prompt: any) {
-  ensureTerminalVideoPreviewNode(prompt);
   const response = await submitComfyPromptWith5060Lease({
     baseUrl: COMFY_BASE_URL,
     workerId: "production-edit-video",

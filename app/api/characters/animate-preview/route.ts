@@ -6,7 +6,6 @@ import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 
 import { configuredVideoComfyBaseUrl, logComfyRouting } from "@/app/api/_lib/comfyTarget";
-import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import { createCharacterAnimationPreviewJob } from "@/lib/jobs/voicePipelineJobs";
 import { getOwnerContext } from "@/lib/ownerKey";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
@@ -619,7 +618,6 @@ async function uploadImageToComfy(imagePath: string, filenameStem: string) {
 }
 
 async function submitComfyPrompt(prompt: JsonRecord, clientId: string) {
-  ensureTerminalVideoPreviewNode(prompt);
   logComfyRouting(
     "/api/characters/animate-preview POST",
     { requestKind: "character-animate-preview", workflowLabel: "Character Animate Preview", mediaType: "video" },

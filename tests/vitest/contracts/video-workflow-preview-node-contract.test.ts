@@ -1,6 +1,4 @@
 import { describe, expect, it } from "vitest";
-import fs from "node:fs";
-import path from "node:path";
 
 import { ensureTerminalVideoPreviewNode, type ComfyVideoPreviewGraph } from "@/lib/comfyVideoPreview";
 import { buildH3Workflow } from "@/lib/production/h3Workflows";
@@ -22,12 +20,6 @@ function expectTerminalPreview(graph: ComfyVideoPreviewGraph) {
   expect(previews).toHaveLength(1);
   expect(previews[0]?.inputs?.images).toEqual(expect.any(Array));
   expect(Number(previews[0]?.inputs?.frame_rate)).toBeGreaterThan(0);
-}
-
-function loadJsonGraph(relativePath: string) {
-  return JSON.parse(
-    fs.readFileSync(path.join(process.cwd(), relativePath), "utf8").replace(/^\uFEFF/, ""),
-  ) as ComfyVideoPreviewGraph;
 }
 
 describe("video workflow terminal preview nodes", () => {
@@ -118,33 +110,5 @@ describe("video workflow terminal preview nodes", () => {
       outputPrefix: "contract/alpha-preview",
       backend: "rtx3090",
     }).graph);
-  });
-
-  it("registered Generate video JSON templates can be made runtime-preview compliant", () => {
-    const registry = JSON.parse(fs.readFileSync(path.join(process.cwd(), "comfy_workflows/index.json"), "utf8"));
-    const videoEntries = registry.workflows.filter((entry: any) =>
-      entry.enabled === true
-      && Array.isArray(entry.tags)
-      && entry.tags.includes("video")
-      && typeof entry.path === "string"
-    );
-
-    expect(videoEntries.length).toBeGreaterThan(0);
-    for (const entry of videoEntries) {
-      const graph = loadJsonGraph(path.join("comfy_workflows", entry.path));
-      ensureTerminalVideoPreviewNode(graph);
-      expectTerminalPreview(graph);
-    }
-  });
-
-  it("direct video-edit workflow templates preview their terminal saved output at runtime", () => {
-    const editGraph = loadJsonGraph("app/workflows/production/ltx-edit-anything-video-api.json");
-    ensureTerminalVideoPreviewNode(editGraph);
-    expectTerminalPreview(editGraph);
-    expect(terminalPreviewNodes(editGraph)[0]?.inputs?.images).toEqual(editGraph["206"].inputs?.images);
-
-    const wooshGraph = loadJsonGraph("comfy_workflows/internal/edit-video/sony_woosh_v2a.json");
-    ensureTerminalVideoPreviewNode(wooshGraph);
-    expectTerminalPreview(wooshGraph);
   });
 });

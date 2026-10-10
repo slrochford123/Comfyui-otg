@@ -7,7 +7,6 @@ import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 
 import { configuredVideoComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
-import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import { getGallerySourcesForRequest, resolveGalleryItemByName } from "@/lib/gallery";
 import { ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import { SessionInvalidError } from "@/lib/ownerKey";
@@ -378,7 +377,6 @@ function buildGraph(params: {
 }
 
 async function submitPrompt(comfyBaseUrl: string, graph: any) {
-  ensureTerminalVideoPreviewNode(graph);
   const clientId = `otg-ltx-edit-${randomUUID()}`;
   const res = await submitComfyPromptWith5060Lease({
     baseUrl: comfyBaseUrl,

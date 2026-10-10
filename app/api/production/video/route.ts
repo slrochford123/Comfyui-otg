@@ -4,7 +4,6 @@ import fs from "node:fs/promises";
 import fssync from "node:fs";
 
 import { logComfyRouting } from "@/app/api/_lib/comfyTarget";
-import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import { logVideoBackendJob, selectVideoBackend } from "@/lib/videoBackendFailover";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { OTG_DATA_ROOT, ensureDir, safeSegment } from "@/lib/paths";
@@ -839,7 +838,6 @@ export async function POST(req: NextRequest) {
     // Legacy workflow JSON may contain fixed seeds. Replace them at the
     // execution boundary while preserving intentional relative offsets.
     rewriteWorkflowSeedsPreservingOffsets(workflow);
-    ensureTerminalVideoPreviewNode(workflow);
 
     const submitRes = await submitComfyPromptWith5060Lease({
       baseUrl: comfyBaseUrl,

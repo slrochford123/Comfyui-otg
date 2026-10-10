@@ -23,7 +23,6 @@ import fs from "node:fs";
 import sharp from "sharp";
 import { loadWorkflowById, extractPromptGraph, validatePromptGraph } from "@/lib/workflows";
 import { normalizeExplicitCreateVideoFromImagesRequest } from "@/lib/videoWorkflowRequestNormalization";
-import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { readState, markRunning, writeState } from "@/lib/contentState";
 import { writePromptRequestMeta } from "@/lib/promptRequestMeta";
@@ -4644,10 +4643,6 @@ export async function POST(req: NextRequest) {
     // best-effort only
   }
 
-  if (route.kind === "video") {
-    ensureTerminalVideoPreviewNode(graph);
-  }
-
   let upstream: Response;
   try {
     upstream = await submitComfyPromptWith5060Lease({
@@ -4721,7 +4716,6 @@ export async function POST(req: NextRequest) {
     // with overwrite=true to the fallback. No prompt is submitted by this step.
     await parseOtgBody(fallbackRequestClone, fallbackBackend.baseUrl);
     graph = prepared.graph;
-    ensureTerminalVideoPreviewNode(graph);
     fallbackDebug = {
       compatibilityMode: prepared.compatibility.mode,
       reductionsApplied: prepared.reductionsApplied,
