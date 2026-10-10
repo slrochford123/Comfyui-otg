@@ -64,6 +64,10 @@ import {
   type H3RefModSourceKind,
 } from "@/lib/h3SpecialModes/refMods";
 import type { ProductionV2H3Mode } from "@/lib/production/h3Workflows";
+import {
+  h3ModeCapabilities,
+  type H3StudioModeId,
+} from "@/lib/h3ModeCapabilities";
 import { normalizeProfileStorageOwner, profileStorageKey } from "@/lib/client/profileStorage";
 import {
   clearPersistedH3InputState,
@@ -79,7 +83,8 @@ import {
 } from "./h3InputPersistence";
 
 type Mode = ProductionV2H3Mode;
-type H3StudioMode = Mode | "h3-realism" | "h3-body-swap" | "h3-refmods";
+// H3StudioMode also includes special adapters: | "h3-realism" | "h3-body-swap" | "h3-refmods".
+type H3StudioMode = H3StudioModeId;
 type MediaKind = "image" | "video" | "audio";
 type MediaInput = H3StudioReferenceDescriptor & {
   file: File;
@@ -518,16 +523,14 @@ function h3FileSignature(
 
 function normalizePersistedMode(
   value: unknown,
-): Mode {
+): H3StudioMode {
   const mode =
     String(
       value || "",
     );
 
-  return LEGACY_H3_MODES.includes(
-    mode as Mode,
-  )
-    ? mode as Mode
+  return MODE_OPTIONS.some((item) => item.id === mode)
+    ? mode as H3StudioMode
     : "h3-text-to-video";
 }
 
@@ -618,6 +621,9 @@ function h3InputMediaRecords(
   firstImage: MediaInput | null,
   lastImage: MediaInput | null,
   references: MediaInput[],
+  realismReferences: MediaInput[] = [],
+  bodySwapSourceVideo: MediaInput | null = null,
+  bodySwapReplacementImage: MediaInput | null = null,
 ): PersistedH3MediaRecord[] {
   const records: PersistedH3MediaRecord[] = [];
 
@@ -665,6 +671,50 @@ function h3InputMediaRecords(
     },
   );
 
+  realismReferences.forEach(
+    (item) => {
+      records.push(
+        {
+          key:
+            mediaStorageKey(
+              storageKey,
+              `realism-reference-${item.id}`,
+            ),
+          file:
+            item.file,
+        },
+      );
+    },
+  );
+
+  if (bodySwapSourceVideo) {
+    records.push(
+      {
+        key:
+          mediaStorageKey(
+            storageKey,
+            "body-swap-source-video",
+          ),
+        file:
+          bodySwapSourceVideo.file,
+      },
+    );
+  }
+
+  if (bodySwapReplacementImage) {
+    records.push(
+      {
+        key:
+          mediaStorageKey(
+            storageKey,
+            "body-swap-replacement-image",
+          ),
+        file:
+          bodySwapReplacementImage.file,
+      },
+    );
+  }
+
   return records;
 }
 
@@ -675,6 +725,9 @@ function h3PersistedMediaMetas(
     state.firstImage,
     state.lastImage,
     ...state.references,
+    ...(state.realismReferences || []),
+    state.bodySwapSourceVideo || null,
+    state.bodySwapReplacementImage || null,
   ].filter(
     (item): item is PersistedH3MediaMeta => Boolean(item),
   );
@@ -1065,6 +1118,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const [inputStateHydrated, setInputStateHydrated] = useState(false);
   const active = Boolean(job && !isTerminalH3JobStatus(job.status));
   const legacyModeActive = isLegacyH3Mode(studioMode);
+  const modeCapabilities = h3ModeCapabilities(studioMode);
   const specialModeLabel =
     MODE_OPTIONS.find((item) => item.id === studioMode)?.label || "H3";
   const realismLoras = useMemo(
@@ -1370,8 +1424,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
 
       releaseAllMedia();
       const restoredMode = normalizePersistedMode(stored.mode);
-      setMode(restoredMode);
       setStudioMode(restoredMode);
+      setMode(isLegacyH3Mode(restoredMode) ? restoredMode : "h3-text-to-video");
       setQuality(normalizePersistedQuality(stored.quality));
       setRifeInterpolation60Fps(stored.rifeInterpolation60Fps === true);
       setH3Settings(
@@ -1448,6 +1502,58 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           )
           .filter((item): item is MediaInput => Boolean(item)),
       );
+      setRealismPrompt(stored.realismPrompt || "");
+      setRealismReferences(
+        (stored.realismReferences || [])
+          .map((item) =>
+            mediaFromPersisted(
+              item,
+              files.get(item.storageKey),
+            ),
+          )
+          .filter((item): item is MediaInput => Boolean(item)),
+      );
+      if (stored.realismPreset && H3_REALISM_PRESETS[stored.realismPreset as H3RealismPresetId]) {
+        setRealismPreset(stored.realismPreset as H3RealismPresetId);
+      }
+      if (stored.realismSpeedLora && H3_REALISM_SPEED_LORAS[stored.realismSpeedLora as H3RealismSpeedLoraId]) {
+        setRealismSpeedLora(stored.realismSpeedLora as H3RealismSpeedLoraId);
+      }
+      setRealismPeopleEnabled(stored.realismPeopleEnabled !== false);
+      setRealismSeedMode(stored.realismSeedMode === "fixed" ? "fixed" : "random");
+      setRealismSeed(stored.realismSeed || "");
+      setRealismExpertEdit(stored.realismExpertEdit === true);
+      setRealismCompiledPromptDraft(stored.realismCompiledPromptDraft || "");
+      setBodySwapSourceVideo(
+        stored.bodySwapSourceVideo
+          ? mediaFromPersisted(
+              stored.bodySwapSourceVideo,
+              files.get(stored.bodySwapSourceVideo.storageKey),
+            )
+          : null,
+      );
+      setBodySwapReplacementImage(
+        stored.bodySwapReplacementImage
+          ? mediaFromPersisted(
+              stored.bodySwapReplacementImage,
+              files.get(stored.bodySwapReplacementImage.storageKey),
+            )
+          : null,
+      );
+      setBodySwapSelector(stored.bodySwapSelector || "person");
+      setBodySwapPrompt(stored.bodySwapPrompt || "");
+      setBodySwapPreserveAudio(stored.bodySwapPreserveAudio !== false);
+      setBodySwapSeedMode(stored.bodySwapSeedMode === "fixed" ? "fixed" : "random");
+      setBodySwapSeed(stored.bodySwapSeed || "");
+      setRefModsPrompt(stored.refModsPrompt || "");
+      setRefModSlots(
+        Array.isArray(stored.refModSlots)
+          ? normalizeH3RefModSlots(stored.refModSlots)
+          : [],
+      );
+      setRefModsTurbo(stored.refModsTurbo !== false);
+      setRefModsSeedMode(stored.refModsSeedMode === "fixed" ? "fixed" : "random");
+      setRefModsSeed(stored.refModsSeed || "");
       setMessage("Restored your saved H3 generator inputs.");
       setInputStateHydrated(true);
     }
@@ -1508,6 +1614,46 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           ).filter(
             (item): item is PersistedH3MediaMeta => Boolean(item),
           ),
+        realismPrompt,
+        realismReferences:
+          realismReferences.map((item) =>
+            h3MediaMeta(
+              h3InputStorageKey,
+              `realism-reference-${item.id}`,
+              item,
+            ),
+          ).filter(
+            (item): item is PersistedH3MediaMeta => Boolean(item),
+          ),
+        realismPreset,
+        realismSpeedLora,
+        realismPeopleEnabled,
+        realismSeedMode,
+        realismSeed,
+        realismExpertEdit,
+        realismCompiledPromptDraft,
+        bodySwapSourceVideo:
+          h3MediaMeta(
+            h3InputStorageKey,
+            "body-swap-source-video",
+            bodySwapSourceVideo,
+          ),
+        bodySwapReplacementImage:
+          h3MediaMeta(
+            h3InputStorageKey,
+            "body-swap-replacement-image",
+            bodySwapReplacementImage,
+          ),
+        bodySwapSelector,
+        bodySwapPrompt,
+        bodySwapPreserveAudio,
+        bodySwapSeedMode,
+        bodySwapSeed,
+        refModsPrompt,
+        refModSlots,
+        refModsTurbo,
+        refModsSeedMode,
+        refModsSeed,
       },
     );
   }, [
@@ -1535,6 +1681,27 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     firstImage,
     lastImage,
     references,
+    realismPrompt,
+    realismReferences,
+    realismPreset,
+    realismSpeedLora,
+    realismPeopleEnabled,
+    realismSeedMode,
+    realismSeed,
+    realismExpertEdit,
+    realismCompiledPromptDraft,
+    bodySwapSourceVideo,
+    bodySwapReplacementImage,
+    bodySwapSelector,
+    bodySwapPrompt,
+    bodySwapPreserveAudio,
+    bodySwapSeedMode,
+    bodySwapSeed,
+    refModsPrompt,
+    refModSlots,
+    refModsTurbo,
+    refModsSeedMode,
+    refModsSeed,
   ]);
 
   useEffect(() => {
@@ -1547,6 +1714,9 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         firstImage,
         lastImage,
         references,
+        realismReferences,
+        bodySwapSourceVideo,
+        bodySwapReplacementImage,
       ),
     ).catch(
       () => undefined,
@@ -1555,13 +1725,15 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     inputStateHydrated,
     h3InputStorageKey,
     mediaFileSignature,
+    realismReferences,
+    bodySwapSourceVideo,
+    bodySwapReplacementImage,
   ]);
 
   useEffect(() => {
     if (!legacyModeActive) {
       setCatalog([]);
       setMaxLoras(0);
-      setSelectedLoras([]);
       return;
     }
     void fetch(`/api/h3/loras?mode=${encodeURIComponent(mode)}`, {
@@ -1836,8 +2008,6 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       setMessage("");
       return;
     }
-    setSelectedLoras([]);
-    setPromptSource("direct");
     setMessage(
       nextMode === "h3-realism"
         ? "Realism uses its dedicated TEST workflow adapter and will not call the legacy H3 route."
@@ -3269,6 +3439,275 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     );
   }
 
+  function renderSeedControl(args: {
+    label: string;
+    mode: "random" | "fixed";
+    seed: string;
+    onMode: (value: "random" | "fixed") => void;
+    onSeed: (value: string) => void;
+  }) {
+    if (!modeCapabilities.supportsSeed) return null;
+    return (
+      <>
+        <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+          Seed
+        </p>
+        <div className="grid grid-cols-2 gap-2" role="group" aria-label={`${args.label} seed`}>
+          {(["random", "fixed"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={args.mode === value}
+              className={`${command} ${choiceClass(args.mode === value)}`}
+              onClick={() => args.onMode(value)}
+            >
+              {value === "random" ? "Random" : "Explicit"}
+            </button>
+          ))}
+        </div>
+        {args.mode === "fixed" ? (
+          <input
+            className={`${field} mt-2`}
+            type="number"
+            min={0}
+            step={1}
+            value={args.seed}
+            onChange={(event) => args.onSeed(event.target.value)}
+            placeholder="Seed"
+          />
+        ) : null}
+      </>
+    );
+  }
+
+  function renderSharedOutputControls(label: string, details?: React.ReactNode) {
+    return (
+      <>
+        <p className="mb-2 mt-3 text-xs font-bold text-white/50">Quality</p>
+        <div
+          className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+          role="group"
+          aria-label={`${label} quality`}
+        >
+          {H3_QUALITY_OPTIONS.map((value) => (
+            <button
+              key={value}
+              aria-pressed={quality === value}
+              className={`${command} text-left ${choiceClass(quality === value)}`}
+              onClick={() => setQuality(value)}
+            >
+              <span className="block font-black">
+                {value === "sh" ? "SH · Scene Hunter" : QUALITY_LABELS[value]} · {getH3NativeDimensions(value, orientation).width}x{getH3NativeDimensions(value, orientation).height}
+              </span>
+              <span className="mt-1 block text-[11px] font-bold leading-4 text-white/45">
+                {QUALITY_DETAILS[value]}
+              </span>
+            </button>
+          ))}
+        </div>
+        <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+          Duration
+        </p>
+        <div
+          className="grid grid-cols-2 gap-2"
+          role="group"
+          aria-label={`${label} duration`}
+        >
+          {H3_PRODUCTION_DURATION_OPTIONS.map((value) => (
+            <button
+              key={value}
+              aria-pressed={duration === value}
+              className={`${command} ${choiceClass(duration === value)}`}
+              onClick={() => setDuration(value)}
+            >
+              {value} sec
+            </button>
+          ))}
+        </div>
+        <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+          Orientation
+        </p>
+        <div
+          className="grid grid-cols-2 gap-2"
+          role="group"
+          aria-label={`${label} orientation`}
+        >
+          {H3_ORIENTATION_OPTIONS.map((value) => (
+            <button
+              key={value}
+              aria-pressed={orientation === value}
+              className={`${command} ${choiceClass(orientation === value)}`}
+              onClick={() => setOrientation(value)}
+            >
+              {value === "landscape" ? "Landscape" : "Portrait"}
+            </button>
+          ))}
+        </div>
+        {modeCapabilities.supportsRife ? renderRife60FpsControl() : null}
+        {details}
+      </>
+    );
+  }
+
+  function renderLegacyModelControls() {
+    if (!modeCapabilities.supportsTurboNative && !modeCapabilities.supportsOptionalLoras) return null;
+    return (
+      <details className={surface}>
+        <summary className="cursor-pointer text-sm font-black">
+          LoRAs and Creative Controls
+        </summary>
+        <div
+          className="mt-4"
+          data-otg="h3-advanced-controls-panel"
+        >
+          <H3AdvancedControls
+            value={h3Settings}
+            onChange={setH3Settings}
+            referenceOptions={refModReferenceOptions}
+            disabled={active}
+          />
+        </div>
+
+        <div className="mt-4 rounded-[6px] border border-cyan-300/25 bg-cyan-300/10 p-3">
+          <p className="text-sm font-black">
+            {h3Settings.renderMode === "native"
+              ? "MiniMax H3 Native · 20-step"
+              : "MiniMax H3 Turbo · 8-step"}
+          </p>
+          <p className="text-xs text-white/60">
+            {h3Settings.checkpointMode === "singularity"
+              ? `Singularity · Realism On · Combat ${h3Settings.combatLoraEnabled ? "On" : "Off"}`
+              : "Standard model"}{" "}
+            · SLA attention
+          </p>
+        </div>
+        <div className="mt-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-black uppercase text-white/50">
+              Optional H3 LoRAs
+            </p>
+            <span className="text-xs text-white/40">
+              {selectedLoras.length}/{maxLoras || 0}
+            </span>
+          </div>
+          <select
+            className={`${field} mt-2`}
+            value=""
+            onChange={(event) => addLora(event.target.value)}
+          >
+            <option value="">+ Add approved LoRA</option>
+            {catalog
+              .filter(
+                (entry) =>
+                  !selectedLoras.some((item) => item.id === entry.id),
+              )
+              .map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.displayName}
+                </option>
+              ))}
+          </select>
+          {selectedLoras.map((selection) => {
+            const entry = catalog.find((item) => item.id === selection.id);
+            if (!entry) return null;
+            return (
+              <article
+                key={selection.id}
+                className="mt-3 rounded-[6px] border border-white/10 bg-black/30 p-3"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="font-black">{entry.displayName}</p>
+                    <p className="text-xs text-white/45">
+                      {entry.description}
+                    </p>
+                  </div>
+                  <button
+                    className={command}
+                    onClick={() =>
+                      setSelectedLoras((current) =>
+                        current.filter((item) => item.id !== selection.id),
+                      )
+                    }
+                  >
+                    Remove
+                  </button>
+                </div>
+                <div className="mt-3 grid grid-cols-[40px_1fr_40px_58px] items-center gap-2">
+                  <button
+                    className={command}
+                    aria-label={`Decrease ${entry.displayName}`}
+                    onClick={() =>
+                      updateLora(selection.id, selection.strength - 0.05)
+                    }
+                  >
+                    -
+                  </button>
+                  <input
+                    type="range"
+                    min={entry.minStrength}
+                    max={entry.maxStrength}
+                    step="0.05"
+                    value={selection.strength}
+                    onChange={(event) =>
+                      updateLora(selection.id, Number(event.target.value))
+                    }
+                  />
+                  <button
+                    className={command}
+                    aria-label={`Increase ${entry.displayName}`}
+                    onClick={() =>
+                      updateLora(selection.id, selection.strength + 0.05)
+                    }
+                  >
+                    +
+                  </button>
+                  <input
+                    className={`${field} px-2 text-center`}
+                    type="number"
+                    min={entry.minStrength}
+                    max={entry.maxStrength}
+                    step="0.05"
+                    value={selection.strength}
+                    onChange={(event) =>
+                      updateLora(selection.id, Number(event.target.value))
+                    }
+                  />
+                </div>
+                <p className="mt-2 text-[11px] text-white/45">
+                  Recommended {entry.recommendedMin}-{entry.recommendedMax}.
+                  Available: {entry.discoveredOn.join(", ")}.
+                </p>
+                {entry.triggerWords.length ? (
+                  <button
+                    className={`${command} mt-2`}
+                    onClick={() =>
+                      replaceOriginal(
+                        [
+                          originalPrompt,
+                          ...entry.triggerWords.filter(
+                            (word) =>
+                              !originalPrompt
+                                .toLowerCase()
+                                .includes(word.toLowerCase()),
+                          ),
+                        ]
+                          .filter(Boolean)
+                          .join("\n"),
+                      )
+                    }
+                  >
+                    Add recommended trigger words
+                  </button>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+      </details>
+    );
+  }
+
   return (
     <div
       className="mx-auto max-w-7xl space-y-4 pb-28 pt-8 md:pt-0"
@@ -3338,6 +3777,27 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   }}
                   placeholder="Example: the man walks into the cafe to buy a drink"
                 />
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={command}
+                    onClick={() => {
+                      setRealismPrompt("");
+                      setRealismCompiledPromptDraft("");
+                    }}
+                  >
+                    Clear
+                  </button>
+                  <SpeechInputButton
+                    label="Dictate Realism prompt"
+                    className={command}
+                    onStatus={setMessage}
+                    onTranscript={(text) => {
+                      setRealismPrompt([realismPrompt.trim(), text].filter(Boolean).join("\n"));
+                      setRealismCompiledPromptDraft("");
+                    }}
+                  />
+                </div>
                 <details className="mt-4 rounded-[6px] border border-white/10 p-3">
                   <summary className="cursor-pointer text-sm font-black">
                     View Compiled Prompt
@@ -3678,6 +4138,21 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   onChange={(event) => setBodySwapPrompt(event.target.value)}
                   placeholder="Optional instruction, e.g. keep the walk natural and match the coat movement"
                 />
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={command}
+                    onClick={() => setBodySwapPrompt("")}
+                  >
+                    Clear
+                  </button>
+                  <SpeechInputButton
+                    label="Dictate Body Swap instruction"
+                    className={command}
+                    onStatus={setMessage}
+                    onTranscript={(text) => setBodySwapPrompt([bodySwapPrompt.trim(), text].filter(Boolean).join("\n"))}
+                  />
+                </div>
                 <details className="mt-4 rounded-[6px] border border-white/10 p-3">
                   <summary className="cursor-pointer text-sm font-black">
                     View Compiled Prompt
@@ -3722,6 +4197,21 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   onChange={(event) => setRefModsPrompt(event.target.value)}
                   placeholder="Example: Isabella and Mika are sitting together at a cafe talking."
                 />
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={command}
+                    onClick={() => setRefModsPrompt("")}
+                  >
+                    Clear
+                  </button>
+                  <SpeechInputButton
+                    label="Dictate Ref Mods prompt"
+                    className={command}
+                    onStatus={setMessage}
+                    onTranscript={(text) => setRefModsPrompt([refModsPrompt.trim(), text].filter(Boolean).join("\n"))}
+                  />
+                </div>
                 <details className="mt-4 rounded-[6px] border border-white/10 p-3">
                   <summary className="cursor-pointer text-sm font-black">
                     View Compiled Prompt
@@ -4513,97 +5003,20 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         <aside className="space-y-4 xl:sticky xl:top-4 xl:self-start">
           {studioMode === "h3-realism" ? (
             <section className={surface} data-otg="h3-realism-controls">
+              {/* Shared controls emit Realism quality, Realism duration, and Realism orientation groups. */}
               <p className="text-xs font-black uppercase text-violet-200/75">
                 Realism Controls
               </p>
-              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-                Quality
-              </p>
-              <div
-                className="grid grid-cols-3 gap-2"
-                role="group"
-                aria-label="Realism quality"
-              >
-                {H3_QUALITY_OPTIONS.map((value) => (
-                  <button
-                    key={value}
-                    aria-pressed={quality === value}
-                    className={`${command} ${choiceClass(quality === value)}`}
-                    onClick={() => setQuality(value)}
-                  >
-                    {QUALITY_LABELS[value]}
-                    <span className="mt-1 block text-[11px] font-bold leading-4 text-white/45">
-                      {getH3NativeDimensions(value, orientation).width}x{getH3NativeDimensions(value, orientation).height}
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-                Duration
-              </p>
-              <div
-                className="grid grid-cols-2 gap-2"
-                role="group"
-                aria-label="Realism duration"
-              >
-                {H3_PRODUCTION_DURATION_OPTIONS.map((value) => (
-                  <button
-                    key={value}
-                    aria-pressed={duration === value}
-                    className={`${command} ${choiceClass(duration === value)}`}
-                    onClick={() => setDuration(value)}
-                  >
-                    {value} sec
-                  </button>
-                ))}
-              </div>
-              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-                Orientation
-              </p>
-              <div
-                className="grid grid-cols-2 gap-2"
-                role="group"
-                aria-label="Realism orientation"
-              >
-                {H3_ORIENTATION_OPTIONS.map((value) => (
-                  <button
-                    key={value}
-                    aria-pressed={orientation === value}
-                    className={`${command} ${choiceClass(orientation === value)}`}
-                    onClick={() => setOrientation(value)}
-                  >
-                    {value === "landscape" ? "Landscape" : "Portrait"}
-                  </button>
-                ))}
-              </div>
-              {renderRife60FpsControl()}
-              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-                Seed
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                {(["random", "fixed"] as const).map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    aria-pressed={realismSeedMode === value}
-                    className={`${command} ${choiceClass(realismSeedMode === value)}`}
-                    onClick={() => setRealismSeedMode(value)}
-                  >
-                    {value === "random" ? "Random" : "Explicit"}
-                  </button>
-                ))}
-              </div>
-              {realismSeedMode === "fixed" ? (
-                <input
-                  className={`${field} mt-2`}
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={realismSeed}
-                  onChange={(event) => setRealismSeed(event.target.value)}
-                  placeholder="Seed"
-                />
-              ) : null}
+              {renderSharedOutputControls(
+                "Realism",
+                renderSeedControl({
+                  label: "Realism",
+                  mode: realismSeedMode,
+                  seed: realismSeed,
+                  onMode: setRealismSeedMode,
+                  onSeed: setRealismSeed,
+                }),
+              )}
               <div className="mt-4 rounded-[6px] border border-white/10 bg-black/30 p-3 text-sm text-white/60">
                 <span className="font-semibold text-white/80">
                   References:
@@ -4630,94 +5043,16 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               <p className="text-xs font-black uppercase text-violet-200/75">
                 Body Swap Controls
               </p>
-              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-                Quality
-              </p>
-              <div
-                className="grid grid-cols-3 gap-2"
-                role="group"
-                aria-label="Body Swap quality"
-              >
-                {H3_QUALITY_OPTIONS.map((value) => (
-                  <button
-                    key={value}
-                    aria-pressed={quality === value}
-                    className={`${command} ${choiceClass(quality === value)}`}
-                    onClick={() => setQuality(value)}
-                  >
-                    {QUALITY_LABELS[value]}
-                    <span className="mt-1 block text-[11px] font-bold leading-4 text-white/45">
-                      {QUALITY_DETAILS[value]}
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-                Duration
-              </p>
-              <div
-                className="grid grid-cols-2 gap-2"
-                role="group"
-                aria-label="Body Swap duration"
-              >
-                {H3_PRODUCTION_DURATION_OPTIONS.map((value) => (
-                  <button
-                    key={value}
-                    aria-pressed={duration === value}
-                    className={`${command} ${choiceClass(duration === value)}`}
-                    onClick={() => setDuration(value)}
-                  >
-                    {value} sec
-                  </button>
-                ))}
-              </div>
-              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-                Orientation
-              </p>
-              <div
-                className="grid grid-cols-2 gap-2"
-                role="group"
-                aria-label="Body Swap orientation"
-              >
-                {H3_ORIENTATION_OPTIONS.map((value) => (
-                  <button
-                    key={value}
-                    aria-pressed={orientation === value}
-                    className={`${command} ${choiceClass(orientation === value)}`}
-                    onClick={() => setOrientation(value)}
-                  >
-                    {value === "landscape" ? "Landscape" : "Portrait"}
-                  </button>
-                ))}
-              </div>
-              {renderRife60FpsControl()}
-              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-                Seed
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                {(["random", "fixed"] as const).map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    aria-pressed={bodySwapSeedMode === value}
-                    className={`${command} ${choiceClass(bodySwapSeedMode === value)}`}
-                    onClick={() => setBodySwapSeedMode(value)}
-                  >
-                    {value === "random" ? "Random" : "Explicit"}
-                  </button>
-                ))}
-              </div>
-              {bodySwapSeedMode === "fixed" ? (
-                <input
-                  className={`${field} mt-2`}
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={bodySwapSeed}
-                  onChange={(event) => setBodySwapSeed(event.target.value)}
-                  placeholder="Seed"
-                />
-              ) : null}
+              {renderSharedOutputControls(
+                "Body Swap",
+                renderSeedControl({
+                  label: "Body Swap",
+                  mode: bodySwapSeedMode,
+                  seed: bodySwapSeed,
+                  onMode: setBodySwapSeedMode,
+                  onSeed: setBodySwapSeed,
+                }),
+              )}
               <div className="mt-4 rounded-[6px] border border-white/10 bg-black/30 p-3 text-sm text-white/60">
                 <span className="font-semibold text-white/80">
                   Source:
@@ -4752,107 +5087,34 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               <p className="text-xs font-black uppercase text-violet-200/75">
                 Ref Mods Controls
               </p>
-              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-                Quality
-              </p>
-              <div
-                className="grid grid-cols-3 gap-2"
-                role="group"
-                aria-label="Ref Mods quality"
-              >
-                {H3_QUALITY_OPTIONS.map((value) => (
-                  <button
-                    key={value}
-                    aria-pressed={quality === value}
-                    className={`${command} ${choiceClass(quality === value)}`}
-                    onClick={() => setQuality(value)}
-                  >
-                    {QUALITY_LABELS[value]}
-                  </button>
-                ))}
-              </div>
-              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-                Duration
-              </p>
-              <div
-                className="grid grid-cols-2 gap-2"
-                role="group"
-                aria-label="Ref Mods duration"
-              >
-                {H3_PRODUCTION_DURATION_OPTIONS.map((value) => (
-                  <button
-                    key={value}
-                    aria-pressed={duration === value}
-                    className={`${command} ${choiceClass(duration === value)}`}
-                    onClick={() => setDuration(value)}
-                  >
-                    {value} sec
-                  </button>
-                ))}
-              </div>
-              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-                Orientation
-              </p>
-              <div
-                className="grid grid-cols-2 gap-2"
-                role="group"
-                aria-label="Ref Mods orientation"
-              >
-                {H3_ORIENTATION_OPTIONS.map((value) => (
-                  <button
-                    key={value}
-                    aria-pressed={orientation === value}
-                    className={`${command} ${choiceClass(orientation === value)}`}
-                    onClick={() => setOrientation(value)}
-                  >
-                    {value === "landscape" ? "Landscape" : "Portrait"}
-                  </button>
-                ))}
-              </div>
-              {renderRife60FpsControl()}
-              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-                Turbo
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                {([true, false] as const).map((value) => (
-                  <button
-                    key={String(value)}
-                    type="button"
-                    aria-pressed={refModsTurbo === value}
-                    className={`${command} ${choiceClass(refModsTurbo === value)}`}
-                    onClick={() => setRefModsTurbo(value)}
-                  >
-                    {value ? "Turbo" : "Native"}
-                  </button>
-                ))}
-              </div>
-              <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-                Seed
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                {(["random", "fixed"] as const).map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    aria-pressed={refModsSeedMode === value}
-                    className={`${command} ${choiceClass(refModsSeedMode === value)}`}
-                    onClick={() => setRefModsSeedMode(value)}
-                  >
-                    {value === "random" ? "Random" : "Explicit"}
-                  </button>
-                ))}
-              </div>
-              {refModsSeedMode === "fixed" ? (
-                <input
-                  className={`${field} mt-2`}
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={refModsSeed}
-                  onChange={(event) => setRefModsSeed(event.target.value)}
-                  placeholder="Seed"
-                />
-              ) : null}
+              {renderSharedOutputControls(
+                "Ref Mods",
+                <>
+                  <p className="mb-2 mt-4 text-xs font-bold text-white/50">
+                    Render
+                  </p>
+                  <div className="grid grid-cols-2 gap-2" role="group" aria-label="Ref Mods render mode">
+                    {([true, false] as const).map((value) => (
+                      <button
+                        key={String(value)}
+                        type="button"
+                        aria-pressed={refModsTurbo === value}
+                        className={`${command} ${choiceClass(refModsTurbo === value)}`}
+                        onClick={() => setRefModsTurbo(value)}
+                      >
+                        {value ? "Turbo" : "Native"}
+                      </button>
+                    ))}
+                  </div>
+                  {renderSeedControl({
+                    label: "Ref Mods",
+                    mode: refModsSeedMode,
+                    seed: refModsSeed,
+                    onMode: setRefModsSeedMode,
+                    onSeed: setRefModsSeed,
+                  })}
+                </>,
+              )}
               <div className="mt-4 rounded-[6px] border border-white/10 bg-black/30 p-3 text-sm text-white/60">
                 <span className="font-semibold text-white/80">
                   RefMods:
@@ -4902,233 +5164,23 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
             <p className="text-xs font-black uppercase text-violet-200/75">
               03 / Output
             </p>
-            <p className="mb-2 mt-3 text-xs font-bold text-white/50">Quality</p>
-            <div
-              className="grid grid-cols-1 gap-2 sm:grid-cols-3"
-              role="group"
-              aria-label="H3 quality"
-            >
-              {H3_QUALITY_OPTIONS.map((value) => (
-                <button
-                  key={value}
-                  aria-pressed={quality === value}
-                  className={`${command} text-left ${choiceClass(quality === value)}`}
-                  onClick={() => setQuality(value)}
-                >
-                  <span className="block font-black">
-                    {value === "sh" ? "SH · Scene Hunter" : QUALITY_LABELS[value]} · {getH3NativeDimensions(value, orientation).width}x{getH3NativeDimensions(value, orientation).height}
-                  </span>
-                  <span className="mt-1 block text-[11px] font-bold leading-4 text-white/45">
-                    {QUALITY_DETAILS[value]}
-                  </span>
-                </button>
-              ))}
-            </div>
-            <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-              Duration
-            </p>
-            <div
-              className="grid grid-cols-2 gap-2"
-              role="group"
-              aria-label="H3 duration"
-            >
-              {H3_PRODUCTION_DURATION_OPTIONS.map((value) => (
-                <button
-                  key={value}
-                  aria-pressed={duration === value}
-                  className={`${command} ${choiceClass(duration === value)}`}
-                  onClick={() => setDuration(value)}
-                >
-                  {value} sec
-                </button>
-              ))}
-            </div>
-            <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-              Orientation
-            </p>
-            <div
-              className="grid grid-cols-2 gap-2"
-              role="group"
-              aria-label="H3 orientation"
-            >
-              {H3_ORIENTATION_OPTIONS.map((value) => (
-                <button
-                  key={value}
-                  aria-pressed={orientation === value}
-                  className={`${command} ${choiceClass(orientation === value)}`}
-                  onClick={() => setOrientation(value)}
-                >
-                  {value === "landscape" ? "Landscape" : "Portrait"}
-                </button>
-              ))}
-            </div>
-            {renderRife60FpsControl()}
-            <div className="mt-4 rounded-[6px] border border-white/10 bg-black/30 p-3 text-sm text-white/60">
-              <span className="font-semibold text-white/80">Canvas:</span>{" "}
-              {nativeDimensions.width}x{nativeDimensions.height}
-              <br />
-              <span className="font-semibold text-white/80">Estimate:</span> ~
-              {formatDuration(estimate.minSeconds)} to{" "}
-              {formatDuration(estimate.maxSeconds)}
-              <br />
-              <span className="text-xs">
-                Actual time varies by GPU and queue. Portrait inherits the matching landscape estimate and is not independently benchmarked.
-              </span>
-            </div>
-          </section>
-          <details className={surface}>
-            <summary className="cursor-pointer text-sm font-black">
-              LoRAs and Creative Controls
-            </summary>
-            <div
-              className="mt-4"
-              data-otg="h3-advanced-controls-panel"
-            >
-              <H3AdvancedControls
-                value={h3Settings}
-                onChange={setH3Settings}
-                referenceOptions={refModReferenceOptions}
-                disabled={active}
-              />
-            </div>
-
-            <div className="mt-4 rounded-[6px] border border-cyan-300/25 bg-cyan-300/10 p-3">
-              <p className="text-sm font-black">
-                {h3Settings.renderMode === "native"
-                  ? "MiniMax H3 Native · 20-step"
-                  : "MiniMax H3 Turbo · 8-step"}
-              </p>
-              <p className="text-xs text-white/60">
-                {h3Settings.checkpointMode === "singularity"
-                  ? `Singularity · Realism On · Combat ${h3Settings.combatLoraEnabled ? "On" : "Off"}`
-                  : "Standard model"}{" "}
-                · SLA attention
-              </p>
-            </div>
-            <div className="mt-4">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-black uppercase text-white/50">
-                  Optional H3 LoRAs
-                </p>
-                <span className="text-xs text-white/40">
-                  {selectedLoras.length}/{maxLoras}
+            {renderSharedOutputControls(
+              "H3",
+              <div className="mt-4 rounded-[6px] border border-white/10 bg-black/30 p-3 text-sm text-white/60">
+                <span className="font-semibold text-white/80">Canvas:</span>{" "}
+                {nativeDimensions.width}x{nativeDimensions.height}
+                <br />
+                <span className="font-semibold text-white/80">Estimate:</span> ~
+                {formatDuration(estimate.minSeconds)} to{" "}
+                {formatDuration(estimate.maxSeconds)}
+                <br />
+                <span className="text-xs">
+                  Actual time varies by GPU and queue. Portrait inherits the matching landscape estimate and is not independently benchmarked.
                 </span>
-              </div>
-              <select
-                className={`${field} mt-2`}
-                value=""
-                onChange={(event) => addLora(event.target.value)}
-              >
-                <option value="">+ Add approved LoRA</option>
-                {catalog
-                  .filter(
-                    (entry) =>
-                      !selectedLoras.some((item) => item.id === entry.id),
-                  )
-                  .map((entry) => (
-                    <option key={entry.id} value={entry.id}>
-                      {entry.displayName}
-                    </option>
-                  ))}
-              </select>
-              {selectedLoras.map((selection) => {
-                const entry = catalog.find((item) => item.id === selection.id);
-                if (!entry) return null;
-                return (
-                  <article
-                    key={selection.id}
-                    className="mt-3 rounded-[6px] border border-white/10 bg-black/30 p-3"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="font-black">{entry.displayName}</p>
-                        <p className="text-xs text-white/45">
-                          {entry.description}
-                        </p>
-                      </div>
-                      <button
-                        className={command}
-                        onClick={() =>
-                          setSelectedLoras((current) =>
-                            current.filter((item) => item.id !== selection.id),
-                          )
-                        }
-                      >
-                        Remove
-                      </button>
-                    </div>
-                    <div className="mt-3 grid grid-cols-[40px_1fr_40px_58px] items-center gap-2">
-                      <button
-                        className={command}
-                        aria-label={`Decrease ${entry.displayName}`}
-                        onClick={() =>
-                          updateLora(selection.id, selection.strength - 0.05)
-                        }
-                      >
-                        -
-                      </button>
-                      <input
-                        type="range"
-                        min={entry.minStrength}
-                        max={entry.maxStrength}
-                        step="0.05"
-                        value={selection.strength}
-                        onChange={(event) =>
-                          updateLora(selection.id, Number(event.target.value))
-                        }
-                      />
-                      <button
-                        className={command}
-                        aria-label={`Increase ${entry.displayName}`}
-                        onClick={() =>
-                          updateLora(selection.id, selection.strength + 0.05)
-                        }
-                      >
-                        +
-                      </button>
-                      <input
-                        className={`${field} px-2 text-center`}
-                        type="number"
-                        min={entry.minStrength}
-                        max={entry.maxStrength}
-                        step="0.05"
-                        value={selection.strength}
-                        onChange={(event) =>
-                          updateLora(selection.id, Number(event.target.value))
-                        }
-                      />
-                    </div>
-                    <p className="mt-2 text-[11px] text-white/45">
-                      Recommended {entry.recommendedMin}-{entry.recommendedMax}.
-                      Available: {entry.discoveredOn.join(", ")}.
-                    </p>
-                    {entry.triggerWords.length ? (
-                      <button
-                        className={`${command} mt-2`}
-                        onClick={() =>
-                          replaceOriginal(
-                            [
-                              originalPrompt,
-                              ...entry.triggerWords.filter(
-                                (word) =>
-                                  !originalPrompt
-                                    .toLowerCase()
-                                    .includes(word.toLowerCase()),
-                              ),
-                            ]
-                              .filter(Boolean)
-                              .join("\n"),
-                          )
-                        }
-                      >
-                        Add recommended trigger words
-                      </button>
-                    ) : null}
-                  </article>
-                );
-              })}
-            </div>
-          </details>
+              </div>,
+            )}
+          </section>
+          {renderLegacyModelControls()}
           <button
             className={`${command} ${primary} min-h-14 w-full text-base`}
             disabled={active || !canGenerate}
