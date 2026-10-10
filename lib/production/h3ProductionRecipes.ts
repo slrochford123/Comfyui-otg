@@ -19,6 +19,7 @@ export type H3ProductionMode =
   | "h3-image-to-video"
   | "h3-reference-to-video";
 export type H3ProductionBackendId = "rtx5060ti" | "rtx3090";
+type H3ProductionBackendAlias = H3ProductionBackendId | "rtx3090-comfy-kitchen";
 export type H3TurboLoraFamily = "none" | "ref2va";
 
 export type H3ProductionRecipe = {
@@ -109,12 +110,20 @@ function modeCode(mode: H3ProductionMode) {
 }
 
 export function h3ProductionRouteKey(
-  backend: H3ProductionBackendId,
+  backend: H3ProductionBackendAlias,
   mode: H3ProductionMode,
   durationSeconds: H3ProductionDuration,
   quality: H3Quality,
 ) {
-  return `${backend}:${mode}:${durationSeconds}:${quality}`;
+  return `${normalizeH3ProductionBackendId(backend) || backend}:${mode}:${durationSeconds}:${quality}`;
+}
+
+export function normalizeH3ProductionBackendId(
+  value: unknown,
+): H3ProductionBackendId | null {
+  if (value === "rtx3090" || value === "rtx3090-comfy-kitchen") return "rtx3090";
+  if (value === "rtx5060ti") return "rtx5060ti";
+  return null;
 }
 
 function recipe(spec: RouteSpec): H3ProductionRecipe {
@@ -190,13 +199,16 @@ export function getH3NativeDimensions(
 export function getH3ProductionRecipe(
   mode: H3ProductionMode,
   durationSeconds: H3ProductionDuration,
-  backend: H3ProductionBackendId,
+  backend: H3ProductionBackendAlias,
   quality: H3Quality,
 ): H3ProductionRecipe {
-  const key = h3ProductionRouteKey(backend, mode, durationSeconds, quality);
+  const normalizedBackend = normalizeH3ProductionBackendId(backend);
+  const key = normalizedBackend
+    ? h3ProductionRouteKey(normalizedBackend, mode, durationSeconds, quality)
+    : `${backend}:${mode}:${durationSeconds}:${quality}`;
   const selected = H3_PRODUCTION_RECIPES[key];
   if (!selected) {
-    throw new Error(`No qualified MiniMax H3 workflow is registered for ${key}.`);
+    throw new Error(`No qualified MiniMax H3 workflow is registered for ${backend}:${mode}:${durationSeconds}:${quality}.`);
   }
   return selected;
 }
@@ -205,13 +217,14 @@ export function getH3ProductionTimeEstimate(
   mode: H3ProductionMode,
   durationSeconds: H3ProductionDuration,
   quality: H3Quality,
-  backend?: H3ProductionBackendId | null,
+  backend?: H3ProductionBackendAlias | null,
 ) {
-  if (backend) {
+  const normalizedBackend = normalizeH3ProductionBackendId(backend);
+  if (normalizedBackend) {
     const seconds = getH3ProductionRecipe(
       mode,
       durationSeconds,
-      backend,
+      normalizedBackend,
       quality,
     ).etaSeconds;
     return { seconds, minSeconds: seconds, maxSeconds: seconds };

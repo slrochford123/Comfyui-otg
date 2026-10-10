@@ -12,6 +12,7 @@ import {
   H3_PRODUCTION_ROUTE_KEYS,
   H3_QUALITY_OPTIONS,
   h3ProductionRouteKey,
+  normalizeH3ProductionBackendId,
   normalizeH3Quality,
   type H3ProductionBackendId,
   type H3ProductionDuration,
@@ -57,6 +58,26 @@ describe("MiniMax H3 Scene Hunter/LQ/HQ production recipe matrix", () => {
         }
       }
     }
+  });
+
+  it("normalizes the PROD Comfy Kitchen backend profile to the qualified 3090 recipe key", () => {
+    expect(normalizeH3ProductionBackendId("rtx3090-comfy-kitchen")).toBe("rtx3090");
+
+    const recipe = getH3ProductionRecipe(
+      "h3-image-to-video",
+      5,
+      "rtx3090-comfy-kitchen",
+      "lq",
+    );
+
+    expect(recipe.routeKey).toBe("rtx3090:h3-image-to-video:5:lq");
+    expect(recipe.workflowFile).toBe(
+      "comfy_workflows/internal/production-v2/h3-b02-approx-preview/rtx3090_I2V_5s_LQ.api.json",
+    );
+    expect(fs.existsSync(path.join(root, recipe.workflowFile))).toBe(true);
+    expect(recipe.nativeWidth).toBe(1056);
+    expect(recipe.nativeHeight).toBe(608);
+    expect(recipe.frameCount).toBe(124);
   });
 
   it("installs all 24 FastH3 B02 approximate-preview runtime graphs with provenance", () => {

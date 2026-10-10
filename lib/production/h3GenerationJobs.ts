@@ -16,6 +16,7 @@ import type {
 import type { ProductionV2H3BackendId, ProductionV2H3Mode } from "@/lib/production/h3Workflows";
 import {
   normalizeH3Quality,
+  normalizeH3ProductionBackendId,
   type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
 
@@ -190,6 +191,7 @@ function db() {
 function fromRow(row: JobRow | undefined): ProductionV2GenerationJob | null {
   if (!row) return null;
   const rawPayload = JSON.parse(row.payload_json) as ProductionV2H3GenerationPayload;
+  const backend = normalizeH3ProductionBackendId(row.backend);
   return {
     id: row.id,
     ownerKey: row.owner_key,
@@ -199,7 +201,7 @@ function fromRow(row: JobRow | undefined): ProductionV2GenerationJob | null {
     mode: row.mode as ProductionV2H3Mode,
     status: row.status as ProductionV2GenerationStatus,
     statusMessage: row.status_message,
-    backend: row.backend as ProductionV2H3BackendId | null,
+    backend,
     comfyPromptId: row.comfy_prompt_id,
     submissionState: row.submission_state as ProductionV2GenerationJob["submissionState"],
     payload: {
