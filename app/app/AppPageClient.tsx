@@ -213,6 +213,18 @@ type ProgressResponse = {
   totalNodes?: number;
   elapsedMs?: number | null;
   estimatedRemainingMs?: number | null;
+  approximatePreview?: {
+    label?: "Approximate Preview" | string;
+    imageUrl?: string;
+    mimeType?: string;
+    width?: number | null;
+    height?: number | null;
+    step?: number | null;
+    total?: number | null;
+    frameCount?: number | null;
+    updatedAt?: number;
+    source?: string;
+  } | null;
   error?: string | null;
 };
 
@@ -1431,6 +1443,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
     currentNodeId: "",
     currentNodeProgress: "",
   });
+  const [generateApproximatePreview, setGenerateApproximatePreview] = useState<ProgressResponse["approximatePreview"]>(null);
   const [activePromptId, setActivePromptId] = useState("");
   const [latestPreviewUrl, setLatestPreviewUrl] = useState("");
   const [latestPreviewName, setLatestPreviewName] = useState("");
@@ -2876,6 +2889,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         Number.isFinite(nodeValue) && Number.isFinite(nodeMax) && nodeMax > 0
           ? `${Math.round(nodeValue)}/${Math.round(nodeMax)}`
           : "";
+      const approximatePreview = data?.approximatePreview && typeof data.approximatePreview === "object"
+        ? data.approximatePreview
+        : null;
 
       setProgressQueue(queueCount);
       if (promptId) setActivePromptId(promptId);
@@ -2890,6 +2906,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       if (nextStatus === "error") {
         refreshedCompletePromptRef.current = "";
+        setGenerateApproximatePreview(null);
         setProgressStatus("error");
         setProgressPercent(nextPercent || 100);
         return "error";
@@ -2897,6 +2914,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       if (running) {
         refreshedCompletePromptRef.current = "";
+        if (approximatePreview?.imageUrl) setGenerateApproximatePreview(approximatePreview);
         setProgressStatus("running");
         setProgressPercent(nextPercent);
         return "running";
@@ -2904,6 +2922,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       if (nextStatus === "complete") {
         const completionKey = promptId || completedFileName || "__complete__";
+        setGenerateApproximatePreview(null);
         setProgressStatus("complete");
         setProgressPercent(100);
 
@@ -2920,6 +2939,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       }
 
       refreshedCompletePromptRef.current = "";
+      setGenerateApproximatePreview(null);
       setProgressStatus("idle");
       setProgressPercent(0);
       setProgressTiming({
@@ -6877,10 +6897,20 @@ async function handleAskAi() {
 
               <Card title="Preview">
                 <MediaPreviewPanel
-                  url={latestPreviewUrl}
-                  kind={latestPreviewKind}
-                  name={latestPreviewName}
-                  meta={latestPreviewKind === "image" && latestPreviewMeta
+                  url={progressStatus === "running" && generateApproximatePreview?.imageUrl
+                    ? generateApproximatePreview.imageUrl
+                    : latestPreviewUrl}
+                  kind={progressStatus === "running" && generateApproximatePreview?.imageUrl
+                    ? String(generateApproximatePreview.mimeType || "").startsWith("video/")
+                      ? "video"
+                      : "image"
+                    : latestPreviewKind}
+                  name={progressStatus === "running" && generateApproximatePreview?.imageUrl
+                    ? "Approximate Preview"
+                    : latestPreviewName}
+                  meta={progressStatus === "running" && generateApproximatePreview?.imageUrl
+                    ? `Live sampler preview${generateApproximatePreview.step !== null && generateApproximatePreview.total !== null && generateApproximatePreview.step !== undefined && generateApproximatePreview.total !== undefined ? `: step ${generateApproximatePreview.step}/${generateApproximatePreview.total}` : ""}. Final output replaces this preview after completion.`
+                    : latestPreviewKind === "image" && latestPreviewMeta
                     ? `Generated image: ${latestPreviewMeta.width} x ${latestPreviewMeta.height}${latestPreviewMeta.height > latestPreviewMeta.width ? " - portrait" : " - landscape"}`
                     : latestPreviewKind === "video"
                       ? "Latest generated video."
