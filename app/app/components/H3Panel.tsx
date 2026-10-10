@@ -1742,12 +1742,12 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   ]);
 
   useEffect(() => {
-    if (!legacyModeActive) {
+    if (!modeCapabilities.supportsOptionalLoras) {
       setCatalog([]);
       setMaxLoras(0);
       return;
     }
-    void fetch(`/api/h3/loras?mode=${encodeURIComponent(mode)}`, {
+    void fetch(`/api/h3/loras?mode=${encodeURIComponent(studioMode)}`, {
       cache: "no-store",
     })
       .then((res) => res.json())
@@ -1776,7 +1776,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       .catch(() =>
         setMessage("The approved H3 LoRA catalog could not be loaded."),
       );
-  }, [legacyModeActive, mode]);
+  }, [modeCapabilities.supportsOptionalLoras, studioMode]);
   useEffect(() => {
     if (studioMode !== "h3-refmods" || refModLibraryStatus !== "idle") return;
     let cancelled = false;
@@ -2748,6 +2748,11 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         finalRealismPrompt.trim(),
       rifeInterpolation60Fps,
       creative: h3CreativeDirection,
+      checkpointMode: h3Settings.checkpointMode,
+      combatLoraEnabled:
+        h3Settings.checkpointMode === "singularity"
+        && h3Settings.combatLoraEnabled,
+      optionalLoras: selectedLoras,
       loraSettings: {
         preset: realismPreset,
         speedLora: realismSpeedLora,
@@ -2802,6 +2807,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       preserveOriginalAudio: bodySwapPreserveAudio,
       rifeInterpolation60Fps,
       creative: h3CreativeDirection,
+      optionalLoras: selectedLoras,
       seed:
         bodySwapSeedMode === "fixed"
           ? Number(bodySwapSeed)
@@ -2823,6 +2829,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       turbo: refModsTurbo,
       rifeInterpolation60Fps,
       creative: h3CreativeDirection,
+      optionalLoras: selectedLoras,
       seed:
         refModsSeedMode === "fixed"
           ? Number(refModsSeed)
@@ -3642,13 +3649,103 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     );
   }
 
+  function renderRealismModelControl() {
+    if (
+      studioMode !== "h3-realism"
+      || !modeCapabilities.supportsStandardSingularity
+    ) {
+      return null;
+    }
+
+    const singularity =
+      h3Settings.checkpointMode === "singularity";
+
+    return (
+      <section
+        className={surface}
+        data-otg="h3-realism-model-control"
+      >
+        <p className="text-xs font-black uppercase text-violet-200/75">
+          Model
+        </p>
+
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button
+            className={`${command} ${!singularity ? primary : ""}`}
+            disabled={active}
+            onClick={() =>
+              setH3Settings({
+                ...h3Settings,
+                checkpointMode: "standard",
+              })
+            }
+          >
+            Standard
+          </button>
+
+          <button
+            className={`${command} ${singularity ? primary : ""}`}
+            disabled={active}
+            onClick={() => {
+              setH3Settings({
+                ...h3Settings,
+                checkpointMode: "singularity",
+              });
+              setRealismPeopleEnabled(true);
+            }}
+          >
+            Singularity
+          </button>
+        </div>
+
+        <div className="mt-3 rounded-[6px] border border-white/10 bg-black/30 p-3">
+          <p className="text-sm font-black">
+            {singularity
+              ? "MiniMax H3 Singularity"
+              : "MiniMax H3 Standard R2V"}
+          </p>
+
+          <p className="mt-1 text-xs text-white/55">
+            {singularity
+              ? "Singularity uses the Realism LoRA automatically."
+              : "Standard uses the qualified MiniMax H3 reference model."}
+          </p>
+
+          {singularity ? (
+            <label className="mt-3 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={h3Settings.combatLoraEnabled}
+                disabled={active}
+                onChange={(event) =>
+                  setH3Settings({
+                    ...h3Settings,
+                    combatLoraEnabled: event.target.checked,
+                  })
+                }
+              />
+              Combat V2 LoRA
+              <span className="ml-auto text-xs text-white/40">
+                Realism always on
+              </span>
+            </label>
+          ) : null}
+        </div>
+      </section>
+    );
+  }
+
   function renderLegacyModelControls() {
     if (!modeCapabilities.supportsTurboNative && !modeCapabilities.supportsOptionalLoras) return null;
     return (
       <details className={surface}>
         <summary className="cursor-pointer text-sm font-black">
-          LoRAs and Creative Controls
+          {modeCapabilities.supportsTurboNative
+            ? "LoRAs and Creative Controls"
+            : "Optional H3 LoRAs"}
         </summary>
+        {modeCapabilities.supportsTurboNative ? (
+          <>
         <div
           className="mt-4"
           data-otg="h3-advanced-controls-panel"
@@ -3674,6 +3771,9 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
             · SLA attention
           </p>
         </div>
+          </>
+        ) : null}
+
         <div className="mt-4">
           <div className="flex items-center justify-between">
             <p className="text-xs font-black uppercase text-white/50">
@@ -5094,6 +5194,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           )}
         </main>
         <aside className="space-y-4 xl:sticky xl:top-4 xl:self-start">
+          {!legacyModeActive ? renderRealismModelControl() : null}
+          {!legacyModeActive ? renderLegacyModelControls() : null}
           {!legacyModeActive ? renderCreativeControls() : null}
           {studioMode === "h3-realism" ? (
             <section className={surface} data-otg="h3-realism-controls">

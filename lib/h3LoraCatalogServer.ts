@@ -19,6 +19,24 @@ const BACKENDS = Object.keys(H3_BACKEND_PROFILES) as ProductionV2H3BackendId[];
 const MODEL_EXTENSIONS = /\.(safetensors|pt|pth|bin)$/i;
 const execFile = promisify(execFileCallback);
 
+export type H3LoraRequestMode =
+  | ProductionV2H3Mode
+  | "h3-realism"
+  | "h3-body-swap"
+  | "h3-refmods";
+
+function h3LoraCompatibilityMode(
+  mode: H3LoraRequestMode,
+): ProductionV2H3Mode {
+  if (mode === "h3-realism" || mode === "h3-body-swap") {
+    return "h3-reference-to-video";
+  }
+  if (mode === "h3-refmods") {
+    return "h3-text-to-video";
+  }
+  return mode;
+}
+
 export type H3LoraCatalogEntry = {
   id: string;
   displayName: string;
@@ -235,15 +253,16 @@ export function writeH3LoraCatalog(
   return result;
 }
 
-function allowedForMode(entry: H3LoraCatalogEntry, mode: ProductionV2H3Mode) {
-  return mode === "h3-text-to-video"
+function allowedForMode(entry: H3LoraCatalogEntry, mode: H3LoraRequestMode) {
+  const compatibleMode = h3LoraCompatibilityMode(mode);
+  return compatibleMode === "h3-text-to-video"
     ? entry.approvedForT2V
-    : mode === "h3-image-to-video"
+    : compatibleMode === "h3-image-to-video"
       ? entry.approvedForI2V
       : entry.approvedForR2V;
 }
 
-export function publicH3LoraCatalog(mode?: ProductionV2H3Mode) {
+export function publicH3LoraCatalog(mode?: H3LoraRequestMode) {
   const catalog = readH3LoraCatalog();
   return {
     ...catalog,
@@ -260,7 +279,7 @@ export function publicH3LoraCatalog(mode?: ProductionV2H3Mode) {
 
 export function validateH3LoraSelections(
   value: unknown,
-  mode: ProductionV2H3Mode,
+  mode: H3LoraRequestMode,
 ) {
   const catalog = readH3LoraCatalog();
   const requested = Array.isArray(value)

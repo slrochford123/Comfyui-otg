@@ -88,6 +88,7 @@ export type H3RefModsRequestInput = {
   rifeInterpolation60Fps?: unknown;
   seed?: unknown;
   creative?: H3CreativeDirectionInput;
+  optionalLoras?: unknown;
 };
 
 export type H3RefModsCompileInput = {

@@ -1,3 +1,10 @@
+import {
+  H3_COMBAT_V2_LORA,
+  H3_SINGULARITY_CHECKPOINT,
+  type H3CheckpointMode,
+} from "@/lib/production/h3Settings";
+import type { ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
+import { applyH3OptionalLoraChainBeforeConsumer } from "@/lib/h3OptionalLoraChain";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -38,6 +45,9 @@ export type H3RealismWorkflowInput = {
   outputPrefix: string;
   references?: H3RealismWorkflowReference[];
   loraSettings?: H3RealismLoraSettingsInput;
+  optionalLoras?: ResolvedH3OptionalLora[];
+  checkpointMode?: H3CheckpointMode;
+  combatLoraEnabled?: boolean;
   compiledPromptOverride?: string;
 };
 
@@ -61,8 +71,10 @@ const GUIDER_NODE_ID = "223";
 const PRIMARY_SAMPLER_NODE_ID = "226";
 const SAMPLER_SELECT_NODE_ID = "255";
 const BASE_MODEL_NODE_ID = "192";
+const LOCAL_REALISM_STANDARD_CHECKPOINT =
+  "minimax_h3_ref2va_pruned_int8_convrot.safetensors";
 const LOCAL_REALISM_SINGULARITY_CHECKPOINT =
-  "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors";
+  H3_SINGULARITY_CHECKPOINT;
 const ACTIVE_SPEED_LORA_NODE_ID = "53";
 const PEOPLE_LORA_NODE_ID = "337";
 const ATTENTION_PATCH_NODE_ID = "58";
@@ -137,11 +149,18 @@ function setSeed(graph: Record<string, ComfyGraphNode>, seed: number) {
   assertNode(graph, SEED_NODE_ID, "RandomNoise").inputs!.noise_seed = seed;
 }
 
-function setLocalModelAssets(graph: Record<string, ComfyGraphNode>) {
-  // The imported template is preserved on disk. The TEST 3090 backend exposes
-  // the H3 Singularity ref2va checkpoint with the app's pruned filename.
-  assertNode(graph, BASE_MODEL_NODE_ID, "UNETLoader").inputs!.unet_name =
-    LOCAL_REALISM_SINGULARITY_CHECKPOINT;
+function setLocalModelAssets(
+  graph: Record<string, ComfyGraphNode>,
+  checkpointMode: H3CheckpointMode,
+) {
+  assertNode(
+    graph,
+    BASE_MODEL_NODE_ID,
+    "UNETLoader",
+  ).inputs!.unet_name =
+    checkpointMode === "singularity"
+      ? LOCAL_REALISM_SINGULARITY_CHECKPOINT
+      : LOCAL_REALISM_STANDARD_CHECKPOINT;
 }
 
 function pruneReferenceSlots(
@@ -185,6 +204,44 @@ function pruneReferenceSlots(
       delete graph[nodeId];
     }
   });
+}
+
+function applySingularityCombatLora(
+  graph: Record<string, ComfyGraphNode>,
+  enabled: boolean,
+) {
+  if (!enabled) return;
+
+  const attention = assertNode(graph, ATTENTION_PATCH_NODE_ID);
+  const currentModel = attention.inputs!.model;
+
+  if (!Array.isArray(currentModel) || !currentModel.length) {
+    throw new Error(
+      "Realism Singularity Combat V2 could not resolve the current model chain.",
+    );
+  }
+
+  const nodeId = "9490";
+
+  if (graph[nodeId]) {
+    throw new Error(
+      `Realism Singularity Combat V2 node ${nodeId} collides with the workflow template.`,
+    );
+  }
+
+  graph[nodeId] = {
+    class_type: "LoraLoaderModelOnly",
+    inputs: {
+      model: [String(currentModel[0]), Number(currentModel[1]) || 0],
+      lora_name: H3_COMBAT_V2_LORA,
+      strength_model: 1,
+    },
+    _meta: {
+      title: "OTG H3 Combat V2 LoRA",
+    },
+  };
+
+  attention.inputs!.model = [nodeId, 0];
 }
 
 function applyExclusiveLoras(
@@ -270,18 +327,47 @@ function ensurePeopleRealismTrigger(prompt: string, enabled: boolean) {
 export function buildH3RealismWorkflow(
   input: H3RealismWorkflowInput,
 ): H3RealismBuiltWorkflow {
+  const checkpointMode: H3CheckpointMode =
+    input.checkpointMode === "singularity"
+      ? "singularity"
+      : "standard";
+
+  const effectiveLoraSettings: H3RealismLoraSettingsInput | undefined =
+    checkpointMode === "singularity"
+      ? {
+          ...(input.loraSettings || {}),
+          peopleRealismEnabled: true,
+        }
+      : input.loraSettings;
+
   const normalized = validateH3RealismRequest({
     prompt: input.prompt,
     quality: input.quality,
     orientation: input.orientation,
     durationSeconds: input.durationSeconds,
     references: input.references || [],
-    loraSettings: input.loraSettings,
+    loraSettings: effectiveLoraSettings,
   });
+
   const graph = cloneTemplate();
   const orientation = normalizeH3Orientation(normalized.orientation);
   const quality = normalizeH3Quality(normalized.quality);
-  const loras = applyExclusiveLoras(graph, input.loraSettings);
+  const loras = applyExclusiveLoras(graph, effectiveLoraSettings);
+
+  applySingularityCombatLora(
+    graph,
+    checkpointMode === "singularity"
+      && input.combatLoraEnabled === true,
+  );
+
+  applyH3OptionalLoraChainBeforeConsumer(
+    graph,
+    ATTENTION_PATCH_NODE_ID,
+    input.optionalLoras,
+    9500,
+    "H3 Realism",
+  );
+
   const compiledPrompt = ensurePeopleRealismTrigger(
     input.compiledPromptOverride?.trim()
     || compileH3RealismPrompt({
@@ -295,7 +381,7 @@ export function buildH3RealismWorkflow(
   );
 
   setPrompt(graph, compiledPrompt);
-  setLocalModelAssets(graph);
+  setLocalModelAssets(graph, checkpointMode);
   setDimensions(graph, quality, orientation, normalized.durationSeconds);
   setSeed(graph, input.seed);
   pruneReferenceSlots(graph, input.references || []);
