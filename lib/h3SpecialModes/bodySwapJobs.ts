@@ -1,3 +1,4 @@
+import type { ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -59,6 +60,7 @@ export type H3BodySwapJobInput = {
   preserveOriginalAudio: boolean;
   rifeInterpolation60Fps?: boolean;
   creative?: H3BodySwapCreativeDirectionInput;
+  optionalLoras?: ResolvedH3OptionalLora[];
   seed: number;
   sourceVideo: H3BodySwapMedia;
   replacementImage: H3BodySwapMedia;
@@ -218,6 +220,7 @@ export function validateH3BodySwapJobInput(input: H3BodySwapJobInput) {
     preserveOriginalAudio: normalized.preserveOriginalAudio,
     rifeInterpolation60Fps: normalizeH3RifeInterpolation60Fps(input.rifeInterpolation60Fps),
     creative: normalized.creative,
+    optionalLoras: input.optionalLoras || [],
   };
 }
 
@@ -594,6 +597,7 @@ async function submitNewBodySwapPrompt(job: H3BodySwapJob) {
       preserveOriginalAudio: job.input.preserveOriginalAudio,
       compiledPromptOverride: job.input.compiledPromptOverride,
       creative: job.input.creative,
+      optionalLoras: job.input.optionalLoras || [],
     });
     const probe = await inspectH3BodySwapBackendCompatibility(backend, built);
     backendProbes.push(probe);

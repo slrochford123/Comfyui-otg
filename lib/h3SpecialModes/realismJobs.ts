@@ -1,3 +1,5 @@
+import type { H3CheckpointMode } from "@/lib/production/h3Settings";
+import type { ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -51,8 +53,11 @@ export type H3RealismJobInput = {
   compiledPromptOverride?: string;
   rifeInterpolation60Fps?: boolean;
   seed: number;
+  checkpointMode: H3CheckpointMode;
+  combatLoraEnabled: boolean;
   references: H3RealismReference[];
   loraSettings?: H3RealismLoraSettingsInput;
+  optionalLoras?: ResolvedH3OptionalLora[];
 };
 
 export type H3RealismJob = {
@@ -171,6 +176,11 @@ function isRunnableH3RealismStatus(status: H3RealismJob["status"]) {
 }
 
 export function validateH3RealismJobInput(input: H3RealismJobInput) {
+  const checkpointMode: H3CheckpointMode =
+    input.checkpointMode === "singularity"
+      ? "singularity"
+      : "standard";
+
   const normalized = validateH3RealismRequest({
     prompt: input.prompt,
     quality: input.quality,
@@ -189,8 +199,13 @@ export function validateH3RealismJobInput(input: H3RealismJobInput) {
     durationSeconds: normalized.durationSeconds,
     prompt: normalized.prompt,
     rifeInterpolation60Fps: normalizeH3RifeInterpolation60Fps(input.rifeInterpolation60Fps),
+    checkpointMode,
+    combatLoraEnabled:
+      checkpointMode === "singularity"
+      && input.combatLoraEnabled === true,
     references: input.references,
     loraSettings: input.loraSettings,
+    optionalLoras: input.optionalLoras || [],
   };
 }
 
@@ -522,7 +537,10 @@ async function submitNewRealismPrompt(job: H3RealismJob) {
       seed: job.input.seed,
       outputPrefix: `otg_h3_realism/${safeSegment(job.id)}`,
       references,
+      checkpointMode: job.input.checkpointMode,
+      combatLoraEnabled: job.input.combatLoraEnabled,
       loraSettings: job.input.loraSettings,
+      optionalLoras: job.input.optionalLoras || [],
       compiledPromptOverride: job.input.compiledPromptOverride,
     });
     const probe = await inspectH3RealismBackendCompatibility(backend, built);

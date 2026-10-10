@@ -1,3 +1,4 @@
+import { validateH3LoraSelections } from "@/lib/h3LoraCatalogServer";
 import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -222,6 +223,11 @@ function readH3RealismGenerationConfig(
   if (!H3_ORIENTATION_OPTIONS.includes(orientation)) throw new Error("Choose Landscape or Portrait orientation.");
   if (!H3_PRODUCTION_DURATION_OPTIONS.includes(durationSeconds)) throw new Error("Choose a 5- or 10-second duration.");
 
+  const checkpointMode: "standard" | "singularity" =
+    config.checkpointMode === "singularity"
+      ? "singularity"
+      : "standard";
+
   return {
     mode: "h3-realism" as const,
     quality,
@@ -231,9 +237,17 @@ function readH3RealismGenerationConfig(
     compiledPromptOverride: String(config.compiledPromptOverride || "").trim(),
     rifeInterpolation60Fps: config.rifeInterpolation60Fps === true,
     seed: Number.isSafeInteger(Number(config.seed)) && Number(config.seed) >= 0 ? Number(config.seed) : crypto.randomBytes(6).readUIntBE(0, 6),
+    checkpointMode,
+    combatLoraEnabled:
+      checkpointMode === "singularity"
+      && config.combatLoraEnabled === true,
     loraSettings: config.loraSettings && typeof config.loraSettings === "object"
       ? config.loraSettings as Record<string, unknown>
       : undefined,
+    optionalLoras: validateH3LoraSelections(
+      config.optionalLoras,
+      "h3-realism",
+    ).resolved,
   };
 }
 

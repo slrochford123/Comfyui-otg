@@ -1,3 +1,7 @@
+import {
+  validateH3LoraSelections,
+  type ResolvedH3OptionalLora,
+} from "@/lib/h3LoraCatalogServer";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -62,6 +66,7 @@ export type H3RefModsJobInput = {
   rifeInterpolation60Fps: boolean;
   seed: number;
   creative: H3RefModsCreativeDirection;
+  optionalLoras: ResolvedH3OptionalLora[];
   compiledPrompt: string;
 };
 
@@ -244,6 +249,10 @@ function isRunnableStatus(status: H3RefModsJob["status"]) {
 
 export function validateH3RefModsJobInput(input: H3RefModsRequestInput): H3RefModsJobInput {
   const normalized = validateH3RefModsRequest(input);
+  const optionalLoras = validateH3LoraSelections(
+    input.optionalLoras,
+    "h3-refmods",
+  ).resolved;
   const seed = normalized.seed ?? crypto.randomBytes(6).readUIntBE(0, 6);
   if (!Number.isSafeInteger(seed) || seed < 0) {
     throw new Error("H3 Ref Mods seed must be a non-negative safe integer.");
@@ -259,6 +268,7 @@ export function validateH3RefModsJobInput(input: H3RefModsRequestInput): H3RefMo
     rifeInterpolation60Fps: normalized.rifeInterpolation60Fps,
     seed,
     creative: normalized.creative,
+    optionalLoras,
     compiledPrompt: normalized.compiledPrompt,
   };
 }
@@ -473,6 +483,7 @@ async function execute(job: H3RefModsJob) {
       prompt: persisted.input.compiledPrompt,
       refMods: persisted.input.refMods,
       turbo: persisted.input.turbo,
+      optionalLoras: persisted.input.optionalLoras || [],
       seed: persisted.input.seed,
       outputPrefix: `otg_h3_refmods/${safeSegment(job.id)}`,
     });
@@ -599,6 +610,7 @@ export function retryH3RefModsJob(source: H3RefModsJob) {
     turbo: source.input.turbo,
     rifeInterpolation60Fps: source.input.rifeInterpolation60Fps,
     creative: source.input.creative,
+    optionalLoras: source.input.optionalLoras,
     seed: crypto.randomBytes(6).readUIntBE(0, 6),
   }, source.galleryOwner);
 }

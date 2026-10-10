@@ -1,3 +1,5 @@
+import type { ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
+import { applyH3OptionalLoraChainBeforeConsumer } from "@/lib/h3OptionalLoraChain";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -22,6 +24,7 @@ export type H3RefModsT2VWorkflowInput = {
   prompt: string;
   refMods: H3RefModSlot[];
   turbo: boolean;
+  optionalLoras?: ResolvedH3OptionalLora[];
   seed: number;
   outputPrefix: string;
 };
@@ -125,6 +128,14 @@ export function buildH3RefModsT2VWorkflow(
     delete graph["36"];
     if (graph["38"]) graph["38"].inputs.model = ["30", 0];
   }
+
+  applyH3OptionalLoraChainBeforeConsumer(
+    graph,
+    "38",
+    input.optionalLoras,
+    9500,
+    "H3 Ref Mods",
+  );
 
   graph[LOADER_NODE_ID] = {
     class_type: "MiniMaxH3RefModsLoader",

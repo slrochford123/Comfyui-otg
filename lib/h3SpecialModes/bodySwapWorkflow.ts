@@ -1,3 +1,5 @@
+import type { ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
+import { applyH3OptionalLoraChainBeforeConsumer } from "@/lib/h3OptionalLoraChain";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -33,6 +35,7 @@ export type H3BodySwapWorkflowInput = {
   preserveOriginalAudio?: boolean;
   compiledPromptOverride?: string;
   creative?: H3BodySwapCreativeDirectionInput;
+  optionalLoras?: ResolvedH3OptionalLora[];
 };
 
 export type H3BodySwapBuiltWorkflow = {
@@ -138,6 +141,7 @@ export function buildH3BodySwapWorkflow(
     orientation: input.orientation,
     durationSeconds: input.durationSeconds,
     preserveOriginalAudio: input.preserveOriginalAudio,
+    creative: input.creative,
   });
   const graph = cloneTemplate();
   const compiledPrompt = input.compiledPromptOverride?.trim()
@@ -152,6 +156,15 @@ export function buildH3BodySwapWorkflow(
   setInputs(graph, { ...input, selector: normalized.selector, durationSeconds: normalized.durationSeconds });
   setSeed(graph, input.seed);
   setSampling(graph);
+
+  applyH3OptionalLoraChainBeforeConsumer(
+    graph,
+    "179",
+    input.optionalLoras,
+    9500,
+    "H3 Body Swap",
+  );
+
   preserveWorkflowSilencePath(graph);
   setOutputPrefix(graph, input.outputPrefix);
   ensureTerminalVideoPreviewNode(graph);
