@@ -3,6 +3,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
+import {
+  ensureComfyClientProgressMonitor,
+  recordComfyPromptSubmitted,
+  waitForComfyClientProgressMonitor,
+} from "@/lib/comfyProgress";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -156,6 +161,9 @@ function patchPrompt(prompt: any, args: {
 }
 
 async function queueComfyPrompt(prompt: any) {
+  const clientId = `otg-ltx-edit-video-${crypto.randomUUID()}`;
+  ensureComfyClientProgressMonitor({ comfyBaseUrl: COMFY_BASE_URL, clientId });
+  await waitForComfyClientProgressMonitor({ comfyBaseUrl: COMFY_BASE_URL, clientId, timeoutMs: 1500 });
   const response = await submitComfyPromptWith5060Lease({
     baseUrl: COMFY_BASE_URL,
     workerId: "production-edit-video",
@@ -165,7 +173,7 @@ async function queueComfyPrompt(prompt: any) {
       cache: "no-store",
       body: JSON.stringify({
         prompt,
-        client_id: `otg-ltx-edit-video-${crypto.randomUUID()}`,
+        client_id: clientId,
       }),
     },
   });
@@ -183,7 +191,18 @@ async function queueComfyPrompt(prompt: any) {
     throw new Error(json?.error || json?.message || text || `ComfyUI prompt failed (${response.status}).`);
   }
 
-  return String(json.prompt_id);
+  const promptId = String(json.prompt_id);
+  recordComfyPromptSubmitted({
+    promptId,
+    ownerKey: "production-edit-video",
+    deviceId: "production-edit-video",
+    clientId,
+    comfyBaseUrl: COMFY_BASE_URL,
+    totalNodes: prompt && typeof prompt === "object" ? Object.keys(prompt).length : null,
+  });
+  ensureComfyClientProgressMonitor({ comfyBaseUrl: COMFY_BASE_URL, clientId });
+
+  return promptId;
 }
 
 async function getHistory(promptId: string) {
