@@ -229,7 +229,17 @@ function refModCategoryLabel(category: H3RefModCategory) {
 
 function refModFileUrl(file: string | null | undefined) {
   const value = String(file || "").trim();
+  if (/^(?:https?:|blob:|data:)/i.test(value)) return value;
+  if (value.startsWith("/api/") || value.startsWith("/mock-assets/") || value.startsWith("/assets/")) return value;
   return value ? `/api/file?path=${encodeURIComponent(value)}` : "";
+}
+
+function refModPreviewUrl(entry: H3RefModLibraryEntry) {
+  const previewPath =
+    entry.previewPath ||
+    (entry.category === "motion" ? entry.isolatedDerivativePath || entry.sourceClipPath : null) ||
+    (entry.category === "audio" ? entry.sourceClipPath : null);
+  return refModFileUrl(previewPath);
 }
 
 function useRefModInH3(entry: H3RefModLibraryEntry) {
@@ -3900,8 +3910,7 @@ function RefModGalleryPanel({
       {status === "ready" && filteredEntries.length > 0 ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" data-otg="refmod-gallery-cards">
           {filteredEntries.map((entry) => {
-            const playable = entry.category === "motion" || entry.category === "audio";
-            const src = playable ? refModFileUrl(entry.file) : "";
+            const src = refModPreviewUrl(entry);
             return (
               <article key={entry.id || entry.name} className="overflow-hidden rounded-2xl border border-white/10 bg-black/30">
                 <div className="flex aspect-video items-center justify-center bg-black/40 p-3">

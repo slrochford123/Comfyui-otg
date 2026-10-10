@@ -21,6 +21,20 @@ export type PersistedH3MediaMeta = {
   clipDurationSeconds?: number;
 };
 
+export type PersistedH3RefModSlot = {
+  id?: string;
+  name: string;
+  category?: string;
+  sourceKind?: string;
+  strength?: number;
+  components?: string;
+  visualStrength?: number;
+  audioStrength?: number;
+  copies?: number;
+  description?: string;
+  characterId?: string;
+};
+
 export type PersistedH3InputState = {
   version: 1;
   savedAt: string;
@@ -46,6 +60,27 @@ export type PersistedH3InputState = {
   firstImage: PersistedH3MediaMeta | null;
   lastImage: PersistedH3MediaMeta | null;
   references: PersistedH3MediaMeta[];
+  realismPrompt?: string;
+  realismReferences?: PersistedH3MediaMeta[];
+  realismPreset?: string;
+  realismSpeedLora?: string;
+  realismPeopleEnabled?: boolean;
+  realismSeedMode?: "random" | "fixed";
+  realismSeed?: string;
+  realismExpertEdit?: boolean;
+  realismCompiledPromptDraft?: string;
+  bodySwapSourceVideo?: PersistedH3MediaMeta | null;
+  bodySwapReplacementImage?: PersistedH3MediaMeta | null;
+  bodySwapSelector?: string;
+  bodySwapPrompt?: string;
+  bodySwapPreserveAudio?: boolean;
+  bodySwapSeedMode?: "random" | "fixed";
+  bodySwapSeed?: string;
+  refModsPrompt?: string;
+  refModSlots?: PersistedH3RefModSlot[];
+  refModsTurbo?: boolean;
+  refModsSeedMode?: "random" | "fixed";
+  refModsSeed?: string;
 };
 
 export type PersistedH3MediaRecord = {

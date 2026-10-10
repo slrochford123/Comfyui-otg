@@ -12,6 +12,12 @@ import { ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import { SessionInvalidError } from "@/lib/ownerKey";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 import { freshProductionSeed } from "@/lib/production/randomSeed";
+import {
+  ensureComfyClientProgressMonitor,
+  readComfyPromptProgress,
+  recordComfyPromptSubmitted,
+  waitForComfyClientProgressMonitor,
+} from "@/lib/comfyProgress";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,6 +35,26 @@ type InputVideo = {
   label: string;
   title: string;
   source: string;
+};
+
+type LtxEditLiveJobMeta = {
+  jobId: string;
+  ownerKey: string;
+  promptId: string;
+  comfyClientId: string;
+  comfyBaseUrl: string;
+  outputBase: string;
+  inputVideoTitle: string;
+  task: string;
+  instruction: string;
+  durationSeconds: number;
+  fps: number;
+  longerSide: number;
+  useVideoReasoning: boolean;
+  obscuraStrength?: number;
+  createdAt: string;
+  status: "running" | "completed" | "canceled" | "failed";
+  result?: Record<string, unknown>;
 };
 
 const VIDEO_EXT_RE = /\.(mp4|webm|mov|mkv|avi)$/i;
@@ -75,6 +101,26 @@ function cleanOutputBase(value: string) {
 
 function editVideoJobRoot(ownerKey: string) {
   return path.join(OTG_DATA_ROOT, "edit_video_jobs", safeSegment(ownerKey || "local"));
+}
+
+function liveJobMetaPath(jobDir: string) {
+  return safeJoin(jobDir, "ltx-edit-job.json");
+}
+
+async function writeLiveJobMeta(jobDir: string, meta: LtxEditLiveJobMeta) {
+  await fsp.writeFile(liveJobMetaPath(jobDir), JSON.stringify(meta, null, 2), "utf8");
+}
+
+async function readLiveJobMeta(ownerKey: string, jobId: string) {
+  const jobRoot = editVideoJobRoot(ownerKey);
+  const jobDir = safeJoin(jobRoot, jobId);
+  const metaPath = liveJobMetaPath(jobDir);
+  const text = await fsp.readFile(metaPath, "utf8");
+  const meta = JSON.parse(text) as LtxEditLiveJobMeta;
+  if (meta.ownerKey !== ownerKey || meta.jobId !== jobId) {
+    throw new StageError("job_lookup", "LTX edit job was not found for this session.", 404);
+  }
+  return { jobDir, meta };
 }
 
 function basenameOnly(value: string) {
@@ -376,15 +422,22 @@ function buildGraph(params: {
   return graph;
 }
 
-async function submitPrompt(comfyBaseUrl: string, graph: any) {
+async function submitPrompt(args: {
+  comfyBaseUrl: string;
+  graph: any;
+  ownerKey: string;
+  deviceId: string;
+}) {
   const clientId = `otg-ltx-edit-${randomUUID()}`;
+  ensureComfyClientProgressMonitor({ comfyBaseUrl: args.comfyBaseUrl, clientId });
+  await waitForComfyClientProgressMonitor({ comfyBaseUrl: args.comfyBaseUrl, clientId, timeoutMs: 1500 });
   const res = await submitComfyPromptWith5060Lease({
-    baseUrl: comfyBaseUrl,
+    baseUrl: args.comfyBaseUrl,
     workerId: "edit-video-ltx-edit",
     init: {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: graph, client_id: clientId }),
+      body: JSON.stringify({ prompt: args.graph, client_id: clientId }),
     },
     fetcher: (url, init) => fetchStage(url, init, "submit_prompt", 120_000),
   });
@@ -394,7 +447,28 @@ async function submitPrompt(comfyBaseUrl: string, graph: any) {
   }
   const promptId = String((parsed.json as any)?.prompt_id || "").trim();
   if (!promptId) throw new StageError("submit_prompt", "Comfy response did not include prompt_id.", res.status, parsed.json || parsed.text);
-  return promptId;
+  recordComfyPromptSubmitted({
+    promptId,
+    ownerKey: args.ownerKey,
+    deviceId: args.deviceId,
+    clientId,
+    comfyBaseUrl: args.comfyBaseUrl,
+    totalNodes: args.graph && typeof args.graph === "object" ? Object.keys(args.graph).length : null,
+  });
+  ensureComfyClientProgressMonitor({ comfyBaseUrl: args.comfyBaseUrl, clientId });
+  return { promptId, clientId };
+}
+
+async function readHistoryOnce(comfyBaseUrl: string, promptId: string) {
+  const res = await fetchStage(`${comfyBaseUrl}/history/${encodeURIComponent(promptId)}`, { method: "GET" }, "poll_history", 30_000);
+  const parsed = await readJsonOrText(res);
+  if (!res.ok || !parsed.json) return null;
+  const json: any = parsed.json;
+  const record = json[promptId] || json;
+  if (record?.status?.status_str === "error") {
+    throw new StageError("poll_history", "Comfy workflow failed.", 500, record);
+  }
+  return record?.outputs ? record : null;
 }
 
 async function pollHistory(comfyBaseUrl: string, promptId: string) {
@@ -469,6 +543,128 @@ async function copyOrDownloadOutput(args: { comfyBaseUrl: string; file: HistoryF
 
   throw new StageError("download_output", "Could not download generated LTX edited video from ComfyUI.", 502, { file: args.file, failures });
 }
+
+async function finalizeLiveJobIfReady(jobDir: string, meta: LtxEditLiveJobMeta) {
+  if (meta.status === "completed" && meta.result) {
+    return {
+      ok: true,
+      status: "complete",
+      running: false,
+      ...meta.result,
+    };
+  }
+
+  if (meta.status === "canceled") {
+    return {
+      ok: true,
+      status: "canceled",
+      running: false,
+      jobId: meta.jobId,
+      promptId: meta.promptId,
+    };
+  }
+
+  const history = await readHistoryOnce(meta.comfyBaseUrl, meta.promptId);
+  const progress = readComfyPromptProgress(meta.promptId);
+  if (!history?.outputs) {
+    return {
+      ok: true,
+      status: "running",
+      running: true,
+      jobId: meta.jobId,
+      promptId: meta.promptId,
+      progressPercent: progress?.percent ?? 0,
+      approximatePreview: progress?.approximatePreview || null,
+    };
+  }
+
+  const files = collectHistoryFiles(history.outputs || history).filter((file) => /\.(mp4|webm|mov|mkv)$/i.test(file.filename || ""));
+  if (!files.length) throw new StageError("find_output", "No video output was found in ComfyUI history.", 502, history.outputs || history);
+  files.sort((a, b) => scoreHistoryFile(b, "LTX_Edit") - scoreHistoryFile(a, "LTX_Edit"));
+  const chosen = files[0];
+
+  const outputName = `${meta.outputBase}_${meta.jobId.slice(0, 8)}${path.extname(chosen.filename || ".mp4") || ".mp4"}`;
+  const outputPath = safeJoin(jobDir, outputName);
+  await copyOrDownloadOutput({ comfyBaseUrl: meta.comfyBaseUrl, file: chosen, targetPath: outputPath });
+
+  const stat = fs.statSync(outputPath);
+  const result = {
+    jobId: meta.jobId,
+    promptId: meta.promptId,
+    fileName: outputName,
+    url: `/api/edit-video/file?jobId=${encodeURIComponent(meta.jobId)}&name=${encodeURIComponent(outputName)}`,
+    sourceVideoName: meta.inputVideoTitle,
+    task: meta.task,
+    instruction: meta.instruction,
+    durationSeconds: meta.durationSeconds,
+    fps: meta.fps,
+    longerSide: meta.longerSide,
+    useVideoReasoning: meta.useVideoReasoning,
+    obscuraStrength: meta.obscuraStrength,
+    sizeBytes: stat.size,
+  };
+
+  await writeLiveJobMeta(jobDir, {
+    ...meta,
+    status: "completed",
+    result,
+  });
+
+  return {
+    ok: true,
+    status: "complete",
+    running: false,
+    ...result,
+  };
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const { owner } = await getGallerySourcesForRequest(req);
+    const jobId = String(req.nextUrl.searchParams.get("jobId") || "").trim();
+    if (!jobId) throw new StageError("job_lookup", "Missing jobId.", 400);
+    const { jobDir, meta } = await readLiveJobMeta(owner.ownerKey, jobId);
+    const result = await finalizeLiveJobIfReady(jobDir, meta);
+    return NextResponse.json(result);
+  } catch (error: any) {
+    if (error instanceof SessionInvalidError) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+    if (error instanceof StageError) {
+      return NextResponse.json({ ok: false, error: error.message, stage: error.stage, detail: error.detail }, { status: error.status || 500 });
+    }
+    return NextResponse.json({ ok: false, error: error?.message || "LTX Edit Anything status failed" }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const { owner } = await getGallerySourcesForRequest(req);
+    const body = await req.json().catch(() => ({}));
+    const jobId = String(body?.jobId || req.nextUrl.searchParams.get("jobId") || "").trim();
+    if (!jobId) throw new StageError("job_lookup", "Missing jobId.", 400);
+    const { jobDir, meta } = await readLiveJobMeta(owner.ownerKey, jobId);
+
+    await fetchStage(`${meta.comfyBaseUrl}/queue`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ delete: [meta.promptId] }),
+    }, "cancel_queue", 30_000).catch(() => null);
+    await fetchStage(`${meta.comfyBaseUrl}/interrupt`, { method: "POST" }, "cancel_interrupt", 30_000).catch(() => null);
+
+    await writeLiveJobMeta(jobDir, { ...meta, status: "canceled" });
+    return NextResponse.json({ ok: true, status: "canceled", jobId, promptId: meta.promptId });
+  } catch (error: any) {
+    if (error instanceof SessionInvalidError) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+    if (error instanceof StageError) {
+      return NextResponse.json({ ok: false, error: error.message, stage: error.stage, detail: error.detail }, { status: error.status || 500 });
+    }
+    return NextResponse.json({ ok: false, error: error?.message || "LTX Edit Anything cancel failed" }, { status: 500 });
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
@@ -496,13 +692,48 @@ export async function POST(req: NextRequest) {
     const longerSide = clamp(Number(firstText(form.get("longerSide"))) || 1024, 512, 1536);
     const seed = freshProductionSeed();
     const useVideoReasoning = /^(true|1|yes|on)$/i.test(firstText(form.get("useVideoReasoning")));
+    const livePreview = /^(true|1|yes|on)$/i.test(firstText(form.get("livePreview")));
     const obscuraStrength = Number(firstText(form.get("obscuraStrength")) || 2.3);
     const outputBase = cleanOutputBase(firstText(form.get("outputTitle")) || "ltx_edit_anything");
     const outputPrefix = `EditVideo/LTX_Edit_${jobId}`;
 
     const comfyVideoName = await uploadLocalFileToComfy({ comfyBaseUrl, filePath: inputVideo.path, fileName: inputVideo.label });
     const graph = buildGraph({ sourceVideoName: comfyVideoName, task, instruction, negativePrompt, durationSeconds, fps, longerSide, seed, outputPrefix, useVideoReasoning, obscuraStrength });
-    const promptId = await submitPrompt(comfyBaseUrl, graph);
+    const deviceId = String(req.headers.get("x-otg-device-id") || "edit-video").trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 96) || "edit-video";
+    const submitted = await submitPrompt({ comfyBaseUrl, graph, ownerKey: owner.ownerKey, deviceId });
+    const promptId = submitted.promptId;
+
+    if (livePreview) {
+      await writeLiveJobMeta(jobDir, {
+        jobId,
+        ownerKey: owner.ownerKey,
+        promptId,
+        comfyClientId: submitted.clientId,
+        comfyBaseUrl,
+        outputBase,
+        inputVideoTitle: inputVideo.title || inputVideo.label,
+        task,
+        instruction,
+        durationSeconds,
+        fps,
+        longerSide,
+        useVideoReasoning,
+        obscuraStrength: task === "obscura_remova" ? obscuraStrength : undefined,
+        createdAt: new Date().toISOString(),
+        status: "running",
+      });
+
+      return NextResponse.json({
+        ok: true,
+        status: "running",
+        running: true,
+        jobId,
+        promptId,
+        comfyClientId: submitted.clientId,
+        progressUrl: `/api/progress?promptId=${encodeURIComponent(promptId)}`,
+      }, { status: 202 });
+    }
+
     const history = await pollHistory(comfyBaseUrl, promptId);
 
     const files = collectHistoryFiles(history.outputs || history).filter((file) => /\.(mp4|webm|mov|mkv)$/i.test(file.filename || ""));

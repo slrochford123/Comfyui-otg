@@ -61,6 +61,7 @@ export type H3RefModSidecar = {
   alphaGenerator?: "ltx-2.5-alpha-gen" | null;
   sourceClipPath?: string | null;
   isolatedDerivativePath?: string | null;
+  alphaMattePath?: string | null;
   alphaWorkflow?: string | null;
   sourceAssets: Array<{
     name: string;

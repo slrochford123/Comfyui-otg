@@ -22,6 +22,7 @@ import {
   type ProductionV2ReferencePlan,
   type ProductionV2Scene,
 } from "@/lib/production/v2";
+import { appendProtectedDialogueBlock, detectProtectedDialogue } from "@/lib/promptDialogue";
 
 // Prompt controls and provider policy are adapted from Hailuo H3 Prompt Builder
 // v2.8.0-beta.1 (c) 2026 Bob Doyle Media, MIT.
@@ -214,6 +215,8 @@ export function formatProductionV2ScenePrompt(value: string) {
 export function buildProductionV2SceneEnhancementInstruction(scene: ProductionV2Scene) {
   if (scene.model !== "minimax-h3") throw new Error("The H3 Scene Prompt enhancer requires MiniMax H3.");
   const userPrompt = sanitizeNamedStyleReferences(scene.promptStateByMode[scene.generationMode].userPrompt);
+  const protectedUserPrompt = appendProtectedDialogueBlock(userPrompt);
+  const protectedDialogue = detectProtectedDialogue(userPrompt);
   const timeline = productionV2ShotTimeline(scene);
   const effectiveFlow = effectiveH3ShotFlow(scene.promptOptions.shotFlow, scene.promptOptions.visualStyle, userPrompt);
   const subjects = scene.generationMode === "h3-reference-to-video" ? stableSubjects(scene) : [];
@@ -251,7 +254,12 @@ TIMING CONTRACT
 - Use supplied dialogue turns only to stage reactions, pacing, blocking, and camera coverage. Do not quote, paraphrase, reorder, merge, or invent spoken dialogue in the cinematic sections.
 
 USER REQUEST
-${userPrompt}
+${protectedUserPrompt}
+
+${protectedDialogue.hasDialogue ? `PROTECTED FREEFORM DIALOGUE
+- The USER REQUEST contains dialogue inferred from ordinary typed or dictated wording.
+- Preserve every protected dialogue line exactly, with speaker and delivery intact.
+- Do not paraphrase, drop, reorder, merge, or invent spoken dialogue.` : "The USER REQUEST does not contain protected freeform dialogue. Do not invent spoken dialogue."}
 
 SELECTED LOOK
 Visual style: ${scene.promptOptions.visualStyle}

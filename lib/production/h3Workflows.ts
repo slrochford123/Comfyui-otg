@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import {
   DEFAULT_H3_ADVANCED_SETTINGS,
   H3_SINGULARITY_CHECKPOINT,
@@ -1549,6 +1550,8 @@ export function buildH3Workflow(input: H3WorkflowBuildInput) {
     });
   }
 
+  ensureTerminalVideoPreviewNode(graph);
+
   return {
     workflowId:
       input.operation === "visual-edit"
@@ -1609,6 +1612,7 @@ export function buildH3VsrWorkflow(input: { videoInputFilename: string; outputPr
   if (!outputPrefix) throw new Error("RTX VSR requires a deterministic output prefix.");
   graph["6"].inputs.file = videoInputFilename;
   graph["9"].inputs.filename_prefix = outputPrefix;
+  ensureTerminalVideoPreviewNode(graph);
   return {
     workflowId: "minimax-h3-rtx-vsr-ultra-1080p-v1",
     workflowFile: H3_VSR_WORKFLOW_FILE,

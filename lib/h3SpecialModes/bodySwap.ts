@@ -6,6 +6,7 @@ import {
   type H3ProductionDuration,
   type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
+import { appendProtectedDialogueBlock, detectProtectedDialogue } from "@/lib/promptDialogue";
 
 export type H3BodySwapRequestInput = {
   prompt?: unknown;
@@ -33,6 +34,8 @@ export function normalizeH3BodySwapSelector(value: unknown) {
 export function compileH3BodySwapPrompt(input: H3BodySwapCompileInput) {
   const selector = normalizeH3BodySwapSelector(input.selector);
   const instruction = clean(input.prompt);
+  const protectedInstruction = instruction ? appendProtectedDialogueBlock(instruction) : "";
+  const protectedDialogue = detectProtectedDialogue(instruction);
   return [
     "subject_definitions:",
     "<Subject 1> is the replacement person whose visual identity, facial features, skin tone, hairstyle, body build, and attire are strictly derived from <Picture 1>.",
@@ -47,7 +50,10 @@ export function compileH3BodySwapPrompt(input: H3BodySwapCompileInput) {
     "",
     "detailed_description:",
     "[Shot 1] <Subject 1> is synthesized precisely inside the SAM3 tracked mask for the selected target. The replacement fills the tracked region naturally from the first frame through the final frame, matching the source person's scale, pose, body placement, timing, and motion continuity. Ambient light wrap, realistic contact shadows, correct occlusion, and seamless edge blending integrate <Subject 1> into the environment. No residual black border, matte halo, visible silhouette edge, flicker, or identity bleed remains around the mask.",
-    instruction ? `Additional user instruction: ${instruction}` : "",
+    protectedInstruction ? `Additional user instruction: ${protectedInstruction}` : "",
+    protectedDialogue.hasDialogue
+      ? "Protected dialogue is present. Preserve each quoted line, speaker, delivery, and ordering exactly."
+      : "",
     "",
     "overall_soundscape:",
     input.preserveOriginalAudio

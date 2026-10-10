@@ -46,7 +46,6 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, showProductio
       ...(isAdmin ? [{ id: "voices", label: "Voices" } as Item] : []),
       { id: "editvideo", label: "Edit Video" },
       { id: "settings", label: "Settings" },
-      { id: "support", label: "Support" },
     ],
     [isAdmin, showProduction]
   );

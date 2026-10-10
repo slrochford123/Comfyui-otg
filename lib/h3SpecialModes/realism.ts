@@ -6,6 +6,7 @@ import {
   type H3ProductionDuration,
   type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
+import { appendProtectedDialogueBlock, detectProtectedDialogue } from "@/lib/promptDialogue";
 
 export type H3RealismReferenceKind = "image" | "video" | "audio";
 
@@ -368,6 +369,8 @@ function referenceLines(references: H3RealismReferenceInput[]) {
 export function compileH3RealismPrompt(input: H3RealismCompileInput) {
   const prompt = input.prompt.trim();
   if (!prompt) throw new Error("Enter a Realism prompt before compiling.");
+  const protectedPrompt = appendProtectedDialogueBlock(prompt);
+  const protectedDialogue = detectProtectedDialogue(prompt);
   const references = input.references || [];
   validateH3RealismReferences(references);
   const loras = input.loras || normalizeH3RealismLoras({ preset: "balanced" });
@@ -393,7 +396,7 @@ export function compileH3RealismPrompt(input: H3RealismCompileInput) {
       : "No standalone audio reference was supplied.",
     "",
     "summary:",
-    `[realistic MiniMax H3 reference generation] Create a ${duration}-second ${orientation} video from this user intent: ${prompt}`,
+    `[realistic MiniMax H3 reference generation] Create a ${duration}-second ${orientation} video from this user intent: ${protectedPrompt}`,
     refs.length ? `Connected references in order:\n${refs.join("\n")}` : "No external references are connected.",
     "",
     "retention_analysis:",
@@ -410,6 +413,9 @@ export function compileH3RealismPrompt(input: H3RealismCompileInput) {
       "Render highly realistic human proportions and natural scene physics.",
       "Honor the user's action, environment, lighting, camera/framing, motion, and continuity instructions.",
       "Use restrained, coherent camera behavior unless the user specifically asks for a move.",
+      protectedDialogue.hasDialogue
+        ? "Protected dialogue is present. Preserve each quoted line, speaker, delivery, and ordering exactly."
+        : "No protected dialogue was supplied. Do not invent spoken dialogue.",
       "Preserve user-provided dialogue without rewriting it.",
       "Avoid waxy skin, oily faces, melted features, identity drift, extra limbs, unrequested characters, and visible reference artifacts.",
     ].join(" "),

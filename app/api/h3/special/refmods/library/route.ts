@@ -50,6 +50,10 @@ export async function GET() {
             normalized.motionType = sidecar.motionType || null;
             normalized.isolationEnabled = sidecar.isolationEnabled === true;
             normalized.alphaGenerator = sidecar.alphaGenerator || null;
+            normalized.sourceClipPath = sidecar.sourceClipPath || null;
+            normalized.isolatedDerivativePath = sidecar.isolatedDerivativePath || null;
+            normalized.alphaMattePath = sidecar.alphaMattePath || null;
+            normalized.previewPath = sidecar.isolatedDerivativePath || sidecar.sourceClipPath || sidecar.sourceAssets?.[0]?.path || null;
             normalized.createdAt ||= sidecar.createdAt;
             normalized.modifiedAt ||= sidecar.updatedAt;
           }

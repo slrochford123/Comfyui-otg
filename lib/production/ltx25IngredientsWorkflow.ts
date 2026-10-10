@@ -1,6 +1,7 @@
 import {
   LTX25_INGREDIENTS_QUALIFIED_GRAPH_V1,
 } from "@/lib/production/ltx25IngredientsQualifiedGraph";
+import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 
 export const LTX25_INGREDIENTS_WORKFLOW_VERSION =
   "ltx25-ingredients-qualified-2026-09-05-v1" as const;
@@ -362,6 +363,8 @@ export function buildLtx25IngredientsWorkflow(
 
     guide.inputs.latent = ["27", 0];
   }
+
+  ensureTerminalVideoPreviewNode(graph);
 
   return {
     backend: input.backend,

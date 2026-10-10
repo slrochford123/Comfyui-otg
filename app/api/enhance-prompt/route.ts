@@ -1,6 +1,11 @@
 import { NextRequest } from "next/server";
 import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
 import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
+import {
+  appendProtectedDialogueBlock,
+  detectProtectedDialogue,
+  ensureProtectedDialogueInOutput,
+} from "@/lib/promptDialogue";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -388,6 +393,20 @@ function buildQwenEnhancePrompt(
     "Original user prompt:",
     prompt,
 
+    ...(detectProtectedDialogue(prompt).protectedBlock
+      ? [
+          "",
+          appendProtectedDialogueBlock(prompt).slice(prompt.length).trim(),
+          "",
+          "Protected-dialogue rules:",
+          "If the user wrote or dictated speech without quotation marks, preserve it as dialogue.",
+          "Do not rewrite, paraphrase, remove, reorder, or invent spoken words.",
+        ]
+      : [
+          "",
+          "No protected dialogue was detected. Do not invent spoken dialogue.",
+        ]),
+
     ...(context.visualContext
       ? [
           "",
@@ -627,7 +646,10 @@ async function qwenGenerateEnhancement(
     );
   }
 
-  const enhancedPrompt = extractEnhancedPrompt(payload?.response);
+  const enhancedPrompt = ensureProtectedDialogueInOutput(
+    prompt,
+    extractEnhancedPrompt(payload?.response),
+  );
   if (!enhancedPrompt) {
     throw new Error(
       "Prompt enhancer returned no text. The original prompt was preserved.",

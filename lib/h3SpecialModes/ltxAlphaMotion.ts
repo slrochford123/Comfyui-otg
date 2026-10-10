@@ -1,3 +1,4 @@
+import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import type { H3PromptGraph } from "@/lib/production/h3Workflows";
 
 export const H3_LTX_ALPHA_GENERATOR_ID = "ltx-2.5-alpha-gen" as const;
@@ -249,6 +250,7 @@ export function buildH3LtxAlphaWorkflow(input: H3LtxAlphaWorkflowInput): H3LtxAl
     "24": { class_type: "CreateVideo", inputs: { images: ["23", 0], fps, bit_depth: 8, codec: "h264" } },
     "25": { class_type: "SaveVideo", inputs: { video: ["24", 0], filename_prefix: outputPrefix, format: "auto", codec: "auto" } },
   };
+  ensureTerminalVideoPreviewNode(graph);
 
   return {
     workflowId: H3_LTX_ALPHA_GENERATOR_ID,

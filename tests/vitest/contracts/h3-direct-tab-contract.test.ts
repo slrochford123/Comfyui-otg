@@ -146,7 +146,7 @@ describe("H3 direct-generation tab contract", () => {
     expect(panel).toContain("getH3NativeDimensions(value, orientation).width");
     expect(panel).toContain("SH · Scene Hunter");
     expect(panel).toContain("Generate Scene Hunter");
-    expect(panel).toContain('aria-label="H3 orientation"');
+    expect(panel).toContain("aria-label={`${label} orientation`}");
     expect(panel).toContain("H3_PRODUCTION_DURATION_OPTIONS.map");
     expect(panel).toContain("Up to 9 images, 3 videos, and 3 standalone audio references.");
     expect(panel).toContain('/api/ollama-ai/transcribe');

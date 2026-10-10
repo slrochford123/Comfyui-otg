@@ -13,6 +13,7 @@ import {
   H3_RIFE_TARGET_MODEL,
   normalizeH3RifeInterpolation60Fps,
 } from "../../../lib/h3RifeFinalization";
+import { H3_MODE_CAPABILITIES } from "../../../lib/h3ModeCapabilities";
 import { validateH3RefModsRequest } from "../../../lib/h3SpecialModes/refMods";
 import { createProductionV2 } from "../../../lib/production/v2";
 
@@ -35,7 +36,8 @@ describe("H3 RIFE 60 FPS finalization contract", () => {
     const panel = read("app/app/components/H3Panel.tsx");
     const productionPanel = read("app/app/components/ProductionV2Panel.tsx");
     expect(panel).toContain('data-otg="h3-rife-60fps-control"');
-    expect(panel.match(/renderRife60FpsControl\(\)/g) || []).toHaveLength(5);
+    expect(panel).toContain("renderSharedOutputControls");
+    expect(Object.values(H3_MODE_CAPABILITIES).every((capability) => capability.supportsRife)).toBe(true);
     expect(panel).toContain("Interpolate");
     expect(panel).toContain("H3 still renders natively at 24 FPS");
     expect(productionPanel).toContain('data-otg="production-v2-h3-rife-60fps"');

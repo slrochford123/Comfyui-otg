@@ -31,7 +31,8 @@ describe("H3 Studio redesign contracts", () => {
     const workflows = read("lib/production/h3Workflows.ts");
 
     expect(panel).toContain('type Mode = ProductionV2H3Mode');
-    expect(panel).toContain('type H3StudioMode = Mode | "h3-realism" | "h3-body-swap" | "h3-refmods"');
+    expect(panel).toContain('type H3StudioMode = H3StudioModeId');
+    expect(read("lib/h3ModeCapabilities.ts")).toContain('| "h3-refmods"');
     expect(panel).toContain('id: "h3-realism"');
     expect(panel).toContain('id: "h3-body-swap"');
     expect(panel).toContain('id: "h3-refmods"');

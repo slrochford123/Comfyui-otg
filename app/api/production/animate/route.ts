@@ -5,6 +5,11 @@ import fs from "fs/promises";
 import path from "path";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 import { freshProductionSeed } from "@/lib/production/randomSeed";
+import {
+  ensureComfyClientProgressMonitor,
+  recordComfyPromptSubmitted,
+  waitForComfyClientProgressMonitor,
+} from "@/lib/comfyProgress";
 
 
 // OTG_PRODUCTION_ANIMATE_BACKEND_EXACT_PROMPT_V29
@@ -429,9 +434,14 @@ function buildPreparedSegments(body: AnimateRequestBody, fps: number) {
   });
 }
 
-async function queueComfyWorkflow(workflow: WorkflowGraph) {
+async function queueComfyWorkflow(
+  workflow: WorkflowGraph,
+  progressContext: { ownerKey?: string; deviceId?: string } = {}
+) {
   const clientId = `otg-production-animate-${Date.now()}`;
   const baseUrl = comfyUrl();
+  ensureComfyClientProgressMonitor({ comfyBaseUrl: baseUrl, clientId });
+  await waitForComfyClientProgressMonitor({ comfyBaseUrl: baseUrl, clientId, timeoutMs: 1500 });
   logComfyRouting(
     "/api/production/animate POST",
     { requestKind: "production-animate", workflowLabel: "Production Animate", mediaType: "video" },
@@ -472,6 +482,18 @@ async function queueComfyWorkflow(workflow: WorkflowGraph) {
     "prompt_id" in responseJson
       ? String((responseJson as { prompt_id: unknown }).prompt_id)
       : null;
+
+  if (promptId) {
+    recordComfyPromptSubmitted({
+      promptId,
+      ownerKey: progressContext.ownerKey || "production-animate",
+      deviceId: progressContext.deviceId || "production-animate",
+      clientId,
+      comfyBaseUrl: baseUrl,
+      totalNodes: workflow && typeof workflow === "object" ? Object.keys(workflow).length : null,
+    });
+    ensureComfyClientProgressMonitor({ comfyBaseUrl: baseUrl, clientId });
+  }
 
   return {
     clientId,
@@ -613,7 +635,7 @@ function applyDefaultModeDurationOverrides(
   };
 }
 // OTG_PRODUCTION_ANIMATE_DEFAULT_DURATION_CONTROL_V1_END
-async function runDefaultMode(body: AnimateRequestBody) {
+async function runDefaultMode(body: AnimateRequestBody, progressContext: { ownerKey?: string; deviceId?: string } = {}) {
   const fps = clampNumber(body.fps ?? body.frameRate, DEFAULT_FPS, 1, 60);
   const width = Math.round(clampNumber(body.width, 1280, 32, 8192));
   const height = Math.round(clampNumber(body.height, 720, 32, 8192));
@@ -698,7 +720,7 @@ async function runDefaultMode(body: AnimateRequestBody) {
     randomNoise.node.inputs.noise_seed = freshProductionSeed();
   }
 
-  const queued = await queueComfyWorkflow(workflow);
+  const queued = await queueComfyWorkflow(workflow, progressContext);
 
   return {
     mode: "default",
@@ -787,7 +809,7 @@ function buildDirectorTimelineData(
   };
 }
 
-async function runDirectorMode(body: AnimateRequestBody) {
+async function runDirectorMode(body: AnimateRequestBody, progressContext: { ownerKey?: string; deviceId?: string } = {}) {
   const fps = clampNumber(body.fps ?? body.frameRate, DEFAULT_FPS, 1, 60);
   const guideStrength = clampNumber(body.guideStrength, 1, 0, 2);
 
@@ -848,7 +870,7 @@ async function runDirectorMode(body: AnimateRequestBody) {
     randomNoise.node.inputs.noise_seed = freshProductionSeed();
   }
 
-  const queued = await queueComfyWorkflow(workflow);
+  const queued = await queueComfyWorkflow(workflow, progressContext);
 
   return {
     mode: "director",
@@ -1394,11 +1416,15 @@ export async function POST(request: NextRequest) {
     // OTG_PRODUCTION_ANIMATE_COMFY_UPLOAD_RETURN_FIX_V5
     body = await otgPrepareProductionAnimateImagesForComfy(request, videoSelection.backend.baseUrl, body);
     const mode = resolveMode(body);
+    const deviceId = String(request.headers.get("x-otg-device-id") || (body as any).deviceId || "production-animate")
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, "")
+      .slice(0, 96) || "production-animate";
 
     const result =
       mode === "director"
-        ? await runDirectorMode(body)
-        : await runDefaultMode(body);
+        ? await runDirectorMode(body, { deviceId })
+        : await runDefaultMode(body, { deviceId });
 
     return NextResponse.json({
       ok: true,

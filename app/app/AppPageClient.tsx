@@ -6,6 +6,8 @@ import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useSt
 import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
+import MediaPreviewPanel from "./components/MediaPreviewPanel";
+import SpeechInputButton from "./components/SpeechInputButton";
 import type { GalleryActionKind } from "./components/GalleryWorkspace";
 import {
   APP_COLOR_MODE_KEY,
@@ -211,6 +213,18 @@ type ProgressResponse = {
   totalNodes?: number;
   elapsedMs?: number | null;
   estimatedRemainingMs?: number | null;
+  approximatePreview?: {
+    label?: "Approximate Preview" | string;
+    imageUrl?: string;
+    mimeType?: string;
+    width?: number | null;
+    height?: number | null;
+    step?: number | null;
+    total?: number | null;
+    frameCount?: number | null;
+    updatedAt?: number;
+    source?: string;
+  } | null;
   error?: string | null;
 };
 
@@ -1429,6 +1443,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
     currentNodeId: "",
     currentNodeProgress: "",
   });
+  const [generateApproximatePreview, setGenerateApproximatePreview] = useState<ProgressResponse["approximatePreview"]>(null);
   const [activePromptId, setActivePromptId] = useState("");
   const [latestPreviewUrl, setLatestPreviewUrl] = useState("");
   const [latestPreviewName, setLatestPreviewName] = useState("");
@@ -2874,6 +2889,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         Number.isFinite(nodeValue) && Number.isFinite(nodeMax) && nodeMax > 0
           ? `${Math.round(nodeValue)}/${Math.round(nodeMax)}`
           : "";
+      const approximatePreview = data?.approximatePreview && typeof data.approximatePreview === "object"
+        ? data.approximatePreview
+        : null;
 
       setProgressQueue(queueCount);
       if (promptId) setActivePromptId(promptId);
@@ -2888,6 +2906,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       if (nextStatus === "error") {
         refreshedCompletePromptRef.current = "";
+        setGenerateApproximatePreview(null);
         setProgressStatus("error");
         setProgressPercent(nextPercent || 100);
         return "error";
@@ -2895,6 +2914,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       if (running) {
         refreshedCompletePromptRef.current = "";
+        if (approximatePreview?.imageUrl) setGenerateApproximatePreview(approximatePreview);
         setProgressStatus("running");
         setProgressPercent(nextPercent);
         return "running";
@@ -2902,6 +2922,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       if (nextStatus === "complete") {
         const completionKey = promptId || completedFileName || "__complete__";
+        setGenerateApproximatePreview(null);
         setProgressStatus("complete");
         setProgressPercent(100);
 
@@ -2918,6 +2939,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       }
 
       refreshedCompletePromptRef.current = "";
+      setGenerateApproximatePreview(null);
       setProgressStatus("idle");
       setProgressPercent(0);
       setProgressTiming({
@@ -4481,6 +4503,30 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     setPromptAssessmentOpen(false);
     setPromptAssessment(null);
     setStatusMessage("Prompt cleared.");
+  }
+
+  function handleClearLatestPreview() {
+    setLatestPreviewUrl("");
+    setLatestPreviewName("");
+    setLatestPreviewKind("");
+    setLatestPreviewMeta(null);
+    setStatusMessage("Preview cleared. Prompt and settings were kept.");
+  }
+
+  function handleResetGenerateWorkspace() {
+    pushPromptUndoSnapshot(prompt);
+    setPrompt("");
+    setNegativePrompt("");
+    setWorkflowId("");
+    setUploadedFileName("");
+    setActiveGenerateStyleId("");
+    setDurationSeconds(5);
+    setOrientation("landscape");
+    handleClearLatestPreview();
+    try {
+      window.localStorage.removeItem(appStateStorageKey);
+    } catch {}
+    setStatusMessage("Generate workspace reset.");
   }
 
   function handleUndoPrompt() {
@@ -6289,24 +6335,15 @@ async function handleAskAi() {
                     </button>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void handleMicClick("generate", (text) => {
-                      pushPromptUndoSnapshot(prompt);
-                      setPrompt((prev) => appendPromptText(prev, text));
-                    })
-                  }
-                  className={cn(
-                    "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
-                    recordingTarget === "generate"
-                      ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
-                      : "border-white/10 bg-white/5 hover:bg-white/10"
-                  )}
-                  disabled={transcribingTarget === "generate"}
-                >
-                  <IconMic />
-                </button>
+                <SpeechInputButton
+                  label="Dictate generation prompt"
+                  className="inline-flex h-12 min-w-12 items-center justify-center rounded-full border border-white/10 bg-white/5 px-3 text-xs font-black text-white transition hover:bg-white/10"
+                  onStatus={setStatusMessage}
+                  onTranscript={(text) => {
+                    pushPromptUndoSnapshot(prompt);
+                    setPrompt((prev) => appendPromptText(prev, text));
+                  }}
+                />
                 <GhostButton onClick={handleClearPrompt} disabled={!prompt}>
                   Clear
                 </GhostButton>
@@ -6859,38 +6896,30 @@ async function handleAskAi() {
               </Card>
 
               <Card title="Preview">
-                <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/45">
-                  <div className="aspect-[16/9] bg-black/60">
-                    {latestPreviewUrl ? (
-                      latestPreviewKind === "video" ? (
-                        <video src={latestPreviewUrl} className="h-full w-full object-contain" controls playsInline muted />
-                      ) : (
-                        <img src={latestPreviewUrl} alt={latestPreviewName || "Latest generated content"} className="h-full w-full object-contain" />
-                      )
-                    ) : (
-                      <div className="flex h-full items-center justify-center px-6 text-center text-white/45">
-                        Preview will appear here after ComfyUI finishes creating content.
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-white/60">
-                  <div className="min-w-0 space-y-1">
-                    <div className="truncate">{latestPreviewName || "No completed output yet"}</div>
-                    <div className="text-xs text-white/45">
-                      {latestPreviewKind === "image" && latestPreviewMeta
-                        ? `Generated image: ${latestPreviewMeta.width} x ${latestPreviewMeta.height}${latestPreviewMeta.height > latestPreviewMeta.width ? " - portrait" : " - landscape"}`
-                        : latestPreviewKind === "video"
-                          ? "Latest generated video."
-                          : "Generate content to update this preview."}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <GhostButton onClick={() => void refreshLatestContent(true)} disabled={progressStatus === "running"}>
-                      Refresh preview
-                    </GhostButton>
-                  </div>
-                </div>
+                <MediaPreviewPanel
+                  url={progressStatus === "running" && generateApproximatePreview?.imageUrl
+                    ? generateApproximatePreview.imageUrl
+                    : latestPreviewUrl}
+                  kind={progressStatus === "running" && generateApproximatePreview?.imageUrl
+                    ? String(generateApproximatePreview.mimeType || "").startsWith("video/")
+                      ? "video"
+                      : "image"
+                    : latestPreviewKind}
+                  name={progressStatus === "running" && generateApproximatePreview?.imageUrl
+                    ? "Approximate Preview"
+                    : latestPreviewName}
+                  meta={progressStatus === "running" && generateApproximatePreview?.imageUrl
+                    ? `Live sampler preview${generateApproximatePreview.step !== null && generateApproximatePreview.total !== null && generateApproximatePreview.step !== undefined && generateApproximatePreview.total !== undefined ? `: step ${generateApproximatePreview.step}/${generateApproximatePreview.total}` : ""}. Final output replaces this preview after completion.`
+                    : latestPreviewKind === "image" && latestPreviewMeta
+                    ? `Generated image: ${latestPreviewMeta.width} x ${latestPreviewMeta.height}${latestPreviewMeta.height > latestPreviewMeta.width ? " - portrait" : " - landscape"}`
+                    : latestPreviewKind === "video"
+                      ? "Latest generated video."
+                      : "Generate content to update this preview."}
+                  onRefresh={() => void refreshLatestContent(true)}
+                  refreshing={progressStatus === "running"}
+                  onClear={handleClearLatestPreview}
+                  onReset={handleResetGenerateWorkspace}
+                />
               </Card>
             </div>
 
@@ -7332,35 +7361,14 @@ async function handleAskAi() {
                         }}
                       />
 
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void handleMicClick(
-                            "ask",
-                            (text) =>
-                              setAskInput(
-                                (prev) =>
-                                  appendPromptText(
-                                    prev,
-                                    text
-                                  )
-                              )
-                          )
+                      <SpeechInputButton
+                        label="Dictate Story Helper message"
+                        className="inline-flex h-12 min-w-12 items-center justify-center rounded-full border border-white/10 bg-white/5 px-3 text-xs font-black text-white transition hover:bg-white/10"
+                        onStatus={setStatusMessage}
+                        onTranscript={(text) =>
+                          setAskInput((prev) => appendPromptText(prev, text))
                         }
-                        className={cn(
-                          "inline-flex h-12 w-12 items-center justify-center rounded-full border text-white transition",
-                          recordingTarget ===
-                            "ask"
-                            ? "border-cyan-400/40 bg-[linear-gradient(90deg,rgba(145,92,255,0.55),rgba(40,200,255,0.35))]"
-                            : "border-white/10 bg-white/5 hover:bg-white/10"
-                        )}
-                        disabled={
-                          transcribingTarget ===
-                          "ask"
-                        }
-                      >
-                        <IconMic />
-                      </button>
+                      />
 
                       <GhostButton
                         onClick={

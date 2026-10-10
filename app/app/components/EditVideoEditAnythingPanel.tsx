@@ -42,6 +42,7 @@ type EditTask = "add" | "remove" | "replace" | "convert_style" | "obscura_remova
 type LtxEditResult = {
   ok: boolean;
   jobId: string;
+  promptId?: string;
   fileName: string;
   url: string;
   galleryUrl?: string;
@@ -52,6 +53,14 @@ type LtxEditResult = {
   sourceVideoName?: string;
   task?: EditTask;
   instruction?: string;
+};
+
+type LivePreviewPayload = {
+  imageUrl?: string;
+  mimeType?: string;
+  step?: number | null;
+  total?: number | null;
+  updatedAt?: number;
 };
 
 type Props = {
@@ -130,6 +139,10 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
   const [saveBusy, setSaveBusy] = React.useState(false);
   const [status, setStatus] = React.useState("");
   const [result, setResult] = React.useState<LtxEditResult | null>(null);
+  const [liveJobId, setLiveJobId] = React.useState("");
+  const [livePromptId, setLivePromptId] = React.useState("");
+  const [liveProgressPercent, setLiveProgressPercent] = React.useState(0);
+  const [livePreview, setLivePreview] = React.useState<LivePreviewPayload | null>(null);
 
   React.useEffect(() => {
     return () => {
@@ -204,6 +217,101 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
     setInstruction(taskExamples[nextTask]);
   }
 
+  React.useEffect(() => {
+    if (!busy || !liveJobId || !livePromptId) return;
+
+    let cancelled = false;
+
+    async function pollLiveEdit() {
+      try {
+        const [progressResponse, jobResponse] = await Promise.all([
+          fetch(`/api/progress?promptId=${encodeURIComponent(livePromptId)}`, {
+            cache: "no-store",
+            credentials: "include",
+          }).catch(() => null),
+          fetch(`/api/edit-video/ltx-edit?jobId=${encodeURIComponent(liveJobId)}`, {
+            cache: "no-store",
+            credentials: "include",
+          }),
+        ]);
+
+        const progressData = progressResponse ? await progressResponse.json().catch(() => null) : null;
+        const jobData = await jobResponse.json().catch(() => ({}));
+        if (cancelled) return;
+
+        const preview = progressData?.approximatePreview && typeof progressData.approximatePreview === "object"
+          ? progressData.approximatePreview as LivePreviewPayload
+          : jobData?.approximatePreview && typeof jobData.approximatePreview === "object"
+            ? jobData.approximatePreview as LivePreviewPayload
+            : null;
+        if (preview?.imageUrl) setLivePreview(preview);
+
+        const percent = Number(progressData?.progressPercent ?? progressData?.percent ?? jobData?.progressPercent ?? 0);
+        if (Number.isFinite(percent)) setLiveProgressPercent(Math.max(0, Math.min(100, Math.round(percent))));
+
+        if (!jobResponse.ok || jobData?.ok === false) {
+          throw new Error(jobData?.error || "LTX Edit Anything status failed.");
+        }
+
+        const statusText = String(jobData?.status || "").toLowerCase();
+        if (statusText === "complete" || statusText === "completed" || jobData?.url) {
+          setResult(jobData as LtxEditResult);
+          setBusy(false);
+          setLiveJobId("");
+          setLivePromptId("");
+          setLiveProgressPercent(100);
+          setStatus("LTX Edit Anything result is ready. Preview it, then save to Gallery or download.");
+          return;
+        }
+
+        if (statusText === "canceled") {
+          setBusy(false);
+          setLiveJobId("");
+          setLivePromptId("");
+          setStatus("LTX Edit Anything canceled.");
+          return;
+        }
+
+        setStatus("Editing video in ComfyUI. Live preview updates when sampler frames arrive.");
+      } catch (error: any) {
+        if (cancelled) return;
+        setBusy(false);
+        setStatus(error?.message || "LTX Edit Anything failed.");
+      }
+    }
+
+    void pollLiveEdit();
+    const timer = window.setInterval(() => void pollLiveEdit(), 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [busy, liveJobId, livePromptId]);
+
+  async function cancelLiveEdit() {
+    if (!liveJobId) {
+      setBusy(false);
+      return;
+    }
+    setStatus("Canceling LTX Edit Anything...");
+    try {
+      await fetch("/api/edit-video/ltx-edit", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ jobId: liveJobId }),
+      });
+    } catch {
+      // Best-effort cancellation; local UI still exits the live preview state.
+    } finally {
+      setBusy(false);
+      setLiveJobId("");
+      setLivePromptId("");
+      setLivePreview(null);
+      setStatus("LTX Edit Anything canceled.");
+    }
+  }
+
   async function runEdit() {
     if (!selectedVideo) {
       setStatus("Choose or upload a source video first.");
@@ -222,6 +330,10 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
 
     setBusy(true);
     setResult(null);
+    setLiveJobId("");
+    setLivePromptId("");
+    setLivePreview(null);
+    setLiveProgressPercent(0);
     setStatus("Submitting LTX 2.3 Edit Anything workflow to ComfyUI...");
 
     try {
@@ -242,21 +354,35 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
       form.set("longerSide", String(side));
       form.set("useVideoReasoning", useVideoReasoning ? "true" : "false");
       form.set("obscuraStrength", String(obscuraStrength));
+      form.set("livePreview", "true");
 
       const response = await fetch("/api/edit-video/ltx-edit", {
         method: "POST",
+        credentials: "include",
         body: form,
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data?.ok === false) {
         throw new Error(data?.error || JSON.stringify(data));
       }
+      if (response.status === 202 || data?.running || data?.status === "running") {
+        const nextJobId = String(data.jobId || "");
+        const nextPromptId = String(data.promptId || "");
+        if (!nextJobId || !nextPromptId) throw new Error("LTX Edit Anything did not return a live preview job.");
+        setLiveJobId(nextJobId);
+        setLivePromptId(nextPromptId);
+        setStatus("Editing video in ComfyUI. Live preview updates when sampler frames arrive.");
+        return;
+      }
+
       setResult(data as LtxEditResult);
+      setBusy(false);
       setStatus("LTX Edit Anything result is ready. Preview it, then save to Gallery or download.");
     } catch (error: any) {
       setStatus(error?.message || "LTX Edit Anything failed.");
-    } finally {
       setBusy(false);
+    } finally {
+      // Async live-preview submissions keep busy=true until the status poll completes.
     }
   }
 
@@ -471,9 +597,56 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
             {busy ? "Editing Video..." : "Run LTX Edit Anything"}
           </button>
 
+          {busy && liveJobId ? (
+            <button
+              type="button"
+              onClick={() => void cancelLiveEdit()}
+              className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-full border border-red-300/25 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-50 transition hover:bg-red-500/15"
+            >
+              Cancel
+            </button>
+          ) : null}
+
           {status ? <div className="mt-4 rounded-[18px] border border-white/10 bg-black/35 px-4 py-3 text-sm text-white/70">{status}</div> : null}
         </div>
       </div>
+
+      {busy && livePreview?.imageUrl ? (
+        <div className="mt-5 rounded-[24px] border border-purple-300/15 bg-purple-400/[0.05] p-4">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
+            {String(livePreview.mimeType || "").startsWith("video/") ? (
+              <video
+                key={livePreview.updatedAt || livePreview.imageUrl}
+                src={livePreview.imageUrl}
+                controls
+                muted
+                autoPlay
+                loop
+                className="aspect-video w-full rounded-[18px] bg-black object-contain xl:max-w-2xl"
+              />
+            ) : (
+              <img
+                src={livePreview.imageUrl}
+                alt="Live LTX Edit Anything sampler preview"
+                className="aspect-video w-full rounded-[18px] bg-black object-contain xl:max-w-2xl"
+              />
+            )}
+            <div className="flex-1">
+              <h3 className="text-xl font-black text-white">Approximate Preview</h3>
+              <p className="mt-2 text-sm leading-6 text-white/62">
+                Live sampler preview while ComfyUI is editing. Final output replaces this preview after completion.
+              </p>
+              <p className="mt-2 text-xs text-white/42">
+                Progress: {liveProgressPercent}%
+                {livePreview.step !== null && livePreview.step !== undefined && livePreview.total !== null && livePreview.total !== undefined
+                  ? ` - Step ${livePreview.step}/${livePreview.total}`
+                  : ""}
+              </p>
+              {livePromptId ? <p className="mt-2 break-all font-mono text-xs text-white/35">Prompt ID: {livePromptId}</p> : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {result ? (
         <div className="mt-5 rounded-[24px] border border-cyan-400/15 bg-cyan-400/[0.04] p-4">
