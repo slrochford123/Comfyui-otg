@@ -7,6 +7,10 @@ import {
   type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
 import { appendProtectedDialogueBlock, detectProtectedDialogue } from "@/lib/promptDialogue";
+import {
+  h3CreativeDirectionLines,
+  type H3CreativeDirectionInput,
+} from "@/lib/h3CreativeDirection";
 
 export type H3RealismReferenceKind = "image" | "video" | "audio";
 
@@ -67,6 +71,7 @@ export type H3RealismCompileInput = {
   orientation?: H3Orientation;
   references?: H3RealismReferenceInput[];
   loras?: H3RealismNormalizedLoras;
+  creative?: H3CreativeDirectionInput;
 };
 
 export const H3_REALISM_LIMITS = {
@@ -398,6 +403,9 @@ export function compileH3RealismPrompt(input: H3RealismCompileInput) {
     "summary:",
     `[realistic MiniMax H3 reference generation] Create a ${duration}-second ${orientation} video from this user intent: ${protectedPrompt}`,
     refs.length ? `Connected references in order:\n${refs.join("\n")}` : "No external references are connected.",
+    "",
+    "creative_direction:",
+    h3CreativeDirectionLines(input.creative),
     "",
     "retention_analysis:",
     "<Subject 1>: preserve the user-provided identity and any supplied reference identity. Retain natural facial anatomy, skin texture, hair continuity, body scale, wardrobe continuity, and action intent. Do not introduce unrequested people.",

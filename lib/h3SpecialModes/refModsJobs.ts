@@ -13,6 +13,7 @@ import { readComfyPromptProgress } from "@/lib/comfyProgress";
 import {
   compileH3RefModsPrompt,
   validateH3RefModsRequest,
+  type H3RefModsCreativeDirection,
   type H3RefModsRequestInput,
 } from "@/lib/h3SpecialModes/refMods";
 import { buildH3RefModsT2VWorkflow } from "@/lib/h3SpecialModes/refModsWorkflow";
@@ -60,6 +61,7 @@ export type H3RefModsJobInput = {
   turbo: boolean;
   rifeInterpolation60Fps: boolean;
   seed: number;
+  creative: H3RefModsCreativeDirection;
   compiledPrompt: string;
 };
 
@@ -256,6 +258,7 @@ export function validateH3RefModsJobInput(input: H3RefModsRequestInput): H3RefMo
     turbo: normalized.turbo,
     rifeInterpolation60Fps: normalized.rifeInterpolation60Fps,
     seed,
+    creative: normalized.creative,
     compiledPrompt: normalized.compiledPrompt,
   };
 }
@@ -595,6 +598,7 @@ export function retryH3RefModsJob(source: H3RefModsJob) {
     refMods: source.input.refMods,
     turbo: source.input.turbo,
     rifeInterpolation60Fps: source.input.rifeInterpolation60Fps,
+    creative: source.input.creative,
     seed: crypto.randomBytes(6).readUIntBE(0, 6),
   }, source.galleryOwner);
 }
@@ -618,6 +622,7 @@ export function h3RefModsPublicStatus(job: H3RefModsJob) {
     prompt: job.input.compiledPrompt || compileH3RefModsPrompt({
       prompt: job.input.prompt,
       refMods: job.input.refMods,
+      creative: job.input.creative,
     }),
     backend: job.backend,
     backendLabel: job.backend ? H3_BACKEND_PROFILES[job.backend].label : "RTX 3090",

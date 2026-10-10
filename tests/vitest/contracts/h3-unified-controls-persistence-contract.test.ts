@@ -7,6 +7,9 @@ import {
   h3ModeCapabilities,
   type H3StudioModeId,
 } from "../../../lib/h3ModeCapabilities";
+import { compileH3BodySwapPrompt } from "../../../lib/h3SpecialModes/bodySwap";
+import { compileH3RealismPrompt } from "../../../lib/h3SpecialModes/realism";
+import { compileH3RefModsPrompt } from "../../../lib/h3SpecialModes/refMods";
 
 const root = process.cwd();
 const read = (file: string) => fs.readFileSync(path.join(root, file), "utf8");
@@ -36,6 +39,9 @@ describe("H3 unified controls and cross-mode persistence", () => {
     expect(h3ModeCapabilities("h3-realism").supportsRealismPreset).toBe(true);
     expect(h3ModeCapabilities("h3-body-swap").supportsBodySwapInputs).toBe(true);
     expect(h3ModeCapabilities("h3-refmods").supportsRefModSlots).toBe(true);
+    expect(h3ModeCapabilities("h3-realism").supportsLookControls).toBe(true);
+    expect(h3ModeCapabilities("h3-body-swap").supportsLookControls).toBe(true);
+    expect(h3ModeCapabilities("h3-refmods").supportsLookControls).toBe(true);
   });
 
   it("keeps optional H3 LoRAs and builder selection when switching into special modes", () => {
@@ -69,6 +75,40 @@ describe("H3 unified controls and cross-mode persistence", () => {
     expect(panel).toContain('label="Dictate Realism prompt"');
     expect(panel).toContain('label="Dictate Body Swap instruction"');
     expect(panel).toContain('label="Dictate Ref Mods prompt"');
+  });
+
+  it("carries shared creative controls into special-mode prompt compilers", () => {
+    const creative = {
+      visualStyle: "Cinematic realism",
+      cameraFeel: "Handheld documentary",
+      shotFlow: "Slow push-in",
+    };
+    expect(compileH3RealismPrompt({
+      prompt: "a person walks into a room",
+      creative,
+    })).toContain("creative_direction:");
+    expect(compileH3BodySwapPrompt({
+      selector: "person",
+      prompt: "the person waves",
+      creative,
+    })).toContain("Camera feel: Handheld documentary.");
+    expect(compileH3RefModsPrompt({
+      prompt: "Isabella walks through the cafe",
+      refMods: [{
+        id: "isabella",
+        name: "Isabella",
+        category: "character",
+        sourceKind: "image",
+        strength: 0.9,
+        components: "Auto",
+        visualStrength: 0.9,
+        audioStrength: 0,
+        copies: 1,
+        description: "character card",
+        characterId: "",
+      }],
+      creative,
+    })).toContain("Shot flow / motion direction: Slow push-in.");
   });
 });
 

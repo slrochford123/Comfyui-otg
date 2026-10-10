@@ -89,7 +89,7 @@ export const H3_MODE_CAPABILITIES: Record<H3StudioModeId, H3ModeCapabilities> = 
   "h3-realism": {
     ...BASE_VIDEO_OUTPUT,
     supportsPromptWorkspace: true,
-    supportsLookControls: false,
+    supportsLookControls: true,
     supportsSourceImage: false,
     supportsReferenceDeck: false,
     supportsRealismReferences: true,
@@ -106,7 +106,7 @@ export const H3_MODE_CAPABILITIES: Record<H3StudioModeId, H3ModeCapabilities> = 
   "h3-body-swap": {
     ...BASE_VIDEO_OUTPUT,
     supportsPromptWorkspace: true,
-    supportsLookControls: false,
+    supportsLookControls: true,
     supportsSourceImage: false,
     supportsReferenceDeck: false,
     supportsRealismReferences: false,
@@ -123,7 +123,7 @@ export const H3_MODE_CAPABILITIES: Record<H3StudioModeId, H3ModeCapabilities> = 
   "h3-refmods": {
     ...BASE_VIDEO_OUTPUT,
     supportsPromptWorkspace: true,
-    supportsLookControls: false,
+    supportsLookControls: true,
     supportsSourceImage: false,
     supportsReferenceDeck: false,
     supportsRealismReferences: false,

@@ -7,6 +7,12 @@ import {
   type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
 import { appendProtectedDialogueBlock, detectProtectedDialogue } from "@/lib/promptDialogue";
+import {
+  h3CreativeDirectionLines,
+  normalizeH3CreativeDirection,
+  type H3CreativeDirection,
+  type H3CreativeDirectionInput,
+} from "@/lib/h3CreativeDirection";
 
 export type H3BodySwapRequestInput = {
   prompt?: unknown;
@@ -15,12 +21,14 @@ export type H3BodySwapRequestInput = {
   orientation?: unknown;
   durationSeconds?: unknown;
   preserveOriginalAudio?: unknown;
+  creative?: H3CreativeDirectionInput;
 };
 
 export type H3BodySwapCompileInput = {
   prompt?: string;
   selector: string;
   preserveOriginalAudio?: boolean;
+  creative?: H3CreativeDirectionInput;
 };
 
 function clean(value: unknown) {
@@ -43,6 +51,9 @@ export function compileH3BodySwapPrompt(input: H3BodySwapCompileInput) {
     "",
     "summary:",
     "[single-person body swap + video inpainting + reference synthesis] The target video replaces only the tracked/masked person from <Video 1> with <Subject 1> from <Picture 1>. The original scene, camera motion, perspective, background, lighting, and non-target people or objects remain preserved.",
+    "",
+    "creative_direction:",
+    h3CreativeDirectionLines(input.creative),
     "",
     "retention_analysis:",
     "<Subject 1>: fully_preserved - identity, facial anatomy, skin tone, hairstyle, body build, and recognizable attire are derived from <Picture 1>.",
@@ -79,5 +90,9 @@ export function validateH3BodySwapRequest(input: H3BodySwapRequestInput) {
     orientation,
     durationSeconds,
     preserveOriginalAudio: input.preserveOriginalAudio !== false,
+    creative: normalizeH3CreativeDirection(input.creative),
   };
 }
+
+export type H3BodySwapCreativeDirection = H3CreativeDirection;
+export type H3BodySwapCreativeDirectionInput = H3CreativeDirectionInput;
