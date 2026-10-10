@@ -10,6 +10,7 @@ import {
 } from "@/lib/production/h3ProductionRecipes";
 import {
   compileH3BodySwapPrompt,
+  type H3BodySwapCreativeDirectionInput,
   validateH3BodySwapRequest,
 } from "@/lib/h3SpecialModes/bodySwap";
 
@@ -31,6 +32,7 @@ export type H3BodySwapWorkflowInput = {
   outputPrefix: string;
   preserveOriginalAudio?: boolean;
   compiledPromptOverride?: string;
+  creative?: H3BodySwapCreativeDirectionInput;
 };
 
 export type H3BodySwapBuiltWorkflow = {
@@ -143,6 +145,7 @@ export function buildH3BodySwapWorkflow(
       prompt: normalized.prompt,
       selector: normalized.selector,
       preserveOriginalAudio: normalized.preserveOriginalAudio,
+      creative: normalized.creative,
     });
 
   setPrompt(graph, compiledPrompt);

@@ -7,6 +7,12 @@ import {
   type H3Quality,
 } from "@/lib/production/h3ProductionRecipes";
 import { appendProtectedDialogueBlock, detectProtectedDialogue } from "@/lib/promptDialogue";
+import {
+  h3CreativeDirectionLines,
+  normalizeH3CreativeDirection,
+  type H3CreativeDirection,
+  type H3CreativeDirectionInput,
+} from "@/lib/h3CreativeDirection";
 
 export type H3RefModCategory =
   | "character"
@@ -81,11 +87,13 @@ export type H3RefModsRequestInput = {
   turbo?: unknown;
   rifeInterpolation60Fps?: unknown;
   seed?: unknown;
+  creative?: H3CreativeDirectionInput;
 };
 
 export type H3RefModsCompileInput = {
   prompt: string;
   refMods: H3RefModSlot[];
+  creative?: H3CreativeDirectionInput;
 };
 
 export const H3_REFMOD_LIMITS = {
@@ -341,6 +349,8 @@ export function compileH3RefModsPrompt(input: H3RefModsCompileInput) {
     ...subjectLines,
     "summary:",
     protectedPrompt,
+    "creative_direction:",
+    h3CreativeDirectionLines(input.creative),
     "retention_analysis:",
     ...retentionLines,
     "detailed_description:",
@@ -384,6 +394,9 @@ export function validateH3RefModsRequest(input: H3RefModsRequestInput) {
     turbo: input.turbo !== false,
     rifeInterpolation60Fps: input.rifeInterpolation60Fps === true || clean(input.rifeInterpolation60Fps).toLowerCase() === "true",
     seed,
-    compiledPrompt: compileH3RefModsPrompt({ prompt, refMods }),
+    creative: normalizeH3CreativeDirection(input.creative),
+    compiledPrompt: compileH3RefModsPrompt({ prompt, refMods, creative: input.creative }),
   };
 }
+
+export type H3RefModsCreativeDirection = H3CreativeDirection;

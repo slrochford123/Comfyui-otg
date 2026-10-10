@@ -1160,6 +1160,15 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const selectedStylePreset = resolveH3StylePreset(stylePresetId);
   const promptBuilderVisualStyle =
     resolveH3PromptBuilderVisualStyle(stylePresetId, visualStyle);
+  const h3CreativeDirection = useMemo(
+    () => ({
+      stylePresetId,
+      visualStyle: promptBuilderVisualStyle,
+      cameraFeel,
+      shotFlow,
+    }),
+    [stylePresetId, promptBuilderVisualStyle, cameraFeel, shotFlow],
+  );
 
   const promptContext = {
     mode,
@@ -1211,6 +1220,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           durationSeconds: item.sourceDurationSeconds,
         })),
         loras: realismLoras,
+        creative: h3CreativeDirection,
       });
     } catch {
       return "";
@@ -1221,6 +1231,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     orientation,
     realismReferences,
     realismLoras,
+    h3CreativeDirection,
   ]);
   const finalRealismPrompt =
     realismExpertEdit && realismCompiledPromptDraft.trim()
@@ -2552,6 +2563,81 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     ]);
   }
 
+  function renderCreativeControls() {
+    if (!modeCapabilities.supportsLookControls) return null;
+    return (
+      <details className={surface}>
+        <summary className="cursor-pointer text-sm font-black">
+          Choose the Look
+        </summary>
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <div className="text-xs text-white/55 md:col-span-3">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <span className="font-bold text-white/85">
+                  Visual Style
+                </span>
+                <p className="mt-0.5 text-[11px] text-white/40">
+                  Choose a visual identity for the entire H3 video.
+                </p>
+              </div>
+
+              <span className="rounded-full border border-white/10 bg-black/25 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white/45">
+                {H3_STYLE_PRESETS.length - 1} creative styles
+              </span>
+            </div>
+
+            <H3StylePresetPicker
+              value={stylePresetId}
+              onChange={setStylePresetId}
+            />
+          </div>
+
+          <label className="text-xs text-white/55">
+            Prompt Builder Visual Style
+            <select
+              className={`${field} mt-1 ${
+                stylePresetId !== "none" ? "opacity-60" : ""
+              }`}
+              value={promptBuilderVisualStyle}
+              disabled={stylePresetId !== "none"}
+              onChange={(event) => setVisualStyle(event.target.value)}
+            >
+              {H3_VISUAL_STYLE_OPTIONS.map((item) => (
+                <option key={item}>{item}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="text-xs text-white/55">
+            Camera Feel
+            <select
+              className={`${field} mt-1`}
+              value={cameraFeel}
+              onChange={(event) => setCameraFeel(event.target.value)}
+            >
+              {H3_CAMERA_FEEL_OPTIONS.map((item) => (
+                <option key={item}>{item}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-white/55">
+            Shot Flow
+            <select
+              className={`${field} mt-1`}
+              value={shotFlow}
+              onChange={(event) => setShotFlow(event.target.value)}
+            >
+              {H3_SHOT_FLOW_OPTIONS.map((item) => (
+                <option key={item}>{item}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </details>
+    );
+  }
+
   async function refreshJob(id = job?.id) {
     if (!id) return null;
     const { response, data } = await fetchH3JobStatus(id);
@@ -2659,10 +2745,9 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       durationSeconds: duration,
       prompt: realismPrompt,
       compiledPromptOverride:
-        realismExpertEdit && finalRealismPrompt.trim()
-          ? finalRealismPrompt
-          : "",
+        finalRealismPrompt.trim(),
       rifeInterpolation60Fps,
+      creative: h3CreativeDirection,
       loraSettings: {
         preset: realismPreset,
         speedLora: realismSpeedLora,
@@ -2708,8 +2793,15 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       durationSeconds: duration,
       prompt: bodySwapPrompt,
       selector: bodySwapSelector,
+      compiledPromptOverride: compileH3BodySwapPrompt({
+        prompt: bodySwapPrompt,
+        selector: bodySwapSelector,
+        preserveOriginalAudio: bodySwapPreserveAudio,
+        creative: h3CreativeDirection,
+      }),
       preserveOriginalAudio: bodySwapPreserveAudio,
       rifeInterpolation60Fps,
+      creative: h3CreativeDirection,
       seed:
         bodySwapSeedMode === "fixed"
           ? Number(bodySwapSeed)
@@ -2730,6 +2822,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       refMods: refModSlots,
       turbo: refModsTurbo,
       rifeInterpolation60Fps,
+      creative: h3CreativeDirection,
       seed:
         refModsSeedMode === "fixed"
           ? Number(refModsSeed)
@@ -5001,6 +5094,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           )}
         </main>
         <aside className="space-y-4 xl:sticky xl:top-4 xl:self-start">
+          {!legacyModeActive ? renderCreativeControls() : null}
           {studioMode === "h3-realism" ? (
             <section className={surface} data-otg="h3-realism-controls">
               {/* Shared controls emit Realism quality, Realism duration, and Realism orientation groups. */}

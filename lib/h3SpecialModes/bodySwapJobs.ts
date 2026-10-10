@@ -29,7 +29,10 @@ import {
   H3_RIFE_NATIVE_FPS,
   normalizeH3RifeInterpolation60Fps,
 } from "@/lib/h3RifeFinalization";
-import { validateH3BodySwapRequest } from "@/lib/h3SpecialModes/bodySwap";
+import {
+  validateH3BodySwapRequest,
+  type H3BodySwapCreativeDirectionInput,
+} from "@/lib/h3SpecialModes/bodySwap";
 import { buildH3BodySwapWorkflow, type H3BodySwapBuiltWorkflow } from "@/lib/h3SpecialModes/bodySwapWorkflow";
 import { H3_BACKEND_PROFILES } from "@/lib/production/h3Workflows";
 
@@ -55,6 +58,7 @@ export type H3BodySwapJobInput = {
   compiledPromptOverride?: string;
   preserveOriginalAudio: boolean;
   rifeInterpolation60Fps?: boolean;
+  creative?: H3BodySwapCreativeDirectionInput;
   seed: number;
   sourceVideo: H3BodySwapMedia;
   replacementImage: H3BodySwapMedia;
@@ -213,6 +217,7 @@ export function validateH3BodySwapJobInput(input: H3BodySwapJobInput) {
     selector: normalized.selector,
     preserveOriginalAudio: normalized.preserveOriginalAudio,
     rifeInterpolation60Fps: normalizeH3RifeInterpolation60Fps(input.rifeInterpolation60Fps),
+    creative: normalized.creative,
   };
 }
 
@@ -588,6 +593,7 @@ async function submitNewBodySwapPrompt(job: H3BodySwapJob) {
       outputPrefix: `otg_h3_body_swap/${safeSegment(job.id)}`,
       preserveOriginalAudio: job.input.preserveOriginalAudio,
       compiledPromptOverride: job.input.compiledPromptOverride,
+      creative: job.input.creative,
     });
     const probe = await inspectH3BodySwapBackendCompatibility(backend, built);
     backendProbes.push(probe);
