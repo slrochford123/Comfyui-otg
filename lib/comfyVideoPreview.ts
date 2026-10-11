@@ -7,6 +7,7 @@ export type ComfyVideoPreviewGraphNode = {
 export type ComfyVideoPreviewGraph = Record<string, ComfyVideoPreviewGraphNode>;
 
 const TERMINAL_PREVIEW_CLASS = "DenoVideoPreview";
+const APPROXIMATE_PREVIEW_CLASS = "ModelPreviewOverrideKJ";
 
 function linkTarget(value: unknown) {
   return Array.isArray(value) && typeof value[0] === "string" ? value[0] : null;
@@ -45,6 +46,58 @@ function addDenoPreview(
     _meta: { title: "OTG terminal video preview" },
   };
   return true;
+}
+
+function isModelLink(value: unknown, nodeId: string) {
+  return Array.isArray(value) && value[0] === nodeId;
+}
+
+function hasApproximatePreview(graph: ComfyVideoPreviewGraph, title: string) {
+  return Object.values(graph).some((node) =>
+    node?.class_type === APPROXIMATE_PREVIEW_CLASS
+    && node._meta?.title === title,
+  );
+}
+
+export function ensureModelApproximatePreviewNode(
+  graph: ComfyVideoPreviewGraph,
+  args: {
+    sourceNodeId: string;
+    consumerNodeIds: readonly string[];
+    preferredNodeId?: number;
+    title?: string;
+  },
+) {
+  const sourceNodeId = String(args.sourceNodeId || "").trim();
+  const title = args.title || "OTG H3 approximate preview";
+  if (!sourceNodeId || !graph[sourceNodeId] || hasApproximatePreview(graph, title)) {
+    return graph;
+  }
+
+  const previewNodeId = nextFreeNodeId(graph, args.preferredNodeId ?? 9700);
+  graph[previewNodeId] = {
+    class_type: APPROXIMATE_PREVIEW_CLASS,
+    inputs: {
+      max_resolution: 512,
+      jpeg_quality: 80,
+      suppress_default_preview: true,
+      preview_frames: 8,
+      preview_fps: 8,
+      tiny_vae: "taeh3.safetensors",
+      model: [sourceNodeId, 0],
+    },
+    _meta: { title },
+  };
+
+  for (const consumerNodeId of args.consumerNodeIds) {
+    const consumer = graph[consumerNodeId];
+    if (!consumer?.inputs) continue;
+    if (isModelLink(consumer.inputs.model, sourceNodeId) || consumer.inputs.model) {
+      consumer.inputs.model = [previewNodeId, 0];
+    }
+  }
+
+  return graph;
 }
 
 export function ensureTerminalVideoPreviewNode(

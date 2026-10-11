@@ -264,6 +264,11 @@ describe("H3 Ref Mods special mode contract", () => {
     expect(built.graph["9401"].inputs.vae).toEqual(["3", 0]);
     expect(built.graph["32"].inputs.conditioning).toEqual(["9401", 0]);
     expect(built.graph["21"].inputs.latent_image).toEqual(["39", 1]);
+    expect(built.graph["9700"].class_type).toBe("ModelPreviewOverrideKJ");
+    expect(built.graph["9700"].inputs.model).toEqual(["43", 0]);
+    expect(built.graph["9700"].inputs.tiny_vae).toBe("taeh3.safetensors");
+    expect(built.graph["24"].inputs.model).toEqual(["9700", 0]);
+    expect(built.graph["32"].inputs.model).toEqual(["9700", 0]);
     expect(built.graph["39"].inputs.width).toBe(608);
     expect(built.graph["39"].inputs.height).toBe(352);
     expect(built.graph["39"].inputs.prompt).toBe(compiled);

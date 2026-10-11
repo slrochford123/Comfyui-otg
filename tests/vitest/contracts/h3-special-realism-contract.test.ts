@@ -240,9 +240,12 @@ describe("H3 Realism special mode contract", () => {
     expect(built.graph["332"].inputs?.shift_video).toBe(12);
     expect(built.graph["332"].inputs?.shift_audio).toBe(3);
     expect(built.graph["261"].inputs?.steps).toBe(12);
-    expect(built.graph["261"].inputs?.model).toEqual(["332", 0]);
+    expect(built.graph["9700"].class_type).toBe("ModelPreviewOverrideKJ");
+    expect(built.graph["9700"].inputs?.model).toEqual(["332", 0]);
+    expect(built.graph["9700"].inputs?.tiny_vae).toBe("taeh3.safetensors");
+    expect(built.graph["261"].inputs?.model).toEqual(["9700", 0]);
     expect(built.graph["289"].inputs?.step).toBe(8);
-    expect(built.graph["223"].inputs?.model).toEqual(["332", 0]);
+    expect(built.graph["223"].inputs?.model).toEqual(["9700", 0]);
     expect(built.graph["226"].inputs?.sampler).toEqual(["255", 0]);
     expect(built.graph["226"].inputs?.sigmas).toEqual(["261", 0]);
     expect(built.graph["214"]).toBeUndefined();

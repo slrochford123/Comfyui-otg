@@ -101,6 +101,11 @@ describe("H3 Body Swap special mode contract", () => {
     expect(built.graph["717"].inputs?.object_indices).toBe("0");
     expect(built.graph["129"].inputs?.noise_seed).toBe(42);
     expect(built.graph["124"].inputs?.steps).toBe(4);
+    expect(built.graph["9700"].class_type).toBe("ModelPreviewOverrideKJ");
+    expect(built.graph["9700"].inputs?.model).toEqual(["179", 0]);
+    expect(built.graph["9700"].inputs?.tiny_vae).toBe("taeh3.safetensors");
+    expect(built.graph["124"].inputs?.model).toEqual(["9700", 0]);
+    expect(built.graph["126"].inputs?.model).toEqual(["9700", 0]);
     expect(built.graph["704"].inputs?.volume).toBe(-100);
     expect(built.graph["92"].inputs?.filename_prefix).toBe("contract/body-swap");
     expect(built.graph["722"].inputs?.filename_prefix).toBe("contract/body-swap_mask");
