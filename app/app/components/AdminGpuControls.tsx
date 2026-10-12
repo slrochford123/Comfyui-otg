@@ -90,7 +90,7 @@ export default function AdminGpuControls() {
         className="flex cursor-pointer list-none items-center gap-1.5 rounded-[10px] border border-violet-300/35 bg-violet-300/10 px-3 py-2 text-xs font-bold text-violet-100 hover:bg-violet-300/20 [&::-webkit-details-marker]:hidden"
         aria-label="Admin GPU controls"
       >
-        <span aria-hidden="true">◈</span> GPU Controls <span aria-hidden="true">▾</span>
+        <span aria-hidden="true">◈</span> GPU<span className="hidden sm:inline"> Controls</span> <span aria-hidden="true">▾</span>
       </summary>
       <div className="absolute right-0 top-[calc(100%+8px)] z-[100] w-[min(330px,calc(100vw-20px))] rounded-xl border border-white/15 bg-[#111320] p-3 text-sm text-white shadow-2xl">
         <div className="mb-2 flex items-center justify-between gap-2">
