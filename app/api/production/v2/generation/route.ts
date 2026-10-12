@@ -312,7 +312,7 @@ export async function POST(req: NextRequest) {
       const clipStartSeconds = Math.max(0, finiteNumber((body as any)?.videoClipStartSeconds, 0));
       const finalPrompt = [
         "Use <Video 1> as the exact temporal and visual reference.",
-        `Use only the selected 5-second reference window starting at ${clipStartSeconds.toFixed(2)} seconds.`,
+        `Use only the selected H3 reference window starting at ${clipStartSeconds.toFixed(2)} seconds.`,
         "Preserve the source video's subjects, action, timing, composition, and audio unless the requested edit explicitly changes them.",
         `Requested visual transformation: ${editPrompt}`,
       ].join("\n");
@@ -339,7 +339,7 @@ export async function POST(req: NextRequest) {
             mediaPath,
             includeAudio: true,
             clipStartSeconds,
-            clipDurationSeconds: 5,
+            clipDurationSeconds: 120,
           },
         },
       });

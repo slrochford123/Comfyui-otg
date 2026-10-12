@@ -155,7 +155,7 @@ describe(
         );
 
         expect(route).toContain(
-          "first frame of the selected five-second video reference window",
+          "first frame of the selected video reference window",
         );
       },
     );

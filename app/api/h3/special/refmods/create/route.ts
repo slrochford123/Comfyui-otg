@@ -8,7 +8,7 @@ import sharp from "sharp";
 
 import { probeDurationSeconds } from "@/lib/ffmpeg";
 import {
-  H3_REFERENCE_VIDEO_CLIP_SECONDS,
+  H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS,
   trimH3ReferenceVideoClip,
 } from "@/lib/h3ReferenceVideoClip";
 import { isAcceptedH3MediaFile, supportedH3MediaExtensions, type H3InputMediaKind } from "@/lib/h3MediaTypes";
@@ -128,14 +128,15 @@ async function saveUploadedSource(
       outputDir: safeJoin(media, "clips"),
       outputPrefix: ordinal,
       startSeconds: 0,
+      durationSeconds: H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS,
       includeAudio: false,
     });
 
     return {
       path: clip.outputPath,
-      name: `${path.parse(file.name || `${ordinal}.mp4`).name}_${H3_REFERENCE_VIDEO_CLIP_SECONDS}s.mp4`,
+      name: `${path.parse(file.name || `${ordinal}.mp4`).name}_${clip.durationSeconds.toFixed(2)}s.mp4`,
       kind,
-      durationSeconds: H3_REFERENCE_VIDEO_CLIP_SECONDS,
+      durationSeconds: clip.durationSeconds,
     };
   }
 

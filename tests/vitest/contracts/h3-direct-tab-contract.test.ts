@@ -140,9 +140,11 @@ describe("H3 direct-generation tab contract", () => {
     const panel = read("app/app/components/H3Panel.tsx");
     expect(panel).toContain("Prompt Builder");
     expect(panel).toContain("Use Audio From Video");
-    expect(panel).toContain("5-second reference window");
+    expect(panel).toContain("Selected video window");
     expect(panel).toContain("videoClipStartSeconds");
-    expect(panel).toContain('aria-label="Reference video 5-second start time"');
+    expect(panel).toContain("videoClipDurationSeconds");
+    expect(panel).toContain('aria-label="Reference video clip duration"');
+    expect(panel).toContain('aria-label="Reference video start time"');
     expect(panel).toContain("getH3NativeDimensions(value, orientation).width");
     expect(panel).toContain("SH · Scene Hunter");
     expect(panel).toContain("Generate Scene Hunter");
@@ -153,13 +155,14 @@ describe("H3 direct-generation tab contract", () => {
     expect(panel).toContain('/api/enhance-prompt');
   });
 
-  it("trims H3 direct R2V video references to the selected 5-second window before upload", () => {
+  it("trims H3 direct R2V video references to the selected 5-to-120-second window before upload", () => {
     const route = read("app/api/h3/generation/route.ts");
 
     expect(route).toContain("trimH3ReferenceVideoClip");
     expect(route).toContain("videoClipStartSeconds");
+    expect(route).toContain("videoClipDurationSeconds");
     expect(route).toContain("startSeconds: videoClipStarts[index] || 0");
-    expect(route).toContain("H3_REFERENCE_VIDEO_CLIP_SECONDS");
+    expect(route).toContain("durationSeconds: videoClipDurations[index]");
   });
 
   it("renders approximate-preview video payloads as video, not still images", () => {

@@ -188,7 +188,7 @@ describe(
     );
 
     it(
-      "clips H3 Production video references to a selected 5-second window before Comfy upload",
+      "clips H3 Production video references to a selected 5-second to 2-minute window before Comfy upload",
       () => {
         const panel =
           readSource(
@@ -211,7 +211,7 @@ describe(
           'data-otg="production-v2-h3-reference-window"',
         );
         expect(panel).toContain(
-          'aria-label="H3 reference video 5-second start time"',
+          'aria-label="H3 reference video start time"',
         );
         expect(panel).toContain(
           "videoClipStartSeconds: clipStartSeconds",
@@ -224,6 +224,9 @@ describe(
         );
         expect(jobs).toContain(
           "clipStartSeconds?: number;",
+        );
+        expect(jobs).toContain(
+          "clipDurationSeconds?: number;",
         );
         expect(scheduler).toContain(
           "prepareH3ReferenceVideoClip",

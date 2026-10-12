@@ -108,6 +108,7 @@ type H3GenerationConfig = {
   audioDescriptions: string[];
   videoAudioFlags: boolean[];
   videoClipStartSeconds: number[];
+  videoClipDurationSeconds: number[];
 };
 type H3StagedUploadDescriptor = {
   id: string;
@@ -284,7 +285,9 @@ function categoryLabel(category: H3RefModCategory) {
 }
 const H3_PERSISTED_JOB_STORAGE_KEY = "otg:h3:persisted-direct-job:v1";
 const H3_INPUT_STORAGE_KEY = "otg:h3:generator-inputs:v1";
-const H3_REFERENCE_VIDEO_CLIP_SECONDS = 5;
+const H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS = 5;
+const H3_REFERENCE_VIDEO_DEFAULT_CLIP_SECONDS = 5;
+const H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS = 120;
 
 type H3PanelProps = {
   authenticatedOwnerKey?: string;
@@ -806,12 +809,22 @@ function VideoReferenceWindowControl({
   onChange: (patch: Partial<MediaInput>) => void;
 }) {
   const duration = Number(item.sourceDurationSeconds || 0);
-  const maxStart = Math.max(0, duration - H3_REFERENCE_VIDEO_CLIP_SECONDS);
+  const maxClipDuration = duration > 0
+    ? Math.min(duration, H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS)
+    : H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS;
+  const clipDuration = Math.min(
+    Math.max(
+      Number(item.clipDurationSeconds || H3_REFERENCE_VIDEO_DEFAULT_CLIP_SECONDS),
+      H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS,
+    ),
+    Math.max(H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS, maxClipDuration),
+  );
+  const maxStart = Math.max(0, duration - clipDuration);
   const clipStart = Math.min(
     Math.max(0, Number(item.clipStartSeconds || 0)),
     maxStart,
   );
-  const canChoose = duration >= H3_REFERENCE_VIDEO_CLIP_SECONDS;
+  const canChoose = duration >= H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS;
 
   return (
     <div className="mt-3 rounded-[6px] border border-cyan-300/20 bg-cyan-300/[0.06] p-3">
@@ -822,11 +835,18 @@ function VideoReferenceWindowControl({
         onLoadedMetadata={(event) => {
           const next = event.currentTarget.duration;
           if (Number.isFinite(next) && next > 0) {
-            const nextMax = Math.max(0, next - H3_REFERENCE_VIDEO_CLIP_SECONDS);
+            const nextClipDuration = Math.min(
+              Math.max(
+                Number(item.clipDurationSeconds || H3_REFERENCE_VIDEO_DEFAULT_CLIP_SECONDS),
+                H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS,
+              ),
+              Math.max(H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS, Math.min(next, H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS)),
+            );
+            const nextMax = Math.max(0, next - nextClipDuration);
             onChange({
               sourceDurationSeconds: next,
               clipStartSeconds: Math.min(clipStart, nextMax),
-              clipDurationSeconds: H3_REFERENCE_VIDEO_CLIP_SECONDS,
+              clipDurationSeconds: nextClipDuration,
             });
           }
         }}
@@ -834,20 +854,48 @@ function VideoReferenceWindowControl({
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs font-black uppercase text-cyan-100">
-            5-second reference window
+            Selected video window
           </p>
           <p className="mt-1 text-[11px] text-white/45">
-            Only this selected portion is sent to H3.
+            Send 5 seconds to 2 minutes from this source.
           </p>
         </div>
         <span className="shrink-0 rounded-full border border-white/10 bg-black/35 px-2 py-1 text-[11px] font-bold text-white/70">
           {formatClipSeconds(clipStart)} -{" "}
-          {formatClipSeconds(clipStart + H3_REFERENCE_VIDEO_CLIP_SECONDS)}
+          {formatClipSeconds(clipStart + clipDuration)}
         </span>
       </div>
+      <label className="mt-3 block text-[11px] font-bold uppercase tracking-wide text-white/45">
+        Clip length
+      </label>
       <input
-        aria-label="Reference video 5-second start time"
-        className="mt-3 w-full"
+        aria-label="Reference video clip duration"
+        className="mt-2 w-full"
+        type="range"
+        min={H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS}
+        max={Math.max(H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS, maxClipDuration)}
+        step="0.05"
+        value={clipDuration}
+        disabled={!canChoose}
+        onChange={(event) => {
+          const nextDuration = Number(event.target.value);
+          const nextMaxStart = Math.max(0, duration - nextDuration);
+          onChange({
+            clipDurationSeconds: nextDuration,
+            clipStartSeconds: Math.min(clipStart, nextMaxStart),
+          });
+        }}
+      />
+      <div className="mt-1 flex justify-between text-[11px] text-white/40">
+        <span>5.00s min</span>
+        <span>{duration > 0 ? `${formatClipSeconds(maxClipDuration)} max` : "2:00 max"}</span>
+      </div>
+      <label className="mt-3 block text-[11px] font-bold uppercase tracking-wide text-white/45">
+        Start time
+      </label>
+      <input
+        aria-label="Reference video start time"
+        className="mt-2 w-full"
         type="range"
         min={0}
         max={Math.max(0, maxStart)}
@@ -857,7 +905,7 @@ function VideoReferenceWindowControl({
         onChange={(event) =>
           onChange({
             clipStartSeconds: Number(event.target.value),
-            clipDurationSeconds: H3_REFERENCE_VIDEO_CLIP_SECONDS,
+            clipDurationSeconds: clipDuration,
           })
         }
       />
@@ -871,7 +919,7 @@ function VideoReferenceWindowControl({
       </div>
       {duration > 0 && !canChoose ? (
         <p className="mt-2 rounded-[6px] border border-amber-300/30 bg-amber-300/10 px-2 py-1 text-xs text-amber-100">
-          Reference video must be at least {H3_REFERENCE_VIDEO_CLIP_SECONDS}{" "}
+          Reference video must be at least {H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS}{" "}
           seconds long.
         </p>
       ) : null}
@@ -1155,7 +1203,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const videoReferenceTooShort = videoReferences.some(
     (item) =>
       Number(item.sourceDurationSeconds || 0) > 0
-      && Number(item.sourceDurationSeconds || 0) < H3_REFERENCE_VIDEO_CLIP_SECONDS,
+      && Number(item.sourceDurationSeconds || 0) < H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS,
   );
   const selectedStylePreset = resolveH3StylePreset(stylePresetId);
   const promptBuilderVisualStyle =
@@ -1923,7 +1971,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           : undefined,
       clipDurationSeconds:
         meta.kind === "video"
-          ? H3_REFERENCE_VIDEO_CLIP_SECONDS
+          ? H3_REFERENCE_VIDEO_DEFAULT_CLIP_SECONDS
           : undefined,
     };
   }
@@ -1941,7 +1989,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       includeAudio: false,
       clipStartSeconds: kind === "video" ? 0 : undefined,
       clipDurationSeconds:
-        kind === "video" ? H3_REFERENCE_VIDEO_CLIP_SECONDS : undefined,
+        kind === "video" ? H3_REFERENCE_VIDEO_DEFAULT_CLIP_SECONDS : undefined,
     };
   }
   function release(item: MediaInput | null) {
@@ -2250,7 +2298,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               clipStartSeconds:
                 item.clipStartSeconds || 0,
               clipDurationSeconds:
-                H3_REFERENCE_VIDEO_CLIP_SECONDS,
+                item.clipDurationSeconds || H3_REFERENCE_VIDEO_DEFAULT_CLIP_SECONDS,
             },
           ),
         },
@@ -2281,7 +2329,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       );
 
     return [
-      `First frame of selected ${H3_REFERENCE_VIDEO_CLIP_SECONDS}-second video window ${start.toFixed(2)}s-${(start + H3_REFERENCE_VIDEO_CLIP_SECONDS).toFixed(2)}s:`,
+      `First frame of selected ${formatClipSeconds(item.clipDurationSeconds || H3_REFERENCE_VIDEO_DEFAULT_CLIP_SECONDS)} video window ${start.toFixed(2)}s-${(start + (item.clipDurationSeconds || H3_REFERENCE_VIDEO_DEFAULT_CLIP_SECONDS)).toFixed(2)}s:`,
       String(
         data.descriptor,
       ).trim(),
@@ -2722,6 +2770,9 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       videoClipStartSeconds: references
         .filter((item) => item.kind === "video")
         .map((item) => item.clipStartSeconds || 0),
+      videoClipDurationSeconds: references
+        .filter((item) => item.kind === "video")
+        .map((item) => item.clipDurationSeconds || H3_REFERENCE_VIDEO_DEFAULT_CLIP_SECONDS),
     };
   }
   function appendH3GenerationFiles(body: FormData) {
@@ -2777,6 +2828,9 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       videoClipStartSeconds: realismReferences
         .filter((item) => item.kind === "video")
         .map((item) => item.clipStartSeconds || 0),
+      videoClipDurationSeconds: realismReferences
+        .filter((item) => item.kind === "video")
+        .map((item) => item.clipDurationSeconds || H3_REFERENCE_VIDEO_DEFAULT_CLIP_SECONDS),
       audioDurations: realismReferences
         .filter((item) => item.kind === "audio")
         .map((item) => item.sourceDurationSeconds || null),
@@ -2810,6 +2864,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       preserveOriginalAudio: bodySwapPreserveAudio,
       sourceVideoClipStartSeconds:
         bodySwapSourceVideo?.clipStartSeconds || 0,
+      sourceVideoClipDurationSeconds:
+        bodySwapSourceVideo?.clipDurationSeconds || H3_REFERENCE_VIDEO_DEFAULT_CLIP_SECONDS,
       rifeInterpolation60Fps,
       creative: h3CreativeDirection,
       optionalLoras: selectedLoras,
@@ -3393,7 +3449,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       return setMessage("Add at least one reference.");
     if (mode === "h3-reference-to-video" && videoReferenceTooShort) {
       return setMessage(
-        `Reference videos must be at least ${H3_REFERENCE_VIDEO_CLIP_SECONDS} seconds long.`,
+        `Reference videos must be at least ${H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS} seconds long.`,
       );
     }
     const uploadBytes = h3UploadBytes([

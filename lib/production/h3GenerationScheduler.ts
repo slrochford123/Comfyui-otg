@@ -6,7 +6,6 @@ import path from "node:path";
 
 import { readComfyPromptProgress } from "@/lib/comfyProgress";
 import {
-  H3_REFERENCE_VIDEO_CLIP_SECONDS,
   trimH3ReferenceVideoClip,
 } from "@/lib/h3ReferenceVideoClip";
 import { ensureDir, OTG_DATA_ROOT, safeSegment } from "@/lib/paths";
@@ -162,12 +161,13 @@ async function prepareH3ReferenceVideoClip(job: ProductionV2GenerationJob) {
     outputDir,
     outputPrefix: `${job.id}_video_reference`,
     startSeconds: reference.clipStartSeconds || 0,
+    durationSeconds: reference.clipDurationSeconds,
     includeAudio: reference.includeAudio,
   });
 
   return {
     ...clip,
-    promptNote: `Use selected ${H3_REFERENCE_VIDEO_CLIP_SECONDS}-second reference window ${clip.startSeconds.toFixed(2)}s-${(clip.startSeconds + H3_REFERENCE_VIDEO_CLIP_SECONDS).toFixed(2)}s.`,
+    promptNote: `Use selected ${clip.durationSeconds.toFixed(2)}-second reference window ${clip.startSeconds.toFixed(2)}s-${(clip.startSeconds + clip.durationSeconds).toFixed(2)}s.`,
   };
 }
 

@@ -4,7 +4,6 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 import {
-  H3_REFERENCE_VIDEO_CLIP_SECONDS,
   extractH3ReferenceVideoPromptFrame,
 } from "@/lib/h3ReferenceVideoClip";
 import {
@@ -99,6 +98,7 @@ async function describeFrame(
   framePath: string,
   referenceName: string,
   startSeconds: number,
+  durationSeconds: number,
   ownerKey: string,
 ) {
   const bytes =
@@ -112,13 +112,13 @@ async function describeFrame(
       "",
       "You are a factual visual observer supporting the MiniMax H3 Reference-to-Video Prompt Builder.",
       "Inspect exactly ONE supplied video frame.",
-      "This frame is the first frame of the selected five-second video reference window.",
+      "This frame is the first frame of the selected video reference window.",
       "Describe only visible factual information useful for an AI video prompt: subject identity cues, shot composition, camera angle, environment, props, lighting, color palette, and any motion setup implied by visible posture or blur.",
       "Do not invent unseen actions, dialogue, events, off-screen objects, or story facts.",
       "Return one concise factual paragraph only. No markdown, labels, JSON, preamble, or analysis.",
       "",
       `Reference video: ${referenceName || "Unnamed video reference"}.`,
-      `Selected window starts at ${startSeconds.toFixed(2)} seconds and lasts ${H3_REFERENCE_VIDEO_CLIP_SECONDS} seconds.`,
+      `Selected window starts at ${startSeconds.toFixed(2)} seconds and lasts ${durationSeconds.toFixed(2)} seconds.`,
     ].join(
       "\n",
     );
@@ -238,6 +238,11 @@ export async function POST(
         body.clipStartSeconds,
         0,
       );
+    const durationSeconds =
+      finiteNumber(
+        body.clipDurationSeconds,
+        5,
+      );
 
     const requestId =
       `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -267,6 +272,7 @@ export async function POST(
               staged.name,
             ).name || "video-reference",
           startSeconds,
+          durationSeconds,
         },
       );
 
@@ -279,6 +285,7 @@ export async function POST(
           180,
         ),
         frame.startSeconds,
+        frame.durationSeconds,
         owner.ownerKey,
       );
 
