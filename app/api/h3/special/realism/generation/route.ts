@@ -8,6 +8,10 @@ import { NextResponse } from "next/server";
 import sharp from "sharp";
 
 import { probeDurationSeconds } from "@/lib/ffmpeg";
+import {
+  H3_REFERENCE_VIDEO_CLIP_SECONDS,
+  trimH3ReferenceVideoClip,
+} from "@/lib/h3ReferenceVideoClip";
 import { isAcceptedH3MediaFile, supportedH3MediaExtensions, type H3InputMediaKind } from "@/lib/h3MediaTypes";
 import { readCompletedH3StagedUpload } from "@/lib/h3StagedUploads";
 import {
@@ -71,6 +75,12 @@ function numbers(value: unknown) {
     : [];
 }
 
+function clipStarts(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => Number(item)).map((item) => Number.isFinite(item) ? item : 0)
+    : [];
+}
+
 async function saveMediaBytes(
   ownerKey: string,
   requestId: string,
@@ -81,6 +91,7 @@ async function saveMediaBytes(
   },
   category: H3InputMediaKind,
   index: number,
+  clipStartSeconds = 0,
 ): Promise<SavedH3RealismMedia> {
   if (!isAcceptedH3MediaFile(category, source)) {
     throw new Error(`Choose a supported H3 Realism ${category} file (${supportedH3MediaExtensions(category).join(", ")}).`);
@@ -104,6 +115,23 @@ async function saveMediaBytes(
   }
 
   await fsp.writeFile(target, source.bytes);
+
+  if (category === "video") {
+    const clip = await trimH3ReferenceVideoClip({
+      inputPath: target,
+      outputDir: safeJoin(directory, "clips"),
+      outputPrefix: `video-${index + 1}`,
+      startSeconds: clipStartSeconds,
+      includeAudio: true,
+    });
+
+    return {
+      path: clip.outputPath,
+      name: `${path.parse(source.name).name || `video-${index + 1}`}_5s.mp4`,
+      durationSeconds: H3_REFERENCE_VIDEO_CLIP_SECONDS,
+    };
+  }
+
   const durationSeconds = await probeDurationSeconds(target);
   if (!Number.isFinite(durationSeconds)) {
     throw new Error(`Could not read the duration for ${source.name}. Use a standard ${category} file with readable timing metadata.`);
@@ -111,7 +139,14 @@ async function saveMediaBytes(
   return { path: target, name: path.basename(source.name), durationSeconds };
 }
 
-async function saveFile(ownerKey: string, requestId: string, file: File, category: H3InputMediaKind, index: number) {
+async function saveFile(
+  ownerKey: string,
+  requestId: string,
+  file: File,
+  category: H3InputMediaKind,
+  index: number,
+  clipStartSeconds = 0,
+) {
   return saveMediaBytes(
     ownerKey,
     requestId,
@@ -122,6 +157,7 @@ async function saveFile(ownerKey: string, requestId: string, file: File, categor
     },
     category,
     index,
+    clipStartSeconds,
   );
 }
 
@@ -131,6 +167,7 @@ async function saveStagedFile(
   value: unknown,
   category: H3InputMediaKind,
   index: number,
+  clipStartSeconds = 0,
 ) {
   const staged = await readCompletedH3StagedUpload(ownerKey, value, category);
   return saveMediaBytes(
@@ -143,6 +180,7 @@ async function saveStagedFile(
     },
     category,
     index,
+    clipStartSeconds,
   );
 }
 
@@ -170,10 +208,11 @@ async function fileList(
   category: H3InputMediaKind,
   notes: string[],
   durations: Array<number | null>,
+  starts: number[] = [],
 ) {
   const files = form.getAll(key).filter((item): item is File => item instanceof File && item.size > 0);
   return Promise.all(files.map(async (file, index): Promise<H3RealismReference> => {
-    const saved = await saveFile(ownerKey, requestId, file, category, index);
+    const saved = await saveFile(ownerKey, requestId, file, category, index, starts[index] || 0);
     return toRealismReference(saved, category, index, notes, durations);
   }));
 }
@@ -185,6 +224,7 @@ async function stagedList(
   category: H3InputMediaKind,
   notes: string[],
   durations: Array<number | null>,
+  starts: number[] = [],
 ) {
   const uploads = Array.isArray(values)
     ? values
@@ -193,7 +233,7 @@ async function stagedList(
       : [];
 
   return Promise.all(uploads.map(async (value, index): Promise<H3RealismReference> => {
-    const saved = await saveStagedFile(ownerKey, requestId, value, category, index);
+    const saved = await saveStagedFile(ownerKey, requestId, value, category, index, starts[index] || 0);
     return toRealismReference(saved, category, index, notes, durations);
   }));
 }
@@ -281,11 +321,12 @@ async function stagedMedia(
   const videoDescriptions = descriptions(config.videoDescriptions);
   const audioDescriptions = descriptions(config.audioDescriptions);
   const videoDurations = numbers(config.videoDurations);
+  const videoClipStarts = clipStarts(config.videoClipStartSeconds);
   const audioDurations = numbers(config.audioDurations);
 
   return {
     images: await stagedList(staged.referenceImages, ownerKey, requestId, "image", imageDescriptions, []),
-    videos: await stagedList(staged.referenceVideos, ownerKey, requestId, "video", videoDescriptions, videoDurations),
+    videos: await stagedList(staged.referenceVideos, ownerKey, requestId, "video", videoDescriptions, videoDurations, videoClipStarts),
     audios: await stagedList(staged.referenceAudios, ownerKey, requestId, "audio", audioDescriptions, audioDurations),
   };
 }
@@ -300,11 +341,12 @@ async function multipartMedia(
   const videoDescriptions = descriptions(config.videoDescriptions);
   const audioDescriptions = descriptions(config.audioDescriptions);
   const videoDurations = numbers(config.videoDurations);
+  const videoClipStarts = clipStarts(config.videoClipStartSeconds);
   const audioDurations = numbers(config.audioDurations);
 
   return {
     images: await fileList(form, "referenceImages", ownerKey, requestId, "image", imageDescriptions, []),
-    videos: await fileList(form, "referenceVideos", ownerKey, requestId, "video", videoDescriptions, videoDurations),
+    videos: await fileList(form, "referenceVideos", ownerKey, requestId, "video", videoDescriptions, videoDurations, videoClipStarts),
     audios: await fileList(form, "referenceAudios", ownerKey, requestId, "audio", audioDescriptions, audioDurations),
   };
 }

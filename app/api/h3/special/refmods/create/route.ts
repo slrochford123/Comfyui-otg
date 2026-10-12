@@ -7,6 +7,10 @@ import { NextResponse } from "next/server";
 import sharp from "sharp";
 
 import { probeDurationSeconds } from "@/lib/ffmpeg";
+import {
+  H3_REFERENCE_VIDEO_CLIP_SECONDS,
+  trimH3ReferenceVideoClip,
+} from "@/lib/h3ReferenceVideoClip";
 import { isAcceptedH3MediaFile, supportedH3MediaExtensions, type H3InputMediaKind } from "@/lib/h3MediaTypes";
 import {
   createH3RefModCreateJob,
@@ -118,6 +122,23 @@ async function saveUploadedSource(
   ensureDir(media);
   const target = safeJoin(media, `${ordinal}${ext}`);
   await fsp.writeFile(target, bytes);
+  if (kind === "video") {
+    const clip = await trimH3ReferenceVideoClip({
+      inputPath: target,
+      outputDir: safeJoin(media, "clips"),
+      outputPrefix: ordinal,
+      startSeconds: 0,
+      includeAudio: false,
+    });
+
+    return {
+      path: clip.outputPath,
+      name: `${path.parse(file.name || `${ordinal}.mp4`).name}_${H3_REFERENCE_VIDEO_CLIP_SECONDS}s.mp4`,
+      kind,
+      durationSeconds: H3_REFERENCE_VIDEO_CLIP_SECONDS,
+    };
+  }
+
   const durationSeconds = await probeDurationSeconds(target);
   if (!Number.isFinite(durationSeconds)) {
     throw new Error(`Could not read the ${kind} duration for ${file.name || "upload"}.`);

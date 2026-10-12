@@ -7,6 +7,10 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 
+import {
+  H3_REFERENCE_VIDEO_CLIP_SECONDS,
+  trimH3ReferenceVideoClip,
+} from "@/lib/h3ReferenceVideoClip";
 import { isAcceptedH3MediaFile, supportedH3MediaExtensions, type H3InputMediaKind } from "@/lib/h3MediaTypes";
 import { readCompletedH3StagedUpload } from "@/lib/h3StagedUploads";
 import {
@@ -53,6 +57,11 @@ function parseConfig(form: FormData) {
   return JSON.parse(raw || "{}") as Record<string, unknown>;
 }
 
+function finiteClipStart(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
 async function saveMediaBytes(
   ownerKey: string,
   requestId: string,
@@ -63,6 +72,7 @@ async function saveMediaBytes(
   },
   category: H3InputMediaKind,
   label: string,
+  clipStartSeconds = 0,
 ): Promise<H3BodySwapMedia> {
   if (!isAcceptedH3MediaFile(category, source)) {
     throw new Error(`Choose a supported Body Swap ${label} file (${supportedH3MediaExtensions(category).join(", ")}).`);
@@ -85,10 +95,33 @@ async function saveMediaBytes(
   } else {
     await fsp.writeFile(target, source.bytes);
   }
+
+  if (category === "video") {
+    const clip = await trimH3ReferenceVideoClip({
+      inputPath: target,
+      outputDir: safeJoin(directory, "clips"),
+      outputPrefix: safeSegment(label),
+      startSeconds: clipStartSeconds,
+      includeAudio: true,
+    });
+
+    return {
+      path: clip.outputPath,
+      name: `${path.parse(source.name).name || label}_${H3_REFERENCE_VIDEO_CLIP_SECONDS}s.mp4`,
+    };
+  }
+
   return { path: target, name: path.basename(source.name) };
 }
 
-async function saveFile(ownerKey: string, requestId: string, file: File, category: H3InputMediaKind, label: string) {
+async function saveFile(
+  ownerKey: string,
+  requestId: string,
+  file: File,
+  category: H3InputMediaKind,
+  label: string,
+  clipStartSeconds = 0,
+) {
   return saveMediaBytes(
     ownerKey,
     requestId,
@@ -99,10 +132,18 @@ async function saveFile(ownerKey: string, requestId: string, file: File, categor
     },
     category,
     label,
+    clipStartSeconds,
   );
 }
 
-async function saveStagedFile(ownerKey: string, requestId: string, value: unknown, category: H3InputMediaKind, label: string) {
+async function saveStagedFile(
+  ownerKey: string,
+  requestId: string,
+  value: unknown,
+  category: H3InputMediaKind,
+  label: string,
+  clipStartSeconds = 0,
+) {
   const staged = await readCompletedH3StagedUpload(ownerKey, value, category);
   return saveMediaBytes(
     ownerKey,
@@ -114,6 +155,7 @@ async function saveStagedFile(ownerKey: string, requestId: string, value: unknow
     },
     category,
     label,
+    clipStartSeconds,
   );
 }
 
@@ -181,10 +223,12 @@ async function stagedMedia(
   ownerKey: string,
   requestId: string,
   staged: H3BodySwapStagedMedia,
+  config: Record<string, unknown>,
 ): Promise<H3BodySwapMediaPayload> {
+  const sourceVideoClipStartSeconds = finiteClipStart(config.sourceVideoClipStartSeconds);
   return {
     sourceVideo: staged.sourceVideo
-      ? await saveStagedFile(ownerKey, requestId, staged.sourceVideo, "video", "source-video")
+      ? await saveStagedFile(ownerKey, requestId, staged.sourceVideo, "video", "source-video", sourceVideoClipStartSeconds)
       : null,
     replacementImage: staged.replacementImage
       ? await saveStagedFile(ownerKey, requestId, staged.replacementImage, "image", "replacement-image")
@@ -196,12 +240,14 @@ async function multipartMedia(
   form: FormData,
   ownerKey: string,
   requestId: string,
+  config: Record<string, unknown>,
 ): Promise<H3BodySwapMediaPayload> {
   const sourceVideo = form.get("sourceVideo");
   const replacementImage = form.get("replacementImage");
+  const sourceVideoClipStartSeconds = finiteClipStart(config.sourceVideoClipStartSeconds);
   return {
     sourceVideo: sourceVideo instanceof File && sourceVideo.size > 0
-      ? await saveFile(ownerKey, requestId, sourceVideo, "video", "source-video")
+      ? await saveFile(ownerKey, requestId, sourceVideo, "video", "source-video", sourceVideoClipStartSeconds)
       : null,
     replacementImage: replacementImage instanceof File && replacementImage.size > 0
       ? await saveFile(ownerKey, requestId, replacementImage, "image", "replacement-image")
@@ -255,7 +301,7 @@ export async function POST(req: NextRequest) {
       }
       if (body?.config && typeof body.config === "object") {
         const requestId = crypto.randomUUID();
-        const media = await stagedMedia(ownerKey, requestId, body.staged || {});
+        const media = await stagedMedia(ownerKey, requestId, body.staged || {}, body.config as Record<string, unknown>);
         return await startGenerationJob(ownerKey, owner, body.config as Record<string, unknown>, media);
       }
       throw new Error("Unknown H3 Body Swap generation action.");
@@ -264,7 +310,7 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const config = parseConfig(form);
     const requestId = crypto.randomUUID();
-    const media = await multipartMedia(form, ownerKey, requestId);
+    const media = await multipartMedia(form, ownerKey, requestId, config);
     return await startGenerationJob(ownerKey, owner, config, media);
   } catch (error) {
     return errorResponse(error);

@@ -39,7 +39,9 @@ describe("H3 Realism special mode contract", () => {
     expect(compileRoute).toContain("validateH3RealismRequest");
     expect(compileRoute).toContain("compileH3RealismPrompt");
     expect(generationRoute).toContain("validateH3RealismJobInput");
-    expect(generationRoute).toContain("probeDurationSeconds");
+    expect(generationRoute).toContain("trimH3ReferenceVideoClip");
+    expect(generationRoute).toContain("videoClipStartSeconds");
+    expect(generationRoute).toContain("H3_REFERENCE_VIDEO_CLIP_SECONDS");
   });
 
   it("keeps normal H3 production routes unchanged", () => {
@@ -93,7 +95,7 @@ describe("H3 Realism special mode contract", () => {
       validateH3RealismReferences([
         { kind: "video", name: "too-short.mp4", durationSeconds: 1.5 },
       ]),
-    ).toThrow("2 to 15 seconds");
+    ).toThrow("at least 5 seconds");
     expect(() =>
       validateH3RealismReferences([
         { kind: "video", name: "a.mp4", durationSeconds: 8 },
@@ -106,6 +108,17 @@ describe("H3 Realism special mode contract", () => {
         { kind: "audio", name: "b.wav", durationSeconds: 8 },
       ]),
     ).toThrow("15 seconds or less");
+  });
+
+  it("selects and uploads only a five-second Realism video-reference window", () => {
+    const panel = read("app/app/components/H3Panel.tsx");
+    const generationRoute = read("app/api/h3/special/realism/generation/route.ts");
+
+    expect(panel).toContain("VideoReferenceWindowControl");
+    expect(panel).toContain("videoClipStartSeconds: realismReferences");
+    expect(generationRoute).toContain("trimH3ReferenceVideoClip({");
+    expect(generationRoute).toContain("startSeconds: clipStartSeconds");
+    expect(generationRoute).toContain("durationSeconds: H3_REFERENCE_VIDEO_CLIP_SECONDS");
   });
 
   it("enforces exactly one speed LoRA and keeps People Realism independent", () => {

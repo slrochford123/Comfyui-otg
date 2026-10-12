@@ -2774,6 +2774,9 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       videoDurations: realismReferences
         .filter((item) => item.kind === "video")
         .map((item) => item.sourceDurationSeconds || null),
+      videoClipStartSeconds: realismReferences
+        .filter((item) => item.kind === "video")
+        .map((item) => item.clipStartSeconds || 0),
       audioDurations: realismReferences
         .filter((item) => item.kind === "audio")
         .map((item) => item.sourceDurationSeconds || null),
@@ -2805,6 +2808,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         creative: h3CreativeDirection,
       }),
       preserveOriginalAudio: bodySwapPreserveAudio,
+      sourceVideoClipStartSeconds:
+        bodySwapSourceVideo?.clipStartSeconds || 0,
       rifeInterpolation60Fps,
       creative: h3CreativeDirection,
       optionalLoras: selectedLoras,
@@ -4100,25 +4105,34 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                         placeholder="Identity, continuity, motion, pace, ambience"
                       />
                       {item.kind !== "image" ? (
-                        <label className="mt-3 block text-xs text-white/55">
-                          Approx. duration seconds
-                          <input
-                            className={`${field} mt-1`}
-                            type="number"
-                            min={item.kind === "video" ? H3_REALISM_LIMITS.minVideoSeconds : 0}
-                            max={H3_REALISM_LIMITS.maxVideoSeconds}
-                            step="0.1"
-                            value={item.sourceDurationSeconds ?? ""}
-                            onChange={(event) =>
-                              updateRealismReference(item.id, {
-                                sourceDurationSeconds:
-                                  event.target.value === ""
-                                    ? undefined
-                                    : Number(event.target.value),
-                              })
+                        item.kind === "video" ? (
+                          <VideoReferenceWindowControl
+                            item={item}
+                            onChange={(patch) =>
+                              updateRealismReference(item.id, patch)
                             }
                           />
-                        </label>
+                        ) : (
+                          <label className="mt-3 block text-xs text-white/55">
+                            Approx. duration seconds
+                            <input
+                              className={`${field} mt-1`}
+                              type="number"
+                              min={0}
+                              max={H3_REALISM_LIMITS.maxVideoSeconds}
+                              step="0.1"
+                              value={item.sourceDurationSeconds ?? ""}
+                              onChange={(event) =>
+                                updateRealismReference(item.id, {
+                                  sourceDurationSeconds:
+                                    event.target.value === ""
+                                      ? undefined
+                                      : Number(event.target.value),
+                                })
+                              }
+                            />
+                          </label>
+                        )
                       ) : null}
                     </article>
                   ))}
@@ -4234,6 +4248,14 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                     {bodySwapSourceVideo ? (
                       <div className="mt-3">
                         <MediaPreview item={bodySwapSourceVideo} />
+                        <VideoReferenceWindowControl
+                          item={bodySwapSourceVideo}
+                          onChange={(patch) =>
+                            setBodySwapSourceVideo((current) =>
+                              current ? { ...current, ...patch } : current,
+                            )
+                          }
+                        />
                       </div>
                     ) : (
                       <div className="mt-3 flex aspect-video items-center justify-center rounded-[6px] border border-dashed border-white/15 text-sm text-white/35">
