@@ -8,7 +8,7 @@ import { applyH3OptionalLoraChainBeforeConsumer } from "@/lib/h3OptionalLoraChai
 import fs from "node:fs";
 import path from "node:path";
 
-import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
+import { ensureModelApproximatePreviewNode, ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import {
   getH3NativeDimensions,
   normalizeH3Orientation,
@@ -386,6 +386,12 @@ export function buildH3RealismWorkflow(
   setSeed(graph, input.seed);
   pruneReferenceSlots(graph, input.references || []);
   setOutputPrefix(graph, input.outputPrefix);
+  ensureModelApproximatePreviewNode(graph, {
+    sourceNodeId: DUAL_CLOCK_NODE_ID,
+    consumerNodeIds: [SCHEDULER_NODE_ID, GUIDER_NODE_ID],
+    preferredNodeId: 9700,
+    title: "OTG H3 Realism approximate preview",
+  });
   ensureTerminalVideoPreviewNode(graph);
 
   return {

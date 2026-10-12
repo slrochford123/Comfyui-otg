@@ -72,6 +72,10 @@ describe("Qwen Image Edit 2.1 Character Card integration", () => {
     );
     expect(standard).toContain("TextEncodeQwenImage21");
     expect(standard).toContain("qwen_image_2.1_int8_convrot.safetensors");
+    expect(standard).toContain(
+      "qwen_image_2.1_turbo_lora_avg_rank_178_bf16.safetensors",
+    );
+    expect(standard).toContain('"steps": 8');
     expect(standard).toContain("five-view character card");
     expect(standard).toContain("CLOSE-UP FACE shot");
     expect(standard).not.toContain("CLOSE-UP BACK shot");

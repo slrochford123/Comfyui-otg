@@ -7,11 +7,19 @@ import { buildH3BodySwapWorkflow } from "@/lib/h3SpecialModes/bodySwapWorkflow";
 import { buildH3RefModsT2VWorkflow } from "@/lib/h3SpecialModes/refModsWorkflow";
 import { normalizeH3RefModSlots } from "@/lib/h3SpecialModes/refMods";
 import { buildH3LtxAlphaWorkflow } from "@/lib/h3SpecialModes/ltxAlphaMotion";
+import { describeComfyPromptError } from "@/lib/production/h3Comfy";
 
 function terminalPreviewNodes(graph: ComfyVideoPreviewGraph) {
   return Object.values(graph).filter((node) =>
-    node.class_type === "DenoVideoPreview"
+    node.class_type === "PreviewAnimation"
     && node._meta?.title === "OTG terminal video preview",
+  );
+}
+
+function approximatePreviewNodes(graph: ComfyVideoPreviewGraph) {
+  return Object.values(graph).filter((node) =>
+    node.class_type === "ModelPreviewOverrideKJ"
+    && String(node._meta?.title || "").includes("approximate preview"),
   );
 }
 
@@ -19,11 +27,19 @@ function expectTerminalPreview(graph: ComfyVideoPreviewGraph) {
   const previews = terminalPreviewNodes(graph);
   expect(previews).toHaveLength(1);
   expect(previews[0]?.inputs?.images).toEqual(expect.any(Array));
-  expect(Number(previews[0]?.inputs?.frame_rate)).toBeGreaterThan(0);
+  expect(Number(previews[0]?.inputs?.fps)).toBeGreaterThan(0);
+}
+
+function expectApproximatePreview(graph: ComfyVideoPreviewGraph) {
+  const previews = approximatePreviewNodes(graph);
+  expect(previews).toHaveLength(1);
+  expect(previews[0]?.inputs?.model).toEqual(expect.any(Array));
+  expect(previews[0]?.inputs?.tiny_vae).toBe("taeh3.safetensors");
+  expect(previews[0]?.inputs?.suppress_default_preview).toBe(true);
 }
 
 describe("video workflow terminal preview nodes", () => {
-  it("adds one terminal Deno video preview beside SaveVideo without replacing output", () => {
+  it("adds one terminal video preview beside SaveVideo without replacing output", () => {
     const graph: ComfyVideoPreviewGraph = {
       "1": { class_type: "CreateVideo", inputs: { images: ["10", 0], audio: ["11", 0], fps: 24 } },
       "2": { class_type: "SaveVideo", inputs: { video: ["1", 0], filename_prefix: "contract" } },
@@ -31,6 +47,19 @@ describe("video workflow terminal preview nodes", () => {
     ensureTerminalVideoPreviewNode(graph);
     expect(graph["2"].class_type).toBe("SaveVideo");
     expectTerminalPreview(graph);
+  });
+
+  it("keeps structured Comfy prompt rejections readable", () => {
+    expect(describeComfyPromptError({
+      type: "missing_node_type",
+      message: "Node 'OTG terminal video preview' not found.",
+      details: "Node ID '#9800'",
+      extra_info: {
+        node_id: "9800",
+        class_type: "DenoVideoPreview",
+        node_title: "OTG terminal video preview",
+      },
+    })).toContain("class=DenoVideoPreview");
   });
 
   it("standard H3 Text/Image/Reference workflows carry terminal previews", () => {
@@ -61,8 +90,8 @@ describe("video workflow terminal preview nodes", () => {
     }).graph);
   });
 
-  it("special H3 video workflows carry terminal previews", () => {
-    expectTerminalPreview(buildH3RealismWorkflow({
+  it("special H3 video workflows carry terminal and live approximate previews", () => {
+    const realism = buildH3RealismWorkflow({
       prompt: "The person looks at camera.",
       quality: "sh",
       orientation: "landscape",
@@ -71,9 +100,11 @@ describe("video workflow terminal preview nodes", () => {
       outputPrefix: "contract/realism-preview",
       references: [{ kind: "image", name: "face.png", uploadedFilename: "face.png", description: "" }],
       loraSettings: { preset: "balanced" },
-    }).graph);
+    }).graph;
+    expectTerminalPreview(realism);
+    expectApproximatePreview(realism);
 
-    expectTerminalPreview(buildH3BodySwapWorkflow({
+    const bodySwap = buildH3BodySwapWorkflow({
       sourceVideoFilename: "source.mp4",
       replacementImageFilename: "replacement.png",
       prompt: "natural replacement",
@@ -84,9 +115,11 @@ describe("video workflow terminal preview nodes", () => {
       seed: 42,
       outputPrefix: "contract/body-swap-preview",
       preserveOriginalAudio: true,
-    }).graph);
+    }).graph;
+    expectTerminalPreview(bodySwap);
+    expectApproximatePreview(bodySwap);
 
-    expectTerminalPreview(buildH3RefModsT2VWorkflow({
+    const refMods = buildH3RefModsT2VWorkflow({
       backend: "rtx3090",
       quality: "sh",
       orientation: "landscape",
@@ -96,7 +129,9 @@ describe("video workflow terminal preview nodes", () => {
       turbo: true,
       seed: 99,
       outputPrefix: "contract/refmods-preview",
-    }).graph);
+    }).graph;
+    expectTerminalPreview(refMods);
+    expectApproximatePreview(refMods);
   });
 
   it("LTX alpha preprocessing workflow carries a terminal preview", () => {

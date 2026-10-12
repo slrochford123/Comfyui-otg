@@ -3,7 +3,7 @@ import { applyH3OptionalLoraChainBeforeConsumer } from "@/lib/h3OptionalLoraChai
 import fs from "node:fs";
 import path from "node:path";
 
-import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
+import { ensureModelApproximatePreviewNode, ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import {
   getH3NativeDimensions,
   type H3Orientation,
@@ -167,6 +167,12 @@ export function buildH3BodySwapWorkflow(
 
   preserveWorkflowSilencePath(graph);
   setOutputPrefix(graph, input.outputPrefix);
+  ensureModelApproximatePreviewNode(graph, {
+    sourceNodeId: "179",
+    consumerNodeIds: [SCHEDULER_NODE_ID, "126"],
+    preferredNodeId: 9700,
+    title: "OTG H3 Body Swap approximate preview",
+  });
   ensureTerminalVideoPreviewNode(graph);
 
   return {

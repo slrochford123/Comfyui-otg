@@ -6,7 +6,13 @@ export type ComfyVideoPreviewGraphNode = {
 
 export type ComfyVideoPreviewGraph = Record<string, ComfyVideoPreviewGraphNode>;
 
-const TERMINAL_PREVIEW_CLASS = "DenoVideoPreview";
+const TERMINAL_PREVIEW_TITLE = "OTG terminal video preview";
+const TERMINAL_PREVIEW_CLASS = "PreviewAnimation";
+const LEGACY_TERMINAL_PREVIEW_CLASSES = new Set([
+  "DenoVideoPreview",
+  "PreviewAnimation",
+]);
+const APPROXIMATE_PREVIEW_CLASS = "ModelPreviewOverrideKJ";
 
 function linkTarget(value: unknown) {
   return Array.isArray(value) && typeof value[0] === "string" ? value[0] : null;
@@ -14,8 +20,8 @@ function linkTarget(value: unknown) {
 
 function hasTerminalPreview(graph: ComfyVideoPreviewGraph) {
   return Object.values(graph).some((node) =>
-    node?.class_type === TERMINAL_PREVIEW_CLASS
-    && node._meta?.title === "OTG terminal video preview",
+    LEGACY_TERMINAL_PREVIEW_CLASSES.has(String(node?.class_type || ""))
+    && node._meta?.title === TERMINAL_PREVIEW_TITLE,
   );
 }
 
@@ -25,7 +31,7 @@ function nextFreeNodeId(graph: ComfyVideoPreviewGraph, preferred = 9800) {
   return String(id);
 }
 
-function addDenoPreview(
+function addTerminalPreview(
   graph: ComfyVideoPreviewGraph,
   inputs: Record<string, unknown>,
   preferredId?: number,
@@ -34,17 +40,68 @@ function addDenoPreview(
   if (!Array.isArray(images)) return false;
 
   const previewInputs: Record<string, unknown> = {
+    fps: Number(inputs.frame_rate || inputs.fps || 24) || 24,
     images,
-    frame_rate: Number(inputs.frame_rate || inputs.fps || 24) || 24,
   };
-  if (Array.isArray(inputs.audio)) previewInputs.audio = inputs.audio;
 
   graph[nextFreeNodeId(graph, preferredId)] = {
     class_type: TERMINAL_PREVIEW_CLASS,
     inputs: previewInputs,
-    _meta: { title: "OTG terminal video preview" },
+    _meta: { title: TERMINAL_PREVIEW_TITLE },
   };
   return true;
+}
+
+function isModelLink(value: unknown, nodeId: string) {
+  return Array.isArray(value) && value[0] === nodeId;
+}
+
+function hasApproximatePreview(graph: ComfyVideoPreviewGraph, title: string) {
+  return Object.values(graph).some((node) =>
+    node?.class_type === APPROXIMATE_PREVIEW_CLASS
+    && node._meta?.title === title,
+  );
+}
+
+export function ensureModelApproximatePreviewNode(
+  graph: ComfyVideoPreviewGraph,
+  args: {
+    sourceNodeId: string;
+    consumerNodeIds: readonly string[];
+    preferredNodeId?: number;
+    title?: string;
+  },
+) {
+  const sourceNodeId = String(args.sourceNodeId || "").trim();
+  const title = args.title || "OTG H3 approximate preview";
+  if (!sourceNodeId || !graph[sourceNodeId] || hasApproximatePreview(graph, title)) {
+    return graph;
+  }
+
+  const previewNodeId = nextFreeNodeId(graph, args.preferredNodeId ?? 9700);
+  graph[previewNodeId] = {
+    class_type: APPROXIMATE_PREVIEW_CLASS,
+    inputs: {
+      max_resolution: 512,
+      jpeg_quality: 80,
+      suppress_default_preview: true,
+      preview_frames: 8,
+      preview_fps: 8,
+      tiny_vae: "taeh3.safetensors",
+      model: [sourceNodeId, 0],
+    },
+    _meta: { title },
+  };
+
+  for (const consumerNodeId of args.consumerNodeIds) {
+    const consumer = graph[consumerNodeId];
+    if (!consumer?.inputs) continue;
+    if (isModelLink(consumer.inputs.model, sourceNodeId) || consumer.inputs.model) {
+      consumer.inputs.model = [previewNodeId, 0];
+    }
+  }
+
+  return graph;
 }
 
 export function ensureTerminalVideoPreviewNode(
@@ -57,19 +114,19 @@ export function ensureTerminalVideoPreviewNode(
     if (node?.class_type !== "SaveVideo") continue;
     const sourceId = linkTarget(node.inputs?.video);
     const source = sourceId ? graph[sourceId] : null;
-    if (source?.class_type === "CreateVideo" && addDenoPreview(graph, source.inputs || {}, preferredNodeId)) {
+    if (source?.class_type === "CreateVideo" && addTerminalPreview(graph, source.inputs || {}, preferredNodeId)) {
       return graph;
     }
   }
 
   for (const node of Object.values(graph)) {
-    if (node?.class_type === "VHS_VideoCombine" && addDenoPreview(graph, node.inputs || {}, preferredNodeId)) {
+    if (node?.class_type === "VHS_VideoCombine" && addTerminalPreview(graph, node.inputs || {}, preferredNodeId)) {
       return graph;
     }
   }
 
   for (const node of Object.values(graph)) {
-    if (node?.class_type === "CreateVideo" && addDenoPreview(graph, node.inputs || {}, preferredNodeId)) {
+    if (node?.class_type === "CreateVideo" && addTerminalPreview(graph, node.inputs || {}, preferredNodeId)) {
       return graph;
     }
   }

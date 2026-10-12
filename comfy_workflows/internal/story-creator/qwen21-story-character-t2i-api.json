@@ -44,6 +44,20 @@
       "title": "Load VAE"
     }
   },
+  "455": {
+    "inputs": {
+      "model": [
+        "451",
+        0
+      ],
+      "lora_name": "qwen_image_2.1_turbo_lora_avg_rank_178_bf16.safetensors",
+      "strength_model": 1
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Qwen Image 2.1 Turbo LoRA"
+    }
+  },
   "456": {
     "inputs": {
       "width": 1024,
@@ -74,13 +88,13 @@
   "458": {
     "inputs": {
       "seed": 593103825222985,
-      "steps": 25,
+      "steps": 8,
       "cfg": 1,
       "sampler_name": "euler",
       "scheduler": "simple",
       "denoise": 1,
       "model": [
-        "451",
+        "455",
         0
       ],
       "positive": [

@@ -3,7 +3,7 @@ import { applyH3OptionalLoraChainBeforeConsumer } from "@/lib/h3OptionalLoraChai
 import fs from "node:fs";
 import path from "node:path";
 
-import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
+import { ensureModelApproximatePreviewNode, ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import {
   getH3NativeDimensions,
   type H3Orientation,
@@ -160,6 +160,13 @@ export function buildH3RefModsT2VWorkflow(
     throw new Error("H3 Ref Mods T2V base latent wiring is not the expected MiniMaxH3ImageToVideo output.");
   }
 
+  const approximatePreviewSourceNodeId = graph["43"] ? "43" : "42";
+  ensureModelApproximatePreviewNode(graph, {
+    sourceNodeId: approximatePreviewSourceNodeId,
+    consumerNodeIds: ["24", "32"],
+    preferredNodeId: 9700,
+    title: "OTG H3 RefMods approximate preview",
+  });
   ensureTerminalVideoPreviewNode(graph);
 
   return {
