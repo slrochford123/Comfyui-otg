@@ -6,6 +6,7 @@ import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useSt
 import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
+import AdminGpuControls from "./components/AdminGpuControls";
 import type { GalleryActionKind } from "./components/GalleryWorkspace";
 import {
   APP_COLOR_MODE_KEY,
@@ -6075,6 +6076,7 @@ async function handleAskAi() {
               >
                 Settings
               </button>
+              {isAdmin ? <AdminGpuControls /> : null}
               <div className="max-w-[160px] truncate rounded-[10px] border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-white/62">
                 {username || "Guest"}
               </div>
@@ -6095,6 +6097,7 @@ async function handleAskAi() {
       {appUiMode === "classic" ? (
       <div className="pointer-events-none fixed right-3 top-4 z-30 md:right-5 md:top-5">
         <div className="pointer-events-auto inline-flex items-center gap-2">
+          {isAdmin ? <AdminGpuControls /> : null}
           <button
             type="button"
             onClick={toggleColorMode}

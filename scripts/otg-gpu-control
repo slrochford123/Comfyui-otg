@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Install as root-owned /usr/local/sbin/otg-gpu-control (not from a writable checkout).
+# Only these two local systemd units may be managed. Never kill arbitrary GPU PIDs.
+set -Eeuo pipefail
+umask 077
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+if [[ "${EUID}" -ne 0 || "${#}" -ne 1 ]]; then
+  echo "Root invocation with exactly one of: status, free, reset" >&2
+  exit 64
+fi
+
+action="$1"
+case "$action" in
+  status|free|reset) ;;
+  *) echo "Unrecognized GPU control action" >&2; exit 64 ;;
+esac
+
+service_core=otg-comfyui.service
+service_h3=otg-comfyui-h3.service
+
+if [[ "$action" != status ]]; then
+  # Protect all app workers, even if different Node processes send requests.
+  exec 9>/run/lock/otg-gpu-control.lock
+  if ! flock -n 9; then
+    echo "Another GPU control operation is already running" >&2
+    exit 75
+  fi
+fi
+
+result=0
+case "$action" in
+  free)
+    # systemctl stop operates on only the named unit cgroups.
+    systemctl stop "$service_core" "$service_h3" || result=1
+    ;;
+  reset)
+    systemctl stop "$service_core" "$service_h3" || result=1
+    systemctl start "$service_core" || result=1
+    systemctl start "$service_h3" || result=1
+    if [[ "$result" == 0 ]]; then
+      # The running systemd state alone is insufficient; wait for HTTP readiness.
+      ready=0
+      for ((i=0; i<30; i++)); do
+        if curl -fs --max-time 2 -o /dev/null http://127.0.0.1:8188/system_stats &&
+           curl -fs --max-time 2 -o /dev/null http://127.0.0.1:8189/system_stats; then
+          ready=1
+          break
+        fi
+        sleep 2
+      done
+      if [[ "$ready" != 1 ]]; then
+        echo "ComfyUI services did not both become HTTP-ready" >&2
+        result=1
+      fi
+    fi
+    ;;
+esac
+
+systemd_state() {
+  systemctl is-active "$1" 2>/dev/null || true
+}
+http_state() {
+  if curl -fs --max-time 2 -o /dev/null "http://127.0.0.1:$1/system_stats"; then
+    printf 'ready'
+  else
+    printf 'offline'
+  fi
+}
+gpu_field() {
+  # Report first local GPU; no assumption that unrelated GPU processes are stopped.
+  nvidia-smi --id=0 --query-gpu="$1" --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d '\r' || true
+}
+
+printf 'HOST=%s\n' "$(hostname)"
+printf 'SERVICE_8188=%s\n' "$(systemd_state "$service_core")"
+printf 'SERVICE_8189=%s\n' "$(systemd_state "$service_h3")"
+printf 'HTTP_8188=%s\n' "$(http_state 8188)"
+printf 'HTTP_8189=%s\n' "$(http_state 8189)"
+printf 'GPU_NAME=%s\n' "$(gpu_field name)"
+printf 'GPU_USED_MIB=%s\n' "$(gpu_field memory.used)"
+printf 'GPU_TOTAL_MIB=%s\n' "$(gpu_field memory.total)"
+exit "$result"
