@@ -16,8 +16,17 @@ case "$action" in
   *) echo "Unrecognized GPU control action" >&2; exit 64 ;;
 esac
 
+unit_exists() {
+  systemctl list-unit-files "$1" --no-legend --no-pager 2>/dev/null | grep -q "^$1[[:space:]]"
+}
+
 service_core=otg-comfyui.service
 service_h3=otg-comfyui-h3.service
+if ! unit_exists "$service_core" && unit_exists comfyui-5060.service; then
+  # PROD 5060 Ti host runs a single ComfyUI service on port 8188.
+  service_core=comfyui-5060.service
+  service_h3=
+fi
 
 http_state() {
   local port="$1"
@@ -45,17 +54,19 @@ result=0
 case "$action" in
   free)
     # systemctl stop operates on only the named unit cgroups.
-    systemctl stop "$service_core" "$service_h3" || result=1
+    systemctl stop "$service_core" ${service_h3:+"$service_h3"} || result=1
     ;;
   reset)
-    systemctl stop "$service_core" "$service_h3" || result=1
+    systemctl stop "$service_core" ${service_h3:+"$service_h3"} || result=1
     systemctl start "$service_core" || result=1
-    systemctl start "$service_h3" || result=1
+    if [[ -n "$service_h3" ]]; then
+      systemctl start "$service_h3" || result=1
+    fi
     if [[ "$result" == 0 ]]; then
       # The running systemd state alone is insufficient; wait for HTTP readiness.
       ready=0
       for ((i=0; i<30; i++)); do
-        if http_state 8188 >/dev/null && http_state 8189 >/dev/null; then
+        if http_state 8188 >/dev/null && { [[ -z "$service_h3" ]] || http_state 8189 >/dev/null; }; then
           ready=1
           break
         fi
@@ -70,7 +81,18 @@ case "$action" in
 esac
 
 systemd_state() {
+  if [[ -z "$1" ]]; then
+    printf 'not-installed'
+    return 0
+  fi
   systemctl is-active "$1" 2>/dev/null || true
+}
+optional_http_state() {
+  if [[ -z "$service_h3" ]]; then
+    printf 'not-applicable'
+    return 0
+  fi
+  http_state "$1"
 }
 gpu_field() {
   # Report first local GPU; no assumption that unrelated GPU processes are stopped.
@@ -81,7 +103,7 @@ printf 'HOST=%s\n' "$(hostname)"
 printf 'SERVICE_8188=%s\n' "$(systemd_state "$service_core")"
 printf 'SERVICE_8189=%s\n' "$(systemd_state "$service_h3")"
 printf 'HTTP_8188=%s\n' "$(http_state 8188)"
-printf 'HTTP_8189=%s\n' "$(http_state 8189)"
+printf 'HTTP_8189=%s\n' "$(optional_http_state 8189)"
 printf 'GPU_NAME=%s\n' "$(gpu_field name)"
 printf 'GPU_USED_MIB=%s\n' "$(gpu_field memory.used)"
 printf 'GPU_TOTAL_MIB=%s\n' "$(gpu_field memory.total)"

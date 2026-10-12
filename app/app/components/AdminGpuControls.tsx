@@ -80,7 +80,8 @@ export default function AdminGpuControls() {
   const mib = status?.gpu;
   const total = mib?.totalMiB;
   const used = mib?.usedMiB;
-  const allReady = services?.comfy8188.http === "ready" && services?.h38189.http === "ready";
+  const allReady = services?.comfy8188.http === "ready" &&
+    (services?.h38189.http === "ready" || services?.h38189.http === "not-applicable");
   return (
     <details
       className="relative z-[90] shrink-0"

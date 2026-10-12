@@ -49,6 +49,7 @@ describe("admin GPU controls TEST contract", () => {
   it("limits the installed helper to the two intended ComfyUI services", () => {
     expect(helper).toContain("service_core=otg-comfyui.service");
     expect(helper).toContain("service_h3=otg-comfyui-h3.service");
+    expect(helper).toContain("comfyui-5060.service");
     expect(helper).toContain("systemctl stop");
     expect(helper).toContain("systemctl start");
     expect(helper).toContain("http://$candidate:$port/system_stats");
@@ -59,5 +60,11 @@ describe("admin GPU controls TEST contract", () => {
     expect(helper).not.toMatch(/\bpkill\b/);
     expect(helper).not.toMatch(/\bkillall\b/);
     expect(helper).not.toMatch(/\bnvidia-smi\b.*\|\s*xargs/);
+  });
+
+  it("treats the single-service 5060 profile as ready without an 8189 backend", () => {
+    expect(helper).toContain("not-installed");
+    expect(helper).toContain("not-applicable");
+    expect(panel).toContain('services?.h38189.http === "not-applicable"');
   });
 });
