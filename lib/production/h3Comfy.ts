@@ -71,6 +71,38 @@ function clean(value: unknown) {
   return String(value ?? "").trim();
 }
 
+export function describeComfyPromptError(value: unknown): string {
+  if (value instanceof Error) return clean(value.message);
+  if (typeof value === "string") return clean(value);
+  if (Array.isArray(value)) {
+    return value
+      .map(describeComfyPromptError)
+      .filter(Boolean)
+      .join("; ");
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const extra = record.extra_info && typeof record.extra_info === "object"
+      ? record.extra_info as Record<string, unknown>
+      : {};
+    const parts = [
+      clean(record.message),
+      clean(record.type) ? `type=${clean(record.type)}` : "",
+      clean(record.details),
+      clean(extra.node_id) ? `node=${clean(extra.node_id)}` : "",
+      clean(extra.class_type) ? `class=${clean(extra.class_type)}` : "",
+      clean(extra.node_title) ? `title=${clean(extra.node_title)}` : "",
+    ].filter(Boolean);
+    if (parts.length) return parts.join("; ");
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "";
+    }
+  }
+  return clean(value);
+}
+
 function h3RifeRequiredNodeClassesForProbe(backend: ProductionV2H3BackendId) {
   return backend === "rtx5060ti"
     ? ["VHS_LoadVideo", "RIFEInterpolation", "VHS_VideoCombine"]
@@ -525,7 +557,7 @@ export async function submitH3PromptToBaseUrl(args: {
       status:
         response.status,
       error:
-        clean(
+        describeComfyPromptError(
           payload.error
           || payload.message
           || text,

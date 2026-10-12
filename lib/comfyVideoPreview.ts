@@ -6,7 +6,12 @@ export type ComfyVideoPreviewGraphNode = {
 
 export type ComfyVideoPreviewGraph = Record<string, ComfyVideoPreviewGraphNode>;
 
-const TERMINAL_PREVIEW_CLASS = "DenoVideoPreview";
+const TERMINAL_PREVIEW_TITLE = "OTG terminal video preview";
+const TERMINAL_PREVIEW_CLASS = "PreviewAnimation";
+const LEGACY_TERMINAL_PREVIEW_CLASSES = new Set([
+  "DenoVideoPreview",
+  "PreviewAnimation",
+]);
 const APPROXIMATE_PREVIEW_CLASS = "ModelPreviewOverrideKJ";
 
 function linkTarget(value: unknown) {
@@ -15,8 +20,8 @@ function linkTarget(value: unknown) {
 
 function hasTerminalPreview(graph: ComfyVideoPreviewGraph) {
   return Object.values(graph).some((node) =>
-    node?.class_type === TERMINAL_PREVIEW_CLASS
-    && node._meta?.title === "OTG terminal video preview",
+    LEGACY_TERMINAL_PREVIEW_CLASSES.has(String(node?.class_type || ""))
+    && node._meta?.title === TERMINAL_PREVIEW_TITLE,
   );
 }
 
@@ -26,7 +31,7 @@ function nextFreeNodeId(graph: ComfyVideoPreviewGraph, preferred = 9800) {
   return String(id);
 }
 
-function addDenoPreview(
+function addTerminalPreview(
   graph: ComfyVideoPreviewGraph,
   inputs: Record<string, unknown>,
   preferredId?: number,
@@ -35,15 +40,14 @@ function addDenoPreview(
   if (!Array.isArray(images)) return false;
 
   const previewInputs: Record<string, unknown> = {
+    fps: Number(inputs.frame_rate || inputs.fps || 24) || 24,
     images,
-    frame_rate: Number(inputs.frame_rate || inputs.fps || 24) || 24,
   };
-  if (Array.isArray(inputs.audio)) previewInputs.audio = inputs.audio;
 
   graph[nextFreeNodeId(graph, preferredId)] = {
     class_type: TERMINAL_PREVIEW_CLASS,
     inputs: previewInputs,
-    _meta: { title: "OTG terminal video preview" },
+    _meta: { title: TERMINAL_PREVIEW_TITLE },
   };
   return true;
 }
@@ -110,19 +114,19 @@ export function ensureTerminalVideoPreviewNode(
     if (node?.class_type !== "SaveVideo") continue;
     const sourceId = linkTarget(node.inputs?.video);
     const source = sourceId ? graph[sourceId] : null;
-    if (source?.class_type === "CreateVideo" && addDenoPreview(graph, source.inputs || {}, preferredNodeId)) {
+    if (source?.class_type === "CreateVideo" && addTerminalPreview(graph, source.inputs || {}, preferredNodeId)) {
       return graph;
     }
   }
 
   for (const node of Object.values(graph)) {
-    if (node?.class_type === "VHS_VideoCombine" && addDenoPreview(graph, node.inputs || {}, preferredNodeId)) {
+    if (node?.class_type === "VHS_VideoCombine" && addTerminalPreview(graph, node.inputs || {}, preferredNodeId)) {
       return graph;
     }
   }
 
   for (const node of Object.values(graph)) {
-    if (node?.class_type === "CreateVideo" && addDenoPreview(graph, node.inputs || {}, preferredNodeId)) {
+    if (node?.class_type === "CreateVideo" && addTerminalPreview(graph, node.inputs || {}, preferredNodeId)) {
       return graph;
     }
   }
