@@ -104,10 +104,11 @@ export async function POST(request: NextRequest) {
   const origin = request.headers.get("origin") || "";
   const allowedOrigins = String(process.env.OTG_GPU_CONTROLS_ALLOWED_ORIGINS || "")
     .split(",").map((part) => part.trim()).filter(Boolean);
+  const fetchSite = request.headers.get("sec-fetch-site");
   if (!origin || !allowedOrigins.includes(origin) ||
       request.headers.get("x-otg-gpu-control") !== "1" ||
       request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" ||
-      !["same-origin", "none"].includes(request.headers.get("sec-fetch-site") || "")) {
+      (fetchSite !== null && !["same-origin", "none"].includes(fetchSite))) {
     return response({ ok: false, error: "Request origin verification failed." }, 403);
   }
 
