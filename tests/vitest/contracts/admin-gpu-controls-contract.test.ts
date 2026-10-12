@@ -51,8 +51,11 @@ describe("admin GPU controls TEST contract", () => {
     expect(helper).toContain("service_h3=otg-comfyui-h3.service");
     expect(helper).toContain("systemctl stop");
     expect(helper).toContain("systemctl start");
-    expect(helper).toContain("http://127.0.0.1:8188/system_stats");
-    expect(helper).toContain("http://127.0.0.1:8189/system_stats");
+    expect(helper).toContain("http://$candidate:$port/system_stats");
+    expect(helper).toContain("http_state 8188");
+    expect(helper).toContain("http_state 8189");
+    expect(helper).toContain("hostname -I");
+    expect(helper).toContain("grep -E '^100\\.'");
     expect(helper).not.toMatch(/\bpkill\b/);
     expect(helper).not.toMatch(/\bkillall\b/);
     expect(helper).not.toMatch(/\bnvidia-smi\b.*\|\s*xargs/);
