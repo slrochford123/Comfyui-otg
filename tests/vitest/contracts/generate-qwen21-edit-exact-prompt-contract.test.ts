@@ -6,6 +6,9 @@ import {
   IMAGE_MODELS,
   QWEN21_IMAGE_EDIT_MODELS,
   QWEN21_IMAGE_EDIT_WORKFLOW_ID,
+  QWEN21_TURBO_CFG,
+  QWEN21_TURBO_LORA,
+  QWEN21_TURBO_STEPS,
   applyQwen21ImageEditExactPrompt,
 } from "../../../lib/imageGenerateWorkflows";
 
@@ -56,6 +59,14 @@ describe("Generate Qwen Image Edit 2.1 exact prompt contract", () => {
     expect(graph["474"]?.class_type).toBe(
       "TextEncodeQwenImage21",
     );
+    expect(graph["455"]?.class_type).toBe(
+      "LoraLoaderModelOnly",
+    );
+    expect(graph["455"]?.inputs?.lora_name).toBe(
+      QWEN21_TURBO_LORA,
+    );
+    expect(graph["455"]?.inputs?.model).toEqual(["451", 0]);
+    expect(graph["469"]?.inputs?.model).toEqual(["455", 0]);
   });
 
   it("binds the user instruction byte-for-byte without rewriting it", () => {
@@ -91,8 +102,8 @@ describe("Generate Qwen Image Edit 2.1 exact prompt contract", () => {
       2,
     ]);
 
-    expect(graph["458"].inputs.steps).toBe(25);
-    expect(graph["458"].inputs.cfg).toBe(1);
+    expect(graph["458"].inputs.steps).toBe(QWEN21_TURBO_STEPS);
+    expect(graph["458"].inputs.cfg).toBe(QWEN21_TURBO_CFG);
     expect(graph["458"].inputs.sampler_name).toBe("euler");
     expect(graph["458"].inputs.scheduler).toBe("simple");
   });

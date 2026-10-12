@@ -20,6 +20,9 @@ import {
 import {
   submitComfyPromptWith5060Lease,
 } from "@/lib/workers/comfyPromptLease";
+import {
+  QWEN21_TURBO_LORA,
+} from "@/lib/imageGenerateWorkflows";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,6 +44,7 @@ type ModelConfig = {
     unet: string;
     clip: string;
     vae: string;
+    lora?: string;
   };
   preferredBackend:
     | "image-primary"
@@ -203,6 +207,7 @@ const MODEL_CONFIG: Record<
       "KSampler",
       "VAEDecode",
       "SaveImageAdvanced",
+      "LoraLoaderModelOnly",
     ],
     requirements: {
       unet:
@@ -211,6 +216,8 @@ const MODEL_CONFIG: Record<
         "qwen3vl_8b_int8_convrot.safetensors",
       vae:
         "qwen_image_2.1_vae_bf16.safetensors",
+      lora:
+        QWEN21_TURBO_LORA,
     },
     preferredBackend:
       "image-primary",
@@ -854,6 +861,27 @@ async function validateBackend(
         reason:
           `Required VAE is missing: ${config.requirements.vae}`,
       };
+    }
+
+    if (config.requirements.lora) {
+      const loras =
+        loaderChoices(
+          info,
+          "LoraLoaderModelOnly",
+          "lora_name",
+        );
+
+      if (
+        !loras.includes(
+          config.requirements.lora,
+        )
+      ) {
+        return {
+          ok: false,
+          reason:
+            `Required LoRA is missing: ${config.requirements.lora}`,
+        };
+      }
     }
 
     return {

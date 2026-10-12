@@ -1600,6 +1600,9 @@ function applyLtx23Overrides(
     if (!hasNode("474") || nodeClassType("474") !== "TextEncodeQwenImage21") {
       throw new Error("Qwen Character Card contract mismatch: node 474 must be TextEncodeQwenImage21.");
     }
+    if (!hasNode("455") || nodeClassType("455") !== "LoraLoaderModelOnly") {
+      throw new Error("Qwen Character Card contract mismatch: node 455 must be LoraLoaderModelOnly.");
+    }
     if (!hasNode("458") || nodeClassType("458") !== "KSampler") {
       throw new Error("Qwen Character Card contract mismatch: node 458 must be KSampler.");
     }
@@ -3392,7 +3395,7 @@ function applyEditImageOverrides(graph: any, body: any) {
   setNodeIfPresent(graph, "60", { filename_prefix: "Edit_Image" });
   setNodeIfPresent(graph, "461", { filename_prefix: "Edit_Image" });
 
-  // Uploaded better workflow uses Lightning LoRA by default: 4 steps, CFG 1.
+  // Qwen Image 2.1 uses the Turbo LoRA graph profile: 8 steps, CFG 1.
   setNodeIfPresent(graph, "433:443", { value: true });
   setNodeIfPresent(graph, "433:436", { value: 4 });
   setNodeIfPresent(graph, "433:437", { value: 1 });
@@ -3402,7 +3405,7 @@ function applyEditImageOverrides(graph: any, body: any) {
     denoise: 1,
   });
   setNodeIfPresent(graph, "458", {
-    steps: 25,
+    steps: 8,
     cfg: 1,
     sampler_name: "euler",
     scheduler: "simple",
@@ -3417,6 +3420,7 @@ function assertCharacterCandidateEditContract(graph: any, body: any) {
   const expected = [
     ["470", "LoadImage"],
     ["474", "TextEncodeQwenImage21"],
+    ["455", "LoraLoaderModelOnly"],
     ["458", "KSampler"],
     ["457", "VAEDecode"],
     ["461", "SaveImageAdvanced"],
@@ -3437,7 +3441,17 @@ function assertCharacterCandidateEditContract(graph: any, body: any) {
       throw new Error(`Character candidate edit ${label} contract mismatch; expected ${expectedValue}.`);
     }
   }
-  if (Number(graph?.["458"]?.inputs?.steps) !== 25 || Number(graph?.["458"]?.inputs?.cfg) !== 1) {
+  if (
+    String(graph?.["455"]?.inputs?.lora_name || "") !==
+      "qwen_image_2.1_turbo_lora_avg_rank_178_bf16.safetensors" ||
+    !Array.isArray(graph?.["455"]?.inputs?.model) ||
+    String(graph?.["455"]?.inputs?.model?.[0]) !== "451" ||
+    !Array.isArray(graph?.["469"]?.inputs?.model) ||
+    String(graph?.["469"]?.inputs?.model?.[0]) !== "455"
+  ) {
+    throw new Error("Character candidate edit Qwen 2.1 Turbo LoRA contract mismatch.");
+  }
+  if (Number(graph?.["458"]?.inputs?.steps) !== 8 || Number(graph?.["458"]?.inputs?.cfg) !== 1) {
     throw new Error("Character candidate edit Qwen 2.1 steps/CFG contract mismatch.");
   }
   if (String(graph?.["474"]?.inputs?.prompt || "") !== String(body?.positivePrompt || body?.prompt || "").trim()) {

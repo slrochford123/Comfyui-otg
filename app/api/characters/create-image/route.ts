@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomInt, randomUUID } from "node:crypto";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 import { getOwnerContext } from "@/lib/ownerKey";
+import { QWEN21_TURBO_LORA } from "@/lib/imageGenerateWorkflows";
 import {
   isTelevisionAnimeStyleId,
   televisionAnimeStylePrompt,
@@ -59,6 +60,7 @@ type ModelConfig = {
     unet: string;
     clip: string;
     vae: string;
+    lora?: string;
   };
   preferredBackend: "image-primary" | "local-3090";
 };
@@ -185,11 +187,13 @@ const MODEL_CONFIG: Record<CharacterCreateModelId, ModelConfig> = {
       "KSampler",
       "VAEDecode",
       "SaveImageAdvanced",
+      "LoraLoaderModelOnly",
     ],
     requirements: {
       unet: "qwen_image_2.1_int8_convrot.safetensors",
       clip: "qwen3vl_8b_int8_convrot.safetensors",
       vae: "qwen_image_2.1_vae_bf16.safetensors",
+      lora: QWEN21_TURBO_LORA,
     },
     preferredBackend: "image-primary",
   },
@@ -513,6 +517,12 @@ async function validateBackend(baseUrl: string, config: ModelConfig) {
     }
     if (!vaes.includes(config.requirements.vae)) {
       return { ok: false, reason: `Required VAE is missing: ${config.requirements.vae}` };
+    }
+    if (config.requirements.lora) {
+      const loras = loaderChoices(info, "LoraLoaderModelOnly", "lora_name");
+      if (!loras.includes(config.requirements.lora)) {
+        return { ok: false, reason: `Required LoRA is missing: ${config.requirements.lora}` };
+      }
     }
 
     return { ok: true, reason: "" };

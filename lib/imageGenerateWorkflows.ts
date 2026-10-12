@@ -28,6 +28,11 @@ export const IMAGE_LORA_ADULT_ACK_VERSION = "image-lora-adult-v1";
 export const QWEN21_IMAGE_EDIT_WORKFLOW_ID =
   "presets/image_qwen_image_2_1_image_edit";
 
+export const QWEN21_TURBO_LORA =
+  "qwen_image_2.1_turbo_lora_avg_rank_178_bf16.safetensors";
+export const QWEN21_TURBO_STEPS = 8;
+export const QWEN21_TURBO_CFG = 1;
+
 export const QWEN21_IMAGE_EDIT_MODELS = {
   unet: "qwen_image_2.1_int8_convrot.safetensors",
   clip: "qwen3vl_8b_int8_convrot.safetensors",
@@ -108,6 +113,7 @@ export function applyQwen21ImageEditExactPrompt(
 
   const expectedNodes = [
     ["451", "UNETLoader"],
+    ["455", "LoraLoaderModelOnly"],
     ["453", "CLIPLoader"],
     ["454", "VAELoader"],
     ["469", "QwenImage21Cache"],
@@ -124,6 +130,22 @@ export function applyQwen21ImageEditExactPrompt(
         `Qwen Image Edit 2.1 workflow contract mismatch at node ${nodeId}; expected ${classType}.`,
       );
     }
+  }
+
+  if (
+    String(graph?.["455"]?.inputs?.lora_name || "") !==
+      QWEN21_TURBO_LORA ||
+    Number(graph?.["455"]?.inputs?.strength_model) !== 1 ||
+    !Array.isArray(graph?.["455"]?.inputs?.model) ||
+    String(graph?.["455"]?.inputs?.model?.[0]) !== "451" ||
+    Number(graph?.["455"]?.inputs?.model?.[1]) !== 0 ||
+    !Array.isArray(graph?.["469"]?.inputs?.model) ||
+    String(graph?.["469"]?.inputs?.model?.[0]) !== "455" ||
+    Number(graph?.["469"]?.inputs?.model?.[1]) !== 0
+  ) {
+    throw new Error(
+      `Qwen Image Edit 2.1 Turbo LoRA must route UNET 451 through node 455 (${QWEN21_TURBO_LORA}) before QwenImage21Cache node 469.`,
+    );
   }
 
   const modelChecks = [
@@ -192,8 +214,8 @@ export function applyQwen21ImageEditExactPrompt(
   graph["474"].inputs.prompt = positivePrompt;
   graph["474"].inputs.negative_prompt = negativePrompt;
 
-  sampler.inputs.steps = 25;
-  sampler.inputs.cfg = 1;
+  sampler.inputs.steps = QWEN21_TURBO_STEPS;
+  sampler.inputs.cfg = QWEN21_TURBO_CFG;
   sampler.inputs.sampler_name = "euler";
   sampler.inputs.scheduler = "simple";
   sampler.inputs.denoise = 1;

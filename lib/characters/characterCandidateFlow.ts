@@ -1,3 +1,5 @@
+import { QWEN21_TURBO_LORA } from "@/lib/imageGenerateWorkflows";
+
 export const CHARACTER_CANDIDATE_EDIT_CONTRACT = {
   workflowId: "presets/image_qwen_image_2_1_image_edit",
   verifiedTemplateName: "image_qwen_image_2_1_image_edit.json",
@@ -14,7 +16,7 @@ export const CHARACTER_CANDIDATE_EDIT_CONTRACT = {
   model: "qwen_image_2.1_int8_convrot.safetensors",
   clip: "qwen3vl_8b_int8_convrot.safetensors",
   vae: "qwen_image_2.1_vae_bf16.safetensors",
-  lora: "",
+  lora: QWEN21_TURBO_LORA,
 } as const;
 
 export const CHARACTER_EDIT_PRESERVATION_TEXT =
