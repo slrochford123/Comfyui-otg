@@ -102,11 +102,11 @@ describe("H3 Ref Mods special mode contract", () => {
     expect(fs.existsSync(path.join(sourceDir, "checkpoint-tester.source.json"))).toBe(true);
   });
 
-  it("clips uploaded Motion RefMod source videos to a 5-second to 2-minute visual source", () => {
+  it("clips uploaded Motion RefMod source videos to a fixed 5-second visual source", () => {
     const route = read("app/api/h3/special/refmods/create/route.ts");
 
     expect(route).toContain("trimH3ReferenceVideoClip");
-    expect(route).toContain("H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS");
+    expect(route).not.toContain("H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS");
     expect(route).toContain('includeAudio: false');
     expect(route).toContain("durationSeconds: clip.durationSeconds");
   });

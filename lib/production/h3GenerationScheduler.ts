@@ -161,7 +161,6 @@ async function prepareH3ReferenceVideoClip(job: ProductionV2GenerationJob) {
     outputDir,
     outputPrefix: `${job.id}_video_reference`,
     startSeconds: reference.clipStartSeconds || 0,
-    durationSeconds: reference.clipDurationSeconds,
     includeAudio: reference.includeAudio,
   });
 

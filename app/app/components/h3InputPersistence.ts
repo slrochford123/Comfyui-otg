@@ -18,7 +18,6 @@ export type PersistedH3MediaMeta = {
   includeAudio?: boolean;
   sourceDurationSeconds?: number;
   clipStartSeconds?: number;
-  clipDurationSeconds?: number;
 };
 
 export type PersistedH3RefModSlot = {

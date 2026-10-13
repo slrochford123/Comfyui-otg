@@ -37,18 +37,18 @@ describe("H3 Body Swap special mode contract", () => {
     expect(jobs).toContain('sourceType: "h3-body-swap-generation"');
   });
 
-  it("selects and uploads a bounded Body Swap source-video window", () => {
+  it("selects and uploads a fixed 5-second Body Swap source-video window", () => {
     const panel = read("app/app/components/H3Panel.tsx");
     const route = read("app/api/h3/special/body-swap/generation/route.ts");
 
     expect(panel).toContain("sourceVideoClipStartSeconds:");
-    expect(panel).toContain("sourceVideoClipDurationSeconds:");
+    expect(panel).not.toContain("sourceVideoClipDurationSeconds:");
     expect(panel).toContain("setBodySwapSourceVideo((current)");
     expect(route).toContain("trimH3ReferenceVideoClip");
     expect(route).toContain("sourceVideoClipStartSeconds");
-    expect(route).toContain("sourceVideoClipDurationSeconds");
+    expect(route).not.toContain("sourceVideoClipDurationSeconds");
     expect(route).toContain("startSeconds: clipStartSeconds");
-    expect(route).toContain("durationSeconds: clipDurationSeconds");
+    expect(route).not.toContain("durationSeconds: clipDurationSeconds");
   });
 
   it("compiles a single-person Body Swap prompt from simple controls", () => {

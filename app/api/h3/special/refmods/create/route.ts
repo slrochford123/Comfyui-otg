@@ -8,7 +8,6 @@ import sharp from "sharp";
 
 import { probeDurationSeconds } from "@/lib/ffmpeg";
 import {
-  H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS,
   trimH3ReferenceVideoClip,
 } from "@/lib/h3ReferenceVideoClip";
 import { isAcceptedH3MediaFile, supportedH3MediaExtensions, type H3InputMediaKind } from "@/lib/h3MediaTypes";
@@ -128,7 +127,6 @@ async function saveUploadedSource(
       outputDir: safeJoin(media, "clips"),
       outputPrefix: ordinal,
       startSeconds: 0,
-      durationSeconds: H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS,
       includeAudio: false,
     });
 

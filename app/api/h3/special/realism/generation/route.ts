@@ -91,7 +91,6 @@ async function saveMediaBytes(
   category: H3InputMediaKind,
   index: number,
   clipStartSeconds = 0,
-  clipDurationSeconds?: number,
 ): Promise<SavedH3RealismMedia> {
   if (!isAcceptedH3MediaFile(category, source)) {
     throw new Error(`Choose a supported H3 Realism ${category} file (${supportedH3MediaExtensions(category).join(", ")}).`);
@@ -122,7 +121,6 @@ async function saveMediaBytes(
       outputDir: safeJoin(directory, "clips"),
       outputPrefix: `video-${index + 1}`,
       startSeconds: clipStartSeconds,
-      durationSeconds: clipDurationSeconds,
       includeAudio: true,
     });
 
@@ -147,7 +145,6 @@ async function saveFile(
   category: H3InputMediaKind,
   index: number,
   clipStartSeconds = 0,
-  clipDurationSeconds?: number,
 ) {
   return saveMediaBytes(
     ownerKey,
@@ -160,7 +157,6 @@ async function saveFile(
     category,
     index,
     clipStartSeconds,
-    clipDurationSeconds,
   );
 }
 
@@ -171,7 +167,6 @@ async function saveStagedFile(
   category: H3InputMediaKind,
   index: number,
   clipStartSeconds = 0,
-  clipDurationSeconds?: number,
 ) {
   const staged = await readCompletedH3StagedUpload(ownerKey, value, category);
   return saveMediaBytes(
@@ -185,7 +180,6 @@ async function saveStagedFile(
     category,
     index,
     clipStartSeconds,
-    clipDurationSeconds,
   );
 }
 
@@ -214,11 +208,10 @@ async function fileList(
   notes: string[],
   durations: Array<number | null>,
   starts: number[] = [],
-  clipDurations: number[] = [],
 ) {
   const files = form.getAll(key).filter((item): item is File => item instanceof File && item.size > 0);
   return Promise.all(files.map(async (file, index): Promise<H3RealismReference> => {
-    const saved = await saveFile(ownerKey, requestId, file, category, index, starts[index] || 0, clipDurations[index]);
+    const saved = await saveFile(ownerKey, requestId, file, category, index, starts[index] || 0);
     return toRealismReference(saved, category, index, notes, durations);
   }));
 }
@@ -231,7 +224,6 @@ async function stagedList(
   notes: string[],
   durations: Array<number | null>,
   starts: number[] = [],
-  clipDurations: number[] = [],
 ) {
   const uploads = Array.isArray(values)
     ? values
@@ -240,7 +232,7 @@ async function stagedList(
       : [];
 
   return Promise.all(uploads.map(async (value, index): Promise<H3RealismReference> => {
-    const saved = await saveStagedFile(ownerKey, requestId, value, category, index, starts[index] || 0, clipDurations[index]);
+    const saved = await saveStagedFile(ownerKey, requestId, value, category, index, starts[index] || 0);
     return toRealismReference(saved, category, index, notes, durations);
   }));
 }
@@ -329,12 +321,11 @@ async function stagedMedia(
   const audioDescriptions = descriptions(config.audioDescriptions);
   const videoDurations = numbers(config.videoDurations);
   const videoClipStarts = clipStarts(config.videoClipStartSeconds);
-  const videoClipDurations = clipStarts(config.videoClipDurationSeconds);
   const audioDurations = numbers(config.audioDurations);
 
   return {
     images: await stagedList(staged.referenceImages, ownerKey, requestId, "image", imageDescriptions, []),
-    videos: await stagedList(staged.referenceVideos, ownerKey, requestId, "video", videoDescriptions, videoDurations, videoClipStarts, videoClipDurations),
+    videos: await stagedList(staged.referenceVideos, ownerKey, requestId, "video", videoDescriptions, videoDurations, videoClipStarts),
     audios: await stagedList(staged.referenceAudios, ownerKey, requestId, "audio", audioDescriptions, audioDurations),
   };
 }
@@ -350,12 +341,11 @@ async function multipartMedia(
   const audioDescriptions = descriptions(config.audioDescriptions);
   const videoDurations = numbers(config.videoDurations);
   const videoClipStarts = clipStarts(config.videoClipStartSeconds);
-  const videoClipDurations = clipStarts(config.videoClipDurationSeconds);
   const audioDurations = numbers(config.audioDurations);
 
   return {
     images: await fileList(form, "referenceImages", ownerKey, requestId, "image", imageDescriptions, []),
-    videos: await fileList(form, "referenceVideos", ownerKey, requestId, "video", videoDescriptions, videoDurations, videoClipStarts, videoClipDurations),
+    videos: await fileList(form, "referenceVideos", ownerKey, requestId, "video", videoDescriptions, videoDurations, videoClipStarts),
     audios: await fileList(form, "referenceAudios", ownerKey, requestId, "audio", audioDescriptions, audioDurations),
   };
 }

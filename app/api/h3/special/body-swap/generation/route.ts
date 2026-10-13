@@ -72,7 +72,6 @@ async function saveMediaBytes(
   category: H3InputMediaKind,
   label: string,
   clipStartSeconds = 0,
-  clipDurationSeconds?: number,
 ): Promise<H3BodySwapMedia> {
   if (!isAcceptedH3MediaFile(category, source)) {
     throw new Error(`Choose a supported Body Swap ${label} file (${supportedH3MediaExtensions(category).join(", ")}).`);
@@ -102,7 +101,6 @@ async function saveMediaBytes(
       outputDir: safeJoin(directory, "clips"),
       outputPrefix: safeSegment(label),
       startSeconds: clipStartSeconds,
-      durationSeconds: clipDurationSeconds,
       includeAudio: true,
     });
 
@@ -122,7 +120,6 @@ async function saveFile(
   category: H3InputMediaKind,
   label: string,
   clipStartSeconds = 0,
-  clipDurationSeconds?: number,
 ) {
   return saveMediaBytes(
     ownerKey,
@@ -135,7 +132,6 @@ async function saveFile(
     category,
     label,
     clipStartSeconds,
-    clipDurationSeconds,
   );
 }
 
@@ -146,7 +142,6 @@ async function saveStagedFile(
   category: H3InputMediaKind,
   label: string,
   clipStartSeconds = 0,
-  clipDurationSeconds?: number,
 ) {
   const staged = await readCompletedH3StagedUpload(ownerKey, value, category);
   return saveMediaBytes(
@@ -160,7 +155,6 @@ async function saveStagedFile(
     category,
     label,
     clipStartSeconds,
-    clipDurationSeconds,
   );
 }
 
@@ -231,10 +225,9 @@ async function stagedMedia(
   config: Record<string, unknown>,
 ): Promise<H3BodySwapMediaPayload> {
   const sourceVideoClipStartSeconds = finiteClipStart(config.sourceVideoClipStartSeconds);
-  const sourceVideoClipDurationSeconds = finiteClipStart(config.sourceVideoClipDurationSeconds);
   return {
     sourceVideo: staged.sourceVideo
-      ? await saveStagedFile(ownerKey, requestId, staged.sourceVideo, "video", "source-video", sourceVideoClipStartSeconds, sourceVideoClipDurationSeconds)
+      ? await saveStagedFile(ownerKey, requestId, staged.sourceVideo, "video", "source-video", sourceVideoClipStartSeconds)
       : null,
     replacementImage: staged.replacementImage
       ? await saveStagedFile(ownerKey, requestId, staged.replacementImage, "image", "replacement-image")
@@ -251,10 +244,9 @@ async function multipartMedia(
   const sourceVideo = form.get("sourceVideo");
   const replacementImage = form.get("replacementImage");
   const sourceVideoClipStartSeconds = finiteClipStart(config.sourceVideoClipStartSeconds);
-  const sourceVideoClipDurationSeconds = finiteClipStart(config.sourceVideoClipDurationSeconds);
   return {
     sourceVideo: sourceVideo instanceof File && sourceVideo.size > 0
-      ? await saveFile(ownerKey, requestId, sourceVideo, "video", "source-video", sourceVideoClipStartSeconds, sourceVideoClipDurationSeconds)
+      ? await saveFile(ownerKey, requestId, sourceVideo, "video", "source-video", sourceVideoClipStartSeconds)
       : null,
     replacementImage: replacementImage instanceof File && replacementImage.size > 0
       ? await saveFile(ownerKey, requestId, replacementImage, "image", "replacement-image")

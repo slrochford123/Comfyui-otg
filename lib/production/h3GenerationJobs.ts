@@ -50,7 +50,6 @@ export type ProductionV2H3GenerationPayload = {
     mediaPath: string;
     includeAudio: boolean;
     clipStartSeconds?: number;
-    clipDurationSeconds?: number;
   };
   retryOfJobId?: string;
 };

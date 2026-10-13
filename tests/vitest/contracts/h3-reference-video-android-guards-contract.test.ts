@@ -53,7 +53,7 @@ describe(
     );
 
     it(
-      "normalizes every H3 reference video to a bounded 5-second to 2-minute MP4 before ComfyUI upload",
+      "normalizes every H3 reference video to a fixed 5-second MP4 while allowing 20-minute sources",
       () => {
         const clipper =
           read(
@@ -69,13 +69,13 @@ describe(
         expect(
           clipper,
         ).toContain(
-          "H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS = 120",
+          "H3_REFERENCE_VIDEO_MAX_SOURCE_SECONDS = 20 * 60",
         );
 
         expect(
           clipper,
         ).toContain(
-          "normalizeH3ReferenceVideoClipDuration",
+          "duration > H3_REFERENCE_VIDEO_MAX_SOURCE_SECONDS",
         );
 
         expect(
@@ -123,7 +123,13 @@ describe(
         expect(
           clipper,
         ).toContain(
-          "exceeded ${clipDuration} seconds",
+          "H3_REFERENCE_VIDEO_CLIP_SECONDS.toFixed(3)",
+        );
+
+        expect(
+          clipper,
+        ).toContain(
+          "exceeded ${H3_REFERENCE_VIDEO_CLIP_SECONDS} seconds",
         );
       },
     );

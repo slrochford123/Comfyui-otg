@@ -339,7 +339,6 @@ export async function POST(req: NextRequest) {
             mediaPath,
             includeAudio: true,
             clipStartSeconds,
-            clipDurationSeconds: 120,
           },
         },
       });

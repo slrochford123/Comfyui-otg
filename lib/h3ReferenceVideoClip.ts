@@ -7,8 +7,8 @@ import { probeVideoInfo } from "@/lib/videoFrame";
 
 export const H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS = 5;
 export const H3_REFERENCE_VIDEO_DEFAULT_CLIP_SECONDS = 5;
-export const H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS = 120;
 export const H3_REFERENCE_VIDEO_CLIP_SECONDS = H3_REFERENCE_VIDEO_DEFAULT_CLIP_SECONDS;
+export const H3_REFERENCE_VIDEO_MAX_SOURCE_SECONDS = 20 * 60;
 export const H3_REFERENCE_VIDEO_MAX_FPS = 24;
 export const H3_REFERENCE_VIDEO_MAX_WIDTH = 1376;
 export const H3_REFERENCE_VIDEO_MAX_HEIGHT = 768;
@@ -19,27 +19,11 @@ function finiteNumber(value: unknown, fallback = 0) {
   return Number.isFinite(next) ? next : fallback;
 }
 
-export function normalizeH3ReferenceVideoClipDuration(value: unknown, sourceDurationSeconds?: number | null) {
-  const sourceDuration = finiteNumber(sourceDurationSeconds, H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS);
-  const sourceLimit =
-    sourceDuration > 0
-      ? Math.min(sourceDuration, H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS)
-      : H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS;
-  return Math.min(
-    Math.max(
-      finiteNumber(value, H3_REFERENCE_VIDEO_DEFAULT_CLIP_SECONDS),
-      H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS,
-    ),
-    Math.max(H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS, sourceLimit),
-  );
-}
-
 export async function trimH3ReferenceVideoClip(args: {
   inputPath: string;
   outputDir: string;
   outputPrefix: string;
   startSeconds: number;
-  durationSeconds?: number;
   includeAudio?: boolean;
   maxWidth?: number;
   maxHeight?: number;
@@ -56,9 +40,13 @@ export async function trimH3ReferenceVideoClip(args: {
       `Reference video must be at least ${H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS} seconds long.`,
     );
   }
+  if (duration > H3_REFERENCE_VIDEO_MAX_SOURCE_SECONDS + H3_REFERENCE_VIDEO_DURATION_TOLERANCE_SECONDS) {
+    throw new Error(
+      "Reference video must be no more than 20 minutes long.",
+    );
+  }
 
-  const clipDuration = normalizeH3ReferenceVideoClipDuration(args.durationSeconds, duration);
-  const maxStart = Math.max(0, duration - clipDuration);
+  const maxStart = Math.max(0, duration - H3_REFERENCE_VIDEO_CLIP_SECONDS);
   const startSeconds = Math.min(
     Math.max(0, finiteNumber(args.startSeconds, 0)),
     maxStart,
@@ -93,7 +81,7 @@ export async function trimH3ReferenceVideoClip(args: {
 
   const outputPath = path.join(
     outputDir,
-    `${safeSegment(args.outputPrefix || "h3-reference-video")}_${startSeconds.toFixed(2).replace(".", "p")}_${clipDuration.toFixed(2).replace(".", "p")}s.mp4`,
+    `${safeSegment(args.outputPrefix || "h3-reference-video")}_${startSeconds.toFixed(2).replace(".", "p")}_5s.mp4`,
   );
 
   const ffmpeg = resolveFfmpegPath();
@@ -107,7 +95,7 @@ export async function trimH3ReferenceVideoClip(args: {
     "-i",
     inputPath,
     "-t",
-    clipDuration.toFixed(3),
+    H3_REFERENCE_VIDEO_CLIP_SECONDS.toFixed(3),
     "-map",
     "0:v:0",
     "-vf",
@@ -139,7 +127,7 @@ export async function trimH3ReferenceVideoClip(args: {
     throw new Error(
       result.stderr
       || result.stdout
-      || "Could not prepare the H3 reference video clip.",
+      || "Could not prepare the 5-second H3 reference video clip.",
     );
   }
 
@@ -179,18 +167,18 @@ export async function trimH3ReferenceVideoClip(args: {
   if (
     outputInfo.durationSeconds
     && outputInfo.durationSeconds
-      > clipDuration
+      > H3_REFERENCE_VIDEO_CLIP_SECONDS
         + H3_REFERENCE_VIDEO_DURATION_TOLERANCE_SECONDS
   ) {
     throw new Error(
-      `The prepared H3 reference clip exceeded ${clipDuration} seconds.`,
+      `The prepared H3 reference clip exceeded ${H3_REFERENCE_VIDEO_CLIP_SECONDS} seconds.`,
     );
   }
 
   return {
     outputPath,
     startSeconds,
-    durationSeconds: clipDuration,
+    durationSeconds: H3_REFERENCE_VIDEO_CLIP_SECONDS,
     sourceDurationSeconds: duration,
     width:
       outputInfo.width,
@@ -206,7 +194,6 @@ export async function extractH3ReferenceVideoPromptFrame(args: {
   outputDir: string;
   outputPrefix: string;
   startSeconds: number;
-  durationSeconds?: number;
 }) {
   const inputPath = path.resolve(args.inputPath);
   const outputDir = path.resolve(args.outputDir);
@@ -220,9 +207,13 @@ export async function extractH3ReferenceVideoPromptFrame(args: {
       `Reference video must be at least ${H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS} seconds long.`,
     );
   }
+  if (duration > H3_REFERENCE_VIDEO_MAX_SOURCE_SECONDS + H3_REFERENCE_VIDEO_DURATION_TOLERANCE_SECONDS) {
+    throw new Error(
+      "Reference video must be no more than 20 minutes long.",
+    );
+  }
 
-  const clipDuration = normalizeH3ReferenceVideoClipDuration(args.durationSeconds, duration);
-  const maxStart = Math.max(0, duration - clipDuration);
+  const maxStart = Math.max(0, duration - H3_REFERENCE_VIDEO_CLIP_SECONDS);
   const startSeconds = Math.min(
     Math.max(0, finiteNumber(args.startSeconds, 0)),
     maxStart,
@@ -275,7 +266,7 @@ export async function extractH3ReferenceVideoPromptFrame(args: {
     outputPath,
     startSeconds,
     durationSeconds:
-      clipDuration,
+      H3_REFERENCE_VIDEO_CLIP_SECONDS,
     sourceDurationSeconds:
       duration,
   };

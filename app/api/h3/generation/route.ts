@@ -167,7 +167,6 @@ async function toH3Reference(
   notes: string[],
   audioFlags: boolean[] = [],
   videoClipStarts: number[] = [],
-  videoClipDurations: number[] = [],
   videoClipBounds?: H3ReferenceVideoClipBounds,
 ): Promise<H3DirectReference> {
   if (category !== "video") {
@@ -184,7 +183,6 @@ async function toH3Reference(
     outputDir: path.join(path.dirname(saved.path), "clips"),
     outputPrefix: `${path.parse(saved.name).name || `video-${index + 1}`}`,
     startSeconds: videoClipStarts[index] || 0,
-    durationSeconds: videoClipDurations[index],
     includeAudio,
     maxWidth: videoClipBounds?.maxWidth,
     maxHeight: videoClipBounds?.maxHeight,
@@ -210,13 +208,12 @@ async function fileList(
   notes: string[],
   audioFlags: boolean[] = [],
   videoClipStarts: number[] = [],
-  videoClipDurations: number[] = [],
   videoClipBounds?: H3ReferenceVideoClipBounds,
 ) {
   const files = form.getAll(key).filter((item): item is File => item instanceof File && item.size > 0);
   return Promise.all(files.map(async (file, index): Promise<H3DirectReference> => {
     const saved = await saveFile(ownerKey, requestId, file, category, index);
-    return toH3Reference(saved, category, index, notes, audioFlags, videoClipStarts, videoClipDurations, videoClipBounds);
+    return toH3Reference(saved, category, index, notes, audioFlags, videoClipStarts, videoClipBounds);
   }));
 }
 
@@ -228,7 +225,6 @@ async function stagedList(
   notes: string[],
   audioFlags: boolean[] = [],
   videoClipStarts: number[] = [],
-  videoClipDurations: number[] = [],
   videoClipBounds?: H3ReferenceVideoClipBounds,
 ) {
   const uploads = Array.isArray(values)
@@ -239,7 +235,7 @@ async function stagedList(
 
   return Promise.all(uploads.map(async (value, index): Promise<H3DirectReference> => {
     const saved = await saveStagedFile(ownerKey, requestId, value, category, index);
-    return toH3Reference(saved, category, index, notes, audioFlags, videoClipStarts, videoClipDurations, videoClipBounds);
+    return toH3Reference(saved, category, index, notes, audioFlags, videoClipStarts, videoClipBounds);
   }));
 }
 
@@ -331,7 +327,6 @@ async function stagedMedia(
   const audioDescriptions = descriptions(config.audioDescriptions);
   const videoAudioFlags = Array.isArray(config.videoAudioFlags) ? config.videoAudioFlags.map(Boolean) : [];
   const videoClipStarts = numbers(config.videoClipStartSeconds);
-  const videoClipDurations = numbers(config.videoClipDurationSeconds);
   const videoClipBounds =
     h3ReferenceVideoClipBounds(
       config,
@@ -341,7 +336,7 @@ async function stagedMedia(
     firstFiles: await stagedList(staged.firstImage, ownerKey, requestId, "image", [""]),
     lastFiles: await stagedList(staged.lastImage, ownerKey, requestId, "image", [""]),
     images: await stagedList(staged.referenceImages, ownerKey, requestId, "image", imageDescriptions),
-    videos: await stagedList(staged.referenceVideos, ownerKey, requestId, "video", videoDescriptions, videoAudioFlags, videoClipStarts, videoClipDurations, videoClipBounds),
+    videos: await stagedList(staged.referenceVideos, ownerKey, requestId, "video", videoDescriptions, videoAudioFlags, videoClipStarts, videoClipBounds),
     audios: await stagedList(staged.referenceAudios, ownerKey, requestId, "audio", audioDescriptions),
   };
 }
@@ -357,7 +352,6 @@ async function multipartMedia(
   const audioDescriptions = descriptions(config.audioDescriptions);
   const videoAudioFlags = Array.isArray(config.videoAudioFlags) ? config.videoAudioFlags.map(Boolean) : [];
   const videoClipStarts = numbers(config.videoClipStartSeconds);
-  const videoClipDurations = numbers(config.videoClipDurationSeconds);
   const videoClipBounds =
     h3ReferenceVideoClipBounds(
       config,
@@ -367,7 +361,7 @@ async function multipartMedia(
     firstFiles: await fileList(form, "firstImage", ownerKey, requestId, "image", [""]),
     lastFiles: await fileList(form, "lastImage", ownerKey, requestId, "image", [""]),
     images: await fileList(form, "referenceImages", ownerKey, requestId, "image", imageDescriptions),
-    videos: await fileList(form, "referenceVideos", ownerKey, requestId, "video", videoDescriptions, videoAudioFlags, videoClipStarts, videoClipDurations, videoClipBounds),
+    videos: await fileList(form, "referenceVideos", ownerKey, requestId, "video", videoDescriptions, videoAudioFlags, videoClipStarts, videoClipBounds),
     audios: await fileList(form, "referenceAudios", ownerKey, requestId, "audio", audioDescriptions),
   };
 }

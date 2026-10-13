@@ -211,7 +211,7 @@ describe(
           'data-otg="production-v2-h3-reference-window"',
         );
         expect(panel).toContain(
-          'aria-label="H3 reference video start time"',
+          'aria-label="H3 reference video 5-second start time"',
         );
         expect(panel).toContain(
           "videoClipStartSeconds: clipStartSeconds",
@@ -225,7 +225,7 @@ describe(
         expect(jobs).toContain(
           "clipStartSeconds?: number;",
         );
-        expect(jobs).toContain(
+        expect(jobs).not.toContain(
           "clipDurationSeconds?: number;",
         );
         expect(scheduler).toContain(

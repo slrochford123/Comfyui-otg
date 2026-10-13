@@ -278,7 +278,8 @@ const secondaryButton = `${buttonBase} border-white/15 bg-white/[0.06] text-zinc
 const dangerButton = `${buttonBase} border-red-300/35 bg-red-400/15 text-red-100 hover:bg-red-400/25`;
 const fieldClass = "w-full rounded-lg border border-white/12 bg-black/35 px-3 py-2.5 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-cyan-300/60";
 const H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS = 5;
-const H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS = 120;
+const H3_REFERENCE_VIDEO_CLIP_SECONDS = 5;
+const H3_REFERENCE_VIDEO_MAX_SOURCE_SECONDS = 20 * 60;
 const EMPTY_EXPANDED_GROUPS = new Set<string>();
 
 /*
@@ -698,10 +699,11 @@ function StudioShell({
   const [audioDubMode, setAudioDubMode] = useState<"preserve_performance" | "rewrite_line">("preserve_performance");
   const [audioDubEmotion, setAudioDubEmotion] = useState("preserve");
   const [audioDubReplacementText, setAudioDubReplacementText] = useState("");
-  const referenceClipDuration = Math.min(Math.max(duration, H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS), H3_REFERENCE_VIDEO_MAX_CLIP_SECONDS);
-  const referenceClipMaxStart = Math.max(0, duration - referenceClipDuration);
+  const referenceClipMaxStart = Math.max(0, duration - H3_REFERENCE_VIDEO_CLIP_SECONDS);
   const referenceClipStartClamped = Math.min(Math.max(0, referenceClipStart), referenceClipMaxStart);
-  const referenceClipReady = duration >= H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS;
+  const referenceClipReady =
+    duration >= H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS
+    && duration <= H3_REFERENCE_VIDEO_MAX_SOURCE_SECONDS;
   const sourceVideoUrl = mediaUrl(version?.previewUrl || version?.mediaPath || scene.generatedClip?.previewUrl || scene.generatedClip?.path || "");
   const sourceVideoFileName = fileNameFromUrl(version?.mediaPath || version?.previewUrl || scene.generatedClip?.path || scene.generatedClip?.previewUrl || sourceVideoUrl);
   const audioSceneTitle = `Scene ${scene.sceneNumber}`;
@@ -917,14 +919,14 @@ function StudioShell({
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-xs font-black uppercase text-cyan-100">Reference Window</p>
-                    <p className="mt-1 text-[11px] leading-4 text-zinc-500">Send 5 seconds to 2 minutes from this source.</p>
+                    <p className="mt-1 text-[11px] leading-4 text-zinc-500">Pick the 5-second clip sent to H3. Source videos can be up to 20 minutes.</p>
                   </div>
                   <span className="shrink-0 rounded-full border border-white/10 bg-black/35 px-2 py-1 text-[11px] font-bold text-zinc-200">
-                    {referenceClipStartClamped.toFixed(2)}s - {(referenceClipStartClamped + referenceClipDuration).toFixed(2)}s
+                    {referenceClipStartClamped.toFixed(2)}s - {(referenceClipStartClamped + H3_REFERENCE_VIDEO_CLIP_SECONDS).toFixed(2)}s
                   </span>
                 </div>
                 <input
-                  aria-label="H3 reference video start time"
+                  aria-label="H3 reference video 5-second start time"
                   type="range"
                   min={0}
                   max={referenceClipMaxStart}
@@ -940,7 +942,9 @@ function StudioShell({
                 </div>
                 {!referenceClipReady ? (
                   <p className="mt-2 rounded-md border border-amber-300/30 bg-amber-300/10 px-2 py-1 text-xs text-amber-100">
-                    Source video must be at least {H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS} seconds.
+                    {duration < H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS
+                      ? `Source video must be at least ${H3_REFERENCE_VIDEO_MIN_CLIP_SECONDS} seconds.`
+                      : "Source video must be 20 minutes or less."}
                   </p>
                 ) : null}
               </div>

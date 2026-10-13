@@ -80,8 +80,8 @@ export const H3_REALISM_LIMITS = {
   maxAudios: 3,
   maxCombinedReferences: 12,
   minVideoSeconds: 5,
-  maxVideoSeconds: 120,
-  maxTotalVideoSeconds: 360,
+  maxVideoSeconds: 20 * 60,
+  maxTotalVideoSeconds: 3 * 20 * 60,
   maxTotalAudioSeconds: 15,
 } as const;
 
@@ -299,12 +299,12 @@ export function validateH3RealismReferences(
     const duration = numberOrNull(video.durationSeconds);
     if (duration === null) continue;
     if (duration < H3_REALISM_LIMITS.minVideoSeconds || duration > H3_REALISM_LIMITS.maxVideoSeconds) {
-      throw new Error("Realism video references must be at least 5 seconds and no more than 2 minutes each.");
+      throw new Error("Realism video references must be at least 5 seconds and no more than 20 minutes each.");
     }
     totalVideoSeconds += duration;
   }
   if (totalVideoSeconds > H3_REALISM_LIMITS.maxTotalVideoSeconds) {
-    throw new Error("Realism video references should total 6 minutes or less.");
+    throw new Error("Realism video references should total 60 minutes or less.");
   }
 
   const totalAudioSeconds = audios
