@@ -2,7 +2,7 @@
 
 const { spawnSync } = require("node:child_process");
 
-const REQUIRED_NODE_MAJOR = 20;
+const REQUIRED_NODE_MAJOR = 22;
 
 function npmCommand() {
   return process.platform === "win32" ? "npm.cmd" : "npm";
@@ -30,7 +30,7 @@ function checkNodeMajor() {
         REQUIRED_NODE_MAJOR +
         ".x, got " +
         process.version +
-        ". Use Node 20, then run npm install."
+        ". Use Node 22, then run npm install."
     );
   }
 
@@ -38,14 +38,12 @@ function checkNodeMajor() {
 }
 
 function tryLoadBetterSqlite() {
-  try {
-    const Database = require("better-sqlite3");
-    const db = new Database(":memory:");
-    db.close();
-    return null;
-  } catch (err) {
-    return err;
-  }
+  // Never dlopen two ABI variants in this process after rebuilding a native
+  // module. Probe in a fresh child both before and after the rebuild.
+  const probe = spawnSync(process.execPath, ["-e", "const D=require('better-sqlite3');const db=new D(':memory:');db.close();"], {
+    cwd: process.cwd(), encoding: "utf8", timeout: 15000,
+  });
+  return probe.status === 0 ? null : new Error(probe.stderr || probe.error?.message || "Native SQLite probe failed.");
 }
 
 function errorText(err) {
@@ -78,14 +76,14 @@ warn("better-sqlite3 failed to load. Rebuilding for current Node ABI.");
 warn(errorText(firstError));
 
 if (!rebuildBetterSqlite()) {
-  fail("npm rebuild better-sqlite3 failed. Run npm install under Node 20.");
+  fail("npm rebuild better-sqlite3 failed. Run npm install under Node 22.");
 }
 
 const secondError = tryLoadBetterSqlite();
 
 if (secondError) {
   warn(errorText(secondError));
-  fail("better-sqlite3 still cannot load after rebuild. Delete node_modules and run npm install under Node 20.");
+  fail("better-sqlite3 still cannot load after rebuild. Delete node_modules and run npm install under Node 22.");
 }
 
 log("better-sqlite3 rebuilt and verified.");

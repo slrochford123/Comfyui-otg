@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { runtimePath, voicePython } from "@/lib/runtime/configPaths";
 import { spawn } from "node:child_process";
 
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
@@ -13,8 +14,8 @@ export const dynamic = "force-dynamic";
 const OTG_DATA_DIR = process.env.OTG_DATA_DIR || path.join(process.cwd(), "data");
 const JOBS_DIR = path.join(OTG_DATA_DIR, "device_jobs");
 const WAN2GP_JOBS_DIR = path.join(OTG_DATA_DIR, "wan2gp_jobs");
-const WAN2GP_ROOT = (process.env.WAN2GP_ROOT || "C:\\AI\\Wan2GP").trim();
-const WAN2GP_PYTHON = (process.env.WAN2GP_PYTHON || "C:\\Users\\SLRoc\\miniconda3\\python.exe").trim();
+const WAN2GP_ROOT = (process.env.WAN2GP_ROOT || runtimePath("wan2gp")).trim();
+const WAN2GP_PYTHON = (process.env.WAN2GP_PYTHON || voicePython("wan2gp")).trim();
 const WAN2GP_MODEL_TYPE = (process.env.WAN2GP_MODEL_TYPE || "i2v_2_2").trim();
 
 function ensureDir(dir: string) {

@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { getGallerySourcesForRequest, resolveGalleryItemByName } from "@/lib/gallery";
 import { OTG_DATA_ROOT, ensureDir, safeSegment } from "@/lib/paths";
 import { SessionInvalidError } from "@/lib/ownerKey";
+import { voicePython } from "@/lib/runtime/configPaths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,10 +45,7 @@ function resolveDemucsCommand() {
   const configuredPython = String(process.env.OTG_DEMUCS_PYTHON || process.env.DEMUCS_PYTHON || "").trim();
   const candidates = [
     configuredPython,
-    "/home/shawn-rochford/AI/ComfyUI/venv-core/bin/python",
-    "/home/shawn-rochford/AI/ComfyUI/venv-h3-cu130/bin/python",
-    "C:\\AI\\demucs_env\\Scripts\\python.exe",
-    "C:\\AI\\Demucs\\demucs_env\\Scripts\\python.exe",
+    voicePython("demucs"),
   ].filter(Boolean);
 
   for (const candidate of candidates) {

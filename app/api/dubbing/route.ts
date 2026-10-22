@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { voicePython } from "@/lib/runtime/configPaths";
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest) {
     const outputPath = safeJoin(outputDir, `${jobId}.wav`);
     const metaPath = safeJoin(outputDir, `${jobId}.json`);
 
-    const py = (process.env.SEED_VC_PYTHON || "D:\\AI\\seed-vc\\.venv\\Scripts\\python.exe").trim();
+    const py = (process.env.SEED_VC_PYTHON || voicePython("voice-dubbing")).trim();
     const seedVcUrl = (process.env.SEED_VC_URL || "http://127.0.0.1:7860").trim().replace(/\/+$/, "");
     const timeoutMs = Math.max(60_000, Number(process.env.SEED_VC_TIMEOUT_MS || 600_000));
     const script = path.join(process.cwd(), "scripts", "seedvc", "dub.py");

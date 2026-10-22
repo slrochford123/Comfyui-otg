@@ -4,6 +4,7 @@ import path from "path";
 import sharp from "sharp";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 import { buildInternalSourceProxyFetch } from "./internalSourceProxy";
+import { runtimePath } from "@/lib/runtime/configPaths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -132,8 +133,7 @@ function sourceRoots() {
     process.env.OTG_COMFY_OUTPUT_DIR,
     comfyRoot ? path.join(comfyRoot, "output") : "",
     dataRoot,
-    "/home/shawn-rochford/AI/ComfyUI/ComfyUI/output",
-    "/home/shawn-rochford/AI/ComfyUI/output",
+    runtimePath("comfy", "output"),
     "/opt/ComfyUI/output",
     "/mnt/otg_fast/comfyui/output",
                 ]);

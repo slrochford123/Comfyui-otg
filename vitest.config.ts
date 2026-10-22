@@ -16,8 +16,8 @@ export default defineConfig({
     fileParallelism: false,
     // Integration fixtures own process.env, native SQLite connections and local
     // FFmpeg processes. Run one fork; do not compete for these shared resources.
-    minWorkers: 1,
     maxWorkers: 1,
+    pool: "forks",
     exclude: [
       ...configDefaults.exclude,
       "**/.patch-backups/**",

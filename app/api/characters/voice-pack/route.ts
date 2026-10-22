@@ -2,14 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { runtimePath, voicePython, dataRoot } from "@/lib/runtime/configPaths";
+import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { assertOwnerMediaFile, OwnerMediaAccessError } from "@/lib/ownerMediaAccess";
 
 export const runtime = "nodejs";
 
-const OTG_DATA_ROOT = path.resolve(process.env.OTG_DATA_ROOT || path.join(process.cwd(), "data"));
+const OTG_DATA_ROOT = dataRoot();
 
-const INDEX_TTS_ROOT = path.resolve(process.env.INDEX_TTS_ROOT || "C:\\AI\\voices\\IndexTTS2");
-const INDEX_TTS_PYTHON = path.resolve(process.env.INDEX_TTS_PYTHON || "C:\\AI\\voices\\IndexTTS2\\.venv\\Scripts\\python.exe");
-const INDEX_TTS_BRIDGE = path.resolve(process.env.INDEX_TTS_BRIDGE || "C:\\AI\\voices\\VoiceLab\\scripts\\indextts2_voicelab_smoke.py");
+const INDEX_TTS_ROOT = path.resolve(process.env.INDEX_TTS_ROOT || runtimePath("indextts2"));
+const INDEX_TTS_PYTHON = path.resolve(process.env.INDEX_TTS_PYTHON || process.env.INDEXTTS2_PYTHON || voicePython("indextts2"));
+const INDEX_TTS_BRIDGE = path.resolve(process.env.INDEX_TTS_BRIDGE || runtimePath("indextts2", "scripts", "indextts2_voicelab_smoke.py"));
 const INDEX_TTS_PACK_TIMEOUT_MS = Math.max(60_000, Number(process.env.INDEX_TTS_PACK_TIMEOUT_MS || 12 * 60 * 1000));
 
 const INDEX_STYLE_PACK = [
@@ -81,9 +84,6 @@ function safeSegment(value: unknown) {
   return cleaned || "character";
 }
 
-function ownerKeyFromRequest(req: NextRequest) {
-  return safeSegment(req.headers.get("x-otg-device-id") || "web_characters_builder");
-}
 
 function nowIso() {
   return new Date().toISOString();
@@ -184,9 +184,10 @@ function runIndexTts(args: {
 
 export async function POST(req: NextRequest) {
   try {
+    const owner = await getOwnerContext(req);
     const body = await req.json();
 
-    const ownerKey = ownerKeyFromRequest(req);
+    const ownerKey = safeSegment(owner.ownerKey);
     const characterId = safeSegment(body?.characterId || body?.characterName || "character");
     const characterName = String(body?.characterName || "").trim();
 
@@ -201,6 +202,7 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+    assertOwnerMediaFile(referenceWav, owner.ownerKey);
 
     await requireDir(INDEX_TTS_ROOT, "IndexTTS2 root");
     await requireFile(INDEX_TTS_PYTHON, "IndexTTS2 Python");
@@ -291,6 +293,8 @@ export async function POST(req: NextRequest) {
       outputs,
     });
   } catch (error: any) {
+    if (error instanceof SessionInvalidError) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    if (error instanceof OwnerMediaAccessError) return NextResponse.json({ ok: false, error: error.message }, { status: 403 });
     return NextResponse.json(
       { ok: false, error: error?.message || "IndexTTS2 voice-pack creation failed" },
       { status: 500 },

@@ -95,11 +95,11 @@ export function h3LoraBackendRoot(backend: ProductionV2H3BackendId) {
   if (backend === "rtx3090")
     return (
       process.env.OTG_H3_LORA_ROOT_RTX3090 ||
-      "/home/shawn-rochford/AI/ComfyUI/models/loras/MiniMax-H3"
+      "/opt/slr-studios/workers/3090/models/loras/MiniMax-H3"
     );
   return (
     process.env.OTG_H3_LORA_ROOT_RTX5060TI ||
-    "/opt/ComfyUI/models/loras/MiniMax-H3"
+    "/opt/slr-studios/workers/5060ti/models/loras/MiniMax-H3"
   );
 }
 
@@ -573,8 +573,22 @@ async function deleteLocalH3Lora(
   fs.unlinkSync(target.target);
 }
 
+export function h3LoraDeletionLocation(backend: ProductionV2H3BackendId) {
+  const local = process.env.OTG_H3_LORA_LOCAL_BACKEND;
+  if (local !== "rtx3090" && local !== "rtx5060ti")
+    throw new Error("Configure the local H3 LoRA backend before deleting model files.");
+  if (backend === local) return { kind: "local" as const };
+  const key = backend === "rtx3090" ? "OTG_H3_RTX3090_SSH_HOST" : "OTG_H3_RTX5060TI_SSH_HOST";
+  const host = process.env[key] || "";
+  // Trusted deployment alias only; no browser hostname, options or commands.
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(host))
+    throw new Error("Configure the selected remote H3 LoRA host before deleting model files.");
+  return { kind: "remote" as const, host };
+}
+
 async function deleteRemoteH3Lora(
   target: ReturnType<typeof resolveH3LoraDeleteTarget>,
+  host: string,
 ) {
   const script =
     "import base64,pathlib,sys; root=pathlib.Path(base64.b64decode(sys.argv[1]).decode()).resolve(strict=True); rel=base64.b64decode(sys.argv[2]).decode(); candidate=root/rel; assert not candidate.is_symlink(), 'symlink refused'; target=candidate.resolve(strict=True); assert target!=root and root in target.parents, 'outside approved root'; assert target.is_file(), 'not a regular model file'; target.unlink()";
@@ -588,7 +602,7 @@ async function deleteRemoteH3Lora(
       "BatchMode=yes",
       "-o",
       "ConnectTimeout=8",
-      process.env.OTG_H3_RTX5060TI_SSH_HOST || "otg-slr",
+      host,
       command,
     ],
     { timeout: 30_000 },
@@ -621,8 +635,9 @@ export async function deleteH3LoraFiles(
         `${entry.displayName} is not recorded as installed on ${H3_BACKEND_PROFILES[backend].label}.`,
       );
     const target = resolveH3LoraDeleteTarget(backend, entry.filename);
-    if (backend === "rtx3090") await deleteLocalH3Lora(target);
-    else await deleteRemoteH3Lora(target);
+    const location = h3LoraDeletionLocation(backend);
+    if (location.kind === "local") await deleteLocalH3Lora(target);
+    else await deleteRemoteH3Lora(target, location.host);
     currentEntry = {
       ...currentEntry,
       enabled: false,

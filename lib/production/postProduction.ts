@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { runtimePath, voicePython } from "@/lib/runtime/configPaths";
 
 import { probeDurationSeconds, resolveFfmpegPath, resolveFfprobePath, runCmd } from "@/lib/ffmpeg";
 import { ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
@@ -129,13 +130,13 @@ export async function adjustProductionV2Volume(args: {
 
 export function resolveProductionV2Demucs() {
   const python = clean(process.env.OTG_DEMUCS_PYTHON)
-    || "/home/shawn-rochford/AI/LeVo2/.venv/bin/python";
+    || voicePython("demucs");
   const runner = clean(process.env.OTG_DEMUCS_RUNNER)
-    || "/home/shawn-rochford/AI/models/LeVo2/runtime/third_party/demucs/run.py";
+    || runtimePath("demucs", "run.py");
   const modelDir = clean(
     process.env.OTG_DEMUCS_MODEL_DIR
     || process.env.OTG_DEMUCS_MODEL_REPO,
-  ) || "/home/shawn-rochford/AI/models/LeVo2/runtime/third_party/demucs/ckpt";
+  ) || runtimePath("demucs", "ckpt");
 
   const parsedGpuId = Number(
     clean(process.env.OTG_DEMUCS_GPU_ID) || "0",

@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { runtimePath } from "@/lib/runtime/configPaths";
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -14,7 +15,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const VOICES_ROOT = path.resolve(process.env.OTG_VOICES_ROOT || "C:\\AI\\Voices");
+const VOICES_ROOT = path.resolve(process.env.OTG_VOICES_ROOT || runtimePath("voices"));
 const ALLOWED_ROOTS = [VOICES_ROOT, path.resolve(OTG_DATA_ROOT)];
 const AUDIO_EXT_RE = /\.(mp3|wav|flac|m4a|aac|ogg|webm)$/i;
 const VIDEO_EXT_RE = /\.(mp4|webm|mov|mkv)$/i;
@@ -66,7 +67,7 @@ function validateVoicePath(rawValue: string) {
   const voicePath = expandVoicePath(rawValue);
   const allowed = ALLOWED_ROOTS.some((root) => assertInside(root, voicePath));
   if (!allowed || !fs.existsSync(voicePath) || IGNORE_RE.test(voicePath)) {
-    throw new Error("Selected voice source is invalid. Use a Characters reference voice or a clean C:\\AI\\Voices source, not venv/site-packages/test files.");
+    throw new Error("Selected voice source is invalid. Choose a Characters reference or a clean configured voice-library file, not runtime/test files.");
   }
   if (fs.statSync(voicePath).isFile() && !AUDIO_EXT_RE.test(voicePath)) {
     throw new Error("Selected voice source must be clean reference audio for XTTS.");

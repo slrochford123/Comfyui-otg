@@ -1,14 +1,15 @@
 """TEST-only HDR export bridge around the installed official Lightricks nodes.
 
-OpenImageIO is isolated under TEST qualification storage, not installed into the
-shared Comfy venv. This node has no configurable shell command or output root.
+OpenImageIO is isolated under a deployment-configured dependency directory, not
+installed into the shared Comfy venv. No shell command or output root is exposed.
 """
 import re
+import os
 import sys
 from pathlib import Path
 from zipfile import ZipFile, ZIP_STORED
 
-DEPENDENCIES = "/home/shawn-rochford/AI/runtime/test/qualification/ltx25-node-deps"
+DEPENDENCIES = os.environ.get("OTG_LTX_HDR_DEPENDENCIES", "/opt/slr-studios/dependencies/ltx-hdr")
 
 class TESTLTXHDRExport:
     @classmethod

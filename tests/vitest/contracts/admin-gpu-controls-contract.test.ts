@@ -15,15 +15,13 @@ describe("admin GPU controls TEST contract", () => {
   const app = read("app/app/AppPageClient.tsx");
   const helper = read("scripts/otg-gpu-control");
 
-  it("keeps the API admin-only and TEST-host gated", () => {
+  it("keeps the API admin-only and explicitly endpoint-routed", () => {
     expect(route).toContain("requireAdmin");
-    expect(route).toContain("OTG_GPU_CONTROLS_ENABLED");
-    expect(route).toContain("OTG_GPU_CONTROLS_HOSTNAME");
     expect(route).toContain("OTG_GPU_CONTROLS_ALLOWED_ORIGINS");
-    expect(route).toContain("target === hostname()");
-    expect(route).toContain("/usr/local/sbin/otg-gpu-control");
-    expect(route).toContain('"/usr/bin/sudo"');
-    expect(route).toContain('"-n"');
+    expect(route).toContain("maintenanceOperation");
+    expect(route).not.toContain("hostname()");
+    expect(route).not.toContain("execFile");
+    expect(route).not.toContain("/usr/local/sbin/otg-gpu-control");
   });
 
   it("requires browser-origin protections for destructive actions", () => {

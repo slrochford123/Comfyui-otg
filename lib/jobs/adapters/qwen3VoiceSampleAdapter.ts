@@ -3,6 +3,7 @@ import { ensureDir, OTG_DATA_ROOT, safeSegment } from "@/lib/paths";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { runtimePath, voicePython } from "@/lib/runtime/configPaths";
 
 export type Qwen3VoiceSampleAdapterResult = {
   samplePath: string;
@@ -67,9 +68,9 @@ export function isQwen3VoiceSampleJob(job: QueuedContractJob): boolean {
 function qwen3Config(): Qwen3VoiceSampleConfig {
   return {
     enabled: isRealQwen3VoiceSampleEnabled(),
-    root: path.resolve(process.env.QWEN_TTS_ROOT || "C:\\AI\\voices\\qwen 3"),
-    python: path.resolve(process.env.QWEN_TTS_PYTHON || "C:\\Users\\SLRoc\\miniconda3\\envs\\qwen3tts-repair\\python.exe"),
-    sitePackages: path.resolve(process.env.QWEN_TTS_SITE_PACKAGES || "C:\\AI\\voices\\qwen 3\\qwen3tts-env\\Lib\\site-packages"),
+    root: path.resolve(process.env.QWEN_TTS_ROOT || runtimePath("qwen-tts")),
+    python: path.resolve(process.env.QWEN_TTS_PYTHON || voicePython("qwen-tts")),
+    sitePackages: path.resolve(process.env.QWEN_TTS_SITE_PACKAGES || runtimePath("qwen-tts", "site-packages")),
     bridge: path.resolve(process.env.QWEN_TTS_BRIDGE || path.join(process.cwd(), "scripts", "qwen3_voice_design_preview.py")),
     modelId: String(process.env.QWEN_TTS_MODEL_ID || "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"),
     timeoutMs: Math.max(60_000, Number(process.env.QWEN_TTS_PREVIEW_TIMEOUT_MS || 10 * 60 * 1000)),

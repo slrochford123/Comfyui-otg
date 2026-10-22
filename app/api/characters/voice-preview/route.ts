@@ -3,20 +3,22 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import fssync from "node:fs";
 import path from "node:path";
+import { platformRuntimePath, runtimePath, voicePython, dataRoot } from "@/lib/runtime/configPaths";
+import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 
 export const runtime = "nodejs";
 
-const OTG_DATA_ROOT = path.resolve(process.env.OTG_DATA_ROOT || path.join(process.cwd(), "data"));
+const OTG_DATA_ROOT = dataRoot();
 
-const INDEX_TTS_ROOT = path.resolve(process.env.INDEX_TTS_ROOT || "C:\\AI\\voices\\IndexTTS2");
-const INDEX_TTS_PYTHON = path.resolve(process.env.INDEX_TTS_PYTHON || "C:\\AI\\voices\\IndexTTS2\\.venv\\Scripts\\python.exe");
-const INDEX_TTS_BRIDGE = path.resolve(process.env.INDEX_TTS_BRIDGE || "C:\\AI\\voices\\VoiceLab\\scripts\\indextts2_voicelab_smoke.py");
-const INDEX_TTS_REFERENCE_WAV = path.resolve(process.env.INDEX_TTS_REFERENCE_WAV || "C:\\AI\\voices\\VoiceLab\\samples\\input\\jorog_reference.wav");
+const INDEX_TTS_ROOT = path.resolve(process.env.INDEX_TTS_ROOT || platformRuntimePath("C:\\AI\\voices\\IndexTTS2", "indextts2"));
+const INDEX_TTS_PYTHON = path.resolve(process.env.INDEX_TTS_PYTHON || process.env.INDEXTTS2_PYTHON || voicePython("indextts2"));
+const INDEX_TTS_BRIDGE = path.resolve(process.env.INDEX_TTS_BRIDGE || runtimePath("indextts2", "scripts", "indextts2_voicelab_smoke.py"));
+const INDEX_TTS_REFERENCE_WAV = path.resolve(process.env.INDEX_TTS_REFERENCE_WAV || runtimePath("voice-references", "synthetic-default.wav"));
 const PREVIEW_TIMEOUT_MS = Math.max(60_000, Number(process.env.INDEX_TTS_PREVIEW_TIMEOUT_MS || 5 * 60 * 1000));
 
-const QWEN_TTS_ROOT = path.resolve(process.env.QWEN_TTS_ROOT || "C:\\AI\\voices\\qwen 3");
-const QWEN_TTS_PYTHON = path.resolve(process.env.QWEN_TTS_PYTHON || "C:\\Users\\SLRoc\\miniconda3\\envs\\qwen3tts-repair\\python.exe");
-const QWEN_TTS_SITE_PACKAGES = path.resolve(process.env.QWEN_TTS_SITE_PACKAGES || "C:\\AI\\voices\\qwen 3\\qwen3tts-env\\Lib\\site-packages");
+const QWEN_TTS_ROOT = path.resolve(process.env.QWEN_TTS_ROOT || runtimePath("qwen-tts"));
+const QWEN_TTS_PYTHON = path.resolve(process.env.QWEN_TTS_PYTHON || voicePython("qwen-tts"));
+const QWEN_TTS_SITE_PACKAGES = path.resolve(process.env.QWEN_TTS_SITE_PACKAGES || runtimePath("qwen-tts", "site-packages"));
 const QWEN_TTS_BRIDGE = path.resolve(process.env.QWEN_TTS_BRIDGE || path.join(process.cwd(), "scripts", "qwen3_voice_design_preview.py"));
 const QWEN_TTS_MODEL_ID = String(process.env.QWEN_TTS_MODEL_ID || "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign");
 const QWEN_PREVIEW_TIMEOUT_MS = Math.max(60_000, Number(process.env.QWEN_TTS_PREVIEW_TIMEOUT_MS || 10 * 60 * 1000));
@@ -31,9 +33,6 @@ function safeSegment(value: unknown) {
   return cleaned || "character";
 }
 
-function ownerKeyFromRequest(req: NextRequest) {
-  return safeSegment(req.headers.get("x-otg-device-id") || "web_characters_builder");
-}
 
 function fileUrlFor(absPath: string) {
   const rel = path.relative(OTG_DATA_ROOT, absPath).replace(/\\/g, "/");
@@ -230,9 +229,10 @@ function voiceEmotionPrompt(voiceSettings: any) {
 
 export async function POST(req: NextRequest) {
   try {
+    const owner = await getOwnerContext(req);
     const body = await req.json();
 
-    const ownerKey = ownerKeyFromRequest(req);
+    const ownerKey = safeSegment(owner.ownerKey);
     const characterId = safeSegment(body?.characterId || body?.characterName || "character");
     const text = String(body?.text || "").trim();
 
@@ -333,6 +333,7 @@ export async function POST(req: NextRequest) {
       stderrPath,
     });
   } catch (error: any) {
+    if (error instanceof SessionInvalidError) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     return NextResponse.json(
       { ok: false, error: error?.message || "IndexTTS2 voice preview failed" },
       { status: 500 },

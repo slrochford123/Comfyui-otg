@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import fssync from "node:fs";
 import path from "node:path";
+import { runtimePath } from "@/lib/runtime/configPaths";
 import { promisify } from "node:util";
 
 import { NextRequest, NextResponse } from "next/server";
@@ -21,8 +22,8 @@ const execFileAsync = promisify(execFile);
 const REPO_ROOT = process.cwd();
 const GALLERY_PROFILE = process.env.OTG_GALLERY_PROFILE || "test_profile";
 const CONFIGURED_GALLERY_DIR = process.env.OTG_GALLERY_DIR || "";
-const COMFY_INPUT_DIR = process.env.OTG_COMFY_INPUT_DIR || "C:\\AI\\ComfyUI\\ComfyUI\\input";
-const COMFY_OUTPUT_DIR = process.env.OTG_COMFY_OUTPUT_DIR || "C:\\AI\\ComfyUI\\ComfyUI\\output";
+const COMFY_INPUT_DIR = process.env.OTG_COMFY_INPUT_DIR || runtimePath("comfyui", "input");
+const COMFY_OUTPUT_DIR = process.env.OTG_COMFY_OUTPUT_DIR || runtimePath("comfyui", "output");
 const FFMPEG_BIN = process.env.OTG_FFMPEG_BIN || process.env.FFMPEG_PATH || "ffmpeg";
 
 function safeName(value: unknown, fallback = "clip") {

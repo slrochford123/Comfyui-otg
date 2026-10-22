@@ -24,6 +24,7 @@ import { submitComfyPromptWithGpuLease } from "@/lib/workers/comfyPromptLease";
 import { probeVideoInfo } from "@/lib/videoFrame";
 import { resolveFfmpegPath, runCmd } from "@/lib/ffmpeg";
 import { scailSourceObjectIndex, scailFramePlan } from "@/lib/scailRuntime";
+import { runtimePath } from "@/lib/runtime/configPaths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -105,10 +106,11 @@ function configuredComfyOutputRoots() {
 
   return uniqueStrings([
     process.env.COMFY_OUTPUT_DIR || null,
+    process.env.OTG_COMFY_OUTPUT_DIR || null,
     process.env.ADMIN_GALLERY_ROOT || null,
     ...envRoots,
     "/mnt/otg_fast/comfyui/output",
-    "/home/shawn-rochford/ComfyUI/output",
+    runtimePath("comfy", "output"),
     "E:/Renders/ComfyUI",
   ])
     .map((root) => path.resolve(root))

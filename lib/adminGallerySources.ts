@@ -45,7 +45,6 @@ export type AdminGalleryPage = {
   hasMore: boolean;
 };
 
-const LOCAL_3090_OUTPUT_ROOT = "/home/shawn-rochford/AI/ComfyUI/ComfyUI/output";
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".mov", ".mkv"]);
 const MEDIA_EXTENSIONS = new Set([...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS]);
@@ -336,9 +335,8 @@ function toItem(source: AdminGallerySourceDefinition, value: Omit<AdminGalleryIt
 
 async function localRootForSource(sourceId: AdminGallerySourceId) {
   const configured = configuredLocalRoot(sourceId);
-  const requested =
-    configured ||
-    (sourceId === "comfy-3090" ? LOCAL_3090_OUTPUT_ROOT : "");
+  // Never infer logical 3090 identity from this web host's generic output root.
+  const requested = configured;
 
   if (!requested) {
     throw new Error(

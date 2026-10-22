@@ -1,31 +1,20 @@
-import { NextResponse } from "next/server";
-import path from "path";
-import fs from "fs/promises";
+import { NextRequest, NextResponse } from "next/server";
+import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { POST as deleteOwnedGalleryCopy } from "@/app/api/gallery/delete/route";
 
-type Body = { filename: string; subfolder?: string; type?: "output" | "input" | "temp" | string };
-
-function safeJoin(base: string, ...parts: string[]) {
-  const p = path.normalize(path.join(base, ...parts));
-  const b = path.normalize(base + path.sep);
-  if (!p.startsWith(b)) throw new Error("Path traversal blocked");
-  return p;
-}
-
-export async function POST(req: Request) {
+/** Legacy filename API: preserve compatibility, never delete shared worker files. */
+export async function POST(request: NextRequest) {
   try {
-    const { filename, subfolder = "", type = "output" } = (await req.json()) as Body;
-
-    if (!filename) return NextResponse.json({ ok: false, error: "Missing filename" }, { status: 400 });
-
-    // Adjust these env vars to match your machine
-    const comfyDir = process.env.COMFYUI_DIR || "C:\\ComfyUI";
-    const base = path.join(comfyDir, String(type)); // output/input/temp
-
-    const target = safeJoin(base, subfolder, filename);
-    await fs.unlink(target);
-
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });
+    await getOwnerContext(request);
+    const body = await request.json().catch(() => null);
+    const filename = body?.filename;
+    if (typeof filename !== "string" || !filename || /[\\/\x00]/.test(filename) || filename === "." || filename === "..") {
+      return NextResponse.json({ ok: false, error: "Invalid filename." }, { status: 400 });
+    }
+    const target = new URL('/api/gallery/delete', request.url);
+    return deleteOwnedGalleryCopy(new NextRequest(target, { method: 'POST', headers: request.headers,
+      body: JSON.stringify({ name: filename, deleteOriginals: false }) }));
+  } catch (error) {
+    return NextResponse.json({ ok: false, error: error instanceof SessionInvalidError ? "Unauthorized" : "Unable to delete Gallery item." }, { status: error instanceof SessionInvalidError ? 401 : 500 });
   }
 }

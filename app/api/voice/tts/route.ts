@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { runtimePath } from "@/lib/runtime/configPaths";
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -18,7 +19,7 @@ export const revalidate = 0;
 
 type TtsProvider = "indextts2" | "omnivoice";
 
-const VOICES_ROOT = path.resolve(process.env.OTG_VOICES_ROOT || "C:\\AI\\Voices");
+const VOICES_ROOT = path.resolve(process.env.OTG_VOICES_ROOT || runtimePath("voices"));
 const ALLOWED_REFERENCE_ROOTS = [VOICES_ROOT, path.resolve(OTG_DATA_ROOT), path.resolve(process.cwd(), "data")];
 const AUDIO_EXT_RE = /\.(mp3|wav|flac|m4a|aac|ogg|webm)$/i;
 const IGNORE_RE = /[\\/](venv|\.venv|env|node_modules|site-packages|test_data|tests|__pycache__|\.git|scipy)[\\/]/i;
@@ -65,7 +66,7 @@ function validateReferencePath(rawValue: string) {
   const voicePath = expandVoicePath(rawValue);
   const allowed = ALLOWED_REFERENCE_ROOTS.some((root) => assertInside(root, voicePath));
   if (!voicePath || !allowed || !fs.existsSync(voicePath) || IGNORE_RE.test(voicePath)) {
-    throw new Error("Selected voice source is invalid. Use a Characters reference voice or a clean C:\\AI\\Voices source.");
+    throw new Error("Selected voice source is invalid. Choose a Characters reference or a file in the configured voice library.");
   }
   const stat = fs.statSync(voicePath);
   if (stat.isFile()) {

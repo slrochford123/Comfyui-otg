@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { runtimePath, voicePython } from "@/lib/runtime/configPaths";
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -52,16 +53,16 @@ const LTX_WORKFLOW_PATH = path.resolve(
     path.join(process.cwd(), "app", "app", "workflows", "animate-me-create-video-from-images.json"),
 );
 
-const INDEX_TTS_ROOT = path.resolve(process.env.INDEX_TTS_ROOT || "C:\\AI\\voices\\IndexTTS2");
-const INDEX_TTS_PYTHON = path.resolve(process.env.INDEX_TTS_PYTHON || "C:\\AI\\voices\\IndexTTS2\\.venv\\Scripts\\python.exe");
-const INDEX_TTS_BRIDGE = path.resolve(process.env.INDEX_TTS_BRIDGE || "C:\\AI\\voices\\VoiceLab\\scripts\\indextts2_voicelab_smoke.py");
+const INDEX_TTS_ROOT = path.resolve(process.env.INDEX_TTS_ROOT || runtimePath("indextts2"));
+const INDEX_TTS_PYTHON = path.resolve(process.env.INDEX_TTS_PYTHON || process.env.INDEXTTS2_PYTHON || voicePython("indextts2"));
+const INDEX_TTS_BRIDGE = path.resolve(process.env.INDEX_TTS_BRIDGE || runtimePath("indextts2", "scripts", "indextts2_voicelab_smoke.py"));
 
 const DEFAULT_DEVICE_ID = "web_characters_builder";
 const DEFAULT_SCRIPT = "Hey, thanks for creating me. I'm your new character. Let's make some great movies.";
 const COMFY_TIMEOUT_MS = Math.max(60_000, Number(process.env.ANIMATE_ME_COMFY_TIMEOUT_MS || 90 * 60 * 1000));
 const INDEX_TTS_TIMEOUT_MS = Math.max(60_000, Number(process.env.ANIMATE_ME_INDEX_TTS_TIMEOUT_MS || 10 * 60 * 1000));
 const FFMPEG_TIMEOUT_MS = Math.max(60_000, Number(process.env.ANIMATE_ME_FFMPEG_TIMEOUT_MS || 10 * 60 * 1000));
-const ANIMATE_ME_SEED_VC_PYTHON = path.resolve(process.env.SEED_VC_PYTHON || process.env.ANIMATE_ME_SEED_VC_PYTHON || "D:\\AI\\seed-vc\\.venv\\Scripts\\python.exe");
+const ANIMATE_ME_SEED_VC_PYTHON = path.resolve(process.env.SEED_VC_PYTHON || process.env.ANIMATE_ME_SEED_VC_PYTHON || voicePython("voice-dubbing"));
 const ANIMATE_ME_SEED_VC_SCRIPT = path.resolve(process.env.SEED_VC_SCRIPT || process.env.ANIMATE_ME_SEED_VC_SCRIPT || path.join(process.cwd(), "scripts", "seedvc", "dub.py"));
 const ANIMATE_ME_SEED_VC_URL = String(process.env.SEED_VC_URL || process.env.ANIMATE_ME_SEED_VC_URL || "http://127.0.0.1:7860").trim().replace(/\/+$/, "");
 const ANIMATE_ME_SEED_VC_TIMEOUT_MS = Math.max(60_000, Number(process.env.SEED_VC_TIMEOUT_MS || process.env.ANIMATE_ME_SEED_VC_TIMEOUT_MS || 600_000));

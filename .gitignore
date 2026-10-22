@@ -73,7 +73,7 @@ apply-*.py
 *.pth
 *.pt
 *.onnx
-runtime/
+/runtime/
 qualification/
 qualification-evidence/
 models/

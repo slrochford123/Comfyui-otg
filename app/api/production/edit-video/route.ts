@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { runtimePath } from "@/lib/runtime/configPaths";
 import crypto from "node:crypto";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 import {
@@ -24,7 +25,7 @@ const COMFY_BASE_URL = String(
 const COMFY_INPUT_DIR =
   process.env.OTG_COMFY_INPUT_DIR ||
   process.env.COMFYUI_INPUT_DIR ||
-  "C:\\AI\\ComfyUI\\ComfyUI\\input";
+  runtimePath("comfyui", "input");
 
 const GALLERY_PROFILE =
   process.env.OTG_GALLERY_PROFILE ||

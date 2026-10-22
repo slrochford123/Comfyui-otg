@@ -69,6 +69,7 @@ function scan(
 afterEach(() => {
   delete process.env.OTG_H3_LORA_CATALOG_FILE;
   delete process.env.OTG_H3_LORA_ROOT_RTX3090;
+  delete process.env.OTG_H3_LORA_LOCAL_BACKEND;
   temporaryFiles
     .splice(0)
     .forEach((file) => fs.rmSync(file, { force: true, recursive: true }));
@@ -246,6 +247,7 @@ describe("H3 LoRA policy and deletion boundaries", () => {
   });
 
   it("deletes only the exact selected local file and revokes its policy", async () => {
+    process.env.OTG_H3_LORA_LOCAL_BACKEND = "rtx3090";
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "h3-delete-"));
     temporaryFiles.push(root);
     const target = path.join(root, "lora", "selected.safetensors");

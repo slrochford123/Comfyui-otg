@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { configurationPath, runtimePath, qualificationEnvironment } from "@/lib/runtime/configPaths";
 import { configuredVideoComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import { getGallerySourcesForRequest } from "@/lib/gallery";
 import { LTX_STUDIOS_CATALOG, validateLtxStudiosCatalog } from "@/lib/ltxStudiosCatalog";
@@ -13,7 +14,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function comfyRoot() {
-  return String(process.env.OTG_LTX_STUDIO_COMFY_MODELS || process.env.COMFYUI_MODELS_ROOT || "/home/shawn-rochford/AI/ComfyUI/models").trim();
+  return String(process.env.OTG_LTX_STUDIO_COMFY_MODELS || process.env.COMFYUI_MODELS_ROOT || runtimePath("comfyui", "models")).trim();
 }
 
 function localAssetState() {
@@ -31,7 +32,11 @@ export async function GET(req: NextRequest) {
     validateLtxStudiosCatalog();
     const assets = localAssetState();
     let qualified:Record<string,{workflowRevision?:string;promptId?:string}>={};
-    try{qualified=JSON.parse(fs.readFileSync(process.env.OTG_LTX_STUDIOS_QUALIFICATION_FILE || "/home/shawn-rochford/AI/runtime/test/config/ltx-studios-qualified.json","utf8"));}catch{}
+    try{
+      const proof=JSON.parse(fs.readFileSync(process.env.OTG_LTX_STUDIOS_QUALIFICATION_FILE || configurationPath("ltx-studios-qualified.json"),"utf8"));
+      const environment=qualificationEnvironment();
+      if(environment && (environment === "prod" ? proof.environment === "prod" : !proof.environment || proof.environment === environment)) qualified=proof.entries||proof;
+    }catch{}
     const entries = await Promise.all(LTX_STUDIOS_CATALOG.map(async(entry) => {
       const tool=isLtxStudioRuntimeTool(entry.id)?entry.id:null;
       const compatibility=tool?await inspectLtxStudioRuntime(configuredVideoComfyBaseUrl() || "",tool):null;

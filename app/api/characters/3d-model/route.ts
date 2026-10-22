@@ -2,15 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "node:child_process";
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { dataRoot, voicePython } from "@/lib/runtime/configPaths";
+import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { assertOwnerMediaFile, OwnerMediaAccessError } from "@/lib/ownerMediaAccess";
+import { safeSegment } from "@/lib/paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const PROJECT_ROOT = process.cwd();
-const DATA_ROOT = path.join(PROJECT_ROOT, "data");
-const DEVICE_ID = "web_characters_builder";
+const DATA_ROOT = dataRoot();
 
-const HY3D_PYTHON = process.env.HY3D_PYTHON || "C:\\AI\\Hunyuan3D\\python_standalone\\python.exe";
+const HY3D_PYTHON = process.env.HY3D_PYTHON || voicePython("hunyuan3d");
 const HY3D_SCRIPT = path.join(PROJECT_ROOT, "scripts", "hy3d_character_shape.py");
 
 const JSON_HEADERS = {
@@ -57,8 +60,8 @@ function toDataRelative(filePath: string): string {
   return path.relative(DATA_ROOT, absolute).replace(/\\/g, "/");
 }
 
-function updateSavedCharacter3dModel(characterId: string, modelRecord: Record<string, unknown>) {
-  const characterPath = path.join(DATA_ROOT, "characters", DEVICE_ID, `${characterId}.json`);
+function updateSavedCharacter3dModel(characterId: string, modelRecord: Record<string, unknown>, ownerKey: string) {
+  const characterPath = path.join(DATA_ROOT, "characters", safeSegment(ownerKey), `${characterId}.json`);
 
   if (!existsSync(characterPath)) {
     return {
@@ -826,6 +829,7 @@ async function generateWithLocalWrapperBackend(characterId: string, imagePath: s
 }
 export async function POST(request: NextRequest) {
   try {
+    const owner = await getOwnerContext(request);
     const body = await request.json().catch(() => null);
 
     if (!body || typeof body !== "object") {
@@ -840,12 +844,13 @@ export async function POST(request: NextRequest) {
     }
 
     const imagePath = requireInsideDataRoot(rawImagePath);
+    assertOwnerMediaFile(imagePath, owner.ownerKey);
 
     if (!existsSync(imagePath)) {
       return json(404, { ok: false, error: `Input image not found: ${imagePath}` });
     }
 
-    const modelDir = path.join(DATA_ROOT, "characters", DEVICE_ID, characterId, "models");
+    const modelDir = path.join(DATA_ROOT, "characters", safeSegment(owner.ownerKey), characterId, "models");
     const outputPath = path.join(modelDir, "hy3d_preview.glb");
 
     mkdirSync(modelDir, { recursive: true });
@@ -886,7 +891,7 @@ export async function POST(request: NextRequest) {
       result = await generateWithLocalWrapperBackend(characterId, imagePath, modelDir, outputPath);
     }
 
-    const characterRecordUpdate = updateSavedCharacter3dModel(characterId, result.modelRecord);
+    const characterRecordUpdate = updateSavedCharacter3dModel(characterId, result.modelRecord, owner.ownerKey);
 
     return json(200, {
       ok: true,
@@ -894,6 +899,8 @@ export async function POST(request: NextRequest) {
       characterRecordUpdate,
     });
   } catch (error: any) {
+    if (error instanceof SessionInvalidError) return json(401, { ok: false, error: "Unauthorized" });
+    if (error instanceof OwnerMediaAccessError) return json(403, { ok: false, error: error.message });
     return json(500, {
       ok: false,
       error: error?.message || "HY3D generation failed.",
@@ -903,6 +910,7 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    const owner = await getOwnerContext(request);
     const url = new URL(request.url);
     const requestedPath = url.searchParams.get("path") || "";
 
@@ -911,6 +919,7 @@ export async function GET(request: NextRequest) {
     }
 
     const filePath = dataPathFromRequest(requestedPath);
+    assertOwnerMediaFile(filePath, owner.ownerKey);
     const ext = path.extname(filePath).toLowerCase();
 
     if (![".glb", ".gltf", ".obj", ".ply"].includes(ext)) {
@@ -966,6 +975,8 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error: any) {
+    if (error instanceof SessionInvalidError) return json(401, { ok: false, error: "Unauthorized" });
+    if (error instanceof OwnerMediaAccessError) return json(403, { ok: false, error: error.message });
     return json(500, {
       ok: false,
       error: error?.message || "Failed to read 3D model file.",

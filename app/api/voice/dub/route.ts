@@ -13,19 +13,20 @@ import { GET as ownerMediaFile } from "@/app/api/file/route";
 import { aukRewriteInstruction } from "@/lib/voiceRewritePrompt";
 import { acquireAuxiliary3090, AuxiliaryGpuBusyError } from "@/lib/workers/auxiliary3090Lease";
 import { ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
+import { runtimePath, voicePython } from "@/lib/runtime/configPaths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const VOICES_ROOT = path.resolve(
-  process.env.OTG_VOICES_ROOT || "/home/shawn-rochford/AI/runtime/test/voice-dubbing"
+  process.env.OTG_VOICES_ROOT || runtimePath("voice-dubbing")
 );
 const SEED_VC_ROOT = path.resolve(
-  process.env.SEED_VC_ROOT || "/home/shawn-rochford/AI/runtime/test/voice-dubbing/src/seed-vc"
+  process.env.SEED_VC_ROOT || runtimePath("voice-dubbing", "src", "seed-vc")
 );
 const SEED_VC_HF_CACHE = path.resolve(
-  process.env.SEED_VC_HF_CACHE || "/home/shawn-rochford/AI/runtime/test/voice-dubbing/hf-cache"
+  process.env.SEED_VC_HF_CACHE || runtimePath("voice-dubbing", "hf-cache")
 );
 const ALLOWED_REFERENCE_ROOTS = [VOICES_ROOT, path.resolve(OTG_DATA_ROOT), path.resolve(process.cwd(), "data")];
 const AUDIO_EXT_RE = /\.(mp3|wav|flac|m4a|aac|ogg|webm)$/i;
@@ -113,7 +114,7 @@ function findSeedVcScript() {
 function seedVcPython() {
   const configured = process.env.SEED_VC_PYTHON?.trim();
   if (configured && !(process.platform === "win32" && configured.startsWith("/opt/"))) return configured;
-  const isolated = "/home/shawn-rochford/AI/runtime/test/voice-dubbing/venv/bin/python";
+  const isolated = voicePython("voice-dubbing");
   if (fs.existsSync(isolated)) return isolated;
   const winVenv = path.join(SEED_VC_ROOT, ".venv", "Scripts", "python.exe");
   if (fs.existsSync(winVenv)) return winVenv;
@@ -548,13 +549,13 @@ async function runSeedVc(inputPath: string, outputPath: string, samplePath: stri
 function applioPython() {
   const configured = process.env.APPLIO_PYTHON?.trim();
   if (configured) return configured;
-  const root = process.env.APPLIO_ROOT || "/home/shawn-rochford/AI/runtime/test/Applio";
+  const root = process.env.APPLIO_ROOT || runtimePath("Applio");
   const venv = path.join(root, ".venv", "bin", "python");
   return fs.existsSync(venv) ? venv : "python";
 }
 
 function applioRoot() {
-  return path.resolve(process.env.APPLIO_ROOT || "/home/shawn-rochford/AI/runtime/test/Applio");
+  return path.resolve(process.env.APPLIO_ROOT || runtimePath("Applio"));
 }
 
 function applioCoreScript() {
@@ -562,7 +563,7 @@ function applioCoreScript() {
 }
 
 function aukRoot() {
-  return path.resolve(process.env.AUK_ROOT || "/home/shawn-rochford/AI/runtime/test/AuK");
+  return path.resolve(process.env.AUK_ROOT || runtimePath("AuK"));
 }
 
 function aukCli() {

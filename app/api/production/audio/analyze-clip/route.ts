@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { SessionInvalidError } from "@/lib/ownerKey";
 import { productionAudioOwner, productionAudioMediaReadable, ProductionAudioAccessError } from "@/lib/productionAudioAccess";
 import { safeSegment } from "@/lib/paths";
+import { runtimePath, voicePython } from "@/lib/runtime/configPaths";
 import {
   productionAudioAnalysisRoot,
   productionAudioGalleryRoots,
@@ -24,11 +25,11 @@ const CONFIGURED_GALLERY_DIR = process.env.OTG_GALLERY_DIR || "";
 
 const COMFY_INPUT_DIR =
   process.env.OTG_COMFY_INPUT_DIR ||
-  "C:\\AI\\ComfyUI\\ComfyUI\\input";
+  runtimePath("comfyui", "input");
 
 const COMFY_OUTPUT_DIR =
   process.env.OTG_COMFY_OUTPUT_DIR ||
-  "C:\\AI\\ComfyUI\\ComfyUI\\output";
+  runtimePath("comfyui", "output");
 
 const ANALYSIS_ROOT =
   process.env.OTG_AUDIO_ANALYSIS_DIR ||
@@ -38,17 +39,17 @@ const FFMPEG_BIN = process.env.OTG_FFMPEG_BIN || "ffmpeg";
 const FFPROBE_BIN = process.env.OTG_FFPROBE_BIN || "ffprobe";
 const PYTHON_BIN =
   process.env.OTG_AUDIO_ANALYSIS_PYTHON ||
-  "/home/shawn-rochford/AI/ComfyUI/venv-core/bin/python";
+  voicePython("demucs");
 const DEMUCS_MODEL = process.env.OTG_DEMUCS_MODEL || "htdemucs";
 const LOCAL_DIARIZATION_PYTHON =
   process.env.OTG_SPEAKER_DIARIZATION_PYTHON ||
-  "/home/shawn-rochford/AI/runtime/test/voice-dubbing/diarization-venv/bin/python";
+  runtimePath("voice-dubbing", "diarization-venv", "bin", "python");
 const LOCAL_DIARIZATION_SCRIPT =
   process.env.OTG_SPEAKER_DIARIZATION_SCRIPT ||
   path.join(REPO_ROOT, "scripts", "voice", "pyannote_diarize.py");
 const LOCAL_DIARIZATION_MODEL =
   process.env.OTG_SPEAKER_DIARIZATION_MODEL ||
-  "/home/shawn-rochford/AI/runtime/test/voice-dubbing/models/pyannote-community-1";
+  runtimePath("voice-dubbing", "models", "pyannote-community-1");
 const LOCAL_DIARIZATION_DEVICE = process.env.OTG_SPEAKER_DIARIZATION_DEVICE || "cuda";
 const SPEAKER_DIARIZATION_URL = String(
   process.env.OTG_SPEAKER_DIARIZATION_URL ||

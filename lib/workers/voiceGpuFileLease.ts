@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import {spawn,spawnSync} from "node:child_process";
+import { sharedVoiceLockPath } from "@/lib/runtime/configPaths";
 
 // Same server-configured lock used by the existing Python voice workers.
 // No path, command, hostname or service name comes from an HTTP request.
-function lockPath(){return process.env.OTG_VOICE_GPU_LOCK_FILE||"/home/shawn-rochford/AI/runtime/test/voice-gpu.lock";}
+function lockPath(){return sharedVoiceLockPath();}
 export function voiceGpuFileBusy(){
   const file=lockPath();fs.mkdirSync(path.dirname(file),{recursive:true});
   const check=spawnSync("/usr/bin/flock",["--nonblock",file,"/usr/bin/true"],{timeout:1000,stdio:"ignore"});
