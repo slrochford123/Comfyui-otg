@@ -37,6 +37,7 @@ type SavedAssetCandidate = {
   artStyle: string;
   prompt: string;
   promptId: string;
+  backend?: string;
   seed: number;
   workflowId: string;
   internalPrompt: string;
@@ -460,6 +461,7 @@ export async function POST(
             "promptId",
           ),
         ),
+      backend: clean(form.get("backend")),
       seed:
         Number(
           form.get(

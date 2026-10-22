@@ -19,6 +19,37 @@ function isInsideRoot(root: string, candidate: string) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+function candidateMediaPaths(requestedPath: string) {
+  const raw = String(requestedPath || "").trim().replace(/^file:\/\//i, "");
+  if (!raw) return [];
+
+  const candidates = new Set<string>();
+  const add = (value: string) => candidates.add(path.resolve(value));
+  const dataRoot = path.resolve(OTG_DATA_ROOT);
+  const persistentRoot = path.resolve(process.env.OTG_PERSISTENT_DATA_ROOT || "/var/lib/otg");
+
+  if (path.isAbsolute(raw)) {
+    add(raw);
+    const legacyRoots = [
+      "/var/lib/otg/data",
+      "/home/otg/data",
+      "/home/shawn-rochford/AI/runtime/test/data",
+    ];
+    for (const legacyRoot of legacyRoots) {
+      const legacy = path.resolve(legacyRoot);
+      if (raw === legacy || raw.startsWith(`${legacy}${path.sep}`)) {
+        add(path.join(dataRoot, path.relative(legacy, raw)));
+      }
+    }
+  } else {
+    add(path.join(dataRoot, raw));
+    add(path.join(persistentRoot, raw));
+    add(path.join(process.cwd(), raw));
+  }
+
+  return Array.from(candidates);
+}
+
 function ownerAllowedRoots(owner: Awaited<ReturnType<typeof getOwnerContext>>) {
   const ownerSafe = safeSegment(owner.ownerKey || "local");
 
@@ -35,12 +66,16 @@ function ownerAllowedRoots(owner: Awaited<ReturnType<typeof getOwnerContext>>) {
     getOwnerDirs(owner.ownerKey).preview,
     owner.username ? userGalleryDir(owner.username) : deviceGalleryDir(owner.deviceId),
     path.join(OTG_DATA_ROOT, "assets", ownerSafe),
+    path.join(OTG_DATA_ROOT, "assets-saved-for-later", ownerSafe),
     path.join(OTG_DATA_ROOT, "backgrounds", ownerSafe),
     path.join(OTG_DATA_ROOT, "characters", ownerSafe),
+    path.join(OTG_DATA_ROOT, "background_removal", ownerSafe),
     path.join(OTG_DATA_ROOT, "edit-video", ownerSafe),
     path.join(OTG_DATA_ROOT, "edit_video", "music", ownerSafe),
     path.join(OTG_DATA_ROOT, "edit_video_jobs", ownerSafe),
     path.join(OTG_DATA_ROOT, "edit_video_dub_voice_jobs", ownerSafe),
+    path.join(OTG_DATA_ROOT, "production_audio_dub_previews", ownerSafe),
+    path.join(process.env.OTG_AUDIO_ANALYSIS_DIR || path.join(OTG_DATA_ROOT, "production_audio_analysis"), ownerSafe),
     path.join(OTG_DATA_ROOT, "extract_audio_jobs", ownerSafe),
     path.join(OTG_DATA_ROOT, "h3-direct", ownerSafe),
     path.join(OTG_DATA_ROOT, "h3-special", "refmods", ownerSafe),
@@ -59,6 +94,17 @@ function ownerAllowedRoots(owner: Awaited<ReturnType<typeof getOwnerContext>>) {
     path.join(OTG_DATA_ROOT, "voices", "users", ownerSafe),
     path.join(OTG_DATA_ROOT, "worker-artifacts", ownerSafe),
   ];
+  // Voice Studio stores both uploaded references and generated auditions in
+  // voice-ID directories. Include only this authenticated owner's namespace,
+  // never the shared samples/outputs parent or another owner's directory.
+  for (const kind of ["samples", "outputs"]) {
+    const voiceRoot = path.join(OTG_DATA_ROOT, "uploads", "voices", kind);
+    try {
+      for (const entry of fs.readdirSync(voiceRoot, { withFileTypes: true })) {
+        if (entry.isDirectory() && !entry.isSymbolicLink() && entry.name.startsWith(`${ownerSafe}__`)) roots.push(path.join(voiceRoot, entry.name));
+      }
+    } catch {}
+  }
 
   return Array.from(new Set(roots.map((root) => path.resolve(root))));
 }
@@ -72,19 +118,20 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Missing path" }, { status: 400 });
     }
 
-    const resolved = path.resolve(requestedPath);
     const owner = await getOwnerContext(req);
-    const allowed = ownerAllowedRoots(owner).some((root) => isInsideRoot(root, resolved));
+    const allowedRoots = ownerAllowedRoots(owner);
+    const resolved = candidateMediaPaths(requestedPath).find((candidate) =>
+      allowedRoots.some((root) => {
+        if (!isInsideRoot(root, candidate) || !fs.existsSync(candidate) || !fs.existsSync(root)) return false;
+        return isInsideRoot(fs.realpathSync(root), fs.realpathSync(candidate));
+      }),
+    );
 
-    if (!allowed) {
+    if (!resolved) {
       return NextResponse.json(
-        { ok: false, error: "Forbidden", detail: { resolved } },
-        { status: 403 }
+        { ok: false, error: "File not found" },
+        { status: 404 }
       );
-    }
-
-    if (!fs.existsSync(resolved)) {
-      return NextResponse.json({ ok: false, error: "File not found" }, { status: 404 });
     }
 
     const stat = fs.statSync(resolved);

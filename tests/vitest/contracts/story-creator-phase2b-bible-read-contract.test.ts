@@ -24,6 +24,10 @@ const panel = read(
   "app/app/components/StoryCreatorPanel.tsx",
 );
 
+const bible = read(
+  "app/app/components/storyCreatorV2/BibleTab.tsx",
+);
+
 describe(
   "Story Creator Phase 2B Story Bible read contract",
   () => {
@@ -132,31 +136,21 @@ describe(
     );
 
     it(
-      "renders explicit canon suggestion and unknown sections",
+      "renders the editable Canon Library without individual approvals",
       () => {
-        expect(panel).toContain(
-          '"Canon"',
-        );
-
-        expect(panel).toContain(
-          '"Suggestions"',
-        );
-
-        expect(panel).toContain(
-          '"Unknown"',
-        );
-
         expect(panel).toContain(
           "storyBibleFactsByStatus.canon",
         );
-
         expect(panel).toContain(
-          "storyBibleFactsByStatus.suggestion",
+          "storyBiblePendingFacts",
         );
-
-        expect(panel).toContain(
-          "storyBibleFactsByStatus.unknown",
-        );
+        expect(bible).toContain("Canon Library");
+        expect(bible).toContain("Search story details");
+        expect(bible).toContain(">Edit</");
+        expect(bible).toContain(">Delete</");
+        expect(bible).toContain("Legacy proposed details");
+        expect(bible).not.toContain("Approve as canon");
+        expect(bible).not.toContain("Edit & approve");
       },
     );
 

@@ -6,16 +6,13 @@ import { promisify } from "node:util";
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { cookieName } from "@/lib/auth/cookies";
-import { verifySession } from "@/lib/auth/jwt";
 import { SessionInvalidError } from "@/lib/ownerKey";
-import { safeDeviceId } from "@/lib/otgDevice";
-import { resolveOwnerAlias } from "@/lib/ownerAlias";
 import {
   productionAudioGalleryRoots,
   productionAudioProductionsRoot,
 } from "@/lib/productionAudioSourcePaths";
 import { OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
+import { productionAudioOwner, productionAudioMediaReadable, ProductionAudioAccessError } from "@/lib/productionAudioAccess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,29 +52,8 @@ function isLikelyVideoName(value: unknown) {
   return /\.(mp4|mov|m4v|webm|mkv|avi)$/i.test(String(value || "").trim());
 }
 
-function safeUsername(raw: unknown) {
-  const value = String(raw || "").trim();
-  return /^[a-zA-Z0-9_-]{3,128}$/.test(value) ? value : "";
-}
-
 async function ownerKeyFromRequest(request: NextRequest) {
-  const token = request.cookies.get(cookieName())?.value || "";
-  if (token) {
-    try {
-      const payload: any = await verifySession(token);
-      const username = safeUsername(payload?.username);
-      if (username) return resolveOwnerAlias(username);
-    } catch {
-      throw new SessionInvalidError();
-    }
-  }
-
-  const deviceId = safeDeviceId(
-    request.headers.get("x-otg-device-id") ||
-    request.nextUrl.searchParams.get("deviceId") ||
-    "local",
-  );
-  return resolveOwnerAlias(deviceId);
+  return productionAudioOwner(request);
 }
 
 async function exists(filePath: string) {
@@ -151,37 +127,18 @@ async function findSourceVideo(body: any, request: NextRequest, workDir: string)
   }
 
   for (const candidate of candidates) {
-    if (await exists(candidate)) {
+    if (await exists(candidate) && await productionAudioMediaReadable(request, candidate)) {
       if (!isLikelyVideoName(requestedNameRaw) || isLikelyVideoName(candidate)) return candidate;
     }
   }
 
-  const productionRoot = productionAudioProductionsRoot();
+  const productionRoot = path.join(productionAudioProductionsRoot(), safeSegment(ownerKey));
   for (const name of requestedNames) {
     const found = await findRecursive(productionRoot, name);
-    if (found && (!isLikelyVideoName(requestedNameRaw) || isLikelyVideoName(found))) return found;
+    if (found && await productionAudioMediaReadable(request, found) && (!isLikelyVideoName(requestedNameRaw) || isLikelyVideoName(found))) return found;
   }
 
-  if (sourceUrl) {
-    const absoluteUrl = sourceUrl.startsWith("http://") || sourceUrl.startsWith("https://")
-      ? sourceUrl
-      : new URL(sourceUrl, request.nextUrl.origin).toString();
-    const response = await fetch(absoluteUrl, {
-      cache: "no-store",
-      headers: { cookie: request.headers.get("cookie") || "" },
-    });
-    if (response.ok) {
-      const arrayBuffer = await response.arrayBuffer();
-      if (arrayBuffer.byteLength > 0) {
-        const fallbackName = safeName(requestedNameRaw || fileNameFromUrl(sourceUrl), "source-clip.mp4");
-        const downloadedPath = path.join(workDir, fallbackName);
-        await fs.writeFile(downloadedPath, Buffer.from(arrayBuffer));
-        return downloadedPath;
-      }
-    }
-  }
-
-  throw new Error(`Could not locate source clip "${requestedNameRaw || fileNameFromUrl(sourceUrl)}".`);
+  throw new ProductionAudioAccessError();
 }
 
 async function muxDubbedAudio(sourceVideoPath: string, dubbedAudioPath: string, outputPath: string) {
@@ -478,6 +435,7 @@ async function renderSegmentFirstDubV36BPW5(
   const renderedSegments: AudioStudioRenderedSegmentV36BPW5[] = [];
   const baseTitle = safeName(body.title || "audio_studio_dub", "audio_studio_dub");
   const backgroundStemPath = analysisBackgroundStemPathV36BPW9(body);
+  if (backgroundStemPath && !await productionAudioMediaReadable(request, backgroundStemPath)) throw new ProductionAudioAccessError();
   const mixPlan: AudioStudioMixPlanV36BPW9 = {
     sourceBedPath: backgroundStemPath,
     sourceBedKind: backgroundStemPath ? "demucs_background" : "original_audio",
@@ -599,6 +557,7 @@ export async function POST(request: NextRequest) {
       })),
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error: any) {
+    if (error instanceof ProductionAudioAccessError) return NextResponse.json({ok:false,error:error.message},{status:404});
     if (error instanceof SessionInvalidError) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }

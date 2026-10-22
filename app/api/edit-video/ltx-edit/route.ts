@@ -5,11 +5,17 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
+import { cancelComfyPrompt, ComfyCancelSafetyError } from "@/lib/comfySafeCancel";
+import { assertH3LtxAlphaAvailable } from "@/lib/h3SpecialModes/ltxAlphaMotion";
+import { buildLtxStudiosAlpha } from "@/lib/ltxStudiosAlpha";
+import {buildLtxStudioWorkflow,inspectLtxStudioRuntime,isLtxStudioRuntimeTool,LTX_STUDIO_RUNTIME,type LtxStudioRuntimeTool} from "@/lib/ltxStudiosRuntime";
+import { probeVideoInfo } from "@/lib/videoFrame";
 
 import { configuredVideoComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
 import { getGallerySourcesForRequest, resolveGalleryItemByName } from "@/lib/gallery";
 import { ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import { SessionInvalidError } from "@/lib/ownerKey";
+import { requireSessionUser } from "@/lib/sessionUser";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 import { freshProductionSeed } from "@/lib/production/randomSeed";
 import {
@@ -52,9 +58,13 @@ type LtxEditLiveJobMeta = {
   longerSide: number;
   useVideoReasoning: boolean;
   obscuraStrength?: number;
+  studioTool?: LtxStudioRuntimeTool;
+  speed?: number;
+  seed?: number;
   createdAt: string;
-  status: "running" | "completed" | "canceled" | "failed";
+  status: "running" | "completed" | "canceling" | "canceled" | "failed";
   result?: Record<string, unknown>;
+  error?: string;
 };
 
 const VIDEO_EXT_RE = /\.(mp4|webm|mov|mkv|avi)$/i;
@@ -74,6 +84,26 @@ class StageError extends Error {
     this.status = status;
     this.detail = detail;
   }
+}
+
+function comfyFailureDetail(record: any) {
+  const status = record?.status || {};
+  const nodeErrors = status?.messages || record?.node_errors || status?.node_errors;
+  const executionError=Array.isArray(status?.messages)?status.messages.find((entry:any)=>entry?.[0]==="execution_error")?.[1]:null;
+  const nodeMessage=executionError?.exception_message?`Node ${executionError.node_id}: ${String(executionError.exception_message).split("\n")[0]}`:null;
+  const message = nodeMessage || status?.message || record?.error?.message || status?.status_str;
+  let safeNodeErrors: unknown = undefined;
+  if (nodeErrors) {
+    try {
+      safeNodeErrors = JSON.parse(JSON.stringify(nodeErrors).slice(0, 6000));
+    } catch {
+      safeNodeErrors = "Comfy returned node error details that could not be serialized.";
+    }
+  }
+  return {
+    message: String(message || "Comfy workflow failed.").slice(0, 800),
+    nodeErrors: safeNodeErrors,
+  };
 }
 
 function firstText(value: FormDataEntryValue | null): string {
@@ -288,6 +318,7 @@ async function resolveInputVideo(args: {
   form: FormData;
   sources: Awaited<ReturnType<typeof getGallerySourcesForRequest>>["sources"];
   inputDir: string;
+  image?: boolean;
 }): Promise<InputVideo> {
   const source = firstText(args.form.get("video_source"));
   const title = firstText(args.form.get("video_title")) || "Selected video";
@@ -295,10 +326,10 @@ async function resolveInputVideo(args: {
   if (source === "upload") {
     const value = args.form.get("video_file");
     if (!(value instanceof File)) {
-      throw new StageError("input", "Missing uploaded video.", 400);
+      throw new StageError("input", args.image?"Missing uploaded image.":"Missing uploaded video.", 400);
     }
     const inputName = cleanFileName(value.name || "uploaded_video.mp4", "uploaded_video.mp4");
-    if (!VIDEO_EXT_RE.test(inputName)) throw new StageError("input", "Unsupported video file type.", 400);
+    if (!(args.image ? /\.(png|jpe?g|webp)$/i : VIDEO_EXT_RE).test(inputName)) throw new StageError("input", args.image ? "Use a PNG, JPEG, or WEBP source image." : "Unsupported video file type.", 400);
     const inputPath = safeJoin(args.inputDir, inputName);
     const buffer = Buffer.from(await value.arrayBuffer());
     await fsp.writeFile(inputPath, buffer);
@@ -309,8 +340,8 @@ async function resolveInputVideo(args: {
     const name = firstText(args.form.get("video_name"));
     const scope = firstText(args.form.get("video_scope"));
     const item = resolveGalleryItemByName({ sources: args.sources, name, scopeHint: scope || null });
-    if (!item || item.kind !== "video") {
-      throw new StageError("input", "Gallery video not found.", 404);
+    if (!item || item.kind !== (args.image ? "image" : "video")) {
+      throw new StageError("input", "Gallery source media not found.", 404);
     }
     return { path: item.path, label: item.name || path.basename(item.path), title, source: "gallery" };
   }
@@ -434,6 +465,7 @@ async function submitPrompt(args: {
   const res = await submitComfyPromptWith5060Lease({
     baseUrl: args.comfyBaseUrl,
     workerId: "edit-video-ltx-edit",
+    releaseIdlePeer: true,
     init: {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -466,7 +498,8 @@ async function readHistoryOnce(comfyBaseUrl: string, promptId: string) {
   const json: any = parsed.json;
   const record = json[promptId] || json;
   if (record?.status?.status_str === "error") {
-    throw new StageError("poll_history", "Comfy workflow failed.", 500, record);
+    const detail = comfyFailureDetail(record);
+    throw new StageError("poll_history", `Comfy workflow failed: ${detail.message}`, 500, detail);
   }
   return record?.outputs ? record : null;
 }
@@ -483,7 +516,8 @@ async function pollHistory(comfyBaseUrl: string, promptId: string) {
       const record = json[promptId] || json;
       if (record?.outputs) return record;
       if (record?.status?.status_str === "error") {
-        throw new StageError("poll_history", "Comfy workflow failed.", 500, record);
+        const detail = comfyFailureDetail(record);
+        throw new StageError("poll_history", `Comfy workflow failed: ${detail.message}`, 500, detail);
       }
     }
     await sleep(POLL_INTERVAL_MS);
@@ -545,6 +579,14 @@ async function copyOrDownloadOutput(args: { comfyBaseUrl: string; file: HistoryF
 }
 
 async function finalizeLiveJobIfReady(jobDir: string, meta: LtxEditLiveJobMeta) {
+  if(meta.status==="failed")throw new StageError("execution",meta.error||"This workflow failed. Correct the input and submit again.",500);
+  if(meta.status === "canceling") {
+    const canceled=await cancelComfyPrompt(meta.comfyBaseUrl,meta.promptId);
+    if(canceled.status!=="completed") {
+      await writeLiveJobMeta(jobDir,{...meta,status:canceled.status});
+      return {ok:true,status:canceled.status,running:canceled.status==="canceling",jobId:meta.jobId,promptId:meta.promptId};
+    }
+  }
   if (meta.status === "completed" && meta.result) {
     return {
       ok: true,
@@ -564,7 +606,11 @@ async function finalizeLiveJobIfReady(jobDir: string, meta: LtxEditLiveJobMeta) 
     };
   }
 
-  const history = await readHistoryOnce(meta.comfyBaseUrl, meta.promptId);
+  let history;
+  try{history=await readHistoryOnce(meta.comfyBaseUrl, meta.promptId);}catch(error){
+    if(error instanceof StageError&&error.message.startsWith("Comfy workflow failed:"))await writeLiveJobMeta(jobDir,{...meta,status:"failed",error:error.message});
+    throw error;
+  }
   const progress = readComfyPromptProgress(meta.promptId);
   if (!history?.outputs) {
     return {
@@ -581,13 +627,26 @@ async function finalizeLiveJobIfReady(jobDir: string, meta: LtxEditLiveJobMeta) 
   const files = collectHistoryFiles(history.outputs || history).filter((file) => /\.(mp4|webm|mov|mkv)$/i.test(file.filename || ""));
   if (!files.length) throw new StageError("find_output", "No video output was found in ComfyUI history.", 502, history.outputs || history);
   files.sort((a, b) => scoreHistoryFile(b, "LTX_Edit") - scoreHistoryFile(a, "LTX_Edit"));
-  const chosen = files[0];
+  const chosen = meta.studioTool==="sdr-to-hdr" ? files.find(file=>!file.filename.endsWith("_hlg.mp4")) : files[0];
+  if(!chosen)throw new StageError("find_output","SDR preview output is missing.",502);
 
   const outputName = `${meta.outputBase}_${meta.jobId.slice(0, 8)}${path.extname(chosen.filename || ".mp4") || ".mp4"}`;
   const outputPath = safeJoin(jobDir, outputName);
   await copyOrDownloadOutput({ comfyBaseUrl: meta.comfyBaseUrl, file: chosen, targetPath: outputPath });
 
   const stat = fs.statSync(outputPath);
+  const outputInfo = await probeVideoInfo(outputPath);
+  let hdrMasterUrl:string|undefined,exrArchiveUrl:string|undefined;
+  if(meta.studioTool==="sdr-to-hdr"){
+    const allFiles=collectHistoryFiles(history.outputs||history);
+    for(const [suffix,localName] of [["_hlg.mp4","hdr_master.mp4"],["_acescg_exr.zip","acescg_exr.zip"]]){
+      const file=allFiles.find(item=>item.filename.endsWith(suffix));
+      if(!file)throw new StageError("find_output",`HDR deliverable missing: ${suffix}`,502);
+      await copyOrDownloadOutput({comfyBaseUrl:meta.comfyBaseUrl,file,targetPath:safeJoin(jobDir,localName)});
+      const url=`/api/edit-video/file?jobId=${encodeURIComponent(meta.jobId)}&name=${encodeURIComponent(localName)}&download=1`;
+      if(localName==="hdr_master.mp4")hdrMasterUrl=url;else exrArchiveUrl=url;
+    }
+  }
   const result = {
     jobId: meta.jobId,
     promptId: meta.promptId,
@@ -596,12 +655,16 @@ async function finalizeLiveJobIfReady(jobDir: string, meta: LtxEditLiveJobMeta) 
     sourceVideoName: meta.inputVideoTitle,
     task: meta.task,
     instruction: meta.instruction,
-    durationSeconds: meta.durationSeconds,
-    fps: meta.fps,
+    durationSeconds: outputInfo.durationSeconds ?? meta.durationSeconds,
+    fps: outputInfo.fps ?? meta.fps,
     longerSide: meta.longerSide,
     useVideoReasoning: meta.useVideoReasoning,
     obscuraStrength: meta.obscuraStrength,
+    studioTool: meta.studioTool,
+    speed: meta.speed,
+    seed: meta.seed,
     sizeBytes: stat.size,
+    hdrMasterUrl,exrArchiveUrl,
   };
 
   await writeLiveJobMeta(jobDir, {
@@ -620,6 +683,7 @@ async function finalizeLiveJobIfReady(jobDir: string, meta: LtxEditLiveJobMeta) 
 
 export async function GET(req: NextRequest) {
   try {
+    await requireSessionUser(req).catch(()=>{throw new SessionInvalidError();});
     const { owner } = await getGallerySourcesForRequest(req);
     const jobId = String(req.nextUrl.searchParams.get("jobId") || "").trim();
     if (!jobId) throw new StageError("job_lookup", "Missing jobId.", 400);
@@ -639,25 +703,26 @@ export async function GET(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    await requireSessionUser(req).catch(()=>{throw new SessionInvalidError();});
     const { owner } = await getGallerySourcesForRequest(req);
     const body = await req.json().catch(() => ({}));
     const jobId = String(body?.jobId || req.nextUrl.searchParams.get("jobId") || "").trim();
     if (!jobId) throw new StageError("job_lookup", "Missing jobId.", 400);
     const { jobDir, meta } = await readLiveJobMeta(owner.ownerKey, jobId);
 
-    await fetchStage(`${meta.comfyBaseUrl}/queue`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ delete: [meta.promptId] }),
-    }, "cancel_queue", 30_000).catch(() => null);
-    await fetchStage(`${meta.comfyBaseUrl}/interrupt`, { method: "POST" }, "cancel_interrupt", 30_000).catch(() => null);
-
-    await writeLiveJobMeta(jobDir, { ...meta, status: "canceled" });
-    return NextResponse.json({ ok: true, status: "canceled", jobId, promptId: meta.promptId });
+    if(meta.status==="completed"||meta.status==="canceled") return NextResponse.json(await finalizeLiveJobIfReady(jobDir,meta));
+    await writeLiveJobMeta(jobDir,{...meta,status:"canceling"});
+    try {
+      const canceled=await cancelComfyPrompt(meta.comfyBaseUrl,meta.promptId);
+      if(canceled.status==="completed")return NextResponse.json(await finalizeLiveJobIfReady(jobDir,{...meta,status:"running"}));
+      await writeLiveJobMeta(jobDir,{...meta,status:canceled.status});
+      return NextResponse.json({ok:true,...canceled,jobId,promptId:meta.promptId});
+    } catch(error) {await writeLiveJobMeta(jobDir,meta);throw error;}
   } catch (error: any) {
     if (error instanceof SessionInvalidError) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
+    if (error instanceof ComfyCancelSafetyError) return NextResponse.json({ok:false,error:error.message},{status:409});
     if (error instanceof StageError) {
       return NextResponse.json({ ok: false, error: error.message, stage: error.stage, detail: error.detail }, { status: error.status || 500 });
     }
@@ -667,6 +732,7 @@ export async function DELETE(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    await requireSessionUser(req).catch(()=>{throw new SessionInvalidError();});
     const form = await req.formData();
     const { owner, sources } = await getGallerySourcesForRequest(req);
     const comfyBaseUrl = normalizeBaseUrl(configuredVideoComfyBaseUrl());
@@ -678,32 +744,54 @@ export async function POST(req: NextRequest) {
     const inputDir = safeJoin(jobDir, "input");
     ensureDir(inputDir);
 
-    const inputVideo = await resolveInputVideo({ form, sources, inputDir });
+    const rawStudioTool = firstText(form.get("studioTool"));
+    if (rawStudioTool && !isLtxStudioRuntimeTool(rawStudioTool)) throw new StageError("input", "Unknown LTX Studios tool.", 400);
+    const studioTool = rawStudioTool as LtxStudioRuntimeTool | "";
+    const inputVideo = await resolveInputVideo({ form, sources, inputDir, image:studioTool ? LTX_STUDIO_RUNTIME[studioTool].image : false });
     if (!fs.existsSync(inputVideo.path) || !fs.statSync(inputVideo.path).isFile()) {
       throw new StageError("input", "Source video file does not exist.", 404);
     }
 
     const task = firstText(form.get("task")) || "add";
-    const instruction = firstText(form.get("instruction"));
+    const instruction = studioTool === "alpha-gen" ? "Generate the foreground alpha matte." : studioTool==="sdr-to-hdr"?"Reference-driven SDR to HDR conversion.":firstText(form.get("instruction"));
     if (!instruction) throw new StageError("input", "Edit instruction is required.", 400);
     const negativePrompt = firstText(form.get("negativePrompt"));
     const durationSeconds = clamp(Number(firstText(form.get("durationSeconds"))) || 5, 1, 30);
     const fps = clamp(Number(firstText(form.get("fps"))) || 24, 8, 60);
+    if(studioTool&&durationSeconds*fps>145)throw new StageError("input","LTX Studios supports at most 145 frames. Choose a shorter duration.",400);
     const longerSide = clamp(Number(firstText(form.get("longerSide"))) || 1024, 512, 1536);
     const seed = freshProductionSeed();
-    const useVideoReasoning = /^(true|1|yes|on)$/i.test(firstText(form.get("useVideoReasoning")));
+    const useVideoReasoning = !studioTool && /^(true|1|yes|on)$/i.test(firstText(form.get("useVideoReasoning")));
     const livePreview = /^(true|1|yes|on)$/i.test(firstText(form.get("livePreview")));
     const obscuraStrength = Number(firstText(form.get("obscuraStrength")) || 2.3);
     const outputBase = cleanOutputBase(firstText(form.get("outputTitle")) || "ltx_edit_anything");
     const outputPrefix = `EditVideo/LTX_Edit_${jobId}`;
 
-    const comfyVideoName = await uploadLocalFileToComfy({ comfyBaseUrl, filePath: inputVideo.path, fileName: inputVideo.label });
-    const graph = buildGraph({ sourceVideoName: comfyVideoName, task, instruction, negativePrompt, durationSeconds, fps, longerSide, seed, outputPrefix, useVideoReasoning, obscuraStrength });
+    const speed = Number(firstText(form.get("speed")) || 0.2);
+    if(studioTool==="slow-motion-control"&&(!Number.isFinite(speed)||speed<0.025||speed>1||fps!==24))throw new StageError("input","Slow Motion Control requires speed 0.025–1 and 24fps playback.",400);
+    const comfyVideoName = await uploadLocalFileToComfy({ comfyBaseUrl, filePath: inputVideo.path, fileName: `ltx_${jobId}_${inputVideo.label}` });
+    let graph = buildGraph({ sourceVideoName: comfyVideoName, task, instruction, negativePrompt, durationSeconds, fps, longerSide, seed, outputPrefix, useVideoReasoning, obscuraStrength });
+    if (studioTool) {
+      const compatibility=await inspectLtxStudioRuntime(comfyBaseUrl,studioTool);
+      if(!compatibility.compatible)throw new StageError("preflight",`Required LTX model or nodes unavailable: ${[...compatibility.missingNodes,...compatibility.missingAssets].join(", ")}`,503);
+      const shape=await probeVideoInfo(inputVideo.path);
+      const boundedDuration=LTX_STUDIO_RUNTIME[studioTool].image?durationSeconds:Math.min(durationSeconds,shape.durationSeconds||durationSeconds);
+      let lookFilename:string|undefined;
+      if(studioTool==="layout-to-render"){
+        const look=form.get("look_file");
+        if(!(look instanceof File)||!(/\.(png|jpe?g|webp)$/i.test(look.name)))throw new StageError("input","Choose a PNG, JPEG or WEBP finished look image.",400);
+        const lookPath=safeJoin(inputDir,"look_"+cleanFileName(look.name,"look.png"));
+        await fsp.writeFile(lookPath,Buffer.from(await look.arrayBuffer()));
+        const lookShape=await probeVideoInfo(lookPath);if(!lookShape.width||!lookShape.height)throw new StageError("input","Look image could not be decoded.",400);
+        lookFilename=await uploadLocalFileToComfy({comfyBaseUrl,filePath:lookPath,fileName:`ltx_look_${jobId}_${path.basename(lookPath)}`});
+      }
+      graph = buildLtxStudioWorkflow({ tool:studioTool,mediaFilename: comfyVideoName, sourceWidth:shape.width||0,sourceHeight:shape.height||0,longerSide,durationSeconds:boundedDuration,fps,seed,outputPrefix,instruction,negativePrompt,speed,sourceHasAudio:shape.hasAudio,lookFilename }).graph as typeof graph;
+    }
     const deviceId = String(req.headers.get("x-otg-device-id") || "edit-video").trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 96) || "edit-video";
     const submitted = await submitPrompt({ comfyBaseUrl, graph, ownerKey: owner.ownerKey, deviceId });
     const promptId = submitted.promptId;
 
-    if (livePreview) {
+    if (livePreview || studioTool) {
       await writeLiveJobMeta(jobDir, {
         jobId,
         ownerKey: owner.ownerKey,
@@ -714,6 +802,9 @@ export async function POST(req: NextRequest) {
         inputVideoTitle: inputVideo.title || inputVideo.label,
         task,
         instruction,
+        studioTool: studioTool || undefined,
+        speed: studioTool === "slow-motion-control" ? speed : undefined,
+        seed,
         durationSeconds,
         fps,
         longerSide,
@@ -746,6 +837,7 @@ export async function POST(req: NextRequest) {
     await copyOrDownloadOutput({ comfyBaseUrl, file: chosen, targetPath: outputPath });
 
     const stat = fs.statSync(outputPath);
+    const outputInfo = await probeVideoInfo(outputPath);
     return NextResponse.json({
       ok: true,
       jobId,
@@ -755,8 +847,8 @@ export async function POST(req: NextRequest) {
       sourceVideoName: inputVideo.title || inputVideo.label,
       task,
       instruction,
-      durationSeconds,
-      fps,
+      durationSeconds: outputInfo.durationSeconds ?? durationSeconds,
+      fps: outputInfo.fps ?? fps,
       longerSide,
       useVideoReasoning,
       obscuraStrength: task === "obscura_remova" ? obscuraStrength : undefined,

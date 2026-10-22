@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/app/api/admin/_requireAdmin";
+import { with3090QueueStatus } from "@/lib/workers/maintenanceStatus";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +22,42 @@ const GPU_CONTROL_ENV_KEYS = [
 ] as const;
 
 type Action = "status" | "free" | "reset";
+type Target = "3090" | "5060ti";
+const activeOperations = new Set<Target>();
+function targetValue(value:unknown):Target|null {return value==="3090"||value==="5060ti"?value:null;}
+
+async function invokeRemote(action:Action) {
+  const token=String(process.env.OTG_TEST_MAINTENANCE_5060_TOKEN||'').trim() || (()=>{
+    try{return fs.readFileSync('/home/shawn-rochford/AI/runtime/test/config/maintenance-5060.token','utf8').trim();}catch{return '';}
+  })();
+  if(!token)throw new Error('RTX 5060 Ti TEST maintenance agent is not configured.');
+  const r=await fetch('http://100.98.212.116:8799/maintenance',{
+    method:'POST',headers:{'content-type':'application/json',Authorization:`Bearer ${token}`},
+    body:JSON.stringify({action:action==='reset'?'reset_comfy':action==='free'?'free_vram':'status'}),
+    signal:AbortSignal.timeout(action==='reset'?200000:145000),cache:'no-store',
+  });
+  const body=await r.json();
+  if(!r.ok||!body.ok||!body.status)throw new Error(body.error||'RTX 5060 Ti maintenance failed.');
+  return body.status as ReturnType<typeof parseOutput>;
+}
+
+async function targetOperation(target:Target,action:Action) {
+  if(target==='5060ti')return invokeRemote(action);
+  if(action!=='status') {
+    const before=await invoke('status');
+    const endpoints=[['comfy8188','http://100.75.162.64:8188'],['h38189','http://100.75.162.64:8189']] as const;
+    for(const [key,base] of endpoints) {
+      if(before.services[key].state!=='active')continue;
+      const r=await fetch(base+'/queue',{cache:'no-store',signal:AbortSignal.timeout(5000)});
+      if(!r.ok)throw new Error('Cannot verify the active worker queue. Maintenance refused.');
+      const q=await r.json();
+      if(!Array.isArray(q.queue_running)||!Array.isArray(q.queue_pending))throw new Error('Cannot verify worker queue.');
+      if(q.queue_running.length||q.queue_pending.length)throw new Error('Worker is busy. Wait for jobs to finish before maintenance.');
+    }
+  }
+  const status=await invoke(action);
+  return action==='status'?with3090QueueStatus(status):status;
+}
 
 function response(payload: Record<string, unknown>, status = 200) {
   return NextResponse.json(payload, {
@@ -131,23 +168,26 @@ function configurationError() {
   return response({ ok: false, error: "GPU controls not configured for this server." }, 503);
 }
 
-export async function GET() {
+export async function GET(request:NextRequest) {
   const { error } = await authenticate();
   if (error) return error;
-  if (!isConfigured()) return configurationError();
+  const target=targetValue(request.nextUrl.searchParams.get('target')||'3090');
+  if(!target)return response({ok:false,error:'Invalid GPU target.'},400);
+  if (target==='3090'&&!isConfigured()) return configurationError();
   try {
-    const status = await invoke("status");
-    return response({ ok: true, status });
+    const status = await targetOperation(target,"status");
+    return response({ ok: true, target, status });
   } catch (error) {
     console.error("[otg-gpu-controls] status failed", error);
-    return response({ ok: false, error: "Unable to read GPU or ComfyUI status; check the installed helper and sudoers." }, 503);
+    return response({ ok: false, error: target === "5060ti"
+      ? "RTX 5060 Ti remote TEST maintenance service is unavailable. Ask the OS administrator to install or start the configured service."
+      : "Unable to read RTX 3090 GPU or ComfyUI status; check the installed TEST helper and sudoers." }, 503);
   }
 }
 
 export async function POST(request: NextRequest) {
   const { admin, error } = await authenticate();
   if (error) return error;
-  if (!isConfigured()) return configurationError();
 
   // Cookie-authenticated destructive actions: require an explicit origin
   // allowlist and a custom header that cross-origin forms cannot send.
@@ -162,20 +202,27 @@ export async function POST(request: NextRequest) {
     return response({ ok: false, error: "Request origin verification failed." }, 403);
   }
 
-  const body = await request.json().catch(() => null) as { action?: unknown } | null;
+  const body = await request.json().catch(() => null) as { action?: unknown;target?:unknown } | null;
+  const target=targetValue(body?.target||'3090');
+  if(!target)return response({ok:false,error:'Invalid GPU target.'},400);
+  if(target==='3090'&&!isConfigured())return configurationError();
   const action = body?.action;
   if (action !== "free" && action !== "reset" || !ACTIONS.has(action)) {
     return response({ ok: false, error: "Unrecognized GPU operation." }, 400);
   }
+  if(activeOperations.has(target))return response({ok:false,error:'Maintenance is already in progress for this GPU.'},409);
+  activeOperations.add(target);
 
-  const event = { operator: admin?.email || admin?.username || "unknown", action, host: hostname(), time: new Date().toISOString() };
+  const event = { operator: admin?.email || admin?.username || "unknown", action, target, host: hostname(), time: new Date().toISOString() };
   console.info("[otg-gpu-controls] requested", event);
   try {
-    const status = await invoke(action);
+    const status = await targetOperation(target,action);
     console.info("[otg-gpu-controls] completed", event);
-    return response({ ok: true, action, status });
+    return response({ ok: true, action, target, status });
   } catch (e) {
     console.error("[otg-gpu-controls] failed", { ...event, error: e instanceof Error ? e.message : String(e) });
-    return response({ ok: false, error: "ComfyUI operation failed or timed out. Inspect server logs and service status." }, 503);
+    return response({ ok: false, error: e instanceof Error && /busy|queue|already in progress/i.test(e.message)?e.message:"ComfyUI operation failed or timed out. Inspect TEST maintenance service status." }, 503);
+  } finally {
+    activeOperations.delete(target);
   }
 }

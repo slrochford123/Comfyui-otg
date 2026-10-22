@@ -1,5 +1,6 @@
 ﻿import { Capacitor } from "@capacitor/core";
 import { LocalNotifications } from "@capacitor/local-notifications";
+import { slrNotificationBranding } from "./slrNotificationBranding";
 
 const CHANNEL_ID = "otg_renders";
 const CHANNEL_NAME = "OTG Renders";
@@ -37,6 +38,7 @@ export async function notifyRenderComplete(promptId: string) {
       {
         id,
         title: "Render complete",
+        ...(await slrNotificationBranding()),
         body: `Prompt ${promptId} finished.`,
         extra: { promptId },
         channelId: CHANNEL_ID,

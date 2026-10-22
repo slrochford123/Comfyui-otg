@@ -34,6 +34,7 @@ for _otg_stream_name in ("stdout", "stderr"):
         except Exception:
             pass
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -472,6 +473,27 @@ def generate_with_index(payload: Dict[str, Any]) -> Dict[str, Any]:
     write_json(output_dir / "indextts2_clone_result.json", result)
     return result
 
+def check_runtime() -> Dict[str, Any]:
+    index_root = Path(normalize_path(os.environ.get("INDEXTTS2_ROOT")) or DEFAULT_INDEX_ROOT).resolve()
+    cfg_path = Path(normalize_path(os.environ.get("INDEXTTS2_CFG")) or DEFAULT_INDEX_CFG).resolve()
+    model_dir = Path(normalize_path(os.environ.get("INDEXTTS2_MODEL_DIR")) or DEFAULT_INDEX_MODEL_DIR).resolve()
+    required = [cfg_path, model_dir / "gpt.pth", model_dir / "s2mel.pth", model_dir / "bpe.model"]
+    missing = [str(item) for item in required if not item.exists()]
+    if not index_root.exists() or missing:
+        raise RuntimeError("IndexTTS2 runtime is incomplete: " + ", ".join(missing or [str(index_root)]))
+    sys.path.insert(0, str(index_root))
+    if importlib.util.find_spec("indextts.infer_v2") is None:
+        raise RuntimeError("IndexTTS2 infer_v2 module is unavailable in the configured runtime.")
+    return {
+        "ok": True,
+        "provider": "indextts2",
+        "runtime": str(index_root),
+        "config": str(cfg_path),
+        "modelDir": str(model_dir),
+        "modelLoaded": False,
+        "gpuUsed": False,
+    }
+
 def main() -> int:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--params-json", default="")
@@ -482,10 +504,15 @@ def main() -> int:
     parser.add_argument("--stdout-log", default="")
     parser.add_argument("--stderr-log", default="")
     parser.add_argument("--run-worker", action="store_true")
+    parser.add_argument("--check-runtime", action="store_true")
     known, rest = parser.parse_known_args()
     unknown = parse_unknown_args(rest)
 
     payload = read_payload(known, unknown)
+
+    if known.check_runtime:
+        print(json.dumps(check_runtime(), ensure_ascii=False))
+        return 0
 
     if known.run_worker:
         result = generate_with_index(payload)

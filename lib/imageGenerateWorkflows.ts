@@ -28,6 +28,12 @@ export const IMAGE_LORA_ADULT_ACK_VERSION = "image-lora-adult-v1";
 export const QWEN21_IMAGE_EDIT_WORKFLOW_ID =
   "presets/image_qwen_image_2_1_image_edit";
 
+export const QWEN21_IMAGE_CREATE_WORKFLOW_ID =
+  "presets/image_qwen_image_2_1_t2i";
+
+export const QWEN21_STORY_CREATE_WORKFLOW_FILE =
+  "workflows/characters/create/image_qwen_image_2_1_t2i.json";
+
 export const QWEN21_TURBO_LORA =
   "qwen_image_2.1_turbo_lora_avg_rank_178_bf16.safetensors";
 export const QWEN21_TURBO_STEPS = 8;
@@ -37,6 +43,29 @@ export const QWEN21_IMAGE_EDIT_MODELS = {
   unet: "qwen_image_2.1_int8_convrot.safetensors",
   clip: "qwen3vl_8b_int8_convrot.safetensors",
   vae: "qwen_image_2.1_vae_bf16.safetensors",
+} as const;
+
+export const QWEN21_TURBO_CONTRACT = {
+  verified: true,
+  label: "Qwen Image 2.1 Turbo",
+  editLabel: "Qwen Image Edit 2.1 Turbo",
+  checkpoint: QWEN21_IMAGE_EDIT_MODELS.unet,
+  textEncoder: QWEN21_IMAGE_EDIT_MODELS.clip,
+  vae: QWEN21_IMAGE_EDIT_MODELS.vae,
+  acceleration: {
+    kind: "lora",
+    name: QWEN21_TURBO_LORA,
+    strength: 1,
+  },
+  sampling: {
+    steps: QWEN21_TURBO_STEPS,
+    cfg: QWEN21_TURBO_CFG,
+    sampler: "euler",
+    scheduler: "simple",
+    denoise: 1,
+  },
+  backend: "image-primary",
+  gpu: "RTX 5060 Ti 16 GB",
 } as const;
 
 export const LOCKED_IMAGE_SIZES: Record<ImageOrientation, { width: number; height: number }> = {
@@ -60,8 +89,8 @@ export const IMAGE_MODELS: ImageModelDefinition[] = [
     optionalLoras: [],
   },
   {
-    id: "presets/image_qwen_image_2_1_t2i",
-    label: "Qwen Image 2.1",
+    id: QWEN21_IMAGE_CREATE_WORKFLOW_ID,
+    label: QWEN21_TURBO_CONTRACT.label,
     operation: "create",
     maxInputImages: 0,
     defaultLora: null,
@@ -69,7 +98,7 @@ export const IMAGE_MODELS: ImageModelDefinition[] = [
   },
   {
     id: QWEN21_IMAGE_EDIT_WORKFLOW_ID,
-    label: "Qwen Image Edit 2.1",
+    label: QWEN21_TURBO_CONTRACT.editLabel,
     operation: "edit",
     maxInputImages: 3,
     defaultLora: null,

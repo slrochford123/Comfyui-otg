@@ -543,15 +543,25 @@
   },
   "146": {
     "inputs": {
-      "filename_prefix": "result_1_pass",
-      "format": "auto",
-      "codec": "auto",
-      "video": [
-        "145",
+      "images": [
+        "40",
         0
-      ]
+      ],
+      "frame_rate": [
+        "79",
+        0
+      ],
+      "loop_count": 0,
+      "filename_prefix": "result_1_pass",
+      "format": "video/h264-mp4",
+      "pingpong": false,
+      "save_output": true,
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false
     },
-    "class_type": "SaveVideo",
+    "class_type": "VHS_VideoCombine",
     "_meta": {
       "title": "Result"
     }
@@ -574,33 +584,9 @@
       "title": "Image Concatenate (Swwan)"
     }
   },
-  "168": {
-    "inputs": {
-      "cfg_scale": 1,
-      "eta": 1,
-      "norm_threshold": 0,
-      "momentum_coefficient": -0.9,
-      "model": [
-        "192",
-        0
-      ],
-      "positive": [
-        "104",
-        0
-      ],
-      "negative": [
-        "104",
-        1
-      ]
-    },
-    "class_type": "APGGuider",
-    "_meta": {
-      "title": "🅛🅣🅧 APG Guider"
-    }
-  },
   "169": {
     "inputs": {
-      "lora_name": "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+      "lora_name": "LTX-2.x/Acceleration/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
       "strength_model": 0.5,
       "model": [
         "39",
@@ -628,7 +614,7 @@
   },
   "192": {
     "inputs": {
-      "lora_name": "ltxx/ltx23_edit_anything_global_rank128_v1_9000steps_adamw.safetensors",
+      "lora_name": "LTX-2.x/Control-and-Editing/ltx23_edit_anything_global_rank128_v1_9000steps_adamw.safetensors",
       "strength_model": 1,
       "model": [
         "169",

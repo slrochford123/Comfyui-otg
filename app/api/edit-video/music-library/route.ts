@@ -5,6 +5,7 @@ import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import {productionAudioMediaReadable} from "@/lib/productionAudioAccess";
 import { OTG_DATA_ROOT, ensureDir, safeSegment } from "@/lib/paths";
 
 export const runtime = "nodejs";
@@ -125,7 +126,7 @@ export async function POST(req: NextRequest) {
     ensureDir(dirs.generated);
     ensureDir(dirs.library);
 
-    if (!assertInside(dirs.root, audioPath)) {
+    if (!assertInside(dirs.root, audioPath)||!await productionAudioMediaReadable(req,audioPath)) {
       return NextResponse.json({ ok: false, error: "Audio file is outside the Edit Video music storage area." }, { status: 400 });
     }
 

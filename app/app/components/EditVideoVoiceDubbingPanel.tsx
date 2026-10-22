@@ -1,15 +1,13 @@
-﻿"use client";
-
-// OTG_QWEN3_TTS_VIDEO_DUB_OPTION_V11
-// OTG_VOICE_TEXT_TO_SPEECH_INDEXTTS2_V1
+"use client";
 
 import React from "react";
-import CharacterTextToSpeechPanel from "./CharacterTextToSpeechPanel";
+
+type WorkflowMode = "convert" | "rewrite";
 
 type VoiceModel = {
   id: string;
   name: string;
-  engine: "seed-vc" | "xtts" | "reference" | "character";
+  engine: "reference" | "character" | "seed-vc" | "xtts";
   path: string;
   displayPath: string;
   modelPath?: string;
@@ -19,54 +17,89 @@ type VoiceModel = {
   notes?: string;
 };
 
-type AudioDubResult = {
-  jobId: string;
-  fileName: string;
-  url: string;
-  saved?: boolean;
-  engine?: string;
-  modelName?: string;
-  message?: string;
+type SpeechSegment = {
+  start: number;
+  end: number;
+  speakerId?: string;
+  text?: string;
 };
 
-type VideoDubResult = {
-  jobId: string;
-  fileName: string;
-  url: string;
-  transcript?: string;
-  saved?: boolean;
-  mode?: string;
-  ttsEngine?: string;
-  message?: string;
+type DetectedVoiceLane = {
+  id: string;
+  label: string;
+  description?: string;
+  segments: SpeechSegment[];
+  segmentCount: number;
+  totalSpeechSeconds: number;
+  confidence?: string;
 };
 
-type VideoTtsEngine = "xtts" | "qwen3" | "omnivoice";
-
-type DialogueSegmentResult = {
-  jobId: string;
-  fileName: string;
-  url: string;
-  startTime: number;
-  endTime: number;
-  duration: number;
-  sourceDuration: number;
+type ClipAnalysis = {
+  ok: boolean;
+  runId: string;
+  sourcePath: string;
+  sourceFileName: string;
+  durationSeconds: number;
+  separation?: { tool?: string; backgroundStemAvailable?: boolean };
+  diarization?: { tool?: string; note?: string };
+  voices: DetectedVoiceLane[];
 };
 
-function cleanName(value: string) {
+type LaneMapping = { targetVoiceId: string; replacementText: string };
+
+type DubResult = {
+  previewVideoUrl?: string;
+  previewVideoPath?: string;
+  workflow?: Record<string, unknown>;
+  mixPlan?: Record<string, unknown>;
+};
+
+function safeTitle(value: string) {
   return (
-    String(value || "voice_dub")
+    String(value || "voice_conversion")
       .replace(/\.[a-z0-9]+$/i, "")
       .replace(/[^a-zA-Z0-9._ -]+/g, "_")
       .replace(/\s+/g, "_")
       .replace(/_+/g, "_")
       .replace(/^_+|_+$/g, "")
-      .slice(0, 80) || "voice_dub"
+      .slice(0, 80) || "voice_conversion"
   );
 }
 
-function withDownload(url: string) {
-  if (!url) return "#";
-  return `${url}${url.includes("?") ? "&" : "?"}download=1`;
+function downloadUrl(url: string) {
+  return url ? `${url}${url.includes("?") ? "&" : "?"}download=1` : "#";
+}
+
+function methodLabel(model: VoiceModel | undefined) {
+  if (!model) return "Choose a target voice";
+  return model.engine === "character" ? "Trained Applio voice" : "Seed-VC reference voice";
+}
+
+function PillButton({
+  active,
+  children,
+  disabled,
+  onClick,
+}: {
+  active?: boolean;
+  children: React.ReactNode;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex min-h-11 items-center justify-center rounded-full border px-5 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-45 ${
+        active
+          ? "border-cyan-300/45 bg-cyan-300/15 text-cyan-50"
+          : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
+      }`}
+    >
+      {children}
+    </button>
+  );
 }
 
 export default function EditVideoVoiceDubbingPanel({
@@ -74,1286 +107,289 @@ export default function EditVideoVoiceDubbingPanel({
 }: {
   onSaved?: () => void;
 }) {
-  const [modeTab, setModeTab] = React.useState<"audio" | "tts" | "video">("audio");
+  void onSaved;
+  const [mode, setMode] = React.useState<WorkflowMode>("convert");
   const [models, setModels] = React.useState<VoiceModel[]>([]);
   const [modelsBusy, setModelsBusy] = React.useState(false);
   const [modelsError, setModelsError] = React.useState("");
-  const [selectedModelId, setSelectedModelId] = React.useState("");
-
-  const [performanceFile, setPerformanceFile] = React.useState<File | null>(
-    null,
-  );
-  const [performanceUrl, setPerformanceUrl] = React.useState("");
-  const [recording, setRecording] = React.useState(false);
-  const [recordStatus, setRecordStatus] = React.useState("");
-  const [engine, setEngine] = React.useState<
-    "auto" | "seed-vc" | "xtts"
-  >("auto");
-  const [pitch, setPitch] = React.useState(0);
-  const [outputTitle, setOutputTitle] = React.useState("character_voice_dub");
-  const [busy, setBusy] = React.useState(false);
-  const [saveBusy, setSaveBusy] = React.useState(false);
-  const [status, setStatus] = React.useState("");
-  const [result, setResult] = React.useState<AudioDubResult | null>(null);
-
   const [videoFile, setVideoFile] = React.useState<File | null>(null);
   const [videoUrl, setVideoUrl] = React.useState("");
-  const [voiceSampleFile, setVoiceSampleFile] = React.useState<File | null>(
-    null,
-  );
-  const [voiceSampleUrl, setVoiceSampleUrl] = React.useState("");
-  const [videoTranscript, setVideoTranscript] = React.useState("");
-  const [videoTtsEngine, setVideoTtsEngine] = React.useState<VideoTtsEngine>("xtts");
-  const [videoDubMode, setVideoDubMode] = React.useState<"replace" | "overlay">(
-    "replace",
-  );
-  const [videoTitle, setVideoTitle] = React.useState("xtts_video_dub");
-  const [videoBusy, setVideoBusy] = React.useState(false);
-  const [videoSaveBusy, setVideoSaveBusy] = React.useState(false);
-  const [videoStatus, setVideoStatus] = React.useState("");
-  const [videoResult, setVideoResult] = React.useState<VideoDubResult | null>(
-    null,
-  );
+  const [analysis, setAnalysis] = React.useState<ClipAnalysis | null>(null);
+  const [analysisBusy, setAnalysisBusy] = React.useState(false);
+  const [expectedSpeakerCount, setExpectedSpeakerCount] = React.useState("auto");
+  const [mappings, setMappings] = React.useState<Record<string, LaneMapping>>({});
+  const [title, setTitle] = React.useState("voice_converted_video");
+  const [busy, setBusy] = React.useState(false);
+  const [status, setStatus] = React.useState("");
+  const [error, setError] = React.useState("");
+  const [result, setResult] = React.useState<DubResult | null>(null);
+  const [quickVoiceName, setQuickVoiceName] = React.useState("");
+  const [quickVoiceFile, setQuickVoiceFile] = React.useState<File | null>(null);
+  const [quickVoiceBusy, setQuickVoiceBusy] = React.useState(false);
+  const videoUrlRef = React.useRef("");
 
-  const [segmentStart, setSegmentStart] = React.useState(0);
-  const [segmentEnd, setSegmentEnd] = React.useState(0);
-  const [segmentSourceDuration, setSegmentSourceDuration] = React.useState(0);
-  const [segmentBusy, setSegmentBusy] = React.useState(false);
-  const [segmentStatus, setSegmentStatus] = React.useState("");
-  const [segmentResult, setSegmentResult] =
-    React.useState<DialogueSegmentResult | null>(null);
-  const [segmentPreviewing, setSegmentPreviewing] = React.useState(false);
-
-  const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
-  const chunksRef = React.useRef<Blob[]>([]);
-  const streamRef = React.useRef<MediaStream | null>(null);
-  const segmentVideoRef = React.useRef<HTMLVideoElement | null>(null);
-
-  const selectedModel = React.useMemo(
-    () => models.find((item) => item.id === selectedModelId) || null,
-    [models, selectedModelId],
-  );
-
-  const loadModels = React.useCallback(async () => {
+  const loadModels = React.useCallback(async (preferredId = "") => {
     setModelsBusy(true);
     setModelsError("");
     try {
-      const response = await fetch("/api/voice/models", { cache: "no-store" });
+      const response = await fetch("/api/voice/models", { cache: "no-store", credentials: "include" });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok || data?.ok === false)
-        throw new Error(data?.error || "Voice model scan failed.");
-      const items = Array.isArray(data?.items) ? data.items : [];
+      if (!response.ok || data?.ok === false) throw new Error(data?.error || "Voice library could not be loaded.");
+      const items = Array.isArray(data?.items) ? (data.items as VoiceModel[]) : [];
       setModels(items);
-      setSelectedModelId(
-        (current) =>
-          current ||
-          items.find((item: VoiceModel) => item.usable)?.id ||
-          items[0]?.id ||
-          "",
-      );
-    } catch (error: any) {
-      setModelsError(error?.message || "Voice model scan failed.");
+      if (preferredId) {
+        setMappings((current) => {
+          const next = { ...current };
+          for (const lane of analysis?.voices || []) {
+            if (!next[lane.id]?.targetVoiceId) next[lane.id] = { ...(next[lane.id] || { replacementText: "" }), targetVoiceId: preferredId };
+          }
+          return next;
+        });
+      }
+      return items;
+    } catch (loadError: any) {
+      setModelsError(loadError?.message || "Voice library could not be loaded.");
+      return [] as VoiceModel[];
     } finally {
       setModelsBusy(false);
     }
-  }, []);
+  }, [analysis]);
 
   React.useEffect(() => {
-    void loadModels();
+    const timer = window.setTimeout(() => {
+      void loadModels();
+    }, 0);
     return () => {
-      if (performanceUrl.startsWith("blob:"))
-        URL.revokeObjectURL(performanceUrl);
-      if (videoUrl.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
-      if (voiceSampleUrl.startsWith("blob:"))
-        URL.revokeObjectURL(voiceSampleUrl);
-      streamRef.current?.getTracks().forEach((track) => track.stop());
+      window.clearTimeout(timer);
+      if (videoUrlRef.current.startsWith("blob:")) URL.revokeObjectURL(videoUrlRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadModels]);
+  }, []);
 
-  function setPerformanceAudio(file: File | null) {
+  function setVideo(file: File | null) {
     if (!file) return;
-    if (
-      !file.type.startsWith("audio/") &&
-      !/\.(mp3|wav|m4a|aac|ogg|flac|webm)$/i.test(file.name)
-    ) {
-      setStatus("Select an audio file only.");
+    if (!file.type.startsWith("video/") && !/\.(mp4|webm|mov|mkv)$/i.test(file.name)) {
+      setError("Choose an MP4, WEBM, MOV, or MKV video.");
       return;
     }
-    if (performanceUrl.startsWith("blob:")) URL.revokeObjectURL(performanceUrl);
+    if (videoUrl.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
+    setVideoFile(file);
+    const nextUrl = URL.createObjectURL(file);
+    videoUrlRef.current = nextUrl;
+    setVideoUrl(nextUrl);
+    setAnalysis(null);
+    setMappings({});
     setResult(null);
-    setStatus("");
-    setPerformanceFile(file);
-    setPerformanceUrl(URL.createObjectURL(file));
+    setError("");
+    setStatus("Video ready. Click Analyze Speech.");
   }
 
-  async function toggleRecording() {
-    if (recording) {
-      mediaRecorderRef.current?.stop();
+  async function analyzeSpeech() {
+    if (!videoFile) {
+      setError("Upload a video first.");
       return;
     }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setRecordStatus(
-        "Mic recording is not available in this browser/context.",
-      );
-      return;
-    }
+    setAnalysisBusy(true);
+    setError("");
+    setResult(null);
+    setStatus("Analyzing speech, separating dialogue, and detecting speakers...");
     try {
-      setRecordStatus("Requesting microphone access...");
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      chunksRef.current = [];
-      const recorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0)
-          chunksRef.current.push(event.data);
-      };
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, {
-          type: recorder.mimeType || "audio/webm",
-        });
-        const ext = recorder.mimeType.includes("mp4")
-          ? "m4a"
-          : recorder.mimeType.includes("wav")
-            ? "wav"
-            : "webm";
-        const file = new File(
-          [blob],
-          `recorded_performance_${Date.now()}.${ext}`,
-          { type: blob.type || "audio/webm" },
-        );
-        stream.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-        mediaRecorderRef.current = null;
-        setRecording(false);
-        setRecordStatus("Recording captured. Preview it before converting.");
-        setPerformanceAudio(file);
-      };
-      recorder.start();
-      setRecording(true);
-      setRecordStatus("Recording. Click Stop Recording when finished.");
-    } catch (error: any) {
-      setRecordStatus(error?.message || "Microphone access failed.");
-      setRecording(false);
+      const form = new FormData();
+      form.append("video", videoFile, videoFile.name);
+      if (expectedSpeakerCount !== "auto") form.append("expectedSpeakerCount", expectedSpeakerCount);
+      const response = await fetch("/api/production/audio/analyze-clip", { method: "POST", body: form, credentials: "include", cache: "no-store" });
+      const data = (await response.json().catch(() => ({}))) as ClipAnalysis & { error?: string };
+      if (!response.ok || data?.ok === false) throw new Error(data?.error || "Speech analysis failed.");
+      const lanes = Array.isArray(data.voices) ? data.voices : [];
+      setAnalysis(data);
+      setMappings(Object.fromEntries(lanes.map((lane) => [lane.id, { targetVoiceId: "", replacementText: "" }])));
+      setStatus(lanes.length ? `Found ${lanes.length} voice lane${lanes.length === 1 ? "" : "s"}. Assign a target voice to continue.` : "No clear speech lanes were detected.");
+    } catch (analysisError: any) {
+      setAnalysis(null);
+      setMappings({});
+      setError(analysisError?.message || "Speech analysis failed.");
+      setStatus("");
+    } finally {
+      setAnalysisBusy(false);
     }
   }
 
-  async function convertVoice() {
-    if (!performanceFile)
-      return setStatus("Record or upload performance audio first.");
-    if (!selectedModel)
-      return setStatus("Select a character/reference voice first.");
-    if (!selectedModel.usable)
-      return setStatus(
-        selectedModel.notes ||
-          "Selected voice is not usable for conversion yet.",
-      );
-    const trainedCharacter = selectedModel.engine === "character";
+  function updateMapping(laneId: string, patch: Partial<LaneMapping>) {
+    setMappings((current) => ({ ...current, [laneId]: { ...(current[laneId] || { targetVoiceId: "", replacementText: "" }), ...patch } }));
+  }
 
-    if (
-      trainedCharacter &&
-      (!selectedModel.modelPath || !selectedModel.indexPath)
-    ) {
-      return setStatus(
-        "Selected trained character is missing its Applio model or index path.",
-      );
+  function updateSegment(laneId: string, index: number, key: "start" | "end", value: number) {
+    setAnalysis((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        voices: current.voices.map((lane) => {
+          if (lane.id !== laneId) return lane;
+          const segments = lane.segments.map((segment, segmentIndex) => {
+            if (segmentIndex !== index) return segment;
+            const next = { ...segment, [key]: Math.max(0, value) };
+            if (next.end <= next.start) {
+              if (key === "start") next.end = next.start + 0.05;
+              else next.start = Math.max(0, next.end - 0.05);
+            }
+            return next;
+          });
+          return { ...lane, segments };
+        }),
+      };
+    });
+  }
+
+  async function addQuickReferenceVoice() {
+    if (!quickVoiceFile) {
+      setError("Choose a clean 5–10 second voice sample first.");
+      return;
     }
+    setQuickVoiceBusy(true);
+    setError("");
+    setStatus("Adding the reference sample to the voice library...");
+    try {
+      const form = new FormData();
+      form.append("file", quickVoiceFile, quickVoiceFile.name);
+      form.append("name", quickVoiceName.trim() || quickVoiceFile.name.replace(/\.[^.]+$/, ""));
+      const response = await fetch("/api/voice/reference", { method: "POST", body: form, credentials: "include" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data?.ok === false) throw new Error(data?.error || "Reference voice could not be added.");
+      await loadModels(`library:${String(data.voice?.voiceId || "")}`);
+      setQuickVoiceFile(null);
+      setQuickVoiceName("");
+      setStatus("Reference voice added. It is available as a Seed-VC target below.");
+    } catch (voiceError: any) {
+      setError(voiceError?.message || "Reference voice could not be added.");
+      setStatus("");
+    } finally {
+      setQuickVoiceBusy(false);
+    }
+  }
 
-    const form = new FormData();
-    form.append("performance_audio", performanceFile, performanceFile.name);
-    form.append("voice_id", selectedModel.id);
-    form.append("voice_path", selectedModel.path);
+  function openVoiceTraining() {
+    window.location.href = "/app?tab=characters";
+  }
 
-    if (trainedCharacter) {
-      form.append("engine", "applio");
-      form.append("model_path", selectedModel.modelPath || selectedModel.path);
-      form.append("index_path", selectedModel.indexPath || "");
-
-      if (selectedModel.samplePath) {
-        form.append("voice_sample_path", selectedModel.samplePath);
+  async function runVoiceWorkflow() {
+    if (!analysis?.sourcePath || !analysis.voices.length) {
+      setError("Analyze the video before starting the voice workflow.");
+      return;
+    }
+    const mappingsToSend = [];
+    for (const lane of analysis.voices) {
+      const laneMapping = mappings[lane.id];
+      const target = models.find((model) => model.id === laneMapping?.targetVoiceId);
+      if (!target) {
+        setError(`Choose a target voice for ${lane.label}.`);
+        return;
       }
-    } else {
-      form.append("engine", engine);
+      if (mode === "rewrite" && !laneMapping?.replacementText.trim()) {
+        setError(`Enter replacement dialogue for ${lane.label}.`);
+        return;
+      }
+      if (target.engine === "character" && (!target.modelPath || !target.indexPath)) {
+        setError(`${target.name} is missing its trained Applio model or index.`);
+        return;
+      }
+      mappingsToSend.push({
+        voiceId: lane.id,
+        voiceName: target.name,
+        voiceModelId: target.id,
+        characterId: target.engine === "character" ? target.id.replace(/^character:/, "").split(":")[0] : "",
+        voicePath: target.path,
+        modelPath: target.modelPath || "",
+        indexPath: target.indexPath || "",
+        samplePath: target.samplePath || (target.engine === "reference" ? target.path : ""),
+        engine: target.engine === "character" ? "applio" : "auto",
+        dubMode: mode === "rewrite" ? "rewrite_line" : "preserve_performance",
+        emotion: "preserve",
+        replacementText: laneMapping?.replacementText || "",
+        segments: lane.segments,
+      });
     }
 
-    form.append("dub_mode", "preserve_performance");
-    form.append("emotion", "preserve");
-    form.append("pitch", String(pitch));
-    form.append("title", cleanName(outputTitle));
     setBusy(true);
+    setError("");
     setResult(null);
-    setStatus(
-      "Converting performance audio into the selected character voice...",
-    );
+    setStatus(mode === "rewrite" ? "Generating replacement dialogue and rebuilding the video audio..." : "Converting each detected dialogue lane and rebuilding the video audio...");
     try {
-      const response = await fetch("/api/voice/dub", {
+      const response = await fetch("/api/production/audio/dub-preview", {
         method: "POST",
-        body: form,
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        cache: "no-store",
+        body: JSON.stringify({
+          sourcePath: analysis.sourcePath,
+          sourceFileName: analysis.sourceFileName || videoFile?.name || "source-video.mp4",
+          title: safeTitle(title),
+          voiceMappings: mappingsToSend,
+          audioClipAnalysis: analysis,
+          dubMode: mode === "rewrite" ? "rewrite_line" : "preserve_performance",
+        }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok || data?.ok === false)
-        throw new Error(data?.error || "Voice dubbing failed.");
-      setResult({
-        jobId: String(data.jobId || ""),
-        fileName: String(data.fileName || "voice_dub.wav"),
-        url: String(data.url || ""),
-        saved: Boolean(data.saved),
-        engine: String(data.engine || selectedModel.engine),
-        modelName: String(data.modelName || selectedModel.name),
-        message: String(data.message || ""),
-      });
-      setStatus(data?.message || "Voice dub is ready.");
-    } catch (error: any) {
-      setStatus(error?.message || "Voice dubbing failed.");
+      if (!response.ok || data?.ok === false) throw new Error(data?.error || "Voice workflow failed.");
+      setResult(data as DubResult);
+      setStatus(mode === "rewrite" ? "Replacement dialogue video is ready for review." : "Voice-converted video is ready for review.");
+    } catch (workflowError: any) {
+      setError(workflowError?.message || "Voice workflow failed.");
+      setStatus("");
     } finally {
       setBusy(false);
     }
   }
 
-  async function saveToGallery() {
-    if (!result?.jobId || !result.fileName) return;
-    setSaveBusy(true);
-    setStatus("Saving dubbed audio to Gallery...");
-    try {
-      const response = await fetch("/api/voice/dub/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jobId: result.jobId,
-          fileName: result.fileName,
-          title: cleanName(outputTitle),
-          engine: result.engine,
-          modelName: result.modelName,
-        }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data?.ok === false)
-        throw new Error(data?.error || "Save to Gallery failed.");
-      setResult((current) => (current ? { ...current, saved: true } : current));
-      setStatus("Saved to Gallery.");
-      onSaved?.();
-    } catch (error: any) {
-      setStatus(error?.message || "Save to Gallery failed.");
-    } finally {
-      setSaveBusy(false);
-    }
-  }
-
-  function useInProduction() {
-    if (!result?.url) return;
-    try {
-      window.dispatchEvent(
-        new CustomEvent("otg:production-reference-audio", {
-          detail: {
-            url: result.url,
-            fileName: result.fileName,
-            title: outputTitle,
-            source: "voice-dubbing",
-          },
-        }),
-      );
-      setStatus(
-        "Dubbed audio prepared for Production. Production wiring can consume otg:production-reference-audio when that phase is opened.",
-      );
-    } catch {
-      setStatus(
-        "Dubbed audio is ready. Production wiring is not connected yet.",
-      );
-    }
-  }
-
-  function setVideoInput(file: File | null) {
-    if (!file) return;
-    if (
-      !file.type.startsWith("video/") &&
-      !/\.(mp4|webm|mov|mkv)$/i.test(file.name)
-    )
-      return setVideoStatus("Select a video file only.");
-    if (videoUrl.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
-    setVideoFile(file);
-    setVideoUrl(URL.createObjectURL(file));
-    setVideoResult(null);
-    setVideoStatus("");
-    setSegmentStart(0);
-    setSegmentEnd(0);
-    setSegmentSourceDuration(0);
-    setSegmentResult(null);
-    setSegmentStatus("");
-    setSegmentPreviewing(false);
-  }
-
-  function handleSegmentVideoMetadata(
-    event: React.SyntheticEvent<HTMLVideoElement>,
-  ) {
-    const duration = Number(event.currentTarget.duration);
-
-    if (!Number.isFinite(duration) || duration <= 0) return;
-
-    setSegmentSourceDuration(duration);
-    setSegmentStart(0);
-    setSegmentEnd(duration);
-    setSegmentResult(null);
-    setSegmentStatus("");
-  }
-
-  function previewDialogueSegment() {
-    const video = segmentVideoRef.current;
-
-    if (!video) {
-      setSegmentStatus("Select a video first.");
-      return;
-    }
-
-    if (
-      !Number.isFinite(segmentStart) ||
-      !Number.isFinite(segmentEnd) ||
-      segmentStart < 0 ||
-      segmentEnd <= segmentStart ||
-      segmentEnd > segmentSourceDuration + 0.05
-    ) {
-      setSegmentStatus("Choose a valid start and end time.");
-      return;
-    }
-
-    video.pause();
-    video.currentTime = segmentStart;
-    setSegmentPreviewing(true);
-    setSegmentStatus(
-      `Previewing ${segmentStart.toFixed(2)}s to ${segmentEnd.toFixed(2)}s.`,
-    );
-
-    void video.play().catch(() => {
-      setSegmentPreviewing(false);
-      setSegmentStatus("Press play on the video to preview this selection.");
-    });
-  }
-
-  function handleSegmentVideoTimeUpdate(
-    event: React.SyntheticEvent<HTMLVideoElement>,
-  ) {
-    if (!segmentPreviewing) return;
-
-    const video = event.currentTarget;
-
-    if (video.currentTime >= segmentEnd) {
-      video.pause();
-      video.currentTime = segmentEnd;
-      setSegmentPreviewing(false);
-      setSegmentStatus(
-        `Preview complete: ${segmentStart.toFixed(2)}s to ${segmentEnd.toFixed(2)}s.`,
-      );
-    }
-  }
-
-  async function cutDialogueSegment() {
-    if (!videoFile) {
-      setSegmentStatus("Select a video first.");
-      return;
-    }
-
-    if (
-      !Number.isFinite(segmentStart) ||
-      !Number.isFinite(segmentEnd) ||
-      segmentStart < 0 ||
-      segmentEnd <= segmentStart ||
-      segmentEnd > segmentSourceDuration + 0.05
-    ) {
-      setSegmentStatus("Choose a valid start and end time.");
-      return;
-    }
-
-    const form = new FormData();
-    form.append("video", videoFile, videoFile.name);
-    form.append("start", String(segmentStart));
-    form.append("end", String(segmentEnd));
-
-    setSegmentBusy(true);
-    setSegmentResult(null);
-    setSegmentStatus("Creating dialogue section...");
-
-    try {
-      const response = await fetch("/api/edit-video/dialogue-segment", {
-        method: "POST",
-        body: form,
-      });
-
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok || data?.ok === false) {
-        throw new Error(data?.error || "Dialogue section could not be created.");
-      }
-
-      setSegmentResult({
-        jobId: String(data.jobId || ""),
-        fileName: String(data.fileName || "dialogue_segment.mp4"),
-        url: String(data.url || ""),
-        startTime: Number(data.startTime || 0),
-        endTime: Number(data.endTime || 0),
-        duration: Number(data.duration || 0),
-        sourceDuration: Number(data.sourceDuration || segmentSourceDuration),
-      });
-
-      setSegmentStatus(
-        `Dialogue section ready: ${Number(data.duration || 0).toFixed(2)} seconds.`,
-      );
-    } catch (error: any) {
-      setSegmentStatus(
-        error?.message || "Dialogue section could not be created.",
-      );
-    } finally {
-      setSegmentBusy(false);
-    }
-  }
-
-  function setVoiceSampleInput(file: File | null) {
-    if (!file) return;
-    if (
-      !file.type.startsWith("audio/") &&
-      !/\.(mp3|wav|m4a|aac|ogg|flac|webm)$/i.test(file.name)
-    )
-      return setVideoStatus("Select an audio file for the voice sample.");
-    if (voiceSampleUrl.startsWith("blob:")) URL.revokeObjectURL(voiceSampleUrl);
-    setVoiceSampleFile(file);
-    setVoiceSampleUrl(URL.createObjectURL(file));
-    setVideoResult(null);
-  }
-
-  async function runVideoDub() {
-    if (!videoFile) return setVideoStatus("Select a video first.");
-    if (!voiceSampleFile && !selectedModel)
-      return setVideoStatus(
-        "Select a character/reference voice or upload a voice sample.",
-      );
-    const form = new FormData();
-    form.append("video", videoFile, videoFile.name);
-    if (voiceSampleFile)
-      form.append("voice_upload", voiceSampleFile, voiceSampleFile.name);
-    if (selectedModel) form.append("voice_path", selectedModel.path);
-    form.append("transcript", videoTranscript);
-    form.append("tts_engine", videoTtsEngine);
-    form.append("mode", videoDubMode);
-    form.append("title", cleanName(videoTitle));
-    setVideoBusy(true);
-    setVideoResult(null);
-    const engineLabel = videoTtsEngine === "omnivoice" ? "OmniVoice" : videoTtsEngine === "qwen3" ? "Qwen3-TTS" : "XTTS";
-    setVideoStatus(
-      videoTranscript.trim()
-        ? `Generating ${engineLabel} speech and replacing video audio...`
-        : `Extracting audio, transcribing with Whisper, then generating ${engineLabel} speech...`,
-    );
-    try {
-      const response = await fetch("/api/edit-video/dub-voice", {
-        method: "POST",
-        body: form,
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data?.ok === false)
-        throw new Error(data?.error || `${engineLabel} video dub failed.`);
-      setVideoResult({
-        jobId: String(data.jobId || ""),
-        fileName: String(data.fileName || `${videoTtsEngine}_video_dub.mp4`),
-        url: String(data.url || ""),
-        transcript: String(data.transcript || ""),
-        mode: String(data.mode || videoDubMode),
-        ttsEngine: String(data.ttsEngine || videoTtsEngine),
-        message: String(data.message || ""),
-      });
-      if (!videoTranscript.trim() && data?.transcript)
-        setVideoTranscript(String(data.transcript));
-      setVideoStatus(data?.message || `${engineLabel} video dub is ready.`);
-    } catch (error: any) {
-      setVideoStatus(error?.message || `${engineLabel} video dub failed.`);
-    } finally {
-      setVideoBusy(false);
-    }
-  }
-
-  async function saveVideoDubToGallery() {
-    if (!videoResult?.jobId || !videoResult.fileName) return;
-    setVideoSaveBusy(true);
-    setVideoStatus("Saving dubbed video to Gallery...");
-    try {
-      const response = await fetch("/api/edit-video/dub-voice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jobId: videoResult.jobId,
-          fileName: videoResult.fileName,
-          title: cleanName(videoTitle),
-          ttsEngine: videoResult.ttsEngine || videoTtsEngine,
-        }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data?.ok === false)
-        throw new Error(data?.error || "Save to Gallery failed.");
-      setVideoResult((current) =>
-        current ? { ...current, saved: true } : current,
-      );
-      setVideoStatus("Saved to Gallery.");
-      onSaved?.();
-    } catch (error: any) {
-      setVideoStatus(error?.message || "Save to Gallery failed.");
-    } finally {
-      setVideoSaveBusy(false);
-    }
-  }
-
-  const Button = ({
-    active,
-    children,
-    onClick,
-  }: {
-    active: boolean;
-    children: React.ReactNode;
-    onClick: () => void;
-  }) => (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`inline-flex min-h-10 items-center justify-center rounded-full border px-4 py-2 text-sm font-semibold transition ${active ? "border-cyan-400/40 bg-cyan-400/15 text-cyan-50" : "border-white/10 bg-white/5 text-white/75 hover:bg-white/10"}`}
-    >
-      {children}
-    </button>
-  );
+  const usableModels = models.filter((model) => model.usable);
 
   return (
     <section className="rounded-[28px] border border-white/10 bg-black/45 p-5 shadow-[0_0_40px_rgba(80,80,180,0.08)]">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-black uppercase tracking-[0.24em] text-white/55">
-            Dialogue Replacement
-          </p>
-          <h2 className="mt-1 text-2xl font-black text-white">
-            Dialogue Replacement
-          </h2>
-          <p className="mt-2 max-w-4xl text-sm leading-6 text-white/58">
-            Use Seed-VC for voice-to-voice performance conversion, IndexTTS2 for emotional character Text-to-Speech, or XTTS / Qwen3-TTS
-            with Whisper to dub an existing video with a Characters tab
-            reference voice.
-          </p>
+          <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-200/70">Video Voice Studio</p>
+          <h2 className="mt-1 text-2xl font-black text-white">Change voices without rebuilding the video by hand</h2>
+          <p className="mt-2 max-w-4xl text-sm leading-6 text-white/60">Upload the finished video once. The app analyzes the dialogue, assigns voices, converts the selected lanes, and restores the original video, music, and effects automatically.</p>
         </div>
-        <span className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-cyan-100">
-          Local
-        </span>
+        <span className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-cyan-100">Local</span>
       </div>
 
       <div className="mt-5 flex flex-wrap gap-2">
-        <Button
-          active={modeTab === "audio"}
-          onClick={() => setModeTab("audio")}
-        >
-          Performance → Character Voice
-        </Button>
-        <Button
-          active={modeTab === "tts"}
-          onClick={() => setModeTab("tts")}
-        >
-          Text-to-Speech
-        </Button>
-        <Button
-          active={modeTab === "video"}
-          onClick={() => setModeTab("video")}
-        >
-          TTS Video Dub
-        </Button>
+        <PillButton active={mode === "convert"} onClick={() => setMode("convert")}>Preserve Performance</PillButton>
+        <PillButton active={mode === "rewrite"} onClick={() => setMode("rewrite")}>Rewrite Dialogue</PillButton>
+      </div>
+
+      <div className="mt-4 rounded-[18px] border border-cyan-300/15 bg-cyan-300/[0.05] p-4 text-sm leading-6 text-cyan-50/80">
+        {mode === "convert" ? <><strong className="text-cyan-50">Preserve Performance:</strong> the original words, timing, pauses, and delivery stay in place. A 5–10 second reference sample uses Seed-VC; a trained character voice uses Applio.</> : <><strong className="text-cyan-50">Rewrite Dialogue:</strong> enter new words for each detected speaker. AuK generates the new source line, then the selected voice converts it into the target character. This is separate from performance-preserving conversion.</>}
       </div>
 
       <div className="mt-5 rounded-[22px] border border-white/10 bg-black/30 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-black text-white">
-              Select character/reference voice
-            </h3>
-            <p className="mt-1 text-xs text-white/50">
-              Characters tab voices appear first. Clean C:\\AI\\Voices sources
-              are fallback options. Junk folders are ignored.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void loadModels()}
-            className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white/75 hover:bg-white/10"
-          >
-            Rescan
-          </button>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h3 className="text-sm font-black text-white">1. Upload the source video</h3><p className="mt-1 text-xs text-white/50">No audio extraction or reattachment is required from the user.</p></div>
+          <label className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-white/5 px-5 py-2.5 text-sm font-semibold text-white hover:bg-white/10">{videoFile ? "Choose a different video" : "Upload Video"}<input type="file" accept="video/*,.mp4,.webm,.mov,.mkv" className="hidden" onChange={(event) => setVideo(event.target.files?.[0] || null)} /></label>
         </div>
-        <select
-          value={selectedModelId}
-          onChange={(event) => setSelectedModelId(event.target.value)}
-          className="mt-3 w-full rounded-[18px] border border-white/10 bg-black/65 px-4 py-3 text-sm text-white outline-none"
-        >
-          {models.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name} [{item.engine.toUpperCase()}]
-            </option>
-          ))}
-        </select>
-        {modelsBusy ? (
-          <p className="mt-2 text-xs text-white/45">Scanning voices...</p>
-        ) : null}
-        {modelsError ? (
-          <p className="mt-2 text-xs text-red-200/85">{modelsError}</p>
-        ) : null}
-        {selectedModel ? (
-          <div className="mt-3 rounded-[18px] border border-white/10 bg-black/35 p-3 text-xs text-white/60">
-            <p className="font-semibold text-white/80">{selectedModel.name}</p>
-            <p className="mt-1 break-words">{selectedModel.displayPath}</p>
-            {selectedModel.notes ? (
-              <p className="mt-2 text-amber-100/75">{selectedModel.notes}</p>
-            ) : null}
-            {selectedModel.samplePath ? (
-              <p className="mt-2 break-words">
-                Reference sample: {selectedModel.samplePath}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
+        {videoUrl ? <video src={videoUrl} controls preload="metadata" className="mt-4 max-h-[420px] w-full rounded-[18px] border border-white/10 bg-black object-contain" /> : <div className="mt-4 rounded-[18px] border border-dashed border-white/10 bg-black/25 px-4 py-10 text-center text-sm text-white/40">Choose the H3 video you want to edit.</div>}
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Speaker count<select value={expectedSpeakerCount} onChange={(event) => setExpectedSpeakerCount(event.target.value)} className="mt-2 block min-h-11 rounded-[14px] border border-white/10 bg-black/45 px-3 text-sm font-semibold normal-case tracking-normal text-white outline-none"><option value="auto">Auto detect</option><option value="1">1 speaker</option><option value="2">2 speakers</option><option value="3">3 speakers</option><option value="4">4 speakers</option><option value="5">5 speakers</option></select></label>
+          <PillButton disabled={analysisBusy || !videoFile} onClick={() => void analyzeSpeech()}>{analysisBusy ? "Analyzing..." : "Analyze Speech"}</PillButton>
+        </div>
       </div>
 
-      {modeTab === "audio" ? (
-        <div className="mt-5 space-y-4">
-          <div className="rounded-[22px] border border-white/10 bg-black/30 p-4">
-            <h3 className="text-sm font-black text-white">
-              Step 1: Perform the line
-            </h3>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void toggleRecording()}
-                className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-5 py-2 text-sm font-semibold text-cyan-50 hover:bg-cyan-400/15"
-              >
-                {recording ? "Stop Recording" : "Record Voice"}
-              </button>
-              <label className="inline-flex cursor-pointer rounded-full border border-white/10 bg-white/5 px-5 py-2 text-sm font-semibold text-white hover:bg-white/10">
-                Upload Audio
-                <input
-                  type="file"
-                  accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm"
-                  className="hidden"
-                  onChange={(event) =>
-                    setPerformanceAudio(event.target.files?.[0] || null)
-                  }
-                />
-              </label>
-            </div>
-            {recordStatus ? (
-              <p className="mt-2 text-xs text-white/50">{recordStatus}</p>
-            ) : null}
-            {performanceUrl ? (
-              <audio
-                src={performanceUrl}
-                controls
-                preload="metadata"
-                className="mt-3 w-full"
-              />
-            ) : (
-              <div className="mt-3 rounded-[18px] border border-white/10 bg-black/35 px-4 py-4 text-sm text-white/45">
-                No performance audio selected.
-              </div>
-            )}
-          </div>
-          <div className="rounded-[22px] border border-white/10 bg-black/30 p-4">
-            <h3 className="text-sm font-black text-white">
-              Step 2: Convert to character voice
-            </h3>
-            <div className="mt-3 grid gap-3 md:grid-cols-[1fr_180px_2fr]">
-              <div>
-                <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-                  Engine
-                </label>
-                <select
-                  value={engine}
-                  onChange={(event) => setEngine(event.target.value as any)}
-                  className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none"
-                >
-                  <option value="auto">Auto (trained character → Applio)</option>
-                  <option value="seed-vc">Seed-VC</option>
-                  <option value="xtts">XTTS fallback</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-                  Pitch shift
-                </label>
-                <input
-                  type="number"
-                  min="-24"
-                  max="24"
-                  value={pitch}
-                  onChange={(event) => setPitch(Number(event.target.value))}
-                  className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-                  Output name
-                </label>
-                <input
-                  value={outputTitle}
-                  onChange={(event) =>
-                    setOutputTitle(cleanName(event.target.value))
-                  }
-                  className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none"
-                />
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => void convertVoice()}
-              disabled={busy || !performanceFile || !selectedModelId}
-              className="mt-4 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-5 py-2 text-sm font-semibold text-cyan-50 hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {busy ? "Converting..." : "Convert Voice"}
-            </button>
-          </div>
-          {status ? (
-            <div className="rounded-[18px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/72">
-              {status}
-            </div>
-          ) : null}
-          {result?.url ? (
-            <div className="rounded-[22px] border border-white/10 bg-black/30 p-4">
-              <h4 className="text-sm font-black text-white">Preview output</h4>
-              <audio
-                src={result.url}
-                controls
-                preload="metadata"
-                className="mt-3 w-full"
-              />
-              <div className="mt-4 flex flex-wrap gap-2">
-                <a
-                  href={withDownload(result.url)}
-                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10"
-                >
-                  Download
-                </a>
-                <button
-                  type="button"
-                  onClick={() => void saveToGallery()}
-                  disabled={saveBusy || result.saved}
-                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-50"
-                >
-                  {result.saved
-                    ? "Saved to Gallery"
-                    : saveBusy
-                      ? "Saving..."
-                      : "Save to Gallery"}
-                </button>
-                <button
-                  type="button"
-                  onClick={useInProduction}
-                  className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-50 hover:bg-cyan-400/15"
-                >
-                  Use in Production
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      <div className="mt-5 rounded-[22px] border border-white/10 bg-black/30 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-black text-white">2. Add a quick reference voice or train a permanent one</h3><p className="mt-1 max-w-3xl text-xs leading-5 text-white/50">A clean 5–10 second sample is enough for Seed-VC. Use Train a Voice when you want a repeatable Applio character model.</p></div><PillButton onClick={openVoiceTraining}>Train a Voice</PillButton></div>
+        <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]"><input value={quickVoiceName} onChange={(event) => setQuickVoiceName(event.target.value)} placeholder="Reference name, e.g. Test Voice 1" className="min-h-11 rounded-[14px] border border-white/10 bg-black/45 px-3 text-sm text-white outline-none placeholder:text-white/30" /><label className="flex min-h-11 cursor-pointer items-center rounded-[14px] border border-white/10 bg-black/45 px-3 text-sm text-white/75">{quickVoiceFile?.name || "Choose 5–10 second sample"}<input type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.flac,.webm" className="hidden" onChange={(event) => setQuickVoiceFile(event.target.files?.[0] || null)} /></label><PillButton disabled={quickVoiceBusy || !quickVoiceFile} onClick={() => void addQuickReferenceVoice()}>{quickVoiceBusy ? "Adding..." : "Add Voice"}</PillButton></div>
+        {modelsBusy ? <p className="mt-3 text-xs text-white/45">Loading voice library...</p> : null}
+        {modelsError ? <p className="mt-3 text-xs text-rose-200">{modelsError}</p> : null}
+        {!modelsBusy && !usableModels.length ? <p className="mt-3 rounded-[14px] border border-amber-300/20 bg-amber-300/[0.06] px-3 py-3 text-sm text-amber-100/80">No target voices are visible for this session yet. Add a quick reference sample or sign into the profile that owns the voice library.</p> : null}
+      </div>
 
-      {modeTab === "audio" ? (
-        <div className="mt-5 rounded-[22px] border border-cyan-400/15 bg-cyan-400/[0.04] p-4">
-          <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200/70">
-            Step 3
-          </p>
+      {analysis ? <div className="mt-5 rounded-[22px] border border-white/10 bg-black/30 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-black text-white">3. Assign target voices</h3><p className="mt-1 text-xs text-white/50">Each detected lane can use a different target voice. Adjust the time boundaries only when automatic detection needs correction.</p></div><div className="text-right text-xs text-white/45"><div>{analysis.durationSeconds.toFixed(2)} seconds</div><div>{analysis.diarization?.tool || "speech analysis"}</div></div></div>
+        <div className="mt-4 space-y-4">{analysis.voices.map((lane, laneIndex) => { const laneMapping = mappings[lane.id] || { targetVoiceId: "", replacementText: "" }; const target = models.find((model) => model.id === laneMapping.targetVoiceId); return <div key={lane.id} className="rounded-[18px] border border-white/10 bg-black/25 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h4 className="font-black text-white">{lane.label || `Voice ${laneIndex + 1}`}</h4><p className="mt-1 text-xs text-white/50">{lane.segmentCount} dialogue section{lane.segmentCount === 1 ? "" : "s"} · {lane.totalSpeechSeconds.toFixed(2)} seconds</p></div><span className="rounded-full border border-white/10 px-3 py-1 text-[11px] font-bold text-white/50">{lane.confidence || "detected"}</span></div><select aria-label={`Target voice for ${lane.label || `Voice ${laneIndex + 1}`}`} value={laneMapping.targetVoiceId} onChange={(event) => updateMapping(lane.id, { targetVoiceId: event.target.value })} className="mt-3 min-h-11 w-full rounded-[14px] border border-white/10 bg-black/50 px-3 text-sm font-semibold text-white outline-none"><option value="">Choose target voice</option>{usableModels.map((model) => <option key={model.id} value={model.id}>{model.name} — {methodLabel(model)}</option>)}</select>{target ? <p className="mt-2 text-xs text-cyan-100/65">{methodLabel(target)}. {target.engine === "character" ? "Uses the trained model." : "Uses the saved reference sample; no training required."}</p> : null}{mode === "rewrite" ? <textarea value={laneMapping.replacementText} onChange={(event) => updateMapping(lane.id, { replacementText: event.target.value })} rows={2} placeholder={`New dialogue for ${lane.label || "this speaker"}`} className="mt-3 w-full rounded-[14px] border border-white/10 bg-black/45 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30" /> : null}<div className="mt-3 grid gap-2 md:grid-cols-2">{lane.segments.map((segment, segmentIndex) => <div key={`${lane.id}-${segmentIndex}`} className="rounded-[12px] border border-white/10 bg-black/25 p-3"><div className="mb-2 text-xs font-black uppercase tracking-[0.16em] text-white/40">Section {segmentIndex + 1}{segment.text ? ` · ${segment.text}` : ""}</div><div className="grid grid-cols-2 gap-2"><label className="text-[11px] text-white/45">Start<input type="number" min="0" step="0.05" value={segment.start} onChange={(event) => updateSegment(lane.id, segmentIndex, "start", Number(event.target.value))} className="mt-1 min-h-9 w-full rounded-[10px] border border-white/10 bg-black/45 px-2 text-sm text-white outline-none" /></label><label className="text-[11px] text-white/45">End<input type="number" min="0" step="0.05" value={segment.end} onChange={(event) => updateSegment(lane.id, segmentIndex, "end", Number(event.target.value))} className="mt-1 min-h-9 w-full rounded-[10px] border border-white/10 bg-black/45 px-2 text-sm text-white outline-none" /></label></div></div>)}</div></div>; })}</div>
+        <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto] md:items-end"><label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Output name<input value={title} onChange={(event) => setTitle(safeTitle(event.target.value))} className="mt-2 min-h-11 w-full rounded-[14px] border border-white/10 bg-black/45 px-3 text-sm font-semibold normal-case tracking-normal text-white outline-none" /></label><PillButton active disabled={busy || !analysis.voices.length} onClick={() => void runVoiceWorkflow()}>{busy ? "Working..." : mode === "rewrite" ? "Rewrite Dialogue" : "Convert Voices"}</PillButton></div><p className="mt-3 text-xs leading-5 text-white/45">Music and sound effects are kept through the dialogue/background mix. The original video stream is preserved.</p>
+      </div> : null}
 
-          <h3 className="mt-1 text-sm font-black text-white">
-            Select the dialogue section in the video
-          </h3>
-
-          <p className="mt-2 text-sm leading-6 text-white/60">
-            Choose the exact part of the source video that should receive the
-            approved character performance. Preview the timing before creating
-            the selected section for the next Put in Video step.
-          </p>
-
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <div className="rounded-[18px] border border-white/10 bg-black/30 p-4">
-              <label className="inline-flex cursor-pointer rounded-full border border-white/10 bg-white/5 px-5 py-2 text-sm font-semibold text-white hover:bg-white/10">
-                Select Video
-                <input
-                  type="file"
-                  accept="video/*,.mp4,.webm,.mov,.mkv"
-                  className="hidden"
-                  onChange={(event) =>
-                    setVideoInput(event.target.files?.[0] || null)
-                  }
-                />
-              </label>
-
-              {videoUrl ? (
-                <video
-                  ref={segmentVideoRef}
-                  src={videoUrl}
-                  controls
-                  preload="metadata"
-                  onLoadedMetadata={handleSegmentVideoMetadata}
-                  onTimeUpdate={handleSegmentVideoTimeUpdate}
-                  className="mt-3 max-h-[420px] w-full rounded-[18px] border border-white/10 bg-black object-contain"
-                />
-              ) : (
-                <div className="mt-3 rounded-[18px] border border-white/10 bg-black/35 px-4 py-8 text-sm text-white/45">
-                  No source video selected.
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-[18px] border border-white/10 bg-black/30 p-4">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-                    Start time · {segmentStart.toFixed(2)}s
-                  </label>
-                  <input
-                    type="range"
-                    min="0"
-                    max={Math.max(0, segmentEnd - 0.05)}
-                    step="0.05"
-                    value={segmentStart}
-                    onChange={(event) => {
-                      const next = Math.min(
-                        Number(event.target.value),
-                        Math.max(0, segmentEnd - 0.05),
-                      );
-                      setSegmentStart(next);
-                      if (segmentVideoRef.current) {
-                        segmentVideoRef.current.currentTime = next;
-                        segmentVideoRef.current.pause();
-                      }
-                      setSegmentPreviewing(false);
-                      setSegmentResult(null);
-                      setSegmentStatus("");
-                    }}
-                    className="mt-4 w-full cursor-pointer accent-violet-500 disabled:opacity-40"
-                  />
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = Math.max(0, segmentStart - 0.5);
-                        setSegmentStart(next);
-                        if (segmentVideoRef.current) {
-                          segmentVideoRef.current.currentTime = next;
-                          segmentVideoRef.current.pause();
-                        }
-                        setSegmentPreviewing(false);
-                        setSegmentResult(null);
-                        setSegmentStatus("");
-                      }}
-                      disabled={!videoFile || segmentStart <= 0}
-                      className="min-h-11 flex-1 rounded-full border border-white/10 bg-white/5 px-3 text-sm font-black text-white disabled:opacity-40"
-                    >
-                      −0.5s
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = Math.min(
-                          segmentEnd - 0.05,
-                          segmentStart + 0.5,
-                        );
-                        setSegmentStart(next);
-                        if (segmentVideoRef.current) {
-                          segmentVideoRef.current.currentTime = next;
-                          segmentVideoRef.current.pause();
-                        }
-                        setSegmentPreviewing(false);
-                        setSegmentResult(null);
-                        setSegmentStatus("");
-                      }}
-                      disabled={!videoFile || segmentStart >= segmentEnd - 0.05}
-                      className="min-h-11 flex-1 rounded-full border border-white/10 bg-white/5 px-3 text-sm font-black text-white disabled:opacity-40"
-                    >
-                      +0.5s
-                    </button>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const current = Number(
-                        segmentVideoRef.current?.currentTime || 0,
-                      );
-                      const next = Math.min(
-                        current,
-                        Math.max(0, segmentEnd - 0.05),
-                      );
-                      setSegmentStart(next);
-                      setSegmentPreviewing(false);
-                      setSegmentResult(null);
-                      setSegmentStatus("");
-                    }}
-                    disabled={!videoFile}
-                    className="mt-2 text-xs font-semibold text-cyan-200 disabled:opacity-40"
-                  >
-                    Set Start to Current Frame
-                  </button>
-                </div>
-
-                <div>
-                  <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-                    End time · {segmentEnd.toFixed(2)}s
-                  </label>
-                  <input
-                    type="range"
-                    min={Math.min(segmentSourceDuration, segmentStart + 0.05)}
-                    max={segmentSourceDuration || undefined}
-                    step="0.05"
-                    value={segmentEnd}
-                    onChange={(event) => {
-                      const next = Math.max(
-                        segmentStart + 0.05,
-                        Math.min(
-                          segmentSourceDuration,
-                          Number(event.target.value),
-                        ),
-                      );
-                      setSegmentEnd(next);
-                      if (segmentVideoRef.current) {
-                        segmentVideoRef.current.currentTime = next;
-                        segmentVideoRef.current.pause();
-                      }
-                      setSegmentPreviewing(false);
-                      setSegmentResult(null);
-                      setSegmentStatus("");
-                    }}
-                    className="mt-4 w-full cursor-pointer accent-violet-500 disabled:opacity-40"
-                  />
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = Math.max(
-                          segmentStart + 0.05,
-                          segmentEnd - 0.5,
-                        );
-                        setSegmentEnd(next);
-                        if (segmentVideoRef.current) {
-                          segmentVideoRef.current.currentTime = next;
-                          segmentVideoRef.current.pause();
-                        }
-                        setSegmentPreviewing(false);
-                        setSegmentResult(null);
-                        setSegmentStatus("");
-                      }}
-                      disabled={!videoFile || segmentEnd <= segmentStart + 0.05}
-                      className="min-h-11 flex-1 rounded-full border border-white/10 bg-white/5 px-3 text-sm font-black text-white disabled:opacity-40"
-                    >
-                      −0.5s
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = Math.min(
-                          segmentSourceDuration,
-                          segmentEnd + 0.5,
-                        );
-                        setSegmentEnd(next);
-                        if (segmentVideoRef.current) {
-                          segmentVideoRef.current.currentTime = next;
-                          segmentVideoRef.current.pause();
-                        }
-                        setSegmentPreviewing(false);
-                        setSegmentResult(null);
-                        setSegmentStatus("");
-                      }}
-                      disabled={!videoFile || segmentEnd >= segmentSourceDuration}
-                      className="min-h-11 flex-1 rounded-full border border-white/10 bg-white/5 px-3 text-sm font-black text-white disabled:opacity-40"
-                    >
-                      +0.5s
-                    </button>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const current = Number(
-                        segmentVideoRef.current?.currentTime || 0,
-                      );
-                      const next = Math.max(
-                        segmentStart + 0.05,
-                        Math.min(segmentSourceDuration, current),
-                      );
-                      setSegmentEnd(next);
-                      setSegmentPreviewing(false);
-                      setSegmentResult(null);
-                      setSegmentStatus("");
-                    }}
-                    disabled={!videoFile}
-                    className="mt-2 text-xs font-semibold text-cyan-200 disabled:opacity-40"
-                  >
-                    Set End to Current Frame
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-4 rounded-[16px] border border-white/10 bg-black/25 p-3 text-sm text-white/60">
-                Video: {segmentSourceDuration.toFixed(2)}s
-                {" · "}
-                Selection: {Math.max(0, segmentEnd - segmentStart).toFixed(2)}s
-              </div>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={previewDialogueSegment}
-                  disabled={!videoFile || segmentPreviewing}
-                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-50"
-                >
-                  {segmentPreviewing ? "Previewing..." : "Preview Selection"}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => void cutDialogueSegment()}
-                  disabled={segmentBusy || !videoFile}
-                  className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-50 hover:bg-cyan-400/15 disabled:opacity-50"
-                >
-                  {segmentBusy ? "Creating Section..." : "Cut Section"}
-                </button>
-              </div>
-
-              {segmentStatus ? (
-                <p className="mt-3 text-sm text-white/65">{segmentStatus}</p>
-              ) : null}
-            </div>
-          </div>
-
-          {segmentResult?.url ? (
-            <div className="mt-4 rounded-[18px] border border-emerald-400/15 bg-emerald-400/[0.04] p-4">
-              <h4 className="text-sm font-black text-white">
-                Dialogue section ready
-              </h4>
-              <p className="mt-1 text-xs text-white/55">
-                {segmentResult.startTime.toFixed(2)}s →{" "}
-                {segmentResult.endTime.toFixed(2)}s ·{" "}
-                {segmentResult.duration.toFixed(2)}s
-              </p>
-              <video
-                src={segmentResult.url}
-                controls
-                preload="metadata"
-                className="mt-3 max-h-[420px] w-full rounded-[18px] border border-white/10 bg-black object-contain"
-              />
-              <p className="mt-3 text-xs text-cyan-100/70">
-                Ready for the next Put in Video step after this selection is approved.
-              </p>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {modeTab === "tts" ? (
-        <CharacterTextToSpeechPanel onSaved={onSaved} />
-      ) : null}
-
-      {modeTab === "video" ? (
-        <div className="mt-5 space-y-4">
-          <div className="rounded-[22px] border border-cyan-400/15 bg-cyan-400/[0.04] p-4">
-            <h3 className="text-sm font-black text-white">
-              XTTS / Qwen3-TTS / OmniVoice + Whisper video dubbing
-            </h3>
-            <p className="mt-2 text-sm leading-6 text-white/60">
-              V1 is simple whole-clip dubbing: extract video audio, use
-              transcript text or local Whisper, generate cloned speech with
-              the selected local TTS engine, then replace or lightly overlay
-              the original audio with FFmpeg. Qwen3-TTS requires a configured
-              local command or service. OmniVoice requires its own install command/service. No lip-sync or sentence timing yet.
-            </p>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="rounded-[22px] border border-white/10 bg-black/30 p-4">
-              <h4 className="text-sm font-black text-white">
-                Step 1: Select video
-              </h4>
-              <label className="mt-3 inline-flex cursor-pointer rounded-full border border-white/10 bg-white/5 px-5 py-2 text-sm font-semibold text-white hover:bg-white/10">
-                Upload Video
-                <input
-                  type="file"
-                  accept="video/*,.mp4,.webm,.mov,.mkv"
-                  className="hidden"
-                  onChange={(event) =>
-                    setVideoInput(event.target.files?.[0] || null)
-                  }
-                />
-              </label>
-              {videoUrl ? (
-                <video
-                  src={videoUrl}
-                  controls
-                  preload="metadata"
-                  className="mt-3 max-h-[360px] w-full rounded-[18px] border border-white/10 bg-black object-contain"
-                />
-              ) : (
-                <div className="mt-3 rounded-[18px] border border-white/10 bg-black/35 px-4 py-6 text-sm text-white/45">
-                  No video selected.
-                </div>
-              )}
-            </div>
-            <div className="rounded-[22px] border border-white/10 bg-black/30 p-4">
-              <h4 className="text-sm font-black text-white">
-                Step 2: Voice source
-              </h4>
-              <p className="mt-2 text-xs text-white/50">
-                Default uses the selected Characters tab/reference voice above.
-                Uploading a sample overrides it for this job.
-              </p>
-              <label className="mt-3 inline-flex cursor-pointer rounded-full border border-white/10 bg-white/5 px-5 py-2 text-sm font-semibold text-white hover:bg-white/10">
-                Upload Voice Sample
-                <input
-                  type="file"
-                  accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm"
-                  className="hidden"
-                  onChange={(event) =>
-                    setVoiceSampleInput(event.target.files?.[0] || null)
-                  }
-                />
-              </label>
-              {voiceSampleUrl ? (
-                <audio
-                  src={voiceSampleUrl}
-                  controls
-                  preload="metadata"
-                  className="mt-3 w-full"
-                />
-              ) : (
-                <div className="mt-3 rounded-[18px] border border-white/10 bg-black/35 px-4 py-4 text-sm text-white/45">
-                  Using selected character/reference voice.
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="rounded-[22px] border border-white/10 bg-black/30 p-4">
-            <h4 className="text-sm font-black text-white">
-              Step 3: Transcript and output
-            </h4>
-            <label className="mt-3 block text-xs font-black uppercase tracking-[0.18em] text-white/45">
-              Transcript
-            </label>
-            <textarea
-              value={videoTranscript}
-              onChange={(event) => setVideoTranscript(event.target.value)}
-              placeholder="Optional for v1. Type the words here for fastest TTS dubbing. Leave blank only if WHISPER_DUB_COMMAND / FASTER_WHISPER_COMMAND is configured."
-              className="mt-2 min-h-32 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none"
-            />
-            <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_1fr]">
-              <div>
-                <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-                  TTS engine
-                </label>
-                <select
-                  value={videoTtsEngine}
-                  onChange={(event) =>
-                    setVideoTtsEngine(event.target.value as VideoTtsEngine)
-                  }
-                  className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none"
-                >
-                  <option value="xtts">XTTS v2</option>
-                  <option value="qwen3">Qwen3-TTS</option>
-                  <option value="omnivoice">OmniVoice</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-                  Audio mode
-                </label>
-                <select
-                  value={videoDubMode}
-                  onChange={(event) =>
-                    setVideoDubMode(event.target.value as any)
-                  }
-                  className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none"
-                >
-                  <option value="replace">Replace original audio</option>
-                  <option value="overlay">
-                    Keep low original + overlay cloned voice
-                  </option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-                  Output name
-                </label>
-                <input
-                  value={videoTitle}
-                  onChange={(event) =>
-                    setVideoTitle(cleanName(event.target.value))
-                  }
-                  className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none"
-                />
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => void runVideoDub()}
-              disabled={
-                videoBusy ||
-                !videoFile ||
-                (!voiceSampleFile && !selectedModelId)
-              }
-              className="mt-4 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-5 py-2 text-sm font-semibold text-cyan-50 hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {videoBusy
-                ? "Generating Dub..."
-                : videoTtsEngine === "omnivoice"
-                  ? "Generate OmniVoice Video Dub"
-                : videoTtsEngine === "qwen3"
-                  ? "Generate Qwen3 Video Dub"
-                  : "Generate XTTS Video Dub"}
-            </button>
-          </div>
-          {videoStatus ? (
-            <div className="rounded-[18px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/72">
-              {videoStatus}
-            </div>
-          ) : null}
-          {videoResult?.url ? (
-            <div className="rounded-[22px] border border-white/10 bg-black/30 p-4">
-              <h4 className="text-sm font-black text-white">
-                Step 4: Preview dubbed video
-              </h4>
-              <video
-                src={videoResult.url}
-                controls
-                preload="metadata"
-                className="mt-3 max-h-[520px] w-full rounded-[18px] border border-white/10 bg-black object-contain"
-              />
-              {videoResult.transcript ? (
-                <details className="mt-3 text-sm text-white/60">
-                  <summary className="cursor-pointer font-semibold text-white/75">
-                    Transcript used
-                  </summary>
-                  <p className="mt-2 whitespace-pre-wrap rounded-[14px] bg-black/40 p-3">
-                    {videoResult.transcript}
-                  </p>
-                </details>
-              ) : null}
-              <div className="mt-4 flex flex-wrap gap-2">
-                <a
-                  href={withDownload(videoResult.url)}
-                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10"
-                >
-                  Download
-                </a>
-                <button
-                  type="button"
-                  onClick={() => void saveVideoDubToGallery()}
-                  disabled={videoSaveBusy || videoResult.saved}
-                  className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-50"
-                >
-                  {videoResult.saved
-                    ? "Saved to Gallery"
-                    : videoSaveBusy
-                      ? "Saving..."
-                      : "Save to Gallery"}
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      {status ? <div className="mt-4 rounded-[16px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/75">{status}</div> : null}
+      {error ? <div role="alert" className="mt-4 rounded-[16px] border border-rose-300/25 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-100">{error}</div> : null}
+      {result?.previewVideoUrl ? <div className="mt-5 rounded-[22px] border border-emerald-300/20 bg-emerald-300/[0.05] p-4"><h3 className="text-sm font-black text-white">4. Preview the result</h3><video src={result.previewVideoUrl} controls preload="metadata" className="mt-3 max-h-[520px] w-full rounded-[18px] border border-white/10 bg-black object-contain" /><div className="mt-4 flex flex-wrap gap-2"><a href={downloadUrl(result.previewVideoUrl)} className="inline-flex min-h-11 items-center rounded-full border border-white/10 bg-white/5 px-5 py-2.5 text-sm font-semibold text-white hover:bg-white/10">Download Video</a><button type="button" onClick={() => { setResult(null); setStatus("Ready for another conversion."); }} className="inline-flex min-h-11 items-center rounded-full border border-white/10 bg-white/5 px-5 py-2.5 text-sm font-semibold text-white hover:bg-white/10">Start Another</button></div><p className="mt-3 text-xs leading-5 text-emerald-100/65">Review target voice identity, timing, emotion, loudness, music, and effects before processing more clips.</p></div> : null}
     </section>
   );
 }

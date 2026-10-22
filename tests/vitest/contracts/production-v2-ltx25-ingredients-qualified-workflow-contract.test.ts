@@ -34,7 +34,10 @@ describe(
 
         const graph = built.graph;
 
-        expect(Object.keys(graph)).toHaveLength(25);
+        expect(Object.keys(graph)).toHaveLength(26);
+
+        expect(graph["9800"].class_type)
+          .toBe("PreviewAnimation");
 
         expect(graph["1"].class_type)
           .toBe("LoadImage");

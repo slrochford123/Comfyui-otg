@@ -28,13 +28,13 @@ const ideas = read(
 );
 
 describe("Story Creator V2 extraction contract", () => {
-  it("adds an authenticated extractor route backed by the existing Qwen durable path", () => {
+  it("adds an authenticated extractor route backed by the shared OpenAI provider", () => {
     expect(route).toContain("export async function POST");
     expect(route).not.toContain("export async function GET");
     expect(route).toContain("requireSessionUser");
-    expect(route).toContain("qwenDurableFetch");
-    expect(route).toContain("QWEN_CLUSTER_MODEL");
-    expect(route).toContain("story-creator-extract");
+    expect(route).toContain("createOpenAIText");
+    expect(route).toContain("openAIModels().story");
+    expect(route).toContain('useCase: "story-helper"');
   });
 
   it("commits normalized extraction through one store helper", () => {
@@ -47,17 +47,18 @@ describe("Story Creator V2 extraction contract", () => {
       "insertDeterministicStoryConflictsForFacts",
     );
     expect(route).toContain("applyStoryExtraction");
-    expect(route).toContain("getStoryCreatorMessage");
+    expect(route).toContain("listUnreviewedStoryMessages");
+    expect(route).toContain("recordStoryMemoryReview");
   });
 
-  it("writes only suggestions and unknowns, never canon", () => {
+  it("extracts proposals and lets server reconciliation save only nonconflicting canon", () => {
     expect(route).toContain(
       'fact.canonStatus === "unknown"',
     );
     expect(route).toContain('"suggestion"');
     expect(route).toContain('"unknown"');
     expect(route).not.toContain('canonStatus: "canon"');
-    expect(route).not.toContain('"create-canon"');
+    expect(route).toContain("autoCanonizeNonconflicting: true");
   });
 
   it("connects Ideas extraction to the existing selected project and exact source message", () => {
@@ -67,16 +68,24 @@ describe("Story Creator V2 extraction contract", () => {
     expect(panel).toContain("extractionSourceMessageId");
     expect(panel).toContain("loadStoryBible(project.id)");
     expect(panel).toContain("loadStoryConflicts(project.id)");
-    expect(panel).toContain('setStoryCreatorStage("bible")');
+    expect(panel).toContain("setStoryMemoryOpen(true)");
     expect(panel).not.toContain("selectedExtractionProjectId");
+    expect(panel).toContain("paidOperationAuthorization");
+    expect(panel).toContain("story-memory-extraction");
+    expect(panel).toContain("window.confirm");
   });
 
-  it("presents extraction as non-canon Bible suggestions", () => {
-    expect(ideas).toContain("Extract Story Info");
-    expect(ideas).toContain("Retry Extraction");
-    expect(ideas).toContain(
-      "Bible as suggestions or unknowns, never canon",
-    );
+  it("defers background extraction instead of making a hidden paid request", () => {
+    expect(panel).toContain("Story Memory extraction is deferred");
+    expect(panel).not.toContain("extractionResults.push");
+    expect(route).toContain("AI_PAYMENT_AUTHORIZATION_REQUIRED");
+    expect(route).toContain("maxOutputTokens > 1000");
+  });
+
+  it("presents one simple bulk Story Details review", () => {
+    expect(ideas).toContain("Review Story Details");
+    expect(ideas).toContain("Try Again");
+    expect(ideas).toContain("Save new nonconflicting details");
     expect(ideas).toContain("Extracting...");
   });
 });

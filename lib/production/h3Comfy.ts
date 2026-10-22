@@ -26,6 +26,7 @@ import {
   waitForComfyClientProgressMonitor,
 } from "@/lib/comfyProgress";
 import { submitComfyPromptWithGpuLease } from "@/lib/workers/comfyPromptLease";
+import { retrieveRemoteComfyMedia } from "@/lib/storyCreator/remoteComfyMedia";
 
 type ObjectInfo = Record<string, {
   input?: {
@@ -497,6 +498,7 @@ export async function submitH3PromptToBaseUrl(args: {
       ownerId:
         args.jobId,
       purpose: "video",
+      releaseIdlePeer: true,
       preSubmitCleanup:
         args.preSubmitCleanup
         ?? null,
@@ -682,12 +684,6 @@ export async function downloadH3VideoFromBaseUrl(args: {
   artifactSuffix?: string;
   fetcher?: typeof fetch;
 }) {
-  const url = new URL(`${args.baseUrl.replace(/\/+$/, "")}/view`);
-  url.searchParams.set("filename", path.basename(args.file.filename));
-  url.searchParams.set("subfolder", args.file.subfolder);
-  url.searchParams.set("type", args.file.type || "output");
-  const response = await fetchWithTimeout(args.fetcher || fetch, url.toString(), {}, 120_000);
-  if (!response.ok) throw new Error(`Could not download generated H3 video (HTTP ${response.status}).`);
   const extension = /\.(mp4|webm|mov|m4v|mkv)$/i.test(path.extname(args.file.filename)) ? path.extname(args.file.filename).toLowerCase() : ".mp4";
   const directory = safeJoin(
     OTG_DATA_ROOT,
@@ -698,14 +694,22 @@ export async function downloadH3VideoFromBaseUrl(args: {
     safeSegment(args.sceneId),
     "generations",
   );
-  await fsp.mkdir(directory, { recursive: true });
   const artifactSuffix = clean(args.artifactSuffix);
   const target = safeJoin(
     directory,
     `${safeSegment(args.generationJobId)}${artifactSuffix ? `-${safeSegment(artifactSuffix)}` : ""}${extension}`,
   );
-  await fsp.writeFile(target, Buffer.from(await response.arrayBuffer()));
-  return target;
+  const fetcher = args.fetcher || fetch;
+  const published = await retrieveRemoteComfyMedia({
+    baseUrl: args.baseUrl,
+    trustedBaseUrls: [args.baseUrl],
+    file: args.file,
+    storageRoot: safeJoin(OTG_DATA_ROOT, "productions-v2"),
+    destinationPath: target,
+    kind: "video",
+    fetcher: ((input, init) => fetchWithTimeout(fetcher, String(input), init, 120_000)) as typeof fetch,
+  });
+  return published.filePath;
 }
 
 export async function downloadH3Video(args: {

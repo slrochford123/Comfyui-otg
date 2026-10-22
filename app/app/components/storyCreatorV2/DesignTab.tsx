@@ -12,6 +12,9 @@ import {
   type StoryCreatorAssetCreateInput,
 } from "./StoryAssetGrid";
 import { VoiceDesignPanel } from "./VoiceDesignPanel";
+import { VisualAssetStudio } from "./VisualAssetStudio";
+import type { StoryProductionPlanRecord } from "@/lib/storyCreator/productionPlan";
+import type { StoryVisualDirectorAction } from "@/lib/storyCreator/visualActions";
 
 type VoiceProfileInput = {
   name: string;
@@ -60,6 +63,10 @@ type StoryDesignContext = {
 };
 
 type Props = {
+  projectId: string;
+  productionPlan: StoryProductionPlanRecord | null;
+  productionMode: "automatic" | "assisted" | "manual";
+  directorVisualAction: StoryVisualDirectorAction | null;
   entities: StoryBibleEntity[];
   assetsLabel: string;
   assets: StoryCreatorAsset[];
@@ -99,6 +106,10 @@ const designAreas = [
 ] as const;
 
 export function DesignTab({
+  projectId,
+  productionPlan,
+  productionMode,
+  directorVisualAction,
   entities,
   assetsLabel,
   assets,
@@ -246,6 +257,14 @@ export function DesignTab({
   return (
     <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <CharacterDesignPanel />
+
+      <VisualAssetStudio
+        projectId={projectId}
+        entities={entities}
+        productionPlan={productionPlan}
+        productionMode={productionMode}
+        directorAction={directorVisualAction}
+      />
 
       <section className="rounded-[20px] border border-cyan-300/15 bg-cyan-300/[0.04] p-4 xl:col-span-2">
         <p className="text-xs font-black uppercase tracking-[0.16em] text-cyan-100/60">
@@ -425,17 +444,24 @@ export function DesignTab({
         </section>
       ))}
 
-      <StoryAssetGrid
-        title={assetsLabel}
-        assets={assets}
-        busy={assetBusy}
-        loading={assetsLoading}
-        error={assetError}
-        notice={assetNotice}
-        refreshingAssetIds={refreshingAssetIds}
-        onCreateAsset={onCreateAsset}
-        onRefreshAsset={onRefreshAsset}
-      />
+      <details className="rounded-[20px] border border-white/10 bg-black/25 xl:col-span-2">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-black text-white/65">
+          Existing asset workflow and records
+        </summary>
+        <div className="border-t border-white/10 p-3">
+          <StoryAssetGrid
+            title={assetsLabel}
+            assets={assets}
+            busy={assetBusy}
+            loading={assetsLoading}
+            error={assetError}
+            notice={assetNotice}
+            refreshingAssetIds={refreshingAssetIds}
+            onCreateAsset={onCreateAsset}
+            onRefreshAsset={onRefreshAsset}
+          />
+        </div>
+      </details>
 
       <VoiceDesignPanel
         busy={assetBusy}

@@ -4,10 +4,9 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import { cookieName } from "@/lib/auth/cookies";
-import { verifySession } from "@/lib/auth/jwt";
-import { safeDeviceId } from "@/lib/otgDevice";
-import { resolveOwnerAlias } from "@/lib/ownerAlias";
+import { SessionInvalidError } from "@/lib/ownerKey";
+import { productionAudioOwner, productionAudioMediaReadable, ProductionAudioAccessError } from "@/lib/productionAudioAccess";
+import { safeSegment } from "@/lib/paths";
 import {
   productionAudioAnalysisRoot,
   productionAudioGalleryRoots,
@@ -37,8 +36,20 @@ const ANALYSIS_ROOT =
 
 const FFMPEG_BIN = process.env.OTG_FFMPEG_BIN || "ffmpeg";
 const FFPROBE_BIN = process.env.OTG_FFPROBE_BIN || "ffprobe";
-const PYTHON_BIN = process.env.OTG_AUDIO_ANALYSIS_PYTHON || "python";
+const PYTHON_BIN =
+  process.env.OTG_AUDIO_ANALYSIS_PYTHON ||
+  "/home/shawn-rochford/AI/ComfyUI/venv-core/bin/python";
 const DEMUCS_MODEL = process.env.OTG_DEMUCS_MODEL || "htdemucs";
+const LOCAL_DIARIZATION_PYTHON =
+  process.env.OTG_SPEAKER_DIARIZATION_PYTHON ||
+  "/home/shawn-rochford/AI/runtime/test/voice-dubbing/diarization-venv/bin/python";
+const LOCAL_DIARIZATION_SCRIPT =
+  process.env.OTG_SPEAKER_DIARIZATION_SCRIPT ||
+  path.join(REPO_ROOT, "scripts", "voice", "pyannote_diarize.py");
+const LOCAL_DIARIZATION_MODEL =
+  process.env.OTG_SPEAKER_DIARIZATION_MODEL ||
+  "/home/shawn-rochford/AI/runtime/test/voice-dubbing/models/pyannote-community-1";
+const LOCAL_DIARIZATION_DEVICE = process.env.OTG_SPEAKER_DIARIZATION_DEVICE || "cuda";
 const SPEAKER_DIARIZATION_URL = String(
   process.env.OTG_SPEAKER_DIARIZATION_URL ||
     process.env.SPEAKER_DIARIZATION_URL ||
@@ -102,31 +113,8 @@ function isLikelyVideoName(value: unknown) {
   return /\.(mp4|mov|m4v|webm|mkv|avi)$/i.test(String(value || "").trim());
 }
 
-function safeUsername(raw: unknown) {
-  const value = String(raw || "").trim();
-  return /^[a-zA-Z0-9_-]{3,128}$/.test(value) ? value : "";
-}
-
 async function ownerKeyFromRequest(request: NextRequest) {
-  const token = request.cookies.get(cookieName())?.value || "";
-
-  if (token) {
-    try {
-      const payload: any = await verifySession(token);
-      const username = safeUsername(payload?.username);
-      if (username) return resolveOwnerAlias(username);
-    } catch {
-      // Source discovery can still use the device-scoped fallback.
-    }
-  }
-
-  const deviceId = safeDeviceId(
-    request.headers.get("x-otg-device-id") ||
-    request.nextUrl.searchParams.get("deviceId") ||
-    "local",
-  );
-
-  return resolveOwnerAlias(deviceId);
+  return productionAudioOwner(request);
 }
 
 async function exists(filePath: string) {
@@ -195,38 +183,18 @@ async function findSourceVideo(body: any, request: NextRequest, workDir: string)
   }
 
   for (const candidate of candidates) {
-    if (await exists(candidate)) {
+    if (await exists(candidate) && await productionAudioMediaReadable(request, candidate)) {
       if (!isLikelyVideoName(requestedNameRaw) || isLikelyVideoName(candidate)) return candidate;
     }
   }
 
-  const productionRoot = productionAudioProductionsRoot();
+  const productionRoot = path.join(productionAudioProductionsRoot(), safeSegment(ownerKey));
   for (const name of requestedNames) {
     const found = await findRecursive(productionRoot, name);
-    if (found && (!isLikelyVideoName(requestedNameRaw) || isLikelyVideoName(found))) return found;
+    if (found && await productionAudioMediaReadable(request, found) && (!isLikelyVideoName(requestedNameRaw) || isLikelyVideoName(found))) return found;
   }
 
-  if (sourceUrl) {
-    const absoluteUrl = sourceUrl.startsWith("http://") || sourceUrl.startsWith("https://")
-      ? sourceUrl
-      : new URL(sourceUrl, request.nextUrl.origin).toString();
-
-    const response = await fetch(absoluteUrl, { cache: "no-store" });
-
-    if (response.ok) {
-      const arrayBuffer = await response.arrayBuffer();
-      if (arrayBuffer.byteLength > 0) {
-        const fallbackName = safeName(requestedNameRaw || fileNameFromUrl(sourceUrl), "source-clip.mp4");
-        const downloadedPath = path.join(workDir, fallbackName);
-        await fs.writeFile(downloadedPath, Buffer.from(arrayBuffer));
-        return downloadedPath;
-      }
-    }
-  }
-
-  throw new Error(
-    `Could not locate source clip "${requestedNameRaw || fileNameFromUrl(sourceUrl)}". Tried exact gallery filename, decoded URL filename, Comfy output/input, and gallery URL fetch.`
-  );
+  throw new ProductionAudioAccessError();
 }
 
 async function durationSeconds(filePath: string) {
@@ -555,6 +523,50 @@ async function tryExternalDiarization(
   }
 }
 
+async function tryLocalDiarization(
+  wavPath: string,
+  duration: number,
+  expectedSpeakerCount: number,
+  workDir: string,
+) {
+  if (process.env.OTG_LOCAL_SPEAKER_DIARIZATION_ENABLED === "0") return null;
+  if (!(await exists(LOCAL_DIARIZATION_PYTHON)) || !(await exists(LOCAL_DIARIZATION_SCRIPT)) || !(await exists(LOCAL_DIARIZATION_MODEL))) {
+    return null;
+  }
+
+  try {
+    const result = await execFileAsync(
+      LOCAL_DIARIZATION_PYTHON,
+      [
+        LOCAL_DIARIZATION_SCRIPT,
+        "--audio", wavPath,
+        "--model", LOCAL_DIARIZATION_MODEL,
+        "--device", LOCAL_DIARIZATION_DEVICE,
+        ...(expectedSpeakerCount > 0 ? ["--min-speakers", String(expectedSpeakerCount)] : []),
+        "--max-speakers", String(expectedSpeakerCount || 5),
+      ],
+      {
+        timeout: SPEAKER_DIARIZATION_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024 * 20,
+        windowsHide: true,
+      },
+    );
+    const lines = String(result.stdout || "").trim().split(/\r?\n/g).filter(Boolean);
+    const payload = lines.length ? JSON.parse(lines[lines.length - 1]) : {};
+    await fs.writeFile(path.join(workDir, "local_diarization.json"), JSON.stringify(payload, null, 2), "utf8");
+    if (payload?.ok === false) return null;
+    const voices = normalizeExternalDiarizationPayload(payload, duration);
+    return voices.length ? voices : null;
+  } catch (error: any) {
+    await fs.writeFile(
+      path.join(workDir, "local_diarization_error.txt"),
+      String(error?.stderr || error?.message || error || "Local diarization failed"),
+      "utf8",
+    ).catch(() => undefined);
+    return null;
+  }
+}
+
 function buildEstimatedSpeakerLanes(
   segments: Array<{ start: number; end: number }>,
   totalSpeechSeconds: number,
@@ -599,13 +611,41 @@ function buildEstimatedSpeakerLanes(
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-
+    const ownerKey = await productionAudioOwner(request);
     const runId = `audio_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    const workDir = path.join(ANALYSIS_ROOT, runId);
+    const workDir = path.join(ANALYSIS_ROOT, safeSegment(ownerKey), runId);
     await fs.mkdir(workDir, { recursive: true });
 
-    const sourcePath = await findSourceVideo(body, request, workDir);
+    const contentType = String(request.headers.get("content-type") || "").toLowerCase();
+    let body: any = {};
+    let uploadedVideo: File | null = null;
+
+    if (contentType.includes("multipart/form-data")) {
+      const form = await request.formData();
+      const candidate = form.get("video") || form.get("file");
+      if (candidate && typeof (candidate as any).arrayBuffer === "function") {
+        uploadedVideo = candidate as File;
+      }
+      body = {
+        sourceFileName: uploadedVideo?.name || "uploaded-video.mp4",
+        expectedSpeakerCount: form.get("expectedSpeakerCount") || form.get("speakerCount") || "",
+      };
+    } else {
+      body = await request.json();
+    }
+
+    let sourcePath = "";
+    if (uploadedVideo) {
+      const size = Number((uploadedVideo as any).size || 0);
+      if (!Number.isFinite(size) || size <= 0) {
+        return NextResponse.json({ ok: false, error: "Uploaded video is empty." }, { status: 400 });
+      }
+      const fileName = safeName(uploadedVideo.name || "uploaded-video.mp4", "uploaded-video.mp4");
+      sourcePath = path.join(workDir, fileName);
+      await fs.writeFile(sourcePath, Buffer.from(await uploadedVideo.arrayBuffer()));
+    } else {
+      sourcePath = await findSourceVideo(body, request, workDir);
+    }
     const duration = await durationSeconds(sourcePath);
 
     const extractedWav = path.join(workDir, "source_mono_16k.wav");
@@ -616,7 +656,8 @@ export async function POST(request: NextRequest) {
     const expectedSpeakerCount = clampExpectedSpeakerCount(
       body.expectedSpeakerCount ?? body.speakerCount ?? body.maxSpeakers
     );
-    const externalVoices = await tryExternalDiarization(analysisWav, duration, expectedSpeakerCount, workDir);
+    const localVoices = await tryLocalDiarization(analysisWav, duration, expectedSpeakerCount, workDir);
+    const externalVoices = localVoices || await tryExternalDiarization(analysisWav, duration, expectedSpeakerCount, workDir);
     const segments = externalVoices ? [] : await detectSpeechSegments(analysisWav, duration);
 
     const totalSpeechSeconds = Math.round(
@@ -638,6 +679,7 @@ export async function POST(request: NextRequest) {
     const result = {
       ok: true,
       runId,
+      sourcePath,
       sourceFileName: safeName(body.sourceFileName || fileNameFromUrl(body.sourceUrl), path.basename(sourcePath)),
       durationSeconds: duration,
       separation: {
@@ -648,9 +690,15 @@ export async function POST(request: NextRequest) {
         backgroundStemAvailable: Boolean(demucs?.backgroundPath),
       },
       diarization: {
-        tool: externalVoices ? "external_speaker_diarization" : "silencedetect_estimated_speaker_lanes",
+        tool: localVoices
+          ? "local_pyannote_community_1"
+          : externalVoices
+            ? "external_speaker_diarization"
+            : "silencedetect_estimated_speaker_lanes",
         expectedSpeakerCount,
-        note: externalVoices
+        note: localVoices
+          ? "Local pyannote Community-1 diarization returned voice lanes from the dialogue stem."
+          : externalVoices
           ? "External speaker diarization returned voice lanes from the dialogue stem."
           : expectedSpeakerCount > 0
             ? `Fallback speaker-lane estimation is active with a requested ${expectedSpeakerCount}-voice split. For best speaker identity separation, connect OTG_SPEAKER_DIARIZATION_URL.`
@@ -666,6 +714,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error: any) {
+    if (error instanceof SessionInvalidError) return NextResponse.json({ok:false,error:"Unauthorized"},{status:401});
+    if (error instanceof ProductionAudioAccessError) return NextResponse.json({ok:false,error:error.message},{status:404});
     return NextResponse.json(
       {
         ok: false,

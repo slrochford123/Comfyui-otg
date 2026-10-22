@@ -1362,26 +1362,11 @@ nav [data-otg-build-badge]{
 
   This intentionally does not affect inputs, textareas, selects, or form field text.
 */
-button,
-button *,
-[role="button"],
-[role="button"] *,
-a[class*="button"],
-a[class*="button"] *,
-[class*="Button"],
-[class*="Button"] *,
-.btn,
-.btn * {
+html:not([data-otg-color-mode="light"]) :is(button, button *, [role="button"], [role="button"] *, a[class*="button"], a[class*="button"] *, [class*="Button"], [class*="Button"] *, .btn, .btn *) {
   color: #f8fafc !important;
 }
 
-button:disabled,
-button[disabled],
-button[aria-disabled="true"],
-[role="button"][aria-disabled="true"],
-[class*="Button"][aria-disabled="true"],
-.btn:disabled,
-.btn[disabled] {
+html:not([data-otg-color-mode="light"]) :is(button:disabled, button[disabled], button[aria-disabled="true"], [role="button"][aria-disabled="true"], [class*="Button"][aria-disabled="true"], .btn:disabled, .btn[disabled]) {
   color: #f8fafc !important;
   -webkit-text-fill-color: #f8fafc !important;
 }

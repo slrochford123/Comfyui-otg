@@ -522,13 +522,13 @@ describe(
   "Production V2 LTX 2.5 Comfy transport",
   () => {
     it(
-      "locks scheduler priority to 5060 first, then 3090",
+      "locks scheduler priority to 3090 first, then 5060 Ti",
       () => {
         expect(
           LTX25_INGREDIENTS_BACKEND_PRIORITY,
         ).toEqual([
-          "rtx5060ti",
           "rtx3090",
+          "rtx5060ti",
         ]);
       },
     );

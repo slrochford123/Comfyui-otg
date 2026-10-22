@@ -134,6 +134,24 @@ export async function GET(req: NextRequest) {
 
     const nextState = readState(owner.ownerKey);
 
+    // A worker can disappear after admission (for example, a ComfyUI restart)
+    // leaving the durable owner state marked running even though the prompt is
+    // no longer queued and has no history result. Do not keep the Android UI
+    // in an infinite Running state; allow a short admission/grace window first.
+    const startedAtMs = Number(nextState?.startedAt || state?.startedAt || 0);
+    const staleWithoutQueue =
+      !!prompt_id &&
+      queue_remaining === 0 &&
+      nextState?.status === "running" &&
+      !prompt_complete &&
+      !prompt_error &&
+      startedAtMs > 0 &&
+      Date.now() - startedAtMs > 30_000;
+    if (staleWithoutQueue) {
+      prompt_error = "The generation worker stopped before returning a result. Retry the generation.";
+      markError(owner.ownerKey, prompt_error);
+    }
+
     let status: "idle" | "running" | "complete" | "error" = "idle";
     if (prompt_error || nextState?.status === "error") {
       status = "error";

@@ -1,0 +1,90 @@
+/* Shared light design system, including portals outside the app's <main>.
+   Legacy utility aliases are centralized here while components adopt tokens.
+   Media itself and semantic destructive/success/warning colors are not inverted. */
+html[data-otg-color-mode="light"] {
+  color-scheme: light;
+  --bg0: var(--color-background, #f2f3f7);
+  --bg1: var(--color-surface, #e9ecf3);
+  --ink: var(--color-text, #242a38);
+  --muted: var(--color-text-muted, #555e70);
+  --muted2: var(--color-text-muted, #555e70);
+  --card: var(--color-card, #f8f7fb);
+  --card2: var(--color-surface-elevated, #faf9fc);
+  --border: var(--color-border, #cbd1dd);
+  --shadow: var(--color-shadow);
+}
+html[data-otg-color-mode="light"] body.otg-app {
+  background: var(--color-background, #f2f3f7) !important;
+  color: var(--color-text, #242a38) !important;
+}
+html[data-otg-color-mode="light"] body.otg-app::before { background: none; animation: none; }
+html[data-otg-color-mode="light"] :is(.otg-authPage, .otg-authBg) { background: var(--color-background) !important; color: var(--color-text); }
+html[data-otg-color-mode="light"] :is(.otg-authCard, .otg-authCard2, .otg-card, .otg-panel) { background: var(--color-card) !important; border-color: var(--color-border); box-shadow: var(--color-shadow); }
+html[data-otg-color-mode="light"] :is(.otg-cardTitle, .otg-authTitle, .otg-authLabel, .otg-authRemember) { color: var(--color-text) !important; }
+html[data-otg-color-mode="light"] :is(.otg-help, .otg-authSub, .otg-authHeaderMini) { color: var(--color-text-muted) !important; }
+html[data-otg-color-mode="light"] .otg-authShowBtn { background: var(--color-surface); border-color: var(--color-border); color: var(--color-text); }
+html[data-otg-color-mode="light"] .otg-adminGrid { background: var(--color-card); border-color: var(--color-border); }
+html[data-otg-color-mode="light"] :is(.otg-adminRow, .otg-adminValue) { color: var(--color-text); border-color: var(--color-border); }
+html[data-otg-color-mode="light"] :is(.otg-adminHead, .otg-adminLabel) { color: var(--color-text-muted); }
+html[data-otg-color-mode="light"] .otg-adminHead { background: var(--color-surface); }
+html[data-otg-color-mode="light"] .otg-adminDeleteBtn { color: var(--color-error); }
+html[data-otg-color-mode="light"] :is(header, nav, [role="dialog"], .otg-card, .otg-panel, .otg-authCard) {
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+html[data-otg-color-mode="light"] :is(.bg-black, [class*="bg-zinc-9"], [class*="bg-slate-9"], [class*="bg-gray-9"], [class*="bg-neutral-9"], [class*="bg-black/"], [class*="bg-white/"], [class*="bg-[#0"], [class*="bg-[#1"], [class*="bg-[#2"]) {
+  background-color: var(--color-card) !important;
+  color: var(--color-text) !important;
+  box-shadow: var(--color-shadow);
+}
+html[data-otg-color-mode="light"] :is(section, article, div, aside, header):is([class*="bg-[radial-gradient"], [class*="bg-[linear-gradient"]) {
+  background: var(--color-card) !important;
+  color: var(--color-text) !important;
+}
+/* Backdrops remain dim; only their inner dialog surfaces become light. */
+html[data-otg-color-mode="light"] :is([class*="bg-black/"], [class*="bg-zinc-950/"]).fixed.inset-0 {
+  background-color: rgba(25, 29, 43, .64) !important;
+  box-shadow: none;
+}
+html[data-otg-color-mode="light"] :is([class~="text-white"], [class*="text-white/"], [class*="text-zinc-1"], [class*="text-zinc-2"], [class*="text-slate-1"], [class*="text-slate-2"], [class*="text-gray-1"], [class*="text-gray-2"]) { color: var(--color-text) !important; }
+html[data-otg-color-mode="light"] :is([class*="text-zinc-3"], [class*="text-zinc-4"], [class*="text-zinc-5"], [class*="text-slate-3"], [class*="text-slate-4"], [class*="text-gray-3"], [class*="text-gray-4"]) { color: var(--color-text-muted) !important; }
+html[data-otg-color-mode="light"] :is([class*="border-white"], [class*="border-zinc-7"], [class*="border-zinc-8"], [class*="border-slate-7"], [class*="border-slate-8"]) { border-color: var(--color-border) !important; }
+html[data-otg-color-mode="light"] :is(input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]), textarea, select, option) {
+  background-color: var(--color-surface-elevated) !important;
+  color: var(--color-text) !important;
+  border-color: var(--color-border) !important;
+  color-scheme: light;
+}
+html[data-otg-color-mode="light"] :is(input, textarea)::placeholder { color: var(--color-text-muted) !important; opacity: 1; }
+html[data-otg-color-mode="light"] :is([class*="text-red-1"], [class*="text-red-2"], [class*="text-red-3"], [class*="text-rose-1"], [class*="text-rose-2"]) { color: var(--color-error) !important; }
+html[data-otg-color-mode="light"] :is([class*="text-green-1"], [class*="text-green-2"], [class*="text-emerald-1"], [class*="text-emerald-2"], [class*="text-emerald-3"]) { color: var(--color-success) !important; }
+html[data-otg-color-mode="light"] :is([class*="text-amber-1"], [class*="text-amber-2"], [class*="text-amber-3"], [class*="text-yellow-1"], [class*="text-yellow-2"]) { color: var(--color-warning) !important; }
+html[data-otg-color-mode="light"] :is(button, a):is(.bg-red-500, .bg-red-600, .bg-red-700, .bg-green-600, .bg-emerald-600) { color: #fff !important; }
+html[data-otg-color-mode="light"] :is(button, a)[class*="bg-gradient-to-"],
+html[data-otg-color-mode="light"] .otg-btnPrimary { background: var(--color-primary) !important; color: var(--color-primary-foreground) !important; }
+html[data-otg-color-mode="light"] :is([class*="text-cyan-"], [class*="text-sky-"], [class*="text-purple-"], [class*="text-violet-"]) { color: var(--color-primary) !important; }
+html[data-otg-color-mode="light"] :is(.production-v2-storyboard-theme, [data-otg="production-v2-storyboard"]) {
+  --production-workspace: var(--color-card);
+  --production-accent: var(--color-primary);
+  --production-accent-contrast: var(--color-text);
+  --production-accent-soft: var(--color-primary-muted);
+  --production-accent-border: var(--color-primary-border);
+}
+html[data-otg-color-mode="light"] :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
+html[data-otg-color-mode="light"] :is(button, input, select, textarea):disabled { opacity: .65; }
+html[data-otg-color-mode="light"] :is(button, [role="button"], .btn) { -webkit-text-fill-color: currentColor; }
+html[data-otg-color-mode="light"] :is(button, [role="button"], .btn) :is(span, strong, h3, p, svg) { color: inherit; -webkit-text-fill-color: currentColor; }
+/* Primary fills and their children must use their matching contrast token. */
+html[data-otg-color-mode="light"] :is(button, a):is([class*="bg-gradient-to-"], .otg-btnPrimary, [style*="background: var(--color-primary);"]),
+html[data-otg-color-mode="light"] :is(button, a):is([class*="bg-gradient-to-"], .otg-btnPrimary, [style*="background: var(--color-primary);"]) * {
+  color: var(--color-primary-foreground) !important;
+  -webkit-text-fill-color: currentColor;
+}
+html[data-otg-color-mode="light"] :is(button, a)[style*="background: var(--color-primary);"] { background: var(--color-primary) !important; }
+/* Arbitrary-gradient navigation cards are primary fills too. Their legacy
+   text-white aliases must not override the matching foreground token. */
+html[data-otg-color-mode="light"] :is(button, a)[class*="bg-[linear-gradient"],
+html[data-otg-color-mode="light"] :is(button, a)[class*="bg-[linear-gradient"] * {
+  color: var(--color-primary-foreground) !important;
+  -webkit-text-fill-color: currentColor;
+}

@@ -3,8 +3,10 @@ import path from "node:path";
 
 import {
   ensureDir,
+  OTG_DATA_ROOT,
   safeSegment,
 } from "@/lib/paths";
+import { retrieveRemoteComfyMedia } from "@/lib/storyCreator/remoteComfyMedia";
 
 import {
   submitComfyPromptWithGpuLease,
@@ -15,11 +17,28 @@ import type {
   Ltx25IngredientsGraph,
 } from "@/lib/production/ltx25IngredientsWorkflow";
 
-export const LTX25_INGREDIENTS_BACKEND_PRIORITY = [
-  "rtx5060ti",
-  "rtx3090",
-] as const satisfies readonly
-  Ltx25IngredientsBackendId[];
+function configuredLtx25BackendPriority() {
+  const configured = String(
+    process.env.OTG_LTX25_BACKEND_PRIORITY || "rtx3090,rtx5060ti",
+  )
+    .split(",")
+    .map((value) => value.trim())
+    .filter(
+      (value): value is Ltx25IngredientsBackendId =>
+        value === "rtx3090" || value === "rtx5060ti",
+    );
+
+  return configured.length
+    ? configured
+    : ["rtx3090", "rtx5060ti"] as Ltx25IngredientsBackendId[];
+}
+
+/*
+ * The 3090 is the production-primary lane. The 5060 Ti remains an explicit,
+ * forward-compatible fallback for capacity or maintenance windows.
+ */
+export const LTX25_INGREDIENTS_BACKEND_PRIORITY =
+  configuredLtx25BackendPriority() as readonly Ltx25IngredientsBackendId[];
 
 export const LTX25_INGREDIENTS_BACKEND_PROFILES = {
   rtx5060ti: {
@@ -1045,69 +1064,19 @@ export async function downloadLtx25IngredientsVideo(
       input.backend
     ];
 
-  const url =
-    new URL(
-      `${profile.baseUrl}/view`,
-    );
-
-  url.searchParams.set(
-    "filename",
-    input.file.filename,
-  );
-
-  if (input.file.subfolder) {
-    url.searchParams.set(
-      "subfolder",
-      input.file.subfolder,
-    );
-  }
-
-  url.searchParams.set(
-    "type",
-    input.file.type
-      || "output",
-  );
-
-  const response =
-    await fetchWithTimeout(
-      fetcher,
-      url.toString(),
-      {
-        method: "GET",
-      },
-      120_000,
-    );
-
-  if (!response.ok) {
-    throw new Error(
-      `Could not download LTX output: HTTP ${response.status}.`,
-    );
-  }
-
-  const bytes =
-    Buffer.from(
-      await response.arrayBuffer(),
-    );
-
   const destinationPath =
     path.resolve(
       input.destinationPath,
     );
-
-  ensureDir(
-    path.dirname(
-      destinationPath,
-    ),
-  );
-
-  await fs.writeFile(
+  const published = await retrieveRemoteComfyMedia({
+    baseUrl: profile.baseUrl,
+    trustedBaseUrls: [profile.baseUrl],
+    file: input.file,
+    storageRoot: OTG_DATA_ROOT,
     destinationPath,
-    bytes,
-  );
+    kind: "video",
+    fetcher: ((request, init) => fetchWithTimeout(fetcher, String(request), init, 120_000)) as typeof fetch,
+  });
 
-  return {
-    destinationPath,
-    bytes:
-      bytes.length,
-  };
+  return { destinationPath: published.filePath, bytes: published.bytes };
 }

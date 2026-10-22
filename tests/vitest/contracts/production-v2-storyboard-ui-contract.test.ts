@@ -33,10 +33,14 @@ describe(
     it(
       "uses model-aware quality copy",
       () => {
-        expect(
-          source,
-        ).toContain(
-          '"1.0 MP native (1376x768)" : "0.6 MP native (1056x608)"',
+        expect(source).toContain(
+          '"Scene Hunter · 0.2 MP native (608x352) quick scene search"',
+        );
+        expect(source).toContain(
+          '"1.0 MP native (1376x768) + RTX VSR ULTRA"',
+        );
+        expect(source).toContain(
+          '"0.6 MP native (1056x608) + RTX VSR ULTRA"',
         );
 
         expect(

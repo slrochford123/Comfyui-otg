@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
-import { createCharacter, deleteCharacter, listCharacters, loadCharacter, updateCharacterVoiceProfile, updateCharacterVoiceSelection } from "@/lib/characters/store";
+import { CharacterNameConflictError, createCharacter, deleteCharacter, listCharacters, loadCharacter, updateCharacterVoiceProfile, updateCharacterVoiceSelection } from "@/lib/characters/store";
 import { recoverLatestTrainedApplioVoiceProfile } from "@/lib/jobs/applioArtifactRecovery";
 
 export const runtime = "nodejs";
@@ -213,6 +213,9 @@ export async function POST(req: NextRequest) {
   } catch (e: any) {
     if (e instanceof SessionInvalidError) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+    if (e instanceof CharacterNameConflictError) {
+      return NextResponse.json({ ok: false, error: e.message, code: "CHARACTER_NAME_CONFLICT" }, { status: 409 });
     }
     return NextResponse.json({ ok: false, error: e?.message || "Characters write failed" }, { status: 500 });
   }

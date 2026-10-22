@@ -51,9 +51,13 @@ export async function POST(req: NextRequest) {
     const usernameIn = String(body?.username || "").trim();
 
     let username = usernameIn;
-    if (!username && id) {
+    if (id) {
       const row = db.prepare("SELECT username FROM users WHERE id = ?").get(id) as any;
+      if (!row) return NextResponse.json({ ok: false, error: "Target user not found." }, { status: 404 });
       username = String(row?.username || "").trim();
+      if (usernameIn && usernameIn !== username) {
+        return NextResponse.json({ ok: false, error: "Target user identity mismatch." }, { status: 400 });
+      }
     }
 
     if (!username) {

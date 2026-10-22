@@ -7,6 +7,7 @@ import sharp from "sharp";
 
 import { cancelH3DirectJob, createH3DirectJob, ensureH3DirectJobRunner, getH3DirectJob, getLatestH3DirectJob, h3DirectPublicStatus, startH3DirectJob, validateH3DirectInput, type H3DirectReference } from "@/lib/h3DirectJobs";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { requireSessionUser } from "@/lib/sessionUser";
 import {
   H3_ORIENTATION_OPTIONS,
   H3_PRODUCTION_DURATION_OPTIONS,
@@ -368,6 +369,7 @@ async function multipartMedia(
 
 export async function GET(req: NextRequest) {
   try {
+    await requireSessionUser(req).catch(()=>{throw new SessionInvalidError();});
     const owner = await getOwnerContext(req);
     const { ownerKey } = owner;
     const id = String(req.nextUrl.searchParams.get("jobId") || "").trim();
@@ -386,6 +388,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    await requireSessionUser(req).catch(()=>{throw new SessionInvalidError();});
     const owner = await getOwnerContext(req);
     const { ownerKey } = owner;
     if (req.headers.get("content-type")?.includes("application/json")) {

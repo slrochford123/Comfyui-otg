@@ -12,12 +12,17 @@ import {
 } from "@/lib/sessionUser";
 
 import {
+  candidateComfyImageBaseUrls,
   resolveComfyPromptImageStatus,
 } from "@/lib/comfyImageOutputLookup";
+
+import { OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
+import { retrieveRemoteComfyMedia } from "@/lib/storyCreator/remoteComfyMedia";
 
 import {
   completeStoryGenerationJob,
   failStoryGenerationJob,
+  findStoryVisualVersionForJob,
   findStoryGenerationJobForStoryAsset,
   getStoryAsset,
   getStoryGenerationJob,
@@ -85,26 +90,6 @@ function firstText(...values: unknown[]) {
   return "";
 }
 
-function completionImageUrl(args: {
-  promptId: string;
-  outputNodeId: string;
-  filename: string;
-  subfolder: string;
-  type: string;
-  comfyBaseUrl: string;
-}) {
-  const params = new URLSearchParams();
-  params.set("promptId", args.promptId);
-  params.set("image", "1");
-  if (args.outputNodeId) params.set("nodeId", args.outputNodeId);
-  params.set("filename", args.filename);
-  params.set("type", args.type || "output");
-  if (args.subfolder) params.set("subfolder", args.subfolder);
-  if (args.comfyBaseUrl) params.set("comfyBaseUrl", args.comfyBaseUrl);
-
-  return `/api/comfy/history-image?${params.toString()}`;
-}
-
 function jobOutputNodeId(asset: StoryAsset | null, job: StoryGenerationJob) {
   const response = asRecord(job.response);
   const metadata = asRecord(asset?.metadata);
@@ -132,6 +117,23 @@ function jobComfyBaseUrl(asset: StoryAsset | null, job: StoryGenerationJob) {
     completion.comfyBaseUrl,
     imageResponse.comfyBaseUrl,
   );
+}
+
+function persistentOutputCandidates(asset: StoryAsset | null, job: StoryGenerationJob) {
+  const response = asRecord(job.response);
+  const metadata = asRecord(asset?.metadata);
+  const imageResponse = asRecord(metadata.imageResponse);
+  if (response.persistentOutput !== true) return [];
+  const prefix = firstText(response.outputFilenamePrefix, imageResponse.outputFilenamePrefix);
+  if (!prefix || !/^[A-Za-z0-9_-]+$/.test(prefix)) return [];
+  const subfolder = firstText(response.outputSubfolder, imageResponse.outputSubfolder, "otg_story");
+  if (!/^[A-Za-z0-9_/-]+$/.test(subfolder) || subfolder.includes("..")) return [];
+  return [
+    `${prefix}_00001_.png`,
+    `${prefix}_00001.png`,
+    `${prefix}_00000_.png`,
+    `${prefix}_00000.png`,
+  ].map((filename) => ({ filename, subfolder, type: "output" }));
 }
 
 function safeStatusPayload(args: {
@@ -270,17 +272,72 @@ export async function POST(request: NextRequest) {
       },
     };
 
-    if (resolved.status === "completed" && resolved.image) {
-      const image = resolved.image;
-      const finalUrl = completionImageUrl({
-        promptId: job.promptId,
-        outputNodeId: image.nodeId || outputNodeId,
-        filename: image.filename,
-        subfolder: image.subfolder || "",
-        type: image.type || "output",
-        comfyBaseUrl: resolved.baseUrl || comfyBaseUrl,
+    let recoveredPersistentOutput: {
+      image: { filename: string; subfolder: string; type: string; nodeId: string; bucket: string };
+      localized: Awaited<ReturnType<typeof retrieveRemoteComfyMedia>>;
+    } | null = null;
+    if (resolved.status === "pending" && !resolved.historyFound && resolved.baseUrl) {
+      const version = findStoryVisualVersionForJob({
+        ownerKey: user.ownerKey,
+        projectId,
+        jobId: job.id,
       });
+      const storageRoot = safeJoin(OTG_DATA_ROOT, "story-creator", "media");
+      const destinationPath = safeJoin(
+        storageRoot,
+        safeSegment(user.ownerKey),
+        safeSegment(projectId),
+        safeSegment(version.assetId),
+        `${safeSegment(version.id)}.png`,
+      );
+      for (const candidate of persistentOutputCandidates(asset, job)) {
+        try {
+          const localized = await retrieveRemoteComfyMedia({
+            baseUrl: resolved.baseUrl,
+            trustedBaseUrls: candidateComfyImageBaseUrls(),
+            file: candidate,
+            storageRoot,
+            destinationPath,
+            kind: "image",
+          });
+          recoveredPersistentOutput = {
+            image: { ...candidate, nodeId: outputNodeId, bucket: "images" },
+            localized,
+          };
+          break;
+        } catch (error) {
+          if (!/HTTP 404/.test(error instanceof Error ? error.message : String(error))) throw error;
+        }
+      }
+    }
+
+    if ((resolved.status === "completed" && resolved.image) || recoveredPersistentOutput) {
+      const image = recoveredPersistentOutput?.image || resolved.image!;
+      const version = findStoryVisualVersionForJob({
+        ownerKey: user.ownerKey,
+        projectId,
+        jobId: job.id,
+      });
+      const extension = /\.(png|jpe?g|webp|gif)$/i.exec(image.filename)?.[0]?.toLowerCase() || ".png";
+      const storageRoot = safeJoin(OTG_DATA_ROOT, "story-creator", "media");
+      const destinationPath = safeJoin(
+        storageRoot,
+        safeSegment(user.ownerKey),
+        safeSegment(projectId),
+        safeSegment(version.assetId),
+        `${safeSegment(version.id)}${extension}`,
+      );
+      const localized = recoveredPersistentOutput?.localized || await retrieveRemoteComfyMedia({
+        baseUrl: resolved.baseUrl || comfyBaseUrl,
+        trustedBaseUrls: candidateComfyImageBaseUrls(),
+        file: image,
+        storageRoot,
+        destinationPath,
+        kind: "image",
+      });
+      const finalUrl = `/api/story-creator/visual-assets/media?projectId=${encodeURIComponent(projectId)}&versionId=${encodeURIComponent(version.id)}`;
       const response = asRecord(job.response);
+      const qwenTurbo = asRecord(response.qwenTurbo || version.metadata.qwenTurbo);
       const completed = completeStoryGenerationJob({
         ownerKey: user.ownerKey,
         projectId,
@@ -289,11 +346,7 @@ export async function POST(request: NextRequest) {
         response: statusResponse,
         output: {
           url: finalUrl,
-          filePath: [
-            image.type || "output",
-            image.subfolder || "",
-            image.filename,
-          ].filter(Boolean).join("/"),
+          filePath: localized.filePath,
           promptId: job.promptId,
           outputNodeId: image.nodeId || outputNodeId,
           filename: image.filename,
@@ -309,6 +362,15 @@ export async function POST(request: NextRequest) {
           metadata: {
             outputCount: resolved.count,
             bucket: image.bucket || "",
+            sha256: localized.sha256,
+            bytes: localized.bytes,
+            contentType: localized.contentType,
+            protectedStorage: true,
+            remoteSourceLocalized: true,
+            duplicateFinalization: localized.reused,
+            recoveredFromPersistentOutput: !!recoveredPersistentOutput,
+            runtimeMs: Math.max(0, Date.now() - job.createdAt),
+            qwenTurbo,
           },
         },
       });

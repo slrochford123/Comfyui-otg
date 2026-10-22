@@ -48,6 +48,8 @@ import {
 export const LTX25_INGREDIENTS_SCHEDULER_VERSION =
   "production-v2-ltx25-ingredients-scheduler-v1" as const;
 
+const LTX25_STALE_ACTIVE_JOB_MS = 30 * 60 * 1000;
+
 export type Ltx25IngredientsSchedulerDependencies = {
   probe?: (
     backend:
@@ -87,17 +89,8 @@ export function chooseProductionV2Ltx25Backend(
       ),
     );
 
-  /*
-   * LTX policy differs intentionally from H3:
-   *
-   * We NEVER deliberately enqueue an LTX Ingredients
-   * job behind existing Comfy work.
-   *
-   * 5060 Ti is first choice because the qualified
-   * benchmark was materially faster.
-   *
-   * 3090 is fallback only when actually idle.
-   */
+  /* Never deliberately enqueue behind existing Comfy work. The configured
+   * priority is 3090-first by default, with 5060 Ti retained as fallback. */
   for (
     const backend
     of LTX25_INGREDIENTS_BACKEND_PRIORITY
@@ -623,6 +616,14 @@ async function reconcileActiveLtx25Job(
   }
 
   if (!result) {
+    const updatedAtMs = Date.parse(job.updatedAt);
+    if (Number.isFinite(updatedAtMs) && Date.now() - updatedAtMs > LTX25_STALE_ACTIVE_JOB_MS) {
+      return failProductionV2Ltx25GenerationJob(
+        job.id,
+        "LTX job was stale: ComfyUI no longer has the accepted prompt history. The job was closed so the queue could recover safely.",
+        true,
+      );
+    }
     return (
       markProductionV2Ltx25GenerationRunning(
         job.id,

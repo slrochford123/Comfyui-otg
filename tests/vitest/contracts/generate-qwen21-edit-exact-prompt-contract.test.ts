@@ -43,7 +43,7 @@ describe("Generate Qwen Image Edit 2.1 exact prompt contract", () => {
     );
 
     expect(model?.id).toBe(QWEN21_IMAGE_EDIT_WORKFLOW_ID);
-    expect(model?.label).toBe("Qwen Image Edit 2.1");
+    expect(model?.label).toBe("Qwen Image Edit 2.1 Turbo");
 
     const graph = loadEditGraph();
 

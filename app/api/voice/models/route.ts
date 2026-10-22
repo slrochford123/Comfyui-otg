@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { findUsableTrainedVoiceArtifact } from "@/lib/characterVoiceAudioStudio";
 import { listCharacters } from "@/lib/characters/store";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { loadVoicesLibrary, resolveVoicesFile } from "@/lib/voicesStudio";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest) {
   try {
     const owner = await getOwnerContext(req);
     const characters = listCharacters(owner.ownerKey);
-    const items = characters
+    const characterItems = characters
       .map((character) => {
         const artifact = findUsableTrainedVoiceArtifact(character.characterVoiceProfile);
         const modelPath = String(artifact?.modelPath || "").trim();
@@ -57,6 +58,32 @@ export async function GET(req: NextRequest) {
         };
       })
       .filter(Boolean);
+
+    const referenceItems = loadVoicesLibrary(owner.ownerKey).voices
+      .map((voice) => {
+        const samplePath = resolveVoicesFile(voice.refAudioRel);
+        if (!hasReadableFile(samplePath)) return null;
+        return {
+          id: `library:${voice.voiceId}`,
+          name: voice.name,
+          engine: "reference",
+          provider: "voice-library",
+          voiceId: voice.voiceId,
+          path: samplePath,
+          samplePath,
+          displayPath: voice.refAudioRel,
+          refText: voice.refText,
+          tags: voice.tags,
+          type: voice.type,
+          usable: true,
+          notes: "Saved voice-library reference sample. Seed-VC preserves the source performance while changing voice character.",
+          createdAt: voice.createdAt,
+          updatedAt: voice.updatedAt,
+        };
+      })
+      .filter(Boolean);
+
+    const items = [...referenceItems, ...characterItems];
 
     return NextResponse.json({ ok: true, items }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error: any) {

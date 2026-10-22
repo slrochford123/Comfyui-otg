@@ -79,12 +79,25 @@ export async function POST(req: Request) {
     }
 
     const sid = crypto.randomUUID();
+    const issuedAt = new Date().toISOString();
 
     db.prepare("UPDATE users SET current_session_id = ?, current_session_issued_at = ? WHERE id = ?").run(
       sid,
-      new Date().toISOString(),
+      issuedAt,
       user.id
     );
+    db.prepare("INSERT INTO user_sessions (session_id, user_id, issued_at) VALUES (?, ?, ?)").run(
+      sid,
+      user.id,
+      issuedAt,
+    );
+    db.prepare(`
+      DELETE FROM user_sessions
+      WHERE user_id = ? AND session_id NOT IN (
+        SELECT session_id FROM user_sessions
+        WHERE user_id = ? ORDER BY issued_at DESC LIMIT 8
+      )
+    `).run(user.id, user.id);
 
     const token = await signSession({
       sub: user.id,

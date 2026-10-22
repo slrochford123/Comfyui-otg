@@ -99,11 +99,11 @@ describe("Generate tab rework contract", () => {
 
     expect(
       imageModelsForOperation("create").map((model) => model.label),
-    ).toEqual(["Krea 2 Turbo", "Qwen Image 2.1"]);
+    ).toEqual(["Krea 2 Turbo", "Qwen Image 2.1 Turbo"]);
 
     expect(
       imageModelsForOperation("edit").map((model) => model.label),
-    ).toEqual(["Qwen Image Edit 2.1"]);
+    ).toEqual(["Qwen Image Edit 2.1 Turbo"]);
 
     expect(
       imageModelsForOperation("animate").map((model) => model.label),

@@ -562,6 +562,7 @@ const PaginationBar = React.memo(function PaginationBar({
       <div className="flex flex-wrap items-center gap-2">
         <label className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">Items per page</label>
         <select
+          aria-label="Gallery items per page"
           value={String(pageSize)}
           onChange={(e) => onPageSizeChange(Number(e.target.value))}
           className="rounded-full border border-white/10 bg-black/55 px-4 py-2 text-sm text-white outline-none focus:border-cyan-400/45"
@@ -822,6 +823,7 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
                 className="w-full rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none placeholder:text-white/35 focus:border-cyan-400/45"
               />
               <select
+                aria-label="Gallery media filter"
                 value={galleryFilter}
                 onChange={(e) => onGalleryFilterChange(e.target.value as "all" | "images" | "videos")}
                 className="rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
@@ -848,6 +850,7 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
               </button>
 
               <select
+                aria-label="Gallery sort order"
                 value={gallerySort}
                 onChange={(e) => onGallerySortChange(e.target.value as "newest" | "oldest" | "name")}
                 className="rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
@@ -857,6 +860,7 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
                 <option value="name">Name</option>
               </select>
               <select
+                aria-label="Gallery view mode"
                 value={galleryViewMode}
                 onChange={(e) => onGalleryViewModeChange(e.target.value as GalleryViewMode)}
                 className="rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"

@@ -4,6 +4,7 @@ import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 
 import { getOwnerContext } from "@/lib/ownerKey";
+import { requireWorkerToken } from "@/lib/jobs/workerAuth";
 import { withNoStore, sessionErrorResponse } from "@/lib/http/routeHelpers";
 import { safeSegment } from "@/lib/paths";
 import {
@@ -289,7 +290,10 @@ function buildResult(args: {
 
 export async function POST(req: NextRequest) {
   try {
-    const owner = await getOwnerContext(req);
+    const authenticatedWorker=requireWorkerToken(req);
+    if(!authenticatedWorker.ok)return jsonError(authenticatedWorker.error,authenticatedWorker.status);
+    const owner = {ownerKey:workerOwnerKey(req, "")};
+    if(!owner.ownerKey)return jsonError("Missing worker owner key.",400);
     const form = await req.formData();
 
     const ownerKey = workerOwnerKey(req, owner.ownerKey);

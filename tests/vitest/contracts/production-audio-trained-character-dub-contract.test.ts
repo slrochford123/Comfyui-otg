@@ -59,7 +59,7 @@ describe("Production Audio trained character voice dub contract", () => {
     expect(source).toContain("Rewrite line");
     expect(source).toContain("modelPath: selectedVoice?.modelPath || selectedVoice?.path ||");
     expect(source).toContain("indexPath: selectedVoice?.indexPath ||");
-    expect(source).toContain('engine: selectedVoice?.engine === "character" ? "applio"');
+    expect(source).toContain('engine: selectedVoice?.engine === "character"');
     expect(source).toContain("Generate Voice Swap");
     expect(source).toContain("Voice swap output");
     expect(source).toContain("voiceRow.sampleUrl");

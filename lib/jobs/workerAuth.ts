@@ -1,4 +1,6 @@
 import { NextRequest } from "next/server";
+import fs from "node:fs";
+import {timingSafeEqual} from "node:crypto";
 
 function cleanString(value: unknown): string {
   return String(value || "").trim();
@@ -17,7 +19,11 @@ export function workerTokenFromRequest(req: NextRequest): string {
 export function hasValidWorkerToken(req: NextRequest): boolean {
   const expected = expectedWorkerToken();
   if (!expected) return false;
-  return workerTokenFromRequest(req) === expected;
+  let previous="";
+  const previousFile=cleanString(process.env.OTG_WORKER_PREVIOUS_TOKEN_FILE);
+  if(previousFile){try{previous=fs.readFileSync(previousFile,"utf8").trim();}catch{}}
+  const candidate=Buffer.from(workerTokenFromRequest(req));
+  return [expected,previous].filter(Boolean).some(token=>{const value=Buffer.from(token);return candidate.length===value.length&&timingSafeEqual(candidate,value);});
 }
 
 export function requireWorkerToken(req: NextRequest): { ok: true } | { ok: false; error: string; status: 401 } {

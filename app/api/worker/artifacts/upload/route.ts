@@ -7,6 +7,7 @@ import { sessionErrorResponse, withNoStore } from "@/lib/http/routeHelpers";
 import { getOwnerContext } from "@/lib/ownerKey";
 import { ensureDir, OTG_DATA_ROOT } from "@/lib/paths";
 import { getQueuedContractJob } from "@/lib/jobs/voicePipelineJobs";
+import { requireWorkerToken } from "@/lib/jobs/workerAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,7 +49,10 @@ async function writeFileAtomic(filePath: string, bytes: Buffer): Promise<void> {
 
 export async function POST(req: NextRequest) {
   try {
-    const owner = await getOwnerContext(req);
+    const authenticatedWorker = requireWorkerToken(req);
+    if (!authenticatedWorker.ok) return jsonError(authenticatedWorker.error, authenticatedWorker.status);
+    const owner = {ownerKey:workerOwnerKey(req, "")};
+    if(!owner.ownerKey)return jsonError("Missing worker owner key.",400);
     const ownerKey = workerOwnerKey(req, owner.ownerKey);
     const form = await req.formData();
     const jobId = cleanString(form.get("jobId"));

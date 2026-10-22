@@ -2,6 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import path from "node:path";
 import fs from "node:fs";
 import { execFile } from "node:child_process";
+import { requireSessionUser } from "@/lib/sessionUser";
+import { hasValidWorkerToken } from "@/lib/jobs/workerAuth";
+import {
+  openAIEnabled,
+  transcribeOpenAIAudio,
+} from "@/lib/openai/provider";
+import {
+  listStoryAssets,
+  listStoryBibleEntities,
+  listStoryBibleFacts,
+} from "@/lib/storyCreator/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,8 +49,80 @@ function safeBasename(name: string) {
   return base.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || "audio.webm";
 }
 
+const BASE_TRANSCRIPTION_VOCABULARY = [
+  "Atheria",
+  "Atherians",
+  "Jorog",
+  "Zeltroi",
+  "Kodakai",
+  "Delnai",
+  "Nives",
+  "H3",
+  "LoRA",
+  "Scene Hunter",
+  "SLR Studios",
+];
+
+function splitVocabulary(value: string) {
+  return value
+    .split(/[,\n]/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function storyProjectVocabulary(ownerKey: string, projectId: string) {
+  if (!projectId) return [];
+  try {
+    const terms = new Set<string>();
+    for (const entity of listStoryBibleEntities({ ownerKey, projectId })) {
+      if (entity.name) terms.add(entity.name);
+    }
+    for (const asset of listStoryAssets({ ownerKey, projectId })) {
+      if (asset.name) terms.add(asset.name);
+    }
+    for (const fact of listStoryBibleFacts({ ownerKey, projectId, includeSuperseded: false })) {
+      for (const token of fact.valueText.match(/\b[A-Z][A-Za-z0-9'-]{2,}\b/g) || []) {
+        terms.add(token);
+      }
+    }
+    return Array.from(terms);
+  } catch {
+    return [];
+  }
+}
+
+function buildTranscriptionPrompt(input: {
+  context: string;
+  vocabulary: string[];
+}) {
+  const vocabulary = Array.from(
+    new Set([...BASE_TRANSCRIPTION_VOCABULARY, ...input.vocabulary].filter(Boolean)),
+  ).slice(0, 100);
+  return [
+    "Transcribe the user's speech verbatim in English. Do not summarize, rewrite, invent missing words, or turn the speech into a prompt.",
+    "Preserve unusual fantasy names, model names, product terms, and user commands exactly when audible.",
+    vocabulary.length ? `Vocabulary hints: ${vocabulary.join(", ")}.` : "",
+    input.context ? `Context: ${input.context}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 1800);
+}
+
 export async function POST(req: NextRequest) {
   try {
+    const workerRequest = hasValidWorkerToken(req);
+    const workerOwner = String(req.headers.get("x-otg-owner-key") || "").trim();
+    if (workerRequest && !/^[a-zA-Z0-9_-]{3,128}$/.test(workerOwner)) {
+      return NextResponse.json({ ok: false, error: "Missing or invalid worker owner." }, { status: 400 });
+    }
+    let user: { ownerKey: string };
+    if (workerRequest) {
+      user = { ownerKey: workerOwner };
+    } else {
+      try { user = await requireSessionUser(req); }
+      catch { return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 }); }
+    }
     const form = await req.formData();
     const file = form.get("audio");
     if (!(file instanceof File)) {
@@ -52,6 +135,65 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: `Audio too large (${file.size} bytes)` }, { status: 413 });
     }
 
+    const buf = Buffer.from(await file.arrayBuffer());
+    // Dataset verification is a credentialed local-worker operation, not a
+    // browser request for paid transcription. Never send a training batch to
+    // the paid provider or expose project vocabulary through worker requests.
+    if (!workerRequest && openAIEnabled()) {
+      try {
+        const context = String(form.get("context") || "").trim();
+        const projectId = String(form.get("projectId") || "").trim();
+        const clientMimeType = String(form.get("clientMimeType") || "").trim();
+        const chunkCount = Number(form.get("chunkCount") || 0) || 0;
+        const language = String(form.get("language") || "en").trim() || "en";
+        const clientDurationSeconds = Number(form.get("durationSeconds") || 0) || 0;
+        const vocabulary = [
+          ...splitVocabulary(String(form.get("vocabulary") || "")),
+          ...storyProjectVocabulary(user.ownerKey, projectId),
+        ];
+        const diagnostics = {
+          uploadedBytes: buf.length,
+          fileName: safeBasename(file.name || "microphone.webm"),
+          mimeType: file.type || clientMimeType || "audio/webm",
+          clientMimeType: clientMimeType || null,
+          clientDurationSeconds,
+          chunkCount,
+          language,
+          vocabularyHintCount: Array.from(new Set([...BASE_TRANSCRIPTION_VOCABULARY, ...vocabulary])).length,
+        };
+        const transcript = await transcribeOpenAIAudio({
+          ownerKey: user.ownerKey,
+          projectId: projectId || undefined,
+          audio: buf,
+          fileName: file.name || "microphone.webm",
+          mimeType: file.type || clientMimeType || "audio/webm",
+          prompt: buildTranscriptionPrompt({ context, vocabulary }),
+          language,
+          audioSeconds: clientDurationSeconds,
+        });
+
+        if (!transcript.text) {
+          throw new Error("OpenAI returned an empty transcript.");
+        }
+
+        return NextResponse.json(
+          {
+            ok: true,
+            text: transcript.text,
+            transcript: transcript.text,
+            provider: "openai",
+            usage: transcript.usage,
+            diagnostics,
+          },
+          { headers: { "Cache-Control": "no-store" } },
+        );
+      } catch (error) {
+        if (process.env.OPENAI_TRANSCRIBE_FALLBACK_LOCAL === "0") {
+          throw error;
+        }
+      }
+    }
+
     const otgDir = process.env.OTG_DATA_DIR || path.join(process.cwd(), "data");
     const tmpDir = path.join(otgDir, "tmp", "olama_ai");
     ensureDir(tmpDir);
@@ -61,7 +203,6 @@ export async function POST(req: NextRequest) {
     const inPath = path.join(tmpDir, `${id}_${base}`);
     const wavPath = path.join(tmpDir, `${id}.wav`);
 
-    const buf = Buffer.from(await file.arrayBuffer());
     fs.writeFileSync(inPath, buf);
 
     // Normalize audio with ffmpeg for Whisper reliability.
@@ -138,7 +279,22 @@ export async function POST(req: NextRequest) {
     }
 
     const text = String(parsed.text || "").trim();
-    return NextResponse.json({ ok: true, text }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(
+      {
+        ok: true,
+        text,
+        transcript: text,
+        provider: "local-whisper",
+        diagnostics: {
+          uploadedBytes: buf.length,
+          fileName: safeBasename(file.name || "microphone.webm"),
+          mimeType: file.type || "audio/webm",
+          clientDurationSeconds: Number(form.get("durationSeconds") || 0) || 0,
+          chunkCount: Number(form.get("chunkCount") || 0) || 0,
+        },
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: "Transcription failed", detail: String(e?.message || e) },

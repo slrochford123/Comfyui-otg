@@ -24,10 +24,12 @@ const v2Dir = path.join(
 const componentFiles = [
   "StoryCreatorHeader.tsx",
   "StoryCreatorStageTabs.tsx",
+  "StoryStudioShell.tsx",
   "IdeasTab.tsx",
   "BibleTab.tsx",
   "DesignTab.tsx",
   "WriteTab.tsx",
+  "ProductionPlanner.tsx",
   "ProduceTab.tsx",
   "CanonApprovalQueue.tsx",
   "ConflictReviewPanel.tsx",
@@ -44,6 +46,10 @@ const tabs = read(
   "app/app/components/storyCreatorV2/StoryCreatorStageTabs.tsx",
 );
 
+const studioShell = read(
+  "app/app/components/storyCreatorV2/StoryStudioShell.tsx",
+);
+
 const ideas = read(
   "app/app/components/storyCreatorV2/IdeasTab.tsx",
 );
@@ -58,6 +64,10 @@ const design = read(
 
 const write = read(
   "app/app/components/storyCreatorV2/WriteTab.tsx",
+);
+
+const planner = read(
+  "app/app/components/storyCreatorV2/ProductionPlanner.tsx",
 );
 
 const produce = read(
@@ -81,7 +91,7 @@ describe("Story Creator V2 shell contract", () => {
     }
   });
 
-  it("declares the five stages in the required order", () => {
+  it("retains the legacy five-stage definitions for compatibility", () => {
     expect(tabs).toContain("export type StoryCreatorStage");
     expect(tabs).toContain('| "ideas"');
     expect(tabs).toContain('| "bible"');
@@ -117,9 +127,7 @@ describe("Story Creator V2 shell contract", () => {
     expect(panel).toContain(
       'useState<StoryCreatorStage>("ideas")',
     );
-    expect(panel).toContain(
-      "onStageChange={setStoryCreatorStage}",
-    );
+    expect(panel).toContain("<StoryStudioShell");
     expect(panel).toContain(
       "project={selectedProject}",
     );
@@ -131,6 +139,18 @@ describe("Story Creator V2 shell contract", () => {
     );
   });
 
+  it("presents one unified Story Studio instead of five primary tabs", () => {
+    expect(panel).not.toContain("<StoryCreatorStageTabs");
+    expect(studioShell).toContain("Story Director");
+    expect(studioShell).toContain("Story Memory");
+    expect(studioShell).toContain("Production Studio");
+    expect(studioShell).toContain('id: "automatic"');
+    expect(studioShell).toContain('id: "assisted"');
+    expect(studioShell).toContain('id: "manual"');
+    expect(studioShell).toContain("Paid or GPU-intensive work still");
+    expect(studioShell).toContain('aria-label="Close Story Memory"');
+  });
+
   it("keeps Ideas connected to existing Story Director behavior", () => {
     expect(panel).toContain("/api/story-creator/messages");
     expect(panel).toContain("persistMessage");
@@ -138,9 +158,8 @@ describe("Story Creator V2 shell contract", () => {
     expect(panel).toContain("/api/ollama-ai/chat");
     expect(panel).toContain('"story-helper"');
     expect(ideas).toContain("Story Director Conversation");
-    expect(ideas).toContain("Extracted Story Information");
+    expect(ideas).toContain("Review Story Details");
     expect(ideas).toContain("Open Questions");
-    expect(ideas).toContain("Suggestions");
   });
 
   it("keeps Bible connected to existing Bible state and APIs", () => {
@@ -149,16 +168,16 @@ describe("Story Creator V2 shell contract", () => {
     expect(panel).toContain("storyBibleEntities");
     expect(panel).toContain("storyBibleFacts");
     expect(panel).toContain("storyBibleFactsByStatus.canon");
-    expect(panel).toContain("storyBibleFactsByStatus.suggestion");
-    expect(panel).toContain("storyBibleFactsByStatus.unknown");
+    expect(panel).toContain("storyBiblePendingFacts");
+    expect(panel).not.toContain("CanonApprovalQueue");
 
     expect(bible).toContain("Characters");
     expect(bible).toContain("Locations");
-    expect(bible).toContain("Factions");
-    expect(bible).toContain("Rules / Powers");
+    expect(bible).toContain("Organizations and factions");
+    expect(bible).toContain("Powers and abilities");
     expect(bible).toContain("Timeline");
-    expect(bible).toContain("Tone");
-    expect(bible).toContain("Canon Approvals");
+    expect(bible).toContain("Canon Library");
+    expect(bible).toContain("Back to Story Director");
 
     expect(
       fs.existsSync(
@@ -188,8 +207,20 @@ describe("Story Creator V2 shell contract", () => {
     expect(produce).toContain("MiniMax H3");
   });
 
+  it("adds reviewable production planning without auto-starting generation", () => {
+    expect(studioShell).toContain('label: "Plan & Write"');
+    expect(panel).toContain("<ProductionPlanner");
+    expect(panel).toContain('/api/story-creator/production-plan');
+    expect(planner).toContain("Create AI Plan");
+    expect(planner).toContain("Start Manually");
+    expect(planner).toContain("Approve Plan");
+    expect(planner).toContain("Planning does not generate");
+    expect(planner).not.toContain("/api/h3/");
+    expect(planner).not.toContain("/api/story-creator/generation");
+  });
+
   it("keeps generation behind explicit V2 APIs", () => {
-    expect(v2Sources).toContain("/api/whisper/transcribe");
+    expect(v2Sources).toContain("SpeechInputButton");
     expect(v2Sources).toContain("onLoadDesignContext");
     expect(v2Sources).toContain("Generate From Story");
     expect(v2Sources).toContain("Approve as canon");

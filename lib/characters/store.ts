@@ -127,6 +127,13 @@ export type UpdateCharacterVoiceSelectionInput = {
   metadata?: Record<string, unknown>;
 };
 
+export class CharacterNameConflictError extends Error {
+  constructor(name: string) {
+    super(`A character named "${name}" already exists for this account.`);
+    this.name = "CharacterNameConflictError";
+  }
+}
+
 function charactersRoot(ownerKey: string): string {
   const dir = path.join(OTG_DATA_ROOT, "characters", safeSegment(ownerKey || "local"));
   ensureDir(dir);
@@ -149,9 +156,11 @@ function normalizeRecord(input: CreateCharacterInput, existing?: CharacterRecord
   }
   const id = safeSegment(input.id || input.name || `character_${Date.now()}`);
   const now = new Date().toISOString();
+  const name = String(input.name || "").replace(/\s+/g, " ").trim();
+  if (!name) throw new Error("Character name is required.");
   return {
     id,
-    name: String(input.name || "Untitled Character").trim() || "Untitled Character",
+    name,
     imagePath: String(input.imagePath || "").trim(),
     previewImagePath: input.previewImagePath ? String(input.previewImagePath).trim() : undefined,
     transparentImagePath: input.transparentImagePath ? String(input.transparentImagePath).trim() : undefined,
@@ -270,6 +279,10 @@ export function loadCharacter(ownerKey: string, characterId: string): CharacterR
 export function createCharacter(ownerKey: string, input: CreateCharacterInput): CharacterRecord {
   const next = normalizeRecord(input, null);
   if (!next.imagePath) throw new Error("Character imagePath is required.");
+  const duplicate = listCharacters(ownerKey).find(
+    (item) => item.id !== next.id && item.name.trim().toLocaleLowerCase() === next.name.toLocaleLowerCase(),
+  );
+  if (duplicate) throw new CharacterNameConflictError(next.name);
   const filePath = characterFile(ownerKey, next.id);
   if (fs.existsSync(filePath)) {
     throw new Error("Character already exists. Characters are immutable after creation; delete and recreate instead.");

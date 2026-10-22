@@ -152,12 +152,17 @@ function stageProgress(
   );
 }
 
-function resolveTrainingView(
+export function resolveTrainingView(
   character: VoiceCharacterRecord,
   jobs: VoiceCharacterPipelineJob[],
 ): TrainingView {
   const artifact =
     getReadyHqVoiceArtifact(character);
+  const artifactTime = Date.parse(artifact?.trainedAt || "");
+  const failureIsCurrent = (job: VoiceCharacterPipelineJob) => {
+    const failureTime = Date.parse(job.updatedAt || job.createdAt);
+    return !artifact || !Number.isFinite(artifactTime) || !Number.isFinite(failureTime) || failureTime > artifactTime;
+  };
 
   const activeTraining =
     jobs.find(
@@ -234,7 +239,10 @@ function resolveTrainingView(
 
     let stageIndex = 1;
 
-    if (
+    if (rawStage.includes("generat")) {
+      // Explicit worker state wins over both early and late percentages.
+      stageIndex = 1;
+    } else if (
       rawStage.includes("validat") ||
       rawStage.includes("qc") ||
       rawStage.includes("quality") ||
@@ -271,7 +279,7 @@ function resolveTrainingView(
     jobs.find(
       (job) =>
         job.action === "start_applio_training" &&
-        jobStatus(job) === "failed",
+        jobStatus(job) === "failed" && failureIsCurrent(job),
     );
 
   if (failedTraining) {
@@ -300,7 +308,7 @@ function resolveTrainingView(
     jobs.find(
       (job) =>
         job.action === "generate_training_dataset" &&
-        jobStatus(job) === "failed",
+        jobStatus(job) === "failed" && failureIsCurrent(job),
     );
 
   if (failedDataset) {
@@ -1146,11 +1154,8 @@ export default function VoiceCharactersPanel({
         </div>
 
         <p className="mt-3 text-xs leading-5 text-white/40">
-          Each Voice Character now follows
-          the durable TEST voice pipeline.
-          Live job state is collapsed into
-          these seven user-facing stages;
-          low-level RVC controls remain hidden.
+          Training progress is saved through these seven stages.
+          Your original Voice Sample remains available throughout training.
         </p>
       </section>
 

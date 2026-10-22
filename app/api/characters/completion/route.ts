@@ -5,6 +5,7 @@ import { getOwnerContext } from "@/lib/ownerKey";
 import {
   createCharacterCompletionJob,
   listCharacterCompletionJobs,
+  resumeCharacterCompletionJob,
 } from "@/lib/jobs/characterCompletionJobs";
 import { expectedWorkerToken } from "@/lib/jobs/workerAuth";
 import { enqueueWorkerLifecycleCommand } from "@/lib/workers/workerLifecycleStore";
@@ -40,6 +41,12 @@ export async function POST(req: NextRequest) {
     if (!body.ok) return jsonError(body.error, body.status);
     if (!expectedWorkerToken()) {
       return jsonError("Character Card Worker Manager token is not configured on this TEST server.", 503);
+    }
+
+    if (body.value.resumeJobId) {
+      const job = resumeCharacterCompletionJob(owner.ownerKey, body.value.resumeJobId);
+      if (!job) return jsonError("Character completion job not found.", 404);
+      return NextResponse.json({ ok: true, job, reused: true, workerCommand: job.status === "completed" ? null : enqueueCharacterCompletionWorker(job.jobId) }, { headers: withNoStore() });
     }
 
     const created = createCharacterCompletionJob(owner.ownerKey, body.value);

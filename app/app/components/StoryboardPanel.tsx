@@ -13840,8 +13840,7 @@ const renderedManifest = normalizeProductionEditManifest(row, {
       .filter(([, characterId]) => String(characterId || "").trim())
       .map(([voiceId, characterId]) => {
         const selectedVoice = voiceOptions.find((option) => (
-          option.engine === "character" &&
-          (option.characterId === characterId || option.id === characterId)
+          option.characterId === characterId || option.id === characterId
         ));
         const detectedVoice = detectedVoices.find((voice: any, index: number) => (
           String(voice?.id || voice?.voiceId || voice?.speakerId || `speaker_${index + 1}`) === voiceId
@@ -13857,13 +13856,17 @@ const renderedManifest = normalizeProductionEditManifest(row, {
           .filter(Boolean);
         return {
           voiceId,
-          characterId,
+          characterId: selectedVoice?.characterId || (selectedVoice?.engine === "character" ? characterId : ""),
           voiceModelId: selectedVoice?.id || "",
           voicePath: selectedVoice?.path || "",
           modelPath: selectedVoice?.modelPath || selectedVoice?.path || "",
           indexPath: selectedVoice?.indexPath || "",
           samplePath: selectedVoice?.samplePath || "",
-          engine: selectedVoice?.engine === "character" ? "applio" : selectedVoice?.engine || "auto",
+          engine: selectedVoice?.engine === "character"
+            ? "applio"
+            : selectedVoice?.engine === "reference"
+              ? "auto"
+              : selectedVoice?.engine || "auto",
           dubMode: audioDubMode,
           emotion: audioDubEmotion,
           replacementText: audioDubReplacementText,
@@ -13965,6 +13968,7 @@ const renderedManifest = normalizeProductionEditManifest(row, {
     const activeRow = rows.find((row) => row.key === activeKey) || rows[0] || null;
     const voiceModelOptions = productionVoiceOptionsForScene(scene);
     const characterVoiceModelOptions = voiceModelOptions.filter((option) => option.engine === "character" && option.usable);
+    const referenceVoiceModelOptions = voiceModelOptions.filter((option) => option.engine !== "character" && option.usable);
 
     if (!scene) {
       return (
@@ -13990,7 +13994,7 @@ const renderedManifest = normalizeProductionEditManifest(row, {
             <div className="rounded-[14px] border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/70">
               <div className="font-black text-white">{scene.title}</div>
               <div>Clips found: {rows.length}</div>
-              <div>Character voice models: {characterVoiceModelOptions.length}</div>
+              <div>Character/reference voices: {characterVoiceModelOptions.length + referenceVoiceModelOptions.length}</div>
                 <div>Status: voice swap pipeline</div>
             </div>
           </div>
@@ -14122,10 +14126,18 @@ const renderedManifest = normalizeProductionEditManifest(row, {
                       };
                     });
 
-                  const voiceModelDubCharacters = characterVoiceModelOptions.map((option: ProductionVoiceModelOption, index: number) => ({
+                  const voiceModelDubCharacters = voiceModelOptions
+                    .filter((option: ProductionVoiceModelOption) => option.usable)
+                    .map((option: ProductionVoiceModelOption, index: number) => ({
                     id: String(option.characterId || option.id || `voice_model_${index + 1}`),
                     name: String(option.name || `Character Voice ${index + 1}`),
-                    role: option.engine === "uploaded" ? "Uploaded voice model" : "Character voice model",
+                    role: option.engine === "character"
+                      ? "Trained character voice model"
+                      : option.engine === "reference"
+                        ? "Saved reference voice (Seed-VC)"
+                        : option.engine === "uploaded"
+                          ? "Uploaded voice model"
+                          : `${option.engine.toUpperCase()} voice model`,
                     voiceModel: String(option.path || option.displayPath || option.id || ""),
                   }));
 
@@ -14293,11 +14305,11 @@ const renderedManifest = normalizeProductionEditManifest(row, {
                           <p className="text-[11px] font-black uppercase tracking-[0.24em] text-violet-200/80">
                             Checked Clip Characters
                           </p>
-                          <h3 className="mt-2 text-lg font-black text-white">
-                            Available character voice models
+                            <h3 className="mt-2 text-lg font-black text-white">
+                              Available character and reference voices
                           </h3>
                           <p className="mt-2 text-sm font-semibold leading-6 text-white/35">
-                            Backgrounds are excluded. Checked clip characters and saved character voice options appear here.
+                            Backgrounds are excluded. Trained character voices and saved reference voices appear here. Reference voices use Seed-VC while preserving the selected performance.
                           </p>
 
                           <div className="mt-4 space-y-3">
@@ -14355,7 +14367,7 @@ const renderedManifest = normalizeProductionEditManifest(row, {
                           </div>
                           <button
                             type="button"
-                            onClick={() => startAudioStudioDubPreview(activeAudioStudioClip, activeAudioStudioClipIndex, characterVoiceModelOptions)}
+                            onClick={() => startAudioStudioDubPreview(activeAudioStudioClip, activeAudioStudioClipIndex, voiceModelOptions)}
                             disabled={audioDubPreviewBusy || !activeAudioStudioClip || !Object.values(audioClipVoiceCharacterMap).some(Boolean)}
                             className="rounded-[14px] border border-emerald-200/30 bg-emerald-300/10 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-300/15 disabled:cursor-not-allowed disabled:opacity-50"
                           >

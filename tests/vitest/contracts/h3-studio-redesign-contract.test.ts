@@ -42,8 +42,9 @@ describe("H3 Studio redesign contracts", () => {
     expect(panel).toContain('/api/h3/special/body-swap/generation');
     expect(panel).toContain('/api/h3/special/refmods/generation');
     expect(panel).toContain("if (!legacyModeActive)");
-    expect(panel).toContain("cannot call the legacy H3 Prompt Builder");
-    expect(panel).toContain("cannot call the legacy generation route");
+    expect(panel).toContain("does not support Prompt Builder");
+    expect(panel).toContain("Workflow unavailable");
+    expect(panel).toMatch(/<button[\s\S]*?disabled\s*>\s*Workflow unavailable/);
     expect(panel).toContain("setCatalog([])");
     expect(recipes).not.toContain("h3-realism");
     expect(recipes).not.toContain("h3-body-swap");

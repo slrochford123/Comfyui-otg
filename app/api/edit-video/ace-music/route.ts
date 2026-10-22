@@ -5,7 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { SessionInvalidError } from "@/lib/ownerKey";
+import { requireSessionUser } from "@/lib/sessionUser";
+import { productionAudioMediaReadable, ProductionAudioAccessError } from "@/lib/productionAudioAccess";
+import { aceModelName, aceModelSettings, aceStepReadiness } from "@/lib/aceStepReadiness";
+import { acquireAuxiliary3090, auxiliary3090Busy, AuxiliaryGpuBusyError } from "@/lib/workers/auxiliary3090Lease";
 import { OTG_DATA_ROOT, ensureDir, safeSegment } from "@/lib/paths";
 import { freshProductionSeed } from "@/lib/production/randomSeed";
 
@@ -39,19 +43,6 @@ function fileUrlFor(absPath: string) {
 
 function aceApiBase() {
   return String(process.env.ACE_STEP_API_URL || "http://127.0.0.1:8001").replace(/\/+$/, "");
-}
-
-function aceModelName(value: unknown) {
-  const raw = String(value || "").trim().toLowerCase();
-
-  if (!raw || raw === "turbo" || raw === "xl turbo" || raw === "xl-turbo" || raw === "fastest") {
-    return "acestep-v15-turbo";
-  }
-
-  if (raw.includes("1.5") || raw.includes("v15")) return "acestep-v15-turbo";
-  if (raw.includes("turbo")) return "acestep-v15-turbo";
-
-  return "acestep-v15-turbo";
 }
 
 function basenameOnly(value: unknown) {
@@ -223,10 +214,13 @@ async function fetchToTempFile(req: NextRequest, value: string) {
   const absoluteUrl = raw.startsWith("http://") || raw.startsWith("https://")
     ? raw
     : new URL(raw, req.nextUrl.origin).toString();
+  const target=new URL(absoluteUrl);
+  if(target.origin!==req.nextUrl.origin||!["/api/file","/api/gallery/file"].includes(target.pathname)) throw new ProductionAudioAccessError();
 
   const response = await fetch(absoluteUrl, {
     method: "GET",
     cache: "no-store",
+    redirect: "error",
     headers: {
       cookie: req.headers.get("cookie") || "",
     },
@@ -254,7 +248,8 @@ async function readAceMusicInput(req: NextRequest): Promise<AceMusicInput> {
       (form.get("reference_audio") as any) ||
       (form.get("ref_audio") as any) ||
       (form.get("sampleAudio") as any) ||
-      (form.get("sample_audio") as any);
+      (form.get("sample_audio") as any) ||
+      (form.get("referenceVideoFile") as any);
 
     return {
       prompt: String(form.get("prompt") || form.get("musicPrompt") || form.get("vibe") || "").trim(),
@@ -306,6 +301,7 @@ async function resolveReferenceSource(req: NextRequest, input: AceMusicInput) {
   const direct = String(input.referenceAudioPath || input.referenceVideo?.path || input.referenceVideo?.videoPath || "").trim();
 
   if (direct && path.isAbsolute(direct) && fssync.existsSync(direct)) {
+    if(!await productionAudioMediaReadable(req,direct)) throw new ProductionAudioAccessError();
     return path.normalize(direct);
   }
 
@@ -315,6 +311,7 @@ async function resolveReferenceSource(req: NextRequest, input: AceMusicInput) {
     localPathFromFileUrl(input.referenceVideo?.videoUrl);
 
   if (fromFileUrl && path.isAbsolute(fromFileUrl) && fssync.existsSync(fromFileUrl)) {
+    if(!await productionAudioMediaReadable(req,fromFileUrl)) throw new ProductionAudioAccessError();
     return path.normalize(fromFileUrl);
   }
 
@@ -397,10 +394,9 @@ async function pollAceTask(taskId: string, timeoutMs: number) {
   throw new Error("ACE-Step 1.5 generation timed out before completion.");
 }
 
-async function submitAceTask(req: NextRequest, input: AceMusicInput) {
+async function submitAceTask(req: NextRequest, input: AceMusicInput, referenceAudioPath: string) {
   const base = aceApiBase();
   const durationSeconds = Math.max(10, Math.min(600, Number(input.durationSeconds || 30) || 30));
-  const referenceAudioPath = await resolveReferenceAudioForAce(req, input);
 
   const form = new FormData();
 
@@ -411,6 +407,9 @@ async function submitAceTask(req: NextRequest, input: AceMusicInput) {
   form.append("thinking", "false");
   form.append("batch_size", "1");
   form.append("model", aceModelName(input.model));
+  const settings=aceModelSettings(input.model);
+  form.append("inference_steps",String(settings.inferenceSteps));
+  form.append("guidance_scale",String(settings.guidanceScale));
 
   if (input.bpm) form.append("bpm", input.bpm);
   if (input.keyScale) form.append("key_scale", input.keyScale);
@@ -438,8 +437,25 @@ async function submitAceTask(req: NextRequest, input: AceMusicInput) {
   });
 }
 
+let generationInFlight=false;
+export async function GET(req:NextRequest){
+  try{
+    await requireSessionUser(req).catch(()=>{throw new SessionInvalidError();});
+    const [readiness,gpuBusy]=await Promise.all([aceStepReadiness(aceApiBase()),auxiliary3090Busy()]);
+    if(gpuBusy){readiness.busy=true;for(const preset of Object.values(readiness.presets))preset.ready=false;}
+    return NextResponse.json({ok:true,...readiness},{headers:{"Cache-Control":"no-store"}});
+  }catch(error){
+    if(error instanceof SessionInvalidError)return NextResponse.json({ok:false,error:"Unauthorized"},{status:401});
+    return NextResponse.json({ok:false,reachable:false,error:"ACE-Step is unavailable."},{status:503});
+  }
+}
 export async function POST(req: NextRequest) {
+  let ownsOperation=false;
+  let releaseGpu:(()=>void)|null=null;
   try {
+    const owner=await requireSessionUser(req).catch(()=>{throw new SessionInvalidError();});
+    if(generationInFlight)return NextResponse.json({ok:false,error:"ACE-Step is already processing a request."},{status:409});
+    generationInFlight=true;ownsOperation=true;
     if (process.env.ACE_STEP_ENABLED === "0") {
       return NextResponse.json({ ok: false, error: "ACE-Step 1.5 is disabled." }, { status: 400 });
     }
@@ -451,7 +467,6 @@ export async function POST(req: NextRequest) {
 */
     const inputReq = req.clone() as NextRequest;
     const input = await readAceMusicInput(inputReq);
-    const owner = await getOwnerContext(req);
 
     if (!input.prompt) {
       return NextResponse.json(
@@ -466,17 +481,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const referenceAudioPath = await resolveReferenceAudioForAce(req, input);
     const base = aceApiBase();
-    const health = await fetch(`${base}/health`, { cache: "no-store" }).catch(() => null);
-
-    if (!health?.ok) {
-      return NextResponse.json(
-        { ok: false, error: `ACE-Step 1.5 API is not reachable at ${base}.` },
-        { status: 503 }
-      );
+    let desiredModel:string;
+    try{desiredModel=aceModelName(input.model);}catch{return NextResponse.json({ok:false,error:"Choose a supported ACE-Step model."},{status:400});}
+    const state=await aceStepReadiness(base);
+    if(state.busy)return NextResponse.json({ok:false,error:"ACE-Step is busy with another operation."},{status:409});
+    const selected=Object.values(state.presets).find(x=>x.name===desiredModel);
+    if(!selected?.installed)return NextResponse.json({ok:false,error:"The selected ACE-Step model is not installed."},{status:503});
+    releaseGpu=await acquireAuxiliary3090(`ace:${owner.ownerKey}:${Date.now()}`);
+    if(!selected.ready){
+      // This endpoint is configured to an isolated TEST API. Switch only its
+      // allowlisted model slot, and refuse when that API has queued work.
+      const statsResponse=await fetch(`${base}/v1/stats`,{cache:"no-store",signal:AbortSignal.timeout(5000)});
+      const statsRaw=await statsResponse.json();const stats=statsRaw.data||statsRaw;
+      if(!statsResponse.ok||stats.queue_size!==0||stats.jobs?.running!==0||stats.jobs?.queued!==0)return NextResponse.json({ok:false,error:"ACE-Step is busy or its queue cannot be confirmed; try again after its current operation."},{status:409});
+      const initialized=await fetch(`${base}/v1/init`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:desiredModel,slot:1,init_llm:false}),signal:AbortSignal.timeout(180000)});
+      if(!initialized.ok||!(await aceStepReadiness(base)).presets[input.model as "turbo"|"base"|"sft"]?.ready)return NextResponse.json({ok:false,error:"The selected ACE-Step model could not initialize."},{status:503});
     }
 
-    const releaseResponse = await submitAceTask(req, input);
+    const releaseResponse = await submitAceTask(req, input, referenceAudioPath);
     const releaseData = await releaseResponse.json().catch(() => null);
 
     if (!releaseResponse.ok) {
@@ -516,7 +540,11 @@ export async function POST(req: NextRequest) {
     }
 
     const ownerKey = safeSegment(owner.ownerKey || "local");
-    const outputDir = path.join(OTG_DATA_ROOT, "edit-video", ownerKey, "ace-step-1.5-music");
+    // Keep generated ACE-Step assets inside the same owner-scoped music root
+    // accepted by /api/edit-video/music-library. This allows the UI's
+    // "Save to Music Library" action to promote a generated track without
+    // weakening the path-boundary check in that endpoint.
+    const outputDir = path.join(OTG_DATA_ROOT, "edit_video", "music", ownerKey, "generated");
     await ensureDir(outputDir);
 
     const safeTitle = safeSegment(input.title || "video_with_music");
@@ -559,6 +587,8 @@ export async function POST(req: NextRequest) {
       ),
     });
   } catch (error: any) {
+    if(error instanceof AuxiliaryGpuBusyError)return NextResponse.json({ok:false,error:error.message},{status:409});
+    if(error instanceof ProductionAudioAccessError)return NextResponse.json({ok:false,error:error.message},{status:404});
     if (error instanceof SessionInvalidError) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
@@ -567,6 +597,6 @@ export async function POST(req: NextRequest) {
       { ok: false, error: error?.message || "ACE-Step 1.5 music generation failed." },
       { status: 500 }
     );
-  }
+  } finally {releaseGpu?.();if(ownsOperation)generationInFlight=false;}
 }
 

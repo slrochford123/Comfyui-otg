@@ -44,6 +44,8 @@ function resolveDemucsCommand() {
   const configuredPython = String(process.env.OTG_DEMUCS_PYTHON || process.env.DEMUCS_PYTHON || "").trim();
   const candidates = [
     configuredPython,
+    "/home/shawn-rochford/AI/ComfyUI/venv-core/bin/python",
+    "/home/shawn-rochford/AI/ComfyUI/venv-h3-cu130/bin/python",
     "C:\\AI\\demucs_env\\Scripts\\python.exe",
     "C:\\AI\\Demucs\\demucs_env\\Scripts\\python.exe",
   ].filter(Boolean);
@@ -143,7 +145,8 @@ export async function POST(req: NextRequest) {
     if (extract.code !== 0) throw new Error("FFmpeg audio extraction failed: " + (extract.stderr || extract.stdout));
 
     const demucs = resolveDemucsCommand();
-    const demucsArgs = [...demucs.prefixArgs, "-n", "mdx_extra_q", "--mp3", "-o", demucsDir, extractedAudio];
+    const demucsDevice = String(process.env.OTG_DEMUCS_DEVICE || "cpu").trim() || "cpu";
+    const demucsArgs = [...demucs.prefixArgs, "-n", "mdx_extra_q", "--device", demucsDevice, "--mp3", "-o", demucsDir, extractedAudio];
     const separate = await runCmd(demucs.command, demucsArgs, { timeoutMs: 30 * 60 * 1000 });
     if (separate.code !== 0) throw new Error("Demucs failed: " + (separate.stderr || separate.stdout));
 

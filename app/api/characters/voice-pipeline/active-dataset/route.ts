@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { withNoStore, sessionErrorResponse } from "@/lib/http/routeHelpers";
-import { getOwnerContext } from "@/lib/ownerKey";
+import { requireSessionUser } from "@/lib/sessionUser";
 import { findLatestActiveTrainingDatasetJobForCharacter } from "@/lib/jobs/voicePipelineJobs";
 
 export const runtime = "nodejs";
@@ -13,7 +13,7 @@ function jsonError(error: string, status = 400) {
 
 export async function GET(req: NextRequest) {
   try {
-    const owner = await getOwnerContext(req);
+    const owner = await requireSessionUser(req);
     const { searchParams } = new URL(req.url);
     const characterId = String(searchParams.get("characterId") || "").trim();
 

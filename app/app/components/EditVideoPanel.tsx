@@ -8,6 +8,7 @@ import EditVideoWooshPanel from "./EditVideoWooshPanel";
 import EditVideoVoiceDubbingPanel from "./EditVideoVoiceDubbingPanel";
 import EditVideoExtractAudioPanel from "./EditVideoExtractAudioPanel";
 import EditVideoSwapCharactersPanel from "./EditVideoSwapCharactersPanel";
+import LtxStudiosPanel from "./LtxStudiosPanel";
 
 type GalleryVideoItem = {
   fileName?: string;
@@ -175,11 +176,12 @@ function ordinal(position: number) {
 }
 
 export default function EditVideoPanel({ onRefreshGallery }: Props) {
-  const [activeTool, setActiveTool] = React.useState<"stitch" | "audio" | "voice" | "extract" | "remove" | "video" | "swap">("stitch");
+  const [activeTool, setActiveTool] = React.useState<"stitch" | "audio" | "voice" | "extract" | "remove" | "video" | "swap" | "ltx">("stitch");
   const [slots, setSlots] = React.useState<StitchSlot[]>(() => createEmptySlots());
   const [galleryPickerSlot, setGalleryPickerSlot] = React.useState<number | null>(null);
   const [audioGalleryOpen, setAudioGalleryOpen] = React.useState(false);
   const [galleryVideos, setGalleryVideos] = React.useState<GalleryVideoItem[]>([]);
+  const [galleryPreviewKey, setGalleryPreviewKey] = React.useState("");
   const [galleryBusy, setGalleryBusy] = React.useState(false);
   const [galleryError, setGalleryError] = React.useState("");
   const [stitchBusy, setStitchBusy] = React.useState(false);
@@ -205,6 +207,15 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
 
   const [musicGeneratorPrompt, setMusicGeneratorPrompt] = React.useState("cinematic ambient background music, emotional, clean mix, no copyrighted melody");
   const [musicGeneratorModel, setMusicGeneratorModel] = React.useState<AceMusicModel>("turbo");
+  const [aceService,setAceService]=React.useState<{reachable:boolean;initialized:boolean;busy:boolean;presets:Record<AceMusicModel,{installed:boolean;ready:boolean}>}|null>(null);
+  const aceStatusSequence=React.useRef(0);
+  const musicGenerateLock=React.useRef(false);
+  const refreshAceService=React.useCallback(async()=>{
+    const sequence=++aceStatusSequence.current;
+    try{const r=await fetch("/api/edit-video/ace-music",{cache:"no-store"});const data=await r.json();if(!r.ok||!data.ok)throw Error("Unavailable");if(sequence===aceStatusSequence.current)setAceService(data);}
+    catch{if(sequence===aceStatusSequence.current)setAceService(null);}
+  },[]);
+  React.useEffect(()=>{if(activeTool!=="audio")return;void refreshAceService();const timer=setInterval(()=>void refreshAceService(),5000);return()=>{clearInterval(timer);aceStatusSequence.current++;};},[activeTool,refreshAceService]);
   const [musicGeneratorMode, setMusicGeneratorMode] = React.useState<AceMusicMode>("reference");
   const [musicGeneratorDuration, setMusicGeneratorDuration] = React.useState(30);
   const [musicGeneratorBpm, setMusicGeneratorBpm] = React.useState(95);
@@ -623,12 +634,15 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
   }
 
   async function generateAceStepMusic() {
+    if(musicGenerateLock.current)return;
     const prompt = musicGeneratorPrompt.trim();
     if (!prompt) {
       setMusicGeneratorStatus("Enter a music prompt/vibe first.");
       return;
     }
 
+    if(!aceService?.presets[musicGeneratorModel]?.installed){setMusicGeneratorStatus("The selected ACE-Step model is unavailable. Refresh service status after installation.");return;}
+    musicGenerateLock.current=true;
     setMusicGenerateBusy(true);
     setGeneratedMusicResult(null);
     setMusicGeneratorStatus("Submitting ACE-Step 1.5 API music generation...");
@@ -644,6 +658,7 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
         form.append("title", cleanTitle(audioOutputTitle || "generated_music") || "generated_music");
         form.append("durationSeconds", String(durationSeconds));
         form.append("bpm", String(bpm));
+        form.append("model",musicGeneratorModel);
         form.append("keyscale", musicGeneratorKey || "E minor");
         form.append("referenceVideoFile", audioVideo.file, audioVideo.file.name);
         response = await fetch("/api/edit-video/ace-music", {
@@ -697,7 +712,9 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
     } catch (error: any) {
       setMusicGeneratorStatus(error?.message || "ACE-Step music generation failed.");
     } finally {
+      musicGenerateLock.current=false;
       setMusicGenerateBusy(false);
+      void refreshAceService();
     }
   }
 
@@ -851,7 +868,7 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
         <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-200/70">Video tools</p>
         <h1 className="mt-2 text-4xl font-black tracking-tight text-white">Edit Video</h1>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">
-          Combine generated clips and add background music outside Production. Phase 3B adds ACE-Step music generation while keeping Woosh sound effects, dialogue separation, and LTX video effects for later phases.
+          Combine clips, edit audio, generate music and sound effects, replace dialogue, and apply video effects outside Production.
         </p>
       </section>
 
@@ -865,12 +882,13 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
             { id: "remove", label: "Remove Music" },
             { id: "video", label: "Video Editing", disabled: false },
             { id: "swap", label: "Swap Characters", disabled: false },
+            { id: "ltx", label: "LTX Studios", disabled: false },
           ].map((tool) => (
             <button
               key={tool.id}
               type="button"
               disabled={tool.disabled}
-              onClick={() => !tool.disabled && setActiveTool(tool.id as "stitch" | "audio" | "voice" | "extract" | "remove" | "video" | "swap")}
+              onClick={() => !tool.disabled && setActiveTool(tool.id as "stitch" | "audio" | "voice" | "extract" | "remove" | "video" | "swap" | "ltx")}
               className={cn(
                 "inline-flex min-h-12 items-center justify-center rounded-full border px-5 py-3 text-base font-semibold transition disabled:cursor-not-allowed disabled:opacity-45",
                 activeTool === tool.id
@@ -1098,7 +1116,7 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
             <div>
               <h2 className="text-sm font-black uppercase tracking-[0.18em] text-white/78">Audio Editing</h2>
               <p className="mt-2 text-sm leading-6 text-white/60">
-                Phase 3B adds generated music with ACE-Step. Upload music, choose saved music, or generate a new MP3, then mix it into a video with FFmpeg.
+                Upload music, choose saved music, or generate music with ACE-Step, then mix it into a video.
               </p>
             </div>
             <div className="w-full max-w-sm">
@@ -1237,7 +1255,7 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
                 <h3 className="text-xs font-black uppercase tracking-[0.18em] text-white/60">Optional: Generate or extend music</h3>
                 <p className="mt-2 text-sm text-white/55">ACE-Step 1.5 API can create a music bed from text, or use the selected video audio as a 4-second style reference.</p>
               </div>
-              <div className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-cyan-50">Phase 3B</div>
+              <div className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-cyan-50">Music</div>
             </div>
 
             <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_260px]">
@@ -1294,9 +1312,9 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
                     onChange={(event) => setMusicGeneratorModel(event.target.value as AceMusicModel)}
                     className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none focus:border-cyan-300/40"
                   >
-                    <option value="turbo">XL Turbo / fastest</option>
-                    <option value="base">XL Base / quality test</option>
-                    <option value="sft">XL SFT / prompt adherence</option>
+                    <option value="turbo" disabled={!aceService?.presets.turbo?.installed}>XL Turbo / fastest{aceService?.presets.turbo?.installed?"":" — unavailable"}</option>
+                    <option value="base" disabled={!aceService?.presets.base?.installed}>XL Base / quality{aceService?.presets.base?.installed?"":" — unavailable"}</option>
+                    <option value="sft" disabled={!aceService?.presets.sft?.installed}>XL SFT / prompt adherence{aceService?.presets.sft?.installed?"":" — unavailable"}</option>
                   </select>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
@@ -1322,12 +1340,13 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
               <button
                 type="button"
                 onClick={() => void generateAceStepMusic()}
-                disabled={musicGenerateBusy || !musicGeneratorPrompt.trim()}
+                disabled={musicGenerateBusy || aceService?.busy || !musicGeneratorPrompt.trim() || !aceService?.presets[musicGeneratorModel]?.installed}
                 className="inline-flex min-h-11 items-center justify-center rounded-full border border-cyan-400/20 bg-cyan-400/10 px-5 py-2 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {musicGenerateBusy ? "Generating..." : "Generate Music"}
               </button>
-              <p className="text-sm text-white/50">Use 30 seconds for a standard background bed; the first run may initialize ACE models.</p>
+              <p className="text-sm text-white/50" role="status">{musicGenerateBusy||aceService?.busy?"ACE-Step Busy — shared GPU or music generation in use.":aceService?.presets[musicGeneratorModel]?.ready?"ACE-Step Ready — selected model initialized.":aceService?.presets[musicGeneratorModel]?.installed?"ACE-Step reachable — selected model loads on request.":"ACE-Step unavailable — selected model is not installed or service cannot be reached."}</p>
+              <button type="button" onClick={()=>void refreshAceService()} disabled={musicGenerateBusy} className="min-h-11 rounded-full border border-white/15 px-4 text-sm disabled:opacity-50">Refresh music service</button>
             </div>
 
             {musicGeneratorStatus ? <div className="mt-4 rounded-[18px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/72">{musicGeneratorStatus}</div> : null}
@@ -1337,7 +1356,7 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
                 <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                   <div>
                     <p className="break-words text-sm font-black text-white">{generatedMusicResult.fileName}</p>
-                    <p className="mt-1 text-xs text-white/45">Model: {generatedMusicResult.model.toUpperCase()} Ã¢â‚¬Â¢ Duration: {formatDuration(generatedMusicResult.durationSeconds)} Ã¢â‚¬Â¢ BPM: {generatedMusicResult.bpm || "Unknown"}</p>
+                    <p className="mt-1 text-xs text-white/45">Model: {generatedMusicResult.model.toUpperCase()} · Duration: {formatDuration(generatedMusicResult.durationSeconds)} · BPM: {generatedMusicResult.bpm || "Unknown"}</p>
                   </div>
                   <p className="text-xs text-white/45">Size: {formatBytes(generatedMusicResult.sizeBytes)}</p>
                 </div>
@@ -1464,7 +1483,7 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
       ) : null}
 
       {musicLibraryOpen ? (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/82 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/95 p-4">
           <div className="mx-auto max-w-5xl rounded-[28px] border border-white/10 bg-[#080812] p-4 shadow-2xl md:p-5">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
@@ -1491,7 +1510,7 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
               {musicLibraryItems.map((item) => (
                 <div key={`${item.fileName}:${item.createdAt || ""}`} className="rounded-[22px] border border-white/10 bg-black/35 p-3">
                   <p className="break-words text-sm font-black text-white">{item.title || item.fileName}</p>
-                  <p className="mt-1 text-xs text-white/42">{item.model ? `Model: ${item.model}` : "Saved music"} Ã¢â‚¬Â¢ {formatBytes(item.sizeBytes)}</p>
+                  <p className="mt-1 text-xs text-white/42">{item.model ? `Model: ${item.model}` : "Saved music"} · {formatBytes(item.sizeBytes)}</p>
                   {item.prompt ? <p className="mt-2 line-clamp-2 text-xs text-white/46">{item.prompt}</p> : null}
                   <audio src={item.url} controls preload="metadata" className="mt-3 w-full" />
                   <button
@@ -1530,6 +1549,8 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
         <EditVideoSwapCharactersPanel onRefreshGallery={onRefreshGallery} />
       ) : null}
 
+      {activeTool === "ltx" ? <LtxStudiosPanel /> : null}
+
       {galleryPickerSlot !== null || audioGalleryOpen ? (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/82 p-4 backdrop-blur-sm">
           <div className="mx-auto max-w-6xl rounded-[28px] border border-white/10 bg-[#080812] p-4 shadow-2xl md:p-5">
@@ -1541,7 +1562,7 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
               </div>
               <button
                 type="button"
-                onClick={() => { setGalleryPickerSlot(null); setAudioGalleryOpen(false); }}
+                onClick={() => { setGalleryPickerSlot(null); setAudioGalleryOpen(false); setGalleryPreviewKey(""); }}
                 className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10"
               >
                 Close
@@ -1561,7 +1582,18 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
                 return (
                   <div key={key} className="rounded-[22px] border border-white/10 bg-black/35 p-3">
                     <div className="overflow-hidden rounded-[18px] border border-white/10 bg-black/60">
-                      <video src={item.url} controls muted preload="metadata" className="aspect-video w-full object-contain" />
+                      {galleryPreviewKey === key ? (
+                        <video src={item.url} controls muted playsInline preload="metadata" className="aspect-video w-full object-contain" />
+                      ) : (
+                        <button
+                          type="button"
+                          aria-label={`Preview ${name}`}
+                          onClick={() => setGalleryPreviewKey(key)}
+                          className="flex aspect-video w-full items-center justify-center bg-black/60 px-4 text-sm font-semibold text-white/70"
+                        >
+                          Preview video
+                        </button>
+                      )}
                     </div>
                     <p className="mt-3 break-words text-sm font-semibold text-white/82">{name}</p>
                     <p className="mt-1 text-xs text-white/42">{String(item.source || "gallery")}</p>

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { getOwnerContext } from "@/lib/ownerKey";
+import { requireWorkerToken } from "@/lib/jobs/workerAuth";
 import { withNoStore, sessionErrorResponse } from "@/lib/http/routeHelpers";
 
 export const runtime = "nodejs";
@@ -64,7 +65,10 @@ async function writeOptionalText(form: FormData, field: string, targetPath: stri
 
 export async function POST(req: NextRequest) {
   try {
-    const owner = await getOwnerContext(req);
+    const authenticatedWorker=requireWorkerToken(req);
+    if(!authenticatedWorker.ok)return jsonError(authenticatedWorker.error,authenticatedWorker.status);
+    const owner = {ownerKey:workerOwnerKey(req, "")};
+    if(!owner.ownerKey)return jsonError("Missing worker owner key.",400);
     const form = await req.formData();
 
     const ownerKey = safeSegment(workerOwnerKey(req, owner.ownerKey));

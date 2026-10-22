@@ -315,7 +315,7 @@ describe(
   "Production V2 LTX 2.5 Ingredients scheduler",
   () => {
     it(
-      "locks routing to 5060 Ti first when both GPUs are idle",
+      "routes to the production-primary 3090 first when both GPUs are idle",
       () => {
         expect(
           chooseProductionV2Ltx25Backend([
@@ -329,13 +329,13 @@ describe(
             ),
           ]),
         ).toBe(
-          "rtx5060ti",
+          "rtx3090",
         );
       },
     );
 
     it(
-      "uses the 3090 only when the 5060 Ti is not idle",
+      "uses the 5060 Ti when the production-primary 3090 is not idle",
       async () => {
         const job =
           createJob("fallback");
@@ -404,7 +404,7 @@ describe(
     );
 
     it(
-      "submits on the 5060 and completes from durable Comfy history",
+      "submits on the 3090 and completes from durable Comfy history",
       async () => {
         const job =
           createJob("complete");
@@ -427,7 +427,7 @@ describe(
 
         expect(submitted?.backend)
           .toBe(
-            "rtx5060ti",
+            "rtx3090",
           );
 
         expect(submitted?.status)

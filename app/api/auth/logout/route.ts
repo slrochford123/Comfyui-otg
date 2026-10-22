@@ -15,6 +15,7 @@ export async function POST() {
       const sid = String(payload?.sid || "");
       if (userId && sid) {
         ensureMigrations();
+        db.prepare("DELETE FROM user_sessions WHERE user_id = ? AND session_id = ?").run(userId, sid);
         db.prepare("UPDATE users SET current_session_id = NULL, current_session_issued_at = NULL WHERE id = ? AND current_session_id = ?").run(userId, sid);
       }
     }

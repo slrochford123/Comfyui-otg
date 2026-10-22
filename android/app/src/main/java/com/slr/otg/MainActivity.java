@@ -2,6 +2,8 @@ package com.slr.otg;
 
 import android.app.DownloadManager;
 import android.content.Context;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -19,6 +21,9 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        if ("com.slr.otg.test".equals(getPackageName())) {
+            getWindow().setBackgroundDrawable(new ColorDrawable(Color.rgb(22, 12, 50)));
+        }
         super.onCreate(savedInstanceState);
         installDownloadListener();
     }
@@ -34,6 +39,12 @@ public class MainActivity extends BridgeActivity {
         if (webView == null) {
             Log.w(TAG, "Capacitor WebView was unavailable; download listener not installed.");
             return;
+        }
+
+        // TEST splash and WebView share one opaque background while the first
+        // page arrives. Do not change the installed production wrapper.
+        if ("com.slr.otg.test".equals(getPackageName())) {
+            webView.setBackgroundColor(Color.rgb(22, 12, 50));
         }
 
         webView.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) ->

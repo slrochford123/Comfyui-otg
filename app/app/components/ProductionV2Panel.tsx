@@ -1521,6 +1521,8 @@ export default function ProductionV2Panel() {
   const [generationSubmitting, setGenerationSubmitting] = useState(false);
   const [videoRefreshBusy, setVideoRefreshBusy] = useState(false);
   const [videoRetrySubmitting, setVideoRetrySubmitting] = useState(false);
+  const cancelInFlight = React.useRef(false);
+  const [cancelSubmitting,setCancelSubmitting] = useState(false);
   const [continueSceneSubmitting, setContinueSceneSubmitting] = useState(false);
   /*
    * OTG_PRODUCTION_V2_PROMPT_TOOLS_R10_V1
@@ -1627,7 +1629,8 @@ export default function ProductionV2Panel() {
         if (cancelled) return;
         setDrafts(json.drafts || []);
         setCompleted(json.completed || []);
-        if (json.activeProduction) setProduction(json.activeProduction);
+        // Enter at Production Home. Saved stage/scene state is restored only
+        // after an explicit Open (or a scoped cross-tab handoff).
       } catch (error) {
         if (!cancelled) setMessage(error instanceof Error ? error.message : "Could not load Production V2.");
       } finally {
@@ -3023,7 +3026,7 @@ export default function ProductionV2Panel() {
   }
 
   async function retryVideo() {
-    if (!production || !selectedScene || selectedScene.model !== "minimax-h3" || generationActive) return;
+    if (!production || !selectedScene || generationActive) return;
     setVideoRetrySubmitting(true);
     setMessage("");
     try {
@@ -3037,14 +3040,16 @@ export default function ProductionV2Panel() {
       setGenerationJob(json.job);
       setMessage(`${json.job.statusMessage || "Retry queued"}. Exact reviewed prompt reused in new job ${json.job.id}.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not retry MiniMax H3 generation.");
+      setMessage(error instanceof Error ? error.message : "Could not retry Production video generation.");
     } finally {
       setVideoRetrySubmitting(false);
     }
   }
 
   async function cancelVideoGeneration() {
-    if (!production || !selectedScene || !generationJob || !generationActive) return;
+    if (!production || !selectedScene || !generationJob || !generationActive || cancelInFlight.current) return;
+    cancelInFlight.current=true;
+    setCancelSubmitting(true);
     setMessage("Canceling Production H3 generation...");
     try {
       const response = await fetch("/api/production/v2/generation", {
@@ -3060,9 +3065,12 @@ export default function ProductionV2Panel() {
       });
       const json = await readJsonResponse<{ job: ProductionV2GenerationJobPayload }>(response);
       setGenerationJob(json.job);
-      setMessage("Production H3 generation canceled.");
+      setMessage(json.job.status === "canceled" ? "Production H3 generation canceled. Backend clearance confirmed." : "Cancellation requested; waiting for confirmed backend terminal state.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not cancel Production H3 generation.");
+    } finally {
+      cancelInFlight.current=false;
+      setCancelSubmitting(false);
     }
   }
 
@@ -3902,13 +3910,13 @@ export default function ProductionV2Panel() {
                         : "Generate"}
                 </button>
                 <button type="button" className={secondaryButton} disabled={videoRefreshBusy} onClick={() => void refreshVideoState()}>{videoRefreshBusy ? "Refreshing..." : "Refresh"}</button>
-                {selectedScene.model === "minimax-h3" ? (
+                {(selectedScene.model === "minimax-h3" || selectedScene.model === "ltx-2.5") ? (
                   <button
                     type="button"
                     className={secondaryButton}
-                    disabled={!hasPriorVideoAttempt || !readiness.ok || readOnly || videoRetrySubmitting || generationSubmitting || generationActive || selectedScene.model !== "minimax-h3"}
+                    disabled={!hasPriorVideoAttempt || !readiness.ok || readOnly || videoRetrySubmitting || generationSubmitting || generationActive}
                     onClick={() => void retryVideo()}
-                    title={hasPriorVideoAttempt ? "Reuse the exact reviewed prompt in a new stochastic generation job." : "Retry becomes available after the first generation attempt."}
+                    title={hasPriorVideoAttempt ? "Reuse the exact reviewed prompt and references in a new stochastic generation job." : "Retry becomes available after the first generation attempt."}
                     data-otg="production-v2-video-retry"
                   >
                     {videoRetrySubmitting ? "Retrying..." : "Retry"}
@@ -3920,8 +3928,9 @@ export default function ProductionV2Panel() {
                     className={secondaryButton}
                     onClick={() => void cancelVideoGeneration()}
                     data-otg="production-v2-cancel-generation"
+                    disabled={cancelSubmitting}
                   >
-                    Cancel Generation
+                    {cancelSubmitting ? "Cancelling..." : "Cancel Generation"}
                   </button>
                 ) : null}
               </div>

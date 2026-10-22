@@ -4,6 +4,7 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 
 import fs from "node:fs";
@@ -36,11 +37,13 @@ beforeEach(() => {
       "resource-locks.sqlite",
     ),
   );
+  vi.stubEnv("OTG_VOICE_GPU_LOCK_FILE",path.join(tempDir,"voice-gpu.lock"));
 
   clearResourceLocksForTests();
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   try {
     clearResourceLocksForTests();
   } catch {}

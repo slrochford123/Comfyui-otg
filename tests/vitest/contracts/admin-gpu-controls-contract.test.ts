@@ -39,11 +39,13 @@ describe("admin GPU controls TEST contract", () => {
 
   it("renders only for admin sessions in both app chrome modes", () => {
     expect(app).toContain('import AdminGpuControls from "./components/AdminGpuControls"');
-    expect(app.match(/isAdmin \? <AdminGpuControls \/> : null/g)).toHaveLength(2);
+    expect(app.match(/isAdmin \? <AdminGpuControls \/> : null/g)).toHaveLength(1);
+    expect(app).toContain('data-otg="shared-app-header"');
     expect(panel).toContain("/api/admin/gpu-controls");
     expect(panel).toContain("Free VRAM");
     expect(panel).toContain("Reset ComfyUI");
-    expect(panel).toContain("Active generations will be interrupted");
+    expect(panel).toContain("Busy workers are refused");
+    expect(panel).toContain("Maintenance target GPU");
   });
 
   it("limits the installed helper to the two intended ComfyUI services", () => {

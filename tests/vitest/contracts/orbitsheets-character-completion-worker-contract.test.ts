@@ -56,6 +56,14 @@ describe("Qwen Image Edit 2.1 TEST Character Completion Worker", () => {
     );
   });
 
+  it("describes the actual Qwen five-view card without legacy six-view copy", () => {
+    expect(worker).toContain("Generating the five-view Qwen Image Edit 2.1 Character Card.");
+    expect(worker).not.toContain("six-view Qwen Image Edit 2.1");
+    expect(worker).not.toContain("Qwen Image Edit 2.1 six-view");
+    const hub = readFileSync(resolve(process.cwd(), "app/app/components/CharacterHubPanel.tsx"), "utf8");
+    expect(hub).toContain('isQwenCardV1 ? "Five-view Character Card" : "Six-view Character Card"');
+  });
+
   it("uses the processed source path as the Qwen input", () => {
     expect(worker).toContain(
       '"sourceServerPath": source_image_path',
@@ -150,5 +158,9 @@ describe("Qwen Image Edit 2.1 TEST Character Completion Worker", () => {
   it("packages runtime config files needed by Comfy routing into TEST releases", () => {
     expect(testActivationScript).toContain("comfy_workflows config scripts");
     expect(testActivationScript).toContain('rsync -a --delete "$REPO_DIR/$item/" "$release/$item/"');
+    const managed = readFileSync(resolve(process.cwd(), "scripts/test-maintenance/otg-test-managed.conf"), "utf8");
+    expect(managed).toContain("EnvironmentFile=/home/shawn-rochford/AI/runtime/test/config/app-env/.env.local");
+    expect(managed).toContain("Environment=PORT=3001");
+    expect(managed).not.toContain("otg-prod");
   });
 });

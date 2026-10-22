@@ -20,8 +20,8 @@ let tempRoots: string[] = [];
 async function setup(input: {
   ownerKey?: string;
   authInvalid?: boolean;
-  qwenText?: string;
-  qwenStatus?: number;
+  openAIText?: string;
+  openAIStatus?: number;
 } = {}) {
   const tempRoot = fs.mkdtempSync(
     path.join(
@@ -41,50 +41,38 @@ async function setup(input: {
     "../../../lib/ownerKey"
   );
   const ownerKey = input.ownerKey || "route-owner";
-  const qwenDurableFetch = vi.fn(async () => {
-    if (input.qwenStatus && input.qwenStatus >= 400) {
-      return new Response(
-        JSON.stringify({
-          error: "extractor failed",
-        }),
-        {
-          status: input.qwenStatus,
-        },
-      );
+  const createOpenAIText = vi.fn(async () => {
+    if (input.openAIStatus && input.openAIStatus >= 400) {
+      throw new Error("extractor failed");
     }
 
-    return new Response(
-      JSON.stringify({
-        message: {
-          content:
-            input.qwenText ||
-            JSON.stringify({
-              entities: [
-                {
-                  entityType: "character",
-                  name: "Mara",
-                },
-              ],
-              facts: [
-                {
-                  subjectName: "Mara",
-                  predicate: "role",
-                  valueText: "pilot",
-                  canonStatus: "suggestion",
-                },
-              ],
-              openQuestions: [
-                {
-                  question: "Why did Mara leave?",
-                },
-              ],
-            }),
-        },
-      }),
-      {
-        status: 200,
-      },
-    );
+    return {
+      text:
+        input.openAIText ||
+        JSON.stringify({
+          entities: [
+            {
+              entityType: "character",
+              name: "Mara",
+            },
+          ],
+          facts: [
+            {
+              subjectName: "Mara",
+              predicate: "role",
+              valueText: "pilot",
+              canonStatus: "suggestion",
+            },
+          ],
+          openQuestions: [
+            {
+              question: "Why did Mara leave?",
+            },
+          ],
+        }),
+      responseId: "response-test",
+      usage: {},
+    };
   });
 
   vi.doMock("@/lib/sessionUser", () => ({
@@ -99,12 +87,10 @@ async function setup(input: {
     }),
   }));
 
-  vi.doMock("@/lib/workers/qwenClusterRouter", () => ({
-    QWEN_CLUSTER_MODEL: "qwen-test",
-  }));
-
-  vi.doMock("@/lib/workers/qwenDurableFetch", () => ({
-    qwenDurableFetch,
+  vi.doMock("@/lib/openai/provider", () => ({
+    createOpenAIText,
+    openAIEnabled: () => true,
+    openAIModels: () => ({ story: "gpt-6.1-sol" }),
   }));
 
   const store = await import(
@@ -118,7 +104,7 @@ async function setup(input: {
     ownerKey,
     store,
     route,
-    qwenDurableFetch,
+    createOpenAIText,
   };
 }
 
@@ -133,6 +119,16 @@ function request(body: Record<string, unknown>) {
       body: JSON.stringify(body),
     },
   ) as any;
+}
+
+function paidAuthorization(maxOutputTokens = 1000) {
+  return {
+    paidOperationAuthorization: {
+      approved: true,
+      operation: "story-memory-extraction",
+      maxOutputTokens,
+    },
+  };
 }
 
 afterEach(() => {
@@ -173,8 +169,8 @@ describe("Story Creator V2 extraction route behavior", () => {
     expect(data.ok).toBe(false);
   });
 
-  it("rejects missing sourceMessageId before calling Qwen", async () => {
-    const { route, qwenDurableFetch } = await setup();
+  it("requires explicit authorization before reviewing messages", async () => {
+    const { route, createOpenAIText } = await setup();
 
     const response = await route.POST(
       request({
@@ -183,15 +179,13 @@ describe("Story Creator V2 extraction route behavior", () => {
     );
     const data = await response.json();
 
-    expect(response.status).toBe(400);
-    expect(data.code).toBe(
-      "STORY_EXTRACT_SOURCE_MESSAGE_REQUIRED",
-    );
-    expect(qwenDurableFetch).not.toHaveBeenCalled();
+    expect(response.status).toBe(402);
+    expect(data.code).toBe("AI_PAYMENT_AUTHORIZATION_REQUIRED");
+    expect(createOpenAIText).not.toHaveBeenCalled();
   });
 
   it("extracts a valid stored source message", async () => {
-    const { ownerKey, route, store } = await setup();
+    const { ownerKey, route, store, createOpenAIText } = await setup();
     const project =
       store.createStoryCreatorProject({
         ownerKey,
@@ -201,7 +195,7 @@ describe("Story Creator V2 extraction route behavior", () => {
       store.addStoryCreatorMessage({
         ownerKey,
         projectId: project.id,
-        role: "assistant",
+        role: "user",
         content: "Mara is a pilot.",
       });
 
@@ -209,6 +203,7 @@ describe("Story Creator V2 extraction route behavior", () => {
       request({
         projectId: project.id,
         sourceMessageId: message.id,
+        ...paidAuthorization(700),
       }),
     );
     const data = await response.json();
@@ -219,10 +214,58 @@ describe("Story Creator V2 extraction route behavior", () => {
     expect(data.entitiesCreated).toBe(1);
     expect(data.factsCreated).toBe(1);
     expect(data.questionsCreated).toBe(1);
+    expect(createOpenAIText).toHaveBeenCalledWith(
+      expect.objectContaining({ maxOutputTokens: 700 }),
+    );
   });
 
-  it("rejects a source message from another project", async () => {
-    const { ownerKey, route, store, qwenDurableFetch } =
+  it("rejects unapproved paid extraction before calling OpenAI", async () => {
+    const { ownerKey, route, store, createOpenAIText } = await setup();
+    const project = store.createStoryCreatorProject({
+      ownerKey,
+      title: "Deferred Extraction",
+    });
+    const message = store.addStoryCreatorMessage({
+      ownerKey,
+      projectId: project.id,
+      role: "assistant",
+      content: "This remains unprocessed until extraction is authorized.",
+    });
+
+    const response = await route.POST(request({
+      projectId: project.id,
+      sourceMessageId: message.id,
+    }));
+    const data = await response.json();
+
+    expect(response.status).toBe(402);
+    expect(data.code).toBe("AI_PAYMENT_AUTHORIZATION_REQUIRED");
+    expect(createOpenAIText).not.toHaveBeenCalled();
+    expect(store.listStoryBibleFacts({ ownerKey, projectId: project.id })).toEqual([]);
+  });
+
+  it("rejects malformed or excessive paid extraction budgets", async () => {
+    const { ownerKey, route, store, createOpenAIText } = await setup();
+    const project = store.createStoryCreatorProject({ ownerKey, title: "Bounded Extraction" });
+    const message = store.addStoryCreatorMessage({
+      ownerKey,
+      projectId: project.id,
+      role: "assistant",
+      content: "Budget checks happen before provider calls.",
+    });
+
+    const response = await route.POST(request({
+      projectId: project.id,
+      sourceMessageId: message.id,
+      ...paidAuthorization(1001),
+    }));
+
+    expect(response.status).toBe(402);
+    expect(createOpenAIText).not.toHaveBeenCalled();
+  });
+
+  it("reviews only unreviewed user messages in the selected project", async () => {
+    const { ownerKey, route, store, createOpenAIText } =
       await setup();
     const first =
       store.createStoryCreatorProject({
@@ -246,17 +289,18 @@ describe("Story Creator V2 extraction route behavior", () => {
       request({
         projectId: second.id,
         sourceMessageId: message.id,
+        ...paidAuthorization(),
       }),
     );
     const data = await response.json();
 
-    expect(response.status).toBe(404);
-    expect(data.code).toBe("STORY_MESSAGE_NOT_FOUND");
-    expect(qwenDurableFetch).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(data.message).toContain("already up to date");
+    expect(createOpenAIText).not.toHaveBeenCalled();
   });
 
   it("rejects project ownership mismatch", async () => {
-    const { route, store, qwenDurableFetch } =
+    const { route, store, createOpenAIText } =
       await setup({
         ownerKey: "session-owner",
       });
@@ -277,18 +321,19 @@ describe("Story Creator V2 extraction route behavior", () => {
       request({
         projectId: project.id,
         sourceMessageId: message.id,
+        ...paidAuthorization(),
       }),
     );
     const data = await response.json();
 
     expect(response.status).toBe(404);
     expect(data.code).toBe("STORY_PROJECT_NOT_FOUND");
-    expect(qwenDurableFetch).not.toHaveBeenCalled();
+    expect(createOpenAIText).not.toHaveBeenCalled();
   });
 
-  it("downgrades unsafe structured canon results", async () => {
+  it("automatically stores a nonconflicting extracted detail as canon", async () => {
     const { ownerKey, route, store } = await setup({
-      qwenText: JSON.stringify({
+      openAIText: JSON.stringify({
         entities: [],
         facts: [
           {
@@ -317,6 +362,7 @@ describe("Story Creator V2 extraction route behavior", () => {
       request({
         projectId: project.id,
         sourceMessageId: message.id,
+        ...paidAuthorization(),
       }),
     );
 
@@ -326,12 +372,12 @@ describe("Story Creator V2 extraction route behavior", () => {
         ownerKey,
         projectId: project.id,
       })[0].canonStatus,
-    ).toBe("suggestion");
+    ).toBe("canon");
   });
 
   it("returns a failure response when the extractor response is invalid", async () => {
     const { ownerKey, route, store } = await setup({
-      qwenText: "not-json",
+      openAIText: "not-json",
     });
     const project =
       store.createStoryCreatorProject({
@@ -342,7 +388,7 @@ describe("Story Creator V2 extraction route behavior", () => {
       store.addStoryCreatorMessage({
         ownerKey,
         projectId: project.id,
-        role: "assistant",
+        role: "user",
         content: "Invalid extractor source.",
       });
 
@@ -350,6 +396,7 @@ describe("Story Creator V2 extraction route behavior", () => {
       request({
         projectId: project.id,
         sourceMessageId: message.id,
+        ...paidAuthorization(),
       }),
     );
     const data = await response.json();

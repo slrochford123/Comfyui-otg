@@ -23,11 +23,11 @@ export function StoryCreatorHeader({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-200/70">
-              Story Creator V2
+              SLR Studios Storyteller
             </p>
 
             <span className="rounded-full border border-purple-200/20 bg-purple-300/[0.08] px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-purple-100/70">
-              Five-stage studio
+              Story Studio
             </span>
           </div>
 

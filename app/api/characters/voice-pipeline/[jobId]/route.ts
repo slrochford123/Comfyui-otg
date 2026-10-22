@@ -2,11 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { getOwnerContext } from "@/lib/ownerKey";
 import { withNoStore, sessionErrorResponse } from "@/lib/http/routeHelpers";
 import {
   finalizeTrainingDatasetJob,
-  findVoicePipelineJobOwnerKey,
   getQueuedContractJob,
   resumeVoicePipelineJob,
   stopVoicePipelineJob,
@@ -18,19 +16,13 @@ import {
   validateReadyTrainingDataset,
 } from "@/lib/jobs/trainingDatasetManifest";
 import { hasValidWorkerToken } from "@/lib/jobs/workerAuth";
+import { requireSessionUser } from "@/lib/sessionUser";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function jsonError(error: string, status = 400) {
   return NextResponse.json({ ok: false, error }, { status, headers: withNoStore() });
-}
-
-function resolveVoicePipelineJobOwnerKey(jobId: string, fallbackOwnerKey: string): string {
-  const storedOwnerKey = findVoicePipelineJobOwnerKey(jobId);
-  return storedOwnerKey && /^[A-Za-z0-9._@-]{1,200}$/.test(storedOwnerKey)
-    ? storedOwnerKey
-    : fallbackOwnerKey;
 }
 
 async function quarantineTrainingDataset(ownerKey: string, characterId: string, jobId: string) {
@@ -100,10 +92,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ jobId: stri
   try {
     const tokenWorker = hasValidWorkerToken(req);
     const headerOwnerKey = String(req.headers.get("x-otg-owner-key") || "").trim();
-    const owner = tokenWorker ? { ownerKey: headerOwnerKey } : await getOwnerContext(req);
+    const owner = tokenWorker ? { ownerKey: headerOwnerKey } : await requireSessionUser(req);
     if (!owner.ownerKey) return jsonError("Missing worker owner key.", 400);
     const { jobId } = await ctx.params;
-    const effectiveOwnerKey = resolveVoicePipelineJobOwnerKey(jobId, owner.ownerKey);
+    const effectiveOwnerKey = owner.ownerKey;
     const job = getQueuedContractJob(effectiveOwnerKey, jobId);
     if (!job || job.jobType !== "character_voice_pipeline") return jsonError("Job not found.", 404);
 
@@ -116,10 +108,11 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ jobId: stri
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ jobId: string }> }) {
   try {
     const { jobId } = await ctx.params;
-    const storedOwnerKey = findVoicePipelineJobOwnerKey(jobId);
-    const owner = storedOwnerKey ? { ownerKey: storedOwnerKey } : await getOwnerContext(req);
+    const owner = await requireSessionUser(req);
     if (!owner.ownerKey) return jsonError("Missing worker owner key.", 400);
-    const effectiveOwnerKey = resolveVoicePipelineJobOwnerKey(jobId, owner.ownerKey);
+    const effectiveOwnerKey = owner.ownerKey;
+    const ownedJob = getQueuedContractJob(effectiveOwnerKey, jobId);
+    if (!ownedJob || ownedJob.jobType !== "character_voice_pipeline") return jsonError("Job not found.", 404);
 
     // Completed datasets are terminal. Return idempotent success before reading the body,
     // because stale UI/browser retries may send an empty, malformed, or already-consumed PATCH body.
@@ -139,13 +132,11 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ jobId: st
     const body = parsed.value;
     void body;
 
-    // Idempotent completed-dataset short-circuit by stored job owner.
-
-    // This bypasses stale UI/session-owner mismatch after the backend already locked the dataset.
+    // Idempotency never changes the authenticated owner scope.
 
     if (action === "complete_dataset") {
 
-      const completedDatasetOwnerKey = findVoicePipelineJobOwnerKey(jobId);
+      const completedDatasetOwnerKey = effectiveOwnerKey;
 
       if (completedDatasetOwnerKey) {
 

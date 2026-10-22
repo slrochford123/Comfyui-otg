@@ -80,6 +80,15 @@ export type PersistedH3InputState = {
   refModsTurbo?: boolean;
   refModsSeedMode?: "random" | "fixed";
   refModsSeed?: string;
+  h3DirectorDraft?: string;
+  h3DirectorConversationId?: string;
+  h3DirectorReply?: string;
+  h3DirectorChanges?: string[];
+  h3DirectorPromptVersions?: Array<{
+    id: string;
+    prompt: string;
+    createdAt: number;
+  }>;
 };
 
 export type PersistedH3MediaRecord = {

@@ -1,0 +1,31 @@
+[Unit]
+Description=SLR Studios isolated TEST ACE-Step API (RTX 3090)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/shawn-rochford/AI/runtime/test/ace-isolated/service-code
+Environment=PYTHONPATH=/home/shawn-rochford/AI/runtime/test/ace-isolated/service-code
+Environment=PYTHONPYCACHEPREFIX=/home/shawn-rochford/AI/runtime/test/ace-isolated/cache/pycache
+Environment=HF_HOME=/home/shawn-rochford/AI/runtime/test/ace-isolated/cache/hf
+Environment=HF_MODULES_CACHE=/home/shawn-rochford/AI/runtime/test/ace-isolated/cache/modules
+Environment=HF_HUB_OFFLINE=1
+Environment=TRANSFORMERS_OFFLINE=1
+Environment=TMPDIR=/home/shawn-rochford/AI/runtime/test/ace-isolated/tmp
+Environment=ACESTEP_CONFIG_PATH=acestep-v15-xl-base
+Environment=ACESTEP_NO_INIT=false
+Environment=ACESTEP_INIT_LLM=false
+Environment=ACESTEP_OFFLOAD_TO_CPU=true
+Environment=ACESTEP_OFFLOAD_DIT_TO_CPU=true
+Environment=ACESTEP_DEVICE=cuda
+Environment=CUDA_VISIBLE_DEVICES=0
+ExecStart=/home/shawn-rochford/AI/ACE-Step-1.5/.venv/bin/python -m acestep.api_server --host 127.0.0.1 --port 8002
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=120
+KillMode=control-group
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

@@ -14,6 +14,8 @@ import {
 import {
   addStoryBibleFact,
   createStoryBibleEntity,
+  deleteStoryCanonFact,
+  reviseStoryCanonFact,
 } from "../../../../../lib/storyCreator/store";
 
 export const runtime = "nodejs";
@@ -180,9 +182,32 @@ export async function POST(
       );
     }
 
+    if (action === "update-fact") {
+      const fact = reviseStoryCanonFact({
+        ownerKey,
+        projectId: body?.projectId,
+        factId: body?.factId,
+        valueText: body?.valueText,
+      });
+      return NextResponse.json({ ok: true, action, fact }, {
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+
+    if (action === "delete-fact") {
+      const deleted = deleteStoryCanonFact({
+        ownerKey,
+        projectId: body?.projectId,
+        factId: body?.factId,
+      });
+      return NextResponse.json({ ok: true, action, deleted }, {
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+
     throw requestError(
       "STORY_BIBLE_WRITE_ACTION_INVALID",
-      "Story Bible write action must be create-entity or add-fact.",
+      "Story Bible write action is not supported.",
     );
   } catch (error) {
     return jsonError(error);

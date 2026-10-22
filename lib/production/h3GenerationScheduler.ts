@@ -27,6 +27,7 @@ import {
   cancelProductionV2GenerationJob,
   claimProductionV2GenerationJob,
   completeProductionV2GenerationJob,
+  completeProductionV2GenerationNativeJob,
   failProductionV2GenerationJob,
   getProductionV2GenerationJob,
   listActiveProductionV2GenerationJobs,
@@ -392,6 +393,13 @@ export function applyProductionV2H3GenerationToProduction(
 
   const nativeDimensions =
     qualifiedNativeDimensions(job);
+  const hasVsrFinal = Boolean(job.vsrBackend && job.vsrPromptId);
+  const finalWidth = hasVsrFinal ? H3_FINAL_WIDTH : nativeDimensions.nativeWidth;
+  const finalHeight = hasVsrFinal ? H3_FINAL_HEIGHT : nativeDimensions.nativeHeight;
+  const finalFps = hasVsrFinal ? h3FinalFpsForRife(job.payload.rifeInterpolation60Fps) : H3_RIFE_NATIVE_FPS;
+  const postprocess = hasVsrFinal
+    ? job.payload.rifeInterpolation60Fps ? "rtx-vsr-ultra+rife-60fps" : "rtx-vsr-ultra"
+    : "native-h3";
   const scenes = production.scenes.map((scene) => {
     if (scene.id !== job.sceneId) return scene;
     if (status === "generated" && outputPath && job.backend && job.comfyPromptId) {
@@ -421,12 +429,12 @@ export function applyProductionV2H3GenerationToProduction(
               vsrBackend: job.vsrBackend,
               nativeWidth: nativeDimensions.nativeWidth,
               nativeHeight: nativeDimensions.nativeHeight,
-              finalWidth: H3_FINAL_WIDTH,
-              finalHeight: H3_FINAL_HEIGHT,
+              finalWidth,
+              finalHeight,
               nativeFps: H3_RIFE_NATIVE_FPS,
-              finalFps: h3FinalFpsForRife(job.payload.rifeInterpolation60Fps),
-              rifeInterpolation60Fps: job.payload.rifeInterpolation60Fps === true,
-              postprocess: job.payload.rifeInterpolation60Fps ? "rtx-vsr-ultra+rife-60fps" : "rtx-vsr-ultra",
+              finalFps,
+              rifeInterpolation60Fps: hasVsrFinal && job.payload.rifeInterpolation60Fps === true,
+              postprocess,
               videoReferenceVersionId: parentVersionId,
             },
           }, { selectActive: true });
@@ -481,12 +489,12 @@ export function applyProductionV2H3GenerationToProduction(
             vsrBackend: job.vsrBackend,
             nativeWidth: nativeDimensions.nativeWidth,
             nativeHeight: nativeDimensions.nativeHeight,
-            finalWidth: H3_FINAL_WIDTH,
-            finalHeight: H3_FINAL_HEIGHT,
+            finalWidth,
+            finalHeight,
             nativeFps: H3_RIFE_NATIVE_FPS,
-            finalFps: h3FinalFpsForRife(job.payload.rifeInterpolation60Fps),
-            rifeInterpolation60Fps: job.payload.rifeInterpolation60Fps === true,
-            postprocess: job.payload.rifeInterpolation60Fps ? "rtx-vsr-ultra+rife-60fps" : "rtx-vsr-ultra",
+            finalFps,
+            rifeInterpolation60Fps: hasVsrFinal && job.payload.rifeInterpolation60Fps === true,
+            postprocess,
           },
         }, { selectActive: true, selectGenerated: true, selectForAssembly: true });
       }
@@ -683,6 +691,7 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
     backend: job.backend,
     mode: job.mode,
     h3Quality: job.payload.h3Quality,
+    orientation: job.payload.orientation,
     finalPrompt: job.payload.finalPrompt,
     durationSeconds: job.payload.durationSeconds,
     seed: job.payload.seed,
@@ -694,6 +703,7 @@ async function prepareAndSubmit(job: ProductionV2GenerationJob, dependencies: Sc
     videoReferenceFilename,
     includeVideoReferenceAudio: job.payload.videoReference?.includeAudio,
     userLoras: job.payload.userLoras,
+    h3Settings: job.payload.h3Settings,
   });
   let submitted:
     ProductionV2GenerationJob | null =
@@ -855,17 +865,26 @@ async function prepareAndSubmitVsr(job: ProductionV2GenerationJob, dependencies:
     failActiveJob(job, "RTX VSR post-processing cannot start because the native H3 artifact path is missing.");
     return;
   }
+  // Scene Hunter is a native-resolution search preview, not a 1080p final.
+  if (job.payload.h3Quality === "sh" && !job.payload.rifeInterpolation60Fps) {
+    const completed = completeProductionV2GenerationNativeJob(job.id, job.nativeOutputPath, "Complete - native Scene Hunter preview");
+    if (completed) sceneStatus(completed, "generated", job.nativeOutputPath);
+    return;
+  }
   const availability = await schedulerProbe(dependencies)(H3_VSR_BACKEND, { requireVsr: true });
   if (!availability.healthy) {
-    markProductionV2GenerationVsrWaiting(job.id, "Waiting for the RTX VSR 1080p backend");
+    const completed = completeProductionV2GenerationNativeJob(job.id, job.nativeOutputPath, "Complete - native H3 output (RTX 5060 Ti VSR unavailable)");
+    if (completed) sceneStatus(completed, "generated", job.nativeOutputPath);
     return;
   }
   if (!availability.compatible) {
-    failActiveJob(job, `RTX VSR preflight failed. Missing nodes: ${availability.missingNodes.join(", ") || "unknown"}.`);
+    const completed = completeProductionV2GenerationNativeJob(job.id, job.nativeOutputPath, `Complete - native H3 output (RTX 5060 Ti VSR unavailable: ${availability.missingNodes.join(", ") || "incompatible backend"})`);
+    if (completed) sceneStatus(completed, "generated", job.nativeOutputPath);
     return;
   }
   if (!availability.idle) {
-    markProductionV2GenerationVsrWaiting(job.id, "Waiting for RTX 5060 Ti to run VSR ULTRA 1080p");
+    const completed = completeProductionV2GenerationNativeJob(job.id, job.nativeOutputPath, "Complete - native H3 output (RTX 5060 Ti busy; VSR skipped)");
+    if (completed) sceneStatus(completed, "generated", job.nativeOutputPath);
     return;
   }
 
@@ -1142,7 +1161,7 @@ export async function runProductionV2H3SchedulerTick(dependencies: SchedulerDepe
         probe("rtx5060ti", h3Requirements),
         probe(H3_VSR_BACKEND, { requireVsr: true }),
       ]);
-      if (!vsrProbe.healthy || !vsrProbe.compatible) {
+      if (waiting.payload.h3Quality !== "sh" && (!vsrProbe.healthy || !vsrProbe.compatible)) {
         markProductionV2GenerationWaiting(waiting.id, "Waiting for a compatible RTX VSR ULTRA 1080p backend");
         continue;
       }
@@ -1223,6 +1242,10 @@ export function productionV2GenerationPublicStatus(job: ProductionV2GenerationJo
     : null;
   const progress = readComfyPromptProgress(job.comfyPromptId);
 
+  const hasVsrFinal = Boolean(job.vsrBackend && job.vsrPromptId);
+  const finalWidth = hasVsrFinal ? H3_FINAL_WIDTH : (recipe?.nativeWidth || null);
+  const finalHeight = hasVsrFinal ? H3_FINAL_HEIGHT : (recipe?.nativeHeight || null);
+  const finalFps = hasVsrFinal ? h3FinalFpsForRife(job.payload.rifeInterpolation60Fps) : H3_RIFE_NATIVE_FPS;
   return {
     id: job.id,
     productionId: job.productionId,
@@ -1242,10 +1265,10 @@ export function productionV2GenerationPublicStatus(job: ProductionV2GenerationJo
     promptId: job.comfyPromptId,
     vsrPromptId: job.vsrPromptId,
     nativeOutputReady: Boolean(job.nativeOutputPath),
-    finalResolution: `${H3_FINAL_WIDTH}x${H3_FINAL_HEIGHT}`,
+    finalResolution: finalWidth && finalHeight ? `${finalWidth}x${finalHeight}` : null,
     nativeFps: H3_RIFE_NATIVE_FPS,
-    finalFps: h3FinalFpsForRife(job.payload.rifeInterpolation60Fps),
-    rifeInterpolation60Fps: job.payload.rifeInterpolation60Fps === true,
+    finalFps,
+    rifeInterpolation60Fps: hasVsrFinal && job.payload.rifeInterpolation60Fps === true,
     workflowId: job.workflowId,
     workflowFile: job.workflowFile,
     approximatePreview: progress?.approximatePreview || null,

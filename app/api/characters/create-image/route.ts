@@ -5,6 +5,8 @@ import { randomInt, randomUUID } from "node:crypto";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 import { getOwnerContext } from "@/lib/ownerKey";
 import { QWEN21_TURBO_LORA } from "@/lib/imageGenerateWorkflows";
+import { buildMossWorkflow, MOSS_FILES, MOSS_REQUIRED_NODES, mossDimensions, mossSeed, mossTarget, mossOutputShape } from "@/lib/images/mossImage";
+import { chooseMossBackend } from "@/lib/images/mossBackend";
 import {
   isTelevisionAnimeStyleId,
   televisionAnimeStylePrompt,
@@ -21,6 +23,7 @@ import {
   isCharacterCreateRequestId,
   markCharacterCreateRequestFailed,
   markCharacterCreateRequestSubmitted,
+  scopedCharacterCreateRequestId,
 } from "@/lib/characters/characterCreateRequestStore";
 // OTG_CHARACTER_TELEVISION_ANIME_STYLES_PHASE9_ROUTE
 // OTG_CHARACTER_MOBILE_GENERATION_PERSISTENCE_PHASE10_ROUTE
@@ -30,6 +33,10 @@ export const dynamic = "force-dynamic";
 
 const OUTPUT_WIDTH = 1080;
 const OUTPUT_HEIGHT = 1920;
+// Qwen's latent-size constraint rounds the requested 1080px portrait width
+// up to the nearest supported multiple. Keep the API contract honest instead
+// of advertising 1080x1920 while returning 1088x1920.
+const QWEN_OUTPUT_WIDTH = 1088;
 const MAGE_INTERNAL_WIDTH = 1088;
 const BACKEND_PROBE_TIMEOUT_MS = 12_000;
 const SUBMIT_TIMEOUT_MS = 30_000;
@@ -41,7 +48,8 @@ type CharacterCreateModelId =
   | "krea-2"
   | "boogu"
   | "mage-flow"
-  | "qwen-image-2-1";
+  | "qwen-image-2-1"
+  | "moss-image-sft";
 type CharacterStylePresetId =
   | "cartoon"
   | "anime"
@@ -65,7 +73,20 @@ type ModelConfig = {
   preferredBackend: "image-primary" | "local-3090";
 };
 
+function outputSizeForModel(modelId: unknown) {
+  if (modelId === "moss-image-sft") return mossDimensions(undefined, undefined, "character");
+  return String(modelId || "") === "qwen-image-2-1"
+    ? { width: QWEN_OUTPUT_WIDTH, height: OUTPUT_HEIGHT }
+    : { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT };
+}
+
 const MODEL_CONFIG: Record<CharacterCreateModelId, ModelConfig> = {
+  "moss-image-sft": {
+    id: "moss-image-sft", label: "MOSS-Image SFT (INT8)",
+    workflowFile: "workflows/characters/create/image_moss_image_sft_t2i.json",
+    outputNodeId: "9", requiredNodes: MOSS_REQUIRED_NODES,
+    requirements: MOSS_FILES, preferredBackend: "image-primary",
+  },
   "ernie-image": {
     id: "ernie-image",
     label: "Ernie Image",
@@ -441,7 +462,7 @@ function mutateWorkflow(args: {
     case "qwen-image-2-1":
       setInput(graph, "452", "prompt", prompt);
       setInput(graph, "452", "negative_prompt", negativePrompt(mode));
-      setInput(graph, "456", "width", OUTPUT_WIDTH);
+      setInput(graph, "456", "width", QWEN_OUTPUT_WIDTH);
       setInput(graph, "456", "height", OUTPUT_HEIGHT);
       setInput(graph, "458", "seed", seed);
       replaceOutputWithPreview(graph, config.outputNodeId);
@@ -566,7 +587,7 @@ async function chooseBackend(request: NextRequest, config: ModelConfig) {
   );
 }
 
-async function submitPrompt(baseUrl: string, graph: Record<string, any>) {
+async function submitPrompt(baseUrl: string, graph: Record<string, any>, releaseIdlePeer = false) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SUBMIT_TIMEOUT_MS);
 
@@ -574,6 +595,7 @@ async function submitPrompt(baseUrl: string, graph: Record<string, any>) {
     const response = await submitComfyPromptWith5060Lease({
       baseUrl,
       workerId: "api-character-create-image",
+      releaseIdlePeer,
       init: {
         method: "POST",
         cache: "no-store",
@@ -646,7 +668,7 @@ export async function POST(request: NextRequest) {
     // Clone it first so JSON parsing has an independent stream.
     const bodyRequest = request.clone();
 
-    await getOwnerContext(request);
+    const owner = await getOwnerContext(request);
     const body = asRecord(await bodyRequest.json());
 
     if (!validModel(body.model)) {
@@ -691,7 +713,9 @@ export async function POST(request: NextRequest) {
     }
 
     const config = MODEL_CONFIG[body.model];
-    const seed = randomSeed();
+    const outputSize = config.id === "moss-image-sft" ? mossDimensions(body.width, body.height, "character") : outputSizeForModel(config.id);
+    const seed = config.id === "moss-image-sft" ? mossSeed(body.seed, randomSeed()) : randomSeed();
+    const target = config.id === "moss-image-sft" ? mossTarget(body.gpuTarget) : null;
     const clientRequestId = String(body.clientRequestId || randomUUID()).trim();
     if (!isCharacterCreateRequestId(clientRequestId)) {
       return NextResponse.json(
@@ -699,7 +723,7 @@ export async function POST(request: NextRequest) {
         { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
-    persistentRequestId = clientRequestId;
+    persistentRequestId = scopedCharacterCreateRequestId(owner.ownerKey, clientRequestId);
 
     const persistentTelevisionAnimeStyle =
       body.style === "anime"
@@ -708,7 +732,7 @@ export async function POST(request: NextRequest) {
     const persistentThreeDAnimationStyle =
       body.style === "pixar-3d" ? threeDAnimationStyle : "default";
     const claim = claimCharacterCreateRequest({
-      requestId: clientRequestId,
+      requestId: persistentRequestId,
       model: body.model,
       modelLabel: config.label,
       style: body.style,
@@ -716,6 +740,8 @@ export async function POST(request: NextRequest) {
       threeDAnimationStyle: persistentThreeDAnimationStyle,
       mode: body.mode,
       seed,
+      width: outputSize.width,
+      height: outputSize.height,
       outputNodeId: config.outputNodeId,
     });
 
@@ -724,7 +750,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             ok: true,
-            clientRequestId: claim.record.requestId,
+            clientRequestId,
             promptId: claim.record.promptId,
             prompt_id: claim.record.promptId,
             model: claim.record.model,
@@ -734,10 +760,9 @@ export async function POST(request: NextRequest) {
             threeDAnimationStyle: claim.record.threeDAnimationStyle || "default",
             mode: claim.record.mode,
             seed: claim.record.seed,
-            width: OUTPUT_WIDTH,
-            height: OUTPUT_HEIGHT,
-            orientation: "portrait",
-            aspectRatio: "9:16",
+            width: claim.record.width ?? outputSizeForModel(claim.record.model).width,
+            height: claim.record.height ?? outputSizeForModel(claim.record.model).height,
+            ...mossOutputShape(claim.record.width ?? outputSizeForModel(claim.record.model).width, claim.record.height ?? outputSizeForModel(claim.record.model).height),
             outputNodeId: claim.record.outputNodeId,
             comfyBaseUrl: claim.record.comfyBaseUrl || "",
             backend: claim.record.backend || "",
@@ -770,7 +795,7 @@ export async function POST(request: NextRequest) {
       televisionAnimeStyle,
       threeDAnimationStyle,
     });
-    const graph = mutateWorkflow({
+    const graph = target ? buildMossWorkflow({ prompt, negativePrompt: String(body.negativePrompt || negativePrompt(body.mode)), ...outputSize, seed, target }) : mutateWorkflow({
       graph: loadWorkflow(config),
       config,
       prompt,
@@ -780,9 +805,9 @@ export async function POST(request: NextRequest) {
 
     // Backend selection completes before POST /prompt. Never fail over after
     // submission begins; a lost HTTP response could otherwise duplicate work.
-    const backend = await chooseBackend(request, config);
-    const promptId = await submitPrompt(backend.baseUrl, graph);
-    markCharacterCreateRequestSubmitted(clientRequestId, {
+    const backend = target ? await chooseMossBackend(target) : await chooseBackend(request, config);
+    const promptId = await submitPrompt(backend.baseUrl, graph, target === "3090");
+    markCharacterCreateRequestSubmitted(persistentRequestId, {
       promptId,
       comfyBaseUrl: backend.baseUrl,
       backend: backend.label,
@@ -802,10 +827,9 @@ export async function POST(request: NextRequest) {
         threeDAnimationStyle,
         mode: body.mode,
         seed,
-        width: OUTPUT_WIDTH,
-        height: OUTPUT_HEIGHT,
-        orientation: "portrait",
-        aspectRatio: "9:16",
+        width: outputSize.width,
+        height: outputSize.height,
+        ...(target ? mossOutputShape(outputSize.width, outputSize.height) : { orientation: "portrait", aspectRatio: "9:16" }),
         outputNodeId: config.outputNodeId,
         comfyBaseUrl: backend.baseUrl,
         backend: backend.label,
@@ -823,7 +847,7 @@ export async function POST(request: NextRequest) {
         // Preserve the original generation error if request-state persistence fails.
       }
     }
-    const status = /session|auth|unauthor/i.test(message) ? 401 : 502;
+    const status = error?.status === 400 ? 400 : /session|auth|unauthor/i.test(message) ? 401 : 502;
     return NextResponse.json(
       { ok: false, error: message },
       { status, headers: { "Cache-Control": "no-store" } },

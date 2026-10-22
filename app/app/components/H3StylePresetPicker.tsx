@@ -195,7 +195,7 @@ export function H3StylePresetPicker({
                 }}
                 className={`group relative min-h-[156px] overflow-hidden rounded-[8px] border p-0 text-left transition-all duration-200 ${
                   isSelected
-                    ? "z-10 -translate-y-0.5 border-violet-300/75 bg-violet-500/15 shadow-[0_0_0_1px_rgba(196,181,253,.16),0_10px_30px_rgba(124,58,237,.22)] ring-1 ring-violet-300/45"
+                    ? "z-10 -translate-y-0.5 border-[var(--color-primary-border)] bg-[var(--color-primary-muted)] shadow-[0_0_0_1px_var(--color-primary-border),0_10px_30px_var(--color-primary-muted)] ring-1 ring-[var(--color-primary-border)]"
                     : "border-white/10 bg-[#11172a]/90 hover:-translate-y-0.5 hover:border-violet-300/30 hover:bg-white/[0.08]"
                 } ${disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer"}`}
                 data-otg="h3-style-card"

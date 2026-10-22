@@ -10,6 +10,7 @@ export type VideoProbeInfo = {
   height: number | null;
   fps: number | null;
   codec: string | null;
+  hasAudio?: boolean;
 };
 
 function toFiniteNumber(value: unknown): number | null {
@@ -65,6 +66,7 @@ export async function probeVideoInfo(filePath: string): Promise<VideoProbeInfo> 
     height,
     fps,
     codec,
+    hasAudio: streams.some((stream: any) => String(stream?.codec_type || "").toLowerCase() === "audio"),
   };
 }
 

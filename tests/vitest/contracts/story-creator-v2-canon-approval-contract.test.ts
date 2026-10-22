@@ -29,6 +29,9 @@ const panel = read(
 const queue = read(
   "app/app/components/storyCreatorV2/CanonApprovalQueue.tsx",
 );
+const bible = read(
+  "app/app/components/storyCreatorV2/BibleTab.tsx",
+);
 
 describe("Story Creator V2 canon approval contract", () => {
   it("adds durable review-backed canon approval helpers", () => {
@@ -81,15 +84,7 @@ describe("Story Creator V2 canon approval contract", () => {
     expect(rejectRoute).toContain('"canonStatus" in body');
   });
 
-  it("connects the Bible tab approval queue without moving project ownership", () => {
-    expect(panel).toContain(
-      "/api/story-creator/canon/approve",
-    );
-
-    expect(panel).toContain(
-      "/api/story-creator/canon/reject",
-    );
-
+  it("keeps legacy review APIs available without mounting per-fact approvals", () => {
     expect(panel).toContain(
       "projectId: project.id",
     );
@@ -105,9 +100,21 @@ describe("Story Creator V2 canon approval contract", () => {
     expect(panel).not.toContain(
       "selectedCanonProjectId",
     );
+    expect(panel).not.toContain(
+      "CanonApprovalQueue",
+    );
+    expect(panel).not.toContain(
+      "/api/story-creator/canon/approve",
+    );
+    expect(panel).not.toContain(
+      "/api/story-creator/canon/reject",
+    );
+    expect(bible).toContain("Canon Library");
+    expect(bible).toContain("Legacy proposed details");
+    expect(bible).not.toContain("Approve as canon");
   });
 
-  it("renders explicit canon review actions", () => {
+  it("preserves the retired approval component for rollback compatibility", () => {
     expect(queue).toContain("Approval Queue");
     expect(queue).toContain("Approve as canon");
     expect(queue).toContain("Edit & approve");
@@ -116,5 +123,8 @@ describe("Story Creator V2 canon approval contract", () => {
       "Conflict review required",
     );
     expect(queue).toContain("No suggestions are waiting");
+    expect(panel).not.toContain(
+      'from "./storyCreatorV2/CanonApprovalQueue"',
+    );
   });
 });

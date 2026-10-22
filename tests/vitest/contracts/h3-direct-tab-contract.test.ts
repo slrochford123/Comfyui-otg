@@ -138,6 +138,7 @@ describe("H3 direct-generation tab contract", () => {
 
   it("exposes required controls and deterministic reference limits", () => {
     const panel = read("app/app/components/H3Panel.tsx");
+    const speechInput = read("app/app/components/SpeechInputButton.tsx");
     expect(panel).toContain("Prompt Builder");
     expect(panel).toContain("Use Audio From Video");
     expect(panel).toContain("Selected video window");
@@ -151,7 +152,8 @@ describe("H3 direct-generation tab contract", () => {
     expect(panel).toContain("aria-label={`${label} orientation`}");
     expect(panel).toContain("H3_PRODUCTION_DURATION_OPTIONS.map");
     expect(panel).toContain("Up to 9 images, 3 videos, and 3 standalone audio references.");
-    expect(panel).toContain('/api/ollama-ai/transcribe');
+    expect(panel).toContain('import SpeechInputButton from "./SpeechInputButton"');
+    expect(speechInput).toContain('return endpoint || "/api/ollama-ai/transcribe"');
     expect(panel).toContain('/api/enhance-prompt');
   });
 

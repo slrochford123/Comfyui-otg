@@ -37,7 +37,7 @@ describe(
   "Production V2 LTX 2.5 continuation first-frame contract",
   () => {
     it(
-      "leaves the qualified 25-node Ingredients graph unchanged when no continuation frame exists",
+      "leaves the qualified Ingredients generation graph unchanged when no continuation frame exists",
       () => {
         const built =
           buildLtx25IngredientsWorkflow(
@@ -48,7 +48,10 @@ describe(
 
         expect(
           Object.keys(graph),
-        ).toHaveLength(25);
+        ).toHaveLength(26);
+
+        expect(graph["9800"].class_type)
+          .toBe("PreviewAnimation");
 
         expect(graph["26"])
           .toBeUndefined();
@@ -103,7 +106,10 @@ describe(
 
         expect(
           Object.keys(graph),
-        ).toHaveLength(27);
+        ).toHaveLength(28);
+
+        expect(graph["9800"].class_type)
+          .toBe("PreviewAnimation");
 
         expect(
           graph["26"],

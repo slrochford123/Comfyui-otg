@@ -34,6 +34,10 @@ export async function getOwnerContext(req: NextRequest): Promise<OwnerContext> {
   // Prefer JWT cookie-based auth (used by /api/auth/login).
   let username: string | null = null;
   const token = req.cookies.get(cookieName())?.value || "";
+  // Device labels are routing hints, not authenticated identities. Falling
+  // back to an arbitrary label here lets a caller select a private user key.
+  // Public health/login and credentialed worker routes use separate contexts.
+  if (!token) throw new SessionInvalidError();
   if (token) {
     try {
       const payload: any = await verifySession(token);
@@ -45,7 +49,8 @@ export async function getOwnerContext(req: NextRequest): Promise<OwnerContext> {
     }
   }
 
-  const ownerKey = resolveOwnerAlias(username || deviceId);
+  if (!username) throw new SessionInvalidError();
+  const ownerKey = resolveOwnerAlias(username);
   return {
     deviceId,
     username,

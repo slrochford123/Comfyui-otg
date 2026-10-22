@@ -8,6 +8,7 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 
 import {
@@ -47,6 +48,7 @@ describe(
     });
 
     afterEach(() => {
+      vi.useRealTimers();
       setQwenDurableJobStorePathForTests(
         null,
       );
@@ -63,10 +65,13 @@ describe(
     it(
       "survives temporary GPU contention without returning qwen_cluster_busy",
       async () => {
+        // This is a mocked scheduler contract, not a wall-clock GPU test.
+        // Advance its waiter deterministically even during heavy build I/O.
+        vi.useFakeTimers();
         let executions = 0;
 
-        const response =
-          await qwenDurableFetch(
+        const pendingResponse =
+          qwenDurableFetch(
             "/api/generate",
             {
               prompt:
@@ -135,6 +140,9 @@ describe(
               },
             },
           );
+
+        await vi.runAllTimersAsync();
+        const response = await pendingResponse;
 
         expect(
           response.status,

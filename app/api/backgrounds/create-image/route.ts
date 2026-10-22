@@ -6,6 +6,8 @@ import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 import { SessionInvalidError } from "@/lib/ownerKey";
 import { requireSessionUser } from "@/lib/sessionUser";
 import { QWEN21_TURBO_LORA } from "@/lib/imageGenerateWorkflows";
+import { buildMossWorkflow, MOSS_FILES, MOSS_REQUIRED_NODES, mossDimensions, mossSeed, mossTarget, mossOutputShape } from "@/lib/images/mossImage";
+import { chooseMossBackend } from "@/lib/images/mossBackend";
 
 // OTG_BACKGROUND_STUDIO_FIVE_MODEL_CREATE_V1
 
@@ -24,7 +26,8 @@ type BackgroundCreateModelId =
   | "krea-2"
   | "boogu"
   | "mage-flow"
-  | "qwen-image-2-1";
+  | "qwen-image-2-1"
+  | "moss-image-sft";
 
 type ModelConfig = {
   id: BackgroundCreateModelId;
@@ -42,6 +45,12 @@ type ModelConfig = {
 };
 
 const MODEL_CONFIG: Record<BackgroundCreateModelId, ModelConfig> = {
+  "moss-image-sft": {
+    id: "moss-image-sft", label: "MOSS-Image SFT (INT8)",
+    workflowFile: "workflows/characters/create/image_moss_image_sft_t2i.json",
+    outputNodeId: "9", requiredNodes: MOSS_REQUIRED_NODES,
+    requirements: MOSS_FILES, preferredBackend: "image-primary",
+  },
   "ernie-image": {
     id: "ernie-image",
     label: "Ernie Image",
@@ -709,6 +718,7 @@ async function chooseBackend(
 async function submitPrompt(
   baseUrl: string,
   graph: Record<string, any>,
+  releaseIdlePeer = false,
 ) {
   const controller =
     new AbortController();
@@ -724,6 +734,7 @@ async function submitPrompt(
         baseUrl,
         workerId:
           "api-background-create-image",
+        releaseIdlePeer,
         init: {
           method: "POST",
           cache: "no-store",
@@ -878,7 +889,9 @@ export async function POST(
     const config =
       MODEL_CONFIG[body.model];
 
-    const seed = randomSeed();
+    const target = config.id === "moss-image-sft" ? mossTarget(body.gpuTarget) : null;
+    const dimensions = target ? mossDimensions(body.width, body.height, "background") : { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT };
+    const seed = target ? mossSeed(body.seed, randomSeed()) : randomSeed();
 
     const prompt =
       buildPrompt(inputPrompt);
@@ -895,7 +908,7 @@ export async function POST(
           body.name,
       );
 
-    const graph = mutateWorkflow({
+    const graph = target ? buildMossWorkflow({ prompt, negativePrompt, ...dimensions, seed, target }) : mutateWorkflow({
       graph: loadWorkflow(config),
       config,
       prompt,
@@ -906,7 +919,7 @@ export async function POST(
     // Backend selection completes before POST /prompt.
     // Never submit the same generation to both GPUs.
     const backend =
-      await chooseBackend(
+      target ? await chooseMossBackend(target) : await chooseBackend(
         request,
         config,
       );
@@ -915,6 +928,7 @@ export async function POST(
       await submitPrompt(
         backend.baseUrl,
         graph,
+        target === "3090",
       );
 
     return NextResponse.json(
@@ -925,10 +939,9 @@ export async function POST(
         model: config.id,
         modelLabel: config.label,
         seed,
-        width: OUTPUT_WIDTH,
-        height: OUTPUT_HEIGHT,
-        orientation: "landscape",
-        aspectRatio: "16:9",
+        width: dimensions.width,
+        height: dimensions.height,
+        ...(target ? mossOutputShape(dimensions.width, dimensions.height) : { orientation: "landscape", aspectRatio: "16:9" }),
         outputNodeId:
           config.outputNodeId,
         filenamePrefix,
@@ -951,7 +964,7 @@ export async function POST(
       error?.message ||
       String(error);
 
-    const status =
+    const status = error?.status === 400 ? 400 :
       /session|auth|unauthor/i.test(
         message,
       )

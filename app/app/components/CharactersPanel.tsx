@@ -1,4 +1,6 @@
 "use client";
+import MossGallerySaveButton from "./MossGallerySaveButton";
+import { mossOutputShape } from "@/lib/images/mossImage";
 
 function otgDisplayImageUrlV36BP6(value: unknown) {
   const raw = String(value || "").trim();
@@ -47,6 +49,7 @@ function characterDisplayImagePathV36BP6(character: any) {
 
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import MossImageControls, { defaultMossSettings } from "./MossImageControls";
 import { profileStorageKey } from "@/lib/client/profileStorage";
 import {
   appendGeneratedBackgroundCandidateFifo,
@@ -783,6 +786,11 @@ type CharacterBackgroundPreviewCandidateV36E = {
   workflowImage?: string;
   prompt: string;
   provider: string;
+  promptId?: string;
+  backend?: string;
+  seed?: number;
+  width?: number;
+  height?: number;
   createdAt: string;
 };
 
@@ -832,9 +840,11 @@ type CharacterBackgroundProvider =
   | "krea-2"
   | "boogu"
   | "mage-flow"
-  | "qwen-image-2-1";
+  | "qwen-image-2-1"
+  | "moss-image-sft";
 
 const CHARACTER_BACKGROUND_PROVIDER_PRESETS_V36E = [
+  { id: "moss-image-sft" as const, label: "MOSS-Image SFT (INT8)", description: "OpenMOSS SFT environment generation on your explicitly selected GPU." },
   {
     id: "ernie-image" as const,
     label: "Ernie Image",
@@ -876,7 +886,7 @@ function normalizeCharacterBackgroundProviderV1(
     provider === "krea-2" ||
     provider === "boogu" ||
     provider === "mage-flow" ||
-    provider === "qwen-image-2-1"
+    provider === "qwen-image-2-1" || provider === "moss-image-sft"
   ) {
     return provider;
   }
@@ -3556,7 +3566,7 @@ function firstNonEmptyStringV36BP9(...values: unknown[]) {
 
 async function fetchComfyHistoryImageForPromptV36BP9(
   promptId: string,
-  opts: { nodeId?: string; filenamePrefix?: string } = {},
+  opts: { nodeId?: string; filenamePrefix?: string; comfyBaseUrl?: string; reportFailure?: boolean } = {},
 ): Promise<CharacterGeneratedImageResultV36BP9 | null> {
   if (!promptId) return null;
 
@@ -3567,13 +3577,17 @@ async function fetchComfyHistoryImageForPromptV36BP9(
     });
     if (opts.nodeId) params.set("nodeId", opts.nodeId);
     if (opts.filenamePrefix) params.set("filenamePrefix", opts.filenamePrefix);
+    if (opts.comfyBaseUrl) params.set("comfyBaseUrl", opts.comfyBaseUrl);
     const response = await fetch(`/api/comfy/history-image?${params.toString()}`, {
       cache: "no-store",
       ...CHARACTER_FETCH_OPTIONS,
     });
 
     const json = await response.json().catch(() => null);
-    if (!response.ok || !json?.ok) return null;
+    if (!response.ok || !json?.ok) {
+      if (opts.reportFailure && response.status !== 404 && json?.error) throw new Error(String(json.error));
+      return null;
+    }
 
     const url = firstNonEmptyStringV36BP9(json.url, json.imageUrl, json.file?.url);
     const sourceName = firstNonEmptyStringV36BP9(json.sourceName, json.filename, json.fileName, json.name, json.file?.name);
@@ -3583,7 +3597,8 @@ async function fetchComfyHistoryImageForPromptV36BP9(
       url,
       sourceName,
     };
-  } catch {
+  } catch (error) {
+    if (opts.reportFailure) throw error;
     return null;
   }
 }
@@ -4228,6 +4243,8 @@ const [characterBackgroundStatus, setCharacterBackgroundStatus] = useState("");
   const [characterBackgroundDoNotChange, setCharacterBackgroundDoNotChange] = useState("");
   const [characterBackgroundStudioOpen, setCharacterBackgroundStudioOpen] = useState(initialBackgroundStudioOpen);
   const [characterBackgroundProvider, setCharacterBackgroundProvider] = useState<CharacterBackgroundProvider>("ernie-image");
+  const [mossSettings, setMossSettings] = useState(() => defaultMossSettings("background"));
+  const backgroundOutput = characterBackgroundProvider === "moss-image-sft" ? mossSettings : { width: 1280, height: 720 };
   const [characterBackgroundPreviewCandidates, setCharacterBackgroundPreviewCandidates] = useState<CharacterBackgroundPreviewCandidateV36E[]>([]);
   const [selectedCharacterBackgroundCandidateId, setSelectedCharacterBackgroundCandidateId] = useState("");
   const [expandedCharacterBackgroundCandidateId, setExpandedCharacterBackgroundCandidateId] = useState("");
@@ -5652,8 +5669,9 @@ const [characterBackgroundStatus, setCharacterBackgroundStatus] = useState("");
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: provider,
+          ...(provider === "moss-image-sft" ? mossSettings : {}),
           prompt: finalPrompt,
-          negativePrompt: "characters, people, person, face, body, portrait, text, captions, watermark, logo, blurry, low quality, vertical frame",
+          negativePrompt: provider === "moss-image-sft" ? mossSettings.negativePrompt : "characters, people, person, face, body, portrait, text, captions, watermark, logo, blurry, low quality, vertical frame",
           filenamePrefix: backgroundPreviewTitleV36G,
           name: characterBackgroundName.trim() || "Scene Background",
           previewIndex: 1,
@@ -5672,10 +5690,15 @@ const [characterBackgroundStatus, setCharacterBackgroundStatus] = useState("");
       setCharacterBackgroundStatus(`Background candidate queued. Prompt ${promptId}. Waiting for its exact output...`);
 
       let candidate: CharacterBackgroundPreviewCandidateV36E | null = null;
-      for (let attempt = 0; attempt < 120 && !candidate; attempt += 1) {
+      // MOSS's first measured cold generation took 226s, exceeding the old
+      // three-minute candidate loop. Follow the same durable wait as Characters.
+      const deadline = Date.now() + 24 * 60 * 60 * 1000;
+      while (Date.now() < deadline && !candidate) {
         await waitForBackgroundPreviewV36G(1500);
         const exact = await fetchComfyHistoryImageForPromptV36BP9(promptId, {
           nodeId: outputNodeId || undefined,
+          comfyBaseUrl: json.comfyBaseUrl,
+          reportFailure: true,
           filenamePrefix: outputNodeId ? undefined : backgroundPreviewTitleV36G,
         });
         if (exact?.url) {
@@ -5692,12 +5715,12 @@ const [characterBackgroundStatus, setCharacterBackgroundStatus] = useState("");
         throw new Error(`Background prompt ${promptId} did not return its exact output. Existing candidates were preserved.`);
       }
 
-      const generatedCandidate = { ...candidate, sourceType: "generated" as const };
+      const generatedCandidate = { ...candidate, sourceType: "generated" as const, promptId, backend: String(json.backend || ""), seed: json.seed, width: json.width || backgroundOutput.width, height: json.height || backgroundOutput.height };
       setCharacterBackgroundPreviewCandidates((current) =>
         appendGeneratedBackgroundCandidateFifo(current, generatedCandidate, 5),
       );
       setSelectedCharacterBackgroundCandidateId(generatedCandidate.id);
-      setCharacterBackgroundStatus(`One 1280x720 Background candidate created. Prompt ${promptId}. The generated FIFO keeps the newest five.`);
+      setCharacterBackgroundStatus(`One ${json.width || backgroundOutput.width}x${json.height || backgroundOutput.height} Background candidate created. Prompt ${promptId}. The generated FIFO keeps the newest five.`);
     } catch (error: any) {
       setCharacterBackgroundStatus(error?.message || "Create Background failed. Existing candidates were preserved.");
     } finally {
@@ -13961,7 +13984,7 @@ async function saveCharacter() {
                         }
 
                         const confirmed = window.confirm(
-                          "Prepare Voice Training Dataset will generate 200 same-speaker IndexTTS2 clone clips and can take 30-90 minutes. Keep the worker running until the dataset is ready. Continue?",
+                          "Prepare Voice Training Dataset generates and validates same-speaker IndexTTS2 speech toward an 8-12 minute voice pack. Clip count depends on accepted speech duration and quality. Keep the worker running until the dataset is ready. Continue?",
                         );
                         if (confirmed) void queueCharacterVoicePipelineAction("generate_training_dataset", { trainingPreset: "balanced", requestedClipCount: 200 });
                       }}
@@ -13992,7 +14015,7 @@ async function saveCharacter() {
                   </div>
                                     <p className="mt-2 text-xs leading-5 text-amber-100/80">
                     {indexTts2TrainingDatasetAvailable
-                      ? "Preparing the dataset creates 200 same-speaker voice clips and can take 30 to 90 minutes. Keep the worker running until the status says Ready."
+                      ? "The dataset targets 8-12 minutes of validated same-speaker speech. Clip count varies with duration and quality checks. Keep the worker running until the status says Ready."
                       : indexTts2TrainingDatasetBlockedMessage}
                   </p>
                   {trainingDatasetResult ? (
@@ -14147,7 +14170,7 @@ async function saveCharacter() {
                     <p className="text-sm font-semibold text-emerald-100">Voice Model Status</p>
                     <div className="mt-3 space-y-1 text-xs leading-5 text-emerald-100/85">
                       <div>Selected voice: {lockedTrainingVoiceUrl ? (lockedTrainingVoiceType === "tuned" ? "Tuned voice" : lockedTrainingVoiceType === "base" ? "Raw base voice" : "Ready") : "Not selected"}</div>
-                      <div>Training data: {trainingVoicePackReady ? `Voice pack ready (${trainingDatasetGeneratedClipCount}/${trainingDatasetClipCount || 200} clips)` : "Not prepared"}</div>
+                      <div>Training data: {trainingVoicePackReady ? `Voice pack ready (${trainingDatasetGeneratedClipCount} validated clips)` : "Not prepared"}</div>
                       <div>Voice model: {builderCharacterVoiceProfile?.status === "trained" && builderCharacterVoiceProfile?.modelPath && builderCharacterVoiceProfile?.indexPath ? "Trained model ready" : builderCharacterVoiceProfile?.voiceModelArtifactId ? "Training artifact saved" : "Not trained yet"}</div>
                       {builderCharacterVoiceProfile?.voiceModelArtifactId ? <div className="break-all">Artifact: {builderCharacterVoiceProfile.voiceModelArtifactId}</div> : null}
                       {usableTrainedVoiceArtifact?.id ? <div className="break-all">Selected trained artifact: {usableTrainedVoiceArtifact.id}</div> : null}
@@ -14603,7 +14626,7 @@ return (
                       </h2>
                       <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">
                         Choose an image model and art style, then describe the environment you want to create.
-                        Generated backgrounds begin as landscape 1280 x 720 candidates. After you choose one,
+                        Generated backgrounds use your selected model and output shape. After you choose one,
                         Use This Background creates the 1920 x 1080 Master and then the five directional references required
                         for the six-reference Background Card.
                       </p>
@@ -14663,6 +14686,7 @@ return (
                         </option>
                       ))}
                     </select>
+                    {characterBackgroundProvider === "moss-image-sft" ? <MossImageControls value={mossSettings} onChange={setMossSettings} disabled={characterBackgroundBusy} /> : null}
                     </div>
 
                     <div>
@@ -14816,7 +14840,7 @@ return (
                     </div>
 
                     <p className="mt-3 text-xs leading-5 text-white/40">
-                      Each Generate click creates exactly one 1280 x 720 candidate. The newest five generated
+                      Each Generate click creates exactly one {backgroundOutput.width} x {backgroundOutput.height} candidate. The newest five generated
                       candidates are kept; uploads remain independent. Nothing is saved until you choose it.
                     </p>
 
@@ -14910,13 +14934,13 @@ return (
 
                       <div className="mt-4 space-y-2 text-sm leading-6 text-white/60">
                         <p>
-                          Resolution: <span className="font-bold text-white">1280 x 720</span>
+                          Resolution: <span className="font-bold text-white">{backgroundOutput.width} x {backgroundOutput.height}</span>
                         </p>
                         <p>
-                          Orientation: <span className="font-bold text-white">Landscape</span>
+                          Orientation: <span className="font-bold text-white">{mossOutputShape(backgroundOutput.width, backgroundOutput.height).orientation}</span>
                         </p>
                         <p>
-                          Aspect Ratio: <span className="font-bold text-white">16:9</span>
+                          Aspect Ratio: <span className="font-bold text-white">{mossOutputShape(backgroundOutput.width, backgroundOutput.height).aspectRatio}</span>
                         </p>
                         <p>
                           Final Card: <span className="font-bold text-white">6 canonical references</span>
@@ -14964,7 +14988,7 @@ return (
                             ? "1920 x 1080 Master"
                             : candidateAny.isCompleteBackgroundPlateV36AF
                               ? "Legacy complete background"
-                              : "1280 x 720 candidate";
+                              : candidate.width && candidate.height ? `${candidate.width} x ${candidate.height} candidate` : "Background candidate";
 
                         return (
                           <article
@@ -15024,6 +15048,7 @@ return (
                               ) : null}
 
                               <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                {candidate.provider === "moss-image-sft" && candidate.promptId ? <MossGallerySaveButton imageUrl={otgDisplayImageUrlV36BP6(backgroundPreviewProxySrcV36V(candidate))} promptId={candidate.promptId} backend={candidate.backend || ""} origin="background" prompt={candidate.prompt} seed={candidate.seed} /> : null}
                                 <button
                                   type="button"
                                   data-otg="background-candidate-use-image"

@@ -3,6 +3,7 @@ import { getOwnerContext } from "@/lib/ownerKey";
 import {
   isCharacterCreateRequestId,
   readCharacterCreateRequest,
+  scopedCharacterCreateRequestId,
 } from "@/lib/characters/characterCreateRequestStore";
 
 export const runtime = "nodejs";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
-    await getOwnerContext(request);
+    const owner = await getOwnerContext(request);
     const requestId = String(request.nextUrl.searchParams.get("requestId") || "").trim();
     if (!isCharacterCreateRequestId(requestId)) {
       return NextResponse.json(
@@ -19,7 +20,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const record = readCharacterCreateRequest(requestId);
+    const record = readCharacterCreateRequest(scopedCharacterCreateRequestId(owner.ownerKey, requestId));
     if (!record) {
       return NextResponse.json(
         { ok: false, error: "Character create request not found." },

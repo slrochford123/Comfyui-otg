@@ -19,6 +19,7 @@ import {
 } from "@/lib/h3StylePresets";
 import { H3StylePresetPicker } from "./H3StylePresetPicker";
 import H3AdvancedControls from "./H3AdvancedControls";
+import H3VideoEditPanel from "./H3VideoEditPanel";
 import SpeechInputButton from "./SpeechInputButton";
 import VideoSnapshotPicker from "./VideoSnapshotPicker";
 import {
@@ -233,9 +234,9 @@ const field =
 const command =
   "min-h-10 rounded-[6px] border border-white/15 bg-white/[0.06] px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/[0.11] disabled:cursor-not-allowed disabled:opacity-45";
 const primary =
-  "border-violet-300/60 bg-violet-300 text-[#090b15] hover:bg-violet-200";
+  "border-[var(--color-primary-border)] !bg-[var(--color-primary)] !text-[var(--color-primary-foreground)] hover:brightness-110";
 const selectedChoice =
-  "!border-violet-300/80 !bg-violet-300/20 text-white shadow-[0_0_0_1px_rgba(196,181,253,.12),0_0_18px_rgba(139,92,246,.18)]";
+  "!border-[var(--color-primary-border)] !bg-[var(--color-primary-muted)] text-white shadow-[0_0_0_1px_var(--color-primary-border)]";
 const REFERENCE_LIMIT_HELP =
   "Up to 9 images, 3 videos, and 3 standalone audio references.";
 const H3_ANDROID_UPLOAD_BUDGET_BYTES = 90 * 1024 * 1024;
@@ -450,7 +451,7 @@ function elapsedSeconds(job: JobStatus | null, now: number) {
 function choiceClass(selected: boolean) {
   return selected
     ? selectedChoice
-    : "!border-white/10 !bg-[#11172a] text-white hover:!bg-white/[0.08]";
+    : "!border-[var(--color-border)] !bg-[var(--color-surface)] !text-[var(--color-text)] hover:brightness-105";
 }
 
 function MediaPreview({ item }: { item: MediaInput }) {
@@ -996,6 +997,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     [storageOwnerKey],
   );
   const [mode, setMode] = useState<Mode>("h3-text-to-video");
+  const [videoEditOpen, setVideoEditOpen] = useState(false);
   const [studioMode, setStudioMode] =
     useState<H3StudioMode>("h3-text-to-video");
   const [quality, setQuality] = useState<H3Quality>("lq");
@@ -1010,6 +1012,15 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const [scenePrompt, setScenePrompt] = useState("");
   const [suggestion, setSuggestion] = useState("");
   const [suggestionDraft, setSuggestionDraft] = useState("");
+  const [h3DirectorDraft, setH3DirectorDraft] = useState("");
+  const [h3DirectorConversationId, setH3DirectorConversationId] =
+    useState("");
+  const [h3DirectorReply, setH3DirectorReply] = useState("");
+  const [h3DirectorChanges, setH3DirectorChanges] = useState<string[]>([]);
+  const [h3DirectorPromptVersions, setH3DirectorPromptVersions] = useState<
+    Array<{ id: string; prompt: string; createdAt: number }>
+  >([]);
+  const [h3DirectorBusy, setH3DirectorBusy] = useState(false);
   const [reviewedFingerprint, setReviewedFingerprint] = useState("");
   const [promptSource, setPromptSource] = useState<"direct" | "builder">(
     "direct",
@@ -1098,16 +1109,9 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     "short" | "medium" | "long"
   >("medium");
   const [building, setBuilding] = useState(false);
-  const [micState, setMicState] = useState<
-    "idle" | "listening" | "processing" | "done" | "error"
-  >("idle");
   const [job, setJob] = useState<JobStatus | null>(() => readPersistedH3Job(h3JobStorageKey));
   const [message, setMessage] = useState("");
   const [now, setNow] = useState(Date.now());
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const cancelRecordingRef = useRef(false);
   const objectUrlsRef = useRef(new Set<string>());
   const promptVideoUploadCacheRef = useRef(
     new Map<
@@ -1154,6 +1158,35 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       label: item.name || `Picture ${index + 1}`,
     }));
   const videoReferences = references.filter((item) => item.kind === "video");
+  const h3VoiceVocabularyKeywords = useMemo(() => {
+    const terms = new Set([
+      "Atheria",
+      "Atherians",
+      "Jorog",
+      "Zeltroi",
+      "Kodakai",
+      "Delnai",
+      "Nives",
+      "H3",
+      "LoRA",
+      "Scene Hunter",
+      "SLR Studios",
+    ]);
+    for (const reference of references) {
+      if (reference.name) terms.add(reference.name);
+      if (reference.description) {
+        for (const token of reference.description.match(/\b[A-Z][A-Za-z0-9'-]{2,}\b/g) || []) {
+          terms.add(token);
+        }
+      }
+    }
+    for (const selection of selectedLoras) {
+      const entry = catalog.find((item) => item.id === selection.id);
+      if (entry?.displayName) terms.add(entry.displayName);
+      for (const trigger of entry?.triggerWords || []) terms.add(trigger);
+    }
+    return Array.from(terms).slice(0, 80);
+  }, [catalog, references, selectedLoras]);
   const videoReferenceInvalid = videoReferences.some(
     (item) =>
       Number(item.sourceDurationSeconds || 0) > 0
@@ -1457,6 +1490,25 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       setScenePrompt(stored.scenePrompt || "");
       setSuggestion(stored.suggestion || "");
       setSuggestionDraft(stored.suggestionDraft || "");
+      setH3DirectorDraft(stored.h3DirectorDraft || "");
+      setH3DirectorConversationId(stored.h3DirectorConversationId || "");
+      setH3DirectorReply(stored.h3DirectorReply || "");
+      setH3DirectorChanges(
+        Array.isArray(stored.h3DirectorChanges)
+          ? stored.h3DirectorChanges.map(String).filter(Boolean)
+          : [],
+      );
+      setH3DirectorPromptVersions(
+        Array.isArray(stored.h3DirectorPromptVersions)
+          ? stored.h3DirectorPromptVersions
+              .map((item) => ({
+                id: String(item.id || ""),
+                prompt: String(item.prompt || ""),
+                createdAt: Number(item.createdAt || 0),
+              }))
+              .filter((item) => item.id && item.prompt)
+          : [],
+      );
       setReviewedFingerprint(stored.reviewedFingerprint || "");
       setPromptSource(normalizePersistedPromptSource(stored.promptSource));
       setVisualStyle(
@@ -1600,6 +1652,11 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         scenePrompt,
         suggestion,
         suggestionDraft,
+        h3DirectorDraft,
+        h3DirectorConversationId,
+        h3DirectorReply,
+        h3DirectorChanges,
+        h3DirectorPromptVersions,
         reviewedFingerprint,
         promptSource,
         visualStyle,
@@ -1686,6 +1743,11 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     scenePrompt,
     suggestion,
     suggestionDraft,
+    h3DirectorDraft,
+    h3DirectorConversationId,
+    h3DirectorReply,
+    h3DirectorChanges,
+    h3DirectorPromptVersions,
     reviewedFingerprint,
     promptSource,
     visualStyle,
@@ -1879,7 +1941,6 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   }, [h3LastJobStorageKey]);
   useEffect(
     () => () => {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
       objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     },
     [],
@@ -2020,10 +2081,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     }
     setMessage(
       nextMode === "h3-realism"
-        ? "Realism uses its dedicated TEST workflow adapter and will not call the legacy H3 route."
+        ? "Realism uses its dedicated workflow and does not use the standard H3 route."
         : nextMode === "h3-refmods"
-          ? "Ref Mods is isolated from legacy H3 while its dedicated T2V adapter is validated."
-        : `${MODE_OPTIONS.find((item) => item.id === nextMode)?.label || "This mode"} is isolated while its dedicated adapter is being prepared.`,
+          ? "Ref Mods uses its dedicated reference-to-video workflow."
+        : `${MODE_OPTIONS.find((item) => item.id === nextMode)?.label || "This mode"} is not available yet.`,
     );
   }
   function updateReference(id: string, patch: Partial<MediaInput>) {
@@ -2053,6 +2114,11 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     setScenePrompt("");
     setSuggestion("");
     setSuggestionDraft("");
+    setH3DirectorDraft("");
+    setH3DirectorConversationId("");
+    setH3DirectorReply("");
+    setH3DirectorChanges([]);
+    setH3DirectorPromptVersions([]);
     setReviewedFingerprint("");
     setPromptSource("direct");
     setVisualStyle(DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.visualStyle);
@@ -2395,7 +2461,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   async function buildPrompt() {
     if (!legacyModeActive)
       return setMessage(
-        `${specialModeLabel} will use its own prompt compiler and cannot call the legacy H3 Prompt Builder.`,
+        `${specialModeLabel} uses its own prompt format and does not support Prompt Builder.`,
       );
     if (!canBuildPrompt)
       return setMessage(
@@ -2467,73 +2533,83 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     setMessage("Using your current prompt directly. Prompt Builder is optional.");
   }
 
-  async function mic() {
-    if (micState === "listening") {
-      recorderRef.current?.stop();
-      return;
+  async function askH3Director() {
+    const text = h3DirectorDraft.trim();
+    if (!text) {
+      return setMessage("Type or dictate a direction for the H3 AI Director.");
     }
+    setH3DirectorBusy(true);
+    setMessage("OpenAI H3 Director is refining the scene...");
     try {
-      chunksRef.current = [];
-      cancelRecordingRef.current = false;
-      setMicState("listening");
-      setMessage("Listening...");
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      const recorder = new MediaRecorder(stream);
-      recorderRef.current = recorder;
-      recorder.ondataavailable = (event) => {
-        if (event.data.size) chunksRef.current.push(event.data);
-      };
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop());
-        if (cancelRecordingRef.current) return setMicState("idle");
-        setMicState("processing");
-        try {
-          const body = new FormData();
-          body.set(
-            "audio",
-            new File(chunksRef.current, `h3-${Date.now()}.webm`, {
-              type: "audio/webm",
+      const response = await fetch("/api/openai-ai/h3-director", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          conversationId: h3DirectorConversationId,
+          currentPrompt: originalPrompt,
+          mode,
+          durationSeconds: duration,
+          quality,
+          orientation,
+          visualStyle: promptBuilderVisualStyle,
+          cameraFeel,
+          shotFlow,
+          references: descriptors,
+          loras: selectedLoras
+            .map((selection) => {
+              const entry = catalog.find((item) => item.id === selection.id);
+              return entry
+                ? {
+                    id: entry.id,
+                    label: entry.displayName,
+                    strength: selection.strength,
+                    triggerWords: entry.triggerWords,
+                  }
+                : selection;
             }),
-          );
-          const response = await fetch("/api/ollama-ai/transcribe", {
-            method: "POST",
-            body,
-            credentials: "include",
-          });
-          const data = await response.json();
-          const text = String(data.text || "").trim();
-          if (!response.ok || !text)
-            throw new Error(
-              data.detail || data.error || "No transcript returned.",
-            );
-          replaceOriginal(
-            [originalPrompt.trim(), text].filter(Boolean).join("\n"),
-          );
-          setMicState("done");
-          setMessage("Transcription added. You can edit it before building.");
-        } catch (error) {
-          setMicState("error");
-          setMessage(
-            error instanceof Error ? error.message : "Transcription failed.",
-          );
-        }
-      };
-      recorder.start();
-    } catch (error) {
-      setMicState("error");
-      setMessage(
-        error instanceof Error ? error.message : "Microphone access failed.",
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      const nextPrompt = String(data.prompt || "").trim();
+      if (!response.ok || !nextPrompt) {
+        throw new Error(data.error || "OpenAI H3 Director returned no prompt.");
+      }
+      replaceOriginal(nextPrompt);
+      setScenePrompt("");
+      setSuggestion("");
+      setSuggestionDraft("");
+      setH3DirectorConversationId(String(data.conversationId || ""));
+      setH3DirectorReply(String(data.reply || "OpenAI H3 Director updated the prompt."));
+      setH3DirectorChanges(
+        Array.isArray(data.changes)
+          ? data.changes.map(String).filter(Boolean)
+          : [],
       );
+      setH3DirectorPromptVersions(
+        Array.isArray(data.promptVersions)
+          ? data.promptVersions
+              .map((item: any) => ({
+                id: String(item.id || ""),
+                prompt: String(item.prompt || ""),
+                createdAt: Number(item.createdAt || 0),
+              }))
+              .filter((item: { id: string; prompt: string }) => item.id && item.prompt)
+          : [],
+      );
+      setH3DirectorDraft("");
+      setMessage("OpenAI H3 Director updated your editable H3 prompt.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "OpenAI H3 Director failed.",
+      );
+    } finally {
+      setH3DirectorBusy(false);
     }
   }
-  function cancelMic() {
-    cancelRecordingRef.current = true;
-    recorderRef.current?.stop();
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    setMicState("idle");
-    setMessage("Recording cancelled.");
-  }
+
   function updateLora(id: string, strength: number) {
     const entry = catalog.find((item) => item.id === id);
     if (!entry) return;
@@ -3378,7 +3454,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   async function generate() {
     if (!legacyModeActive)
       return setMessage(
-        `${specialModeLabel} is waiting for its dedicated H3 adapter and cannot call the legacy generation route.`,
+        `${specialModeLabel} is not available yet. Choose Text, Image, or Reference for a supported generation.`,
       );
     if (builderPromptStale)
       return setMessage("The optional Builder prompt changed. Use your current raw prompt or review the Builder result again.");
@@ -3908,6 +3984,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       className="mx-auto max-w-7xl space-y-4 pb-28 pt-8 md:pt-0"
       data-testid="h3-panel"
     >
+      {videoEditOpen ? <H3VideoEditPanel onBack={() => setVideoEditOpen(false)} /> : <>
       <section className="relative overflow-hidden rounded-[8px] border border-violet-300/20 bg-[linear-gradient(135deg,#100d25_0%,#09101b_55%,#071216_100%)] px-4 py-5 shadow-[0_20px_60px_rgba(76,29,149,.18)]">
         <div className="absolute inset-y-0 right-0 w-1 bg-gradient-to-b from-violet-300 via-cyan-300 to-transparent" />
         <p className="text-xs font-black uppercase text-violet-200">
@@ -3936,6 +4013,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               </span>
             </button>
           ))}
+          <button type="button" className={`min-h-20 rounded-[6px] border p-2 text-left ${command}`} onClick={() => setVideoEditOpen(true)}><span className="block font-black">Edit Video</span><span className="block text-xs">One video + text · H3 V2V</span></button>
         </div>
       </section>
       {message ? (
@@ -3958,7 +4036,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                     </h2>
                   </div>
                   <span className="rounded-full bg-cyan-300/15 px-2 py-1 text-[11px] font-bold text-cyan-100">
-                    Dedicated TEST mode
+                    Structured realism
                   </span>
                 </div>
                 <textarea
@@ -3986,6 +4064,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   <SpeechInputButton
                     label="Dictate Realism prompt"
                     className={command}
+                    vocabularyKeywords={h3VoiceVocabularyKeywords}
                     onStatus={setMessage}
                     onTranscript={(text) => {
                       setRealismPrompt([realismPrompt.trim(), text].filter(Boolean).join("\n"));
@@ -4197,8 +4276,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                 </div>
                 <div className="mt-4 rounded-[6px] border border-amber-300/25 bg-amber-300/10 p-3 text-xs leading-5 text-amber-50">
                   One speed LoRA only. People Realism may combine with one
-                  speed LoRA. SH/LQ are TEST draft modes for this workflow;
-                  HQ is closest to the supplied workflow target.
+                  speed LoRA. SH/LQ provide quick previews;
+                  HQ provides the full-resolution result.
                 </div>
               </details>
             </>
@@ -4214,11 +4293,11 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                       Single-person SAM3 body replacement
                     </h2>
                     <p className="mt-1 text-xs text-white/45">
-                      First milestone: one tracked target, one replacement image.
+                      Track one target and replace them using one reference image.
                     </p>
                   </div>
                   <span className="rounded-full bg-cyan-300/15 px-2 py-1 text-[11px] font-bold text-cyan-100">
-                    TEST single-person
+                    Single-person replacement
                   </span>
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -4361,6 +4440,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   <SpeechInputButton
                     label="Dictate Body Swap instruction"
                     className={command}
+                    vocabularyKeywords={h3VoiceVocabularyKeywords}
                     onStatus={setMessage}
                     onTranscript={(text) => setBodySwapPrompt([bodySwapPrompt.trim(), text].filter(Boolean).join("\n"))}
                   />
@@ -4398,9 +4478,6 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                       Up to {H3_REFMOD_LIMITS.maxRefMods} RefMods. Slot order controls subject/reference mapping.
                     </p>
                   </div>
-                  <span className="rounded-full bg-cyan-300/15 px-2 py-1 text-[11px] font-bold text-cyan-100">
-                    TEST adapter
-                  </span>
                 </div>
                 <textarea
                   rows={5}
@@ -4420,6 +4497,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   <SpeechInputButton
                     label="Dictate Ref Mods prompt"
                     className={command}
+                    vocabularyKeywords={h3VoiceVocabularyKeywords}
                     onStatus={setMessage}
                     onTranscript={(text) => setRefModsPrompt([refModsPrompt.trim(), text].filter(Boolean).join("\n"))}
                   />
@@ -4731,14 +4809,11 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                 Dedicated workflow adapter pending
               </h2>
               <p className="mt-3 text-sm leading-6 text-white/60">
-                {specialModeLabel} is separated from the standard Text, Image,
-                and Reference generation routes. This prevents the new workflow
-                from falling through into the legacy H3 Prompt Builder, LoRA
-                catalog, or generation API before its adapter is validated.
+                {specialModeLabel} is not available in this build. It is kept
+                separate from the supported Text, Image, and Reference modes.
               </p>
               <div className="mt-4 rounded-[6px] border border-cyan-300/25 bg-cyan-300/10 p-3 text-sm text-cyan-50">
-                Legacy H3 modes are unchanged. Use Text, Image, or Reference
-                for the existing production routes while this TEST mode is wired.
+                Use Text, Image, or Reference for the supported generation routes.
               </div>
             </section>
           ) : (
@@ -4823,9 +4898,102 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               <SpeechInputButton
                 label="Dictate H3 prompt"
                 className={command}
+                context="H3 video scene direction, fantasy character names, camera movement, references, LoRAs, SLR Studios."
+                vocabularyKeywords={h3VoiceVocabularyKeywords}
                 onStatus={setMessage}
                 onTranscript={(text) => replaceOriginal([originalPrompt.trim(), text].filter(Boolean).join("\n"))}
               />
+            </div>
+            <div
+              className="mt-4 rounded-[6px] border border-cyan-300/20 bg-cyan-300/10 p-3"
+              data-otg="h3-openai-director"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="text-xs font-black uppercase text-cyan-100/80">
+                    OpenAI H3 Scene Director
+                  </p>
+                  <p className="mt-1 text-xs text-white/55">
+                    Refines the editable scene prompt while preserving locked H3 controls.
+                  </p>
+                </div>
+                {h3DirectorConversationId ? (
+                  <span className="rounded-full bg-black/25 px-2 py-1 text-[10px] font-bold uppercase text-white/45">
+                    Memory active
+                  </span>
+                ) : null}
+              </div>
+              <textarea
+                rows={3}
+                className={`${field} mt-3 resize-y text-sm leading-5`}
+                value={h3DirectorDraft}
+                onChange={(event) => setH3DirectorDraft(event.target.value)}
+                placeholder="Tell the AI Director what to create or refine. Example: make the camera lower and keep the wolf doctor calm."
+              />
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  className={`${command} ${primary}`}
+                  disabled={h3DirectorBusy}
+                  onClick={() => void askH3Director()}
+                >
+                  {h3DirectorBusy ? "Directing..." : "Apply Director Prompt"}
+                </button>
+                <SpeechInputButton
+                  label="Dictate Director note"
+                  className={command}
+                  context="H3 video scene direction, fantasy character names, camera movement, references, LoRAs, SLR Studios."
+                  vocabularyKeywords={h3VoiceVocabularyKeywords}
+                  onStatus={setMessage}
+                  onTranscript={(text) =>
+                    setH3DirectorDraft(
+                      [h3DirectorDraft.trim(), text].filter(Boolean).join("\n"),
+                    )
+                  }
+                />
+                <button
+                  className={command}
+                  disabled={!h3DirectorDraft}
+                  onClick={() => setH3DirectorDraft("")}
+                >
+                  Clear Note
+                </button>
+              </div>
+              {h3DirectorReply ? (
+                <div className="mt-3 text-sm text-cyan-50">
+                  <p>{h3DirectorReply}</p>
+                  {h3DirectorChanges.length ? (
+                    <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-white/60">
+                      {h3DirectorChanges.map((change, index) => (
+                        <li key={`${change}-${index}`}>{change}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+              {h3DirectorPromptVersions.length ? (
+                <details className="mt-3 text-xs text-white/60">
+                  <summary className="cursor-pointer font-bold text-white/70">
+                    Prompt version history
+                  </summary>
+                  <div className="mt-2 space-y-2">
+                    {h3DirectorPromptVersions.slice(-5).map((version, index) => (
+                      <button
+                        key={version.id}
+                        type="button"
+                        className="block w-full rounded-[6px] border border-white/10 bg-black/25 p-2 text-left hover:border-cyan-200/40"
+                        onClick={() => replaceOriginal(version.prompt)}
+                      >
+                        <span className="font-bold text-white/70">
+                          Version {Math.max(0, h3DirectorPromptVersions.length - 5) + index + 1}
+                        </span>
+                        <span className="mt-1 block line-clamp-2 text-white/50">
+                          {version.prompt}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </details>
+              ) : null}
             </div>
           </section>
           <details className={surface}>
@@ -5285,8 +5453,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                 {bodySwapPreserveAudio ? "preserve original" : "render silent"}
                 <br />
                 <span className="text-xs">
-                  First TEST adapter keeps the source video dimensions from the
-                  imported graph; duration controls the 24 fps frame cap.
+                  The source video dimensions are preserved; duration controls
+                  the 24 fps frame cap.
                 </span>
               </div>
               <button
@@ -5362,15 +5530,14 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                 {specialModeLabel} cannot submit yet
               </h2>
               <p className="mt-3 text-sm leading-6 text-white/60">
-                The TEST tab is visible, but Generate is intentionally disabled
-                until a dedicated special-mode route validates inputs and builds
-                the correct ComfyUI workflow.
+                This mode cannot run until its required workflow is installed.
+                Choose an available mode to generate a video.
               </p>
               <button
                 className={`${command} mt-4 min-h-14 w-full text-base`}
                 disabled
               >
-                Dedicated Adapter Required
+                Workflow unavailable
               </button>
             </section>
           ) : (
@@ -5429,22 +5596,6 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           )}
         </aside>
       </div>
-      {workflowNotice ? (
-        <section
-          role="status"
-          aria-live="polite"
-          className={`rounded-[6px] border px-4 py-3 text-sm font-semibold ${workflowNoticeClass}`}
-          data-otg="h3-workflow-status-above-preview"
-        >
-          <div className="font-black">{workflowNotice.title}</div>
-          <div className="mt-1 text-white/75">{workflowNotice.detail}</div>
-          {job?.promptId ? (
-            <div className="mt-1 break-all font-mono text-xs text-white/55">
-              Prompt ID: {job.promptId}
-            </div>
-          ) : null}
-        </section>
-      ) : null}
       {job ? (
         <section className={surface}>
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -5679,6 +5830,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           }}
         />
       ) : null}
+      </>}
     </div>
   );
 }

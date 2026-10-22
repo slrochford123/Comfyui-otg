@@ -8,14 +8,25 @@ import { NextRequest, NextResponse } from "next/server";
 // OTG_SEEDVC_FORM_ALIAS_FIX_V10
 
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { requireSessionUser } from "@/lib/sessionUser";
+import { GET as ownerMediaFile } from "@/app/api/file/route";
+import { aukRewriteInstruction } from "@/lib/voiceRewritePrompt";
+import { acquireAuxiliary3090, AuxiliaryGpuBusyError } from "@/lib/workers/auxiliary3090Lease";
 import { ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const VOICES_ROOT = path.resolve(process.env.OTG_VOICES_ROOT || "C:\\AI\\Voices");
-const SEED_VC_ROOT = path.resolve(process.env.SEED_VC_ROOT || path.join(VOICES_ROOT, "Seed-Vc"));
+const VOICES_ROOT = path.resolve(
+  process.env.OTG_VOICES_ROOT || "/home/shawn-rochford/AI/runtime/test/voice-dubbing"
+);
+const SEED_VC_ROOT = path.resolve(
+  process.env.SEED_VC_ROOT || "/home/shawn-rochford/AI/runtime/test/voice-dubbing/src/seed-vc"
+);
+const SEED_VC_HF_CACHE = path.resolve(
+  process.env.SEED_VC_HF_CACHE || "/home/shawn-rochford/AI/runtime/test/voice-dubbing/hf-cache"
+);
 const ALLOWED_REFERENCE_ROOTS = [VOICES_ROOT, path.resolve(OTG_DATA_ROOT), path.resolve(process.cwd(), "data")];
 const AUDIO_EXT_RE = /\.(mp3|wav|flac|m4a|aac|ogg|webm)$/i;
 const MODEL_EXT_RE = /\.(pth|pt|ckpt|safetensors|onnx)$/i;
@@ -102,6 +113,8 @@ function findSeedVcScript() {
 function seedVcPython() {
   const configured = process.env.SEED_VC_PYTHON?.trim();
   if (configured && !(process.platform === "win32" && configured.startsWith("/opt/"))) return configured;
+  const isolated = "/home/shawn-rochford/AI/runtime/test/voice-dubbing/venv/bin/python";
+  if (fs.existsSync(isolated)) return isolated;
   const winVenv = path.join(SEED_VC_ROOT, ".venv", "Scripts", "python.exe");
   if (fs.existsSync(winVenv)) return winVenv;
   const venv = path.join(SEED_VC_ROOT, ".venv", "bin", "python");
@@ -110,7 +123,11 @@ function seedVcPython() {
 }
 
 function hasSeedVcRuntime() {
-  return Boolean(process.env.SEEDVC_DUB_COMMAND?.trim() || findSeedVcScript());
+  const python = seedVcPython();
+  return Boolean(
+    process.env.SEEDVC_DUB_COMMAND?.trim() ||
+      (findSeedVcScript() && (path.isAbsolute(python) ? fs.existsSync(python) : Boolean(python)))
+  );
 }
 
 function validateReadablePath(rawValue: string, label: string, extRe?: RegExp) {
@@ -155,7 +172,7 @@ function resolveVoice(voicePathRaw: string, requestedEngineRaw: string, explicit
   const voicePath = expandVoicePath(voicePathRaw);
   const allowed = ALLOWED_REFERENCE_ROOTS.some((root) => assertInside(root, voicePath));
   if (!voicePath || !allowed || !fs.existsSync(voicePath) || IGNORE_RE.test(voicePath)) {
-    throw new Error("Selected voice path is invalid. Use a Characters tab reference voice or a clean source under C:\\AI\\Voices.");
+    throw new Error("Selected voice path is invalid. Choose a saved reference voice, trained character voice, or a readable audio sample from the voice library.");
   }
 
   const stat = fs.statSync(voicePath);
@@ -175,7 +192,7 @@ function resolveVoice(voicePathRaw: string, requestedEngineRaw: string, explicit
     throw new Error("Seed-VC requires a clean reference audio sample. Select a Characters tab voice or upload/extract a voice sample first.");
   }
   if (engine === "xtts" && !samplePath) {
-    throw new Error("XTTS fallback requires a clean reference audio file from Characters or C:\\AI\\Voices.");
+    throw new Error("XTTS fallback requires a clean reference audio file from the voice library or an uploaded sample.");
   }
 
   return {
@@ -222,12 +239,18 @@ function fillTemplate(template: string, values: Record<string, string>) {
   return output;
 }
 
-async function runCommand(template: string, values: Record<string, string>, cwd?: string, timeoutMs = COMMAND_TIMEOUT_MS) {
+async function runCommand(
+  template: string,
+  values: Record<string, string>,
+  cwd?: string,
+  timeoutMs = COMMAND_TIMEOUT_MS,
+  env?: Partial<NodeJS.ProcessEnv>,
+) {
   const filled = fillTemplate(template, values);
   const parts = splitCommand(filled);
   if (!parts.length) throw new Error("Voice conversion command is empty.");
   return await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(parts[0], parts.slice(1), { cwd, windowsHide: true, shell: false });
+    const child = spawn(parts[0], parts.slice(1), { cwd, env: env ? { ...process.env, ...env } : process.env, windowsHide: true, shell: false });
     let stderr = "";
     let stdout = "";
     const timer = setTimeout(() => {
@@ -481,7 +504,7 @@ function defaultSeedVcCommand() {
   if (/inference_v2\.py$/i.test(script)) {
     return `"${py}" "${script}" --source "{input}" --target "{sample}" --output "{outputDir}" --diffusion-steps ${steps} --length-adjust ${lengthAdjust} --intelligibility-cfg-rate ${cfg} --similarity-cfg-rate ${cfg} --repetition-penalty 1.0`;
   }
-  return `"${py}" "${script}" --source "{input}" --target "{sample}" --output "{outputDir}" --diffusion-steps ${steps} --length-adjust ${lengthAdjust} --inference-cfg-rate ${cfg} --f0-condition False --auto-f0-adjust False --semi-tone-shift {pitch} --fp16 True`;
+  return `"${py}" "${script}" --source "{input}" --target "{sample}" --output "{outputDir}" --diffusion-steps ${steps} --length-adjust ${lengthAdjust} --inference-cfg-rate ${cfg} --f0-condition false --auto-f0-adjust false --semi-tone-shift {pitch}`;
 }
 
 async function runSeedVc(inputPath: string, outputPath: string, samplePath: string, pitch: string, jobDir: string) {
@@ -489,7 +512,7 @@ async function runSeedVc(inputPath: string, outputPath: string, samplePath: stri
   ensureDir(outputDir);
   const command = process.env.SEEDVC_DUB_COMMAND?.trim() || defaultSeedVcCommand();
   if (!command) {
-    throw new Error("Seed-VC is not installed or SEEDVC_DUB_COMMAND is not configured. Install Seed-VC at C:\\AI\\Voices\\Seed-Vc or set SEED_VC_ROOT / SEEDVC_DUB_COMMAND.");
+    throw new Error("Seed-VC is not installed or SEEDVC_DUB_COMMAND is not configured. Set SEED_VC_ROOT / SEED_VC_PYTHON or SEEDVC_DUB_COMMAND.");
   }
   await runCommand(command, {
     input: inputPath,
@@ -502,7 +525,13 @@ async function runSeedVc(inputPath: string, outputPath: string, samplePath: stri
     speaker: samplePath,
     target: samplePath,
     pitch,
-  }, SEED_VC_ROOT, COMMAND_TIMEOUT_MS);
+  }, SEED_VC_ROOT, COMMAND_TIMEOUT_MS, {
+    HF_HOME: SEED_VC_HF_CACHE,
+    HF_HUB_CACHE: path.join(SEED_VC_HF_CACHE, "hub"),
+    HUGGINGFACE_HUB_CACHE: path.join(SEED_VC_HF_CACHE, "hub"),
+    TRANSFORMERS_CACHE: path.join(SEED_VC_HF_CACHE, "transformers"),
+    TOKENIZERS_PARALLELISM: "false",
+  });
 
   if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size <= 0) {
     const generated = newestAudioInDir(outputDir);
@@ -610,14 +639,13 @@ async function runAukRewriteSource(args: {
 
   const sourceSeconds = await probeAudioDurationSeconds(args.sourcePerformancePath);
   const genSeconds = sourceSeconds > 0 ? Math.max(0.35, Math.min(30, sourceSeconds)) : 0;
-  const instruction = [
-    `Say exactly: "${args.replacementText.trim()}"`,
-    `Use the reference voice and ${emotionInstruction(args.emotion)}.`,
-    "Keep the delivery natural and suitable for replacing a line inside a video.",
-  ].join(" ");
+  const instruction = aukRewriteInstruction(args.replacementText);
 
   const cliArgs = [
     "--ckpt", ckpt,
+    // The supported AuK offload mode still performs inference on the 3090,
+    // but does not keep Qwen and DiT resident simultaneously with ACE-Step.
+    "--cpu_offload",
     "--qwen_path", qwenPath,
     "--audio", args.referenceAudioPath,
     "--instruction", instruction,
@@ -638,10 +666,14 @@ async function runAukRewriteSource(args: {
     child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
     child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
     child.on("error", (error) => { clearTimeout(timer); reject(error); });
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
       clearTimeout(timer);
       if (code === 0) resolve();
-      else reject(new Error(`AuK rewrite generation failed with exit code ${code}. ${stderr || stdout}`.slice(0, 5000)));
+      else {
+        await fsp.writeFile(path.join(path.dirname(args.outputPath),"auk-runtime.log"),`${stdout}\n${stderr}`,{mode:0o600}).catch(()=>{});
+        const detail=(stderr || stdout).trim().slice(-3500);
+        reject(new Error(`AuK rewrite generation failed with exit code ${code}. ${detail}`));
+      }
     });
   });
 
@@ -732,8 +764,9 @@ async function runConversion(args: { engine: Engine; inputPath: string; outputPa
 }
 
 export async function POST(req: NextRequest) {
+  let releaseGpu:(()=>void)|null=null;
   try {
-    const owner = await getOwnerContext(req);
+    const owner = await requireSessionUser(req).catch(()=>{throw new SessionInvalidError();});
     const form = await req.formData();
     const performance = form.get("performance_audio") || form.get("audio") || form.get("file") || form.get("performanceAudio");
     if (!performance || typeof (performance as any).arrayBuffer !== "function" || Number((performance as any).size || 0) <= 0) {
@@ -751,6 +784,12 @@ export async function POST(req: NextRequest) {
     const emotion = String(form.get("emotion") || "preserve").trim();
     const replacementText = String(form.get("replacement_text") || form.get("replacementText") || form.get("text") || "").trim();
     const voice = resolveVoice(voicePathRaw, requestedEngine, modelPathRaw, indexPathRaw, samplePathRaw);
+    for (const inputPath of new Set([voice.samplePath,voice.modelPath,voice.indexPath].filter(Boolean))) {
+      const url=new URL("/api/file",req.url);url.searchParams.set("path",inputPath);
+      const allowed=await ownerMediaFile(new NextRequest(url,{headers:req.headers}));
+      await allowed.body?.cancel();
+      if(!allowed.ok)return NextResponse.json({ok:false,error:"Voice source not found."},{status:404});
+    }
 
     const root = ownerJobRoot(owner.ownerKey);
     ensureDir(root);
@@ -765,6 +804,7 @@ export async function POST(req: NextRequest) {
     const outputPath = safeJoin(jobDir, `${title}.wav`);
     await saveUpload(perfFile, rawInput);
     await convertWithFfmpeg(rawInput, normalizedInput);
+    releaseGpu=await acquireAuxiliary3090(`voice-dub:${owner.ownerKey}:${jobId}`);
     let conversionInput = normalizedInput;
     let sourceSpeechMode = "source-performance";
 
@@ -841,9 +881,10 @@ export async function POST(req: NextRequest) {
       message,
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error: any) {
+    if(error instanceof AuxiliaryGpuBusyError)return NextResponse.json({ok:false,error:error.message},{status:409});
     if (error instanceof SessionInvalidError) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
     return NextResponse.json({ ok: false, error: error?.message || "Voice dubbing failed" }, { status: 500 });
-  }
+  } finally { releaseGpu?.(); }
 }

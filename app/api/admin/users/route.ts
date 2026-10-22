@@ -58,6 +58,7 @@ export async function GET(_req: NextRequest) {
       email: r.email,
       username: r.username ?? null,
       createdAt: r.created_at,
+      protected: [...HARD_CODED_ADMINS,...ADMIN_IDENTIFIERS].includes(String(r.email||"").toLowerCase()) || [...HARD_CODED_ADMINS,...ADMIN_IDENTIFIERS].includes(String(r.username||"").toLowerCase()),
     }));
 
     return NextResponse.json({ ok: true, count: users.length, users }, { headers: { "Cache-Control": "no-store" } });
@@ -91,7 +92,8 @@ export async function DELETE(req: NextRequest) {
 
     const targetEmail = String(target.email || "").toLowerCase();
     const targetUsername = String(target.username || "").toLowerCase();
-    if (HARD_CODED_ADMINS.includes(targetEmail) || (targetUsername && HARD_CODED_ADMINS.includes(targetUsername))) {
+    const protectedAdmins=[...HARD_CODED_ADMINS,...ADMIN_IDENTIFIERS,admin.email,admin.username].filter(Boolean);
+    if (protectedAdmins.includes(targetEmail) || (targetUsername && protectedAdmins.includes(targetUsername))) {
       return NextResponse.json(
         { ok: false, error: "Refusing to delete the primary admin account." },
         { status: 400 }

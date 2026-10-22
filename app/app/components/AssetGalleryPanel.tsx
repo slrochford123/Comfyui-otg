@@ -1,6 +1,8 @@
 "use client";
 
 import React from "react";
+import MossImageControls, { defaultMossSettings } from "./MossImageControls";
+import MossGallerySaveButton from "./MossGallerySaveButton";
 
 import {
   ASSET_IMAGE_MODELS,
@@ -38,6 +40,7 @@ type AssetCandidate = {
   artStyle?: string;
   prompt?: string;
   promptId?: string;
+  backend?: string;
   seed?: number;
   workflowId?: string;
   internalPrompt?: string;
@@ -68,6 +71,7 @@ type SavedAssetCandidate = {
   artStyle: string;
   prompt: string;
   promptId: string;
+  backend?: string;
   seed: number;
   workflowId?: string;
   internalPrompt?: string;
@@ -449,6 +453,7 @@ function normalizeSavedAsset(
       text(
         record.promptId,
       ),
+    backend: text(record.backend),
     seed:
       Number(
         record.seed,
@@ -1129,6 +1134,7 @@ function CandidateSlots({
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
+                        {candidate.modelId === "moss-image-sft" && candidate.promptId ? <MossGallerySaveButton imageUrl={candidate.imageUrl} promptId={candidate.promptId} backend={candidate.backend || ""} origin="asset" prompt={candidate.prompt} seed={candidate.seed} /> : null}
                         <button
                           type="button"
                           disabled={
@@ -1226,6 +1232,8 @@ export default function AssetGalleryPanel({
     setAssetName,
   ] =
     React.useState("");
+
+  const [mossSettings, setMossSettings] = React.useState(() => defaultMossSettings("asset"));
 
   const [
     modelId,
@@ -1765,6 +1773,7 @@ export default function AssetGalleryPanel({
               JSON.stringify({
                 name:
                   cleanName,
+                ...(modelId === "moss-image-sft" ? mossSettings : {}),
                 model:
                   modelId,
                 artStyle,
@@ -1860,6 +1869,7 @@ export default function AssetGalleryPanel({
         prompt:
           cleanPrompt,
         promptId,
+        backend: text(payload.backend),
         seed:
           Number(
             payload.seed,
@@ -2161,6 +2171,7 @@ export default function AssetGalleryPanel({
         candidate.promptId ||
           "",
       );
+      form.set("backend", candidate.backend || "");
 
       form.set(
         "seed",
@@ -3111,6 +3122,7 @@ export default function AssetGalleryPanel({
         item.prompt,
       promptId:
         item.promptId,
+      backend: item.backend,
       seed:
         item.seed,
       workflowId:
@@ -3471,6 +3483,8 @@ export default function AssetGalleryPanel({
                 )}
               </select>
             </label>
+
+            {modelId === "moss-image-sft" ? <MossImageControls value={mossSettings} onChange={setMossSettings} disabled={generating} /> : null}
 
             <label className="block">
               <span className="text-xs font-black uppercase tracking-[0.16em] text-white/45">

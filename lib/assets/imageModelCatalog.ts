@@ -4,7 +4,8 @@ export type AssetImageModelId =
   | "krea-2"
   | "boogu"
   | "mage-flow"
-  | "qwen-image-2-1";
+  | "qwen-image-2-1"
+  | "moss-image-sft";
 
 export type AssetImageModel = {
   id: AssetImageModelId;
@@ -13,6 +14,7 @@ export type AssetImageModel = {
 };
 
 export const ASSET_IMAGE_MODELS: readonly AssetImageModel[] = [
+  { id: "moss-image-sft", label: "MOSS-Image SFT (INT8)", workflowFile: "workflows/characters/create/image_moss_image_sft_t2i.json" },
   {
     id: "ernie-image",
     label: "Ernie Image",
@@ -45,7 +47,7 @@ export const ASSET_IMAGE_MODELS: readonly AssetImageModel[] = [
   },
   {
     id: "qwen-image-2-1",
-    label: "Qwen Image 2.1",
+    label: "Qwen Image 2.1 Turbo",
     workflowFile:
       "workflows/characters/create/image_qwen_image_2_1_t2i.json",
   },

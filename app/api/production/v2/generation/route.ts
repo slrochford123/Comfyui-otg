@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { cancelComfyPrompt, ComfyCancelSafetyError } from "@/lib/comfySafeCancel";
 
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
@@ -78,6 +79,7 @@ function retrySeed(previous: number) {
 
 function failure(error: unknown) {
   if (error instanceof SessionInvalidError) return noStore({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (error instanceof ComfyCancelSafetyError) return noStore({ok:false,error:error.message},{status:409});
   return noStore({ ok: false, error: error instanceof Error ? error.message : "Production video generation failed." }, { status: 500 });
 }
 
@@ -292,11 +294,16 @@ export async function POST(req: NextRequest) {
         getProductionV2GenerationJob(String((body as any)?.jobId || ""), ownerKey)
         || getLatestProductionV2SceneGeneration(ownerKey, productionId, sceneId);
       if (!activeJob) return noStore({ ok: false, error: "Production generation job not found." }, { status: 404 });
-      if (activeJob.backend) {
-        await fetch(`${H3_BACKEND_PROFILES[activeJob.backend].baseUrl}/interrupt`, {
-          method: "POST",
-          cache: "no-store",
-        }).catch(() => undefined);
+      if (activeJob.productionId !== productionId || activeJob.sceneId !== sceneId) return noStore({ok:false,error:"Generation does not belong to the selected Production Scene."},{status:409});
+      const postprocessing = activeJob.status.startsWith("postprocessing_");
+      const promptId = postprocessing ? activeJob.vsrPromptId : activeJob.comfyPromptId;
+      const backend = postprocessing ? activeJob.vsrBackend : activeJob.backend;
+      if (promptId && backend) {
+        const confirmation = await cancelComfyPrompt(H3_BACKEND_PROFILES[backend].baseUrl,promptId);
+        if (confirmation.status === "canceling") return noStore({ok:true,job:productionV2GenerationPublicStatus(activeJob),message:"Cancellation requested; backend is still running."},{status:202});
+        if (confirmation.status === "completed") return noStore({ok:true,job:productionV2GenerationPublicStatus(activeJob),message:"Backend completed before cancellation; collecting result."},{status:202});
+      } else if (!["pending","queued_waiting_for_gpu","postprocessing_waiting_for_gpu","completed","failed","canceled"].includes(activeJob.status)) {
+        return noStore({ok:false,error:"Submission is being reconciled. Wait for its backend prompt ID before canceling."},{status:409});
       }
       const canceled = cancelProductionV2H3Generation(activeJob) || activeJob;
       return noStore({ ok: true, job: productionV2GenerationPublicStatus(canceled) });
@@ -433,14 +440,45 @@ export async function POST(req: NextRequest) {
       }
 
       if (action === "retry") {
-        return noStore(
-          {
-            ok: false,
-            error:
-              "LTX 2.5 Retry is not enabled in this integration pass.",
+        const previous =
+          getLatestProductionV2Ltx25SceneGeneration(
+            ownerKey,
+            productionId,
+            sceneId,
+          );
+
+        if (!previous) {
+          return noStore({ ok: false, error: "Retry requires a prior LTX 2.5 generation attempt." }, { status: 409 });
+        }
+
+        if (["pending", "queued_waiting_for_gpu", "claimed", "submitted", "running"].includes(previous.status)) {
+          return noStore({ ok: false, error: `Generation ${previous.id} is already active; duplicate Retry was blocked.` }, { status: 409 });
+        }
+
+        if (previous.status !== "completed" && previous.status !== "failed") {
+          return noStore({ ok: false, error: "The prior LTX 2.5 attempt is not retryable." }, { status: 409 });
+        }
+
+        if (previous.payload.finalPrompt !== prompt.finalPrompt || previous.payload.promptFingerprint !== fingerprint) {
+          return noStore({ ok: false, error: "Retry is blocked because the current final prompt no longer exactly matches the prior attempt." }, { status: 409 });
+        }
+
+        const job = createProductionV2Ltx25GenerationJob({
+          ownerKey,
+          productionId,
+          sceneId,
+          payload: {
+            ...previous.payload,
+            finalPrompt: previous.payload.finalPrompt,
+            promptFingerprint: previous.payload.promptFingerprint,
+            seed: retrySeed(previous.payload.seed),
           },
-          { status: 409 },
-        );
+        });
+
+        startProductionV2Ltx25Scheduler();
+        void runProductionV2Ltx25SchedulerTick();
+
+        return noStore({ ok: true, job: productionV2Ltx25GenerationPublicStatus(job) }, { status: 202 });
       }
 
       /* OTG_PRODUCTION_V2_LTX_R13C_ROUTE_DURATION_5S10S_V1 */

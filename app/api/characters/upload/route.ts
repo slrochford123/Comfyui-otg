@@ -5,6 +5,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { hasValidWorkerToken } from "@/lib/jobs/workerAuth";
 import { OTG_DATA_ROOT, ensureDir, safeSegment } from "@/lib/paths";
 
 export const runtime = "nodejs";
@@ -18,7 +19,15 @@ function safeExt(name: string) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { ownerKey } = await getOwnerContext(req);
+    // Completion workers persist generated cards without a browser cookie.
+    // An owner header alone is never an identity: require the existing private
+    // worker credential before accepting its explicit, folder-safe owner.
+    const workerRequest = hasValidWorkerToken(req);
+    const workerOwner = String(req.headers.get("x-otg-owner-key") || "").trim();
+    if (workerRequest && !/^[a-zA-Z0-9_-]{3,128}$/.test(workerOwner)) {
+      return NextResponse.json({ ok: false, error: "Missing or invalid worker owner." }, { status: 400 });
+    }
+    const ownerKey = workerRequest ? workerOwner : (await getOwnerContext(req)).ownerKey;
     const form = await req.formData();
     const file = form.get("image");
     if (!(file instanceof File)) {

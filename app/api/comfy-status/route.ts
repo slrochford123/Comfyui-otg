@@ -1,4 +1,6 @@
 import { NextRequest } from "next/server";
+import { cookieName } from "@/lib/auth/cookies";
+import { verifySession } from "@/lib/auth/jwt";
 import {
   classifyComfyJob,
   configuredComfyBaseUrlForJob,
@@ -11,7 +13,7 @@ export const runtime = "nodejs";
 
 async function probeImage(baseUrl: string) {
   try {
-    const response = await fetch(`${baseUrl}/system_stats`, { cache: "no-store" });
+    const response = await fetch(`${baseUrl}/system_stats`, { cache: "no-store", signal: AbortSignal.timeout(5000) });
     const json = await response.json().catch(() => ({}));
     const gpuName = Array.isArray(json?.devices) ? String(json.devices[0]?.name || "") || null : null;
     return { ok: response.ok, status: response.status, gpuName, error: response.ok ? null : `HTTP ${response.status}` };
@@ -21,6 +23,16 @@ async function probeImage(baseUrl: string) {
 }
 
 export async function GET(req: NextRequest) {
+  const token = req.cookies.get(cookieName())?.value || "";
+  if (!token) {
+    return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+  try {
+    await verifySession(token);
+  } catch {
+    return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
   const descriptor = {
     mode: String(req.nextUrl.searchParams.get("mode") || "").toLowerCase(),
     preset: String(req.nextUrl.searchParams.get("preset") || req.nextUrl.searchParams.get("workflow") || "").trim(),

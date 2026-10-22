@@ -11,19 +11,14 @@ import {
   requireSessionUser,
 } from "@/lib/sessionUser";
 
-import {
-  QWEN_CLUSTER_MODEL,
-} from "@/lib/workers/qwenClusterRouter";
-
-import {
-  qwenDurableFetch,
-} from "@/lib/workers/qwenDurableFetch";
+import { createOpenAIText, openAIEnabled, openAIModels } from "@/lib/openai/provider";
 
 import {
   applyStoryExtraction,
-  getStoryCreatorMessage,
+  listUnreviewedStoryMessages,
   listStoryBibleEntities,
   listStoryCreatorMessages,
+  recordStoryMemoryReview,
 } from "../../../../lib/storyCreator/store";
 
 export const runtime = "nodejs";
@@ -68,6 +63,8 @@ function jsonError(error: unknown) {
           ? 404
           : code === "STORY_EXTRACT_SOURCE_MESSAGE_REQUIRED"
             ? 400
+            : code === "AI_PAYMENT_AUTHORIZATION_REQUIRED"
+              ? 402
             : code === "qwen_context_unsupported"
               ? 400
               : code === "qwen_cluster_busy"
@@ -99,6 +96,29 @@ function requestError(
 
   error.code = code;
   return error;
+}
+
+function requirePaidExtractionAuthorization(value: unknown) {
+  const authorization =
+    value && typeof value === "object"
+      ? value as Record<string, unknown>
+      : {};
+  const maxOutputTokens = Number(authorization.maxOutputTokens);
+
+  if (
+    authorization.approved !== true ||
+    authorization.operation !== "story-memory-extraction" ||
+    !Number.isInteger(maxOutputTokens) ||
+    maxOutputTokens < 1 ||
+    maxOutputTokens > 1000
+  ) {
+    throw requestError(
+      "AI_PAYMENT_AUTHORIZATION_REQUIRED",
+      "Story Memory extraction requires explicit paid-operation authorization.",
+    );
+  }
+
+  return { maxOutputTokens };
 }
 
 function cleanLabel(value: unknown, limit: number) {
@@ -135,42 +155,14 @@ function parseExtractionJson(value: string) {
   }
 }
 
-function readMessageContent(data: unknown) {
-  if (
-    data &&
-    typeof data === "object" &&
-    "message" in data
-  ) {
-    const message = (data as any).message;
-
-    if (
-      message &&
-      typeof message === "object" &&
-      typeof message.content === "string"
-    ) {
-      return message.content;
-    }
-  }
-
-  if (
-    data &&
-    typeof data === "object" &&
-    typeof (data as any).response === "string"
-  ) {
-    return (data as any).response;
-  }
-
-  return "";
-}
-
 function extractionSystemPrompt() {
   return [
     "You are the Story Creator V2 extractor.",
-    "Read the primary source Story Director message and return JSON only.",
-    "Use supporting context only to understand names and references in the primary source message.",
-    "Extract only story information that is present in the primary source message.",
+    "Read the unreviewed user messages and return JSON only.",
+    "Use supporting context only to understand names and references in those user messages.",
+    "Extract only story information established by the user in the unreviewed messages.",
     "Do not invent canon. Do not approve canon.",
-    "Even if the source message was written by the user, extracted facts are still suggestions or unknowns.",
+    "The server will reconcile ordinary details with established canon after extraction.",
     "Use canonStatus suggestion for candidate facts and unknown for missing information.",
     "Put direct story gaps into openQuestions as questions for the user.",
     "Keep predicates short snake_case, such as role, location, power, rule, tone, timeline_event, relationship, motivation.",
@@ -196,7 +188,7 @@ function buildExtractionUserPrompt(input: {
       ? input.entityNames.join(", ")
       : "(none yet)",
     "",
-    "PRIMARY SOURCE MESSAGE:",
+    "UNREVIEWED USER MESSAGES:",
     `${input.sourceMessage.role.toUpperCase()}: ${input.sourceMessage.content}`,
     "",
     "Supporting recent Story Director context:",
@@ -264,23 +256,38 @@ export async function POST(request: NextRequest) {
     const projectId = String(
       body?.projectId || "",
     ).trim();
-    const sourceMessageId = String(
-      body?.sourceMessageId || "",
-    ).trim();
-
-    if (!sourceMessageId) {
-      throw requestError(
-        "STORY_EXTRACT_SOURCE_MESSAGE_REQUIRED",
-        "Story extraction requires a stored source message.",
+    const paidAuthorization =
+      requirePaidExtractionAuthorization(
+        body?.paidOperationAuthorization,
       );
-    }
 
-    const sourceMessage =
-      getStoryCreatorMessage({
-        ownerKey: user.ownerKey,
-        projectId,
-        messageId: sourceMessageId,
+    const unreviewedMessages = listUnreviewedStoryMessages({
+      ownerKey: user.ownerKey,
+      projectId,
+    });
+    if (!unreviewedMessages.length) {
+      return NextResponse.json({
+        ok: true,
+        alreadyCurrent: true,
+        factsCreated: 0,
+        factsReused: 0,
+        factsAutoSaved: 0,
+        conflictsCreated: 0,
+        conflictsExisting: 0,
+        message: "Story details are already up to date.",
+      }, {
+        headers: { "Cache-Control": "no-store" },
       });
+    }
+    const reviewMessages = unreviewedMessages.slice(0, 48);
+    const throughMessage = reviewMessages[reviewMessages.length - 1];
+    const sourceMessageId = throughMessage.id;
+    const sourceMessage = {
+      role: "user",
+      content: reviewMessages
+        .map((message) => message.content)
+        .join("\n\n"),
+    };
 
     const messages =
       listStoryCreatorMessages({
@@ -290,7 +297,7 @@ export async function POST(request: NextRequest) {
 
     const recentMessages = messages.slice(-48);
     const contextMessages = recentMessages.some(
-      (message) => message.id === sourceMessage.id,
+      (message) => message.id === sourceMessageId,
     )
       ? recentMessages
       : [
@@ -304,56 +311,32 @@ export async function POST(request: NextRequest) {
         projectId,
       });
 
-    const response =
-      await qwenDurableFetch(
-        "/api/chat",
-        {
-          model: QWEN_CLUSTER_MODEL,
-          stream: false,
-          think: false,
-          messages: [
-            {
-              role: "system",
-              content: extractionSystemPrompt(),
-            },
-            {
-              role: "user",
-              content: buildExtractionUserPrompt({
-                sourceMessage,
-                contextMessages,
-                entityNames:
-                  existingEntities.map(
-                    (entity) => entity.name,
-                  ),
-              }),
-            },
-          ],
-          options: {
-            temperature: 0.1,
-            top_p: 0.85,
-            repeat_penalty: 1.05,
-            num_predict: 1400,
-          },
-        },
-        {
-          timeoutMs: 120_000,
-          ownerKey: user.ownerKey,
-          requestKind: "story-creator-extract",
-        },
-      );
 
-    const raw = await response.text();
-    const payload = raw ? JSON.parse(raw) : null;
-    const text = readMessageContent(payload);
+    if (!openAIEnabled()) {
+      throw new Error("OpenAI Story extraction is unavailable.");
+    }
 
-    if (!response.ok || !text.trim()) {
-      throw new Error(
-        String(
-          (payload && (payload as any).error) ||
-            raw ||
-            "Story extractor did not return content.",
+    const aiResult = await createOpenAIText({
+      ownerKey: user.ownerKey,
+      projectId,
+      useCase: "story-helper",
+      model: openAIModels().story,
+      instructions: extractionSystemPrompt(),
+      input: buildExtractionUserPrompt({
+        sourceMessage,
+        contextMessages,
+        entityNames: existingEntities.map(
+          (entity) => entity.name,
         ),
-      );
+      }),
+      maxOutputTokens: paidAuthorization.maxOutputTokens,
+      timeoutMs: 120000,
+    });
+
+    const text = aiResult.text;
+
+    if (!text?.trim()) {
+      throw new Error("OpenAI Story extraction returned no content.");
     }
 
     const extracted =
@@ -374,12 +357,33 @@ export async function POST(request: NextRequest) {
         entities: normalized.entities,
         facts: normalized.facts,
         openQuestions: normalized.openQuestions,
+        autoCanonizeNonconflicting: true,
       });
+
+    const factsSaved = Number(result.factsAutoSaved || 0);
+    const conflictsFound = Number(result.conflictsCreated || 0) +
+      Number(result.conflictsExisting || 0);
+    const messagesRemaining = Math.max(0, unreviewedMessages.length - reviewMessages.length);
+    recordStoryMemoryReview({
+      ownerKey: user.ownerKey,
+      projectId,
+      throughMessageId: sourceMessageId,
+      messageIds: reviewMessages.map((message) => message.id),
+      factsSaved,
+      conflictsFound,
+    });
 
     return NextResponse.json(
       {
         ok: true,
         ...result,
+        messagesReviewed: reviewMessages.length,
+        messagesRemaining,
+        message: messagesRemaining
+          ? `Story details updated. ${factsSaved} details saved. ${conflictsFound} conflicts need your attention. ${messagesRemaining} older messages remain for another authorized review.`
+          : conflictsFound
+          ? `Story details updated. ${factsSaved} details saved. ${conflictsFound} conflicts need your attention.`
+          : `Story details updated. ${factsSaved} details saved.`,
       },
       {
         status: 201,

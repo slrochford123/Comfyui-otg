@@ -2,11 +2,14 @@
 
 import {
   useEffect,
-  useMemo,
   useRef,
   useState,
   type RefObject,
 } from "react";
+
+import SpeechInputButton from "../SpeechInputButton";
+import type { StoryVisualDirectorAction } from "@/lib/storyCreator/visualActions";
+import { StoryDirectorVisualCard } from "./StoryDirectorVisualCard";
 
 type StoryMessage = {
   id: string;
@@ -22,6 +25,9 @@ type StoryOpenQuestion = {
 };
 
 type Props = {
+  projectId: string;
+  projectTitle: string;
+  vocabularyKeywords: string[];
   storyMessages: StoryMessage[];
   messagesLoading: boolean;
   chatBusy: boolean;
@@ -32,48 +38,19 @@ type Props = {
   extractionError: string;
   extractionNotice: string;
   extractionSourceMessageId: string;
+  storyUsage: { costUsd: number; requestCount: number; status: "actual" | "partial" | "unavailable" };
   openQuestions: StoryOpenQuestion[];
   openQuestionsLoading: boolean;
   openQuestionsError: string;
   onDraftChange: (value: string) => void;
   onSend: () => void;
   onExtract: (sourceMessageId: string) => void;
+  visualAction: StoryVisualDirectorAction | null;
+  visualActionError: string;
 };
-
-type RecorderState =
-  | "idle"
-  | "recording"
-  | "transcribing"
-  | "error";
 
 const STORY_DIRECTOR_AUTO_SPEAK_KEY =
   "otg.storyCreator.autoSpeakResponses";
-
-const supportedAudioTypes = [
-  "audio/webm;codecs=opus",
-  "audio/webm",
-  "audio/mp4",
-  "audio/mpeg",
-  "audio/ogg;codecs=opus",
-  "audio/ogg",
-] as const;
-
-function preferredAudioMimeType() {
-  if (typeof MediaRecorder === "undefined") return "";
-
-  return (
-    supportedAudioTypes.find((type) =>
-      MediaRecorder.isTypeSupported(type),
-    ) || ""
-  );
-}
-
-function transcriptFileExtension(mimeType: string) {
-  if (mimeType.includes("mp4")) return "m4a";
-  if (mimeType.includes("mpeg")) return "mp3";
-  if (mimeType.includes("ogg")) return "ogg";
-  return "webm";
-}
 
 function mergeTranscriptDraft(current: string, transcript: string) {
   const cleanTranscript = transcript.replace(/\s+/g, " ").trim();
@@ -101,22 +78,10 @@ export function normalizeStoryDirectorSpeechText(value: string) {
     .trim();
 }
 
-const reservedPanels = [
-  {
-    title: "Extracted Story Information",
-    body: "Coming in the next Story Creator V2 phase.",
-  },
-  {
-    title: "Open Questions",
-    body: "Future story gaps and decisions will collect here.",
-  },
-  {
-    title: "Suggestions",
-    body: "Future Story Director suggestions will stay separate from canon.",
-  },
-] as const;
-
 export function IdeasTab({
+  projectId,
+  projectTitle,
+  vocabularyKeywords,
   storyMessages,
   messagesLoading,
   chatBusy,
@@ -127,19 +92,17 @@ export function IdeasTab({
   extractionError,
   extractionNotice,
   extractionSourceMessageId,
+  storyUsage,
   openQuestions,
   openQuestionsLoading,
   openQuestionsError,
   onDraftChange,
   onSend,
   onExtract,
+  visualAction,
+  visualActionError,
 }: Props) {
-  const [recorderState, setRecorderState] =
-    useState<RecorderState>("idle");
-  const [recorderError, setRecorderError] = useState("");
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const recordedChunksRef = useRef<BlobPart[]>([]);
+  const [recorderStatus, setRecorderStatus] = useState("");
 
   const [autoSpeakResponses, setAutoSpeakResponses] =
     useState(false);
@@ -148,14 +111,6 @@ export function IdeasTab({
   const knownMessageIdsRef = useRef<Set<string> | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(
     null,
-  );
-
-  const canRecord = useMemo(
-    () =>
-      typeof navigator !== "undefined" &&
-      Boolean(navigator.mediaDevices?.getUserMedia) &&
-      typeof MediaRecorder !== "undefined",
-    [],
   );
 
   useEffect(() => {
@@ -173,7 +128,6 @@ export function IdeasTab({
   useEffect(() => {
     return () => {
       stopPlayback();
-      cleanupRecorder();
     };
   }, []);
 
@@ -204,140 +158,6 @@ export function IdeasTab({
       automatic: true,
     });
   }, [autoSpeakResponses, storyMessages]);
-
-  function cleanupRecorder() {
-    mediaRecorderRef.current = null;
-    recordedChunksRef.current = [];
-    mediaStreamRef.current?.getTracks().forEach((track) =>
-      track.stop(),
-    );
-    mediaStreamRef.current = null;
-  }
-
-  async function transcribeAudio(blob: Blob, mimeType: string) {
-    const formData = new FormData();
-    const extension = transcriptFileExtension(mimeType);
-    formData.append(
-      "audio",
-      blob,
-      `story-director-microphone.${extension}`,
-    );
-
-    const response = await fetch("/api/whisper/transcribe", {
-      method: "POST",
-      cache: "no-store",
-      credentials: "include",
-      body: formData,
-    });
-
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(
-        typeof data?.error === "string" && data.error.trim()
-          ? data.error
-          : "Could not transcribe microphone audio.",
-      );
-    }
-
-    const transcript = String(
-      data?.transcript || data?.text || "",
-    ).trim();
-    if (!transcript) {
-      throw new Error("Whisper returned an empty transcript.");
-    }
-
-    onDraftChange(mergeTranscriptDraft(draft, transcript));
-  }
-
-  async function startRecording() {
-    if (
-      recorderState === "recording" ||
-      recorderState === "transcribing"
-    ) {
-      return;
-    }
-
-    if (!canRecord) {
-      setRecorderState("error");
-      setRecorderError(
-        "This browser does not support microphone recording.",
-      );
-      return;
-    }
-
-    try {
-      setRecorderError("");
-      const stream =
-        await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        });
-      const mimeType = preferredAudioMimeType();
-      const recorder = new MediaRecorder(
-        stream,
-        mimeType ? { mimeType } : undefined,
-      );
-
-      recordedChunksRef.current = [];
-      mediaStreamRef.current = stream;
-      mediaRecorderRef.current = recorder;
-
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          recordedChunksRef.current.push(event.data);
-        }
-      };
-
-      recorder.onstop = () => {
-        const chunks = recordedChunksRef.current;
-        const finalMimeType =
-          recorder.mimeType || mimeType || "audio/webm";
-        const blob = new Blob(chunks, {
-          type: finalMimeType,
-        });
-        cleanupRecorder();
-
-        if (!blob.size) {
-          setRecorderState("error");
-          setRecorderError("No microphone audio was captured.");
-          return;
-        }
-
-        setRecorderState("transcribing");
-        void transcribeAudio(blob, finalMimeType)
-          .then(() => {
-            setRecorderState("idle");
-            setRecorderError("");
-          })
-          .catch((error) => {
-            setRecorderState("error");
-            setRecorderError(
-              error instanceof Error
-                ? error.message
-                : "Could not transcribe microphone audio.",
-            );
-          });
-      };
-
-      recorder.start();
-      setRecorderState("recording");
-    } catch (error) {
-      cleanupRecorder();
-      setRecorderState("error");
-      setRecorderError(
-        error instanceof Error
-          ? error.message
-          : "Microphone permission was denied or unavailable.",
-      );
-    }
-  }
-
-  function stopRecording() {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state !== "recording") {
-      return;
-    }
-    recorder.stop();
-  }
 
   function setAutoSpeak(value: boolean) {
     setAutoSpeakResponses(value);
@@ -371,7 +191,7 @@ export function IdeasTab({
       !("speechSynthesis" in window)
     ) {
       if (!options.automatic) {
-        setRecorderError(
+         setRecorderStatus(
           "This browser does not support read-aloud playback.",
         );
       }
@@ -407,7 +227,7 @@ export function IdeasTab({
       utteranceRef.current = null;
       setSpeakingMessageId("");
       if (!options.automatic) {
-        setRecorderError("Could not start read-aloud playback.");
+         setRecorderStatus("Could not start read-aloud playback.");
       }
     }
   }
@@ -417,7 +237,7 @@ export function IdeasTab({
       <section className="flex min-h-[620px] min-w-0 flex-col rounded-[24px] border border-cyan-300/15 bg-black/40">
         <div className="border-b border-white/10 p-5">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200/60">
-            Ideas
+            Story Director
           </p>
 
           <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
@@ -445,9 +265,13 @@ export function IdeasTab({
           </div>
 
           <p className="mt-2 text-xs leading-5 text-white/45">
-            Brainstorm and develop the story here. This keeps the
-            existing Story Helper route, saved message history, send
-            lock, loading state, error state, and project scoping.
+            Talk naturally about the story, characters, scenes, or
+            production. Your conversation stays with this project.
+          </p>
+          <p className="mt-2 text-xs font-bold text-cyan-100/55">
+            Story AI Usage: {storyUsage.status === "unavailable"
+              ? "Unavailable"
+              : `$${storyUsage.costUsd.toFixed(storyUsage.costUsd > 0 && storyUsage.costUsd < 0.01 ? 6 : 2)}${storyUsage.status === "partial" ? " (project-attributed only)" : ""}`}
           </p>
         </div>
 
@@ -520,6 +344,14 @@ export function IdeasTab({
           <div ref={chatEndRef} />
         </div>
 
+        {visualAction ? <StoryDirectorVisualCard key={[visualAction.action, visualAction.assetId || "new", visualAction.sourceVersionId || "source", visualAction.displayVersionId || "pending", visualAction.prompt].join(":")} projectId={projectId} action={visualAction} onChange={(value) => onDraftChange(value)} /> : null}
+
+        {visualActionError ? (
+          <div className="mx-4 mb-4 rounded-[14px] border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs leading-5 text-red-100/80">
+            {visualActionError}
+          </div>
+        ) : null}
+
         <div className="border-t border-white/10 p-4">
           {chatError ? (
             <div className="mb-3 rounded-[14px] border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs leading-5 text-red-100/80">
@@ -527,9 +359,9 @@ export function IdeasTab({
             </div>
           ) : null}
 
-          {recorderError ? (
-            <div className="mb-3 rounded-[14px] border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs leading-5 text-red-100/80">
-              {recorderError}
+          {recorderStatus ? (
+            <div className="mb-3 rounded-[14px] border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs leading-5 text-cyan-100/80">
+              {recorderStatus}
             </div>
           ) : null}
 
@@ -553,35 +385,20 @@ export function IdeasTab({
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                disabled={
-                  chatBusy ||
-                  recorderState === "recording" ||
-                  recorderState === "transcribing"
-                }
-                onClick={() => void startRecording()}
+              <SpeechInputButton
+                label="Record Story Director voice note"
+                disabled={chatBusy}
                 className="rounded-[14px] border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-black uppercase tracking-[0.12em] text-white/70 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Microphone
-              </button>
-
-              {recorderState === "recording" ? (
-                <button
-                  type="button"
-                  onClick={stopRecording}
-                  className="rounded-[14px] border border-red-300/25 bg-red-400/10 px-3 py-2 text-xs font-black uppercase tracking-[0.12em] text-red-50"
-                >
-                  Stop
-                </button>
-              ) : null}
-
+                projectId={projectId}
+                context={`Story Creator project "${projectTitle}", Story Bible canon, active character names, worldbuilding, dialogue, scenes, screenplay, SLR Studios.`}
+                vocabularyKeywords={vocabularyKeywords}
+                onStatus={setRecorderStatus}
+                onTranscript={(text) =>
+                  onDraftChange(mergeTranscriptDraft(draft, text))
+                }
+              />
               <span className="text-[11px] text-white/35">
-                {recorderState === "recording"
-                  ? "Recording..."
-                  : recorderState === "transcribing"
-                    ? "Transcribing..."
-                    : "Ctrl/Cmd + Enter to send"}
+                Ctrl/Cmd + Enter to send
               </span>
             </div>
 
@@ -600,17 +417,16 @@ export function IdeasTab({
       <aside className="min-w-0 space-y-4">
         <section className="rounded-[24px] border border-cyan-300/15 bg-cyan-300/[0.04] p-5">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-100/60">
-            Extracted Story Information
+            Story Memory
           </p>
 
           <h3 className="mt-2 text-lg font-black text-white">
-            Send To Bible Suggestions
+            Review Story Details
           </h3>
 
           <p className="mt-2 text-sm leading-6 text-white/55">
-            Extract characters, locations, rules, tone, and open
-            questions from a specific saved message. Extracted facts
-            enter the Bible as suggestions or unknowns, never canon.
+            Save new nonconflicting details to the Canon Library and
+            set aside genuine contradictions for your decision.
           </p>
 
           {extractionError ? (
@@ -639,8 +455,8 @@ export function IdeasTab({
             {extractionBusy
               ? "Extracting..."
               : extractionError
-                ? "Retry Extraction"
-                : "Extract Story Info"}
+                ? "Try Again"
+                : "Review Story Details"}
           </button>
         </section>
 
@@ -688,26 +504,6 @@ export function IdeasTab({
           )}
         </section>
 
-        {reservedPanels
-          .filter((panel) => panel.title === "Suggestions")
-          .map((panel) => (
-            <section
-              key={panel.title}
-              className="rounded-[24px] border border-white/10 bg-black/35 p-5"
-            >
-              <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
-                Reserved
-              </p>
-
-              <h3 className="mt-2 text-lg font-black text-white">
-                {panel.title}
-              </h3>
-
-              <p className="mt-2 text-sm leading-6 text-white/55">
-                {panel.body}
-              </p>
-            </section>
-          ))}
       </aside>
     </div>
   );

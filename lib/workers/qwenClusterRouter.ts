@@ -87,6 +87,19 @@ async function tryShawn(owner: string, deps: RouterDependencies): Promise<QwenRo
 
   if (!occupancy.available && !qwenResidentIsReusable) return null;
 
+  // A stale resident marker is not proof that the Qwen HTTP endpoint is
+  // accepting work. Probe it before leasing the 3090 lane so an unreachable
+  // endpoint falls through to the configured SLR/5060 fallback.
+  try {
+    const probe = await fetch(`${SHAWN_QWEN_URL}/api/tags`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (!probe.ok) return null;
+  } catch {
+    return null;
+  }
+
   const result = acquireClusterGpuLease({
     lockId: SHAWN_GPU_LOCK_ID,
     ownerId: owner,
@@ -261,9 +274,17 @@ async function ensureComfyLaneFreeForQwen(node: QwenClusterNode) {
     10_000,
   );
 
-  if (!freeResponse.ok) {
+  if (!freeResponse.ok && freeResponse.status !== 404) {
     throw new QwenClusterBusyError(`${node} ComfyUI /free failed before Enhance Prompt.`);
   }
+
+  /*
+   * Some configured ComfyUI builds do not expose /free.  An empty queue is
+   * still a valid hand-off boundary for Qwen: the Ollama keep_alive=0 unload
+   * below remains the authoritative model-release step.  Treat only a
+   * missing endpoint as a compatibility case; preserve failures from an
+   * endpoint that exists but rejected the release request.
+   */
 }
 
 async function unloadQwenModel(baseUrl: string, model: string) {
@@ -334,34 +355,10 @@ export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payl
     throw new DOMException("Qwen cluster request timed out before model execution could begin.", "AbortError");
   }
 
-  /*
-   * OTG_QWEN_DURABLE_QUEUE_V1
-   *
-   * Record the selected physical lane before the Ollama request
-   * begins. If persistence fails here, no inference request has
-   * been sent and the GPU lease can be safely released.
-   */
-  if (options.onRouteAcquired) {
-    try {
-      await options.onRouteAcquired({
-        node:
-          route.node,
-        baseUrl:
-          route.baseUrl,
-        contextCap:
-          route.contextCap,
-      });
-    } catch (error) {
-      releaseClusterGpuLease(
-        route.lease,
-      );
-
-      throw error;
-    }
-  }
   const timer = setTimeout(() => controller.abort(), remainingTimeoutMs);
   let responseCompleted = false;
   let releaseLeaseAfterFailure = false;
+  let requestMayHaveStarted = false;
 
   try {
     const routedModel = String(options.modelByNode?.[route.node] || options.model || QWEN_CLUSTER_MODEL).trim() || QWEN_CLUSTER_MODEL;
@@ -387,6 +384,10 @@ export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payl
       options: routedOptions,
     };
     delete (routedPayload as Record<string, unknown>)._otgForceModelUnload;
+    // Admission (including Comfy-busy refusal) must finish before crossing
+    // the durable running boundary. A pre-execution refusal can then requeue.
+    await options.onRouteAcquired?.({node:route.node,baseUrl:route.baseUrl,contextCap:route.contextCap});
+    requestMayHaveStarted = true;
     const response = await fetch(`${route.baseUrl}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -408,7 +409,7 @@ export async function qwenClusterFetch(path: "/api/generate" | "/api/chat", payl
     // Ollama inference server, so retaining the GPU lease provides no safety.
     // Abort/socket failures remain ambiguous and retain the bounded lease.
     releaseLeaseAfterFailure =
-      leaseCanReleaseImmediatelyAfterTransportFailure(error);
+      !requestMayHaveStarted || leaseCanReleaseImmediatelyAfterTransportFailure(error);
     throw error;
   } finally {
     clearTimeout(timer);

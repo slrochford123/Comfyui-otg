@@ -20,6 +20,7 @@ import {
 
 import {
   hasValidWorkerToken,
+  requireWorkerToken,
 } from "@/lib/jobs/workerAuth";
 
 import {
@@ -67,6 +68,8 @@ export async function POST(
   req: NextRequest,
 ) {
   try {
+    const auth = requireWorkerToken(req);
+    if (!auth.ok) return jsonError(auth.error, auth.status);
     const tokenWorker =
       hasValidWorkerToken(req);
 

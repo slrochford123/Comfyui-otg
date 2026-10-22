@@ -5,7 +5,9 @@ export type StoryCreatorStage =
   | "bible"
   | "design"
   | "write"
-  | "produce";
+  | "audio"
+  | "produce"
+  | "movie";
 
 export const STORY_CREATOR_STAGES = [
   { id: "ideas", label: "Ideas" },

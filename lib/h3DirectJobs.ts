@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
+import { applyH3VideoEditGraph, prepareH3VideoEditSource, finalizeH3VideoEdit, h3VideoEditFrameCount } from "@/lib/h3VideoEdit";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { cancelComfyPrompt } from "@/lib/comfySafeCancel";
 import { clearGalleryListCache, safeGalleryName, writeMetaForFile, type GallerySource } from "@/lib/gallery";
 import type { OwnerContext } from "@/lib/ownerKey";
 import { deviceGalleryDir, ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment, userGalleryDir } from "@/lib/paths";
@@ -53,6 +55,7 @@ export type H3DirectReference = {
 };
 
 export type H3DirectJobInput = {
+  videoEdit?: { requestId: string; source: H3DirectReference; durationSeconds: number; width: number; height: number };
   mode: ProductionV2H3Mode;
   quality: H3Quality;
   orientation: H3Orientation;
@@ -167,7 +170,7 @@ export async function getLatestH3DirectJob(ownerKey: string) {
 }
 
 function isRunnableH3DirectStatus(status: H3DirectJob["status"]) {
-  return ["queued", "preparing", "submitted", "running", "finalizing"].includes(status);
+  return ["queued", "preparing", "submitted", "running", "finalizing", "canceling"].includes(status);
 }
 
 export async function cancelH3DirectJob(ownerKey: string, id: string) {
@@ -179,11 +182,18 @@ export async function cancelH3DirectJob(ownerKey: string, id: string) {
     statusMessage: "Canceling...",
     error: null,
   });
-  if (current.backend) {
-    await fetch(`${H3_BACKEND_PROFILES[current.backend].baseUrl}/interrupt`, {
-      method: "POST",
-      cache: "no-store",
-    }).catch(() => undefined);
+  // A submission may be in flight. Its owner must record the accepted prompt
+  // before a terminal cancellation can be claimed.
+  if (!current.promptId && current.status === "preparing") return canceling;
+  if (current.backend && current.promptId) {
+    try {
+      const result = await cancelComfyPrompt(H3_BACKEND_PROFILES[current.backend].baseUrl, current.promptId);
+      if (result.status === "canceling") return canceling;
+      if (result.status === "completed") return updateJob(ownerKey, id, {status:"running",statusMessage:"Generation completed before cancellation; collecting result."});
+    } catch (error) {
+      await updateJob(ownerKey, id, {status:current.status,statusMessage:error instanceof Error ? error.message : "Cancellation could not be confirmed."});
+      throw error;
+    }
   }
   return updateJob(ownerKey, id, {
     status: "canceled",
@@ -267,7 +277,7 @@ function gallerySourceForJob(job: H3DirectJob): GallerySource {
 
 export function getH3DirectGalleryFileName(job: H3DirectJob) {
   return safeGalleryName(
-    `H3_${job.input.mode.replace(/^h3-/, "")}_${job.input.durationSeconds}s_${job.input.quality}_${job.input.orientation}_${job.id}.mp4`,
+    `H3_${job.input.videoEdit ? "video-edit" : job.input.mode.replace(/^h3-/, "")}_${job.input.videoEdit?.durationSeconds ?? job.input.durationSeconds}s_${job.input.quality}_${job.input.orientation}_${job.id}.mp4`,
   );
 }
 
@@ -302,22 +312,22 @@ export async function saveH3DirectJobToGallery(
     writeMetaForFile(targetPath, {
       originalName: savedName,
       renamedName: savedName,
-      sourceType: "h3-direct-generation",
+      sourceType: job.input.videoEdit ? "h3-video-edit" : "h3-direct-generation",
       requestKind: "h3-direct-auto-gallery",
       mediaCategory: "generated-video",
       positivePrompt: job.input.prompt,
       workflowId: job.workflowId,
-      workflowTitle: "MiniMax H3 Direct Generation",
+      workflowTitle: job.input.videoEdit ? "MiniMax H3 Video Edit" : "MiniMax H3 Direct Generation",
       sourcePromptId: job.promptId,
       submitPayload: {
         requestKind: "h3-direct-auto-gallery",
         jobId: job.id,
-        mode: job.input.mode,
+        mode: job.input.videoEdit ? "h3-video-to-video" : job.input.mode,
         quality: job.input.quality,
         orientation: normalizeH3Orientation(job.input.orientation),
-        width: dimensions.width,
-        height: dimensions.height,
-        durationSeconds: job.input.durationSeconds,
+        width: job.input.videoEdit?.width ?? dimensions.width,
+        height: job.input.videoEdit?.height ?? dimensions.height,
+        durationSeconds: job.input.videoEdit?.durationSeconds ?? job.input.durationSeconds,
         nativeFps: H3_RIFE_NATIVE_FPS,
         finalFps: h3FinalFpsForRife(job.input.rifeInterpolation60Fps),
         rifeInterpolation60Fps: job.input.rifeInterpolation60Fps === true,
@@ -407,7 +417,7 @@ async function execute(job: H3DirectJob) {
     const userLoraFilenames = optionalLoras.map((lora) => lora.filename);
     const probes = await Promise.all(
 
-      H3_BACKEND_PRIORITY.map((candidate) =>
+      H3_BACKEND_PRIORITY.filter(candidate => !job.input.videoEdit || candidate === "rtx3090").map((candidate) =>
 
         inspectH3BackendCompatibility(candidate, {
 
@@ -489,7 +499,21 @@ async function execute(job: H3DirectJob) {
       optionalLoras,
     });
 
+    if (job.input.videoEdit) {
+      const edit = job.input.videoEdit;
+      const prepared = await prepareH3VideoEditSource(edit.source.path, edit.durationSeconds, edit.width, edit.height);
+      const filename = await uploadReference(job, selectedBackend, { ...edit.source, path: prepared, name: "source-conditioned.mp4" }, "video", "v2v_source");
+      applyH3VideoEditGraph(built.graph, filename, edit.durationSeconds, edit.width, edit.height);
+      built.workflowId = "minimax-h3-fun-control-video-edit-native25-v2";
+      built.workflowFile = "lib/h3VideoEdit.ts";
+    }
+
     const clientId = `otg-h3-direct-${crypto.randomUUID()}`;
+    const beforeSubmission = await getH3DirectJob(job.ownerKey, job.id);
+    if (beforeSubmission?.status === "canceling" || beforeSubmission?.status === "canceled") {
+      await updateJob(job.ownerKey,job.id,{status:"canceled",statusMessage:"Canceled before backend submission",completedAt:new Date().toISOString()});
+      return;
+    }
     const submitted = await submitH3Prompt({
       backend: selectedBackend,
       graph: built.graph,
@@ -502,9 +526,10 @@ async function execute(job: H3DirectJob) {
     if (!submitted.accepted) throw new Error(submitted.error);
     backend = selectedBackend;
     promptId = submitted.promptId;
+    const cancelRequested = ["canceling","canceled"].includes((await getH3DirectJob(job.ownerKey,job.id))?.status || "");
     await updateJob(job.ownerKey, job.id, {
-      status: "submitted",
-      statusMessage: "Accepted by ComfyUI",
+      status: cancelRequested ? "canceling" : "submitted",
+      statusMessage: cancelRequested ? "Cancellation requested; verifying backend clearance" : "Accepted by ComfyUI",
       clientId,
       promptId,
       workflowId: built.workflowId,
@@ -517,7 +542,8 @@ async function execute(job: H3DirectJob) {
 
   for (;;) {
     const current = await getH3DirectJob(job.ownerKey, job.id);
-    if (current?.status === "canceling" || current?.status === "canceled") return;
+    if (current?.status === "canceled") return;
+    if (current?.status === "canceling") { await cancelH3DirectJob(job.ownerKey,job.id); await new Promise(r=>setTimeout(r,500)); continue; }
     const history = await getH3PromptHistory(backend, promptId);
     if (history.state === "failed") throw new Error("MiniMax H3 failed in ComfyUI. Review the ComfyUI history for the full node traceback.");
     if (history.state === "completed" && history.video) {
@@ -529,6 +555,7 @@ async function execute(job: H3DirectJob) {
         sceneId: job.id,
         generationJobId: job.id,
       });
+      if (job.input.videoEdit) outputPath = await finalizeH3VideoEdit(outputPath, job.input.videoEdit.durationSeconds);
       const rifeResult = await applyH3Rife60FpsFinalization({
         enabled: job.input.rifeInterpolation60Fps,
         backend,
@@ -602,10 +629,10 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
     id: job.id,
     status: job.status,
     statusMessage: job.statusMessage,
-    mode: job.input.mode,
+    mode: job.input.videoEdit ? "h3-video-to-video" : job.input.mode,
     quality: job.input.quality,
     orientation,
-    durationSeconds: job.input.durationSeconds,
+    durationSeconds: job.input.videoEdit?.durationSeconds ?? job.input.durationSeconds,
     nativeFps: H3_RIFE_NATIVE_FPS,
     finalFps: h3FinalFpsForRife(job.input.rifeInterpolation60Fps),
     rifeInterpolation60Fps: job.input.rifeInterpolation60Fps === true,
@@ -614,7 +641,7 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
     backendLabel: job.backend ? H3_BACKEND_PROFILES[job.backend].label : null,
     workflowId: job.workflowId,
     workflowFile: job.workflowFile,
-    nativeResolution: `${nativeDimensions.width}x${nativeDimensions.height}`,
+    nativeResolution: job.input.videoEdit ? `${job.input.videoEdit.width}x${job.input.videoEdit.height}` : `${nativeDimensions.width}x${nativeDimensions.height}`,
     etaSeconds: estimate.seconds,
     etaMinSeconds: estimate.minSeconds,
     etaMaxSeconds: estimate.maxSeconds,
@@ -641,6 +668,7 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
 }
 
 export function validateH3DirectInput(input: H3DirectJobInput) {
+  if (input.videoEdit) h3VideoEditFrameCount(input.videoEdit.durationSeconds);
   input.rifeInterpolation60Fps = normalizeH3RifeInterpolation60Fps(input.rifeInterpolation60Fps);
   if (!input.prompt.trim()) throw new Error("Enter a prompt before generating.");
   if (!H3_ORIENTATION_OPTIONS.includes(input.orientation)) {

@@ -19,38 +19,53 @@ function read(relativePath: string) {
 const ideas = read(
   "app/app/components/storyCreatorV2/IdeasTab.tsx",
 );
+const speechInput = read(
+  "app/app/components/SpeechInputButton.tsx",
+);
 
 describe("Story Creator V2 microphone and speaker contract", () => {
-  it("records microphone input through MediaRecorder and reuses the existing Whisper route", () => {
-    expect(ideas).toContain("navigator.mediaDevices.getUserMedia");
-    expect(ideas).toContain("new MediaRecorder");
-    expect(ideas).toContain("preferredAudioMimeType");
-    expect(ideas).toContain("MediaRecorder.isTypeSupported");
-    expect(ideas).toContain("/api/whisper/transcribe");
-    expect(ideas).toContain('formData.append(\n      "audio"');
-    expect(ideas).toContain('recorderState === "recording"');
-    expect(ideas).toContain('recorderState === "transcribing"');
-    expect(ideas).toContain("No microphone audio was captured.");
+  it("records microphone input through the shared OpenAI-first transcribe component", () => {
+    expect(ideas).toContain("SpeechInputButton");
+    expect(speechInput).toContain("navigator.mediaDevices.getUserMedia");
+    expect(speechInput).toContain("new MediaRecorder");
+    expect(speechInput).toContain("preferredAudioMimeType");
+    expect(speechInput).toContain("MediaRecorder.isTypeSupported");
+    expect(speechInput).toContain("/api/ollama-ai/transcribe");
+    expect(ideas).toContain("Story Bible canon");
+    expect(speechInput).toContain('body.set("audio"');
+    expect(speechInput).toContain("recorder.start(1000)");
+    expect(speechInput).toContain("recorder.requestData()");
+    expect(speechInput).toContain("Transcribe recording");
+    expect(speechInput).toContain("No microphone audio was captured.");
   });
 
   it("inserts transcript into the editable composer without auto-sending", () => {
     expect(ideas).toContain("mergeTranscriptDraft");
     expect(ideas).toContain("onDraftChange(mergeTranscriptDraft");
-    expect(ideas).toContain("draft, transcript");
+    expect(ideas).toContain("draft, text");
     expect(ideas).not.toContain("onSend(transcript");
     expect(ideas).not.toContain("void onSend");
-    expect(ideas).toContain("Microphone");
-    expect(ideas).toContain("Stop");
-    expect(ideas).toContain("Transcribing...");
+    expect(speechInput).toContain("Mic");
+    expect(speechInput).toContain("Stop Mic");
+    expect(speechInput).toContain("Transcribing...");
   });
 
   it("prevents double recording and handles permission failures nonfatally", () => {
-    expect(ideas).toContain('recorderState === "recording"');
-    expect(ideas).toContain('recorderState === "transcribing"');
-    expect(ideas).toContain("This browser does not support microphone recording.");
-    expect(ideas).toContain("Microphone permission was denied or unavailable.");
-    expect(ideas).toContain("cleanupRecorder");
-    expect(ideas).toContain("track.stop()");
+    expect(speechInput).toContain('state === "listening"');
+    expect(speechInput).toContain('state === "processing"');
+    expect(speechInput).toContain("This browser does not support microphone capture.");
+    expect(speechInput).toContain("Microphone access failed.");
+    expect(speechInput).toContain("stopTracks");
+    expect(speechInput).toContain("track.stop()");
+  });
+
+  it("keeps mobile recordings reviewable before transcription and sends diagnostics", () => {
+    expect(speechInput).toContain("<audio controls");
+    expect(speechInput).toContain('body.set("durationSeconds"');
+    expect(speechInput).toContain('body.set("chunkCount"');
+    expect(speechInput).toContain('body.set("clientMimeType"');
+    expect(speechInput).toContain("Raw transcript added. Review and edit it before submitting.");
+    expect(speechInput).not.toContain("onTranscript(text);\n          setState(\"idle\")");
   });
 
   it("adds assistant-only read-aloud with stop and speech normalization", () => {

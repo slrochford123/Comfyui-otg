@@ -5,6 +5,14 @@ import {
 import {
   qwenDurableFetch,
 } from "@/lib/workers/qwenDurableFetch";
+import {
+  createOpenAIText,
+  createOpenAITextStream,
+  openAIEnabled,
+  openAIModels,
+} from "@/lib/openai/provider";
+import { requireSessionUser } from "@/lib/sessionUser";
+import { buildStoryDirectorProjectContext } from "@/lib/storyCreator/context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -196,7 +204,11 @@ function buildGeneratePrompt(
   return lines.join("\n");
 }
 
-async function parseIncoming(req: NextRequest): Promise<{ messages: ChatMessage[]; images: string[] }> {
+async function parseIncoming(req: NextRequest): Promise<{
+  messages: ChatMessage[];
+  images: string[];
+  projectId: string;
+}> {
   const ct = req.headers.get("content-type") || "";
 
   if (ct.includes("multipart/form-data")) {
@@ -216,10 +228,18 @@ async function parseIncoming(req: NextRequest): Promise<{ messages: ChatMessage[
     const image = fd.get("image");
     if (image instanceof File && image.size > 0) {
       const buf = Buffer.from(await image.arrayBuffer());
-      return { messages, images: [buf.toString("base64")] };
+      return {
+        messages,
+        images: [buf.toString("base64")],
+        projectId: String(fd.get("projectId") || "").trim(),
+      };
     }
 
-    return { messages, images: [] };
+    return {
+      messages,
+      images: [],
+      projectId: String(fd.get("projectId") || "").trim(),
+    };
   }
 
   const body = await req.json().catch(() => null);
@@ -238,7 +258,11 @@ async function parseIncoming(req: NextRequest): Promise<{ messages: ChatMessage[
       ? [imageB64.trim()]
       : [];
 
-  return { messages, images };
+  const projectId = body && typeof body === "object"
+    ? String((body as Record<string, unknown>).projectId || "").trim()
+    : "";
+
+  return { messages, images, projectId };
 }
 
 function shouldFallbackToGenerate(status: number, rawError: string) {
@@ -257,6 +281,46 @@ function readMessageContent(data: Record<string, unknown> | null) {
   }
 
   return "";
+}
+
+function buildOpenAIStoryInput(
+  messages: ChatMessage[],
+  images: string[],
+  profile: AiAssistanceProfile,
+) {
+  const normalized = normalizeMessages(
+    messages,
+    profile === "story-helper"
+      ? STORY_HELPER_MESSAGE_LIMIT
+      : DEFAULT_CHAT_MESSAGE_LIMIT,
+  );
+  const lastUserIndex = (() => {
+    for (let i = normalized.length - 1; i >= 0; i -= 1) {
+      if (normalized[i]?.role === "user") return i;
+    }
+    return -1;
+  })();
+
+  return normalized.map((message, index) => {
+    if (images.length && index === lastUserIndex && message.role === "user") {
+      return {
+        role: "user",
+        content: [
+          { type: "input_text", text: message.content },
+          ...images.slice(0, 1).map((image) => ({
+            type: "input_image",
+            image_url: `data:image/jpeg;base64,${image}`,
+            detail: "low",
+          })),
+        ],
+      };
+    }
+
+    return {
+      role: message.role === "assistant" ? "assistant" : "user",
+      content: message.content,
+    };
+  });
 }
 
 async function qwenFetchForChatRequest(
@@ -787,9 +851,70 @@ async function enforceStoryHelperCompliance(
   return draft;
 }
 
+function storyDirectorStreamResponse(input: {
+  events: AsyncGenerator<
+    | { type: "delta"; delta: string }
+    | { type: "done"; text: string; usage: Record<string, number> }
+  >;
+  model: string;
+  storyContextCounts?: Record<string, number>;
+  storyHelperGuard?: StoryHelperGuardMode | null;
+}) {
+  const encoder = new TextEncoder();
+  const iterator = input.events[Symbol.asyncIterator]();
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        while (true) {
+          const next = await iterator.next();
+          if (next.done) break;
+          if (next.value.type === "delta") {
+            controller.enqueue(encoder.encode(`${JSON.stringify(next.value)}\n`));
+            continue;
+          }
+          const text = cleanOutput(next.value.text);
+          if (!text) throw new Error("OpenAI returned an empty Story Creator reply.");
+          controller.enqueue(encoder.encode(`${JSON.stringify({
+            type: "done",
+            text,
+            usage: next.value.usage,
+            model: input.model,
+            provider: "openai",
+            cpuOnly: true,
+            ...(input.storyContextCounts
+              ? { storyContextCounts: input.storyContextCounts }
+              : {}),
+            ...(input.storyHelperGuard
+              ? { storyHelperGuard: input.storyHelperGuard }
+              : {}),
+          })}\n`));
+        }
+      } catch {
+        controller.enqueue(encoder.encode(`${JSON.stringify({
+          type: "error",
+          error: "Story Director streaming was interrupted. Please retry.",
+        })}\n`));
+      } finally {
+        controller.close();
+      }
+    },
+    async cancel() {
+      await iterator.return?.(undefined);
+    },
+  });
+
+  return new Response(body, {
+    headers: {
+      "Cache-Control": "no-store",
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { messages, images } = await parseIncoming(req);
+    const { messages, images, projectId } = await parseIncoming(req);
     if (!messages.length) {
       return NextResponse.json({ error: "Missing messages" }, { status: 400 });
     }
@@ -811,6 +936,12 @@ export async function POST(req: NextRequest) {
           ? "describe"
           : "default";
 
+    const storyCreatorRequest =
+      aiAssistanceProfile === "story-helper" &&
+      req.headers.get("x-otg-story-creator") === "1";
+    const storyCreatorStreaming =
+      storyCreatorRequest &&
+      req.headers.get("x-otg-stream") === "1";
     const model = aiAssistance
       ? AI_ASSISTANCE_MODEL
       : QWEN_CLUSTER_MODEL;
@@ -821,6 +952,167 @@ export async function POST(req: NextRequest) {
         : null;
 
     const timeoutMs = parsePositiveInt(process.env.OLLAMA_CHAT_TIMEOUT_MS, images.length ? 180000 : 90000);
+
+    if (storyCreatorRequest && !openAIEnabled()) {
+      return NextResponse.json(
+        {
+          error: "OpenAI Story Creator is unavailable. Please retry.",
+          code: "STORY_OPENAI_UNAVAILABLE",
+        },
+        { status: 503 }
+      );
+    }
+    if (
+      aiAssistanceProfile === "story-helper" &&
+      openAIEnabled()
+    ) {
+      try {
+        const user = await requireSessionUser(req);
+        const openAIModel = openAIModels().story;
+        const latestUserMessage = [...messages]
+          .reverse()
+          .find((message) => message.role === "user")
+          ?.content || "";
+        const projectContext = storyCreatorRequest && projectId
+          ? buildStoryDirectorProjectContext({
+              ownerKey: user.ownerKey,
+              projectId,
+              query: latestUserMessage,
+            })
+          : null;
+        const instructions = storyCreatorRequest
+          ? [
+              buildSystemMessage("story-helper").content,
+              "STORY CREATOR LISTENING MODE:",
+              "The user owns the story. Listen first.",
+              "When the latest user message is narration, a story fact, an event, or a correction, acknowledge briefly.",
+              "Begin the reply with 'Locked in.'",
+              "Summarize only the important details newly established by the user.",
+              "Usually respond in one or two short sentences.",
+              "Do not invent details, suggest plot twists, offer opinions, or ask unsolicited questions.",
+              "Do not add optional ideas while the user is narrating.",
+              "When the user explicitly asks for opinions, brainstorming, suggestions, writing, or creative help, answer that request thoughtfully.",
+              "Clearly distinguish any new suggestions from established facts.",
+              "Do not treat a question spoken by a character inside narrated dialogue as a request for your advice.",
+              "If the intent is uncertain, prefer listening and acknowledgment.",
+              "The user's narration is saved as a project message before this request. Acknowledgment does not mean formal Story Bible canon approval.",
+              "These listening rules override earlier general invitations to brainstorm.",
+              projectContext?.context
+                ? [
+                    "PERSISTENT PROJECT CONTEXT:",
+                    projectContext.context,
+                    "Use APPROVED CANON as authoritative.",
+                    "Never present PROPOSED DETAILS or UNKNOWN DETAILS as canon.",
+                  ].join("\n")
+                : "No persistent project context was supplied.",
+            ].join(" ")
+          : buildSystemMessage("story-helper").content;
+        const input = buildOpenAIStoryInput(
+          messages,
+          images,
+          aiAssistanceProfile,
+        );
+
+        if (storyCreatorStreaming) {
+          const events = await createOpenAITextStream({
+            ownerKey: user.ownerKey,
+            projectId,
+            useCase: "story-helper",
+            model: openAIModel,
+            instructions,
+            input,
+            maxOutputTokens: AI_ASSISTANCE_NUM_PREDICT,
+            timeoutMs,
+            signal: req.signal,
+          });
+          return storyDirectorStreamResponse({
+            events,
+            model: openAIModel,
+            storyContextCounts: projectContext?.counts,
+            storyHelperGuard: storyHelperGuardMode,
+          });
+        }
+
+        const openAIResponse = await createOpenAIText({
+          ownerKey: user.ownerKey,
+          projectId: storyCreatorRequest ? projectId : undefined,
+          useCase: "story-helper",
+          model: openAIModel,
+          instructions,
+          input,
+          maxOutputTokens: AI_ASSISTANCE_NUM_PREDICT,
+          timeoutMs,
+        });
+        const message = cleanOutput(openAIResponse.text);
+        if (message) {
+          return NextResponse.json(
+            {
+              message,
+              model: openAIModel,
+              provider: "openai",
+              cpuOnly: true,
+              usage: openAIResponse.usage,
+              ...(projectContext
+                ? { storyContextCounts: projectContext.counts }
+                : {}),
+              ...(storyHelperGuardMode
+                ? { storyHelperGuard: storyHelperGuardMode }
+                : {}),
+            },
+            { headers: { "Cache-Control": "no-store" } },
+          );
+        }
+        if (storyCreatorRequest) {
+          return NextResponse.json(
+            {
+              error: "OpenAI returned an empty Story Creator reply.",
+              code: "STORY_OPENAI_EMPTY",
+            },
+            { status: 502 }
+          );
+        }
+      } catch (error) {
+        const status =
+          typeof error === "object" &&
+          error &&
+          "status" in error
+            ? Number((error as { status?: unknown }).status) || 0
+            : 0;
+
+        if ([401, 403, 404, 429].includes(status)) {
+          const message =
+            status === 401
+              ? "Unauthorized"
+              : error instanceof Error
+                ? error.message
+                : "Story Creator request was denied.";
+          return NextResponse.json(
+            {
+              error: message,
+              code:
+                status === 404
+                  ? "STORY_PROJECT_NOT_FOUND"
+                  : status === 429
+                    ? "STORY_OPENAI_LIMIT"
+                    : "STORY_UNAUTHORIZED",
+            },
+            { status },
+          );
+        }
+
+        if (storyCreatorRequest) {
+          return NextResponse.json(
+            {
+              error: "OpenAI Story Creator could not respond. Please retry.",
+              code: "STORY_OPENAI_UNAVAILABLE",
+            },
+            { status: 502 }
+          );
+        }
+        // Unrelated legacy profiles retain their existing routing.
+      }
+    }
+
     const numThread = parsePositiveInt(process.env.OLLAMA_CHAT_NUM_THREAD || process.env.OLLAMA_ENHANCE_NUM_THREAD, 0);
     const keepAliveOff = truthy(process.env.OLLAMA_CHAT_KEEPALIVE_OFF) || truthy(process.env.OLLAMA_ENHANCE_KEEPALIVE_OFF);
 

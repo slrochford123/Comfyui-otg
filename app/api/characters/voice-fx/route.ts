@@ -1,6 +1,10 @@
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import {NextRequest} from "next/server";
+import {getOwnerContext,SessionInvalidError} from "@/lib/ownerKey";
+import {requireSessionUser} from "@/lib/sessionUser";
+import {GET as ownerMediaFile} from "@/app/api/file/route";
 
 export const runtime = "nodejs";
 
@@ -113,6 +117,7 @@ function runVoiceFx(args: {
 
 export async function POST(request: Request) {
   try {
+    const owner=await requireSessionUser(request).catch(()=>{throw new SessionInvalidError();});
     const body = await request.json().catch(() => null);
 
     if (!body) {
@@ -121,7 +126,7 @@ export async function POST(request: Request) {
 
     const characterId = safeSegment(body.characterId, "character");
     const candidateId = safeSegment(body.candidateId, "candidate");
-    const deviceId = safeSegment(request.headers.get("x-otg-device-id") || body.deviceId || DEFAULT_DEVICE_ID, DEFAULT_DEVICE_ID);
+    const deviceId = safeSegment(owner.ownerKey);
 
     const inputPath = String(body.inputPath || body.input_wav || "").trim();
 
@@ -136,6 +141,13 @@ export async function POST(request: Request) {
     const resolvedInputPath = path.isAbsolute(inputPath)
       ? path.resolve(inputPath)
       : path.resolve(DATA_ROOT, normalizedInputPath);
+
+    const checkUrl=new URL("/api/file",request.url);
+    checkUrl.searchParams.set("path",resolvedInputPath);
+    const authorized=await ownerMediaFile(new NextRequest(checkUrl,{headers:request.headers}));
+    if(!authorized.ok)return Response.json({ok:false,error:"Voice source not found."},{status:404});
+    await authorized.body?.cancel();
+    if(!/\.(wav|mp3|m4a|aac|ogg|flac|opus|webm)$/i.test(resolvedInputPath))return Response.json({ok:false,error:"An audio source is required."},{status:400});
 
     if (!(await fileExists(resolvedInputPath))) {
       return Response.json({ ok: false, error: "Input WAV does not exist.", inputPath: resolvedInputPath }, { status: 404 });
@@ -203,6 +215,7 @@ export async function POST(request: Request) {
       meta,
     });
   } catch (error: any) {
+    if(error instanceof SessionInvalidError)return Response.json({ok:false,error:"Unauthorized"},{status:401});
     return Response.json(
       {
         ok: false,

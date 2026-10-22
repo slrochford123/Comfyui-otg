@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { SessionInvalidError } from "@/lib/ownerKey";
+import { requireSessionUser } from "@/lib/sessionUser";
 
 type SwapEngine = "scail2" | "minimax-h3";
 
@@ -103,6 +105,9 @@ function buildMinimaxPrompt(sourceTitle: string, swaps: SwapMapping[]) {
 }
 
 export async function POST(request: NextRequest) {
+  try { await requireSessionUser(request); } catch {
+    return NextResponse.json({ok:false,error:"Unauthorized"},{status:401});
+  }
   const form = await request.formData();
   const engine = cleanEngine(form.get("engine"));
   const sourceTitle = cleanText(form.get("video_title"), "source video");

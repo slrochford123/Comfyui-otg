@@ -927,7 +927,7 @@ def process_job_orbitsheets(
             job_id,
             20,
             "generating_qwen21_card",
-            "Generating the six-view Qwen Image Edit 2.1 Character Card.",
+            "Generating the five-view Qwen Image Edit 2.1 Character Card.",
             result,
         )
 
@@ -989,7 +989,7 @@ def process_job_orbitsheets(
             job_id,
             78,
             "qwen21_card_ready",
-            "Qwen Image Edit 2.1 six-view Character Card rendered.",
+            "Qwen Image Edit 2.1 five-view Character Card rendered.",
             result,
         )
 

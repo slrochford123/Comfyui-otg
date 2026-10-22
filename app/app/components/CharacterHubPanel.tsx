@@ -3,6 +3,9 @@
 // OTG_CHARACTER_TAB_REWORK_CURRENT_STABLE_PHASE1
 
 import React from "react";
+import MossImageControls, { defaultMossSettings, type MossImageSettings } from "./MossImageControls";
+import { mossOutputShape } from "@/lib/images/mossImage";
+import MossGallerySaveButton from "./MossGallerySaveButton";
 import {
   TELEVISION_ANIME_STYLE_PRESETS,
   type TelevisionAnimeStyleId,
@@ -68,7 +71,8 @@ type CharacterModelId =
   | "krea-2"
   | "boogu"
   | "mage-flow"
-  | "qwen-image-2-1";
+  | "qwen-image-2-1"
+  | "moss-image-sft";
 
 const CHARACTER_CARD_EXPRESSIONS = [
   "neutral",
@@ -96,6 +100,7 @@ const CHARACTER_IMAGE_MODELS: Array<{
   label: string;
   workflowFile: string;
 }> = [
+  { id: "moss-image-sft", label: "MOSS-Image SFT (INT8)", workflowFile: "image_moss_image_sft_t2i.json" },
   {
     id: "ernie-image",
     label: "Ernie Image",
@@ -194,13 +199,12 @@ function GalleryCard({
       className="group relative min-h-[210px] overflow-hidden rounded-[28px] border border-sky-300/20 bg-[linear-gradient(145deg,rgba(14,32,48,0.94),rgba(5,10,18,0.98))] p-6 text-left transition hover:-translate-y-0.5 hover:border-sky-200/45 hover:bg-[linear-gradient(145deg,rgba(20,52,78,0.97),rgba(5,10,18,0.99))]"
     >
       <div
-        className={cn(
-          "mb-8 h-2 w-28 rounded-full shadow-[0_0_28px_rgba(125,211,252,0.22)]",
-          accent
-        )}
+        data-category-accent={accent}
+        className="mb-8 h-2 w-28 rounded-full"
+        style={{background:"var(--color-primary-foreground)"}}
       />
 
-      <div className="text-xs font-black uppercase tracking-[0.22em] text-sky-200/70">
+      <div className="text-xs font-black uppercase tracking-[0.22em]" style={{color:"var(--color-primary-foreground)"}}>
         {eyebrow}
       </div>
 
@@ -212,7 +216,7 @@ function GalleryCard({
         {description}
       </p>
 
-      <div className="mt-7 text-sm font-black text-sky-200">
+      <div className="mt-7 text-sm font-black" style={{color:"var(--color-primary-foreground)"}}>
         {status}
       </div>
     </button>
@@ -406,6 +410,7 @@ function CharacterCreateSetup({
   const [modelId, setModelId] =
     React.useState<CharacterModelId>("ernie-image");
   const [description, setDescription] = React.useState("");
+  const [mossSettings, setMossSettings] = React.useState(() => defaultMossSettings("character"));
   const [stylePresetId, setStylePresetId] =
     React.useState<CharacterStylePresetId>("cartoon");
   const [televisionAnimeStyleId, setTelevisionAnimeStyleId] =
@@ -696,6 +701,7 @@ function CharacterCreateSetup({
   const selectedModel =
     CHARACTER_IMAGE_MODELS.find((model) => model.id === modelId) ??
     CHARACTER_IMAGE_MODELS[0];
+  const characterOutput = modelId === "moss-image-sft" ? { width: mossSettings.width, height: mossSettings.height } : characterOutputForModel(selectedModel.id);
 
   const selectedStylePreset =
     CHARACTER_STYLE_PRESETS.find((preset) => preset.id === stylePresetId) ??
@@ -931,7 +937,7 @@ function CharacterCreateSetup({
       form.set("modelLabel", candidate.modelLabel);
       form.set("styleLabel", candidate.styleLabel);
       form.set("mode", mode);
-      form.set("description", description.trim());
+      form.set("description", candidate.generationDescription || "");
 
       const response = await fetch(
         "/api/characters/saved-for-later",
@@ -1324,7 +1330,7 @@ function CharacterCreateSetup({
               ? "Qwen Image Edit 2.1 Character Card"
               : "OrbitSheets H3 Character Card"
             : "Four-angle Character Card",
-          styleLabel: isOrbitSheetsV2 ? "Six-view Character Card" : "Front / Back / Left / Right",
+          styleLabel: isOrbitSheetsV2 ? (isQwenCardV1 ? "Five-view Character Card" : "Six-view Character Card") : "Front / Back / Left / Right",
           workflowId: isOrbitSheetsV2
             ? isQwenCardV1
               ? "qwen-image-edit-2.1-character-card"
@@ -1388,6 +1394,17 @@ function CharacterCreateSetup({
 
     try {
       let jobId = existingCardWillBeRegenerated ? "" : characterCompletionJobId;
+      if (jobId) {
+        const response = await fetch("/api/characters/completion", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ resumeJobId: jobId }),
+        });
+        const json = await response.json().catch(() => null);
+        if (!response.ok || !json?.job?.jobId) throw new Error(json?.error || "Could not resume Character Card.");
+        jobId = String(json.job.jobId);
+        setCharacterCompletionJobId(jobId);
+      }
 
       // OTG_CHARACTER_HUB_COMPLETED_CARD_RECOVERY_V1
       //
@@ -1761,6 +1778,7 @@ function CharacterCreateSetup({
         backend: job.backend,
         modelLabel: job.modelLabel,
         styleLabel: running.styleLabel,
+        generationDescription: running.requestBody.description,
       };
 
       writeCharacterCreatePersistence(persistenceOwnerKey, {
@@ -1851,6 +1869,7 @@ function CharacterCreateSetup({
     if (!cleanDescription || createLoading || characterCreateJobInFlightRef.current) return;
 
     const requestBody: CharacterCreateRequestBody = {
+      ...(modelId === "moss-image-sft" ? mossSettings : {}),
       model: modelId,
       style: stylePresetId,
       televisionAnimeStyle:
@@ -1907,6 +1926,7 @@ function CharacterCreateSetup({
         backend: job.backend,
         modelLabel: job.modelLabel,
         styleLabel: selectedDetailedStyleLabel,
+        generationDescription: cleanDescription,
       };
 
       writeCharacterCreatePersistence(persistenceOwnerKey, {
@@ -2448,6 +2468,8 @@ function CharacterCreateSetup({
             ))}
           </select>
 
+          {modelId === "moss-image-sft" ? <MossImageControls value={mossSettings} onChange={setMossSettings} disabled={createLoading} /> : null}
+
           <label
             htmlFor={`character-style-${mode}`}
             className="mt-6 block text-xs font-black uppercase tracking-[0.2em] text-sky-200/75"
@@ -2606,7 +2628,7 @@ function CharacterCreateSetup({
 
           <p className="mt-3 text-xs leading-5 text-white/40">
             Generation uses the selected supplied Turbo workflow, exact
-            portrait 1080 x 1920 output, and a fresh random seed. Temporary
+            {characterOutput.width} x {characterOutput.height} output. MOSS respects your selected shape and seed; other models use a fresh random seed. Temporary
             candidates are returned from ComfyUI preview storage and are not
             copied into the normal Gallery.
           </p>
@@ -2685,6 +2707,7 @@ function CharacterCreateSetup({
                         ) : null}
 
                         <div className="grid grid-cols-2 gap-1.5">
+                          {candidate.modelLabel.includes("MOSS") ? <MossGallerySaveButton imageUrl={candidate.imageUrl} promptId={candidate.promptId} backend={candidate.backend} origin={isFreeform ? "freeform-character" : "character"} prompt={candidate.generationDescription || ""} seed={candidate.seed} /> : null}
                           <button
                             type="button"
                             onClick={() => openCandidateEdit(candidate)}
@@ -2784,14 +2807,14 @@ function CharacterCreateSetup({
 
             <div className="mt-3 space-y-2 text-sm leading-6 text-white/65">
               <div>
-                Resolution: {FIXED_CHARACTER_OUTPUT.width} x{" "}
-                {FIXED_CHARACTER_OUTPUT.height}
+                Resolution: {characterOutput.width} x{" "}
+                {characterOutput.height}
               </div>
               <div>
-                Orientation: {FIXED_CHARACTER_OUTPUT.orientation}
+                Orientation: {modelId === "moss-image-sft" ? mossOutputShape(characterOutput.width, characterOutput.height).orientation : FIXED_CHARACTER_OUTPUT.orientation}
               </div>
-              <div>Aspect Ratio: {FIXED_CHARACTER_OUTPUT.aspectRatio}</div>
-              <div>Seed: {FIXED_CHARACTER_OUTPUT.seedBehavior}</div>
+              <div>Aspect Ratio: {modelId === "moss-image-sft" ? mossOutputShape(characterOutput.width, characterOutput.height).aspectRatio : FIXED_CHARACTER_OUTPUT.aspectRatio}</div>
+              <div>Seed: {modelId === "moss-image-sft" ? (mossSettings.seed === "" ? "Random every generation" : mossSettings.seed) : FIXED_CHARACTER_OUTPUT.seedBehavior}</div>
             </div>
           </div>
 
@@ -2800,8 +2823,7 @@ function CharacterCreateSetup({
             {isFreeform
               ? "Freeform stays unrestricted by Standard anatomy and framing rules."
               : "Standard adds full body visible head-to-toe, neutral standing, and no-crop generation guidance."}{" "}
-            Output stays fixed at 1080 x 1920 portrait, and every generation
-            uses a fresh random seed.
+            Current output: {characterOutput.width} x {characterOutput.height}. {modelId === "moss-image-sft" ? "MOSS uses the selected seed, or a random seed when blank." : "Each generation uses a fresh random seed."}
           </div>
         </div>
       </div>
@@ -2875,6 +2897,12 @@ const FIXED_CHARACTER_OUTPUT = {
   seedBehavior: "Random every generation",
 } as const;
 
+function characterOutputForModel(modelId: CharacterModelId) {
+  return modelId === "qwen-image-2-1"
+    ? { width: 1088, height: 1920 }
+    : FIXED_CHARACTER_OUTPUT;
+}
+
 type CharacterCreateJob = {
   promptId: string;
   seed: number;
@@ -2895,6 +2923,7 @@ type CharacterCreateCandidate = CharacterCandidateLineage & {
   backend: string;
   modelLabel: string;
   styleLabel: string;
+  generationDescription?: string;
   internalPrompt?: string;
   workflowId?: string;
   backgroundFree?: boolean;
@@ -3000,6 +3029,11 @@ function characterCreatePersistenceKey(ownerKey: string) {
 }
 
 type CharacterCreateRequestBody = {
+  gpuTarget?: MossImageSettings["gpuTarget"];
+  width?: number;
+  height?: number;
+  seed?: string;
+  negativePrompt?: string;
   model: string;
   style: string;
   televisionAnimeStyle: string;
@@ -4138,6 +4172,7 @@ export default function CharacterHubPanel({
             backend: item.backend,
             modelLabel: item.modelLabel,
             styleLabel: item.styleLabel,
+            generationDescription: item.description,
           });
 
           setView(
@@ -4314,19 +4349,10 @@ export default function CharacterHubPanel({
 
             <p className="mt-3 max-w-3xl text-sm leading-6 text-white/62">
               Create and organize characters, backgrounds, and reusable production
-              assets. Character Gallery is the first section being rebuilt.
+              assets with your selected image provider.
             </p>
           </div>
 
-          {isAdmin ? (
-            <button
-              type="button"
-              onClick={() => setView("legacy")}
-              className="rounded-full border border-amber-300/25 bg-amber-500/10 px-5 py-3 text-sm font-bold text-amber-100 transition hover:bg-amber-500/15"
-            >
-              Legacy Characters — Admin
-            </button>
-          ) : null}
         </div>
       </div>
 
@@ -4340,21 +4366,21 @@ export default function CharacterHubPanel({
         />
 
         <GalleryCard
-          eyebrow="Navigation shell"
+          eyebrow="Environment design"
           title="Background Gallery"
-          description="Background creation and management will be rebuilt in a later phase."
+          description="Create, preview, and save reusable environment images, including MOSS-Image."
           accent="bg-cyan-200"
           onClick={() => setView("background-gallery")}
-          status="Preview section →"
+          status="Open Background Studio →"
         />
 
         <GalleryCard
-          eyebrow="Navigation shell"
+          eyebrow="Production assets"
           title="Asset Gallery"
-          description="Reusable props and production assets will be rebuilt in a later phase."
+          description="Create and manage reusable props and production assets with your selected image model."
           accent="bg-blue-300"
           onClick={() => setView("asset-gallery")}
-          status="Preview section →"
+          status="Open Asset Studio →"
         />
 
           <GalleryCard

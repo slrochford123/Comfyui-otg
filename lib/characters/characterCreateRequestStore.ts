@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 export type CharacterCreateRequestStatus = "submitting" | "submitted" | "failed";
 
@@ -17,6 +18,8 @@ export type CharacterCreateRequestRecord = {
   mode: string;
   // OTG_CHARACTER_3D_ANIMATION_STYLES_PHASE11_STORE
   seed: number;
+  width?: number;
+  height?: number;
   outputNodeId: string;
   promptId?: string;
   comfyBaseUrl?: string;
@@ -26,6 +29,11 @@ export type CharacterCreateRequestRecord = {
 };
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
+
+export function scopedCharacterCreateRequestId(ownerKey: string, requestId: string) {
+  if (!ownerKey || !isCharacterCreateRequestId(requestId)) throw new Error("Invalid Character create request identity.");
+  return `owner_${createHash("sha256").update(ownerKey).update("\0").update(requestId).digest("hex")}`;
+}
 
 function storeRoot() {
   const configured = String(process.env.OTG_CHARACTER_CREATE_REQUEST_STORE || "").trim();

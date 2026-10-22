@@ -73,7 +73,22 @@ async function setup(input: {
   }));
 
   vi.doMock("@/lib/comfyImageOutputLookup", () => ({
+    candidateComfyImageBaseUrls: () => ["http://127.0.0.1:8188"],
     resolveComfyPromptImageStatus,
+  }));
+  const retrieveRemoteComfyMedia = vi.fn(async (args: { destinationPath: string }) => {
+      fs.mkdirSync(path.dirname(args.destinationPath), { recursive: true });
+      fs.writeFileSync(args.destinationPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      return {
+        filePath: args.destinationPath,
+        bytes: 8,
+        sha256: "fixture-sha256",
+        contentType: "image/png",
+        reused: false,
+      };
+    });
+  vi.doMock("@/lib/storyCreator/remoteComfyMedia", () => ({
+    retrieveRemoteComfyMedia,
   }));
 
   const store = await import(
@@ -88,6 +103,7 @@ async function setup(input: {
     store,
     route,
     resolveComfyPromptImageStatus,
+    retrieveRemoteComfyMedia,
   };
 }
 
@@ -107,42 +123,27 @@ function request(body: Record<string, unknown>) {
 function createSubmittedAsset(
   store: StoryStore,
   ownerKey: string,
+  responsePatch: Record<string, unknown> = {},
 ) {
   const project =
     store.createStoryCreatorProject({
       ownerKey,
       title: "Route Asset Status Story",
     });
-  const asset =
-    store.addStoryAsset({
+  const prepared = store.prepareStoryVisualGeneration({
       ownerKey,
       projectId: project.id,
-      assetType: "character",
+      visualKind: "character",
       name: "Mara route design",
       prompt: "Mara in route armor",
-      status: "generating",
-      provider: "qwen-image-2-1",
-      jobId: "route-prompt-1",
-      metadata: {
-        outputNodeId: "461",
-        imageResponse: {
-          comfyBaseUrl: "http://127.0.0.1:8188",
-        },
-      },
+      aspectRatio: "square",
     });
-  const job =
-    store.addStoryGenerationJob({
+  const submitted = store.recordStoryVisualSubmission({
       ownerKey,
       projectId: project.id,
-      assetId: asset.id,
-      jobType: "story-image",
-      provider: "qwen-image-2-1",
-      status: "submitted",
+      versionId: prepared.version.id,
       promptId: "route-prompt-1",
       endpoint: "/api/assets/create-image",
-      request: {
-        model: "qwen-image-2-1",
-      },
       response: {
         outputNodeId: "461",
         comfyBaseUrl: "http://127.0.0.1:8188",
@@ -150,13 +151,14 @@ function createSubmittedAsset(
         width: 1024,
         height: 1024,
         backend: "image-primary",
+        ...responsePatch,
       },
     });
 
   return {
     project,
-    asset,
-    job,
+    asset: submitted.asset,
+    job: submitted.job,
   };
 }
 
@@ -256,9 +258,8 @@ describe("Story Creator V2 asset status route behavior", () => {
     expect(data.asset.status).toBe("ready");
     expect(data.job.status).toBe("complete");
     expect(data.asset.url).toContain(
-      "/api/comfy/history-image",
+      "/api/story-creator/visual-assets/media",
     );
-    expect(data.asset.url).toContain("filename=Mara.png");
     expect(data.asset.metadata.completion).toMatchObject({
       promptId: "route-prompt-1",
       outputNodeId: "461",
@@ -297,6 +298,42 @@ describe("Story Creator V2 asset status route behavior", () => {
         projectId: project.id,
       }),
     ).toHaveLength(1);
+  });
+
+  it("recovers a persistent output when Comfy history was cleared", async () => {
+    const { ownerKey, route, store, retrieveRemoteComfyMedia } = await setup({
+      resolver: async () => ({
+        status: "pending",
+        baseUrl: "http://127.0.0.1:8188",
+        image: null,
+        count: 0,
+        attempts: ["history cleared"],
+        checkedBackends: ["http://127.0.0.1:8188"],
+        error: "",
+        historyFound: false,
+      }),
+    });
+    const { project, asset } = createSubmittedAsset(store, ownerKey, {
+      persistentOutput: true,
+      outputSubfolder: "otg_story",
+      outputFilenamePrefix: "qwen-fixed-output",
+      outputType: "output",
+    });
+
+    const response = await route.POST(request({ projectId: project.id, assetId: asset.id }));
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.status).toBe("complete");
+    expect(data.asset.status).toBe("ready");
+    expect(data.asset.metadata.completion.recoveredFromPersistentOutput).toBe(true);
+    expect(retrieveRemoteComfyMedia).toHaveBeenCalledWith(expect.objectContaining({
+      file: {
+        filename: "qwen-fixed-output_00001_.png",
+        subfolder: "otg_story",
+        type: "output",
+      },
+    }));
   });
 
   it("keeps missing expected output from becoming ready", async () => {

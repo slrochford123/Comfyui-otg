@@ -7,6 +7,7 @@ import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
 import AdminGpuControls from "./components/AdminGpuControls";
+import { uiStatusTone } from "@/lib/uiStatusTone";
 import MediaPreviewPanel from "./components/MediaPreviewPanel";
 import SpeechInputButton from "./components/SpeechInputButton";
 import type { GalleryActionKind } from "./components/GalleryWorkspace";
@@ -260,7 +261,6 @@ type PersistedGenerateState = {
   videoGenerationType?: VideoGenerationType;
   orientation?: "portrait" | "landscape";
   durationSeconds?: number;
-  uploadedFileName?: string;
   gpuTarget?: string;
   activeGenerateStyleId?: string;
   recentGenerateStyleIds?: string[];
@@ -1258,12 +1258,14 @@ async function notifyAndroidContentComplete(args: { key: string; fileName?: stri
     const { LocalNotifications } = await import("@capacitor/local-notifications");
     const title = args.kind === "video" ? "Video complete" : args.kind === "image" ? "Image complete" : "Content complete";
     const fileName = String(args.fileName || "").trim();
+    const { slrNotificationBranding } = await import("@/src/native/slrNotificationBranding");
 
     await LocalNotifications.schedule({
       notifications: [
         {
           id: Math.floor(Date.now() % 2147483647),
           channelId: APP_NOTIFICATION_CHANNEL_ID,
+          ...(await slrNotificationBranding()),
           title,
           body: fileName ? `${fileName} is ready in Gallery.` : "Your OTG content is ready in Gallery.",
           schedule: { at: new Date(Date.now() + 250) },
@@ -1318,18 +1320,12 @@ async function fetchWorkflowsForApp() {
 export default function AppPageClient({ initialUser = null }: { initialUser?: InitialAppUser }) {
   const queryClient = useQueryClient();
 
-  // OTG_DEFAULT_DARK_THEME_V1: dark is the app default theme.
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    document.documentElement.classList.add("dark");
-    document.body.classList.add("dark");
-  }, []);
   const [tab, setTab] = useState<SpinTabId>("generate");
 
   // OTG_PRODUCTION_FORCE_DARK_THEME_V1: force Production tab surfaces to dark even if stale light classes persist.
   useEffect(() => {
     if (typeof document === "undefined") return;
-    const enabled = true;
+    const enabled = document.documentElement.dataset.otgColorMode !== "light";
     document.documentElement.classList.toggle("otg-force-dark-production", enabled);
     document.body.classList.toggle("otg-force-dark-production", enabled);
     return () => {
@@ -1345,8 +1341,13 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [videoBackendStatus, setVideoBackendStatus] = useState<{
     activeLabel: string;
     activeGpu: string;
+    activeBaseUrl: string;
     fallbackActive: boolean;
     fallbackStatus: string;
+    primaryBaseUrl: string;
+    primaryAvailable: boolean;
+    fallbackBaseUrl: string;
+    fallbackAvailable: boolean;
   } | null>(null);
   const [isAdmin, setIsAdmin] = useState(Boolean(initialUser?.admin));
 
@@ -1411,6 +1412,16 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [appCustomColor, setAppCustomColor] = useState(DEFAULT_CUSTOM_COLOR);
   const [appFontScale, setAppFontScale] = useState<AppFontScale>("normal");
   const [appUiMode, setAppUiMode] = useState<AppUiMode>("clean");
+  const sharedHeaderRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const header=sharedHeaderRef.current;
+    if(!header)return;
+    const measure=()=>document.documentElement.style.setProperty("--otg-shared-header-height",`${header.getBoundingClientRect().height}px`);
+    measure();
+    const observer=new ResizeObserver(measure);
+    observer.observe(header);
+    return ()=>observer.disconnect();
+  },[]);
   const [settingsAppearanceMessage, setSettingsAppearanceMessage] = useState("");
   const [passwordCurrent, setPasswordCurrent] = useState("");
   const [passwordNew, setPasswordNew] = useState("");
@@ -1423,6 +1434,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [deleteAccountMessage, setDeleteAccountMessage] = useState("");
 
   const [generateBusy, setGenerateBusy] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
   const generateSubmitInFlightRef = useRef(false);
   const [generateSubmitNotice, setGenerateSubmitNotice] =
     useState<GenerateSubmitNotice>({ state: "idle", message: "" });
@@ -1530,6 +1542,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [describePreviewUrl, setDescribePreviewUrl] = useState("");
   const [describeOutput, setDescribeOutput] = useState("");
   const [describeBusy, setDescribeBusy] = useState(false);
+  const [describeRetryAvailable, setDescribeRetryAvailable] = useState(false);
 
   const [sceneDraft, setSceneDraft] = useState("");
   const [sceneOutput, setSceneOutput] = useState("");
@@ -1617,6 +1630,7 @@ const [askInput, setAskInput] = useState("");
 const [askMessages, setAskMessages] =
   useState<StoryHelperMessage[]>([]);
 const [askBusy, setAskBusy] = useState(false);
+const [askRetryAvailable, setAskRetryAvailable] = useState(false);
 const [askImageName, setAskImageName] = useState("");
 const [askImagePreviewUrl, setAskImagePreviewUrl] =
   useState("");
@@ -2059,6 +2073,57 @@ const activeGenerateStylePreset = useMemo(
     img.src = nextUrl;
   }, []);
 
+  const clearGenerateMediaInputs = useCallback(() => {
+    uploadedFileRef.current = null;
+    secondImageFileRef.current = null;
+    thirdImageFileRef.current = null;
+    lastFrameFileRef.current = null;
+    customAudioFileRef.current = null;
+    setUploadedFileName("");
+    setSecondImageFileName("");
+    setThirdImageFileName("");
+    setLastFrameFileName("");
+    setCustomAudioFileName("");
+    setEditInputCount(1);
+    updateGenerateInputPreview(null);
+    updateLastFrameInputPreview(null);
+    updateGenerateCustomAudioPreview(null);
+    if (imageInputRef.current) imageInputRef.current.value = "";
+    if (secondImageInputRef.current) secondImageInputRef.current.value = "";
+    if (thirdImageInputRef.current) thirdImageInputRef.current.value = "";
+    if (lastFrameInputRef.current) lastFrameInputRef.current.value = "";
+    if (customAudioInputRef.current) customAudioInputRef.current.value = "";
+  }, [updateGenerateCustomAudioPreview, updateGenerateInputPreview, updateLastFrameInputPreview]);
+
+  const handleGenerateMediaModeChange = useCallback((mode: GenerateMediaMode) => {
+    if (mode === generateMediaMode) return;
+    clearGenerateMediaInputs();
+    setGenerateMediaMode(mode);
+    if (mode === "image") {
+      const first = imageModelsForOperation(imageOperation)[0];
+      if (first) setWorkflowId(first.id);
+    } else if (selectedVideoConfiguration?.workflowId) {
+      setWorkflowId(selectedVideoConfiguration.workflowId);
+    }
+    setStatusMessage("Workflow-specific media inputs were cleared for the new generation mode.");
+  }, [clearGenerateMediaInputs, generateMediaMode, imageOperation, selectedVideoConfiguration]);
+
+  const handleImageOperationChange = useCallback((operation: ImageOperation) => {
+    if (operation === imageOperation) return;
+    clearGenerateMediaInputs();
+    setImageOperation(operation);
+    const first = imageModelsForOperation(operation)[0];
+    if (first) setWorkflowId(first.id);
+    setStatusMessage("Workflow-specific media inputs were cleared for the new image operation.");
+  }, [clearGenerateMediaInputs, imageOperation]);
+
+  const handleVideoGenerationTypeChange = useCallback((videoType: VideoGenerationType) => {
+    if (videoType === videoGenerationType) return;
+    clearGenerateMediaInputs();
+    setVideoGenerationType(videoType);
+    setStatusMessage("Workflow-specific media inputs were cleared for the new video workflow.");
+  }, [clearGenerateMediaInputs, videoGenerationType]);
+
   const handleSelectGenerateGalleryItem = useCallback(
     async (item: GalleryItem) => {
       const url = item.url;
@@ -2377,7 +2442,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       }
       if (persisted.orientation === "portrait" || persisted.orientation === "landscape") setOrientation(persisted.orientation);
       if (typeof persisted.durationSeconds === "number") setDurationSeconds(clampGenerateDuration(persisted.durationSeconds));
-      if (typeof persisted.uploadedFileName === "string") setUploadedFileName(persisted.uploadedFileName);
       if (typeof persisted.gpuTarget === "string") setGpuTarget(persisted.gpuTarget);
       if (typeof persisted.activeGenerateStyleId === "string") setActiveGenerateStyleId(persisted.activeGenerateStyleId);
       if (Array.isArray(persisted.recentGenerateStyleIds)) {
@@ -2435,7 +2499,13 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
     try {
       const url = new URL(window.location.href);
-      const tabParam = url.searchParams.get("tab");
+      const rawTabParam = url.searchParams.get("tab");
+      // Keep the human-facing AI Assistants route compatible with the
+      // historical internal `gethelp` tab id used by the navigation state.
+      const tabParam =
+        rawTabParam === "assistants" || rawTabParam === "ai-assistance"
+          ? "gethelp"
+          : rawTabParam;
       if (
         tabParam === "gethelp" ||
         tabParam === "generate" ||
@@ -2466,7 +2536,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         videoGenerationType,
         orientation,
         durationSeconds: clampGenerateDuration(durationSeconds),
-        uploadedFileName,
         gpuTarget,
         activeGenerateStyleId,
         recentGenerateStyleIds,
@@ -2486,7 +2555,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     videoGenerationType,
     orientation,
     durationSeconds,
-    uploadedFileName,
     gpuTarget,
     activeGenerateStyleId,
     recentGenerateStyleIds,
@@ -2506,6 +2574,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     root.style.colorScheme = appColorMode;
     root.dataset.otgTheme = appThemeId;
     root.dataset.otgColorMode = appColorMode;
+    root.classList.toggle("dark", appColorMode === "dark");
+    document.body.classList.toggle("dark", appColorMode === "dark");
+    root.classList.toggle("otg-force-dark-production", appColorMode === "dark");
+    document.body.classList.toggle("otg-force-dark-production", appColorMode === "dark");
     root.dataset.otgUiMode = appUiMode;
 
     try {
@@ -2752,7 +2824,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
     async function loadStatus() {
       try {
-        const res = await fetch("/api/comfy-status", {
+        const res = await fetch("/api/comfy-status?mode=video", {
           cache: "no-store",
           credentials: "include",
         });
@@ -2775,8 +2847,13 @@ ${sceneReferenceCard || ""}`.toLowerCase();
           setVideoBackendStatus({
             activeLabel: String(data.videoBackend.activeLabel || "No video backend available"),
             activeGpu: String(data.videoBackend.activeGpu || ""),
+            activeBaseUrl: String(data.videoBackend.activeBaseUrl || ""),
             fallbackActive: Boolean(data.videoBackend.fallbackActive),
             fallbackStatus: String(data.videoBackend.fallbackStatus || ""),
+            primaryBaseUrl: String(data.videoBackend.primary?.baseUrl || ""),
+            primaryAvailable: Boolean(data.videoBackend.primary?.available),
+            fallbackBaseUrl: String(data.videoBackend.fallback?.baseUrl || ""),
+            fallbackAvailable: Boolean(data.videoBackend.fallback?.available),
           });
         }
         if (typeof data?.message === "string" && data.message.trim()) {
@@ -3109,7 +3186,12 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(typeof data?.error === "string" ? data.error : "ComfyUI submission failed");
+        const detail =
+          (typeof data?.error === "string" && data.error) ||
+          (typeof data?.response?.error === "string" && data.response.error) ||
+          (typeof data?.response?.message === "string" && data.response.message) ||
+          "ComfyUI submission failed";
+        throw new Error(detail);
       }
 
       const debug = data?.otgRequestDebug && typeof data.otgRequestDebug === "object" ? data.otgRequestDebug : null;
@@ -3509,8 +3591,40 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       .filter(Boolean)
       .join("\n|\n");
   }, [promptRelayBeat1, promptRelayBeat2, promptRelayBeat3, promptRelayBeat4]);
+
+  const handleCancelGeneration = useCallback(async () => {
+    if (cancelBusy || generateSubmitInFlightRef.current || !activePromptId) return;
+    setCancelBusy(true);
+    setStatusMessage("Cancelling generation...");
+    try {
+      const response = await fetch("/api/jobs/cancel", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ promptId: activePromptId }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data?.ok === false) {
+        throw new Error(String(data?.error || `Cancellation failed (${response.status}).`));
+      }
+
+      setGenerateApproximatePreview(null);
+      setProgressQueue(0);
+      setProgressPercent(100);
+      setProgressStatus("error");
+      setActivePromptId("");
+      setGenerateSubmitNotice({ state: "failed", message: "Generation cancelled. No result was saved." });
+      setStatusMessage("Generation cancelled.");
+      await refreshProgress();
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Cancellation failed.");
+    } finally {
+      setCancelBusy(false);
+    }
+  }, [activePromptId, cancelBusy, refreshProgress]);
+
   const handleGenerate = useCallback(async () => {
-    if (generateSubmitInFlightRef.current || generateBusy) return;
+    if (generateSubmitInFlightRef.current || generateBusy || progressStatus === "running") return;
     if (generateMediaMode === "video" && !videoWorkflowReady) {
       setStatusMessage("This video workflow is not installed in TEST yet. Choose a ready workflow or provide its JSON.");
       return;
@@ -3642,8 +3756,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         }
       }
       if (generateMediaMode === "image") {
-        body.set("width", orientation === "portrait" ? "720" : "1280");
-        body.set("height", orientation === "portrait" ? "1280" : "720");
+        body.set("width", isEditImageWorkflowSelected ? orientation === "portrait" ? "704" : "1280" : orientation === "portrait" ? "720" : "1280");
+        body.set("height", isEditImageWorkflowSelected ? orientation === "portrait" ? "1280" : "704" : orientation === "portrait" ? "1280" : "720");
         body.delete("durationSeconds");
         body.set("requestKind", "image");
       }
@@ -3747,6 +3861,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     isCustomAudioVideoWorkflowSelected,
     isFirstLastImageVideoWorkflowSelected,
     promptRelayLocalPrompts,
+    progressStatus,
   ]);
 
 
@@ -4519,7 +4634,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     setPrompt("");
     setNegativePrompt("");
     setWorkflowId("");
-    setUploadedFileName("");
+    clearGenerateMediaInputs();
     setActiveGenerateStyleId("");
     setDurationSeconds(5);
     setOrientation("landscape");
@@ -4750,7 +4865,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     setSettingsComfyBusy(true);
     setStatusMessage("Checking Comfy connection...");
     try {
-      const res = await fetch("/api/comfy-status", {
+      const res = await fetch("/api/comfy-status?mode=video", {
         cache: "no-store",
         credentials: "include",
       });
@@ -4764,8 +4879,13 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         setVideoBackendStatus({
           activeLabel: String(data.videoBackend.activeLabel || "No video backend available"),
           activeGpu: String(data.videoBackend.activeGpu || ""),
+          activeBaseUrl: String(data.videoBackend.activeBaseUrl || ""),
           fallbackActive: Boolean(data.videoBackend.fallbackActive),
           fallbackStatus: String(data.videoBackend.fallbackStatus || ""),
+          primaryBaseUrl: String(data.videoBackend.primary?.baseUrl || ""),
+          primaryAvailable: Boolean(data.videoBackend.primary?.available),
+          fallbackBaseUrl: String(data.videoBackend.fallback?.baseUrl || ""),
+          fallbackAvailable: Boolean(data.videoBackend.fallback?.available),
         });
       }
       setSettingsComfyCheckedAt(new Date().toLocaleString());
@@ -4784,6 +4904,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
   async function handleSettingsClearPipeline() {
     if (settingsPipelineBusy) return;
+    if (!window.confirm("Clear the current pipeline state? This unlocks the UI but does not cancel upstream GPU work. Gallery files will be preserved.")) return;
 
     setSettingsPipelineBusy(true);
     setSettingsPipelineMessage("Clearing current pipeline state...");
@@ -4997,6 +5118,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     }
 
     setDescribeBusy(true);
+    setDescribeRetryAvailable(false);
     setStatusMessage("");
 
     try {
@@ -5052,6 +5174,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setStatusMessage("Description created.");
     } catch (error) {
       setDescribeOutput("");
+      setDescribeRetryAvailable(true);
       setStatusMessage(error instanceof Error ? error.message : "Describe failed.");
     } finally {
       setDescribeBusy(false);
@@ -5881,6 +6004,18 @@ function handleOpenStoryConversation(
 function handleDeleteStoryConversation(
   id: string
 ) {
+  const conversation = savedStoryConversations.find(
+    (item) => item.id === id
+  );
+  if (
+    typeof window !== "undefined" &&
+    !window.confirm(
+      `Delete saved conversation${conversation?.name ? ` \"${conversation.name}\"` : ""}?`
+    )
+  ) {
+    return;
+  }
+
   persistStoryConversations(
     savedStoryConversations.filter(
       (conversation) => conversation.id !== id
@@ -5978,6 +6113,7 @@ async function handleAskAi() {
   ];
 
   setAskBusy(true);
+  setAskRetryAvailable(false);
   setStatusMessage("");
 
   try {
@@ -6096,6 +6232,7 @@ async function handleAskAi() {
       "Story Helper answered."
     );
   } catch (error) {
+    setAskRetryAvailable(true);
     setStatusMessage(
       error instanceof Error
         ? error.message
@@ -6122,17 +6259,14 @@ async function handleAskAi() {
         <div className="absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_center,rgba(80,120,255,0.18),rgba(120,60,255,0.10),transparent_62%)]" />
       </div>
 
-      {appUiMode === "clean" ? (
-        <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-[#08090d]/95 px-3 py-3 backdrop-blur-md md:px-5">
+        <header ref={sharedHeaderRef} data-otg="shared-app-header" style={{backgroundColor:"var(--color-surface-elevated)"}} className="sticky inset-x-0 top-0 z-50 border-b border-white/10 px-3 py-3 md:px-5">
           <div className="mx-auto flex max-w-[1480px] flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-[11px] font-black uppercase tracking-[0.18em] text-white/42">SLR Studios OTG</div>
               <div className="mt-0.5 flex items-center gap-3">
                 <h1 className="truncate text-xl font-black tracking-tight text-white">{activeTabLabel}</h1>
-                <span className="hidden rounded-full border border-white/10 px-2.5 py-1 text-xs font-semibold text-white/52 sm:inline-flex">
-                  {connected ? "ComfyUI Connected" : "ComfyUI Offline"}
-                </span>
               </div>
+              <div className="mt-1 flex flex-wrap gap-2 text-xs text-white/65"><span>{connected ? "ComfyUI reachable" : "ComfyUI offline"}</span>{videoBackendStatus ? <span>{videoBackendStatus.activeLabel}{videoBackendStatus.fallbackActive ? " · fallback" : ""}</span> : null}</div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <button
@@ -6166,48 +6300,22 @@ async function handleAskAi() {
             </div>
           </div>
         </header>
-      ) : null}
 
-      {appUiMode === "classic" ? (
-      <div className="pointer-events-none fixed left-3 top-4 z-30 md:left-5 md:top-5">
-        <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-2 text-sm font-semibold text-white shadow-[0_0_20px_rgba(0,0,0,0.35)]">
-          <span className="inline-block h-2.5 w-2.5 rounded-full bg-cyan-400" />
-          <span className="max-w-[180px] truncate">{username}</span>
-        </div>
-      </div>
-      ) : null}
 
-      {appUiMode === "classic" ? (
-      <div className="pointer-events-none fixed right-3 top-4 z-30 md:right-5 md:top-5">
-        <div className="pointer-events-auto inline-flex items-center gap-2">
-          {isAdmin ? <AdminGpuControls /> : null}
-          <button
-            type="button"
-            onClick={toggleColorMode}
-            className="otg-themeSwitch"
-            aria-pressed={appColorMode === "dark"}
-            title="Toggle light and dark mode"
-          >
-            <span className="otg-themeSwitchKnob" />
-            <span>{appColorMode === "dark" ? "Dark" : "Light"}</span>
-          </button>
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-2 text-sm font-semibold text-white shadow-[0_0_20px_rgba(0,0,0,0.35)]">
-            <span className={cn("inline-block h-2.5 w-2.5 rounded-full", connected ? "bg-green-400" : "bg-red-400")} />
-            <span>{connected ? "Connected" : "Disconnected"}</span>
-          </div>
-          {videoBackendStatus ? (
-            <div className={cn("inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-semibold shadow-[0_0_20px_rgba(0,0,0,0.35)]", videoBackendStatus.fallbackActive ? "border-amber-400/35 bg-amber-950/80 text-amber-100" : "border-white/10 bg-black/60 text-white/80")}>
-              <span>{videoBackendStatus.activeLabel}</span>
-              {videoBackendStatus.fallbackActive ? <span>Fallback active</span> : null}
-            </div>
-          ) : null}
-        </div>
-      </div>
-      ) : null}
-
-      <div className={cn("relative z-10 mx-auto px-3 pb-28 pt-24 md:px-5 md:pt-28", appUiMode === "clean" ? "max-w-[1480px]" : "max-w-[1400px]")}>
+      <div className={cn(
+        "relative z-10 mx-auto px-3 pt-4 pb-48 md:px-5 md:pt-6",
+        appUiMode === "clean"
+          ? "max-w-[1480px]"
+          : "max-w-[1400px]",
+      )}>
         {statusMessage ? (
-          <div className="mb-3 rounded-[20px] border border-red-600/40 bg-red-950/60 px-4 py-3 text-sm font-semibold text-red-100">
+          <div role={uiStatusTone(statusMessage) === "error" ? "alert" : "status"} className={cn(
+            "mb-3 rounded-[20px] border px-4 py-3 text-sm font-semibold",
+            uiStatusTone(statusMessage) === "error" ? "border-red-600/40 bg-red-950/60 text-red-100" :
+            uiStatusTone(statusMessage) === "success" ? "border-emerald-500/40 bg-emerald-950/60 text-emerald-100" :
+            uiStatusTone(statusMessage) === "warning" ? "border-amber-500/40 bg-amber-950/60 text-amber-100" :
+            "border-[var(--color-primary-border)] bg-[var(--color-primary-muted)] text-[var(--color-text)]"
+          )}>
             {statusMessage}
           </div>
         ) : null}
@@ -6224,15 +6332,7 @@ async function handleAskAi() {
                   key={mode}
                   type="button"
                   aria-pressed={generateMediaMode === mode}
-                  onClick={() => {
-                    setGenerateMediaMode(mode);
-                    if (mode === "image") {
-                      const first = imageModelsForOperation(imageOperation)[0];
-                      if (first) setWorkflowId(first.id);
-                    } else if (selectedVideoConfiguration?.workflowId) {
-                      setWorkflowId(selectedVideoConfiguration.workflowId);
-                    }
-                  }}
+                  onClick={() => handleGenerateMediaModeChange(mode)}
                   className={cn(
                     "min-h-24 rounded-[28px] border px-5 py-5 text-lg font-black transition md:text-2xl",
                     generateMediaMode === mode
@@ -6250,7 +6350,7 @@ async function handleAskAi() {
                 <div className="space-y-4">
                   <select
                     value={imageOperation}
-                    onChange={(event) => setImageOperation(event.target.value as ImageOperation)}
+                    onChange={(event) => handleImageOperationChange(event.target.value as ImageOperation)}
                     className="w-full rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
                   >
                     {(Object.keys(IMAGE_OPERATION_LABELS) as ImageOperation[]).map((operation) => (
@@ -6271,7 +6371,7 @@ async function handleAskAi() {
                           key={option.id}
                           type="button"
                           aria-pressed={videoGenerationType === option.id}
-                          onClick={() => setVideoGenerationType(option.id)}
+                          onClick={() => handleVideoGenerationTypeChange(option.id)}
                           className={cn(
                             "min-h-20 rounded-[18px] border px-4 py-3 text-left transition",
                             videoGenerationType === option.id
@@ -6551,7 +6651,9 @@ async function handleAskAi() {
                   </PillButton>
                 </div>
                 <p className="text-sm text-white/50">
-                  Images and videos are locked to 720p in portrait or landscape.
+                  {isEditImageWorkflowSelected
+                    ? "Qwen Image Edit uses model-aligned output: 704 x 1280 portrait or 1280 x 704 landscape."
+                    : "Images and videos are locked to 720p in portrait or landscape."}
                 </p>
               </Card>
 
@@ -6822,6 +6924,7 @@ async function handleAskAi() {
                   onClick={handleGenerate}
                   disabled={
                     generateBusy ||
+                    progressStatus === "running" ||
                     !prompt.trim() ||
                     (generateMediaMode === "video" && !videoWorkflowReady) ||
                     (videoNeedsStarterImage && !uploadedFileName) ||
@@ -6832,6 +6935,15 @@ async function handleAskAi() {
                 >
                   {generateBusy ? "Please wait..." : "Generate"}
                 </ActionButton>
+                {progressStatus === "running" ? (
+                  <ActionButton
+                    onClick={() => void handleCancelGeneration()}
+                    disabled={cancelBusy || !activePromptId}
+                    aria-label="Cancel active generation"
+                  >
+                    {cancelBusy ? "Cancelling..." : "Cancel"}
+                  </ActionButton>
+                ) : null}
               </div>
               {generateSubmitNotice.state !== "idle" ? (
                 <div
@@ -7111,6 +7223,11 @@ async function handleAskAi() {
                     >
                       Copy
                     </GhostButton>
+                    {describeRetryAvailable ? (
+                      <GhostButton onClick={() => void handleDescribe()}>
+                        Retry description
+                      </GhostButton>
+                    ) : null}
                   </div>
                 </div>
               </Card>
@@ -7421,6 +7538,12 @@ async function handleAskAi() {
                           ? "Story Helper is thinking..."
                           : "Send"}
                       </ActionButton>
+
+                      {askRetryAvailable ? (
+                        <GhostButton onClick={() => void handleAskAi()}>
+                          Retry Story Helper
+                        </GhostButton>
+                      ) : null}
 
                       {speakingStoryMessageId ? (
                         <GhostButton
@@ -7757,6 +7880,10 @@ async function handleAskAi() {
                     <p className="mt-2 text-lg font-semibold text-white">{videoBackendStatus.activeLabel}</p>
                     {videoBackendStatus.activeGpu ? <p className="mt-1 text-sm text-white/72">{videoBackendStatus.activeGpu}</p> : null}
                     <p className="mt-2 text-sm text-white/72">{videoBackendStatus.fallbackStatus}</p>
+                    <div className="mt-3 grid gap-2 text-xs text-white/60 sm:grid-cols-2">
+                      <div><span className="font-black uppercase tracking-[0.14em] text-white/40">Primary</span><p className="mt-1 break-all font-mono">{videoBackendStatus.primaryBaseUrl || "Unavailable"} · {videoBackendStatus.primaryAvailable ? "available" : "unavailable"}</p></div>
+                      <div><span className="font-black uppercase tracking-[0.14em] text-white/40">Fallback</span><p className="mt-1 break-all font-mono">{videoBackendStatus.fallbackBaseUrl || "Unavailable"} · {videoBackendStatus.fallbackAvailable ? "available" : "unavailable"}</p></div>
+                    </div>
                   </div>
                 ) : null}
                 <div className="grid gap-3 sm:grid-cols-2">

@@ -4,6 +4,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
+import {requireSessionUser} from "@/lib/sessionUser";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,20 +14,22 @@ function editVideoJobRoot(ownerKey: string) {
 }
 
 function buildHeaders(args: { size: number; full: string; stat: fs.Stats; download: boolean }) {
-  const etag = `W/\"${path.basename(args.full)}-${args.size}-${Math.trunc(args.stat.mtimeMs)}\"`;
+  const safeName=path.basename(args.full).replace(/["\\\r\n]/g,"_");
+  const etag = `W/"${safeName}-${args.size}-${Math.trunc(args.stat.mtimeMs)}"`;
   return {
-    "Content-Type": "video/mp4",
+    "Content-Type": args.full.toLowerCase().endsWith(".zip")?"application/zip":"video/mp4",
     "Content-Length": String(args.size),
     "Cache-Control": "private, no-transform, max-age=86400, stale-while-revalidate=604800",
     "Last-Modified": new Date(args.stat.mtimeMs).toUTCString(),
     ETag: etag,
     "Accept-Ranges": "bytes",
-    ...(args.download ? { "Content-Disposition": `attachment; filename=\"${path.basename(args.full)}\"` } : {}),
+    ...(args.download ? { "Content-Disposition": `attachment; filename="${safeName}"` } : {}),
   };
 }
 
 export async function GET(req: NextRequest) {
   try {
+    await requireSessionUser(req).catch(()=>{throw new SessionInvalidError();});
     const owner = await getOwnerContext(req);
     const jobId = String(req.nextUrl.searchParams.get("jobId") || "").trim();
     const name = String(req.nextUrl.searchParams.get("name") || "stitched_video.mp4").trim();

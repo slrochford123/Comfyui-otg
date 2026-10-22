@@ -33,6 +33,7 @@ import { freshProductionSeed } from "@/lib/production/randomSeed";
 import {
   IMAGE_LORA_ADULT_ACK_VERSION,
   QWEN21_IMAGE_EDIT_WORKFLOW_ID,
+  QWEN21_TURBO_CONTRACT,
   applyEditImageReferences,
   applyImageLoraSelections,
   applyLockedImageSize,
@@ -4698,6 +4699,20 @@ export async function POST(req: NextRequest) {
       gpu: videoSelection?.ok ? videoSelection.backend.gpu : null,
       upstreamStatus: upstream.status,
     });
+    const upstreamError = String(
+      parsed?.error ||
+        parsed?.message ||
+        parsed?.response?.error ||
+        parsed?.response?.message ||
+        `ComfyUI rejected the workflow (HTTP ${upstream.status}).`,
+    ).trim();
+    writeState(ownerKey, {
+      promptId: null,
+      status: "error",
+      error: upstreamError,
+      progressPercent: 100,
+      progressUpdatedAt: Date.now(),
+    });
     const canTryFallback = shouldAttemptVideoSubmissionFallback({
       routeKind: route.kind,
       selectionOk: Boolean(videoSelection?.ok),
@@ -4706,7 +4721,7 @@ export async function POST(req: NextRequest) {
       upstreamStatus: upstream.status,
     });
     if (!canTryFallback || !fallbackRequestClone) {
-      return Response.json({ ok: false, upstreamStatus: upstream.status, response: parsed }, { status: upstream.status });
+      return Response.json({ ok: false, upstreamStatus: upstream.status, response: parsed, error: upstreamError }, { status: upstream.status });
     }
 
     const prepared = await prepareFallbackGraph(
@@ -4971,6 +4986,17 @@ export async function POST(req: NextRequest) {
   return Response.json(
     {
       ...parsed,
+      qwenTurbo: generateQwen21Edit
+        ? {
+            ...QWEN21_TURBO_CONTRACT,
+            operation: "edit",
+            workflowId: QWEN21_IMAGE_EDIT_WORKFLOW_ID,
+            seed: (seedRes as any)?.seed ?? (Number((body as any).seed) || null),
+            width: Number((body as any).width) || null,
+            height: Number((body as any).height) || null,
+            comfyBaseUrl: COMFY_BASE_URL,
+          }
+        : null,
       videoBackend: route.kind === "video" && videoSelection?.ok ? {
         id: videoSelection.backend.id,
         label: videoSelection.backend.label,

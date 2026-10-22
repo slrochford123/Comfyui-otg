@@ -211,8 +211,7 @@ function compareClaimCandidates(a: CharacterCompletionJob, b: CharacterCompletio
   if (priorityDelta !== 0) return priorityDelta;
   return (
     compareTimeDesc(a.updatedAt, b.updatedAt) ||
-    compareTimeDesc(a.createdAt, b.createdAt) ||
-    a.jobId.localeCompare(b.jobId)
+    compareTimeDesc(a.createdAt, b.createdAt)
   );
 }
 
@@ -295,6 +294,28 @@ export function getCharacterCompletionJob(ownerKeyRaw: unknown, jobIdRaw: unknow
   if (!ownerKey || !jobId) return null;
   const job = readFreshStore().jobs.find((item) => item.ownerKey === ownerKey && item.jobId === jobId);
   return job ? publicJob(job) : null;
+}
+
+// Explicit user retry resumes durable checkpoints, never a second render of
+// an already completed card. The owner and job ID are both required.
+export function resumeCharacterCompletionJob(ownerKeyRaw: unknown, jobIdRaw: unknown): CharacterCompletionJob | null {
+  const ownerKey = cleanString(ownerKeyRaw);
+  const jobId = cleanString(jobIdRaw);
+  const store = readFreshStore();
+  const index = store.jobs.findIndex(job => job.ownerKey === ownerKey && job.jobId === jobId);
+  if (index < 0) return null;
+  const current = store.jobs[index];
+  if (current.status !== "failed" && current.status !== "canceled") return publicJob(current);
+  const otherActive = store.jobs.find(job => job.ownerKey === ownerKey && job.characterId === current.characterId && job.jobId !== jobId && activeStatus(job.status));
+  if (otherActive) return publicJob(otherActive);
+  const next: CharacterCompletionJob = {
+    ...current, status: "queued", updatedAt: nowIso(), error: null,
+    workerId: null, claimedAt: null, heartbeatAt: null, leaseExpiresAt: null,
+    message: "Resuming Character Card from its saved checkpoints.",
+  };
+  store.jobs[index] = next;
+  writeStore(store);
+  return publicJob(next);
 }
 
 export function claimCharacterCompletionJob(workerIdRaw: unknown): CharacterCompletionJob | null {

@@ -20,6 +20,12 @@ import {
 } from "@/lib/workers/qwenDurableFetch";
 
 import {
+  createOpenAIText,
+  openAIEnabled,
+  openAIModels,
+} from "@/lib/openai/provider";
+
+import {
   listStoryBibleEntities,
   listStoryBibleFacts,
   listStoryCreatorMessages,
@@ -227,6 +233,65 @@ export async function POST(request: NextRequest) {
         projectId,
       }).slice(-12);
 
+    const writeInput = [
+      `Writing mode: ${modeLabel(mode)}.`,
+      instruction
+        ? `User instruction: ${instruction}`
+        : "User instruction: continue from approved canon.",
+      "",
+      "Approved canon:",
+      ...canonLines.map((line) => `- ${line}`),
+      "",
+      "Recent Story Director context:",
+      ...recentMessages.map(
+        (message) =>
+          `${message.role.toUpperCase()}: ${message.content}`,
+      ),
+    ].join("\n");
+
+    if (openAIEnabled()) {
+      try {
+        const openAIModel = openAIModels().story;
+        const openAIResponse = await createOpenAIText({
+          ownerKey: user.ownerKey,
+          projectId,
+          useCase: "story-write",
+          model: openAIModel,
+          instructions: [
+            "You are Story Creator V2 Write mode.",
+            "Write only from approved canon supplied by the app.",
+            "Do not use suggestions, unknowns, or invented facts as if they are canon.",
+            "If information is missing, leave it unspecified or ask a brief missing-info question after the draft.",
+            "Preserve existing downstream production usefulness: clear scenes, dialogue, shots, and character/action continuity when relevant.",
+            "Do not mention model names or internal routing.",
+          ].join(" "),
+          input: writeInput,
+          maxOutputTokens: 1600,
+          timeoutMs: 120_000,
+        });
+        const draft = openAIResponse.text.trim();
+        if (draft) {
+          return NextResponse.json(
+            {
+              ok: true,
+              mode,
+              draft,
+              provider: "openai",
+              model: openAIModel,
+              usage: openAIResponse.usage,
+            },
+            {
+              headers: {
+                "Cache-Control": "no-store",
+              },
+            },
+          );
+        }
+      } catch {
+        // Preserve the existing Qwen write path as rollback.
+      }
+    }
+
     const response =
       await qwenDurableFetch(
         "/api/chat",
@@ -247,21 +312,7 @@ export async function POST(request: NextRequest) {
             },
             {
               role: "user",
-              content: [
-                `Writing mode: ${modeLabel(mode)}.`,
-                instruction
-                  ? `User instruction: ${instruction}`
-                  : "User instruction: continue from approved canon.",
-                "",
-                "Approved canon:",
-                ...canonLines.map((line) => `- ${line}`),
-                "",
-                "Recent Story Director context:",
-                ...recentMessages.map(
-                  (message) =>
-                    `${message.role.toUpperCase()}: ${message.content}`,
-                ),
-              ].join("\n"),
+              content: writeInput,
             },
           ],
           options: {

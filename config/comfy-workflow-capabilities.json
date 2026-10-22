@@ -3322,7 +3322,7 @@
         "VAELoader"
       ],
       "requiredModels": [
-        "anima-base-v1.0.safetensors",
+        "anima-preview3-base.safetensors",
         "qwen_3_06b_base.safetensors",
         "qwen_image_vae.safetensors"
       ],
@@ -3376,10 +3376,10 @@
         },
         "rtx5060ti": {
           "state": "missing-model",
-          "reason": "Missing model files: anima-base-v1.0.safetensors",
+          "reason": "Missing model files: anima-preview3-base.safetensors",
           "missingNodes": [],
           "missingModels": [
-            "anima-base-v1.0.safetensors"
+            "anima-preview3-base.safetensors"
           ],
           "testedConfiguration": null,
           "estimatedOrMeasuredVramGb": null

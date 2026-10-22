@@ -3,6 +3,8 @@
 
 import React from "react";
 import { cn } from "@/lib/cn";
+import type {LtxStudioRuntimeTool} from "@/lib/ltxStudiosRuntime";
+import {LTX_STUDIO_LABELS,LTX_STUDIO_HELP} from "@/lib/ltxStudiosUi";
 
 type GalleryVideoItem = {
   fileName?: string;
@@ -53,6 +55,8 @@ type LtxEditResult = {
   sourceVideoName?: string;
   task?: EditTask;
   instruction?: string;
+  hdrMasterUrl?:string;
+  exrArchiveUrl?:string;
 };
 
 type LivePreviewPayload = {
@@ -65,6 +69,7 @@ type LivePreviewPayload = {
 
 type Props = {
   onRefreshGallery?: () => void;
+  studioTool?: LtxStudioRuntimeTool;
 };
 
 const taskLabels: Record<EditTask, string> = {
@@ -118,24 +123,38 @@ function withDownload(url?: string) {
   return url.includes("?") ? `${url}&download=1` : `${url}?download=1`;
 }
 
-export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) {
+export default function EditVideoEditAnythingPanel({ onRefreshGallery, studioTool }: Props) {
+  const imageInput=studioTool==="ingredients"||studioTool==="slow-motion-control"||studioTool==="cinemagraph";
+  const isAlpha=studioTool==="alpha-gen";
+  const isPromptless=isAlpha||studioTool==="sdr-to-hdr";
+  const toolName=studioTool ? LTX_STUDIO_LABELS[studioTool] : "LTX Edit Anything";
+  const resultName=isAlpha?"Alpha matte":`${toolName} result`;
   const [selectedVideo, setSelectedVideo] = React.useState<SelectedVideo | null>(null);
+  const [lookFile,setLookFile]=React.useState<File|null>(null);
+  const [lookUrl,setLookUrl]=React.useState("");
+  React.useEffect(()=>{if(!lookFile){setLookUrl("");return;}const url=URL.createObjectURL(lookFile);setLookUrl(url);return()=>URL.revokeObjectURL(url);},[lookFile]);
   const [galleryOpen, setGalleryOpen] = React.useState(false);
   const [galleryBusy, setGalleryBusy] = React.useState(false);
   const [galleryError, setGalleryError] = React.useState("");
   const [galleryVideos, setGalleryVideos] = React.useState<GalleryVideoItem[]>([]);
 
   const [task, setTask] = React.useState<EditTask>("add");
-  const [instruction, setInstruction] = React.useState(taskExamples.add);
+  const [instruction, setInstruction] = React.useState(studioTool&&!isAlpha?"":taskExamples.add);
   const [negativePrompt, setNegativePrompt] = React.useState("warped faces, broken limbs, flicker, low quality, blurry, watermark, text overlay, unstable motion");
-  const [outputTitle, setOutputTitle] = React.useState("ltx_edit_anything");
-  const [durationSeconds, setDurationSeconds] = React.useState(5);
+  const [outputTitle, setOutputTitle] = React.useState(studioTool ? `ltx25_${studioTool.replaceAll("-","_")}` : "ltx_edit_anything");
+  const [durationSeconds, setDurationSeconds] = React.useState(studioTool ? 2 : 5);
   const [fps, setFps] = React.useState(24);
-  const [longerSide, setLongerSide] = React.useState(1024);
+  const [speed,setSpeed]=React.useState(0.2);
+  const [longerSide, setLongerSide] = React.useState(studioTool ? 512 : 1024);
   const [useVideoReasoning, setUseVideoReasoning] = React.useState(false);
   const [obscuraStrength, setObscuraStrength] = React.useState(2.3);
+  const invalidSpeed=studioTool==="slow-motion-control"&&(!Number.isFinite(speed)||speed<0.025||speed>1);
+  const maxFrames=studioTool==="restore"?97:145;
+  const invalidDuration=Boolean(studioTool&&(!Number.isFinite(durationSeconds)||durationSeconds<1||durationSeconds*fps>maxFrames));
 
   const [busy, setBusy] = React.useState(false);
+  const [cancelBusy,setCancelBusy]=React.useState(false);
+  const cancelRef=React.useRef(false);
   const [saveBusy, setSaveBusy] = React.useState(false);
   const [status, setStatus] = React.useState("");
   const [result, setResult] = React.useState<LtxEditResult | null>(null);
@@ -161,7 +180,7 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data?.ok === false) throw new Error(data?.error || "Gallery load failed.");
       const raw = Array.isArray(data?.items) ? data.items : Array.isArray(data?.files) ? data.files : [];
-      setGalleryVideos(raw.filter(isVideoItem));
+      setGalleryVideos(raw.filter((item:GalleryVideoItem)=>imageInput ? !isVideoItem(item)&&/\.(png|jpe?g|webp)$/i.test(galleryLookupName(item)) : isVideoItem(item)));
     } catch (error: any) {
       setGalleryError(error?.message || "Gallery load failed.");
       setGalleryVideos([]);
@@ -190,13 +209,13 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
     });
     setGalleryOpen(false);
     setResult(null);
-    setStatus("Selected Gallery video for LTX Edit Anything.");
+    setStatus(`Selected Gallery ${imageInput?"image":"video"} for ${toolName}.`);
   }
 
   function onUploadVideo(file?: File | null) {
     if (!file) return;
-    if (!/\.(mp4|webm|mov|mkv|avi)$/i.test(file.name || "")) {
-      setStatus("Use a video file: MP4, WEBM, MOV, MKV, or AVI.");
+    if (!(imageInput ? /\.(png|jpe?g|webp)$/i : /\.(mp4|webm|mov|mkv|avi)$/i).test(file.name || "")) {
+      setStatus(imageInput ? "Use a PNG, JPEG, or WEBP image." : "Use a video file: MP4, WEBM, MOV, MKV, or AVI.");
       return;
     }
     const previewUrl = URL.createObjectURL(file);
@@ -209,7 +228,7 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
       sizeBytes: file.size,
     });
     setResult(null);
-    setStatus("Uploaded source video for LTX Edit Anything.");
+    setStatus(`Uploaded source ${imageInput?"image":"video"} for ${toolName}.`);
   }
 
   function applyExample(nextTask: EditTask) {
@@ -260,7 +279,7 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
           setLiveJobId("");
           setLivePromptId("");
           setLiveProgressPercent(100);
-          setStatus("LTX Edit Anything result is ready. Preview it, then save to Gallery or download.");
+          setStatus(`${resultName} is ready. Preview it, then save to Gallery or download.`);
           return;
         }
 
@@ -268,11 +287,11 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
           setBusy(false);
           setLiveJobId("");
           setLivePromptId("");
-          setStatus("LTX Edit Anything canceled.");
+          setStatus(`${toolName} canceled.`);
           return;
         }
 
-        setStatus("Editing video in ComfyUI. Live preview updates when sampler frames arrive.");
+        if(!cancelRef.current)setStatus(statusText==="canceling"?"Cancellation requested; waiting for backend clearance.":"Editing video in ComfyUI. Live preview updates when sampler frames arrive.");
       } catch (error: any) {
         if (cancelled) return;
         setBusy(false);
@@ -289,35 +308,39 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
   }, [busy, liveJobId, livePromptId]);
 
   async function cancelLiveEdit() {
-    if (!liveJobId) {
-      setBusy(false);
-      return;
-    }
-    setStatus("Canceling LTX Edit Anything...");
+    if (!liveJobId || cancelRef.current) return;
+    cancelRef.current=true;setCancelBusy(true);
+    setStatus("Cancellation requested; waiting for backend clearance...");
     try {
-      await fetch("/api/edit-video/ltx-edit", {
+      const response=await fetch("/api/edit-video/ltx-edit", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ jobId: liveJobId }),
       });
-    } catch {
-      // Best-effort cancellation; local UI still exits the live preview state.
+      const data=await response.json();
+      if(!response.ok||!data.ok)throw new Error(data.error||"Cancellation could not be confirmed.");
+      if(data.status==="canceled") {
+        setBusy(false);setLiveJobId("");setLivePromptId("");setLivePreview(null);
+        setStatus(`${toolName} canceled. Backend queue clearance confirmed.`);
+      }else if(data.status==="complete"||data.status==="completed") {
+        setResult(data);setBusy(false);setLiveJobId("");setLivePromptId("");setStatus("Generation completed before cancellation; result is ready.");
+      }
+    } catch(error) {
+      setStatus(error instanceof Error?error.message:"Cancellation failed; the backend may still be running.");
     } finally {
-      setBusy(false);
-      setLiveJobId("");
-      setLivePromptId("");
-      setLivePreview(null);
-      setStatus("LTX Edit Anything canceled.");
+      cancelRef.current=false;setCancelBusy(false);
     }
   }
 
   async function runEdit() {
+    if(invalidSpeed||invalidDuration){setStatus("Check motion speed and duration. LTX Studios supports at most 145 frames.");return;}
     if (!selectedVideo) {
-      setStatus("Choose or upload a source video first.");
+      setStatus(`Choose or upload a source ${imageInput?"image":"video"} first.`);
       return;
     }
-    const text = instruction.trim();
+    if(studioTool==="layout-to-render"&&!lookFile){setStatus("Choose the finished look image for the layout video.");return;}
+    const text = isPromptless?"Reference-driven conversion.":instruction.trim();
     if (!text) {
       setStatus("Enter an edit instruction first.");
       return;
@@ -334,7 +357,7 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
     setLivePromptId("");
     setLivePreview(null);
     setLiveProgressPercent(0);
-    setStatus("Submitting LTX 2.3 Edit Anything workflow to ComfyUI...");
+    setStatus(`Submitting ${toolName} workflow to ComfyUI...`);
 
     try {
       const form = new FormData();
@@ -346,11 +369,14 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
         form.set("video_file", selectedVideo.file, selectedVideo.file.name || "uploaded_video.mp4");
       }
       form.set("task", task);
+      if (studioTool) form.set("studioTool", studioTool);
+      if(studioTool==="layout-to-render"&&lookFile)form.set("look_file",lookFile,lookFile.name);
       form.set("instruction", text);
       form.set("negativePrompt", negativePrompt);
       form.set("outputTitle", cleanOutput);
       form.set("durationSeconds", String(seconds));
       form.set("fps", String(rate));
+      if(studioTool==="slow-motion-control")form.set("speed",String(speed));
       form.set("longerSide", String(side));
       form.set("useVideoReasoning", useVideoReasoning ? "true" : "false");
       form.set("obscuraStrength", String(obscuraStrength));
@@ -377,7 +403,7 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
 
       setResult(data as LtxEditResult);
       setBusy(false);
-      setStatus("LTX Edit Anything result is ready. Preview it, then save to Gallery or download.");
+      setStatus(`${resultName} is ready. Preview it, then save to Gallery or download.`);
     } catch (error: any) {
       setStatus(error?.message || "LTX Edit Anything failed.");
       setBusy(false);
@@ -407,6 +433,8 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
           longerSide,
           useVideoReasoning,
           obscuraStrength: task === "obscura_remova" ? obscuraStrength : undefined,
+          studioTool,
+          speed:studioTool==="slow-motion-control"?speed:undefined,
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -425,9 +453,9 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
     <section className="rounded-[28px] border border-white/10 bg-black/45 p-4 md:p-5">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <h2 className="text-sm font-black uppercase tracking-[0.18em] text-white/78">Video Editing</h2>
+          <h2 className="text-sm font-black uppercase tracking-[0.18em] text-white/78">{studioTool ? toolName : "Video Editing"}</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">
-            Phase 4 adds LTX 2.3 Edit Anything. Use it for prompt-driven add, remove, replace, or style conversion edits on an existing video.
+            {studioTool&&LTX_STUDIO_HELP[studioTool] ? LTX_STUDIO_HELP[studioTool] : isAlpha ? "Generate a black-and-white foreground matte. Empty text conditioning; maximum 145 frames." : studioTool==="ingredients"?"Use a reference-sheet image to preserve subjects and objects in a new LTX 2.5 video. Describe the reference sheet and the generated action separately.":studioTool==="colorization"?"Restore color to grayscale footage with the LTX 2.5 Colorization IC-LoRA. Describe the grayscale reference, then use COLORIZE with the desired colors.":studioTool==="slow-motion-control"?"Animate a starting image with controlled physical motion speed. Playback remains 24fps; motion conditioning is 24 divided by speed. Describe the action normally without speed keywords.":"Use LTX 2.3 Edit Anything for prompt-driven edits on an existing video."}
           </p>
         </div>
         <div className="w-full max-w-sm">
@@ -446,12 +474,12 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200/60">Step 1</p>
-              <h3 className="mt-1 text-xl font-black text-white">Choose source video</h3>
+              <h3 className="mt-1 text-xl font-black text-white">{imageInput?"Choose source image":"Choose source video"}</h3>
             </div>
             <div className="flex flex-wrap gap-2">
               <label className="inline-flex min-h-10 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/10">
-                Upload Video
-                <input type="file" accept="video/mp4,video/webm,video/quicktime,video/x-matroska,video/*" className="hidden" onChange={(event) => onUploadVideo(event.target.files?.[0])} />
+                {imageInput?"Upload Image":"Upload Video"}
+                <input type="file" accept={imageInput?"image/png,image/jpeg,image/webp":"video/mp4,video/webm,video/quicktime,video/x-matroska,video/*"} className="hidden" onChange={(event) => {onUploadVideo(event.target.files?.[0]);event.currentTarget.value="";}} />
               </label>
               <button
                 type="button"
@@ -465,24 +493,26 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
 
           {selectedVideo ? (
             <div className="mt-4 rounded-[20px] border border-white/10 bg-black/35 p-3">
-              <video src={selectedVideo.previewUrl} controls preload="metadata" className="aspect-video w-full rounded-[16px] bg-black object-contain" />
+              {imageInput?<img src={selectedVideo.previewUrl} alt={`${toolName} source reference`} className="aspect-video w-full rounded-[16px] bg-black object-contain"/>:<video src={selectedVideo.previewUrl} controls preload="metadata" className="aspect-video w-full rounded-[16px] bg-black object-contain" />}
               <p className="mt-3 break-words text-sm font-bold text-white">{selectedVideo.title}</p>
               <p className="mt-1 text-xs text-white/45">
-                Source: {selectedVideo.source} â€¢ Duration: {formatDuration(selectedVideo.durationSeconds)}
+                Source: {selectedVideo.source} · {imageInput?"Reference image":`Duration: ${formatDuration(selectedVideo.durationSeconds)}`}
               </p>
             </div>
           ) : (
             <div className="mt-4 rounded-[20px] border border-dashed border-white/15 bg-black/25 p-5 text-sm text-white/55">
-              Select a short source video. Start with 5 seconds while validating the workflow.
+              {imageInput?"Select the reference image to use for this video.":"Select a short source video."}
             </div>
           )}
+          {studioTool==="layout-to-render"?<div className="mt-4 rounded-2xl border border-white/15 p-3"><label className="block text-sm font-semibold">Finished look image (independent reference at frame -1)<input aria-label="Layout finished look image" type="file" accept="image/png,image/jpeg,image/webp" className="mt-2 block w-full text-sm" onChange={event=>{setLookFile(event.target.files?.[0]||null);event.currentTarget.value="";}}/></label>{lookUrl?<img src={lookUrl} alt="Finished look reference" className="mt-2 max-h-64 w-full object-contain"/>:null}<p className="mt-2 text-xs text-white/55">Use the finished appearance matching the layout framing, not the grayscale layout frame. The second stage doubles the selected base dimensions.</p></div>:null}
         </div>
 
         <div className="rounded-[24px] border border-white/10 bg-white/[0.035] p-4">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200/60">Step 2</p>
-          <h3 className="mt-1 text-xl font-black text-white">Edit instruction</h3>
+          <h3 className="mt-1 text-xl font-black text-white">{isAlpha ? "Matte output settings" : "Scene instruction"}</h3>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {!isPromptless ? <>
+          {!studioTool ? <><div className="mt-4 grid gap-3 md:grid-cols-2">
             <div>
               <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Task</label>
               <select
@@ -527,7 +557,7 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
                 Video Reasoning is useful for physics, object motion, and temporal stability.
               </div>
             )}
-          </div>
+          </div></> : null}
 
           <label className="mt-4 block text-xs font-black uppercase tracking-[0.18em] text-white/45">Instruction</label>
           <textarea
@@ -545,6 +575,12 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
             rows={3}
             className="mt-2 w-full rounded-[20px] border border-white/10 bg-black/45 px-4 py-3 text-sm leading-6 text-white outline-none placeholder:text-white/35 focus:border-cyan-300/40"
           />
+          </> : null}
+
+          {studioTool==="slow-motion-control"?<label className="mt-4 block text-sm font-semibold">Physical motion speed
+            <input aria-label="Physical motion speed" type="number" min={0.025} max={1} step={0.025} value={speed} onChange={event=>setSpeed(Number(event.target.value))} className="mt-2 w-full rounded-xl border border-white/15 bg-black/30 p-3"/>
+            <span className="mt-1 block text-xs text-white/55">{invalidSpeed?"Enter a speed between 0.025 and 1.":`Motion conditioning: ${(24/speed).toFixed(1)}fps · playback: 24fps`}</span>
+          </label>:null}
 
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <div>
@@ -552,7 +588,7 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
               <input
                 type="number"
                 min={1}
-                max={30}
+                max={studioTool?maxFrames/fps:30}
                 value={durationSeconds}
                 onChange={(event) => setDurationSeconds(Number(event.target.value))}
                 className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none focus:border-cyan-300/40"
@@ -565,6 +601,7 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
                 min={8}
                 max={60}
                 value={fps}
+                disabled={studioTool==="slow-motion-control"}
                 onChange={(event) => setFps(Number(event.target.value))}
                 className="mt-2 w-full rounded-[18px] border border-white/10 bg-black/45 px-4 py-3 text-sm text-white outline-none focus:border-cyan-300/40"
               />
@@ -582,28 +619,30 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
               />
             </div>
           </div>
+          {studioTool?<p className="mt-2 text-xs text-white/55">Video lengths snap to the model's 8k+1 frame grid and cannot exceed the source clip. Exact output duration is shown after rendering.</p>:null}
 
           <button
             type="button"
             onClick={() => void runEdit()}
-            disabled={busy || !selectedVideo || !instruction.trim()}
+            disabled={busy || !selectedVideo || (!isPromptless&&!instruction.trim()) || (studioTool==="layout-to-render"&&!lookFile) || invalidSpeed || invalidDuration}
             className={cn(
               "mt-5 inline-flex min-h-12 w-full items-center justify-center rounded-full px-5 py-3 text-base font-black transition",
-              busy || !selectedVideo || !instruction.trim()
+              busy || !selectedVideo || (!isPromptless&&!instruction.trim()) || (studioTool==="layout-to-render"&&!lookFile) || invalidSpeed || invalidDuration
                 ? "cursor-not-allowed border border-white/10 bg-white/5 text-white/35"
                 : "border border-purple-300/30 bg-[linear-gradient(90deg,rgba(145,92,255,0.75),rgba(40,200,255,0.45))] text-white shadow-[0_0_28px_rgba(120,95,255,0.22)] hover:brightness-110",
             )}
           >
-            {busy ? "Editing Video..." : "Run LTX Edit Anything"}
+            {busy ? "Processing Video..." : `Run ${toolName}`}
           </button>
 
           {busy && liveJobId ? (
             <button
               type="button"
               onClick={() => void cancelLiveEdit()}
+              disabled={cancelBusy}
               className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-full border border-red-300/25 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-50 transition hover:bg-red-500/15"
             >
-              Cancel
+              {cancelBusy?"Cancelling...":"Cancel"}
             </button>
           ) : null}
 
@@ -653,9 +692,9 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
           <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
             <video src={result.galleryUrl || result.url} controls preload="metadata" className="aspect-video w-full rounded-[18px] bg-black object-contain xl:max-w-2xl" />
             <div className="flex-1">
-              <h3 className="text-xl font-black text-white">Edited video result</h3>
+              <h3 className="text-xl font-black text-white">{isAlpha ? "Foreground alpha matte" : resultName}</h3>
               <p className="mt-2 break-words text-sm text-white/62">{result.fileName}</p>
-              <p className="mt-2 text-xs text-white/42">Task: {taskLabels[result.task || task]} â€¢ Duration: {formatDuration(result.durationSeconds || durationSeconds)}</p>
+              <p className="mt-2 text-xs text-white/42">Task: {studioTool ? toolName : taskLabels[result.task || task]} · Duration: {formatDuration(result.durationSeconds || durationSeconds)}</p>
               <div className="mt-4 flex flex-wrap gap-3">
                 <a href={withDownload(result.galleryUrl || result.url)} className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/10">
                   Download
@@ -666,7 +705,7 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
                   disabled={saveBusy || result.saved}
                   className="inline-flex min-h-11 items-center justify-center rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {result.saved ? "Saved to Gallery" : saveBusy ? "Saving..." : "Save to Gallery"}
+                  {result.saved ? "Saved to Gallery" : saveBusy ? "Saving..." : studioTool==="sdr-to-hdr"?"Save Preview to Gallery":"Save to Gallery"}
                 </button>
                 <button type="button" onClick={() => setResult(null)} className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/10">
                   Clear Result
@@ -677,14 +716,15 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
         </div>
       ) : null}
 
+      {result?.hdrMasterUrl?<div className="flex flex-wrap gap-3 rounded-2xl border border-white/15 p-3"><a href={result.hdrMasterUrl} download className="min-h-11 rounded-full border border-white/20 px-4 py-3">Download 10-bit HLG HDR master</a>{result.exrArchiveUrl?<a href={result.exrArchiveUrl} download className="min-h-11 rounded-full border border-white/20 px-4 py-3">Download ACEScg EXR archive</a>:null}<p className="text-xs text-white/60">The in-page player and Gallery preview are tone-mapped SDR; the separate master and EXR files retain HDR.</p></div>:null}
       {galleryOpen ? (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/82 p-4 backdrop-blur-sm">
           <div className="mx-auto max-w-6xl rounded-[28px] border border-white/10 bg-[#080812] p-4 shadow-2xl md:p-5">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-200/70">Gallery picker</p>
-                <h3 className="mt-1 text-2xl font-black text-white">Choose source video</h3>
-                <p className="mt-1 text-sm text-white/55">Preview the video first, then press Use This Video.</p>
+                <h3 className="mt-1 text-2xl font-black text-white">Choose source {imageInput?"image":"video"}</h3>
+                <p className="mt-1 text-sm text-white/55">Preview the {imageInput?"image":"video"} first, then select it.</p>
               </div>
               <button type="button" onClick={() => setGalleryOpen(false)} className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10">
                 Close
@@ -701,11 +741,11 @@ export default function EditVideoEditAnythingPanel({ onRefreshGallery }: Props) 
                 const key = `${item.source || item.scope || "gallery"}:${galleryLookupName(item)}`;
                 return (
                   <div key={key} className="rounded-[22px] border border-white/10 bg-black/35 p-3">
-                    <video src={item.url} controls muted preload="metadata" className="aspect-video w-full rounded-[18px] bg-black object-contain" />
+                    {imageInput?<img src={item.url} alt={displayVideoName(item)} className="aspect-video w-full rounded-[18px] bg-black object-contain"/>:<video src={item.url} controls muted preload="metadata" className="aspect-video w-full rounded-[18px] bg-black object-contain" />}
                     <p className="mt-3 break-words text-sm font-semibold text-white/82">{name}</p>
                     <p className="mt-1 text-xs text-white/42">{String(item.source || item.scope || "gallery")}</p>
                     <button type="button" onClick={() => selectGalleryVideo(item)} className="mt-3 inline-flex min-h-10 w-full items-center justify-center rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-2 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-400/15">
-                      Use This Video
+                      Use This {imageInput?"Image":"Video"}
                     </button>
                   </div>
                 );

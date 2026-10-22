@@ -7,6 +7,8 @@ import {
 import {
   runWithComfySubmissionCriticalSection,
 } from "@/lib/workers/comfySubmissionCriticalSection";
+import { releaseIdle3090Peer } from "@/lib/workers/comfy3090Peer";
+import { acquireVoiceGpuFileLease } from "@/lib/workers/voiceGpuFileLease";
 
 
 export class Comfy5060BusyError extends Error {
@@ -51,6 +53,7 @@ export async function submitComfyPromptWithGpuLease(args: {
   ) => Promise<Response>;
   purpose?: "image" | "video" | "ltx-fallback";
   preSubmitCleanup?: "free" | null;
+  releaseIdlePeer?: boolean;
     submitTimeoutMs?: number;
     onPromptAccepted?: (
       promptId: string,
@@ -125,6 +128,16 @@ export async function submitComfyPromptWithGpuLease(args: {
             null,
       },
       async () => {
+        let releaseVoice:(()=>void)|null=null;
+        if(on3090){
+          try{releaseVoice=await acquireVoiceGpuFileLease();}
+          catch{return Response.json({error:"RTX 3090 is busy with an active voice operation. Wait for it to finish."},{status:409});}
+        }
+        try {
+        if (on3090 && args.releaseIdlePeer) {
+          try { await releaseIdle3090Peer(baseUrl, submit); }
+          catch (error) { return Response.json({error:error instanceof Error ? error.message : "3090 peer readiness failed."},{status:409}); }
+        }
         if (
           args.preSubmitCleanup
           === "free"
@@ -358,6 +371,7 @@ export async function submitComfyPromptWithGpuLease(args: {
           }
 
           return response;
+        } finally { releaseVoice?.(); }
       },
     );
 

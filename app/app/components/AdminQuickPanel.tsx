@@ -10,9 +10,10 @@ export default function AdminQuickPanel() {
     textDecoration: "none",
     borderRadius: 22,
     padding: 16,
-    background: "linear-gradient(180deg, rgba(25,22,44,.98), rgba(12,11,24,.98))",
-    border: "1px solid rgba(140,110,255,.22)",
-    boxShadow: "0 10px 32px rgba(0,0,0,.28)",
+    background: "var(--color-card)",
+    color: "var(--color-text)",
+    border: "1px solid var(--color-border)",
+    boxShadow: "var(--color-shadow)",
   };
 
   return (
@@ -34,6 +35,12 @@ export default function AdminQuickPanel() {
               <div className="otg-cardTitle" style={{ margin: 0 }}>Full Gallery</div>
               <div className="otg-help" style={{ marginTop: 8 }}>
                 Browse all supported images and videos from both TEST ComfyUI output filesystems.
+              </div>
+            </a>
+            <a href="/app/admin/openai-billing" style={tileStyle}>
+              <div className="otg-cardTitle" style={{ margin: 0 }}>OpenAI Billing</div>
+              <div className="otg-help" style={{ marginTop: 8 }}>
+                View usage, credits, estimates, limits, and official billing sync status.
               </div>
             </a>
           </div>

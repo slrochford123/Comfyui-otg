@@ -43,6 +43,8 @@ function isUniversalCharacterVoiceClaim(jobType: string, action: string, workerI
 
 export async function POST(req: NextRequest) {
   try {
+    const authenticatedWorker = requireWorkerToken(req);
+    if (!authenticatedWorker.ok) return jsonError(authenticatedWorker.error, authenticatedWorker.status);
     const body = await readJsonBody<Record<string, unknown>>(req.clone());
     if (!body.ok) return jsonError(body.error, body.status);
 

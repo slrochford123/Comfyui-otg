@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getOwnerContext } from "@/lib/ownerKey";
+import { requireWorkerToken } from "@/lib/jobs/workerAuth";
 import { withNoStore, readJsonBody, sessionErrorResponse } from "@/lib/http/routeHelpers";
 import { claimRemoteVoicePipelineWorkerJob, type RemoteVoicePipelineWorkerAction } from "@/lib/jobs/voicePipelineJobs";
 
@@ -25,7 +26,10 @@ function jsonError(error: string, status = 400) {
 
 export async function POST(req: NextRequest) {
   try {
-    const owner = await getOwnerContext(req);
+    const auth = requireWorkerToken(req);
+    if (!auth.ok) return jsonError(auth.error, auth.status);
+    const owner = {ownerKey:workerOwnerKey(req, "")};
+    if(!owner.ownerKey)return jsonError("Missing worker owner key.",400);
     const body = await readJsonBody<Record<string, unknown>>(req.clone());
     if (!body.ok) return jsonError(body.error, body.status);
 

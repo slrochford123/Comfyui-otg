@@ -1586,6 +1586,8 @@ export function validateH3VsrWorkflowTemplate(graph = loadH3VsrWorkflowTemplate(
     || graph["1"].inputs["resize_type.width"] !== H3_FINAL_WIDTH
     || graph["1"].inputs["resize_type.height"] !== H3_FINAL_HEIGHT
     || graph["1"].inputs.quality !== "ULTRA"
+    || graph["1"].inputs.strength !== 1
+    || graph["1"].inputs.image_encoding !== "8-bit RGB"
   ) {
     throw new Error("Qualified RTX VSR must target 1920x1080 with ULTRA quality.");
   }

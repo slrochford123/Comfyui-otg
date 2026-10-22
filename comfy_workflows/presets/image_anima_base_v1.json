@@ -117,7 +117,7 @@
   },
   "60:44": {
     "inputs": {
-      "unet_name": "anima-base-v1.0.safetensors",
+      "unet_name": "anima-preview3-base.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",

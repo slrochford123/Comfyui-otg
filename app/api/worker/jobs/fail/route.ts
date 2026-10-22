@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readJsonBody, sessionErrorResponse, withNoStore } from "@/lib/http/routeHelpers";
 import { getOwnerContext } from "@/lib/ownerKey";
 import { failRemoteWorkerJob } from "@/lib/jobs/voicePipelineJobs";
-import { hasValidWorkerToken } from "@/lib/jobs/workerAuth";
+import { hasValidWorkerToken, requireWorkerToken } from "@/lib/jobs/workerAuth";
 import { enqueueQwen3VoiceSampleLifecycleRelease } from "@/lib/workers/voiceLifecycleHooks";
 
 export const runtime = "nodejs";
@@ -30,6 +30,8 @@ async function resolveWorkerOwnerKey(req: NextRequest): Promise<string> {
 
 export async function POST(req: NextRequest) {
   try {
+    const authenticatedWorker = requireWorkerToken(req);
+    if (!authenticatedWorker.ok) return jsonError(authenticatedWorker.error, authenticatedWorker.status);
     const ownerKey = await resolveWorkerOwnerKey(req);
     const body = await readJsonBody<Record<string, unknown>>(req.clone());
     if (!body.ok) return jsonError(body.error, body.status);

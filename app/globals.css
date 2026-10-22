@@ -1644,24 +1644,33 @@ main[data-otg-theme] [class*="border-white/"]{
 }
 
 main[data-otg-theme] [class*="text-cyan"],
+main[data-otg-theme] [class*="text-sky"],
 main[data-otg-theme] [class*="text-violet"],
-main[data-otg-theme] [class*="text-purple"],
-main[data-otg-theme] [class*="text-amber"]{
+main[data-otg-theme] [class*="text-purple"]{
   color:var(--color-primary) !important;
 }
 
 main[data-otg-theme] [class*="border-cyan"],
+main[data-otg-theme] [class*="border-sky"],
 main[data-otg-theme] [class*="border-violet"],
-main[data-otg-theme] [class*="border-purple"],
-main[data-otg-theme] [class*="border-amber"]{
+main[data-otg-theme] [class*="border-purple"]{
   border-color:var(--color-primary-border) !important;
 }
 
 main[data-otg-theme] [class*="bg-cyan"],
+main[data-otg-theme] [class*="bg-sky"],
 main[data-otg-theme] [class*="bg-violet"],
-main[data-otg-theme] [class*="bg-purple"],
-main[data-otg-theme] [class*="bg-amber"]{
+main[data-otg-theme] [class*="bg-purple"]{
   background-color:var(--color-primary-muted) !important;
+}
+
+/* Primary gradient actions follow the user's palette; semantic red/green/
+   amber controls retain their destructive/success/warning colors. */
+main[data-otg-theme] button[class*="bg-[linear-gradient"],
+main[data-otg-theme] button[class*="bg-gradient-to-"]{
+  background:var(--color-primary) !important;
+  border-color:var(--color-primary-border) !important;
+  color:var(--color-primary-foreground) !important;
 }
 
 main[data-otg-theme] input,

@@ -63,3 +63,36 @@ apply-*.py
 *.orig
 *.old
 *.tmp
+
+# Private signing material and local model/runtime artifacts
+*.jks
+*.keystore
+*.safetensors
+*.ckpt
+*.gguf
+*.pth
+*.pt
+*.onnx
+runtime/
+qualification/
+qualification-evidence/
+models/
+*.apk
+*.aab
+*.tar.gz
+*.zip
+
+# One-off private Android/browser audit scripts and unsanitized closure ledgers.
+# Reviewed dependency installers remain reproducible source.
+scripts/qa/*
+!scripts/qa/install-test-ltx-hdr.cjs
+!scripts/qa/install-test-ltx-loras.cjs
+!scripts/qa/download-test-ltx-loras.cjs
+!scripts/qa/install-test-ace-isolated.cjs
+!scripts/qa/recheck-ltx-access.cjs
+!scripts/qa/validate-ltx-runtime.ts
+docs/EXECUTION_CLOSURE_*.md
+docs/EXECUTION_CONTROL_MATRIX_*.csv
+docs/FEATURE_ACCEPTANCE_CONTROL_MATRIX_*.csv
+docs/FEATURE_ADDENDUM_EXECUTION_*.md
+docs/FINAL_EXECUTION_CLOSURE_REPORT_*.md

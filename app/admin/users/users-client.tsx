@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 
-type UserRow = { id: string; email: string; username: string | null; createdAt: string };
+type UserRow = { id: string; email: string; username: string | null; createdAt: string; protected?: boolean };
 type ApiResponse =
   | { ok: true; count: number; users: UserRow[] }
   | { ok: false; error: string; detail?: string };
@@ -49,6 +49,7 @@ export default function AdminUsersClient() {
   }, [q, data]);
 
   async function deleteUser(u: UserRow) {
+    if(u.protected)return;
     const ok = confirm(`Delete this account?\n\nEmail: ${u.email}\nUsername: ${u.username || "—"}\n\nThis cannot be undone.`);
     if (!ok) return;
 
@@ -122,7 +123,7 @@ export default function AdminUsersClient() {
       </a>
 
       <a
-        href="/app/admin/feedback"
+        href="/admin/feedback"
         className="otg-authShowBtn"
         style={{ textDecoration: "none", padding: "10px 14px" }}
       >
@@ -188,9 +189,10 @@ export default function AdminUsersClient() {
           className="otg-adminDeleteBtn"
           type="button"
           onClick={() => deleteUser(u)}
-          disabled={busyId === u.id}
+          disabled={busyId === u.id || u.protected}
+          title={u.protected ? "Administrator account protected from deletion." : undefined}
         >
-          {busyId === u.id ? "Deleting…" : "Delete"}
+          {u.protected ? "Protected Admin" : busyId === u.id ? "Deleting…" : "Delete"}
         </button>
       </div>
     </div>

@@ -88,6 +88,10 @@ function comboValues(node: ComboNodeInfo | undefined, field: string) {
   if (!Array.isArray(raw)) return [];
   const first = raw[0];
   if (Array.isArray(first)) return first.map((item) => clean(item)).filter(Boolean);
+  const options = raw[1];
+  if (first === "COMBO" && options && typeof options === "object" && Array.isArray((options as {options?:unknown}).options)) {
+    return ((options as {options:unknown[]}).options).map(item=>clean(item)).filter(Boolean);
+  }
   if (first && typeof first === "object" && Array.isArray((first as { options?: unknown }).options)) {
     return ((first as { options: unknown[] }).options).map((item) => clean(item)).filter(Boolean);
   }

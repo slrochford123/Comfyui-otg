@@ -7,9 +7,10 @@ import path from "node:path";
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
+import { SessionInvalidError } from "@/lib/ownerKey";
 import { ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import { freshProductionSeed } from "@/lib/production/randomSeed";
+import { requireSessionUser } from "@/lib/sessionUser";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -151,6 +152,26 @@ async function runCommand(template: string, values: Record<string, string>, cwd?
   });
 }
 
+async function runExecutable(executable: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(executable, args, { cwd, env, windowsHide: true, shell: false });
+    let stderr = "";
+    let stdout = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`TTS process timed out after ${Math.round(COMMAND_TIMEOUT_MS / 1000)} seconds.`));
+    }, COMMAND_TIMEOUT_MS);
+    child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
+    child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
+    child.on("error", (error) => { clearTimeout(timer); reject(error); });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`TTS process failed with exit code ${code}. ${stderr || stdout}`.slice(0, 5000)));
+    });
+  });
+}
+
 async function fetchWithTimeout(url: string, init: RequestInit) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), COMMAND_TIMEOUT_MS);
@@ -176,29 +197,59 @@ async function synthesizeIndexTts2(values: Record<string, string>, outputPath: s
     await runCommand(command, values, path.dirname(values.voice || VOICES_ROOT));
   } else {
     const ttsUrl = process.env.INDEXTTS2_TTS_URL || process.env.INDEXTTS2_URL || "";
-    if (!ttsUrl.trim()) {
-      throw new Error("IndexTTS2 is not configured. Set INDEXTTS2_TTS_COMMAND or INDEXTTS2_TTS_URL.");
+    if (ttsUrl.trim()) {
+      const resp = await fetchWithTimeout(ttsUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: values.text,
+          emotion: values.emotion,
+          voice: values.voice,
+          speed: Number(values.speed || 1),
+          emotion_strength: Number(values.emotion_strength || 0.8),
+          style_strength: Number(values.style_strength || 0.8),
+          language: values.language || "en",
+          seed: values.seed || "random",
+          output_path: outputPath,
+        }),
+      });
+      if (!resp.ok) {
+        const detail = await resp.text().catch(() => "");
+        throw new Error(`IndexTTS2 failed (${resp.status}). ${detail}`.slice(0, 2000));
+      }
+      await writeBinaryResponse(resp, outputPath);
+      return;
     }
-    const resp = await fetchWithTimeout(ttsUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+
+    const indexRoot = path.resolve(process.env.INDEXTTS2_ROOT || "");
+    const python = path.resolve(process.env.INDEXTTS2_PYTHON || "");
+    const bridge = path.resolve(process.env.INDEXTTS2_BRIDGE || path.join(process.cwd(), "scripts", "index_tts2_clone_pack_bridge.py"));
+    const config = path.resolve(process.env.INDEXTTS2_CFG || path.join(indexRoot, "checkpoints", "config.yaml"));
+    const modelDir = path.resolve(process.env.INDEXTTS2_MODEL_DIR || path.join(indexRoot, "checkpoints"));
+    if (!process.env.INDEXTTS2_ROOT || !process.env.INDEXTTS2_PYTHON || !fs.existsSync(indexRoot) || !fs.existsSync(python) || !fs.existsSync(bridge) || !fs.existsSync(config) || !fs.existsSync(modelDir)) {
+      throw new Error("IndexTTS2 is not configured. Set its existing runtime paths or a TTS service URL.");
+    }
+
+    const requestPath = `${outputPath}.request.json`;
+    await fsp.writeFile(requestPath, JSON.stringify({
+      referencePath: values.voice,
+      outputDir: path.dirname(outputPath),
+      clips: [{
+        id: path.basename(outputPath, path.extname(outputPath)),
         text: values.text,
-        emotion: values.emotion,
-        voice: values.voice,
-        speed: Number(values.speed || 1),
-        emotion_strength: Number(values.emotion_strength || 0.8),
-        style_strength: Number(values.style_strength || 0.8),
-        language: values.language || "en",
-        seed: values.seed || "random",
-        output_path: outputPath,
-      }),
+        delivery: values.emotion || "neutral",
+        outputPath,
+      }],
+    }), { encoding: "utf8", mode: 0o600 });
+    const pythonPath = [indexRoot, process.env.PYTHONPATH || ""].filter(Boolean).join(path.delimiter);
+    await runExecutable(python, [bridge, "--input-json", requestPath], indexRoot, {
+      ...process.env,
+      INDEXTTS2_ROOT: indexRoot,
+      INDEXTTS2_CFG: config,
+      INDEXTTS2_MODEL_DIR: modelDir,
+      INDEXTTS2_PYTHON: python,
+      PYTHONPATH: pythonPath,
     });
-    if (!resp.ok) {
-      const detail = await resp.text().catch(() => "");
-      throw new Error(`IndexTTS2 failed (${resp.status}). ${detail}`.slice(0, 2000));
-    }
-    await writeBinaryResponse(resp, outputPath);
   }
 }
 
@@ -242,7 +293,7 @@ function assertOutput(outputPath: string, provider: TtsProvider) {
 
 export async function POST(req: NextRequest) {
   try {
-    const owner = await getOwnerContext(req);
+    const owner = await requireSessionUser(req);
     const form = await req.formData();
     const text = String(form.get("text") || "").trim();
     if (!text) return NextResponse.json({ ok: false, error: "Text is required." }, { status: 400 });

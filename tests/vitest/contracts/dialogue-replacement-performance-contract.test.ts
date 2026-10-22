@@ -14,45 +14,33 @@ describe("Dialogue Replacement performance conversion contract", () => {
     );
   });
 
-  it("sends trained Character voices through Applio Preserve Performance", () => {
+  it("sends trained Character voices through Applio and reference samples through Seed-VC", () => {
     const source = read(
       "app/app/components/EditVideoVoiceDubbingPanel.tsx",
     );
 
-    expect(source).toContain(
-      'const trainedCharacter = selectedModel.engine === "character"',
-    );
-    expect(source).toContain('form.append("engine", "applio")');
-    expect(source).toContain(
-      'form.append("model_path", selectedModel.modelPath || selectedModel.path)',
-    );
-    expect(source).toContain(
-      'form.append("index_path", selectedModel.indexPath || "")',
-    );
-    expect(source).toContain(
-      'form.append("dub_mode", "preserve_performance")',
-    );
-    expect(source).toContain('form.append("emotion", "preserve")');
+    expect(source).toContain('engine: target.engine === "character" ? "applio" : "auto"');
+    expect(source).toContain('dubMode: mode === "rewrite" ? "rewrite_line" : "preserve_performance"');
+    expect(source).toContain('emotion: "preserve"');
+    expect(source).toContain("modelPath: target.modelPath || \"\"");
+    expect(source).toContain("indexPath: target.indexPath || \"\"");
+    expect(source).toContain("samplePath: target.samplePath || (target.engine === \"reference\" ? target.path : \"\")");
+    expect(source).toContain('fetch("/api/production/audio/dub-preview"');
   });
 
-  it("presents the three-step Dialogue Replacement workflow", () => {
+  it("presents the simplified upload, analyze, map, and convert workflow", () => {
     const source = read(
       "app/app/components/EditVideoVoiceDubbingPanel.tsx",
     );
 
-    expect(source).toContain("Dialogue Replacement");
-    expect(source).toContain("Step 1: Perform the line");
-    expect(source).toContain("Step 2: Convert to character voice");
-    expect(source).toContain(
-      "Select the dialogue section in the video",
-    );
-    expect(source).toContain("Preview Selection");
-    expect(source).toContain("Cut Section");
-    expect(source).toContain(
-      'fetch("/api/edit-video/dialogue-segment"',
-    );
-    expect(source).toContain(
-      "Ready for the next Put in Video step after this selection is approved.",
-    );
+    expect(source).toContain("Video Voice Studio");
+    expect(source).toContain("Preserve Performance");
+    expect(source).toContain("Rewrite Dialogue");
+    expect(source).toContain("Upload Video");
+    expect(source).toContain("Analyze Speech");
+    expect(source).toContain("Assign target voices");
+    expect(source).toContain("Convert Voices");
+    expect(source).toContain('fetch("/api/production/audio/analyze-clip"');
+    expect(source).toContain('fetch("/api/voice/reference"');
   });
 });

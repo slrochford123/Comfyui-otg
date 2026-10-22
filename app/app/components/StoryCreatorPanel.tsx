@@ -1,5 +1,6 @@
 "use client";
 
+import { readStoryDirectorStream } from "./storyDirectorStream";
 import {
   useCallback,
   useEffect,
@@ -10,18 +11,36 @@ import {
 
 import { BibleTab } from "./storyCreatorV2/BibleTab";
 import { DesignTab } from "./storyCreatorV2/DesignTab";
+import { StoryAudioProductionStudio } from "./storyCreatorV2/StoryAudioProductionStudio";
+import { StoryVideoProductionStudio } from "./storyCreatorV2/StoryVideoProductionStudio";
+import { StoryMovieEditor } from "./storyCreatorV2/StoryMovieEditor";
 import { IdeasTab } from "./storyCreatorV2/IdeasTab";
+import {
+  ProductionPlanner,
+  type StoryPlanVersion,
+  type StoryPlanWorkload,
+} from "./storyCreatorV2/ProductionPlanner";
 import { ProduceTab } from "./storyCreatorV2/ProduceTab";
 import { StoryCreatorHeader } from "./storyCreatorV2/StoryCreatorHeader";
+import type { StoryCreatorStage } from "./storyCreatorV2/StoryCreatorStageTabs";
 import {
-  StoryCreatorStageTabs,
-  type StoryCreatorStage,
-} from "./storyCreatorV2/StoryCreatorStageTabs";
+  StoryStudioShell,
+  type StoryProductionMode,
+  type StoryStudioTool,
+} from "./storyCreatorV2/StoryStudioShell";
 import { WriteTab } from "./storyCreatorV2/WriteTab";
 import type {
   StoryCreatorAsset,
   StoryCreatorAssetCreateInput,
 } from "./storyCreatorV2/StoryAssetGrid";
+import type {
+  StoryProductionPlan,
+  StoryProductionPlanRecord,
+} from "@/lib/storyCreator/productionPlan";
+import {
+  isStoryVisualActionInstruction,
+  type StoryVisualDirectorAction,
+} from "@/lib/storyCreator/visualActions";
 
 type StoryProject = {
   id: string;
@@ -192,6 +211,7 @@ function assistantText(data: any) {
   }
   return "";
 }
+
 export default function StoryCreatorPanel({
   ownerKey,
 }: Props) {
@@ -200,6 +220,16 @@ export default function StoryCreatorPanel({
     useState("");
   const [storyCreatorStage, setStoryCreatorStage] =
     useState<StoryCreatorStage>("ideas");
+  const [storyProductionMode, setStoryProductionMode] =
+    useState<StoryProductionMode>("assisted");
+  const [storyMemoryOpen, setStoryMemoryOpen] =
+    useState(false);
+  const [storyProductionOpen, setStoryProductionOpen] =
+    useState(false);
+  const [storyDirectorVisualAction, setStoryDirectorVisualAction] =
+    useState<StoryVisualDirectorAction | null>(null);
+  const [storyDirectorVisualActionError, setStoryDirectorVisualActionError] =
+    useState("");
 
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -218,6 +248,11 @@ export default function StoryCreatorPanel({
     useState("");
   const [storyExtractionNotice, setStoryExtractionNotice] =
     useState("");
+  const [storyUsage, setStoryUsage] = useState<{
+    costUsd: number;
+    requestCount: number;
+    status: "actual" | "partial" | "unavailable";
+  }>({ costUsd: 0, requestCount: 0, status: "unavailable" });
   const [storyOpenQuestions, setStoryOpenQuestions] =
     useState<StoryOpenQuestion[]>([]);
   const [
@@ -241,14 +276,6 @@ export default function StoryCreatorPanel({
     useState(false);
   const [storyBibleError, setStoryBibleError] =
     useState("");
-  const [
-    storyBibleApprovalBusyFactId,
-    setStoryBibleApprovalBusyFactId,
-  ] = useState("");
-  const [
-    storyBibleApprovalError,
-    setStoryBibleApprovalError,
-  ] = useState("");
   const [storyConflicts, setStoryConflicts] =
     useState<StoryConflict[]>([]);
   const [storyConflictsLoading, setStoryConflictsLoading] =
@@ -273,6 +300,17 @@ export default function StoryCreatorPanel({
     useState(false);
   const [storyWritingError, setStoryWritingError] =
     useState("");
+  const [storyProductionPlan, setStoryProductionPlan] =
+    useState<StoryProductionPlanRecord | null>(null);
+  const [storyPlanWorkload, setStoryPlanWorkload] =
+    useState<StoryPlanWorkload | null>(null);
+  const [storyPlanVersions, setStoryPlanVersions] =
+    useState<StoryPlanVersion[]>([]);
+  const [storyPlanLoading, setStoryPlanLoading] =
+    useState(false);
+  const [storyPlanBusy, setStoryPlanBusy] = useState(false);
+  const [storyPlanError, setStoryPlanError] = useState("");
+  const [storyPlanNotice, setStoryPlanNotice] = useState("");
   const [storyAssets, setStoryAssets] =
     useState<StoryCreatorAsset[]>([]);
   const [storyAssetsLoading, setStoryAssetsLoading] =
@@ -300,6 +338,7 @@ export default function StoryCreatorPanel({
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const storySendLockRef = useRef(false);
+  const visualRestoreProjectRef = useRef("");
   const storyAssetStatusBusyRef = useRef<Set<string>>(
     new Set(),
   );
@@ -323,6 +362,23 @@ export default function StoryCreatorPanel({
     [storyBibleEntities],
   );
 
+  const storyVoiceVocabularyKeywords = useMemo(() => {
+    const terms = new Set<string>();
+    if (selectedProject?.title) terms.add(selectedProject.title);
+    for (const entity of storyBibleEntities) {
+      if (entity.name) terms.add(entity.name);
+    }
+    for (const asset of storyAssets) {
+      if (asset.name) terms.add(asset.name);
+    }
+    for (const fact of storyBibleFacts) {
+      for (const token of fact.valueText.match(/\b[A-Z][A-Za-z0-9'-]{2,}\b/g) || []) {
+        terms.add(token);
+      }
+    }
+    return Array.from(terms).slice(0, 80);
+  }, [selectedProject?.title, storyAssets, storyBibleEntities, storyBibleFacts]);
+
   const storyBibleFactsByStatus = useMemo(
     () => ({
       canon: storyBibleFacts.filter(
@@ -336,28 +392,6 @@ export default function StoryCreatorPanel({
       ),
     }),
     [storyBibleFacts],
-  );
-
-  const storyBibleFactSections = useMemo(
-    () =>
-      [
-        [
-          "Canon",
-          "canon",
-          storyBibleFactsByStatus.canon,
-        ],
-        [
-          "Suggestions",
-          "suggestion",
-          storyBibleFactsByStatus.suggestion,
-        ],
-        [
-          "Unknown",
-          "unknown",
-          storyBibleFactsByStatus.unknown,
-        ],
-      ] as const,
-    [storyBibleFactsByStatus],
   );
 
   const extractionSourceMessageId = useMemo(() => {
@@ -548,6 +582,28 @@ export default function StoryCreatorPanel({
     [],
   );
 
+  const loadStoryUsage = useCallback(async (projectId: string) => {
+    if (!projectId) {
+      setStoryUsage({ costUsd: 0, requestCount: 0, status: "unavailable" });
+      return;
+    }
+    try {
+      const response = await fetch(`/api/story-creator/usage?projectId=${encodeURIComponent(projectId)}`, {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error("Usage unavailable");
+      setStoryUsage({
+        costUsd: Number(data.costUsd || 0),
+        requestCount: Number(data.requestCount || 0),
+        status: data.status === "actual" || data.status === "partial" ? data.status : "unavailable",
+      });
+    } catch {
+      setStoryUsage({ costUsd: 0, requestCount: 0, status: "unavailable" });
+    }
+  }, []);
+
   const loadStoryConflicts = useCallback(
     async (projectId: string) => {
       if (!projectId) {
@@ -720,6 +776,54 @@ export default function StoryCreatorPanel({
     [],
   );
 
+  const loadStoryProductionPlan = useCallback(
+    async (projectId: string) => {
+      if (!projectId) {
+        setStoryProductionPlan(null);
+        setStoryPlanWorkload(null);
+        setStoryPlanVersions([]);
+        setStoryPlanError("");
+        return;
+      }
+
+      setStoryPlanLoading(true);
+      setStoryPlanError("");
+
+      try {
+        const response = await fetch(
+          `/api/story-creator/production-plan?projectId=${encodeURIComponent(projectId)}`,
+          {
+            cache: "no-store",
+            credentials: "include",
+          },
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(
+            errorMessage(data, "Could not load the production plan."),
+          );
+        }
+        setStoryProductionPlan(data?.record || null);
+        setStoryPlanWorkload(data?.workload || null);
+        setStoryPlanVersions(
+          Array.isArray(data?.versions) ? data.versions : [],
+        );
+      } catch (error) {
+        setStoryProductionPlan(null);
+        setStoryPlanWorkload(null);
+        setStoryPlanVersions([]);
+        setStoryPlanError(
+          error instanceof Error
+            ? error.message
+            : "Could not load the production plan.",
+        );
+      } finally {
+        setStoryPlanLoading(false);
+      }
+    },
+    [],
+  );
+
   const refreshStoryAssetStatus = useCallback(
     async (
       assetId: string,
@@ -827,8 +931,93 @@ export default function StoryCreatorPanel({
   useEffect(() => {
     if (selectedProjectId) {
       setStoryCreatorStage("ideas");
+      setStoryMemoryOpen(false);
+      setStoryProductionOpen(false);
+      setStoryDirectorVisualAction(null);
+      setStoryDirectorVisualActionError("");
+      visualRestoreProjectRef.current = "";
+
+      try {
+        const savedMode = window.localStorage.getItem(
+          `otg:story-studio:mode:v1:${selectedProjectId}`,
+        );
+        if (
+          savedMode === "automatic" ||
+          savedMode === "assisted" ||
+          savedMode === "manual"
+        ) {
+          setStoryProductionMode(savedMode);
+        } else {
+          setStoryProductionMode("assisted");
+        }
+      } catch {
+        setStoryProductionMode("assisted");
+      }
     }
   }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (!selectedProjectId || visualRestoreProjectRef.current === selectedProjectId) return;
+    visualRestoreProjectRef.current = selectedProjectId;
+    let active = true;
+    void (async () => {
+      try {
+        const response = await fetch(`/api/story-creator/visual-assets?projectId=${encodeURIComponent(selectedProjectId)}`, {
+          cache: "no-store", credentials: "include",
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !active) return;
+        const assets = (Array.isArray(data.assets) ? data.assets : []) as Array<{
+          id: string; name: string; visualKind: StoryVisualDirectorAction["visualKind"];
+          metadata?: Record<string, unknown>; updatedAt?: number;
+          versions?: Array<{ id: string; prompt: string; parentVersionId: string | null; status: string; metadata?: Record<string, unknown> }>;
+        }>;
+        const asset = assets
+          .filter((item) => item.metadata?.source === "story-director-conversation" && Array.isArray(item.versions) && item.versions.length > 0)
+          .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0))[0];
+        const version = asset?.versions?.[0];
+        if (!asset || !version || !["planned", "generating", "ready", "approved", "failed"].includes(version.status)) return;
+        const metadata = { ...(asset.metadata || {}), ...(version.metadata || {}) };
+        setStoryDirectorVisualAction({
+          action: version.parentVersionId ? "prepare-edit" : "prepare-generation",
+          visualKind: asset.visualKind,
+          name: asset.name,
+          prompt: version.prompt,
+          questions: [],
+          entityId: typeof metadata.entityId === "string" ? metadata.entityId : null,
+          assetId: asset.id,
+          sourceVersionId: version.parentVersionId,
+          displayVersionId: version.id,
+          referenceVersionIds: Array.isArray(metadata.referenceVersionIds) ? metadata.referenceVersionIds.filter((value): value is string => typeof value === "string") : [],
+          planVersion: typeof metadata.planVersion === "number" ? metadata.planVersion : null,
+          sceneId: typeof metadata.sceneId === "string" ? metadata.sceneId : null,
+          shotId: typeof metadata.shotId === "string" ? metadata.shotId : null,
+        });
+      } catch {
+        // The conversation remains usable even if an older visual cannot be restored.
+      }
+    })();
+    return () => { active = false; };
+  }, [selectedProjectId]);
+
+  function changeStoryProductionMode(mode: StoryProductionMode) {
+    setStoryProductionMode(mode);
+    if (!selectedProjectId) return;
+
+    try {
+      window.localStorage.setItem(
+        `otg:story-studio:mode:v1:${selectedProjectId}`,
+        mode,
+      );
+    } catch {
+      // Production mode is a UI preference until project planning lands.
+    }
+  }
+
+  function changeStoryStudioTool(tool: StoryStudioTool) {
+    setStoryCreatorStage(tool);
+    setStoryProductionOpen(true);
+  }
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -838,19 +1027,23 @@ export default function StoryCreatorPanel({
       setStoryExtractionBusy(false);
       setStoryExtractionError("");
       setStoryExtractionNotice("");
+      setStoryUsage({ costUsd: 0, requestCount: 0, status: "unavailable" });
       setStoryOpenQuestions([]);
       setStoryOpenQuestionsError("");
 
       setStoryBibleEntities([]);
       setStoryBibleFacts([]);
       setStoryBibleError("");
-      setStoryBibleApprovalBusyFactId("");
-      setStoryBibleApprovalError("");
       setStoryConflicts([]);
       setStoryConflictsError("");
       setStoryWritingDraft("");
       setStoryWritingError("");
       setStoryWritingInstruction("");
+      setStoryProductionPlan(null);
+      setStoryPlanWorkload(null);
+      setStoryPlanVersions([]);
+      setStoryPlanError("");
+      setStoryPlanNotice("");
       setStoryAssets([]);
       setStoryAssetError("");
       setStoryAssetNotice("");
@@ -866,6 +1059,8 @@ export default function StoryCreatorPanel({
     void loadStoryConflicts(selectedProjectId);
     void loadStoryOpenQuestions(selectedProjectId);
     void loadStoryAssets(selectedProjectId);
+    void loadStoryProductionPlan(selectedProjectId);
+    void loadStoryUsage(selectedProjectId);
   }, [
     selectedProjectId,
     loadStoryMessages,
@@ -873,6 +1068,8 @@ export default function StoryCreatorPanel({
     loadStoryConflicts,
     loadStoryOpenQuestions,
     loadStoryAssets,
+    loadStoryProductionPlan,
+    loadStoryUsage,
   ]);
 
   useEffect(() => {
@@ -917,6 +1114,27 @@ export default function StoryCreatorPanel({
   async function createProject() {
     if (!ownerKey || busy) return;
 
+    const title = newTitle.trim();
+
+    if (!title) {
+      setNotice("Enter a story title before creating a project.");
+      return;
+    }
+
+    const normalizedTitle = title.toLocaleLowerCase();
+    if (
+      projects.some(
+        (project) =>
+          project.title.trim().toLocaleLowerCase() ===
+          normalizedTitle,
+      )
+    ) {
+      setNotice(
+        "A Story with that title already exists. Choose a different title or continue the existing Story.",
+      );
+      return;
+    }
+
     if (projects.length >= STORY_LIMIT) {
       setNotice(
         `Story Creator supports up to ${STORY_LIMIT} active stories. Delete one before creating another.`,
@@ -938,8 +1156,7 @@ export default function StoryCreatorPanel({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            title:
-              newTitle.trim() || "Untitled Story",
+            title,
           }),
         },
       );
@@ -1547,6 +1764,66 @@ export default function StoryCreatorPanel({
     }
   }
 
+  async function updateStoryProductionPlan(
+    action: "create" | "generate" | "save" | "approve",
+    payload: Record<string, unknown> = {},
+  ) {
+    const project = selectedProject;
+    if (!project || storyPlanBusy) return;
+
+    setStoryPlanBusy(true);
+    setStoryPlanError("");
+    setStoryPlanNotice("");
+
+    try {
+      const response = await fetch(
+        "/api/story-creator/production-plan",
+        {
+          method: "POST",
+          cache: "no-store",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            projectId: project.id,
+            action,
+            ...payload,
+          }),
+        },
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          errorMessage(data, "Could not update the production plan."),
+        );
+      }
+
+      setStoryProductionPlan(data?.record || null);
+      setStoryPlanWorkload(data?.workload || null);
+      setStoryPlanNotice(
+        typeof data?.message === "string" && data.message.trim()
+          ? data.message
+          : action === "save"
+            ? "Production plan draft saved."
+            : action === "create"
+              ? "Manual production plan created."
+              : action === "generate"
+                ? "AI draft created for review. No media generation was started."
+                : "Production plan approved. No media generation was started.",
+      );
+      await loadStoryProductionPlan(project.id);
+    } catch (error) {
+      setStoryPlanError(
+        error instanceof Error
+          ? error.message
+          : "Could not update the production plan.",
+      );
+    } finally {
+      setStoryPlanBusy(false);
+    }
+  }
+
   async function checkStoryConflicts() {
     const project = selectedProject;
 
@@ -1605,6 +1882,7 @@ export default function StoryCreatorPanel({
     options: {
       stayInIdeas?: boolean;
       silent?: boolean;
+      paidOperationAuthorized?: boolean;
     } = {},
   ) {
     const project = selectedProject;
@@ -1641,6 +1919,13 @@ export default function StoryCreatorPanel({
           body: JSON.stringify({
             projectId: project.id,
             sourceMessageId: targetSourceMessageId,
+            paidOperationAuthorization: options.paidOperationAuthorized
+              ? {
+                  approved: true,
+                  operation: "story-memory-extraction",
+                  maxOutputTokens: 1000,
+                }
+              : undefined,
           }),
         },
       );
@@ -1656,21 +1941,17 @@ export default function StoryCreatorPanel({
         );
       }
 
-      const factCount =
-        Number(data?.factsCreated || 0) +
-        Number(data?.factsReused || 0);
-      const questionCount =
-        Number(data?.questionsCreated || 0) +
-        Number(data?.questionsReused || 0);
+      const factCount = Number(data?.factsAutoSaved || 0);
       const conflictCount =
         Number(data?.conflictsCreated || 0) +
         Number(data?.conflictsExisting || 0);
-      const summary =
-        `Extracted ${factCount} story facts, ${questionCount} questions, and ${conflictCount} conflicts.`;
+      const summary = String(data?.message || "").trim() ||
+        `Story details updated. ${factCount} details saved. ${conflictCount} conflicts need your attention.`;
 
       await loadStoryBible(project.id);
       await loadStoryOpenQuestions(project.id);
       await loadStoryConflicts(project.id);
+      await loadStoryUsage(project.id);
 
       if (!options.silent) {
         setStoryExtractionNotice(summary);
@@ -1680,7 +1961,7 @@ export default function StoryCreatorPanel({
         !options.stayInIdeas &&
         (factCount || conflictCount)
       ) {
-        setStoryCreatorStage("bible");
+        setStoryMemoryOpen(true);
       }
 
       return {
@@ -1703,144 +1984,6 @@ export default function StoryCreatorPanel({
       };
     } finally {
       setStoryExtractionBusy(false);
-    }
-  }
-
-  async function approveStoryBibleSuggestion(
-    factId: string,
-    valueText?: string,
-  ) {
-    const project = selectedProject;
-
-    if (
-      !project ||
-      !factId ||
-      storyBibleApprovalBusyFactId
-    ) {
-      return;
-    }
-
-    setStoryBibleApprovalBusyFactId(factId);
-    setStoryBibleApprovalError("");
-
-    try {
-      const response = await fetch(
-        "/api/story-creator/canon/approve",
-        {
-          method: "POST",
-          cache: "no-store",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            projectId: project.id,
-            factId,
-            ...(valueText === undefined
-              ? {}
-              : { valueText }),
-          }),
-        },
-      );
-
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(
-          errorMessage(
-            data,
-            "Could not approve Story Bible suggestion.",
-          ),
-        );
-      }
-
-      const approvedFact =
-        data?.fact as StoryBibleFact | undefined;
-
-      await loadStoryBible(project.id);
-      await loadStoryConflicts(project.id);
-
-      if (
-        approvedFact &&
-        Number.isFinite(approvedFact.updatedAt)
-      ) {
-        setProjects((current) =>
-          current.map((item) =>
-            item.id === project.id
-              ? {
-                  ...item,
-                  updatedAt:
-                    approvedFact.updatedAt,
-                }
-              : item,
-          ),
-        );
-      }
-    } catch (error) {
-      setStoryBibleApprovalError(
-        error instanceof Error
-          ? error.message
-          : "Could not approve Story Bible suggestion.",
-      );
-    } finally {
-      setStoryBibleApprovalBusyFactId("");
-    }
-  }
-
-  async function rejectStoryBibleSuggestion(
-    factId: string,
-  ) {
-    const project = selectedProject;
-
-    if (
-      !project ||
-      !factId ||
-      storyBibleApprovalBusyFactId
-    ) {
-      return;
-    }
-
-    setStoryBibleApprovalBusyFactId(factId);
-    setStoryBibleApprovalError("");
-
-    try {
-      const response = await fetch(
-        "/api/story-creator/canon/reject",
-        {
-          method: "POST",
-          cache: "no-store",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            projectId: project.id,
-            factId,
-          }),
-        },
-      );
-
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(
-          errorMessage(
-            data,
-            "Could not reject Story Bible suggestion.",
-          ),
-        );
-      }
-
-      await loadStoryBible(project.id);
-      await loadStoryConflicts(project.id);
-    } catch (error) {
-      setStoryBibleApprovalError(
-        error instanceof Error
-          ? error.message
-          : "Could not reject Story Bible suggestion.",
-      );
-    } finally {
-      setStoryBibleApprovalBusyFactId("");
     }
   }
 
@@ -1907,6 +2050,31 @@ export default function StoryCreatorPanel({
     }
   }
 
+  async function changeStoryCanonFact(
+    action: "update-fact" | "delete-fact",
+    factId: string,
+    valueText?: string,
+  ) {
+    const project = selectedProject;
+    if (!project || !factId) return;
+    setStoryBibleError("");
+    try {
+      const response = await fetch("/api/story-creator/bible/write", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: project.id, action, factId, valueText }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(errorMessage(data, "Could not update Story Memory."));
+      await loadStoryBible(project.id);
+      await loadStoryConflicts(project.id);
+    } catch (error) {
+      setStoryBibleError(error instanceof Error ? error.message : "Could not update Story Memory.");
+    }
+  }
+
   async function sendStoryMessage() {
     const project = selectedProject;
     const content = draft.trim();
@@ -1920,8 +2088,13 @@ export default function StoryCreatorPanel({
       return;
     }
     storySendLockRef.current = true;
+    let transientAssistantId = "";
     setChatBusy(true);
     setChatError("");
+    setStoryDirectorVisualActionError("");
+    if (!isStoryVisualActionInstruction(content)) {
+      setStoryDirectorVisualAction(null);
+    }
 
     try {
       const savedUserMessage =
@@ -1939,6 +2112,57 @@ export default function StoryCreatorPanel({
       setStoryMessages(history);
       setDraft("");
 
+      if (isStoryVisualActionInstruction(content)) {
+        const actionResponse = await fetch(
+          "/api/story-creator/visual-actions",
+          {
+            method: "POST",
+            cache: "no-store",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ projectId: project.id, instruction: content }),
+          },
+        );
+        const actionData = await actionResponse.json().catch(() => ({}));
+        if (!actionResponse.ok || !actionData.action) {
+          throw new Error(errorMessage(actionData, "Story Director could not prepare the Qwen image action."));
+        }
+
+        const action = actionData.action as StoryVisualDirectorAction;
+        if (action.action === "clarify") {
+          const clarification = action.questions.join("\n");
+          const savedAssistantMessage = await persistMessage(
+            project.id,
+            "assistant",
+            clarification,
+          );
+          setStoryDirectorVisualAction(null);
+          setStoryMessages([...history, savedAssistantMessage]);
+          setProjects((current) => current.map((item) => item.id === project.id
+            ? { ...item, updatedAt: savedAssistantMessage.createdAt }
+            : item));
+          return;
+        }
+        const savedAssistantMessage = await persistMessage(
+          project.id,
+          "assistant",
+          action.action === "prepare-edit"
+            ? `I prepared the requested change to ${action.name}. Review it below, then choose Change Image to authorize one edit.`
+            : `I prepared a focused visual design for ${action.name}. Review it below, then choose Create Image to authorize one image.`,
+        );
+        setStoryDirectorVisualAction(action);
+        setStoryDirectorVisualActionError("");
+        setStoryMessages([...history, savedAssistantMessage]);
+        setProjects((current) =>
+          current.map((item) =>
+            item.id === project.id
+              ? { ...item, updatedAt: savedAssistantMessage.createdAt }
+              : item,
+          ),
+        );
+        return;
+      }
+
       const aiResponse = await fetch(
         "/api/ollama-ai/chat",
         {
@@ -1947,11 +2171,15 @@ export default function StoryCreatorPanel({
           credentials: "include",
           headers: {
             "Content-Type": "application/json",
+            "Accept": "application/x-ndjson, application/json",
             "x-otg-ai-assistance": "1",
             "x-otg-ai-assistance-profile":
               "story-helper",
+            "x-otg-story-creator": "1",
+            "x-otg-stream": "1",
           },
           body: JSON.stringify({
+            projectId: project.id,
             messages: history.map(
               ({ role, content }) => ({
                 role,
@@ -1962,11 +2190,8 @@ export default function StoryCreatorPanel({
         },
       );
 
-      const aiData = await aiResponse
-        .json()
-        .catch(() => ({}));
-
       if (!aiResponse.ok) {
+        const aiData = await aiResponse.json().catch(() => ({}));
         throw new Error(
           errorMessage(
             aiData,
@@ -1975,8 +2200,28 @@ export default function StoryCreatorPanel({
         );
       }
 
-      const responseText =
-        assistantText(aiData);
+      let responseText = "";
+      if ((aiResponse.headers.get("content-type") || "").includes("application/x-ndjson")) {
+        transientAssistantId = `story-stream-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const transientMessage: StoryMessage = {
+          id: transientAssistantId,
+          projectId: project.id,
+          ownerKey,
+          role: "assistant",
+          content: "",
+          createdAt: Date.now(),
+        };
+        setStoryMessages([...history, transientMessage]);
+        responseText = await readStoryDirectorStream(aiResponse, (text) => {
+          setStoryMessages((current) => current.map((message) =>
+            message.id === transientAssistantId
+              ? { ...message, content: text }
+              : message));
+        });
+      } else {
+        const aiData = await aiResponse.json().catch(() => ({}));
+        responseText = assistantText(aiData);
+      }
 
       if (!responseText) {
         throw new Error(
@@ -2008,56 +2253,22 @@ export default function StoryCreatorPanel({
         ),
       );
 
-      const extractionResults = [];
-
-      extractionResults.push(
-        await extractStoryInformation(
-          savedUserMessage.id,
-          {
-            stayInIdeas: true,
-            silent: true,
-          },
-        ),
+      setStoryExtractionNotice(
+        "Story Director turn saved. Story Memory extraction is deferred until you explicitly authorize Review Story Details.",
       );
-
-      extractionResults.push(
-        await extractStoryInformation(
-          savedAssistantMessage.id,
-          {
-            stayInIdeas: true,
-            silent: true,
-          },
-        ),
-      );
-
-      const successfulExtractions =
-        extractionResults.filter(
-          (result) => result.ok,
-        );
-      const failedExtractions =
-        extractionResults.filter(
-          (result) => !result.ok,
-        );
-
-      if (successfulExtractions.length) {
-        setStoryExtractionNotice(
-          [
-            "Story Director turn saved.",
-            ...successfulExtractions.map(
-              (result) => result.summary,
-            ),
-          ].join(" "),
-        );
-      }
-
-      if (failedExtractions.length) {
-        setStoryExtractionError(
-          `Story Director response was saved, but extraction needs attention: ${failedExtractions
-            .map((result) => result.summary)
-            .join(" ")}`,
-        );
-      }
     } catch (error) {
+      if (transientAssistantId) {
+        setStoryMessages((current) =>
+          current.filter((message) => message.id !== transientAssistantId),
+        );
+      }
+      if (isStoryVisualActionInstruction(content)) {
+        setStoryDirectorVisualActionError(
+          error instanceof Error
+            ? error.message
+            : "Story Director could not prepare the Qwen image action.",
+        );
+      }
       setChatError(
         error instanceof Error
           ? error.message
@@ -2082,13 +2293,44 @@ export default function StoryCreatorPanel({
           onBack={() => setSelectedProjectId("")}
         />
 
-        <StoryCreatorStageTabs
-          activeStage={storyCreatorStage}
-          onStageChange={setStoryCreatorStage}
-        />
-
-        {storyCreatorStage === "ideas" ? (
-          <IdeasTab
+        <StoryStudioShell
+          mode={storyProductionMode}
+          memoryOpen={storyMemoryOpen}
+          productionOpen={storyProductionOpen}
+          activeTool={
+            storyCreatorStage === "design" ||
+            storyCreatorStage === "audio" ||
+            storyCreatorStage === "produce" ||
+            storyCreatorStage === "movie"
+              ? storyCreatorStage
+              : "write"
+          }
+          canonCount={storyBibleFactsByStatus.canon.length}
+          suggestionCount={storyBiblePendingFacts.length}
+          assetCount={storyAssets.length}
+          openConflictCount={storyConflicts.length}
+          onModeChange={changeStoryProductionMode}
+          onMemoryOpenChange={(open) => {
+            setStoryMemoryOpen(open);
+          }}
+          onProductionOpenChange={(open) => {
+            setStoryProductionOpen(open);
+            if (
+              open &&
+              storyCreatorStage !== "design" &&
+              storyCreatorStage !== "audio" &&
+              storyCreatorStage !== "produce" &&
+              storyCreatorStage !== "movie"
+            ) {
+              setStoryCreatorStage("write");
+            }
+          }}
+          onToolChange={changeStoryStudioTool}
+          director={(
+            <IdeasTab
+            projectId={selectedProject.id}
+            projectTitle={selectedProject.title}
+            vocabularyKeywords={storyVoiceVocabularyKeywords}
             storyMessages={storyMessages}
             messagesLoading={messagesLoading}
             chatBusy={chatBusy}
@@ -2101,6 +2343,7 @@ export default function StoryCreatorPanel({
             extractionSourceMessageId={
               extractionSourceMessageId
             }
+            storyUsage={storyUsage}
             openQuestions={storyOpenQuestions}
             openQuestionsLoading={
               storyOpenQuestionsLoading
@@ -2110,33 +2353,28 @@ export default function StoryCreatorPanel({
             }
             onDraftChange={setDraft}
             onSend={() => void sendStoryMessage()}
-            onExtract={(sourceMessageId) =>
-              void extractStoryInformation(sourceMessageId)
-            }
-          />
-        ) : null}
+            onExtract={(sourceMessageId) => {
+              const authorized = window.confirm(
+                "Reviewing your story will use AI credits. Continue?",
+              );
 
-        {storyCreatorStage === "bible" ? (
-          <BibleTab
-            title="Story Bible"
-            heading="Canon & Continuity"
-            readOnlyLabel="Approval center"
-            phaseCopy="Phase 2A approval view. Structured entities and facts are loaded from this Story's durable Story Bible. AI suggestions remain suggestions until the user approves them as canon."
+              if (authorized) {
+                void extractStoryInformation(sourceMessageId, {
+                  paidOperationAuthorized: true,
+                });
+              }
+            }}
+            visualAction={storyDirectorVisualAction}
+            visualActionError={storyDirectorVisualActionError}
+            />
+          )}
+          memory={(
+            <BibleTab
             storyBibleEntities={storyBibleEntities}
             storyBibleFacts={storyBibleFacts}
-            storyBibleFactSections={storyBibleFactSections}
             storyBibleEntityNames={storyBibleEntityNames}
             storyBibleLoading={storyBibleLoading}
             storyBibleError={storyBibleError}
-            canonApprovalFacts={
-              storyBiblePendingFacts
-            }
-            canonApprovalBusyFactId={
-              storyBibleApprovalBusyFactId
-            }
-            canonApprovalError={
-              storyBibleApprovalError
-            }
             storyConflicts={storyConflicts}
             storyConflictsLoading={
               storyConflictsLoading
@@ -2149,18 +2387,9 @@ export default function StoryCreatorPanel({
             onCheckConflicts={() =>
               void checkStoryConflicts()
             }
-            onApproveFact={(factId) =>
-              void approveStoryBibleSuggestion(factId)
-            }
-            onRejectFact={(factId) =>
-              void rejectStoryBibleSuggestion(factId)
-            }
-            onEditApproveFact={(factId, valueText) =>
-              void approveStoryBibleSuggestion(
-                factId,
-                valueText,
-              )
-            }
+            onBack={() => setStoryMemoryOpen(false)}
+            onUpdateFact={(factId, valueText) => void changeStoryCanonFact("update-fact", factId, valueText)}
+            onDeleteFact={(factId) => void changeStoryCanonFact("delete-fact", factId)}
             onResolveConflict={(
               conflictId,
               action,
@@ -2172,11 +2401,14 @@ export default function StoryCreatorPanel({
                 valueText,
               )
             }
-          />
-        ) : null}
-
-        {storyCreatorStage === "design" ? (
-          <DesignTab
+            />
+          )}
+          design={(
+            <DesignTab
+            projectId={selectedProject?.id || ""}
+            productionPlan={storyProductionPlan}
+            productionMode={storyProductionMode}
+            directorVisualAction={storyDirectorVisualAction}
             entities={storyBibleEntities}
             assetsLabel="Assets"
             assets={storyAssets}
@@ -2196,42 +2428,90 @@ export default function StoryCreatorPanel({
             }
             onLoadDesignContext={loadStoryDesignContext}
             onGenerateFromStory={generateStoryDesignFromContext}
-          />
-        ) : null}
-
-        {storyCreatorStage === "write" ? (
-          <WriteTab
-            mode={storyWritingMode}
-            instruction={storyWritingInstruction}
-            draft={storyWritingDraft}
-            busy={storyWritingBusy}
-            error={storyWritingError}
-            onModeChange={setStoryWritingMode}
-            onInstructionChange={
-              setStoryWritingInstruction
-            }
-            onGenerate={() =>
-              void generateStoryWriting()
-            }
-          />
-        ) : null}
-
-        {storyCreatorStage === "produce" ? (
-          <ProduceTab
-            assets={storyAssets}
-            canonCount={
-              storyBibleFactsByStatus.canon.length
-            }
-            openConflictCount={storyConflicts.length}
-            busy={storyExportBusy}
-            error={storyExportError}
-            notice={storyExportNotice}
-            storyPackage={storyProductionPackage}
-            onCreatePackage={() =>
-              void createStoryProductionPackage()
-            }
-          />
-        ) : null}
+            />
+          )}
+          writing={(
+            <div className="space-y-6">
+              <ProductionPlanner
+                record={storyProductionPlan}
+                workload={storyPlanWorkload}
+                versions={storyPlanVersions}
+                loading={storyPlanLoading}
+                busy={storyPlanBusy}
+                error={storyPlanError}
+                notice={storyPlanNotice}
+                onCreateManual={(targetDurationSeconds) =>
+                  void updateStoryProductionPlan("create", {
+                    targetDurationSeconds,
+                  })
+                }
+                onGenerate={(direction, targetDurationSeconds) =>
+                  void updateStoryProductionPlan("generate", {
+                    direction,
+                    targetDurationSeconds,
+                  })
+                }
+                onSave={(plan: StoryProductionPlan) =>
+                  void updateStoryProductionPlan("save", { plan })
+                }
+                onApprove={() =>
+                  void updateStoryProductionPlan("approve")
+                }
+              />
+              <WriteTab
+                mode={storyWritingMode}
+                instruction={storyWritingInstruction}
+                draft={storyWritingDraft}
+                busy={storyWritingBusy}
+                error={storyWritingError}
+                onModeChange={setStoryWritingMode}
+                onInstructionChange={
+                  setStoryWritingInstruction
+                }
+                onGenerate={() =>
+                  void generateStoryWriting()
+                }
+              />
+            </div>
+          )}
+          production={(
+            <div className="space-y-6">
+              <StoryVideoProductionStudio
+                projectId={selectedProject.id}
+                record={storyProductionPlan}
+                mode={storyProductionMode}
+              />
+              <ProduceTab
+                assets={storyAssets}
+                canonCount={
+                  storyBibleFactsByStatus.canon.length
+                }
+                openConflictCount={storyConflicts.length}
+                busy={storyExportBusy}
+                error={storyExportError}
+                notice={storyExportNotice}
+                storyPackage={storyProductionPackage}
+                onCreatePackage={() =>
+                  void createStoryProductionPackage()
+                }
+              />
+            </div>
+          )}
+          audio={(
+            <StoryAudioProductionStudio
+              projectId={selectedProject.id}
+              record={storyProductionPlan}
+              mode={storyProductionMode}
+            />
+          )}
+          movie={(
+            <StoryMovieEditor
+              projectId={selectedProject.id}
+              record={storyProductionPlan}
+              mode={storyProductionMode}
+            />
+          )}
+        />
       </div>
     );
   }
@@ -2274,7 +2554,7 @@ export default function StoryCreatorPanel({
                   void createProject();
                 }
               }}
-              placeholder="Story title — or leave blank"
+              placeholder="Story title required"
               maxLength={120}
               className="w-full rounded-[14px] border border-white/10 bg-black/45 px-4 py-3 text-sm font-semibold text-white outline-none placeholder:text-white/30 focus:border-cyan-300/40"
             />
@@ -2285,6 +2565,7 @@ export default function StoryCreatorPanel({
             onClick={() => void createProject()}
             disabled={
               busy ||
+              !newTitle.trim() ||
               projects.length >= STORY_LIMIT
             }
             className="rounded-[14px] bg-cyan-300 px-5 py-3 text-sm font-black text-black transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"

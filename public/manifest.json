@@ -1,6 +1,6 @@
 {
-  "name": "ComfyUI OTG",
-  "short_name": "ComfyUI OTG",
+  "name": "SLR Studios",
+  "short_name": "SLR Studios",
   "description": "Creating New Worlds On The Go",
   "start_url": "/login",
   "scope": "/",
@@ -9,7 +9,7 @@
     "window-controls-overlay",
     "standalone"
   ],
-  "background_color": "#0b0b10",
+  "background_color": "#160c32",
   "theme_color": "#7c3aed",
   "icons": [
     {
@@ -31,7 +31,7 @@
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png",
+      "src": "/icon-512-maskable.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

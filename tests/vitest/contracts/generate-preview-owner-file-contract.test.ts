@@ -10,10 +10,12 @@ describe("Generate latest preview owner file contract", () => {
     expect(contentLast).toContain("copyToLatest(sourceFull, dirs.preview)");
     expect(contentLast).toContain('url: `/api/preview/file?name=${encodeURIComponent(copied.name)}`');
 
-    expect(previewFile).toContain('import { getOwnerContext } from "@/lib/ownerKey"');
+    expect(previewFile).toContain('import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey"');
     expect(previewFile).toContain('import { getOwnerDirs } from "@/lib/paths"');
-    expect(previewFile).toContain("requestOwnerPreviewRoots");
-    expect(previewFile).toContain("getOwnerDirs(owner.ownerKey).preview");
-    expect(previewFile).toContain("const ownerDirect = await newestFile");
+    expect(previewFile).toContain("function previewRootsForOwner(ownerKey: string)");
+    expect(previewFile).toContain("const dirs = getOwnerDirs(ownerKey || \"local\")");
+    expect(previewFile).toContain("const roots = previewRootsForOwner(owner.ownerKey)");
+    expect(previewFile).toContain("const direct = await newestFile(directCandidates)");
+    expect(previewFile).toContain("isInsideRoot(root, decoded)");
   });
 });

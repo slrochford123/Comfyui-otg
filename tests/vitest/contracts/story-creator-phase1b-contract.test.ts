@@ -119,7 +119,7 @@ describe("Story Creator Phase 1B", () => {
     );
   });
 
-  it("keeps Story Bible and Assets as later-phase placeholders", () => {
+  it("keeps the completed Story Memory and Assets integrations", () => {
     const source = read(
       "app/app/components/StoryCreatorPanel.tsx",
     );
@@ -133,7 +133,7 @@ describe("Story Creator Phase 1B", () => {
     );
 
     expect(source).toContain(
-      "Phase 2",
+      "loadStoryBible",
     );
   });
 

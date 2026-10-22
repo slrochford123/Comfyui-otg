@@ -32,6 +32,8 @@ function jsonError(error: unknown) {
       ? 401
       : code === "STORY_PROJECT_LIMIT"
         ? 409
+        : code === "STORY_PROJECT_TITLE_CONFLICT"
+          ? 409
         : code === "STORY_PROJECT_NOT_FOUND"
           ? 404
           : 400;

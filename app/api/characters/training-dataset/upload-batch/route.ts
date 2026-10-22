@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOwnerContext } from "@/lib/ownerKey";
 import { withNoStore, sessionErrorResponse } from "@/lib/http/routeHelpers";
 import { checkpointRemoteWorkerJob, getQueuedContractJob } from "@/lib/jobs/voicePipelineJobs";
-import { hasValidWorkerToken } from "@/lib/jobs/workerAuth";
+import { hasValidWorkerToken, requireWorkerToken } from "@/lib/jobs/workerAuth";
 import {
   loadVoiceTrainingPolicy,
 } from "@/lib/jobs/voiceTrainingPolicy";
@@ -117,6 +117,8 @@ function uploadedClipEntries(form: FormData): Array<{ clipId: string; file: File
 
 export async function POST(req: NextRequest) {
   try {
+    const authenticatedWorker=requireWorkerToken(req);
+    if(!authenticatedWorker.ok)return jsonError(authenticatedWorker.error,authenticatedWorker.status);
     const tokenWorker = hasValidWorkerToken(req);
     const owner = tokenWorker ? { ownerKey: workerOwnerKey(req, "") } : await getOwnerContext(req);
     if (!owner.ownerKey) return jsonError("Missing worker owner key.", 400);

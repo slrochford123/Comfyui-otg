@@ -8,9 +8,10 @@ const tileStyle: CSSProperties = {
   textDecoration: "none",
   borderRadius: 22,
   padding: 18,
-  background: "linear-gradient(180deg, rgba(25,22,44,.98), rgba(12,11,24,.98))",
-  border: "1px solid rgba(140,110,255,.22)",
-  boxShadow: "0 10px 32px rgba(0,0,0,.28)",
+  background: "var(--color-card)",
+  color: "var(--color-text)",
+  border: "1px solid var(--color-border)",
+  boxShadow: "var(--color-shadow)",
 };
 
 export default function AdminRootPage() {
@@ -38,6 +39,9 @@ export default function AdminRootPage() {
           </a>
           <a href="/app/admin/performance" className="otg-authShowBtn" style={{ textDecoration: "none", padding: "10px 14px" }}>
             Performance
+          </a>
+          <a href="/app/admin/openai-billing" className="otg-authShowBtn" style={{ textDecoration: "none", padding: "10px 14px" }}>
+            OpenAI Billing
           </a>
         </div>
 
@@ -67,6 +71,13 @@ export default function AdminRootPage() {
             <div className="otg-cardTitle" style={{ margin: 0 }}>Performance Center</div>
             <div className="otg-help" style={{ marginTop: 8 }}>
               Inspect storage size, thumbnail cache, route cache coverage, and dependency status.
+            </div>
+          </a>
+
+          <a href="/app/admin/openai-billing" style={tileStyle}>
+            <div className="otg-cardTitle" style={{ margin: 0 }}>OpenAI Billing & Usage</div>
+            <div className="otg-help" style={{ marginTop: 8 }}>
+              Track OpenAI costs, credits, feature attribution, official sync status, and spending controls.
             </div>
           </a>
         </div>

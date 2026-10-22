@@ -3,6 +3,8 @@ import {
   NextResponse,
 } from "next/server";
 import fs from "node:fs";
+import { buildMossWorkflow, MOSS_FILES, MOSS_REQUIRED_NODES, mossDimensions, mossSeed, mossTarget, mossOutputShape, MossInputError } from "@/lib/images/mossImage";
+import { chooseMossBackend } from "@/lib/images/mossBackend";
 import path from "node:path";
 import {
   randomInt,
@@ -21,7 +23,10 @@ import {
   submitComfyPromptWith5060Lease,
 } from "@/lib/workers/comfyPromptLease";
 import {
+  QWEN21_TURBO_CFG,
+  QWEN21_TURBO_CONTRACT,
   QWEN21_TURBO_LORA,
+  QWEN21_TURBO_STEPS,
 } from "@/lib/imageGenerateWorkflows";
 
 export const runtime = "nodejs";
@@ -55,6 +60,12 @@ const MODEL_CONFIG: Record<
   AssetImageModelId,
   ModelConfig
 > = {
+  "moss-image-sft": {
+    id: "moss-image-sft", label: "MOSS-Image SFT (INT8)",
+    workflowFile: "workflows/characters/create/image_moss_image_sft_t2i.json",
+    outputNodeId: "9", requiredNodes: MOSS_REQUIRED_NODES,
+    requirements: MOSS_FILES, preferredBackend: "image-primary",
+  },
   "ernie-image": {
     id: "ernie-image",
     label: "Ernie Image",
@@ -195,7 +206,7 @@ const MODEL_CONFIG: Record<
 
   "qwen-image-2-1": {
     id: "qwen-image-2-1",
-    label: "Qwen Image 2.1",
+    label: QWEN21_TURBO_CONTRACT.label,
     workflowFile:
       "workflows/characters/create/image_qwen_image_2_1_t2i.json",
     outputNodeId: "461",
@@ -406,18 +417,37 @@ function buildAssetPrompt(args: {
   name: string;
   prompt: string;
   artStyle: string;
+  visualKind?: string;
 }) {
+  const kind = String(args.visualKind || "object").trim().toLowerCase();
+  const locationKinds = new Set(["location", "environment", "storyboard", "scene_image", "shot_reference"]);
+  const characterKinds = new Set(["character", "villain", "creature", "animal"]);
+  const productionRules = locationKinds.has(kind)
+    ? [
+        "Create one complete cinematic environment or shot image matching the described story setting",
+        "preserve the requested characters, location, atmosphere, composition, and story action",
+        "do not replace the requested environment with a studio backdrop or isolated-object presentation",
+      ]
+    : characterKinds.has(kind)
+      ? [
+          "Create one complete production character reference matching the described identity",
+          "keep the character fully readable and preserve continuity-critical appearance, wardrobe, and distinctive details",
+          "do not add unrelated characters or replace the requested setting when one is specified",
+        ]
+      : [
+          "Create exactly one isolated reusable production object, prop, vehicle, device, item, or other non-character production asset",
+          "center the complete asset in frame and keep the full object visible with comfortable margin around it",
+          "simple clean neutral studio background suitable for later isolation and production compositing",
+          "do not create an environmental scene around the asset",
+          "do not create duplicate copies, repeated versions, mirrored copies, or a collection of the same object",
+        ];
   return [
     args.prompt.trim(),
     args.artStyle
       ? `Visual style: ${args.artStyle.trim()}`
       : "",
     `Asset identity name: ${args.name.trim()}`,
-    "Create exactly one isolated reusable production object, prop, vehicle, device, item, or other non-character production asset",
-    "center the complete asset in frame and keep the full object visible with comfortable margin around it",
-    "simple clean neutral studio background suitable for later isolation and production compositing",
-    "do not create an environmental scene around the asset",
-    "do not create duplicate copies, repeated versions, mirrored copies, or a collection of the same object",
+    ...productionRules,
     "preserve clear stable shape, proportions, materials, colors, markings, and continuity-critical visible details",
     "clean production reference image",
     "no crop",
@@ -428,7 +458,9 @@ function buildAssetPrompt(args: {
     .join(". ");
 }
 
-function assetNegativePrompt() {
+function assetNegativePrompt(visualKind?: string) {
+  const kind = String(visualKind || "object").trim().toLowerCase();
+  const isEnvironment = new Set(["location", "environment", "storyboard", "scene_image", "shot_reference"]).has(kind);
   return [
     "duplicate asset",
     "multiple copies",
@@ -437,8 +469,7 @@ function assetNegativePrompt() {
     "collection of objects",
     "cropped object",
     "cut off object",
-    "cluttered scene",
-    "large surrounding environment",
+    ...(isEnvironment ? [] : ["cluttered scene", "large surrounding environment"]),
     "watermark",
   ].join(", ");
 }
@@ -448,12 +479,18 @@ function mutateWorkflow(args: {
   config: ModelConfig;
   prompt: string;
   seed: number;
+  visualKind?: string;
+  persistOutput?: boolean;
+  persistentOutputPrefix?: string;
 }) {
   const {
     graph,
     config,
     prompt,
     seed,
+    visualKind,
+    persistOutput,
+    persistentOutputPrefix,
   } = args;
 
   switch (config.id) {
@@ -604,7 +641,7 @@ function mutateWorkflow(args: {
         graph,
         "12:5",
         "negative_prompt",
-        assetNegativePrompt(),
+        assetNegativePrompt(visualKind),
       );
       setInput(
         graph,
@@ -666,7 +703,7 @@ function mutateWorkflow(args: {
         graph,
         "452",
         "negative_prompt",
-        assetNegativePrompt(),
+        assetNegativePrompt(visualKind),
       );
       setInput(
         graph,
@@ -686,10 +723,28 @@ function mutateWorkflow(args: {
         "seed",
         seed,
       );
-      replaceOutputWithPreview(
-        graph,
-        config.outputNodeId,
-      );
+      setInput(graph, "458", "steps", QWEN21_TURBO_STEPS);
+      setInput(graph, "458", "cfg", QWEN21_TURBO_CFG);
+      setInput(graph, "458", "sampler_name", QWEN21_TURBO_CONTRACT.sampling.sampler);
+      setInput(graph, "458", "scheduler", QWEN21_TURBO_CONTRACT.sampling.scheduler);
+      setInput(graph, "458", "denoise", QWEN21_TURBO_CONTRACT.sampling.denoise);
+      if (
+        String(graph?.["451"]?.inputs?.unet_name || "") !== QWEN21_TURBO_CONTRACT.checkpoint ||
+        String(graph?.["453"]?.inputs?.clip_name || "") !== QWEN21_TURBO_CONTRACT.textEncoder ||
+        String(graph?.["454"]?.inputs?.vae_name || "") !== QWEN21_TURBO_CONTRACT.vae ||
+        String(graph?.["455"]?.inputs?.lora_name || "") !== QWEN21_TURBO_CONTRACT.acceleration.name ||
+        Number(graph?.["455"]?.inputs?.strength_model) !== QWEN21_TURBO_CONTRACT.acceleration.strength
+      ) {
+        throw new Error("Qwen Image 2.1 Turbo workflow contract is not verified; generation was not submitted.");
+      }
+      if (persistOutput) {
+        setInput(graph, config.outputNodeId, "filename_prefix", `otg_story/${persistentOutputPrefix || `qwen-${randomUUID()}`}`);
+      } else {
+        replaceOutputWithPreview(
+          graph,
+          config.outputNodeId,
+        );
+      }
       break;
   }
 
@@ -945,6 +1000,13 @@ async function chooseBackend(
     };
   }
 
+  if (config.id === "qwen-image-2-1") {
+    throw new Error(
+      `${config.label} is unavailable on the required RTX 5060 Ti image backend: ${primaryProbe.reason}. ` +
+      "Automatic fallback is disabled for this workflow.",
+    );
+  }
+
   const fallbackProbe =
     await validateBackend(
       local3090,
@@ -972,6 +1034,7 @@ async function chooseBackend(
 async function submitPrompt(
   baseUrl: string,
   graph: Record<string, any>,
+  releaseIdlePeer = false,
 ) {
   const controller =
     new AbortController();
@@ -988,6 +1051,7 @@ async function submitPrompt(
         baseUrl,
         workerId:
           "api-assets-create-image",
+        releaseIdlePeer,
         init: {
           method: "POST",
           cache: "no-store",
@@ -1156,24 +1220,35 @@ export async function POST(
     const config =
       MODEL_CONFIG[body.model];
 
-    const seed =
-      randomSeed();
+    const startedAt = Date.now();
+
+    const target = config.id === "moss-image-sft" ? mossTarget(body.gpuTarget) : null;
+    const dimensions = target ? mossDimensions(body.width, body.height, "asset") : { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT };
+    const seed = target ? mossSeed(body.seed, randomSeed()) : randomSeed();
 
     const finalPrompt =
       buildAssetPrompt({
         name,
         prompt,
         artStyle,
+        visualKind: String(body.visualKind || "object"),
       });
 
+    const persistOutput = body.persistOutput === true;
+    const persistentOutputPrefix = persistOutput && config.id === "qwen-image-2-1"
+      ? `qwen-${randomUUID()}`
+      : "";
     const graph =
-      mutateWorkflow({
+      target ? buildMossWorkflow({ prompt: finalPrompt, negativePrompt: String(body.negativePrompt || ""), ...dimensions, seed, target }) : mutateWorkflow({
         graph:
           loadWorkflow(config),
         config,
         prompt:
           finalPrompt,
         seed,
+        visualKind: String(body.visualKind || "object"),
+        persistOutput,
+        persistentOutputPrefix,
       });
 
     /*
@@ -1182,7 +1257,7 @@ export async function POST(
      * response could otherwise create duplicate work.
      */
     const backend =
-      await chooseBackend(
+      target ? await chooseMossBackend(target) : await chooseBackend(
         request,
         config,
       );
@@ -1226,6 +1301,7 @@ export async function POST(
       await submitPrompt(
         backend.baseUrl,
         graph,
+        target === "3090",
       );
 
     return noStore({
@@ -1241,10 +1317,10 @@ export async function POST(
       artStyle,
       seed,
       width:
-        OUTPUT_WIDTH,
+        dimensions.width,
       height:
-        OUTPUT_HEIGHT,
-      aspectRatio: "1:1",
+        dimensions.height,
+      ...(target ? mossOutputShape(dimensions.width, dimensions.height) : { aspectRatio: "1:1" }),
       outputNodeId:
         config.outputNodeId,
       comfyBaseUrl:
@@ -1254,7 +1330,29 @@ export async function POST(
       fallbackUsed:
         backend.fallbackUsed,
       temporaryCandidate:
-        true,
+        !persistOutput,
+      persistentOutput:
+        persistOutput,
+      outputSubfolder:
+        persistOutput ? "otg_story" : "",
+      outputFilenamePrefix:
+        persistentOutputPrefix,
+      outputType:
+        persistOutput ? "output" : "temp",
+      workflowId: config.id === "qwen-image-2-1"
+        ? "presets/image_qwen_image_2_1_t2i"
+        : config.workflowFile,
+      workflowFile: config.workflowFile,
+      turbo: config.id === "qwen-image-2-1" ? QWEN21_TURBO_CONTRACT : null,
+      checkpoint: config.requirements.unet,
+      textEncoder: config.requirements.clip,
+      vae: config.requirements.vae,
+      acceleration: config.id === "qwen-image-2-1" ? QWEN21_TURBO_CONTRACT.acceleration : null,
+      steps: config.id === "qwen-image-2-1" ? QWEN21_TURBO_STEPS : null,
+      cfg: config.id === "qwen-image-2-1" ? QWEN21_TURBO_CFG : null,
+      sampler: config.id === "qwen-image-2-1" ? QWEN21_TURBO_CONTRACT.sampling.sampler : null,
+      scheduler: config.id === "qwen-image-2-1" ? QWEN21_TURBO_CONTRACT.sampling.scheduler : null,
+      submissionRuntimeMs: Date.now() - startedAt,
     });
   } catch (error) {
     if (
@@ -1282,7 +1380,7 @@ export async function POST(
             : "Asset image generation failed.",
       },
       {
-        status: 502,
+        status: error instanceof MossInputError ? 400 : 502,
       },
     );
   }

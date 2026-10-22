@@ -1,0 +1,21 @@
+[Unit]
+Description=SLR TEST RTX 5060 Ti fixed maintenance agent
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/otg-test-maintenance-5060.env
+ExecStart=/usr/bin/python3 /opt/otg-test-maintenance-5060/agent.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/lock
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1115,12 +1115,24 @@ def free_vram_mib() -> int | None:
         return None
 
 
-def wait_for_free_vram(args: argparse.Namespace) -> int | None:
+def wait_for_free_vram(
+    args: argparse.Namespace,
+    headers: Dict[str, str],
+    job_id: str,
+    state: Dict[str, Any],
+    requested_count: int,
+) -> int | None:
     deadline = time.monotonic() + args.vram_wait_seconds
     while True:
+        assert_job_active(args, headers, job_id)
         free = free_vram_mib()
         if free is None or free >= args.min_free_vram_mib:
             return free
+        state["stage"] = "waiting_for_vram"
+        state["message"] = f"Waiting for RTX 3090 memory: {free} MiB free; {args.min_free_vram_mib} MiB required."
+        checkpoint_job(args, headers, job_id, int(state.get("generated_count") or 0), requested_count,
+                       state["message"], state["stage"],
+                       {"freeVramMiB": free, "requiredFreeVramMiB": args.min_free_vram_mib})
         if time.monotonic() >= deadline:
             raise WorkerError(
                 f"RTX 3090 free VRAM stayed below {args.min_free_vram_mib} MiB. Last reading: {free} MiB."
@@ -2206,7 +2218,7 @@ def process_one(args: argparse.Namespace) -> int:
         )
 
         free = wait_for_free_vram(
-            args
+            args, headers, job_id, state, attempt_budget
         )
 
         log(

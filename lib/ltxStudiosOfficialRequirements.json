@@ -1,0 +1,487 @@
+[
+  {
+    "id": "ingredients",
+    "repository": "Lightricks/LTX-2.5-22b-IC-LoRA-Ingredients",
+    "file": "ltx-2.5-22b-ic-lora-ingredients-0.9.safetensors",
+    "downloadBytes": 1308787472,
+    "license": "LTX-2 Community License",
+    "source": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Ingredients",
+    "accessAtQualification": "gated-denied",
+    "instructions": [
+      {
+        "kind": "summary",
+        "title": "What it does",
+        "body": "Drives a video from a reference sheet — a single composite image of characters, props and locations — so those elements stay visually consistent across the shot."
+      },
+      {
+        "kind": "input",
+        "title": "Input",
+        "body": "A reference sheet image laying out each element in its own panel. Training bucket 768×448, 121 frames, 24fps."
+      },
+      {
+        "kind": "prompting",
+        "title": "Prompt",
+        "body": [
+          "Two labelled parts, no caps trigger — first describe each panel of the sheet, then describe the action: 'Reference sheet: {panels — characters, props, settings}. Generated video: {the action}.'",
+          "Be detailed in both parts. Describe each panel's look, clothing and colors. Describe the shot as a full scene: camera, what each character does and says, lighting and background."
+        ]
+      },
+      {
+        "kind": "tips",
+        "title": "Tips",
+        "body": [
+          "Give characters clean close-ups / turnarounds and larger panels — bigger, clearer panels carry over more faithfully and prevent identity drift.",
+          "LoRA strength ~1.4.",
+          "The generated video won't invent identities that aren't on the reference sheet — every character, prop or location it needs to render must have its own panel.",
+          "Suggested negative prompt: worst quality, inconsistent motion, blurry, jittery, distorted."
+        ]
+      }
+    ]
+  },
+  {
+    "id": "colorization",
+    "repository": "Lightricks/LTX-2.5-22b-IC-LoRA-Colorization",
+    "file": "ltx-2.5-22b-ic-lora-colorization-0.9.safetensors",
+    "downloadBytes": 906080571,
+    "license": "LTX-2 Community License",
+    "source": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Colorization",
+    "accessAtQualification": "gated-denied",
+    "instructions": [
+      {
+        "kind": "summary",
+        "title": "What it does",
+        "body": "Restores natural colour to grayscale, monochrome or desaturated video, keeping the subject, framing and geometry identical."
+      },
+      {
+        "kind": "input",
+        "title": "Input",
+        "body": "A grayscale / B&W video. Training bucket is ~960×544 at 121 frames, 24fps."
+      },
+      {
+        "kind": "prompting",
+        "title": "Prompt",
+        "body": [
+          "Trigger word COLORIZE, in a two-part shape — first describe the grayscale reference, then the colours you want: 'Reference shows {grayscale scene}. Edited shows the same scene with natural colors restored. COLORIZE {vivid colour description}.'",
+          "Example: Reference shows a wild rabbit on textured boulders in high-contrast monochrome. Edited shows the same scene with natural colors restored. COLORIZE a brown cottontail with warm tan and grey-brown fur on grey stone."
+        ]
+      },
+      {
+        "kind": "tips",
+        "title": "Tips",
+        "body": [
+          "Keep the identity and framing wording identical between the two halves — change only the colour words.",
+          "LoRA strength ~1.0; don't render far above the training bucket or colour weakens.",
+          "Not a fix for blur, compression artifacts, noise or low resolution — pair with Deblur/Decompression/Upscale first if the source needs that too."
+        ]
+      }
+    ]
+  },
+  {
+    "id": "slow-motion-control",
+    "repository": "Lightricks/LTX-2.5-22b-LoRA-Slow-Motion-Control",
+    "file": "ltx-2.5-22b-lora-slow-motion-control-1.0.safetensors",
+    "downloadBytes": 654474448,
+    "license": "LTX-2 Community License (verify model card)",
+    "source": "https://huggingface.co/Lightricks/LTX-2.5-22b-LoRA-Slow-Motion-Control",
+    "accessAtQualification": "gated-denied",
+    "instructions": [
+      {"kind":"input","title":"Input and conditioning","body":"Image-to-video on LTX 2.5 distilled with standard LoRA v1.0. Use the official LTX-2.5_I2V_Speed_Control_flow.json; ordinary LoRA loading alone does not implement speed control."},
+      {"kind":"prompting","title":"Speed wiring","body":"Keep playback at 24fps; motion conditioning is 24 divided by speed. Speed 0.2 gives 5x slower physical motion. Use an ordinary scene caption without speed keywords."},
+      {"kind":"tips","title":"Dependencies","body":"Official split distilled transformer, Gemma4 12B projected encoder, video/audio VAEs and spatial x2 upsampler; LTX-2 Community License. No external preprocessing model."}
+    ]
+  },
+  {
+    "id": "cinemagraph",
+    "repository": "Lightricks/LTX-2.5-22b-LoRA-Cinemagraph",
+    "file": "ltx-2.5-22b-lora-cinemagraph-0.9.safetensors",
+    "downloadBytes": 201462650,
+    "license": "LTX-2 Community License",
+    "source": "https://huggingface.co/Lightricks/LTX-2.5-22b-LoRA-Cinemagraph",
+    "accessAtQualification": "gated-denied",
+    "instructions": [
+      {
+        "kind": "summary",
+        "title": "What it does",
+        "body": "Turns a still image into a cinemagraph-style video: the camera is locked off and the entire scene stays completely frozen except for one selected detail, which loops its motion seamlessly (e.g. only a reflection, only drifting clouds, only falling tears)."
+      },
+      {
+        "kind": "input",
+        "title": "Input",
+        "body": "A single reference image to animate — runs through the normal image-to-video flow, no special preprocessing."
+      },
+      {
+        "kind": "prompting",
+        "title": "Prompt",
+        "body": [
+          "Trigger word CINEMAGRAPH_MOTION as the first token, then state the camera is locked-off/static, name everything that stays completely frozen, then name the one specific detail that moves and how, ending with 'seamless natural loop'.",
+          "Example: CINEMAGRAPH_MOTION, tripod locked-off static camera, zero camera movement, the parrot head remains completely frozen, beak locked in place, feathers locked in place, neck locked in place, body locked in place, sunglasses frame locked in place, palm trees, beach, ocean, sky, and background remain completely frozen, only the volcano eruption reflected inside the sunglasses lenses moves, in each lens the reflected volcano erupts dramatically — a powerful fountain of bright molten lava bursts and sprays high into the air from the crater, thick dark ash and billowing smoke plume upward and roll outward across the reflected sky, glowing rivers of orange lava stream and cascade down the volcano's slopes, showers of bright embers and sparks fly up and rain down, the eruption growing more intense and active, all animating continuously and vividly inside both lenses, the lens frames and parrot do not move at all, everything outside the moving reflection stays perfectly still, seamless natural loop."
+        ]
+      },
+      {
+        "kind": "tips",
+        "title": "Tips",
+        "body": [
+          "Works best on short clips — 5–6 seconds.",
+          "LoRA strength ~1.0.",
+          "Out of scope: camera movement, character/body movement, complex dynamic scenes, or multiple moving subjects — it's trained on static, locked-off camera footage only. Describe everything except the one animated detail as frozen.",
+          "If using a negative prompt, exclude terms like camera movement, pan, tilt, zoom, parallax, whole image moving, background sliding, person moving."
+        ]
+      }
+    ]
+  },
+  {
+    "id": "clean-plate",
+    "repository": "Lightricks/LTX-2.5-22b-IC-LoRA-Clean-Plate",
+    "file": "ltx-2.5-22b-ic-lora-clean-plate-1.0.safetensors",
+    "downloadBytes": 327318439,
+    "license": "LTX-2 Community License",
+    "source": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Clean-Plate",
+    "accessAtQualification": "gated-denied",
+    "instructions": [
+      {
+        "kind": "summary",
+        "title": "What it does",
+        "body": "Removes people, pedestrians and vehicles from a video, reconstructing the static background behind them for VFX/compositing clean plates. Best when subjects are partial or edge occluders with visible background — large first-person body parts filling the frame are out of scope."
+      },
+      {
+        "kind": "input",
+        "title": "Input",
+        "body": "A video with the subjects to remove. Trained at 1024×576/576×1024, 49 frames @ 25fps (min 8k+1 frames); validated up to 1920×1088."
+      },
+      {
+        "kind": "prompting",
+        "title": "Prompt",
+        "body": [
+          "No trigger word — describe the desired empty scene, not a removal command. Name the specific people/objects to exclude.",
+          "Example: An empty clean plate of the exact same location: identical background, environment, structures and lighting as the source video, with no people, no humans, no figures, and no body parts such as heads, arms, hands or legs anywhere in the frame. No cast shadows or reflections of people. Static photorealistic footage, natural daylight, high detail."
+        ]
+      },
+      {
+        "kind": "tips",
+        "title": "Tips",
+        "body": [
+          "LoRA strength 1.0.",
+          "Describe the empty scene. Name the people and vehicles to remove, as in \"no people and no vehicles\". The reference video already sets the camera move and the background."
+        ]
+      }
+    ]
+  },
+  {
+    "id": "day-to-night",
+    "repository": "Lightricks/LTX-2.5-22b-IC-LoRA-Day-To-Night",
+    "file": "ltx-2.5-22b-ic-lora-day-to-night-0.9.safetensors",
+    "downloadBytes": 327318440,
+    "license": "LTX-2 Community License",
+    "source": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Day-To-Night",
+    "accessAtQualification": "gated-denied",
+    "instructions": [
+      {
+        "kind": "summary",
+        "title": "What it does",
+        "body": "Re-renders a daytime clip as the same shot at night. Composition, framing, camera move and subject motion are held frame-for-frame; your prompt only drives the new lighting, brightness and colour temperature."
+      },
+      {
+        "kind": "input",
+        "title": "Input",
+        "body": "A daytime video. Best near the training bucket: ~768×448 (or 448×768) at 97 frames (~4s), 24fps."
+      },
+      {
+        "kind": "prompting",
+        "title": "Prompt",
+        "body": [
+          "No trigger word. Describe only the night lighting of the same shot: color temperature, practical lights, ambient darkness.",
+          "Do not invent a new location, subject, camera move, or action. The reference video already has those.",
+          "Example: A realistic nighttime outdoor scene. A mountain landscape under a dark sky filled with bright stars and a prominent Milky Way. Deep natural shadows across the terrain with very faint ambient starlight. Photorealistic night. Only the lighting changes from day to night; identical composition, framing, camera movement and motion."
+        ]
+      },
+      {
+        "kind": "tips",
+        "title": "Tips",
+        "body": [
+          "LoRA strength 1.0",
+          "Longer clips are possible but the relight can drift over the shot.",
+          "Indoor scenes or heavily artificial-light sources are outside the primary training distribution — outdoor daylight-to-night conversions are the strongest case."
+        ]
+      }
+    ]
+  },
+  {
+    "id": "water-simulation",
+    "repository": "Lightricks/LTX-2.5-22b-IC-LoRA-Water-Simulation",
+    "file": "ltx-2.5-22b-ic-lora-water-simulation-0.9.safetensors",
+    "downloadBytes": 906080568,
+    "license": "LTX-2 Community License",
+    "source": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Water-Simulation",
+    "accessAtQualification": "gated-denied",
+    "instructions": [
+      {
+        "kind": "summary",
+        "title": "What it does",
+        "body": "Adds water and fluid VFX — rivers, surf, rain, waterfalls, floods, splashes, spray, wet-surface speculars — onto a dry clip, keeping subject, clothing, pose, framing and background fixed."
+      },
+      {
+        "kind": "input",
+        "title": "Input",
+        "body": "A dry 'before' video at 24fps, 1920×1088 (or 1088×1920). Up to ~185 frames (~7.7s)."
+      },
+      {
+        "kind": "prompting",
+        "title": "Prompt",
+        "body": [
+          "Trigger phrase ADD WATER (required), in the two-part shape: 'Reference shows {dry scene}. Edited shows the same scene with water added. ADD WATER {water description}.'",
+          "Example: Reference shows a brown rabbit on mossy rocks. Edited shows the same scene with water added. ADD WATER a fast-flowing river with white foam rushing over and around the rocks behind the rabbit."
+        ]
+      },
+      {
+        "kind": "tips",
+        "title": "Tips",
+        "body": [
+          "Be concrete about water type and motion.",
+          "LoRA strength ~1.2; use stage-1-only at native resolution to hold identity."
+        ]
+      }
+    ]
+  },
+  {
+    "id": "decompression",
+    "repository": "Lightricks/LTX-2.5-22b-IC-LoRA-Decompression",
+    "file": "ltx-2.5-22b-ic-lora-decompression-0.9.safetensors",
+    "downloadBytes": 906080571,
+    "license": "LTX-2 Community License",
+    "source": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Decompression",
+    "accessAtQualification": "gated-denied",
+    "instructions": [
+      {
+        "kind": "summary",
+        "title": "What it does",
+        "body": "Strips compression artifacts — macroblocking, chroma bleed, ringing, banding — from low-bitrate video. It is not a denoiser or upscaler."
+      },
+      {
+        "kind": "input",
+        "title": "Input",
+        "body": "A heavily compressed / low-bitrate video. Trained at 960×544 × 121 frames, 24fps."
+      },
+      {
+        "kind": "prompting",
+        "title": "Prompt",
+        "body": [
+          "Trigger phrase ENHANCE QUALITY, in the two-part shape: 'Reference shows {scene}, heavily compressed with visible macroblocking, chroma bleed and ringing. Edited shows the same scene restored to high quality with sharp detail and clean edges. ENHANCE QUALITY {scene}.'",
+          "Example: Reference shows a rabbit between mossy boulders, heavily compressed with macroblocking and ringing. Edited shows the same scene restored, sharp and clean. ENHANCE QUALITY a reddish-brown rabbit between mossy grey boulders in soft daylight."
+        ]
+      },
+      {
+        "kind": "tips",
+        "title": "Tips",
+        "body": [
+          "Use stage-1-only and render near the training resolution so the result stays aligned to the reference.",
+          "LoRA strength 1.0.",
+          "Not a general restoration model — it targets compression artifacts specifically, not defocus/motion blur, noise/grain, colorization or upscaling."
+        ]
+      }
+    ]
+  },
+  {
+    "id": "deblur",
+    "repository": "Lightricks/LTX-2.5-22b-IC-LoRA-Deblur",
+    "file": "ltx-2.5-22b-ic-lora-deblur-0.9.safetensors",
+    "downloadBytes": 906080571,
+    "license": "LTX-2 Community License",
+    "source": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Deblur",
+    "accessAtQualification": "gated-denied",
+    "instructions": [
+      {
+        "kind": "summary",
+        "title": "What it does",
+        "body": "Regenerates out-of-focus footage in sharp focus, preserving subject, framing and geometry. Handles genuine defocus only — not motion blur, compression repair, denoise or upscale."
+      },
+      {
+        "kind": "input",
+        "title": "Input",
+        "body": "A defocused video, used directly as the reference. Trained at 960×544 × 121 frames, 24fps; renders well up to 1920×1088."
+      },
+      {
+        "kind": "prompting",
+        "title": "Prompt",
+        "body": [
+          "Trigger word DEBLUR, in the two-part shape: 'Reference shows {scene}, heavily out of focus with soft defocused blur. Edited shows the same scene in sharp focus with crisp detail. DEBLUR {scene}.'",
+          "Example: Reference shows a butterfly on a pink flower, heavily out of focus. Edited shows the same scene in sharp focus. DEBLUR a vibrant butterfly resting on a bright pink flower."
+        ]
+      },
+      {
+        "kind": "tips",
+        "title": "Tips",
+        "body": [
+          "LoRA strength 1.0; lower toward 0.8 if it over-sharpens.",
+          "Handles genuine defocus only — not motion blur, compression artifacts, denoising or super-resolution.",
+          "Extremely blurred content where detail is truly gone will be hallucinated rather than faithfully reconstructed — don't expect it to recover detail that isn't there."
+        ]
+      }
+    ]
+  },
+  {
+    "id": "restore",
+    "repository": "Lightricks/LTX-2.5-22b-IC-LoRA-Restore",
+    "file": "ltx-2.5-22b-ic-lora-restore-1.0.safetensors",
+    "downloadBytes": 1711643914,
+    "license": "LTX-2 Community License",
+    "source": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Restore",
+    "accessAtQualification": "gated-denied",
+    "instructions": [
+      {
+        "kind": "summary",
+        "title": "What it does",
+        "body": "Restores archive footage: low-resolution web rips, low-bitrate broadcast, tape, sepia or black-and-white film. It removes compression damage, tape and sepia casts, flicker, dirt and scratches. It renders the same shot in natural colour. Trained on LTX-2.3 and tested on LTX-2.5."
+      },
+      {
+        "kind": "input",
+        "title": "Input",
+        "body": "An archive clip with progressive frames. Deinterlace an interlaced clip first. Do not denoise or sharpen it. Keep the aspect ratio: do not stretch a 4:3 scan to 16:9. An optional look image sets the colours and the details of the first frame. Use a restored still of the first frame of the clip."
+      },
+      {
+        "kind": "prompting",
+        "title": "Prompt",
+        "body": [
+          "No trigger word. Describe the period, the place, the light, the materials and what people wear. The prompt steers the colour.",
+          "Keep the prompt generic across the frame. Every tile of the frame receives the whole prompt.",
+          "Example: a steam locomotive arriving at a small rural railway station in 1896, passengers in period coats and hats waiting on the platform, wooden station buildings, natural colour"
+        ]
+      },
+      {
+        "kind": "tips",
+        "title": "Tips",
+        "body": [
+          "LoRA strength 1.0. The strength works like a switch: at 0.7 the clip stays monochrome, and 1.4 over-tints.",
+          "Clean footage does not need this LoRA. It always restores.",
+          "A clip longer than 97 frames runs in 97-frame windows. This keeps the colour stable.",
+          "To add detail after the restoration, run the result through Refine Details."
+        ]
+      }
+    ]
+  },
+  {
+    "id": "refine-details",
+    "repository": "Lightricks/LTX-2.5-22b-IC-LoRA-Refine-Details",
+    "file": "ltx-2.5-22b-ic-lora-refine-details-1.0.safetensors",
+    "downloadBytes": 1308787534,
+    "license": "LTX-2 Community License",
+    "source": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Refine-Details",
+    "accessAtQualification": "gated-denied",
+    "instructions": [
+      {
+        "kind": "summary",
+        "title": "What it does",
+        "body": "Rebuilds the fine detail of a soft, compressed or upscaled clip: texture, edges and grain. The framing, the exposure and the colour stay the same."
+      },
+      {
+        "kind": "input",
+        "title": "Input",
+        "body": "A delivery-grade clip, for example 1080p web video, a compressed clip or a generated clip. Do not sharpen or denoise it first. The clip is scaled up to the output size with Lanczos before the model reads it. A 1080p clip refined to 4K is one pass."
+      },
+      {
+        "kind": "prompting",
+        "title": "Prompt",
+        "body": [
+          "No trigger word. Describe the rendering (sharpness, texture, grain, light), not the subjects. Every tile of the frame receives the whole prompt.",
+          "Example: Locked-off wide shot of a clear mountain stream running over mossy granite boulders under a beech forest canopy, thousands of individual leaves, sunlight dappled evenly across the scene, water sparkling with fine ripples, ferns and lichen in the foreground, deep focus, tack sharp everywhere, nature documentary, photoreal, 8K, sharp photographic detail, crisp faces and clothing texture, natural grain, high resolution footage"
+        ]
+      },
+      {
+        "kind": "tips",
+        "title": "Tips",
+        "body": [
+          "LoRA strength 1.0.",
+          "Archive footage looks cleaner but emptier. Run Restore first, then refine.",
+          "A blurred area stays blurred: the model cannot add detail that the source never had.",
+          "Pristine cinema footage can come out slightly softer."
+        ]
+      }
+    ]
+  },
+  {
+    "id": "sdr-to-hdr",
+    "repository": "Lightricks/LTX-2.5-22b-IC-LoRA-SDR-To-HDR",
+    "file": "ltx-2.5-22b-ic-lora-sdr-to-hdr-1.0.safetensors",
+    "downloadBytes": 1308787472,
+    "license": "LTX-2 Community License (verify model card)",
+    "source": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-SDR-To-HDR",
+    "accessAtQualification": "gated-denied",
+    "instructions": [
+      {"kind":"input","title":"Input and output","body":"Full-length SDR MP4/MOV or EXR sequence. Dedicated HDR IC-LoRA pipeline converts input to ACEScct and exports ACEScg EXR plus a BT.2020 10-bit HLG preview master; an ordinary SDR MP4 save node is insufficient."},
+      {"kind":"prompting","title":"Additional required asset","body":"ltx-2.5-22b-ic-lora-sdr-to-hdr-scene-emb.safetensors supplies fixed conditioning. No text encoder or free-text prompt is used at runtime."},
+      {"kind":"tips","title":"Pipeline","body":"LTX 2.5 distilled transformer, video VAE and rank-128 adapter v1.0; seam-keyframe strength 0.95 and eight distilled Euler steps. Official Comfy workflow: 2.5/HDR_workflows/LTX-2.5_ICLoRA_SDR_to_HDR_Distilled.json. LTX-2.x Community License."}
+    ]
+  },
+  {
+    "id": "alpha-gen",
+    "repository": "Lightricks/LTX-2.5-22b-IC-LoRA-Alpha-Gen",
+    "file": "ltx-2.5-22b-ic-lora-alpha-gen-0.9.safetensors",
+    "downloadBytes": 1308787472,
+    "license": "LTX-2 Community License",
+    "source": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Alpha-Gen",
+    "accessAtQualification": "accessible",
+    "instructions": [
+      {
+        "kind": "summary",
+        "title": "What it does",
+        "body": "Generates a matching alpha matte for a video: white is the subject, black is the background. It handles hair, fur, smoke, fire, sheer fabric, glass and water, with no green screen, mask or prompt."
+      },
+      {
+        "kind": "input",
+        "title": "Input",
+        "body": "A video of up to 145 frames (about 6s at 24fps). Longer clips can leak the colors of the video into the matte, so trim or split them first."
+      },
+      {
+        "kind": "prompting",
+        "title": "Prompt",
+        "body": [
+          "Leave the prompt empty. The model decides the foreground on its own, and a prompt does not steer which object is matted."
+        ]
+      },
+      {
+        "kind": "tips",
+        "title": "Tips",
+        "body": [
+          "LoRA strength 1.0",
+          "The matte has the same size and length as the source, frame for frame. Use it as the alpha channel of the original clip.",
+          "There is no control over which object is matted."
+        ]
+      }
+    ]
+  },
+  {
+    "id": "layout-to-render",
+    "repository": "Lightricks/LTX-2.5-22b-IC-LoRA-Layout-To-Render",
+    "file": "ltx-2.5-22b-ic-lora-layout-to-render-1.0.safetensors",
+    "downloadBytes": 1308787439,
+    "license": "LTX-2 Community License",
+    "source": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Layout-To-Render",
+    "accessAtQualification": "gated-denied",
+    "instructions": [
+      {
+        "kind": "summary",
+        "title": "What it does",
+        "body": "A plain 3D layout (simple shapes and a camera move) becomes a realistic scene. The layout video sets the motion and the framing. The reference image sets the colors, the materials and the light."
+      },
+      {
+        "kind": "input",
+        "title": "Input",
+        "body": "A layout video of up to 10 seconds, and a finished image of the first frame. The image is placed before the first frame, so it is a look reference and not a frame of the clip."
+      },
+      {
+        "kind": "prompting",
+        "title": "Prompt",
+        "body": [
+          "No trigger word. Describe the scene in one sentence."
+        ]
+      },
+      {
+        "kind": "tips",
+        "title": "Tips",
+        "body": [
+          "LoRA strength 1.0",
+          "Use an image that matches the layout framing. The model takes the look from the image, and the motion from the layout."
+        ]
+      }
+    ]
+  }
+]

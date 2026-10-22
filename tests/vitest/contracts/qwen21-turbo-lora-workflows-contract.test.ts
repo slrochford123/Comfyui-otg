@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  QWEN21_TURBO_CONTRACT,
   QWEN21_TURBO_CFG,
   QWEN21_TURBO_LORA,
   QWEN21_TURBO_STEPS,
@@ -102,5 +103,34 @@ describe("Qwen Image 2.1 Turbo LoRA workflow contract", () => {
     expect(source).not.toContain(
       `Qwen-Image/Acceleration/${QWEN21_TURBO_LORA}`,
     );
+  });
+
+  it("makes Storyteller create and edit fail closed on the verified Turbo contract", () => {
+    const createRoute = fs.readFileSync(
+      path.join(root, "app/api/assets/create-image/route.ts"),
+      "utf8",
+    );
+    const visualStore = fs.readFileSync(
+      path.join(root, "lib/storyCreator/store.ts"),
+      "utf8",
+    );
+    const visualStudio = fs.readFileSync(
+      path.join(root, "app/app/components/storyCreatorV2/VisualAssetStudio.tsx"),
+      "utf8",
+    );
+
+    expect(QWEN21_TURBO_CONTRACT).toMatchObject({
+      verified: true,
+      checkpoint: "qwen_image_2.1_int8_convrot.safetensors",
+      acceleration: { name: QWEN21_TURBO_LORA, strength: 1 },
+      sampling: { steps: 8, cfg: 1, sampler: "euler", scheduler: "simple" },
+      backend: "image-primary",
+      gpu: "RTX 5060 Ti 16 GB",
+    });
+    expect(createRoute).toContain("Automatic fallback is disabled for this workflow");
+    expect(createRoute).toContain("do not replace the requested environment with a studio backdrop");
+    expect(visualStore).toContain("QWEN21_TURBO_CONTRACT");
+    expect(visualStudio).toContain("Qwen Image Edit 2.1 Turbo");
+    expect(visualStudio).toContain("8 steps · CFG 1 · RTX 5060 Ti");
   });
 });

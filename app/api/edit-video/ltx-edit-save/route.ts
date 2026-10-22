@@ -8,6 +8,9 @@ import { getGallerySourcesForRequest, safeGalleryName, writeMetaForFile } from "
 import { warmGalleryThumb } from "@/lib/galleryThumbs";
 import { OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import { SessionInvalidError } from "@/lib/ownerKey";
+import { requireSessionUser } from "@/lib/sessionUser";
+import {isLtxStudioRuntimeTool,LTX_STUDIO_RUNTIME} from "@/lib/ltxStudiosRuntime";
+import {probeVideoInfo} from "@/lib/videoFrame";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,6 +44,7 @@ function uniqueTargetPath(dir: string, desiredName: string) {
 
 export async function POST(req: NextRequest) {
   try {
+    await requireSessionUser(req).catch(()=>{throw new SessionInvalidError();});
     const body = await readJsonBody(req);
     const jobId = String(body?.jobId || "").trim();
     const fileName = path.basename(String(body?.fileName || "ltx_edit_anything.mp4").trim() || "ltx_edit_anything.mp4");
@@ -62,6 +66,15 @@ export async function POST(req: NextRequest) {
     const task = String(body?.task || "add");
     const useVideoReasoning = Boolean(body?.useVideoReasoning);
     const isObscura = task === "obscura_remova";
+    let jobMeta:Record<string,any>={};
+    const metaPath=safeJoin(jobRoot,jobId,"ltx-edit-job.json");
+    if(fs.existsSync(metaPath)){
+      jobMeta=JSON.parse(await fsp.readFile(metaPath,"utf8"));
+      if(jobMeta.ownerKey!==owner.ownerKey||jobMeta.jobId!==jobId)return NextResponse.json({ok:false,error:"Job not found."},{status:404});
+    }
+    const studioTool=isLtxStudioRuntimeTool(String(jobMeta.studioTool||""))?String(jobMeta.studioTool) as keyof typeof LTX_STUDIO_RUNTIME:null;
+    const sourceType=studioTool?`ltx-studios-${studioTool}`:isObscura?"edit-video-obscura-remova":"edit-video-ltx-edit-anything";
+    const rendered=await probeVideoInfo(sourcePath);
 
     await fsp.copyFile(sourcePath, targetPath);
     warmGalleryThumb(targetPath, 768);
@@ -73,19 +86,27 @@ export async function POST(req: NextRequest) {
       {
         originalName: savedName,
         renamedName: savedName,
-        sourceType: isObscura ? "edit-video-obscura-remova" : "edit-video-ltx-edit-anything",
-        requestKind: isObscura ? "edit-video-obscura-remova" : "edit-video-ltx-edit-anything",
-        workflowId: isObscura ? "internal/edit-video/ltx23_edit_anything+obscura_remova" : "internal/edit-video/ltx23_edit_anything",
-        workflowTitle: isObscura ? "Edit Video - Obscura Remova" : "Edit Video - LTX 2.3 Edit Anything",
+        sourceType,
+        requestKind: sourceType,
+        sourcePromptId: jobMeta.promptId || null,
+        workflowId: studioTool?`internal/ltx25/${studioTool}`:isObscura ? "internal/edit-video/ltx23_edit_anything+obscura_remova" : "internal/edit-video/ltx23_edit_anything",
+        workflowTitle: studioTool?`LTX 2.5 — ${LTX_STUDIO_RUNTIME[studioTool].name}`:isObscura ? "Edit Video - Obscura Remova" : "Edit Video - LTX 2.3 Edit Anything",
         editVideo: {
           version: 1,
-          operation: isObscura ? "obscura-remova" : "ltx-edit-anything",
+          operation: studioTool || (isObscura ? "obscura-remova" : "ltx-edit-anything"),
+          studioTool,
+          renderedMedia:rendered,
+          hdrMasterUrl:jobMeta.result?.hdrMasterUrl||null,
+          exrArchiveUrl:jobMeta.result?.exrArchiveUrl||null,
           task,
           useVideoReasoning,
           obscuraStrength: isObscura ? body?.obscuraStrength ?? null : null,
         },
         submitPayload: {
-          requestKind: isObscura ? "edit-video-obscura-remova" : "edit-video-ltx-edit-anything",
+          requestKind:sourceType,
+          studioTool,
+          speed:jobMeta.speed,
+          seed:jobMeta.seed,
           sourceJobId: jobId,
           title: titleRaw,
           sourceVideoName: body?.sourceVideoName || "Selected video",

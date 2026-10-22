@@ -87,6 +87,25 @@ const migrations: Migration[] = [
       }
     },
   },
+  {
+    id: "006_add_device_sessions",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS user_sessions (
+          session_id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          issued_at TEXT NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS user_sessions_user_issued
+          ON user_sessions(user_id, issued_at DESC);
+        INSERT OR IGNORE INTO user_sessions (session_id, user_id, issued_at)
+          SELECT current_session_id, id, COALESCE(current_session_issued_at, created_at)
+          FROM users
+          WHERE current_session_id IS NOT NULL AND current_session_id <> '';
+      `);
+    },
+  },
 ];
 
 export function ensureMigrations() {

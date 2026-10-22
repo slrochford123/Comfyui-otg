@@ -1594,6 +1594,9 @@ export function failRemoteWorkerJob(
   error: string,
   result?: unknown,
 ): QueuedContractJob | null {
+  const current = getQueuedContractJob(ownerKey, jobId);
+  if (!current) return null;
+  if (["canceled", "terminated", "completed", "ready_for_review"].includes(current.status)) return current;
   const normalizedError = cleanString(error) || "Remote worker failed.";
   const patch: VoicePipelineJobUpdate = {
     status: "failed",

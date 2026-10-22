@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SessionInvalidError } from "@/lib/ownerKey";
-import { getSessionUser } from "@/lib/sessionUser";
+import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { isProductionFeatureEnabled, productionDisabledResponse } from "@/lib/production/featureGate";
 import {
   deleteProduction,
@@ -19,7 +18,7 @@ export async function GET(req: NextRequest) {
   if (!isProductionFeatureEnabled()) return productionDisabledResponse();
 
   try {
-    const user = await getSessionUser(req);
+    const user = await getOwnerContext(req);
     const ownerKey = user.ownerKey;
     const mode = (req.nextUrl.searchParams.get("mode") || "list").trim().toLowerCase();
     const productionId = (req.nextUrl.searchParams.get("productionId") || "").trim();
@@ -53,7 +52,7 @@ export async function POST(req: NextRequest) {
   if (!isProductionFeatureEnabled()) return productionDisabledResponse();
 
   try {
-    const user = await getSessionUser(req);
+    const user = await getOwnerContext(req);
     const ownerKey = user.ownerKey;
     const body = await req.json().catch(() => null);
     const rawAction = String(body?.action || body?.mode || "").trim().toLowerCase();

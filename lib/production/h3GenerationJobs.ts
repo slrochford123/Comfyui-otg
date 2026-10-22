@@ -14,6 +14,8 @@ import type {
   ProductionV2VisualReference,
 } from "@/lib/production/v2";
 import type { ProductionV2H3BackendId, ProductionV2H3Mode } from "@/lib/production/h3Workflows";
+import type { H3Orientation } from "@/lib/production/h3ProductionRecipes";
+import type { H3AdvancedSettings } from "@/lib/production/h3Settings";
 import {
   normalizeH3Quality,
   normalizeH3ProductionBackendId,
@@ -41,6 +43,8 @@ export type ProductionV2H3GenerationPayload = {
   h3Quality: H3Quality;
   seed: number;
   rifeInterpolation60Fps?: boolean;
+  orientation?: H3Orientation;
+  h3Settings?: H3AdvancedSettings;
   startImage: ProductionV2VisualReference | null;
   references: ProductionV2VisualReference[];
   voices: ProductionV2ResolvedVoiceBinding[];
@@ -52,6 +56,13 @@ export type ProductionV2H3GenerationPayload = {
     clipStartSeconds?: number;
   };
   retryOfJobId?: string;
+  storyBinding?: {
+    projectId: string;
+    planVersion: number;
+    sceneId: string;
+    shotId: string;
+    takeId: string;
+  };
 };
 
 export type ProductionV2GenerationJob = {
@@ -432,6 +443,16 @@ export function completeProductionV2GenerationJob(id: string, outputPath: string
     WHERE id = ? AND status IN ('postprocessing_submitted','postprocessing_running')
       AND native_output_path IS NOT NULL AND vsr_backend = 'rtx5060ti' AND vsr_prompt_id IS NOT NULL
   `).run(outputPath, timestamp, timestamp, id);
+  return result.changes === 1 ? selectJob(id) : null;
+}
+
+export function completeProductionV2GenerationNativeJob(id: string, outputPath: string, statusMessage = "Complete - native H3 output") {
+  const timestamp = nowIso();
+  const result = db().prepare(`
+    UPDATE production_v2_generation_jobs
+    SET status = 'completed', status_message = ?, output_path = ?, completed_at = ?, updated_at = ?
+    WHERE id = ? AND status = 'postprocessing_waiting_for_gpu' AND native_output_path IS NOT NULL
+  `).run(statusMessage, outputPath, timestamp, timestamp, id);
   return result.changes === 1 ? selectJob(id) : null;
 }
 

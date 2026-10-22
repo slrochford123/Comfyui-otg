@@ -3,7 +3,7 @@ import * as fsForTestVoice from "node:fs";
 import * as pathForTestVoice from "node:path";
 
 
-import { getOwnerContext } from "@/lib/ownerKey";
+import { requireSessionUser } from "@/lib/sessionUser";
 import {
   OTG_DATA_ROOT,
   safeSegment as safeSegmentForTestVoice,
@@ -353,10 +353,9 @@ function resolveOwnerScopedTestVoiceRequest(
 
 export async function POST(req: NextRequest) {
   try {
+    const owner = await requireSessionUser(req);
     const body = await readJsonBody<Record<string, unknown>>(req.clone());
     if (!body.ok) return jsonError(body.error, body.status);
-
-    const owner = await getOwnerContext(req);
 
     const ownerScopedRequest =
       resolveOwnerScopedTestVoiceRequest(
@@ -393,7 +392,7 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   try {
-    const owner = await getOwnerContext(req);
+    const owner = await requireSessionUser(req);
     const action = String(req.nextUrl.searchParams.get("action") || "").trim();
     const characterId = String(req.nextUrl.searchParams.get("characterId") || "").trim();
     const status = String(req.nextUrl.searchParams.get("status") || "").trim();

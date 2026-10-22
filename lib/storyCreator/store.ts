@@ -3,6 +3,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import {
+  QWEN21_IMAGE_EDIT_WORKFLOW_ID,
+  QWEN21_STORY_CREATE_WORKFLOW_FILE,
+  QWEN21_TURBO_CONTRACT,
+} from "@/lib/imageGenerateWorkflows";
+import {
+  normalizeStoryProductionPlan,
+  type StoryProductionPlan,
+  type StoryProductionPlanRecord,
+} from "./productionPlan";
 
 export const STORY_CREATOR_PROJECT_LIMIT = 6;
 
@@ -139,6 +149,72 @@ export type StoryAsset = {
   updatedAt: number;
 };
 
+export type StoryVisualAssetKind =
+  | "character"
+  | "villain"
+  | "creature"
+  | "animal"
+  | "location"
+  | "environment"
+  | "object"
+  | "prop"
+  | "vehicle"
+  | "storyboard"
+  | "scene_image"
+  | "shot_reference";
+
+export type StoryVisualVersionStatus =
+  | "planned"
+  | "generating"
+  | "ready"
+  | "failed"
+  | "approved"
+  | "rejected";
+
+export type StoryVisualAssetVersion = {
+  id: string;
+  projectId: string;
+  ownerKey: string;
+  assetId: string;
+  version: number;
+  kind: StoryVisualAssetKind;
+  status: StoryVisualVersionStatus;
+  parentVersionId: string | null;
+  prompt: string;
+  provider: string;
+  model: string;
+  workflowId: string;
+  url: string | null;
+  filePath: string | null;
+  jobId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type StoryVisualAssetBinding = {
+  id: string;
+  projectId: string;
+  ownerKey: string;
+  assetId: string;
+  versionId: string;
+  bindingType: "project" | "entity" | "scene" | "shot";
+  entityId: string | null;
+  planVersion: number | null;
+  sceneId: string | null;
+  shotId: string | null;
+  role: string;
+  approved: boolean;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type StoryVisualAssetRecord = StoryAsset & {
+  visualKind: StoryVisualAssetKind;
+  versions: StoryVisualAssetVersion[];
+  bindings: StoryVisualAssetBinding[];
+};
+
 export type StoryGenerationJobStatus =
   | "planned"
   | "submitted"
@@ -233,11 +309,23 @@ export type StoryExtractionApplyResult = {
   entitiesReused: number;
   factsCreated: number;
   factsReused: number;
+  factsAutoSaved: number;
   questionsCreated: number;
   questionsReused: number;
   conflictsCreated: number;
   conflictsExisting: number;
   skipped: string[];
+};
+
+export type StoryMemoryReview = {
+  id: string;
+  projectId: string;
+  ownerKey: string;
+  throughMessageId: string;
+  messageIds: string[];
+  factsSaved: number;
+  conflictsFound: number;
+  createdAt: number;
 };
 
 let dbInstance: Database.Database | null = null;
@@ -482,6 +570,56 @@ function db() {
         created_at ASC
       );
 
+    CREATE TABLE IF NOT EXISTS story_memory_reviews (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      owner_key TEXT NOT NULL,
+      through_message_id TEXT NOT NULL,
+      message_ids_json TEXT NOT NULL DEFAULT '[]',
+      facts_saved INTEGER NOT NULL DEFAULT 0,
+      conflicts_found INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (project_id)
+        REFERENCES story_projects(id)
+        ON DELETE CASCADE,
+      FOREIGN KEY (through_message_id)
+        REFERENCES story_messages(id)
+        ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_story_memory_reviews_project_created
+      ON story_memory_reviews(
+        project_id,
+        owner_key,
+        created_at DESC
+      );
+
+    CREATE TABLE IF NOT EXISTS story_fact_tombstones (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      owner_key TEXT NOT NULL,
+      subject_entity_id TEXT,
+      predicate TEXT NOT NULL,
+      normalized_value TEXT NOT NULL,
+      source_fact_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (project_id)
+        REFERENCES story_projects(id)
+        ON DELETE CASCADE,
+      FOREIGN KEY (subject_entity_id)
+        REFERENCES story_entities(id)
+        ON DELETE CASCADE
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_story_fact_tombstone_scope
+      ON story_fact_tombstones(
+        project_id,
+        owner_key,
+        COALESCE(subject_entity_id, ''),
+        predicate,
+        normalized_value
+      );
+
     CREATE TABLE IF NOT EXISTS story_assets (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -677,6 +815,48 @@ function db() {
         ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS story_production_plans (
+      project_id TEXT PRIMARY KEY,
+      owner_key TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'draft'
+        CHECK(status IN ('draft', 'approved')),
+      plan_json TEXT NOT NULL DEFAULT '{}',
+      approved_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (project_id)
+        REFERENCES story_projects(id)
+        ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_story_production_plans_owner_updated
+      ON story_production_plans(owner_key, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS story_production_plan_versions (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      owner_key TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      status TEXT NOT NULL
+        CHECK(status IN ('draft', 'approved')),
+      plan_json TEXT NOT NULL,
+      source_role TEXT NOT NULL DEFAULT 'user'
+        CHECK(source_role IN ('user', 'assistant', 'system')),
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (project_id)
+        REFERENCES story_projects(id)
+        ON DELETE CASCADE,
+      UNIQUE(project_id, owner_key, version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_story_production_plan_versions
+      ON story_production_plan_versions(
+        project_id,
+        owner_key,
+        version DESC
+      );
+
     CREATE TABLE IF NOT EXISTS story_exports (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -813,7 +993,128 @@ function migrateStoryCreatorSchema(database: Database.Database) {
         status,
         created_at ASC
       );
+
+    CREATE TABLE IF NOT EXISTS story_visual_asset_versions (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      owner_key TEXT NOT NULL,
+      asset_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      visual_kind TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'planned'
+        CHECK(status IN (
+          'planned', 'generating', 'ready',
+          'failed', 'approved', 'rejected'
+        )),
+      parent_version_id TEXT,
+      prompt TEXT NOT NULL DEFAULT '',
+      provider TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      workflow_id TEXT NOT NULL DEFAULT '',
+      url TEXT,
+      file_path TEXT,
+      job_id TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (project_id)
+        REFERENCES story_projects(id)
+        ON DELETE CASCADE,
+      FOREIGN KEY (asset_id)
+        REFERENCES story_assets(id)
+        ON DELETE CASCADE,
+      FOREIGN KEY (parent_version_id)
+        REFERENCES story_visual_asset_versions(id)
+        ON DELETE SET NULL,
+      UNIQUE(project_id, owner_key, asset_id, version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_story_visual_versions_asset
+      ON story_visual_asset_versions(
+        project_id, owner_key, asset_id, version DESC
+      );
+
+    CREATE TABLE IF NOT EXISTS story_visual_asset_bindings (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      owner_key TEXT NOT NULL,
+      asset_id TEXT NOT NULL,
+      version_id TEXT NOT NULL,
+      binding_type TEXT NOT NULL
+        CHECK(binding_type IN ('project', 'entity', 'scene', 'shot')),
+      entity_id TEXT,
+      plan_version INTEGER,
+      scene_id TEXT,
+      shot_id TEXT,
+      role TEXT NOT NULL DEFAULT 'reference',
+      approved INTEGER NOT NULL DEFAULT 0
+        CHECK(approved IN (0, 1)),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (project_id)
+        REFERENCES story_projects(id)
+        ON DELETE CASCADE,
+      FOREIGN KEY (asset_id)
+        REFERENCES story_assets(id)
+        ON DELETE CASCADE,
+      FOREIGN KEY (version_id)
+        REFERENCES story_visual_asset_versions(id)
+        ON DELETE CASCADE,
+      FOREIGN KEY (entity_id)
+        REFERENCES story_entities(id)
+        ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_story_visual_bindings_target
+      ON story_visual_asset_bindings(
+        project_id, owner_key, binding_type,
+        entity_id, plan_version, scene_id, shot_id
+      );
+
+    INSERT OR IGNORE INTO story_visual_asset_versions (
+      id, project_id, owner_key, asset_id, version, visual_kind, status,
+      parent_version_id, prompt, provider, model, workflow_id, url, file_path,
+      job_id, metadata_json, created_at, updated_at
+    )
+    SELECT
+      'legacy-' || id,
+      project_id,
+      owner_key,
+      id,
+      1,
+      CASE
+        WHEN asset_type = 'character' OR asset_type = 'character_card' THEN 'character'
+        WHEN asset_type = 'location' THEN 'location'
+        WHEN asset_type = 'object' THEN 'object'
+        ELSE 'scene_image'
+      END,
+      CASE
+        WHEN status = 'ready' THEN 'ready'
+        WHEN status = 'generating' THEN 'generating'
+        WHEN status = 'failed' THEN 'failed'
+        ELSE 'planned'
+      END,
+      NULL,
+      prompt,
+      provider,
+      CASE WHEN provider LIKE 'qwen%' THEN provider ELSE '' END,
+      COALESCE(json_extract(metadata_json, '$.workflow'), ''),
+      url,
+      file_path,
+      job_id,
+      json_set(metadata_json, '$.migratedFromLegacyAsset', 1),
+      created_at,
+      updated_at
+    FROM story_assets
+    WHERE asset_type NOT IN ('voice', 'video', 'production_package');
   `);
+
+  const factColumns = database
+    .prepare("PRAGMA table_info(story_facts)")
+    .all() as Array<{ name?: unknown }>;
+  if (!factColumns.some((column) => String(column.name) === "deleted_at")) {
+    database.exec("ALTER TABLE story_facts ADD COLUMN deleted_at INTEGER");
+  }
 }
 
 function cleanOwnerKey(value: unknown) {
@@ -834,6 +1135,27 @@ function cleanTitle(value: unknown) {
   if (!title) return "Untitled Story";
 
   return title.slice(0, 120);
+}
+
+function cleanRequiredProjectTitle(value: unknown) {
+  const raw = String(value || "").trim();
+
+  if (!raw) {
+    const error = new Error(
+      "A Story title is required before creating a project.",
+    ) as Error & { code?: string };
+
+    error.code = "STORY_PROJECT_TITLE_REQUIRED";
+    throw error;
+  }
+
+  return cleanTitle(raw);
+}
+
+function storyProjectConflictError(message: string) {
+  const error = new Error(message) as Error & { code?: string };
+  error.code = "STORY_PROJECT_TITLE_CONFLICT";
+  return error;
 }
 
 function cleanShort(value: unknown) {
@@ -981,6 +1303,46 @@ function cleanStoryAssetStatus(
   }
 
   throw new Error("Story asset status is not supported.");
+}
+
+function cleanStoryVisualAssetKind(
+  value: unknown,
+): StoryVisualAssetKind {
+  const kinds: StoryVisualAssetKind[] = [
+    "character",
+    "villain",
+    "creature",
+    "animal",
+    "location",
+    "environment",
+    "object",
+    "prop",
+    "vehicle",
+    "storyboard",
+    "scene_image",
+    "shot_reference",
+  ];
+  if (kinds.includes(value as StoryVisualAssetKind)) {
+    return value as StoryVisualAssetKind;
+  }
+  throw new Error("Story visual asset kind is not supported.");
+}
+
+function cleanStoryVisualVersionStatus(
+  value: unknown,
+): StoryVisualVersionStatus {
+  const statuses: StoryVisualVersionStatus[] = [
+    "planned",
+    "generating",
+    "ready",
+    "failed",
+    "approved",
+    "rejected",
+  ];
+  if (statuses.includes(value as StoryVisualVersionStatus)) {
+    return value as StoryVisualVersionStatus;
+  }
+  throw new Error("Story visual version status is not supported.");
 }
 
 function cleanStoryGenerationJobStatus(
@@ -1268,6 +1630,56 @@ function rowToStoryAsset(row: any): StoryAsset {
   };
 }
 
+function rowToStoryVisualVersion(
+  row: any,
+): StoryVisualAssetVersion {
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id),
+    ownerKey: String(row.owner_key),
+    assetId: String(row.asset_id),
+    version: Number(row.version),
+    kind: cleanStoryVisualAssetKind(row.visual_kind),
+    status: cleanStoryVisualVersionStatus(row.status),
+    parentVersionId: row.parent_version_id
+      ? String(row.parent_version_id)
+      : null,
+    prompt: String(row.prompt || ""),
+    provider: String(row.provider || ""),
+    model: String(row.model || ""),
+    workflowId: String(row.workflow_id || ""),
+    url: row.url ? String(row.url) : null,
+    filePath: row.file_path ? String(row.file_path) : null,
+    jobId: row.job_id ? String(row.job_id) : null,
+    metadata: parseStoryJson(row.metadata_json),
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+function rowToStoryVisualBinding(
+  row: any,
+): StoryVisualAssetBinding {
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id),
+    ownerKey: String(row.owner_key),
+    assetId: String(row.asset_id),
+    versionId: String(row.version_id),
+    bindingType: row.binding_type,
+    entityId: row.entity_id ? String(row.entity_id) : null,
+    planVersion: row.plan_version === null
+      ? null
+      : Number(row.plan_version),
+    sceneId: row.scene_id ? String(row.scene_id) : null,
+    shotId: row.shot_id ? String(row.shot_id) : null,
+    role: String(row.role || "reference"),
+    approved: Boolean(row.approved),
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+  };
+}
+
 function rowToStoryGenerationJob(row: any): StoryGenerationJob {
   return {
     id: String(row.id),
@@ -1315,6 +1727,31 @@ function rowToStoryOpenQuestion(row: any): StoryOpenQuestion {
     sourceMessageId: row.source_message_id
       ? String(row.source_message_id)
       : null,
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+function rowToStoryProductionPlanRecord(
+  row: any,
+): StoryProductionPlanRecord {
+  const projectId = String(row.project_id);
+  let parsed: unknown = {};
+  try {
+    parsed = JSON.parse(String(row.plan_json || "{}"));
+  } catch {
+    parsed = {};
+  }
+
+  return {
+    projectId,
+    ownerKey: String(row.owner_key),
+    version: Number(row.version || 1),
+    status: row.status === "approved" ? "approved" : "draft",
+    plan: normalizeStoryProductionPlan(parsed, projectId),
+    approvedAt: row.approved_at == null
+      ? null
+      : Number(row.approved_at),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
@@ -1372,6 +1809,27 @@ export function createStoryCreatorProject(input: {
   genre?: unknown;
 }) {
   const ownerKey = cleanOwnerKey(input.ownerKey);
+  const title = cleanRequiredProjectTitle(input.title);
+
+  const titleExists = db()
+    .prepare(`
+      SELECT title
+      FROM story_projects
+      WHERE owner_key = ?
+        AND status = 'active'
+    `)
+    .all(ownerKey)
+    .some(
+      (row: any) =>
+        normalizeStoryExtractionKey(String(row.title || "")) ===
+        normalizeStoryExtractionKey(title),
+    );
+
+  if (titleExists) {
+    throw storyProjectConflictError(
+      "A Story with that title already exists. Choose a different title or continue the existing Story.",
+    );
+  }
 
   const countRow = db()
     .prepare(`
@@ -1399,7 +1857,7 @@ export function createStoryCreatorProject(input: {
   const project: StoryCreatorProject = {
     id: randomUUID(),
     ownerKey,
-    title: cleanTitle(input.title),
+    title,
     format: cleanShort(input.format),
     genre: cleanShort(input.genre),
     status: "active",
@@ -1462,7 +1920,29 @@ export function updateStoryCreatorProject(input: {
   const nextTitle =
     input.title === undefined
       ? String(existing.title)
-      : cleanTitle(input.title);
+      : cleanRequiredProjectTitle(input.title);
+
+  if (
+    input.title !== undefined &&
+    db()
+      .prepare(`
+        SELECT title
+        FROM story_projects
+        WHERE owner_key = ?
+          AND status = 'active'
+          AND id <> ?
+      `)
+      .all(ownerKey, id)
+      .some(
+        (row: any) =>
+          normalizeStoryExtractionKey(String(row.title || "")) ===
+          normalizeStoryExtractionKey(nextTitle),
+      )
+  ) {
+    throw storyProjectConflictError(
+      "A Story with that title already exists. Choose a different title.",
+    );
+  }
 
   const nextFormat =
     input.format === undefined
@@ -1893,6 +2373,7 @@ function isStoryBibleFactSuperseded(input: {
       WHERE supersedes_fact_id = ?
         AND project_id = ?
         AND owner_key = ?
+        AND deleted_at IS NULL
       LIMIT 1
     `)
     .get(
@@ -1918,7 +2399,9 @@ function listActiveStoryCanonFactsForScope(input: {
       FROM story_facts AS f
       WHERE f.project_id = ?
         AND f.owner_key = ?
+        AND f.deleted_at IS NULL
         AND f.canon_status = 'canon'
+        AND f.deleted_at IS NULL
         AND (
           (? IS NULL AND f.subject_entity_id IS NULL)
           OR f.subject_entity_id = ?
@@ -2217,6 +2700,7 @@ export function listStoryBibleFacts(input: {
       FROM story_facts AS f
       WHERE f.project_id = ?
         AND f.owner_key = ?
+        AND f.deleted_at IS NULL
       ORDER BY
         f.created_at ASC,
         fact_rowid ASC
@@ -2228,6 +2712,7 @@ export function listStoryBibleFacts(input: {
       FROM story_facts AS f
       WHERE f.project_id = ?
         AND f.owner_key = ?
+        AND f.deleted_at IS NULL
         AND NOT EXISTS (
           SELECT 1
           FROM story_facts AS newer
@@ -2276,6 +2761,7 @@ export function listPendingStoryBibleFacts(input: {
       WHERE f.project_id = ?
         AND f.owner_key = ?
         AND f.canon_status = 'suggestion'
+        AND f.deleted_at IS NULL
         AND NOT EXISTS (
           SELECT 1
           FROM story_facts AS newer
@@ -2607,6 +3093,99 @@ export function addStoryBibleFact(input: {
   return fact;
 }
 
+function insertStoryFactTombstone(input: {
+  fact: StoryBibleFact;
+  now: number;
+}) {
+  db().prepare(`
+    INSERT OR IGNORE INTO story_fact_tombstones (
+      id, project_id, owner_key, subject_entity_id, predicate,
+      normalized_value, source_fact_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    randomUUID(),
+    input.fact.projectId,
+    input.fact.ownerKey,
+    input.fact.subjectEntityId,
+    input.fact.predicate,
+    normalizeFactComparisonValue(input.fact),
+    input.fact.id,
+    input.now,
+  );
+}
+
+export function reviseStoryCanonFact(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  factId: unknown;
+  valueText: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(
+    input.ownerKey,
+    input.projectId,
+  );
+  const factId = cleanOptionalStoryBibleId(input.factId);
+  if (!factId) throw storyBibleError("STORY_BIBLE_FACT_ID_REQUIRED", "Canon entry is required.");
+  const current = assertOwnedStoryBibleFact({ ownerKey, projectId, factId });
+  if (current.canonStatus !== "canon") {
+    throw storyBibleError("STORY_BIBLE_CANON_REQUIRED", "Only canon entries can be edited here.");
+  }
+  const valueText = cleanStoryBibleFactValue(input.valueText);
+  if (!valueText) {
+    throw storyBibleError("STORY_BIBLE_FACT_VALUE_REQUIRED", "Canon text cannot be empty.");
+  }
+  const now = Date.now();
+  const revised = db().transaction(() => {
+    insertStoryFactTombstone({ fact: current, now });
+    return addStoryBibleFact({
+      ownerKey,
+      projectId,
+      subjectEntityId: current.subjectEntityId,
+      predicate: current.predicate,
+      valueText,
+      objectEntityId: current.objectEntityId,
+      canonStatus: "canon",
+      sourceRole: "user",
+      supersedesFactId: current.id,
+    });
+  })();
+  return revised;
+}
+
+export function deleteStoryCanonFact(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  factId: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(
+    input.ownerKey,
+    input.projectId,
+  );
+  const factId = cleanOptionalStoryBibleId(input.factId);
+  if (!factId) throw storyBibleError("STORY_BIBLE_FACT_ID_REQUIRED", "Canon entry is required.");
+  const fact = assertOwnedStoryBibleFact({ ownerKey, projectId, factId });
+  if (fact.canonStatus !== "canon") {
+    throw storyBibleError("STORY_BIBLE_CANON_REQUIRED", "Only canon entries can be deleted here.");
+  }
+  const now = Date.now();
+  db().transaction(() => {
+    insertStoryFactTombstone({ fact, now });
+    db().prepare(`
+      UPDATE story_facts
+      SET deleted_at = ?, updated_at = ?
+      WHERE id = ? AND project_id = ? AND owner_key = ? AND deleted_at IS NULL
+    `).run(now, now, fact.id, projectId, ownerKey);
+    db().prepare(`
+      UPDATE story_conflicts
+      SET status = 'dismissed', resolved_at = ?, updated_at = ?
+      WHERE project_id = ? AND owner_key = ? AND status = 'open'
+        AND (fact_id = ? OR conflicts_with_fact_id = ?)
+    `).run(now, now, projectId, ownerKey, fact.id, fact.id);
+    touchStoryProject({ ownerKey, projectId, now });
+  })();
+  return { id: fact.id, deletedAt: now };
+}
+
 function cleanStoryExtractionFactStatus(
   value: unknown,
 ): StoryBibleFactStatus {
@@ -2625,6 +3204,7 @@ function isCurrentStoryBibleFact(input: {
       WHERE f.id = ?
         AND f.project_id = ?
         AND f.owner_key = ?
+        AND f.deleted_at IS NULL
         AND NOT EXISTS (
           SELECT 1
           FROM story_facts AS newer
@@ -2688,6 +3268,7 @@ function insertDeterministicStoryConflictsForFacts(input: {
       WHERE f.project_id = ?
         AND f.owner_key = ?
         AND f.canon_status = 'canon'
+        AND f.deleted_at IS NULL
         AND (
           (? IS NULL AND f.subject_entity_id IS NULL)
           OR f.subject_entity_id = ?
@@ -2801,6 +3382,7 @@ export function applyStoryExtraction(input: {
   entities?: StoryExtractionEntityInput[];
   facts?: StoryExtractionFactInput[];
   openQuestions?: StoryExtractionOpenQuestionInput[];
+  autoCanonizeNonconflicting?: boolean;
   debugFailurePoint?: unknown;
 }): StoryExtractionApplyResult {
   const { ownerKey, projectId } =
@@ -2840,6 +3422,7 @@ export function applyStoryExtraction(input: {
       entitiesReused: 0,
       factsCreated: 0,
       factsReused: 0,
+      factsAutoSaved: 0,
       questionsCreated: 0,
       questionsReused: 0,
       conflictsCreated: 0,
@@ -2947,7 +3530,7 @@ export function applyStoryExtraction(input: {
         cleanStoryBibleFactValue(
           candidate.valueText,
         );
-      const canonStatus =
+      let canonStatus =
         cleanStoryExtractionFactStatus(
           candidate.canonStatus,
         );
@@ -2973,6 +3556,63 @@ export function applyStoryExtraction(input: {
           `suggestion missing value: ${predicate}`,
         );
         continue;
+      }
+
+      if (
+        input.autoCanonizeNonconflicting &&
+        canonStatus === "suggestion"
+      ) {
+        const normalizedValue = normalizeFactComparisonValue({
+          valueText,
+          objectEntityId: null,
+        });
+        const deletedMatch = db()
+          .prepare(`
+            SELECT id
+            FROM story_fact_tombstones
+            WHERE project_id = ?
+              AND owner_key = ?
+              AND (
+                (? IS NULL AND subject_entity_id IS NULL)
+                OR subject_entity_id = ?
+              )
+              AND predicate = ?
+              AND normalized_value = ?
+            LIMIT 1
+          `)
+          .get(
+            projectId,
+            ownerKey,
+            subject?.id || null,
+            subject?.id || null,
+            predicate,
+            normalizedValue,
+          );
+        if (deletedMatch) {
+          result.skipped.push(
+            `previously deleted detail: ${predicate}`,
+          );
+          continue;
+        }
+
+        const activeCanon = listActiveStoryCanonFactsForScope({
+          ownerKey,
+          projectId,
+          subjectEntityId: subject?.id || null,
+          predicate,
+        });
+        if (
+          activeCanon.some(
+            (fact) =>
+              normalizeFactComparisonValue(fact) === normalizedValue,
+          )
+        ) {
+          result.factsReused += 1;
+          continue;
+        }
+        if (!activeCanon.length) {
+          canonStatus = "canon";
+        }
       }
 
       const key = [
@@ -3001,7 +3641,8 @@ export function applyStoryExtraction(input: {
         valueText,
         objectEntityId: null,
         canonStatus,
-        sourceRole: "assistant",
+        sourceRole:
+          canonStatus === "canon" ? "user" : "assistant",
         sourceMessageId,
         supersedesFactId: null,
         createdAt: now,
@@ -3011,6 +3652,10 @@ export function applyStoryExtraction(input: {
       insertStoryBibleFactRow(fact);
       factByKey.set(key, fact);
       result.factsCreated += 1;
+
+      if (fact.canonStatus === "canon") {
+        result.factsAutoSaved += 1;
+      }
 
       if (fact.canonStatus === "suggestion") {
         affectedProposals.push(fact);
@@ -3108,6 +3753,114 @@ export function applyStoryExtraction(input: {
   });
 
   return write();
+}
+
+function rowToStoryMemoryReview(row: any): StoryMemoryReview {
+  let messageIds: string[] = [];
+  try {
+    const parsed = JSON.parse(String(row.message_ids_json || "[]"));
+    if (Array.isArray(parsed)) {
+      messageIds = parsed.map((value) => String(value || "").trim()).filter(Boolean);
+    }
+  } catch {
+    messageIds = [];
+  }
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id),
+    ownerKey: String(row.owner_key),
+    throughMessageId: String(row.through_message_id),
+    messageIds,
+    factsSaved: Number(row.facts_saved || 0),
+    conflictsFound: Number(row.conflicts_found || 0),
+    createdAt: Number(row.created_at || 0),
+  };
+}
+
+export function listStoryMemoryReviews(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(
+    input.ownerKey,
+    input.projectId,
+  );
+  return db()
+    .prepare(`
+      SELECT *
+      FROM story_memory_reviews
+      WHERE project_id = ? AND owner_key = ?
+      ORDER BY created_at ASC, rowid ASC
+    `)
+    .all(projectId, ownerKey)
+    .map(rowToStoryMemoryReview);
+}
+
+export function listUnreviewedStoryMessages(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+}) {
+  const messages = listStoryCreatorMessages(input).filter(
+    (message) => message.role === "user",
+  );
+  const reviewed = new Set(
+    listStoryMemoryReviews(input).flatMap((review) => review.messageIds),
+  );
+  return messages.filter((message) => !reviewed.has(message.id));
+}
+
+export function recordStoryMemoryReview(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  throughMessageId: unknown;
+  messageIds: unknown;
+  factsSaved?: unknown;
+  conflictsFound?: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(
+    input.ownerKey,
+    input.projectId,
+  );
+  const throughMessageId = cleanOptionalStoryBibleId(input.throughMessageId);
+  if (!throughMessageId) {
+    throw storyBibleError(
+      "STORY_MEMORY_REVIEW_MESSAGE_REQUIRED",
+      "Story review requires a final reviewed message.",
+    );
+  }
+  assertOwnedStoryCreatorMessage({ ownerKey, projectId, messageId: throughMessageId });
+  const messageIds = Array.isArray(input.messageIds)
+    ? [...new Set(input.messageIds.map(cleanOptionalStoryBibleId).filter(Boolean) as string[])]
+    : [];
+  for (const messageId of messageIds) {
+    assertOwnedStoryCreatorMessage({ ownerKey, projectId, messageId });
+  }
+  const review: StoryMemoryReview = {
+    id: randomUUID(),
+    projectId,
+    ownerKey,
+    throughMessageId,
+    messageIds,
+    factsSaved: Math.max(0, Math.floor(Number(input.factsSaved || 0) || 0)),
+    conflictsFound: Math.max(0, Math.floor(Number(input.conflictsFound || 0) || 0)),
+    createdAt: Date.now(),
+  };
+  db().prepare(`
+    INSERT INTO story_memory_reviews (
+      id, project_id, owner_key, through_message_id, message_ids_json,
+      facts_saved, conflicts_found, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    review.id,
+    projectId,
+    ownerKey,
+    review.throughMessageId,
+    JSON.stringify(review.messageIds),
+    review.factsSaved,
+    review.conflictsFound,
+    review.createdAt,
+  );
+  return review;
 }
 
 
@@ -3380,16 +4133,27 @@ function factConflictKey(fact: StoryBibleFact) {
   ].join("\u0001");
 }
 
+function normalizeFactComparisonValue(input: {
+  valueText?: unknown;
+  objectEntityId?: unknown;
+}) {
+  const objectEntityId = String(input.objectEntityId || "").trim();
+  if (objectEntityId) return `entity:${objectEntityId}`;
+  return String(input.valueText || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[^a-z0-9'\s-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function factsDisagree(
   left: StoryBibleFact,
   right: StoryBibleFact,
 ) {
-  return (
-    (left.valueText || "") !==
-      (right.valueText || "") ||
-    (left.objectEntityId || "") !==
-      (right.objectEntityId || "")
-  );
+  return normalizeFactComparisonValue(left) !==
+    normalizeFactComparisonValue(right);
 }
 
 function conflictSummary(input: {
@@ -4295,6 +5059,567 @@ export function addStoryAsset(input: {
   return asset;
 }
 
+function baseAssetTypeForVisualKind(
+  kind: StoryVisualAssetKind,
+): StoryAssetType {
+  if (
+    kind === "character" ||
+    kind === "villain" ||
+    kind === "creature" ||
+    kind === "animal"
+  ) {
+    return "character";
+  }
+  if (kind === "location" || kind === "environment") {
+    return "location";
+  }
+  if (kind === "object" || kind === "prop" || kind === "vehicle") {
+    return "object";
+  }
+  return "reference";
+}
+
+function assertOwnedStoryVisualVersion(input: {
+  ownerKey: string;
+  projectId: string;
+  versionId: string;
+}) {
+  const row = db()
+    .prepare(`
+      SELECT *
+      FROM story_visual_asset_versions
+      WHERE id = ?
+        AND project_id = ?
+        AND owner_key = ?
+      LIMIT 1
+    `)
+    .get(input.versionId, input.projectId, input.ownerKey) as any;
+  if (!row) {
+    throw storyBibleError(
+      "STORY_VISUAL_VERSION_NOT_FOUND",
+      "Story visual asset version was not found in this Story.",
+    );
+  }
+  return rowToStoryVisualVersion(row);
+}
+
+export function getStoryVisualVersion(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  versionId: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(
+    input.ownerKey,
+    input.projectId,
+  );
+  return assertOwnedStoryVisualVersion({
+    ownerKey,
+    projectId,
+    versionId: cleanOptionalStoryBibleId(input.versionId) || "",
+  });
+}
+
+export function findStoryVisualVersionForJob(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  jobId: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  const jobId = cleanOptionalStoryBibleId(input.jobId);
+  if (!jobId) throw new Error("Story generation job id is required.");
+  const row = db().prepare(`
+    SELECT * FROM story_visual_asset_versions
+    WHERE project_id = ? AND owner_key = ? AND job_id = ?
+    LIMIT 1
+  `).get(projectId, ownerKey, jobId) as any;
+  if (!row) {
+    throw storyBibleError(
+      "STORY_VISUAL_VERSION_NOT_FOUND",
+      "Story visual asset version was not found for this generation job.",
+    );
+  }
+  return rowToStoryVisualVersion(row);
+}
+
+export function listStoryVisualAssets(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(
+    input.ownerKey,
+    input.projectId,
+  );
+  const assets = listStoryAssets({ ownerKey, projectId });
+  const versionRows = db()
+    .prepare(`
+      SELECT *
+      FROM story_visual_asset_versions
+      WHERE project_id = ? AND owner_key = ?
+      ORDER BY asset_id, version DESC
+    `)
+    .all(projectId, ownerKey)
+    .map(rowToStoryVisualVersion);
+  const bindingRows = db()
+    .prepare(`
+      SELECT *
+      FROM story_visual_asset_bindings
+      WHERE project_id = ? AND owner_key = ?
+      ORDER BY created_at ASC
+    `)
+    .all(projectId, ownerKey)
+    .map(rowToStoryVisualBinding);
+
+  const versionsByAsset = new Map<string, StoryVisualAssetVersion[]>();
+  const bindingsByAsset = new Map<string, StoryVisualAssetBinding[]>();
+  for (const version of versionRows) {
+    versionsByAsset.set(
+      version.assetId,
+      [...(versionsByAsset.get(version.assetId) || []), version],
+    );
+  }
+  for (const binding of bindingRows) {
+    bindingsByAsset.set(
+      binding.assetId,
+      [...(bindingsByAsset.get(binding.assetId) || []), binding],
+    );
+  }
+
+  return assets
+    .filter((asset) => versionsByAsset.has(asset.id))
+    .map((asset): StoryVisualAssetRecord => {
+      const versions = versionsByAsset.get(asset.id) || [];
+      return {
+        ...asset,
+        visualKind:
+          versions[0]?.kind || cleanStoryVisualAssetKind(
+            asset.metadata.visualKind || asset.assetType,
+          ),
+        versions,
+        bindings: bindingsByAsset.get(asset.id) || [],
+      };
+    });
+}
+
+export function prepareStoryVisualGeneration(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  assetId?: unknown;
+  parentVersionId?: unknown;
+  visualKind: unknown;
+  name: unknown;
+  prompt: unknown;
+  artStyle?: unknown;
+  aspectRatio?: unknown;
+  referenceVersionIds?: unknown;
+  entityId?: unknown;
+  metadata?: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(
+    input.ownerKey,
+    input.projectId,
+  );
+  const visualKind = cleanStoryVisualAssetKind(input.visualKind);
+  const name = cleanTitle(input.name);
+  const prompt = cleanStoryLongText(input.prompt, 40_000);
+  if (!prompt) throw new Error("A visual description is required.");
+  const artStyle = cleanStoryLongText(input.artStyle, 2_000);
+  const aspectRatio = cleanShort(input.aspectRatio) || "landscape";
+  const referenceVersionIds = Array.isArray(input.referenceVersionIds)
+    ? input.referenceVersionIds
+        .map(cleanOptionalStoryBibleId)
+        .filter(Boolean)
+        .slice(0, 8) as string[]
+    : [];
+
+  for (const versionId of referenceVersionIds) {
+    const reference = assertOwnedStoryVisualVersion({
+      ownerKey,
+      projectId,
+      versionId,
+    });
+    if (reference.status !== "approved" && reference.status !== "ready") {
+      throw new Error("Only ready or approved Story references may be used.");
+    }
+  }
+
+  let asset: StoryAsset;
+  const requestedAssetId = cleanOptionalStoryBibleId(input.assetId);
+  if (requestedAssetId) {
+    asset = assertOwnedStoryAsset({ ownerKey, projectId, assetId: requestedAssetId });
+  } else {
+    asset = addStoryAsset({
+      ownerKey,
+      projectId,
+      assetType: baseAssetTypeForVisualKind(visualKind),
+      name,
+      prompt,
+      status: "planned",
+      provider: "qwen-image-2-1",
+      metadata: {
+        visualKind,
+        entityId: cleanOptionalStoryBibleId(input.entityId),
+        ...(input.metadata && typeof input.metadata === "object" ? input.metadata : {}),
+      },
+    });
+  }
+
+  const parentVersionId = cleanOptionalStoryBibleId(input.parentVersionId);
+  if (parentVersionId) {
+    const parent = assertOwnedStoryVisualVersion({ ownerKey, projectId, versionId: parentVersionId });
+    if (parent.assetId !== asset.id) {
+      throw new Error("The source version does not belong to this visual asset.");
+    }
+  }
+  const usesImageEdit = Boolean(parentVersionId || referenceVersionIds.length);
+  const provider = usesImageEdit ? "qwen-image-edit-2-1" : "qwen-image-2-1";
+  const workflowId = usesImageEdit
+    ? QWEN21_IMAGE_EDIT_WORKFLOW_ID
+    : QWEN21_STORY_CREATE_WORKFLOW_FILE;
+
+  const nextVersion = Number(
+    (db().prepare(`
+      SELECT COALESCE(MAX(version), 0) AS max_version
+      FROM story_visual_asset_versions
+      WHERE project_id = ? AND owner_key = ? AND asset_id = ?
+    `).get(projectId, ownerKey, asset.id) as any)?.max_version || 0,
+  ) + 1;
+  const now = Date.now();
+  const versionId = randomUUID();
+  const metadataJson = cleanStoryJson({
+    aspectRatio,
+    artStyle,
+    referenceVersionIds,
+    entityId: cleanOptionalStoryBibleId(input.entityId),
+    qwenTurbo: {
+      ...QWEN21_TURBO_CONTRACT,
+      operation: usesImageEdit ? "edit" : "create",
+      workflowId,
+    },
+    ...(input.metadata && typeof input.metadata === "object" ? input.metadata : {}),
+  });
+  db().prepare(`
+    INSERT INTO story_visual_asset_versions (
+      id, project_id, owner_key, asset_id, version, visual_kind,
+      status, parent_version_id, prompt, provider, model, workflow_id,
+      metadata_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    versionId, projectId, ownerKey, asset.id, nextVersion, visualKind,
+    parentVersionId, prompt, provider, usesImageEdit ? "qwen-image-edit-2-1-turbo" : "qwen-image-2-1-turbo",
+    workflowId,
+    metadataJson, now, now,
+  );
+
+  const version = assertOwnedStoryVisualVersion({ ownerKey, projectId, versionId });
+  return {
+    asset,
+    version,
+    generation: {
+      endpoint: "/api/assets/create-image",
+      method: "POST",
+      body: {
+        name,
+        model: "qwen-image-2-1",
+        artStyle,
+        prompt,
+        orientation: aspectRatio,
+        visualKind,
+        persistOutput: true,
+      },
+      requiresExplicitConfirmation: true,
+    },
+  };
+}
+
+export function recordStoryVisualSubmission(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  versionId: unknown;
+  promptId: unknown;
+  response?: unknown;
+  endpoint?: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  const versionId = cleanOptionalStoryBibleId(input.versionId);
+  const promptId = cleanOptionalStoryBibleId(input.promptId);
+  if (!versionId || !promptId) throw new Error("Visual version and submitted prompt id are required.");
+  const version = assertOwnedStoryVisualVersion({ ownerKey, projectId, versionId });
+  if (version.status !== "planned" && version.status !== "failed") {
+    throw new Error("This visual version has already been submitted.");
+  }
+  const endpoint = cleanStoryLongText(input.endpoint, 2_000) || "/api/assets/create-image";
+  const now = Date.now();
+  const job = addStoryGenerationJob({
+    ownerKey,
+    projectId,
+    assetId: version.assetId,
+    jobType: version.workflowId.includes("image_edit") ? "story-image-edit" : "story-image",
+    provider: version.provider,
+    status: "submitted",
+    promptId,
+    endpoint,
+    request: { versionId, prompt: version.prompt, ...version.metadata },
+    response: input.response,
+  });
+  db().transaction(() => {
+    db().prepare(`
+      UPDATE story_visual_asset_versions
+      SET status = 'generating', job_id = ?, updated_at = ?
+      WHERE id = ? AND project_id = ? AND owner_key = ?
+    `).run(job.id, now, version.id, projectId, ownerKey);
+    db().prepare(`
+      UPDATE story_assets
+      SET status = 'generating', job_id = ?, provider = ?, updated_at = ?
+      WHERE id = ? AND project_id = ? AND owner_key = ?
+    `).run(promptId, version.provider, now, version.assetId, projectId, ownerKey);
+  })();
+  return {
+    asset: assertOwnedStoryAsset({ ownerKey, projectId, assetId: version.assetId }),
+    version: assertOwnedStoryVisualVersion({ ownerKey, projectId, versionId }),
+    job,
+  };
+}
+
+export function attachStoryVisualUpload(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  assetId?: unknown;
+  visualKind: unknown;
+  name: unknown;
+  prompt?: unknown;
+  url: unknown;
+  filePath: unknown;
+  metadata?: unknown;
+}) {
+  const prepared = prepareStoryVisualGeneration({
+    ...input,
+    prompt: input.prompt || `Uploaded reference for ${String(input.name || "visual asset")}`,
+    artStyle: "",
+    aspectRatio: "source",
+  });
+  const { ownerKey, projectId } = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  const url = cleanOptionalStoryBibleId(input.url) ||
+    `/api/story-creator/visual-assets/media?projectId=${encodeURIComponent(projectId)}&versionId=${encodeURIComponent(prepared.version.id)}`;
+  const filePath = cleanOptionalStoryBibleId(input.filePath);
+  const now = Date.now();
+  db().transaction(() => {
+    db().prepare(`
+      UPDATE story_visual_asset_versions
+      SET status = 'ready', provider = 'uploaded', model = '', workflow_id = '',
+          url = ?, file_path = ?, updated_at = ?
+      WHERE id = ? AND project_id = ? AND owner_key = ?
+    `).run(url, filePath, now, prepared.version.id, projectId, ownerKey);
+    db().prepare(`
+      UPDATE story_assets
+      SET status = 'ready', provider = 'uploaded', url = ?, file_path = ?, updated_at = ?
+      WHERE id = ? AND project_id = ? AND owner_key = ?
+    `).run(url, filePath, now, prepared.asset.id, projectId, ownerKey);
+  })();
+  return {
+    asset: assertOwnedStoryAsset({ ownerKey, projectId, assetId: prepared.asset.id }),
+    version: assertOwnedStoryVisualVersion({ ownerKey, projectId, versionId: prepared.version.id }),
+  };
+}
+
+export function approveStoryVisualVersion(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  versionId: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  const versionId = cleanOptionalStoryBibleId(input.versionId);
+  if (!versionId) throw new Error("Visual version id is required.");
+  const version = assertOwnedStoryVisualVersion({ ownerKey, projectId, versionId });
+  if (version.status !== "ready" && version.status !== "approved") {
+    throw new Error("Only a completed visual version can be approved.");
+  }
+  const now = Date.now();
+  db().transaction(() => {
+    db().prepare(`
+      UPDATE story_visual_asset_versions
+      SET status = CASE WHEN id = ? THEN 'approved' ELSE CASE WHEN status = 'approved' THEN 'ready' ELSE status END END,
+          updated_at = CASE WHEN id = ? OR status = 'approved' THEN ? ELSE updated_at END
+      WHERE project_id = ? AND owner_key = ? AND asset_id = ?
+    `).run(version.id, version.id, now, projectId, ownerKey, version.assetId);
+    db().prepare(`
+      UPDATE story_assets
+      SET status = 'ready', prompt = ?, provider = ?, url = ?, file_path = ?,
+          metadata_json = json_set(metadata_json, '$.approvedVisualVersionId', ?), updated_at = ?
+      WHERE id = ? AND project_id = ? AND owner_key = ?
+    `).run(version.prompt, version.provider, version.url, version.filePath, version.id, now, version.assetId, projectId, ownerKey);
+    db().prepare(`
+      UPDATE story_visual_asset_bindings
+      SET approved = CASE WHEN version_id = ? THEN 1 ELSE 0 END, updated_at = ?
+      WHERE project_id = ? AND owner_key = ? AND asset_id = ?
+    `).run(version.id, now, projectId, ownerKey, version.assetId);
+  })();
+  return assertOwnedStoryVisualVersion({ ownerKey, projectId, versionId });
+}
+
+export function rejectStoryVisualVersion(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  versionId: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  const version = assertOwnedStoryVisualVersion({
+    ownerKey,
+    projectId,
+    versionId: cleanOptionalStoryBibleId(input.versionId) || "",
+  });
+  if (version.status === "generating" || version.status === "planned") {
+    throw new Error("Wait for this visual version to finish before rejecting it.");
+  }
+  db().prepare(`
+    UPDATE story_visual_asset_versions
+    SET status = 'rejected', updated_at = ?
+    WHERE id = ? AND project_id = ? AND owner_key = ?
+  `).run(Date.now(), version.id, projectId, ownerKey);
+  return assertOwnedStoryVisualVersion({ ownerKey, projectId, versionId: version.id });
+}
+
+export function restoreStoryVisualVersion(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  versionId: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  const source = assertOwnedStoryVisualVersion({
+    ownerKey,
+    projectId,
+    versionId: cleanOptionalStoryBibleId(input.versionId) || "",
+  });
+  if (!source.url && !source.filePath) throw new Error("The selected version has no restorable image.");
+  const next = Number((db().prepare(`
+    SELECT COALESCE(MAX(version), 0) AS max_version
+    FROM story_visual_asset_versions
+    WHERE project_id = ? AND owner_key = ? AND asset_id = ?
+  `).get(projectId, ownerKey, source.assetId) as any)?.max_version || 0) + 1;
+  const id = randomUUID();
+  const now = Date.now();
+  db().prepare(`
+    INSERT INTO story_visual_asset_versions (
+      id, project_id, owner_key, asset_id, version, visual_kind, status,
+      parent_version_id, prompt, provider, model, workflow_id, url, file_path,
+      metadata_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, projectId, ownerKey, source.assetId, next, source.kind, source.id,
+    source.prompt, source.provider, source.model, source.workflowId, source.url,
+    source.filePath, cleanStoryJson({ ...source.metadata, restoredFromVersionId: source.id }), now, now);
+  return assertOwnedStoryVisualVersion({ ownerKey, projectId, versionId: id });
+}
+
+export function bindStoryVisualVersion(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  versionId: unknown;
+  bindingType: unknown;
+  entityId?: unknown;
+  planVersion?: unknown;
+  sceneId?: unknown;
+  shotId?: unknown;
+  role?: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  const version = assertOwnedStoryVisualVersion({
+    ownerKey,
+    projectId,
+    versionId: cleanOptionalStoryBibleId(input.versionId) || "",
+  });
+  const bindingType = String(input.bindingType || "project");
+  if (!["project", "entity", "scene", "shot"].includes(bindingType)) {
+    throw new Error("Visual binding type is not supported.");
+  }
+  const entityId = cleanOptionalStoryBibleId(input.entityId);
+  if (bindingType === "entity") {
+    if (!entityId) throw new Error("An entity is required for this visual binding.");
+    assertOwnedStoryBibleEntity({ ownerKey, projectId, entityId });
+  }
+  const planVersion = Number(input.planVersion || 0) || null;
+  const sceneId = cleanOptionalStoryBibleId(input.sceneId);
+  const shotId = cleanOptionalStoryBibleId(input.shotId);
+  if (bindingType === "scene" || bindingType === "shot") {
+    if (!planVersion || !sceneId) throw new Error("Plan version and scene are required.");
+    const row = db().prepare(`
+      SELECT plan_json FROM story_production_plan_versions
+      WHERE project_id = ? AND owner_key = ? AND version = ? LIMIT 1
+    `).get(projectId, ownerKey, planVersion) as any;
+    if (!row) throw new Error("The selected production plan version was not found.");
+    const plan = normalizeStoryProductionPlan(JSON.parse(String(row.plan_json)), projectId);
+    const scene = plan.acts.flatMap((act) => act.scenes).find((item) => item.id === sceneId);
+    if (!scene) throw new Error("The selected scene is not part of this production plan version.");
+    if (bindingType === "shot" && (!shotId || !scene.shots.some((shot) => shot.id === shotId))) {
+      throw new Error("The selected shot is not part of this scene.");
+    }
+  }
+  const now = Date.now();
+  const binding: StoryVisualAssetBinding = {
+    id: randomUUID(), projectId, ownerKey, assetId: version.assetId, versionId: version.id,
+    bindingType: bindingType as StoryVisualAssetBinding["bindingType"], entityId,
+    planVersion, sceneId, shotId, role: cleanShort(input.role) || "reference",
+    approved: version.status === "approved", createdAt: now, updatedAt: now,
+  };
+  db().prepare(`
+    INSERT INTO story_visual_asset_bindings (
+      id, project_id, owner_key, asset_id, version_id, binding_type,
+      entity_id, plan_version, scene_id, shot_id, role, approved, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(binding.id, projectId, ownerKey, binding.assetId, binding.versionId,
+    binding.bindingType, binding.entityId, binding.planVersion, binding.sceneId,
+    binding.shotId, binding.role, binding.approved ? 1 : 0, now, now);
+  return binding;
+}
+
+export function planStoryVisualAssetsFromProduction(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  const planRecord = getStoryProductionPlan({ ownerKey, projectId });
+  if (!planRecord || planRecord.status !== "approved") {
+    throw new Error("Approve the production plan before planning visual assets.");
+  }
+  const existing = listStoryVisualAssets({ ownerKey, projectId });
+  const keys = new Set(existing.flatMap((asset) => asset.versions.map((version) => {
+    const sceneId = String(version.metadata.sceneId || "");
+    const shotId = String(version.metadata.shotId || "");
+    return `${version.kind}:${planRecord.version}:${sceneId}:${shotId}`;
+  })));
+  const created: Array<ReturnType<typeof prepareStoryVisualGeneration>> = [];
+  let reused = 0;
+
+  for (const scene of planRecord.plan.acts.flatMap((act) => act.scenes)) {
+    const sceneKey = `storyboard:${planRecord.version}:${scene.id}:`;
+    if (keys.has(sceneKey)) reused += 1;
+    else {
+      created.push(prepareStoryVisualGeneration({
+        ownerKey, projectId, visualKind: "storyboard",
+        name: `Scene ${scene.sceneNumber}: ${scene.title} storyboard`,
+        prompt: [scene.purpose, scene.location, scene.timeOfDay, scene.action, scene.emotionalTone].filter(Boolean).join(". "),
+        aspectRatio: "landscape",
+        metadata: { planVersion: planRecord.version, sceneId: scene.id, shotId: null, automaticPlan: true },
+      }));
+      keys.add(sceneKey);
+    }
+    for (const shot of scene.shots) {
+      const shotKey = `shot_reference:${planRecord.version}:${scene.id}:${shot.id}`;
+      if (keys.has(shotKey)) reused += 1;
+      else {
+        created.push(prepareStoryVisualGeneration({
+          ownerKey, projectId, visualKind: "shot_reference",
+          name: `Scene ${scene.sceneNumber}, Shot ${shot.shotNumber}`,
+          prompt: [shot.description, shot.cameraFraming, shot.cameraMovement, shot.characterActions, scene.continuityRequirements.join(", ")].filter(Boolean).join(". "),
+          aspectRatio: "landscape",
+          metadata: { planVersion: planRecord.version, sceneId: scene.id, shotId: shot.id, automaticPlan: true },
+        }));
+        keys.add(shotKey);
+      }
+    }
+  }
+
+  return { planVersion: planRecord.version, created: created.length, reused, jobsStarted: 0 };
+}
+
 export function listStoryGenerationJobs(input: {
   ownerKey: unknown;
   projectId: unknown;
@@ -4683,6 +6008,24 @@ export function completeStoryGenerationJob(input: {
           projectId,
           ownerKey,
         );
+
+      db().prepare(`
+        UPDATE story_visual_asset_versions
+        SET status = 'ready', provider = ?, url = ?, file_path = ?,
+            metadata_json = json_set(metadata_json, '$.completion', json(?)),
+            updated_at = ?
+        WHERE project_id = ? AND owner_key = ? AND asset_id = ? AND job_id = ?
+      `).run(
+        provider,
+        url,
+        filePath,
+        cleanStoryJson(completion),
+        now,
+        projectId,
+        ownerKey,
+        asset.id,
+        job.id,
+      );
     }
 
     touchStoryProject({
@@ -4815,6 +6158,15 @@ export function failStoryGenerationJob(input: {
           projectId,
           ownerKey,
         );
+
+
+      db().prepare(`
+        UPDATE story_visual_asset_versions
+        SET status = 'failed',
+            metadata_json = json_set(metadata_json, '$.completionError', ?),
+            updated_at = ?
+        WHERE project_id = ? AND owner_key = ? AND asset_id = ? AND job_id = ?
+      `).run(errorText, now, projectId, ownerKey, asset.id, job.id);
     }
 
     touchStoryProject({
@@ -5068,4 +6420,190 @@ export function addStoryOpenQuestion(input: {
   write();
 
   return item;
+}
+
+export function getStoryProductionPlan(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(
+    input.ownerKey,
+    input.projectId,
+  );
+  const row = db()
+    .prepare(`
+      SELECT *
+      FROM story_production_plans
+      WHERE project_id = ?
+        AND owner_key = ?
+      LIMIT 1
+    `)
+    .get(projectId, ownerKey) as any;
+
+  return row ? rowToStoryProductionPlanRecord(row) : null;
+}
+
+export function listStoryProductionPlanVersions(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  limit?: number;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(
+    input.ownerKey,
+    input.projectId,
+  );
+  const limit = Math.max(1, Math.min(50, Number(input.limit || 20)));
+  const rows = db()
+    .prepare(`
+      SELECT *
+      FROM story_production_plan_versions
+      WHERE project_id = ?
+        AND owner_key = ?
+      ORDER BY version DESC
+      LIMIT ?
+    `)
+    .all(projectId, ownerKey, limit) as any[];
+
+  return rows.map((row) => ({
+    id: String(row.id),
+    projectId,
+    version: Number(row.version),
+    status: row.status === "approved" ? "approved" as const : "draft" as const,
+    sourceRole: cleanStoryBibleSourceRole(row.source_role),
+    createdAt: Number(row.created_at),
+  }));
+}
+
+export function saveStoryProductionPlan(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+  plan: unknown;
+  sourceRole?: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(
+    input.ownerKey,
+    input.projectId,
+  );
+  const sourceRole = cleanStoryBibleSourceRole(
+    input.sourceRole || "user",
+  );
+  const existing = db()
+    .prepare(`
+      SELECT * FROM story_production_plans
+      WHERE project_id = ? AND owner_key = ?
+      LIMIT 1
+    `)
+    .get(projectId, ownerKey) as any;
+  const version = Number(existing?.version || 0) + 1;
+  const now = Date.now();
+  const normalized = normalizeStoryProductionPlan(input.plan, projectId);
+  const plan: StoryProductionPlan = {
+    ...normalized,
+    status: "draft",
+  };
+  const planJson = JSON.stringify(plan);
+  if (Buffer.byteLength(planJson, "utf8") > 2_000_000) {
+    throw storyBibleError(
+      "STORY_PRODUCTION_PLAN_TOO_LARGE",
+      "The production plan is too large to save safely.",
+    );
+  }
+  const createdAt = Number(existing?.created_at || now);
+
+  const write = db().transaction(() => {
+    db()
+      .prepare(`
+        INSERT INTO story_production_plans (
+          project_id, owner_key, version, status, plan_json,
+          approved_at, created_at, updated_at
+        ) VALUES (?, ?, ?, 'draft', ?, NULL, ?, ?)
+        ON CONFLICT(project_id) DO UPDATE SET
+          owner_key = excluded.owner_key,
+          version = excluded.version,
+          status = 'draft',
+          plan_json = excluded.plan_json,
+          approved_at = NULL,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        projectId,
+        ownerKey,
+        version,
+        planJson,
+        createdAt,
+        now,
+      );
+
+    db()
+      .prepare(`
+        INSERT INTO story_production_plan_versions (
+          id, project_id, owner_key, version, status,
+          plan_json, source_role, created_at
+        ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)
+      `)
+      .run(
+        randomUUID(),
+        projectId,
+        ownerKey,
+        version,
+        planJson,
+        sourceRole,
+        now,
+      );
+
+    touchStoryProject({ ownerKey, projectId, now });
+  });
+
+  write();
+  return getStoryProductionPlan({ ownerKey, projectId })!;
+}
+
+export function approveStoryProductionPlan(input: {
+  ownerKey: unknown;
+  projectId: unknown;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(
+    input.ownerKey,
+    input.projectId,
+  );
+  const existing = getStoryProductionPlan({ ownerKey, projectId });
+  if (!existing) {
+    throw storyBibleError(
+      "STORY_PRODUCTION_PLAN_REQUIRED",
+      "Create a production plan before approving it.",
+    );
+  }
+
+  const version = existing.version + 1;
+  const now = Date.now();
+  const plan: StoryProductionPlan = {
+    ...existing.plan,
+    status: "approved",
+  };
+  const planJson = JSON.stringify(plan);
+
+  const write = db().transaction(() => {
+    db()
+      .prepare(`
+        UPDATE story_production_plans
+        SET version = ?, status = 'approved', plan_json = ?,
+            approved_at = ?, updated_at = ?
+        WHERE project_id = ? AND owner_key = ?
+      `)
+      .run(version, planJson, now, now, projectId, ownerKey);
+
+    db()
+      .prepare(`
+        INSERT INTO story_production_plan_versions (
+          id, project_id, owner_key, version, status,
+          plan_json, source_role, created_at
+        ) VALUES (?, ?, ?, ?, 'approved', ?, 'user', ?)
+      `)
+      .run(randomUUID(), projectId, ownerKey, version, planJson, now);
+
+    touchStoryProject({ ownerKey, projectId, now });
+  });
+
+  write();
+  return getStoryProductionPlan({ ownerKey, projectId })!;
 }

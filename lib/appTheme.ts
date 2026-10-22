@@ -127,10 +127,17 @@ function rgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+export function themeContrastRatio(first: string, second: string): number {
+  const luminance = (hex: string) => {
+    const { r, g, b } = hexToRgb(hex);
+    const linear = [r, g, b].map(value => { const s = value / 255; return s <= .04045 ? s / 12.92 : ((s + .055) / 1.055) ** 2.4; });
+    return linear[0] * .2126 + linear[1] * .7152 + linear[2] * .0722;
+  };
+  const a = luminance(first), b = luminance(second);
+  return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+}
 function readableForeground(hex: string): string {
-  const { r, g, b } = hexToRgb(hex);
-  const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-  return luminance > 0.58 ? "#111827" : "#ffffff";
+  return themeContrastRatio(hex, "#111827") > themeContrastRatio(hex, "#ffffff") ? "#111827" : "#ffffff";
 }
 
 export function resolveThemeBaseColor(themeId: AppThemeId, customColor = DEFAULT_CUSTOM_COLOR): string {
@@ -141,9 +148,17 @@ export function generateThemeFromColor(baseColor: string, mode: AppColorMode): A
   const primary = normalizeHex(baseColor);
   const hsl = rgbToHsl(hexToRgb(primary));
   const vivid = Math.max(hsl.s, 0.58);
-  const primaryForMode = mode === "light"
+  let primaryForMode = mode === "light"
     ? colorFromHsl(hsl.h, vivid, hsl.h > 35 && hsl.h < 75 ? 0.38 : 0.45)
     : colorFromHsl(hsl.h, Math.min(0.82, vivid + 0.08), hsl.h > 35 && hsl.h < 75 ? 0.62 : 0.64);
+  if (mode === "light") {
+    // The accent is also used for normal-size links/labels, not just buttons.
+    let lightness = rgbToHsl(hexToRgb(primaryForMode)).l;
+    while (themeContrastRatio(primaryForMode, "#f8f7fb") < 4.5 && lightness > .1) {
+      lightness -= .02;
+      primaryForMode = colorFromHsl(hsl.h, vivid, lightness);
+    }
+  }
   const hover = mode === "light"
     ? colorFromHsl(hsl.h, vivid, Math.max(0.28, hsl.l - 0.1))
     : colorFromHsl(hsl.h, vivid, 0.72);
@@ -157,13 +172,13 @@ export function generateThemeFromColor(baseColor: string, mode: AppColorMode): A
       primaryMuted: muted,
       primaryBorder: border,
       primaryForeground: readableForeground(primaryForMode),
-      background: `radial-gradient(circle at top left, ${rgba(primaryForMode, 0.14)}, transparent 34%), linear-gradient(180deg, #f8fafc, #eef2f7)`,
-      surface: "rgba(255, 255, 255, 0.78)",
-      surfaceElevated: "rgba(255, 255, 255, 0.94)",
-      card: "rgba(255, 255, 255, 0.88)",
-      border: "rgba(15, 23, 42, 0.14)",
-      text: "#0f172a",
-      textMuted: "rgba(51, 65, 85, 0.76)",
+      background: "#f2f3f7",
+      surface: "#e9ecf3",
+      surfaceElevated: "#faf9fc",
+      card: "#f8f7fb",
+      border: "#cbd1dd",
+      text: "#242a38",
+      textMuted: "#555e70",
       success: "#15803d",
       warning: "#b45309",
       error: "#b91c1c",
@@ -171,7 +186,7 @@ export function generateThemeFromColor(baseColor: string, mode: AppColorMode): A
       progress: primaryForMode,
       status: colorFromHsl(hsl.h + 28, 0.66, 0.42),
       focusRing: rgba(primaryForMode, 0.38),
-      shadow: "0 18px 60px rgba(15, 23, 42, 0.12)",
+      shadow: "0 6px 24px rgba(35, 42, 62, 0.07)",
     };
   }
 
