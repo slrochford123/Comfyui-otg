@@ -24,6 +24,8 @@ import { DEFAULT_PRODUCTION_V2_H3_USER_LORAS } from "@/lib/production/h3Loras";
 import { validateH3LoraSelections, type ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
 import type { H3StudioLoraSelection } from "@/lib/h3Studio";
 import { buildH3StudioLockedReferences, composeH3StudioFinalPrompt } from "@/lib/h3Studio";
+import { studioDimensions } from "@/lib/h3StudioPlan";
+import { hasH3StudioQualificationAdmission } from "@/lib/h3StudioQualification";
 import {
   getH3NativeDimensions,
   getH3ProductionTimeEstimate,
@@ -55,7 +57,12 @@ export type H3DirectReference = {
 };
 
 export type H3DirectJobInput = {
-  videoEdit?: { requestId: string; source: H3DirectReference; durationSeconds: number; width: number; height: number };
+  studioPlan?: import("@/lib/h3StudioPlan").H3StudioPlan;
+  /** Classification only; never an admission grant. Only the local CLI can authorize. */
+  studioQualification?: { fingerprint: string };
+  studioMedia?: { requestId: string; reviewId: string; fingerprint: string; qualificationFingerprint: string; planHash: string; receipt: import("@/lib/h3StudioReview").StudioExecutionReceipt; directory: string; files: Array<{ path: string; sha256: string }>; simpleEdit?: { sourceId: string; requestFingerprint: string }; autoRequestFingerprint?: string };
+  studioSource?: { requestId: string; source: H3DirectReference; temporarySource: boolean };
+  videoEdit?: { requestId: string; source: H3DirectReference; durationSeconds: number; width: number; height: number; temporarySource?: boolean };
   mode: ProductionV2H3Mode;
   quality: H3Quality;
   orientation: H3Orientation;
@@ -83,6 +90,9 @@ export type H3DirectJob = {
   promptId: string | null;
   workflowId: string | null;
   workflowFile: string | null;
+  studioManifest?: unknown;
+  studioSubmissionState?: "submitting" | "accepted" | "unknown" | "rejected";
+  cancelRequestedAt?: string;
   outputPath: string | null;
   galleryOwner: Pick<OwnerContext, "ownerKey" | "username" | "deviceId" | "scope"> | null;
   galleryStatus: "pending" | "saving" | "saved" | "failed";
@@ -128,7 +138,22 @@ function jobPath(ownerKey: string, id: string) {
 }
 
 async function writeJob(job: H3DirectJob) {
-  await fsp.writeFile(jobPath(job.ownerKey, job.id), JSON.stringify(job, null, 2), "utf8");
+  const destination = jobPath(job.ownerKey, job.id);
+  const temporaryState = `${destination}.${crypto.randomUUID()}.tmp`;
+  await fsp.writeFile(temporaryState, JSON.stringify(job, null, 2), { mode: 0o600 });
+  await fsp.rename(temporaryState, destination);
+  const temporary = job.input.videoEdit?.temporarySource ? job.input.videoEdit : job.input.studioSource?.temporarySource ? job.input.studioSource : null;
+  if (temporary && ["completed", "failed", "canceled"].includes(job.status)) {
+    const directory = path.dirname(temporary.source.path);
+    const expected = path.join(OTG_DATA_ROOT, "h3-direct", safeSegment(job.ownerKey), "uploads");
+    // Only this new workflow's private UUID directory; never legacy/user media.
+    if (path.dirname(directory) === expected && /^[0-9a-f-]{36}$/.test(path.basename(directory))) await fsp.rm(directory, { recursive: true, force: true });
+  }
+  if (job.input.studioMedia && ["completed", "failed", "canceled"].includes(job.status) && !["submitting", "unknown"].includes(job.studioSubmissionState || "")) {
+    const directory = job.input.studioMedia.directory;
+    const expected = path.join(OTG_DATA_ROOT, "h3-direct", safeSegment(job.ownerKey), "uploads");
+    if (path.dirname(directory) === expected && /^[0-9a-f-]{36}$/.test(path.basename(directory))) await fsp.rm(directory, { recursive: true, force: true });
+  }
   return job;
 }
 
@@ -169,6 +194,27 @@ export async function getLatestH3DirectJob(ownerKey: string) {
   return (await listH3DirectJobs(ownerKey))[0] || null;
 }
 
+/** Read-only backend reconciliation. Never resubmits, interrupts, frees or resets. */
+export async function reconcileH3StudioSubmission(ownerKey: string, id: string) {
+  const current = await getH3DirectJob(ownerKey, id);
+  if (!current || !current.input.studioPlan || current.backend !== "rtx3090" || current.promptId
+    || !["submitting", "unknown"].includes(current.studioSubmissionState || "") || !current.clientId) return current;
+  if (state().running.has(id)) return current; // The original POST may still be resolving.
+  try {
+    const base = H3_BACKEND_PROFILES.rtx3090.baseUrl;
+    const [queueResponse, historyResponse] = await Promise.all(["/queue", "/history?max_items=200"].map(p => fetch(base + p, { cache: "no-store", signal: AbortSignal.timeout(10_000) })));
+    if (!queueResponse.ok || !historyResponse.ok) return current;
+    const queue = await queueResponse.json(), history = await historyResponse.json();
+    if (!Array.isArray(queue.queue_running) || !Array.isArray(queue.queue_pending) || !history || typeof history !== "object") return current;
+    const matches = new Set<string>();
+    for (const row of [...queue.queue_running, ...queue.queue_pending]) if (Array.isArray(row) && row[3]?.client_id === current.clientId && typeof row[1] === "string") matches.add(row[1]);
+    for (const [promptId, value] of Object.entries(history)) if ((value as { prompt?: unknown[] })?.prompt?.[3] && ((value as { prompt: Array<{ client_id?: string }> }).prompt[3])?.client_id === current.clientId) matches.add(promptId);
+    if (matches.size !== 1) return current; // Absence/ambiguous history is not proof of rejection.
+    return await updateJob(ownerKey, id, { promptId: [...matches][0], studioSubmissionState: "accepted", status: current.cancelRequestedAt ? "canceling" : "submitted",
+      statusMessage: current.cancelRequestedAt ? "Recovered backend identity; verifying cancellation" : "Recovered accepted backend job; collecting its result", error: null });
+  } catch { return current; }
+}
+
 function isRunnableH3DirectStatus(status: H3DirectJob["status"]) {
   return ["queued", "preparing", "submitted", "running", "finalizing", "canceling"].includes(status);
 }
@@ -179,12 +225,13 @@ export async function cancelH3DirectJob(ownerKey: string, id: string) {
   if (["completed", "failed", "canceled"].includes(current.status)) return current;
   const canceling = await updateJob(ownerKey, id, {
     status: "canceling",
+    cancelRequestedAt: current.cancelRequestedAt || new Date().toISOString(),
     statusMessage: "Canceling...",
     error: null,
   });
   // A submission may be in flight. Its owner must record the accepted prompt
   // before a terminal cancellation can be claimed.
-  if (!current.promptId && current.status === "preparing") return canceling;
+  if (!current.promptId && (current.status === "preparing" || current.status === "canceling" || ["submitting", "unknown"].includes(current.studioSubmissionState || ""))) return canceling;
   if (current.backend && current.promptId) {
     try {
       const result = await cancelComfyPrompt(H3_BACKEND_PROFILES[current.backend].baseUrl, current.promptId);
@@ -203,10 +250,17 @@ export async function cancelH3DirectJob(ownerKey: string, id: string) {
   }).catch(() => canceling);
 }
 
+const jobUpdates = new Map<string, Promise<unknown>>();
 async function updateJob(ownerKey: string, id: string, patch: Partial<H3DirectJob>) {
-  const current = await getH3DirectJob(ownerKey, id);
-  if (!current) throw new Error("H3 direct-generation job was not found.");
-  return writeJob({ ...current, ...patch });
+  const key = `${ownerKey}:${id}`;
+  const previous = jobUpdates.get(key) || Promise.resolve();
+  const next = previous.catch(() => {}).then(async () => {
+    const current = await getH3DirectJob(ownerKey, id);
+    if (!current) throw new Error("H3 direct-generation job was not found.");
+    return writeJob({ ...current, ...patch });
+  });
+  jobUpdates.set(key, next);
+  try { return await next; } finally { if (jobUpdates.get(key) === next) jobUpdates.delete(key); }
 }
 
 export async function createH3DirectJob(
@@ -277,7 +331,7 @@ function gallerySourceForJob(job: H3DirectJob): GallerySource {
 
 export function getH3DirectGalleryFileName(job: H3DirectJob) {
   return safeGalleryName(
-    `H3_${job.input.videoEdit ? "video-edit" : job.input.mode.replace(/^h3-/, "")}_${job.input.videoEdit?.durationSeconds ?? job.input.durationSeconds}s_${job.input.quality}_${job.input.orientation}_${job.id}.mp4`,
+    `H3_${job.input.videoEdit ? "video-edit" : job.input.mode.replace(/^h3-/, "")}_${job.input.videoEdit?.durationSeconds ?? job.input.studioPlan?.durationSeconds ?? job.input.durationSeconds}s_${job.input.quality}_${job.input.orientation}_${job.id}.mp4`,
   );
 }
 
@@ -308,7 +362,7 @@ export async function saveH3DirectJobToGallery(
     }
 
     const stat = fs.statSync(targetPath);
-    const dimensions = getH3NativeDimensions(job.input.quality, normalizeH3Orientation(job.input.orientation));
+    const dimensions = job.input.studioPlan ? studioDimensions(job.input.studioPlan) : getH3NativeDimensions(job.input.quality, normalizeH3Orientation(job.input.orientation));
     writeMetaForFile(targetPath, {
       originalName: savedName,
       renamedName: savedName,
@@ -320,6 +374,7 @@ export async function saveH3DirectJobToGallery(
       workflowTitle: job.input.videoEdit ? "MiniMax H3 Video Edit" : "MiniMax H3 Direct Generation",
       sourcePromptId: job.promptId,
       submitPayload: {
+        ...(job.studioManifest ? { studioManifest: job.studioManifest } : {}),
         requestKind: "h3-direct-auto-gallery",
         jobId: job.id,
         mode: job.input.videoEdit ? "h3-video-to-video" : job.input.mode,
@@ -327,7 +382,7 @@ export async function saveH3DirectJobToGallery(
         orientation: normalizeH3Orientation(job.input.orientation),
         width: job.input.videoEdit?.width ?? dimensions.width,
         height: job.input.videoEdit?.height ?? dimensions.height,
-        durationSeconds: job.input.videoEdit?.durationSeconds ?? job.input.durationSeconds,
+        durationSeconds: job.input.videoEdit?.durationSeconds ?? job.input.studioPlan?.durationSeconds ?? job.input.durationSeconds,
         nativeFps: H3_RIFE_NATIVE_FPS,
         finalFps: h3FinalFpsForRife(job.input.rifeInterpolation60Fps),
         rifeInterpolation60Fps: job.input.rifeInterpolation60Fps === true,
@@ -387,6 +442,21 @@ async function uploadReference(job: H3DirectJob, backend: ProductionV2H3BackendI
 
 async function execute(job: H3DirectJob) {
   let persisted = await getH3DirectJob(job.ownerKey, job.id) || job;
+  if (persisted.status === "canceled") return;
+  const qualification = await import("@/lib/h3StudioQualification");
+  const qualificationJob = !!job.input.studioPlan && qualification.hasH3StudioQualificationAdmission(job.id, job.ownerKey);
+  if (job.input.studioPlan && !job.input.studioMedia && !qualificationJob) throw new Error("Reviewed owner-bound H3 Studio media is required.");
+  if (job.input.studioPlan && persisted.backend && persisted.backend !== "rtx3090") throw new Error("H3 Studio cannot resume on a non-3090 backend.");
+  if (job.input.studioPlan && !persisted.promptId && ["submitting", "unknown"].includes(persisted.studioSubmissionState || "")) throw new Error("Backend submission is unresolved; automatic resubmission is disabled.");
+  const checkBoundMedia = async () => {
+    const media = job.input.studioMedia; if (!media) return;
+    const expected = path.join(OTG_DATA_ROOT, "h3-direct", safeSegment(job.ownerKey), "uploads");
+    if (path.dirname(media.directory) !== expected || !/^[0-9a-f-]{36}$/.test(path.basename(media.directory))) throw new Error("Invalid private Studio media directory.");
+    const references = [job.input.firstImage, job.input.lastImage, ...job.input.images, ...job.input.videos, ...job.input.audios].filter(Boolean) as H3DirectReference[];
+    if (references.length !== media.files.length || references.some(r => !media.files.some(f => f.path === r.path))) throw new Error("Studio reference identity changed.");
+    const { studioFileSha256 } = await import("@/lib/h3StudioMedia");
+    for (const file of media.files) if (path.dirname(file.path) !== media.directory || !/^[a-f0-9]{64}$/.test(file.sha256) || await studioFileSha256(file.path) !== file.sha256) throw new Error("Studio reference bytes changed; submit a fresh reviewed plan.");
+  };
   const optionalLoras: ResolvedH3OptionalLora[] = validateH3LoraSelections(persisted.input.optionalLoras, persisted.input.mode).resolved;
   validateRequiredLoraTriggers(persisted.input, optionalLoras);
 
@@ -409,15 +479,17 @@ async function execute(job: H3DirectJob) {
       });
     }
     persisted = await updateJob(job.ownerKey, job.id, {
-      status: persisted.status === "finalizing" ? "finalizing" : "running",
-      statusMessage: persisted.status === "finalizing" ? persisted.statusMessage : "Reconnected to running H3 generation",
+      status: persisted.cancelRequestedAt ? "canceling" : persisted.status === "finalizing" ? "finalizing" : "running",
+      statusMessage: persisted.cancelRequestedAt ? "Cancellation requested; verifying backend clearance" : persisted.status === "finalizing" ? persisted.statusMessage : "Reconnected to running H3 generation",
       error: null,
     });
   } else {
+    await checkBoundMedia();
+    if (qualificationJob) qualification.assertH3StudioQualificationRequest(job.id, job.ownerKey, job.input);
     const userLoraFilenames = optionalLoras.map((lora) => lora.filename);
     const probes = await Promise.all(
 
-      H3_BACKEND_PRIORITY.filter(candidate => !job.input.videoEdit || candidate === "rtx3090").map((candidate) =>
+      H3_BACKEND_PRIORITY.filter(candidate => !(job.input.videoEdit || job.input.studioPlan) || candidate === "rtx3090").map((candidate) =>
 
         inspectH3BackendCompatibility(candidate, {
 
@@ -440,6 +512,10 @@ async function execute(job: H3DirectJob) {
       throw new Error(`No compatible H3 GPU is available. ${details}`);
     }
     const selectedBackend = backend;
+    const beforePreparing = await getH3DirectJob(job.ownerKey, job.id);
+    if (beforePreparing?.cancelRequestedAt || beforePreparing?.status === "canceled") {
+      await updateJob(job.ownerKey, job.id, { status: "canceled", statusMessage: "Canceled before backend submission", completedAt: new Date().toISOString() }); return;
+    }
 
     await updateJob(job.ownerKey, job.id, {
       status: "preparing",
@@ -477,7 +553,7 @@ async function execute(job: H3DirectJob) {
       uploadedFilename: audioFilenames[index],
     }));
 
-    const built = buildH3Workflow({
+    let built = buildH3Workflow({
       backend: selectedBackend,
       mode: job.input.mode,
       h3Quality: job.input.quality,
@@ -498,6 +574,26 @@ async function execute(job: H3DirectJob) {
       h3Settings: job.input.h3Settings,
       optionalLoras,
     });
+
+    let studioCompilation: ReturnType<typeof import("@/lib/h3StudioCompiler").compileH3StudioPlan> | undefined;
+    let studioBuildInput: Parameters<typeof import("@/lib/h3StudioCompiler").compileH3StudioPlan>[1] | undefined;
+    if (job.input.studioPlan) {
+      const { compileH3StudioPlan } = await import("@/lib/h3StudioCompiler");
+      const { inspectH3StudioInventory, readH3StudioEvidence, assertH3StudioTest } = await import("@/lib/h3StudioRegistry");
+      assertH3StudioTest();
+      studioBuildInput = { backend: selectedBackend, mode: job.input.mode,
+        h3Quality: job.input.quality, orientation: job.input.orientation, durationSeconds: job.input.durationSeconds,
+        finalPrompt: promptWithReferences(job.input), seed: job.input.seed, outputPrefix: `otg_h3_direct/${safeSegment(job.id)}`,
+        startImageFilename: firstImageFilename, lastImageFilename, references, voices,
+        videoReferences: job.input.videos.map((item, index) => ({ uploadedFilename: videoFilenames[index], includeAudio: item.includeAudio === true })) };
+      const result = compileH3StudioPlan(job.input.studioPlan, studioBuildInput,
+        await inspectH3StudioInventory(qualificationJob ? { qualificationJobId: job.id, ownerKey: job.ownerKey } : undefined), readH3StudioEvidence(), { ownerKey: job.ownerKey });
+      const qualifying = qualificationJob && qualification.isStudioQualificationJob(job.id, result.manifest.qualificationFingerprint);
+      if ((!result.manifest.executable && !(qualifying && result.manifest.readyForQualification)) || (job.input.studioMedia && job.input.studioMedia.qualificationFingerprint !== result.manifest.qualificationFingerprint)) throw new Error("H3 plan qualification changed; no backend job was submitted.");
+      await updateJob(job.ownerKey, job.id, { studioManifest: result.manifest });
+      studioCompilation = result;
+      built = { ...built, graph: result.graph, workflowId: result.workflowId };
+    }
 
     if (job.input.videoEdit) {
       const edit = job.input.videoEdit;
@@ -522,11 +618,56 @@ async function execute(job: H3DirectJob) {
       ownerKey: job.ownerKey,
       deviceId: job.galleryOwner?.deviceId || null,
       workerId: "h3-direct",
+      ...(job.input.studioPlan ? {
+        releaseIdlePeer: false,
+        beforeSubmit: async () => {
+          await checkBoundMedia();
+          const latest = await getH3DirectJob(job.ownerKey, job.id);
+          if (!latest || latest.cancelRequestedAt || ["canceling", "canceled"].includes(latest.status)) throw new Error("Cancelled before backend submission.");
+          if (!studioCompilation) throw new Error("Studio compilation is missing.");
+          const { compileH3StudioPlan } = await import("@/lib/h3StudioCompiler");
+          const { inspectH3StudioInventory, readH3StudioEvidence } = await import("@/lib/h3StudioRegistry");
+          if (!studioBuildInput || !job.input.studioPlan) throw new Error("Studio inputs are missing.");
+          const checked = compileH3StudioPlan(job.input.studioPlan, studioBuildInput,
+            await inspectH3StudioInventory(qualificationJob ? { qualificationJobId: job.id, ownerKey: job.ownerKey } : undefined), readH3StudioEvidence(), { ownerKey: job.ownerKey });
+          if (checked.manifest.qualificationFingerprint !== studioCompilation.manifest.qualificationFingerprint
+            || checked.manifest.boundGraphDigest !== studioCompilation.manifest.boundGraphDigest
+            || (!checked.manifest.executable && !(qualificationJob && checked.manifest.readyForQualification))) throw new Error("Qualification or dependencies changed during admission.");
+          studioCompilation = checked;
+          if (job.input.studioMedia) {
+            const { studioReviewedExecutionDigest, studioRequestHash } = await import("@/lib/h3StudioReview");
+            const approved = job.input.studioMedia;
+            const actual = { executionDigest: studioReviewedExecutionDigest(checked.graph), credits: checked.manifest.estimatedCredits, seconds: checked.manifest.estimatedSeconds };
+            if (studioRequestHash(job.input.studioPlan) !== approved.planHash || studioRequestHash(actual) !== studioRequestHash(approved.receipt)) throw new Error("The reviewed prompt, seed, estimate or execution graph changed.");
+          }
+          if (qualificationJob) {
+            const { computeH3StudioSourceRevision } = await import("@/lib/h3StudioIdentity");
+            const { inspectStudioQualificationRuntime } = await import("@/lib/h3StudioRuntime");
+            const requiredVram = qualification.getH3StudioQualificationRequiredVramBytes(job.id, job.ownerKey);
+            if (!requiredVram) throw new Error("Qualification capacity budget is missing.");
+            const live = await inspectStudioQualificationRuntime(requiredVram, true);
+            const admission = qualification.consumeH3StudioQualificationAdmission({ jobId: job.id, ownerKey: job.ownerKey,
+              fingerprint: studioCompilation.manifest.qualificationFingerprint, sourceRevision: computeH3StudioSourceRevision(),
+              boundGraphDigest: studioCompilation.manifest.boundGraphDigest, readyForQualification: studioCompilation.manifest.readyForQualification, live, request: job.input });
+            if (!admission) throw new Error("Qualification admission is not valid for this idle worker and exact configuration.");
+            qualification.captureH3StudioQualificationGraph({ jobId: job.id, ownerKey: job.ownerKey, graph: built.graph });
+          }
+          await updateJob(job.ownerKey, job.id, { studioSubmissionState: "submitting", clientId, workflowId: built.workflowId, workflowFile: built.workflowFile });
+        },
+        onAccepted: async (acceptedPromptId: string) => {
+          const latest = await getH3DirectJob(job.ownerKey, job.id);
+          await updateJob(job.ownerKey, job.id, { promptId: acceptedPromptId, clientId, studioSubmissionState: "accepted", status: latest?.cancelRequestedAt || ["canceling", "canceled"].includes(latest?.status || "") ? "canceling" : "submitted", statusMessage: "Accepted by ComfyUI; prompt identity recorded" });
+        },
+      } : {}),
     });
-    if (!submitted.accepted) throw new Error(submitted.error);
+    if (!submitted.accepted) {
+      if (job.input.studioPlan && [400, 401, 403, 404, 413, 422, 429].includes(submitted.status)) await updateJob(job.ownerKey, job.id, { studioSubmissionState: "rejected" });
+      throw new Error(submitted.error);
+    }
     backend = selectedBackend;
     promptId = submitted.promptId;
-    const cancelRequested = ["canceling","canceled"].includes((await getH3DirectJob(job.ownerKey,job.id))?.status || "");
+    const latestAcceptance = await getH3DirectJob(job.ownerKey, job.id);
+    const cancelRequested = !!latestAcceptance?.cancelRequestedAt || ["canceling","canceled"].includes(latestAcceptance?.status || "");
     await updateJob(job.ownerKey, job.id, {
       status: cancelRequested ? "canceling" : "submitted",
       statusMessage: cancelRequested ? "Cancellation requested; verifying backend clearance" : "Accepted by ComfyUI",
@@ -556,6 +697,15 @@ async function execute(job: H3DirectJob) {
         generationJobId: job.id,
       });
       if (job.input.videoEdit) outputPath = await finalizeH3VideoEdit(outputPath, job.input.videoEdit.durationSeconds);
+      if (job.input.studioPlan) {
+        const { finalizeH3StudioAudio } = await import("@/lib/h3StudioAudio");
+        outputPath = await finalizeH3StudioAudio(outputPath, job.input.studioPlan, job.input.videos[0]?.path);
+        const latest = await getH3DirectJob(job.ownerKey, job.id);
+        if (latest?.status === "canceling" || latest?.status === "canceled") {
+          await updateJob(job.ownerKey, job.id, { status: "canceled", statusMessage: "Canceled after backend completion; output was not added to Gallery", completedAt: new Date().toISOString() });
+          return;
+        }
+      }
       const rifeResult = await applyH3Rife60FpsFinalization({
         enabled: job.input.rifeInterpolation60Fps,
         backend,
@@ -573,6 +723,10 @@ async function execute(job: H3DirectJob) {
         outputPath,
         completedAt: new Date().toISOString(),
       });
+      if (qualificationJob) {
+        await updateJob(job.ownerKey, job.id, { status: "completed", statusMessage: "Qualification output complete; awaiting owner playback review (not published to Gallery)" });
+        return;
+      }
       try {
         await saveH3DirectJobToGallery(completedJob);
         await updateJob(job.ownerKey, job.id, {
@@ -598,14 +752,22 @@ async function execute(job: H3DirectJob) {
 }
 
 export function startH3DirectJob(job: H3DirectJob) {
+  if (job.input.studioQualification && !hasH3StudioQualificationAdmission(job.id, job.ownerKey)) return;
   if (state().running.has(job.id)) return;
   state().running.add(job.id);
   void execute(job)
     .catch(async (error) => {
+      const current = await getH3DirectJob(job.ownerKey, job.id);
+      const uncertain = !!job.input.studioPlan && current?.studioSubmissionState === "submitting" && !current.promptId;
+      if (!uncertain && !current?.promptId && ["canceling", "canceled"].includes(current?.status || "")) {
+        await updateJob(job.ownerKey, job.id, { status: "canceled", statusMessage: "Canceled before backend submission", error: null, completedAt: new Date().toISOString() });
+        return;
+      }
       await updateJob(job.ownerKey, job.id, {
         status: "failed",
-        statusMessage: "Generation failed",
-        error: error instanceof Error ? error.message : String(error),
+        statusMessage: uncertain ? "Submission state unknown; backend reconciliation required before retry" : "Generation failed",
+        ...(uncertain ? { studioSubmissionState: "unknown" as const } : {}),
+        error: job.input.studioPlan ? uncertain ? "Backend acceptance is unresolved. Refresh to reconcile the original job; do not generate a duplicate." : "H3 Studio could not complete. Recheck readiness and references before a deliberately reviewed retry." : error instanceof Error ? error.message : String(error),
         completedAt: new Date().toISOString(),
       }).catch(() => undefined);
     })
@@ -614,12 +776,13 @@ export function startH3DirectJob(job: H3DirectJob) {
 
 export function ensureH3DirectJobRunner(job: H3DirectJob | null | undefined) {
   if (!job || !isRunnableH3DirectStatus(job.status)) return;
+  if (job.input.studioQualification && !hasH3StudioQualificationAdmission(job.id, job.ownerKey)) return;
   startH3DirectJob(job);
 }
 
 export function h3DirectPublicStatus(job: H3DirectJob) {
   const orientation = normalizeH3Orientation(job.input.orientation);
-  const nativeDimensions = getH3NativeDimensions(
+  const nativeDimensions = job.input.studioPlan ? studioDimensions(job.input.studioPlan) : getH3NativeDimensions(
     job.input.quality,
     orientation,
   );
@@ -632,7 +795,7 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
     mode: job.input.videoEdit ? "h3-video-to-video" : job.input.mode,
     quality: job.input.quality,
     orientation,
-    durationSeconds: job.input.videoEdit?.durationSeconds ?? job.input.durationSeconds,
+    durationSeconds: job.input.videoEdit?.durationSeconds ?? job.input.studioPlan?.durationSeconds ?? job.input.durationSeconds,
     nativeFps: H3_RIFE_NATIVE_FPS,
     finalFps: h3FinalFpsForRife(job.input.rifeInterpolation60Fps),
     rifeInterpolation60Fps: job.input.rifeInterpolation60Fps === true,
@@ -641,6 +804,8 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
     backendLabel: job.backend ? H3_BACKEND_PROFILES[job.backend].label : null,
     workflowId: job.workflowId,
     workflowFile: job.workflowFile,
+    ...(job.studioManifest ? { studioManifest: job.studioManifest } : {}),
+    ...(job.input.studioPlan ? { submissionState: job.studioSubmissionState || null, cancellationRequested: !!job.cancelRequestedAt } : {}),
     nativeResolution: job.input.videoEdit ? `${job.input.videoEdit.width}x${job.input.videoEdit.height}` : `${nativeDimensions.width}x${nativeDimensions.height}`,
     etaSeconds: estimate.seconds,
     etaMinSeconds: estimate.minSeconds,

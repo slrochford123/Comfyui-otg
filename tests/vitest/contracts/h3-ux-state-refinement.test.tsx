@@ -33,9 +33,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function openLegacyManual() {
+  fireEvent.click(screen.getByRole("button", { name: "Manual Mode" }));
+  const legacy = document.querySelector('[data-otg="h3-legacy-manual-tools"]') as HTMLElement;
+  expect(legacy.hidden).toBe(false);
+  return within(legacy);
+}
+
 describe("H3 persistent mutually-exclusive selections", () => {
   it("retains exactly one selected mode", () => {
     render(<H3Panel />);
+    const screen = openLegacyManual();
     const text = screen.getByRole("tab", { name: /Text/ });
     const image = screen.getByRole("tab", { name: /Image/ });
     const reference = screen.getByRole("tab", { name: /Reference/ });
@@ -56,6 +64,7 @@ describe("H3 persistent mutually-exclusive selections", () => {
 
   it("retains exactly one enhancement level without selecting action buttons", () => {
     render(<H3Panel />);
+    const screen = openLegacyManual();
     const short = screen.getByRole("button", { name: "Enhance Short" });
     const medium = screen.getByRole("button", { name: "Enhance Medium" });
     const long = screen.getByRole("button", { name: "Enhance Long" });
@@ -81,6 +90,7 @@ describe("H3 persistent mutually-exclusive selections", () => {
 
   it("retains exactly one quality and duration", () => {
     render(<H3Panel />);
+    const screen = openLegacyManual();
     const lq = screen.getByRole("button", { name: /LQ/ });
     const hq = screen.getByRole("button", { name: /HQ/ });
     const five = screen.getByRole("button", { name: "5 sec" });
@@ -97,8 +107,11 @@ describe("H3 persistent mutually-exclusive selections", () => {
 describe("H3 simplified builder and destructive separation", () => {
   it("keeps only the three requested structured controls", () => {
     render(<H3Panel />);
+    const screen = openLegacyManual();
     const details = screen.getByText("Choose the Look").closest("details")!;
-    fireEvent.click(screen.getByText("Choose the Look"));
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
+    expect(details.open).toBe(true);
     expect(within(details).getAllByRole("combobox")).toHaveLength(3);
     expect(within(details).queryAllByRole("textbox")).toHaveLength(0);
     expect(within(details).getByText("Visual Style")).toBeTruthy();

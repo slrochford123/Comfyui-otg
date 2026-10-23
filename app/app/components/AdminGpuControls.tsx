@@ -14,9 +14,9 @@ type GpuStatus = {
 type ApiResult = { ok?: boolean; status?: GpuStatus; error?: string };
 type Action = "free" | "reset";
 
-export default function AdminGpuControls() {
-  const [open, setOpen] = useState(false);
-  const [target,setTarget]=useState<'3090'|'5060ti'>('3090');
+export default function AdminGpuControls({ fixedTarget }: { fixedTarget?: '3090' | '5060ti' } = {}) {
+  const [open, setOpen] = useState(Boolean(fixedTarget));
+  const [target,setTarget]=useState<'3090'|'5060ti'>(fixedTarget || '3090');
   const operationRef=useRef(false);
   const statusRequest=useRef(0);
   const [busy, setBusy] = useState<Action | null>(null);
@@ -97,26 +97,28 @@ export default function AdminGpuControls() {
   const unverified = services?.comfy8188.http === "unverified" || services?.h38189.http === "unverified";
   return (
     <details
-      className="relative z-[90] shrink-0"
+      className="relative min-w-0 shrink-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text)]"
+      open={fixedTarget ? true : undefined}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary
-        className="flex cursor-pointer list-none items-center gap-1.5 rounded-[10px] border border-violet-300/35 bg-violet-300/10 px-3 py-2 text-xs font-bold text-violet-100 hover:bg-violet-300/20 [&::-webkit-details-marker]:hidden"
+        className="flex min-h-11 cursor-pointer list-none items-center gap-1.5 rounded-[10px] px-3 py-2 text-sm font-bold [&::-webkit-details-marker]:hidden"
         aria-label="Admin GPU controls"
+        onClick={event => { if (fixedTarget) event.preventDefault(); }}
       >
-        <span aria-hidden="true">◈</span> GPU<span className="hidden sm:inline"> Controls</span> <span aria-hidden="true">▾</span>
+        <span aria-hidden="true">◈</span> {fixedTarget ? fixedTarget === '3090' ? 'RTX 3090' : 'RTX 5060 Ti' : 'GPU Controls'} <span aria-hidden="true">▾</span>
       </summary>
-      <div className="fixed left-3 right-3 top-[calc(var(--otg-shared-header-height,160px)+8px)] z-[100] max-h-[calc(100dvh-var(--otg-shared-header-height,160px)-100px)] overflow-y-auto rounded-xl border border-white/15 bg-[#111320] p-3 text-sm text-white shadow-2xl sm:absolute sm:left-auto sm:right-0 sm:top-[calc(100%+8px)] sm:w-[330px]" role="group" aria-label="GPU maintenance panel">
+      <div className={fixedTarget ? "min-w-0 p-3 text-sm" : "fixed left-3 right-3 top-[calc(var(--otg-shared-header-height,160px)+8px)] z-[100] max-h-[calc(100dvh-var(--otg-shared-header-height,160px)-100px)] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-3 text-sm text-[var(--color-text)] shadow-2xl sm:absolute sm:left-auto sm:right-0 sm:top-[calc(100%+8px)] sm:w-[330px]"} role="group" aria-label={fixedTarget ? `${fixedTarget} GPU maintenance panel` : "GPU maintenance panel"}>
         <div className="mb-2 flex items-center justify-between gap-2">
           <strong>ComfyUI Management</strong>
-          <span className="text-[10px] uppercase tracking-wide text-violet-200">Admin only</span>
+          <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">Admin only</span>
         </div>
-        <label className="mb-3 block text-xs font-semibold">Target GPU
-          <select aria-label="Maintenance target GPU" value={target} disabled={Boolean(busy)} onChange={e=>setTarget(e.target.value as '3090'|'5060ti')} className="mt-1 w-full rounded-lg border border-white/20 bg-[#111320] p-2 text-white">
+        {!fixedTarget ? <label className="mb-3 block text-xs font-semibold">Target GPU
+          <select aria-label="Maintenance target GPU" value={target} disabled={Boolean(busy)} onChange={e=>setTarget(e.target.value as '3090'|'5060ti')} className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2 text-[var(--color-text)]">
             <option value="3090">RTX 3090</option><option value="5060ti">RTX 5060 Ti</option>
           </select>
-        </label>
-        <div className="mb-3 rounded-lg border border-white/10 bg-black/30 p-2 text-xs">
+        </label> : null}
+        <div className="mb-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2 text-xs">
           <div className="mb-1 font-semibold">{status ? `GPU: ${status.gpu.name}` : "GPU status"}</div>
           <div>
             VRAM: {used !== null && used !== undefined && total !== null && total !== undefined
@@ -128,7 +130,7 @@ export default function AdminGpuControls() {
           </div>
           {target==='3090'?<div>8189: {services?.h38189.state || "Unknown"} / {services?.h38189.http || "Unknown"}</div>:null}
           {status ? (
-            <div className="mt-1 text-white/60">{anyBusy ? "Busy — work queued or running" : allReady ? "Worker reachable; readiness checked" : "Worker is not ready"} · {status.host}</div>
+            <div className="mt-1 text-[var(--color-text-muted)]">{busy ? "Maintenance in progress" : anyBusy ? "Busy — work queued or running" : allReady ? "Worker reachable; readiness checked" : "Worker is not ready"} · {status.host}</div>
           ) : null}
         </div>
         <div className="grid grid-cols-2 gap-2">
@@ -149,11 +151,11 @@ export default function AdminGpuControls() {
             {busy === "reset" ? "Restarting..." : "Reset ComfyUI"}
           </button>
         </div>
-        <button type="button" className="mt-2 text-xs text-white/65 underline hover:text-white" onClick={() => void refresh()} disabled={Boolean(busy)}>
+        <button type="button" className="mt-2 min-h-11 text-xs text-[var(--color-text-muted)] underline" onClick={() => void refresh()} disabled={Boolean(busy)}>
           Refresh GPU status
         </button>
-        {message ? <p className="mt-2 text-xs text-emerald-200" role="status">{message}</p> : null}
-        {error ? <p className="mt-2 text-xs text-red-300" role="alert">{error}</p> : null}
+        {message ? <p className="mt-2 text-xs text-[var(--color-success)]" role="status">{message}</p> : null}
+        {error ? <p className="mt-2 text-xs text-[var(--color-error)]" role="alert">{error}</p> : null}
       </div>
     </details>
   );

@@ -1,12 +1,15 @@
 import fsp from "node:fs/promises";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { requireSessionUser } from "@/lib/sessionUser";
+import { limitedFormData } from "@/lib/limitedRequestBody";
 
 import {
   MAX_STAGED_H3_CHUNK_BYTES,
   pruneExpiredH3StagedUploads,
   readStagedH3UploadDescriptor,
   stagedH3UploadPaths,
+  sanitizeH3StagedUploadId,
 } from "@/lib/h3StagedUploads";
 import {
   getOwnerContext,
@@ -19,6 +22,23 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export async function DELETE(request: NextRequest) {
+  try {
+    await requireSessionUser(request);
+    const owner = await getOwnerContext(request);
+    const id = sanitizeH3StagedUploadId(request.nextUrl.searchParams.get("id"));
+    const paths = stagedH3UploadPaths(owner.ownerKey, { id, name: "unused.mp4" });
+    // Owner-scoped cancellation tombstone prevents an in-flight chunk recreating an upload.
+    ensureDir(paths.directory);
+    await fsp.writeFile(safeJoin(paths.directory, "cancelled"), "cancelled");
+    await fsp.rm(paths.chunks, { recursive: true, force: true });
+    await fsp.rm(paths.metaPath, { force: true });
+    const entries = await fsp.readdir(paths.directory, { withFileTypes: true });
+    for (const entry of entries) if (entry.isFile() && entry.name !== "cancelled") await fsp.rm(safeJoin(paths.directory, entry.name), { force: true });
+    return noStore({ ok: true });
+  } catch (error) { return errorResponse(error); }
+}
 
 const MAX_STAGED_H3_CHUNKS =
   128;
@@ -209,13 +229,14 @@ export async function POST(
   request: NextRequest,
 ) {
   try {
+    await requireSessionUser(request);
     const owner =
       await getOwnerContext(
         request,
       );
 
     const form =
-      await request.formData();
+      await limitedFormData(request, MAX_STAGED_H3_CHUNK_BYTES + 64 * 1024);
 
     const descriptor =
       readStagedH3UploadDescriptor(
@@ -303,6 +324,8 @@ export async function POST(
         descriptor,
       );
 
+    if (await fsp.stat(safeJoin(paths.directory, "cancelled")).catch(() => null)) throw new Error("H3 upload was cancelled. Select the video again.");
+
     ensureDir(
       paths.directory,
     );
@@ -324,6 +347,11 @@ export async function POST(
       ),
     );
 
+    if (await fsp.stat(safeJoin(paths.directory, "cancelled")).catch(() => null)) {
+      await fsp.rm(chunkPath, { force: true });
+      throw new Error("H3 upload was cancelled. Select the video again.");
+    }
+
     const complete =
       await allChunksPresent(
         paths.chunks,
@@ -338,6 +366,11 @@ export async function POST(
         chunkCount,
         descriptor.size,
       );
+      if (await fsp.stat(safeJoin(paths.directory, "cancelled")).catch(() => null)) {
+        await fsp.rm(paths.targetPath, { force: true });
+        await fsp.rm(paths.chunks, { recursive: true, force: true });
+        throw new Error("H3 upload was cancelled. Select the video again.");
+      }
 
       await fsp.writeFile(
         paths.metaPath,
@@ -355,6 +388,11 @@ export async function POST(
         ),
         "utf8",
       );
+      if (await fsp.stat(safeJoin(paths.directory, "cancelled")).catch(() => null)) {
+        await fsp.rm(paths.targetPath, { force: true });
+        await fsp.rm(paths.metaPath, { force: true });
+        throw new Error("H3 upload was cancelled. Select the video again.");
+      }
 
       await fsp.rm(
         paths.chunks,

@@ -1,93 +1,24 @@
 "use client";
-
 import { useCallback, useEffect, useState } from "react";
-
-type ServiceHealth = {
-  id: string;
-  label: string;
-  ok: boolean;
-  status?: number | string;
-  target?: string;
-  error?: string;
-  ms?: number;
-  version?: string | null;
-};
-
-type HealthResponse = {
-  ok: boolean;
-  summary?: { ok: number; total: number };
-  services?: ServiceHealth[];
-  checkedAt?: string;
-  error?: string;
-};
-
-const cardStyle = {
-  border: "1px solid rgba(255,255,255,.14)",
-  borderRadius: 14,
-  padding: 16,
-  background: "rgba(255,255,255,.06)",
-} as const;
-
+import AdminShell, { AdminBadge, adminStyles as styles } from "@/app/app/admin/AdminShell";
+import AdminGpuControls from "@/app/app/components/AdminGpuControls";
+type Service = { id: string; label: string; state: string; target?: string; status?: number | string; error?: string; ms?: number; version?: string | null };
+type Health = { summary?: { ok: number; total: number; notConfigured: number; disabled: number; requiredFailures: number }; services: Service[]; checkedAt?: string };
 export default function HealthClient() {
-  const [data, setData] = useState<HealthResponse | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/admin/health/services", { cache: "no-store", credentials: "include" });
-      const json = (await res.json().catch(() => null)) as HealthResponse | null;
-      if (!res.ok || !json) throw new Error(json?.error || `Health check failed (${res.status})`);
-      setData(json);
-    } catch (err: any) {
-      setError(err?.message || "Health check failed.");
-    } finally {
-      setBusy(false);
-    }
+  const [data, setData] = useState<Health | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const load = useCallback(async (signal?: AbortSignal) => {
+    setBusy(true); setError("");
+    try { const res = await fetch("/api/admin/health/services", { cache: "no-store", signal }); const result = await res.json(); if (!res.ok) throw Error(result.error || "Health check failed."); if (!signal?.aborted) setData(result); }
+    catch (e) { if (!signal?.aborted) setError(e instanceof Error ? e.message : "Health check failed."); }
+    finally { if (!signal?.aborted) setBusy(false); }
   }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  return (
-    <main style={{ minHeight: "100vh", padding: 24, color: "white", fontFamily: "system-ui, sans-serif", background: "#05060b" }}>
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <h1 style={{ margin: 0 }}>Admin Health</h1>
-          <p style={{ opacity: 0.75, marginTop: 8 }}>
-            {data?.summary ? `${data.summary.ok}/${data.summary.total} services healthy` : "Checking services..."}
-          </p>
-        </div>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <a href="/app/admin" style={{ color: "white", textDecoration: "none", border: "1px solid rgba(255,255,255,.18)", borderRadius: 999, padding: "10px 14px" }}>Admin</a>
-          <a href="/app/admin/performance" style={{ color: "white", textDecoration: "none", border: "1px solid rgba(255,255,255,.18)", borderRadius: 999, padding: "10px 14px" }}>Performance</a>
-          <button type="button" onClick={() => void load()} disabled={busy} style={{ borderRadius: 999, padding: "10px 14px" }}>
-            {busy ? "Refreshing..." : "Refresh"}
-          </button>
-        </div>
-      </header>
-
-      {error ? <p role="alert" style={{ color: "#ffb4b4" }}>{error}</p> : null}
-      {data?.checkedAt ? <p style={{ opacity: 0.65 }}>Last checked: {new Date(data.checkedAt).toLocaleString()}</p> : null}
-
-      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12, marginTop: 24 }}>
-        {(data?.services || []).map((service) => (
-          <article key={service.id} style={cardStyle}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-              <strong>{service.label}</strong>
-              <span style={{ color: service.ok ? "#b7f7c0" : "#ffb4b4" }}>{service.ok ? "OK" : "DOWN"}</span>
-            </div>
-            <div style={{ opacity: 0.75, marginTop: 8 }}>Status: {service.status ?? "unknown"}</div>
-            {service.target ? <div style={{ opacity: 0.75, wordBreak: "break-all" }}>Target: {service.target}</div> : null}
-            {service.version ? <div style={{ opacity: 0.75 }}>Version: {service.version}</div> : null}
-            {service.ms !== undefined ? <div style={{ opacity: 0.75 }}>Latency: {service.ms}ms</div> : null}
-            {service.error ? <div style={{ color: "#ffb4b4", marginTop: 8 }}>{service.error}</div> : null}
-          </article>
-        ))}
-      </section>
-    </main>
-  );
+  useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
+  return <AdminShell title="GPU / Services" description="Maintenance targets are identity-pinned. Busy workers are protected." actions={<button className={styles.button} disabled={busy} onClick={() => void load()}>{busy ? "Checking…" : "Refresh services"}</button>}>
+    <section className={styles.grid} aria-label="GPU maintenance"><AdminGpuControls fixedTarget="3090" /><AdminGpuControls fixedTarget="5060ti" /></section>
+    <h2 style={{ marginTop: 24 }}>Service health</h2>{error ? <p role="alert">{error}</p> : null}
+    {data?.summary ? <p>{data.summary.ok}/{data.summary.total} configured, enabled services healthy. {data.summary.notConfigured} not configured · {data.summary.disabled} disabled. {data.summary.requiredFailures ? `${data.summary.requiredFailures} required service(s) need attention.` : ""}</p> : null}
+    <p className={styles.muted}>HTTP health confirms reachability, not model initialization or generation schedulability. GPU worker readiness is shown separately above.</p>
+    <section className={styles.grid}>{(data?.services || []).map(service => <article className={styles.card} key={service.id}><div className={styles.header}><strong>{service.label}</strong><AdminBadge status={service.state} /></div><p className={styles.muted}>Latency: {service.ms === undefined || ["DISABLED", "NOT CONFIGURED"].includes(service.state) ? "Not checked" : `${service.ms} ms`}</p><details className={styles.diagnostics}><summary>Diagnostics</summary>{service.target ? <p>Endpoint: {service.target}</p> : null}<p>HTTP / command status: {service.status ?? "Not checked"}</p>{service.version ? <p>{service.version}</p> : null}{service.error ? <p>{service.error}</p> : null}</details></article>)}</section>
+    {data?.checkedAt ? <p className={styles.muted}>Checked {new Date(data.checkedAt).toLocaleString()}</p> : null}
+  </AdminShell>;
 }

@@ -11,6 +11,8 @@ export type VideoProbeInfo = {
   fps: number | null;
   codec: string | null;
   hasAudio?: boolean;
+  displayWidth?: number;
+  displayHeight?: number;
 };
 
 function toFiniteNumber(value: unknown): number | null {
@@ -29,7 +31,7 @@ function parseFrameRate(value: unknown): number | null {
   return left / right;
 }
 
-export async function probeVideoInfo(filePath: string): Promise<VideoProbeInfo> {
+export async function probeVideoInfo(filePath: string, options?: { uploadedVideo?: boolean }): Promise<VideoProbeInfo> {
   const ffprobe = resolveFfprobePath();
   const result = await runCmd(
     ffprobe,
@@ -38,6 +40,7 @@ export async function probeVideoInfo(filePath: string): Promise<VideoProbeInfo> 
       "error",
       "-print_format",
       "json",
+      ...(options?.uploadedVideo ? ["-protocol_whitelist", "file,pipe", "-format_whitelist", "mov,matroska,webm"] : []),
       "-show_streams",
       "-show_format",
       filePath,
@@ -59,6 +62,8 @@ export async function probeVideoInfo(filePath: string): Promise<VideoProbeInfo> 
     parseFrameRate(videoStream?.avg_frame_rate)
     ?? parseFrameRate(videoStream?.r_frame_rate);
   const codec = videoStream?.codec_name ? String(videoStream.codec_name) : null;
+  const rotation = Number(videoStream?.side_data_list?.find((item: any) => item.rotation != null)?.rotation ?? videoStream?.tags?.rotate ?? 0);
+  const rotated = Number.isFinite(rotation) && Math.abs(Math.round(rotation)) % 180 === 90;
 
   return {
     durationSeconds,
@@ -66,6 +71,7 @@ export async function probeVideoInfo(filePath: string): Promise<VideoProbeInfo> 
     height,
     fps,
     codec,
+    ...(rotated && width && height ? { displayWidth: height, displayHeight: width } : {}),
     hasAudio: streams.some((stream: any) => String(stream?.codec_type || "").toLowerCase() === "audio"),
   };
 }

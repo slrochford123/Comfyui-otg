@@ -54,6 +54,8 @@ export async function submitComfyPromptWithGpuLease(args: {
   purpose?: "image" | "video" | "ltx-fallback";
   preSubmitCleanup?: "free" | null;
   releaseIdlePeer?: boolean;
+  /** Server-owned final admission hook, inside the physical submission mutex. */
+  beforeSubmit?: () => Promise<void>;
     submitTimeoutMs?: number;
     onPromptAccepted?: (
       promptId: string,
@@ -270,6 +272,7 @@ export async function submitComfyPromptWithGpuLease(args: {
         }
 
 
+          await args.beforeSubmit?.();
           const submitTimeoutMs =
             args.submitTimeoutMs == null
               ? (

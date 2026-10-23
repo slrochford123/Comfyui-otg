@@ -3,6 +3,7 @@ import path from "node:path";
 
 export type AdminGallerySourceId = "comfy-3090" | "comfy-5060";
 export type AdminGalleryMediaKind = "image" | "video";
+export type AdminGalleryQuery = { search?: string; media?: "all" | AdminGalleryMediaKind; sort?: "newest" | "oldest" | "name" };
 
 export type AdminGallerySourceDefinition = {
   id: AdminGallerySourceId;
@@ -149,7 +150,7 @@ export async function listAdminGallery(args: {
   source?: AdminGallerySourceId | "all";
   offset?: number;
   limit?: number;
-}): Promise<AdminGalleryPage> {
+} & AdminGalleryQuery): Promise<AdminGalleryPage> {
   const offset = clampOffset(args.offset);
   const limit = clampLimit(args.limit);
   const sources = ADMIN_GALLERY_SOURCES.map(
@@ -158,11 +159,11 @@ export async function listAdminGallery(args: {
   const selected = args.source && args.source !== "all"
     ? [adminGallerySourceById(args.source)]
     : sources;
-  const fetchLimit = Math.min(offset + limit + 1, 1000);
-  const results = await Promise.all(selected.map((source) => listOneSource(source, fetchLimit)));
+  const fetchLimit = offset + limit + 1;
+  const results = await Promise.all(selected.map((source) => listOneSource(source, fetchLimit, args)));
   const items = results
     .flatMap((result) => result.items)
-    .sort(compareAdminGalleryItems);
+    .sort((a, b) => args.sort === "oldest" ? -compareAdminGalleryItems(a, b) : args.sort === "name" ? a.name.localeCompare(b.name) || compareAdminGalleryItems(a, b) : compareAdminGalleryItems(a, b));
   const pageItems = items.slice(offset, offset + limit);
   return {
     ok: results.some((result) => result.ok),
@@ -240,11 +241,11 @@ export function compareAdminGalleryItems(a: AdminGalleryItem, b: AdminGalleryIte
   return b.mtimeMs - a.mtimeMs || a.source.localeCompare(b.source) || a.rel.localeCompare(b.rel);
 }
 
-async function listOneSource(source: AdminGallerySourceDefinition, limit: number) {
+async function listOneSource(source: AdminGallerySourceDefinition, limit: number, query: AdminGalleryQuery) {
   try {
     const result = source.kind === "local"
-      ? await listLocalSource(source, limit)
-      : await listRemoteSource(source, limit);
+      ? await listLocalSource(source, limit, query)
+      : await listRemoteSource(source, limit, query);
     return { source, ok: true, error: "", ...result };
   } catch (error) {
     return {
@@ -258,12 +259,13 @@ async function listOneSource(source: AdminGallerySourceDefinition, limit: number
   }
 }
 
-async function listLocalSource(source: AdminGallerySourceDefinition, limit: number) {
+async function listLocalSource(source: AdminGallerySourceDefinition, limit: number, query: AdminGalleryQuery) {
   const root = await localRootForSource(source.id);
   const items: AdminGalleryItem[] = [];
   await walkLocal(root, root, source, items);
-  items.sort(compareAdminGalleryItems);
-  return { count: items.length, items: items.slice(0, limit), hasMore: items.length > limit };
+  const filtered = items.filter(item => (!query.media || query.media === "all" || item.kind === query.media) && (!query.search || item.rel.toLowerCase().includes(query.search.toLowerCase())));
+  filtered.sort((a, b) => query.sort === "oldest" ? -compareAdminGalleryItems(a, b) : query.sort === "name" ? a.name.localeCompare(b.name) || compareAdminGalleryItems(a, b) : compareAdminGalleryItems(a, b));
+  return { count: filtered.length, items: filtered.slice(0, limit), hasMore: filtered.length > limit };
 }
 
 async function walkLocal(root: string, current: string, source: AdminGallerySourceDefinition, items: AdminGalleryItem[]): Promise<void> {
@@ -286,8 +288,11 @@ async function walkLocal(root: string, current: string, source: AdminGallerySour
   }
 }
 
-async function listRemoteSource(source: AdminGallerySourceDefinition, limit: number) {
-  const response = await fetch(remoteAgentUrl(source.id, "/gallery/list", { limit: String(limit) }), {
+async function listRemoteSource(source: AdminGallerySourceDefinition, limit: number, query: AdminGalleryQuery) {
+  const all: AdminGalleryItem[] = [];
+  let offset = 0, count = 0, hasMore = true;
+  while (hasMore && all.length < limit) {
+  const response = await fetch(remoteAgentUrl(source.id, "/gallery/list", { limit: "1000", offset: String(offset), search: query.search || "", media: query.media || "all", sort: query.sort || "newest" }), {
     cache: "no-store",
     headers: remoteAgentHeaders(source.id),
     signal: AbortSignal.timeout(30_000),
@@ -297,9 +302,11 @@ async function listRemoteSource(source: AdminGallerySourceDefinition, limit: num
     ok?: boolean;
     count?: number;
     hasMore?: boolean;
+    queryVersion?: number;
     items?: Array<{ rel?: string; name?: string; kind?: string; mimeType?: string; bytes?: number; mtimeMs?: number; width?: number; height?: number; durationSeconds?: number }>;
   };
   if (!payload.ok) throw new Error("Remote gallery source returned ok=false.");
+  if (payload.queryVersion !== 2 && payload.hasMore && (offset > 0 || query.search || query.media && query.media !== "all" || query.sort && query.sort !== "newest")) throw new Error("Gallery agent update required for complete-library search, sorting and paging.");
   const items: AdminGalleryItem[] = [];
   for (const raw of payload.items || []) {
     const rel = normalizeAdminGalleryRelPath(String(raw.rel || ""));
@@ -317,8 +324,18 @@ async function listRemoteSource(source: AdminGallerySourceDefinition, limit: num
       durationSeconds: finitePositive(raw.durationSeconds),
     }));
   }
-  items.sort(compareAdminGalleryItems);
-  return { count: finiteNonNegative(payload.count) || items.length, items, hasMore: Boolean(payload.hasMore) };
+  if (payload.queryVersion !== 2 && !payload.hasMore) {
+    const filtered = items.filter(item => (!query.media || query.media === "all" || query.media === item.kind) && (!query.search || item.rel.toLowerCase().includes(query.search.toLowerCase())));
+    filtered.sort((a, b) => query.sort === "oldest" ? -compareAdminGalleryItems(a, b) : query.sort === "name" ? a.name.localeCompare(b.name) || compareAdminGalleryItems(a, b) : compareAdminGalleryItems(a, b));
+    return { count: filtered.length, items: filtered.slice(0, limit), hasMore: filtered.length > limit };
+  }
+  all.push(...items.slice(0, Math.max(0, limit - all.length)));
+  count = finiteNonNegative(payload.count) || all.length;
+  hasMore = Boolean(payload.hasMore);
+  if (!items.length) break;
+  offset += items.length;
+  }
+  return { count, items: all, hasMore };
 }
 
 function toItem(source: AdminGallerySourceDefinition, value: Omit<AdminGalleryItem, "id" | "source" | "sourceLabel" | "mimeType" | "url"> & { mimeType?: string }) {

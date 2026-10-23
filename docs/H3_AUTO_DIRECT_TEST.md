@@ -1,0 +1,11 @@
+# H3 Auto one-click generation — TEST hotfix
+
+Auto's **Create Video** submits one local H3 generation directly. There is no generation review/approval checkbox or second submission button in Auto. Optional expandable video settings remain visible; Manual's explicit plan inspection/review workflow remains unchanged.
+
+Auto always uses project SLA Attention and a family-matched 8-step Turbo adapter. Text/first-last-frame workflows use the existing installed FL2VA 8-step adapter; reference/video-edit workflows use the installed Ref2VA 8-step adapter. They are not interchangeable. Server admission infers workflow family from authorized media and enforces this standard regardless of older saved/manual/Director settings. No automatic 5060 Ti fallback is permitted.
+
+The common engine still validates model integrity/provenance, compatible inputs, authenticated session ownership, exact media identity, an internal execution-bound receipt, budget/concurrency rules and Safe Cancel. An uncertain submission reuses its request ID rather than starting another job. Optional paid AI Director and external-media consent remain distinct and are not implicitly authorized by Create Video. The structured schema enumerates the registered profiles and retains strict validation, consistent with [official OpenAI Structured Outputs documentation](https://developers.openai.com/api/docs/guides/structured-outputs).
+
+The Edit Video unavailable report was traced to the explicit private TEST experimental policy: the screenshot account `slrochford1203` was not listed, while the earlier supplied usernames were. The existing TEST account was verified by stable database ID and added only to the private TEST owner policy, preserving prior entries and file permissions. No user record, role, password, qualification evidence or PROD policy was changed. TEST owner experiments remain labeled unverified, not physically qualified.
+
+All original Manual menu tiles, structural Fun ControlNet backend, other Manual settings, source trim behavior, Gallery and history remain intact. Source and policy snapshots and the previously active TEST release are retained for rollback. GPU rendering and paid API testing remain for the owner.

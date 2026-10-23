@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { adminStyles as styles } from "../AdminShell";
 
 type BillingSnapshot = {
   ok: true;
@@ -189,6 +190,7 @@ function compactDate(value: number) {
 
 const inputStyle = {
   width: "100%",
+  minWidth: 0,
   border: "1px solid var(--color-border)",
   borderRadius: 8,
   padding: "10px 12px",
@@ -197,20 +199,22 @@ const inputStyle = {
 } as const;
 
 const panelStyle = {
+  minWidth: 0,
   border: "1px solid var(--color-border)",
-  borderRadius: 8,
+  borderRadius: 14,
   padding: 16,
   background: "var(--color-card)",
   color: "var(--color-text)",
 } as const;
 
 export default function OpenAIBillingClient() {
+  const mutation = useRef(false);
   const [snapshot, setSnapshot] = useState<BillingSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [filters, setFilters] = useState({
-    environment: "test",
+    environment: "",
     user: "",
     feature: "",
     apiProject: "",
@@ -266,6 +270,8 @@ export default function OpenAIBillingClient() {
   }, [load]);
 
   async function post(action: string, body: Record<string, unknown>) {
+    if (mutation.current) return;
+    mutation.current = true;
     setBusy(action);
     setError(null);
     try {
@@ -296,6 +302,7 @@ export default function OpenAIBillingClient() {
     } catch (err: unknown) {
       setError(errorMessage(err, "OpenAI billing update failed."));
     } finally {
+      mutation.current = false;
       setBusy(null);
     }
   }
@@ -304,11 +311,11 @@ export default function OpenAIBillingClient() {
   const warningThreshold = overview?.lowBalanceWarningsUsd.find((value) => overview.estimatedPrepaidBalanceUsd <= value);
 
   return (
-    <main className="min-h-screen bg-[#03050b] p-3 text-white sm:p-6">
+    <main className={styles.shell}>
       <div className="mx-auto max-w-[1500px]">
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 18 }}>
           <div>
-            <h1 style={{ fontSize: 30, fontWeight: 800, margin: 0 }}>OpenAI Billing & Usage</h1>
+            <h1 style={{ fontWeight: 800, margin: 0 }}>Billing & Usage</h1>
             <p className="otg-help" style={{ marginTop: 6, maxWidth: 860 }}>
               Admin-only view of local feature usage, manually tracked credits, spending controls, and official OpenAI billing sync status.
             </p>
@@ -322,15 +329,15 @@ export default function OpenAIBillingClient() {
               className="otg-authShowBtn"
               style={{ textDecoration: "none", padding: "10px 14px" }}
             >
-              Add Credits / OpenAI Billing
+              Open official OpenAI portal
             </a>
-            <button className="otg-authShowBtn" style={{ padding: "10px 14px" }} onClick={() => post("sync", { days: 30 })} disabled={busy === "sync"}>
+            <button className="otg-authShowBtn" style={{ padding: "10px 14px" }} onClick={() => post("sync", { days: 30 })} disabled={Boolean(busy) || !snapshot?.official.configured || !snapshot?.official.enabled}>
               {busy === "sync" ? "Syncing..." : "Sync Official Costs"}
             </button>
           </div>
         </div>
 
-        {error ? <p role="alert" style={{ color: "#fecaca" }}>{error}</p> : null}
+        {error ? <p role="alert" style={{ color: "var(--color-error)" }}>{error}</p> : null}
         {loading && !snapshot ? <p className="otg-help">Loading OpenAI billing...</p> : null}
 
         {snapshot && overview ? (
@@ -348,7 +355,7 @@ export default function OpenAIBillingClient() {
               </div>
               <div style={{ marginTop: 16 }}>
                 <div style={{ height: 12, borderRadius: 999, background: "rgba(255,255,255,.1)", overflow: "hidden" }}>
-                  <div style={{ width: `${overview.consumedPercent}%`, height: "100%", background: warningThreshold != null ? "#f59e0b" : "#22c55e" }} />
+                  <div style={{ width: `${Math.min(100, Math.max(0, overview.consumedPercent))}%`, height: "100%", background: warningThreshold != null ? "var(--color-warning)" : "var(--color-success)" }} />
                 </div>
                 <p className="otg-help" style={{ marginTop: 10 }}>
                   Data source: {overview.dataSource}. {overview.accuracyStatus}
@@ -369,8 +376,8 @@ export default function OpenAIBillingClient() {
             <section style={{ ...panelStyle, marginBottom: 16 }}>
               <h2 style={{ fontSize: 20, margin: "0 0 12px" }}>Official OpenAI sync</h2>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }}>
-                <Metric label="Admin key configured" value={snapshot.official.configured ? "Yes" : "No"} tone={snapshot.official.configured ? "good" : undefined} />
-                <Metric label="Sync status" value={snapshot.official.status} />
+                <Metric label="Configuration" value={snapshot.official.configured ? "Configured" : "Not configured"} />
+                <Metric label="Sync status" value={!snapshot.official.configured ? "Not configured" : !snapshot.official.enabled ? "Disabled" : snapshot.official.status} />
                 <Metric label="Cost buckets" value={numberFmt(snapshot.official.costBucketCount)} />
                 <Metric label="Usage buckets" value={numberFmt(snapshot.official.usageBucketCount)} />
                 <Metric label="Official completions" value={numberFmt(snapshot.official.usageSummary.completionsRequestCount)} />
@@ -379,7 +386,8 @@ export default function OpenAIBillingClient() {
               <p className="otg-help" style={{ marginTop: 10 }}>
                 Last successful sync: {dateTime(snapshot.official.lastSyncAt)}. Cached input tokens: {numberFmt(snapshot.official.usageSummary.cachedInputTokens)}. Official audio seconds: {numberFmt(snapshot.official.usageSummary.audioSeconds)}.
               </p>
-              {snapshot.official.error ? <p style={{ color: "#fecaca", marginTop: 8 }}>{snapshot.official.error}</p> : null}
+              {!snapshot.official.configured ? <p className={styles.muted}>Official billing sync is not configured. Local usage and credit records remain available.</p> : snapshot.official.error ? <p style={{ color: "var(--color-warning)", marginTop: 8 }}>The last official sync could not complete. Review diagnostics or retry.</p> : null}
+              <details className={styles.diagnostics}><summary>Sync diagnostics</summary><p>Official organization cost reporting requires the server-side OPENAI_ADMIN_API_KEY configuration. No key is displayed here.</p>{snapshot.official.configured && snapshot.official.error ? <p>Sync status: {snapshot.official.status}. Review the protected server logs for details.</p> : null}</details>
             </section>
 
             <section style={{ ...panelStyle, marginBottom: 16 }}>
@@ -396,13 +404,13 @@ export default function OpenAIBillingClient() {
               </div>
             </section>
 
-            <section style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(320px, .8fr)", gap: 16, alignItems: "start", marginBottom: 16 }}>
+            <section className={styles.billingColumns}>
               <div style={panelStyle}>
                 <h2 style={{ fontSize: 20, margin: "0 0 12px" }}>Usage by feature</h2>
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
                     <thead>
-                      <tr style={{ color: "#cbd5e1", textAlign: "left" }}>
+                      <tr style={{ color: "var(--color-text-muted)", textAlign: "left" }}>
                         <th style={th}>Feature</th>
                         <th style={th}>Cost</th>
                         <th style={th}>Requests</th>
@@ -430,23 +438,25 @@ export default function OpenAIBillingClient() {
               </div>
 
               <div style={panelStyle}>
-                <h2 style={{ fontSize: 20, margin: "0 0 12px" }}>Credits & controls</h2>
+                <h2 style={{ fontSize: 20, margin: "0 0 12px" }}>Credits</h2>
+                <p className={styles.muted}>Record credits locally. This form does not buy credits or change the official OpenAI account balance.</p>
                 <div style={{ display: "grid", gap: 10 }}>
                   <Select label="Entry type" value={credit.type} onChange={(value) => setCredit((prev) => ({ ...prev, type: value }))} options={["purchase", "starting_balance", "manual_reconciliation", "adjustment", "refund", "recharge"]} />
                   <Field label="Amount USD" value={credit.amountUsd} onChange={(value) => setCredit((prev) => ({ ...prev, amountUsd: value }))} placeholder="50.00" />
                   <Field label="Effective date" type="date" value={credit.effectiveAt} onChange={(value) => setCredit((prev) => ({ ...prev, effectiveAt: value }))} />
                   <Field label="Verified portal balance" value={credit.verifiedBalanceUsd} onChange={(value) => setCredit((prev) => ({ ...prev, verifiedBalanceUsd: value }))} placeholder="Optional" />
                   <Field label="Note" value={credit.note} onChange={(value) => setCredit((prev) => ({ ...prev, note: value }))} placeholder="OpenAI portal reconciliation" />
-                  <button className="otg-authShowBtn" style={{ padding: "10px 14px" }} disabled={busy === "credit"} onClick={() => post("credit", credit)}>
+                  <button className="otg-authShowBtn" style={{ padding: "10px 14px" }} disabled={Boolean(busy) || !credit.type} onClick={() => post("credit", credit)}>
                     {busy === "credit" ? "Saving..." : "Record credit entry"}
                   </button>
                 </div>
                 <div style={{ marginTop: 18 }}>
+                  <h2>Spending controls</h2>
                   <Field label="Low balance warnings" value={warnings} onChange={setWarnings} placeholder="10, 5" />
                   <button
                     className="otg-authShowBtn"
                     style={{ marginTop: 10, padding: "10px 14px" }}
-                    disabled={busy === "settings"}
+                    disabled={Boolean(busy) || !warnings.trim() || warnings.split(",").some(item => !item.trim() || !Number.isFinite(Number(item)) || Number(item) < 0)}
                     onClick={() => post("settings", { lowBalanceWarningsUsd: warnings.split(",").map((item) => Number(item.trim())) })}
                   >
                     Save warnings
@@ -458,7 +468,7 @@ export default function OpenAIBillingClient() {
               </div>
             </section>
 
-            <section style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
+            <section className={styles.billingColumns}>
               <div style={panelStyle}>
                 <h2 style={{ fontSize: 20, margin: "0 0 12px" }}>Credit history</h2>
                 {snapshot.credits.length ? snapshot.credits.map((item) => (

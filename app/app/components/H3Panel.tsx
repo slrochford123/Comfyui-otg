@@ -20,6 +20,8 @@ import {
 import { H3StylePresetPicker } from "./H3StylePresetPicker";
 import H3AdvancedControls from "./H3AdvancedControls";
 import H3VideoEditPanel from "./H3VideoEditPanel";
+import H3StudioControls, { type H3StudioController } from "./H3StudioControls";
+import type { H3StudioPlan } from "@/lib/h3StudioPlan";
 import SpeechInputButton from "./SpeechInputButton";
 import VideoSnapshotPicker from "./VideoSnapshotPicker";
 import {
@@ -94,6 +96,7 @@ type MediaInput = H3StudioReferenceDescriptor & {
   clipStartSeconds?: number;
 };
 type H3GenerationConfig = {
+  studioPlan?: H3StudioPlan;
   mode: Mode;
   quality: H3Quality;
   orientation: H3Orientation;
@@ -998,6 +1001,13 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   );
   const [mode, setMode] = useState<Mode>("h3-text-to-video");
   const [videoEditOpen, setVideoEditOpen] = useState(false);
+  const [studioController, setStudioController] = useState<H3StudioController>("auto");
+  const [manualControlsOpen, setManualControlsOpen] = useState(false);
+  const [studioBusy, setStudioBusy] = useState(false);
+  const [studioSnapshot, setStudioSnapshot] = useState<{ owner: string; plan: H3StudioPlan } | null>(null);
+  const [studioControllerEpoch, setStudioControllerEpoch] = useState(0);
+  const validatedStudioPlan = studioSnapshot?.owner === storageOwnerKey ? studioSnapshot.plan : null;
+  function setValidatedStudioPlan(plan: H3StudioPlan | null) { setStudioSnapshot(plan ? { owner: storageOwnerKey, plan } : null); }
   const [studioMode, setStudioMode] =
     useState<H3StudioMode>("h3-text-to-video");
   const [quality, setQuality] = useState<H3Quality>("lq");
@@ -2101,6 +2111,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   }
 
   function resetH3Inputs() {
+    if (studioBusy) return;
+    setValidatedStudioPlan(null); setStudioControllerEpoch(value => value + 1);
     releaseAllMedia();
     promptVideoUploadCacheRef.current.clear();
     setMode("h3-text-to-video");
@@ -2764,10 +2776,11 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       setJob(data.job);
       rememberH3Job(h3LastJobStorageKey, data.job);
     }
-    setMessage(response.ok ? "H3 generation canceled." : data.error || "Could not cancel H3 generation.");
+    setMessage(response.ok ? (data.job?.status === "canceled" ? "H3 generation canceled." : "Cancellation requested; waiting for backend confirmation.") : data.error || "Could not cancel H3 generation.");
   }
   function h3GenerationConfig(): H3GenerationConfig {
     return {
+      ...(validatedStudioPlan ? { studioPlan: validatedStudioPlan, seed: validatedStudioPlan.seed } : {}),
       mode,
       quality,
       orientation,
@@ -3984,7 +3997,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       className="mx-auto max-w-7xl space-y-4 pb-28 pt-8 md:pt-0"
       data-testid="h3-panel"
     >
-      {videoEditOpen ? <H3VideoEditPanel onBack={() => setVideoEditOpen(false)} /> : <>
+      <H3StudioControls key={`${storageOwnerKey}:${studioControllerEpoch}`} ownerKey={storageOwnerKey} controller={studioController} onControllerChange={next => { setStudioController(next); setManualControlsOpen(false); }} manualMenu={studioController === "manual" && !manualControlsOpen} onOpenManualControls={() => setManualControlsOpen(true)} onBackToStudio={() => setManualControlsOpen(false)} onBusyChange={setStudioBusy} />
+      <div hidden={studioController !== "manual" || manualControlsOpen} data-otg="h3-legacy-manual-tools" className="space-y-4">
+      {validatedStudioPlan ? <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 text-[var(--color-text)]" aria-label="Applied H3 Studio plan"><p>Applied plan: {validatedStudioPlan.workflowId} · {validatedStudioPlan.durationSeconds}s · {validatedStudioPlan.quality} MP. The editable generation prompt below is the approved plan prompt; the original intent remains in its manifest. Changed settings require a fresh plan.</p><button type="button" className="min-h-11 px-3" onClick={() => setValidatedStudioPlan(null)}>Stop using applied studio plan</button></section> : null}
+      {videoEditOpen ? <H3VideoEditPanel key={storageOwnerKey} authenticatedOwnerKey={storageOwnerKey} studioBusy={studioBusy} onBack={() => setVideoEditOpen(false)} /> : <>
       <section className="relative overflow-hidden rounded-[8px] border border-violet-300/20 bg-[linear-gradient(135deg,#100d25_0%,#09101b_55%,#071216_100%)] px-4 py-5 shadow-[0_20px_60px_rgba(76,29,149,.18)]">
         <div className="absolute inset-y-0 right-0 w-1 bg-gradient-to-b from-violet-300 via-cyan-300 to-transparent" />
         <p className="text-xs font-black uppercase text-violet-200">
@@ -4014,6 +4030,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
             </button>
           ))}
           <button type="button" className={`min-h-20 rounded-[6px] border p-2 text-left ${command}`} onClick={() => setVideoEditOpen(true)}><span className="block font-black">Edit Video</span><span className="block text-xs">One video + text · H3 V2V</span></button>
+          <button type="button" className={`min-h-20 rounded-[6px] border p-2 text-left ${command}`} onClick={() => setManualControlsOpen(true)}><span className="block font-black">Manual</span><span className="block text-xs">Complete creative controls</span></button>
         </div>
       </section>
       {message ? (
@@ -5782,6 +5799,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
             type="button"
             className={command}
             onClick={resetH3Inputs}
+            disabled={studioBusy}
           >
             Reset H3 Generator
           </button>
@@ -5831,6 +5849,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         />
       ) : null}
       </>}
+      </div>
     </div>
   );
 }

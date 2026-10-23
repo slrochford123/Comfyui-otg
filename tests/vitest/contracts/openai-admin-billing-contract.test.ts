@@ -33,7 +33,8 @@ describe("OpenAI admin billing dashboard contract", () => {
     expect(route).toContain("Cache-Control");
     expect(page).toContain("OpenAIBillingClient");
     expect(client).toContain("/api/admin/openai-billing");
-    expect(client).toContain("Add Credits / OpenAI Billing");
+    expect(client).toContain("Open official OpenAI portal");
+    expect(client).toContain("This form does not buy credits");
     expect(client).toContain("officialLocalDiscrepancyUsd");
     expect(client).toContain("Official reported spending");
     expect(client).toContain("Estimated balance");

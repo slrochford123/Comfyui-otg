@@ -104,7 +104,7 @@ describe(
         expect(
           route,
         ).toContain(
-          "request.formData()",
+          "limitedFormData(request, MAX_STAGED_H3_CHUNK_BYTES + 64 * 1024)",
         );
 
         expect(

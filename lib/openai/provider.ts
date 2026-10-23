@@ -252,6 +252,9 @@ export async function createOpenAIText(args: {
   input: any;
   maxOutputTokens?: number;
   timeoutMs?: number;
+  responseSchema?: { name: string; schema: Record<string, unknown> };
+  store?: boolean;
+  maxRetries?: number;
 }) {
   assertOpenAIAuthorized(args.ownerKey, args.useCase);
   const controller = new AbortController();
@@ -264,8 +267,10 @@ export async function createOpenAIText(args: {
         instructions: args.instructions,
         input: args.input,
         max_output_tokens: args.maxOutputTokens || 900,
+        ...(args.responseSchema ? { text: { format: { type: "json_schema", name: args.responseSchema.name, strict: true, schema: args.responseSchema.schema } } } : {}),
+        ...(args.store !== undefined ? { store: args.store } : {}),
       } as any,
-      { signal: controller.signal } as any,
+      { signal: controller.signal, ...(args.maxRetries !== undefined ? { maxRetries: args.maxRetries } : {}) } as any,
     );
 
     const text = String(response.output_text || "").trim();

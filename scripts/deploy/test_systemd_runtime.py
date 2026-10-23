@@ -5,6 +5,8 @@ import unittest
 from unittest.mock import patch
 from contextlib import ExitStack
 import sys
+import io
+import json
 
 spec = importlib.util.spec_from_file_location('systemd_runtime', Path(__file__).with_name('systemd_runtime.py'))
 runtime = importlib.util.module_from_spec(spec)
@@ -16,6 +18,21 @@ def effective(node=NODE, entry=ENTRY):
     return '{ path=' + str(node) + ' ; argv[]=' + str(node) + ' ' + str(entry) + ' ; ignore_errors=no ; }'
 
 class RuntimePrecedenceTests(unittest.TestCase):
+    def test_test_activation_never_interrupts_busy_or_unreadable_workers(self):
+        module_spec=importlib.util.spec_from_file_location('activation',Path(__file__).with_name('activate_test_release.py'))
+        activation=importlib.util.module_from_spec(module_spec)
+        with patch.dict(sys.modules,{'systemd_runtime':runtime}): module_spec.loader.exec_module(activation)
+        empty={'queue_running':[],'queue_pending':[]}
+        with patch.object(activation.urllib.request,'urlopen',side_effect=lambda *a,**k:io.StringIO(json.dumps(empty))) as read:
+            activation.require_idle_workers()
+            self.assertEqual(read.call_count,3)
+        for queue in ({'queue_running':[['owner-job']],'queue_pending':[]},{'queue_running':[],'queue_pending':[['queued-job']]},{}):
+            with self.subTest(queue=queue),patch.object(activation.urllib.request,'urlopen',return_value=io.StringIO(json.dumps(queue))),patch.object(activation,'command') as command:
+                with self.assertRaises(ValueError):activation.require_idle_workers()
+                command.assert_not_called()
+        with patch.object(activation.urllib.request,'urlopen',side_effect=OSError('connection refused')),patch.object(activation,'command') as command:
+            with self.assertRaisesRegex(ValueError,'unavailable'):activation.require_idle_workers()
+            command.assert_not_called()
     def test_exact_legacy_node20_override_failure_is_prevented(self):
         legacy = ['zz-compat-node22.conf', 'zzzz-story-creator-unified-node20.conf',
                   'zzzzz-test-managed-node20.conf']
@@ -123,7 +140,7 @@ class RuntimePrecedenceTests(unittest.TestCase):
             def private_lock(file,*args,**kwargs):
                 return real_open(root/'lock' if str(file)=='/run/lock/slr-test-activation.lock' else file,*args,**kwargs)
             with ExitStack() as stack:
-                for key,value in {'ROOT':root,'CURRENT':current,'PROC':proc,'EXPECTED_LINKS':{'.env.local':environment,'data':data},'command':run,'assert_process':verify}.items():
+                for key,value in {'ROOT':root,'CURRENT':current,'PROC':proc,'EXPECTED_LINKS':{'.env.local':environment,'data':data},'command':run,'assert_process':verify,'require_idle_workers':lambda:None}.items():
                     stack.enter_context(patch.object(activation,key,value))
                 stack.enter_context(patch.object(activation.os,'geteuid',return_value=0))
                 stack.enter_context(patch.object(activation.socket,'gethostname',return_value='shawn'))

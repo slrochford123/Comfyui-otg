@@ -1,87 +1,14 @@
-import type { CSSProperties } from "react";
-
+import AdminShell, { adminStyles as styles } from "./AdminShell";
+import AdminSummary from "./AdminSummary";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-const tileStyle: CSSProperties = {
-  display: "block",
-  textDecoration: "none",
-  borderRadius: 22,
-  padding: 18,
-  background: "var(--color-card)",
-  color: "var(--color-text)",
-  border: "1px solid var(--color-border)",
-  boxShadow: "var(--color-shadow)",
-};
-
+const sections = [
+  ["Users", "Inspect accounts, reset stuck generation state, and manage supported account actions.", "/app/admin/users"],
+  ["Gallery", "Search and browse images and videos across both GPU sources.", "/app/admin/gallery"],
+  ["GPU / Services", "Identity-pinned GPU maintenance and service health diagnostics.", "/app/admin/health"],
+  ["Performance", "Storage, thumbnail cache, runtime and advanced diagnostics.", "/app/admin/performance"],
+  ["Billing & Usage", "Local credit records, spending warnings and official OpenAI cost sync.", "/app/admin/openai-billing"],
+];
 export default function AdminRootPage() {
-  return (
-    <main className="otg-authPage">
-      <div className="otg-authBg" />
-      <section className="otg-authCard2" style={{ maxWidth: 980 }}>
-        <h1 className="otg-authTitle" style={{ marginBottom: 6 }}>Admin Panel</h1>
-        <p className="otg-authSub" style={{ marginBottom: 16 }}>
-          Quick access to users, gallery operations, service health, and performance checks.
-        </p>
-
-        <div style={{ marginBottom: 16, display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <a href="/app" className="otg-authShowBtn" style={{ textDecoration: "none", padding: "10px 14px" }}>
-            Back to App
-          </a>
-          <a href="/app/admin/users" className="otg-authShowBtn" style={{ textDecoration: "none", padding: "10px 14px" }}>
-            Users
-          </a>
-          <a href="/app/admin/gallery" className="otg-authShowBtn" style={{ textDecoration: "none", padding: "10px 14px" }}>
-            Full Gallery
-          </a>
-          <a href="/app/admin/health" className="otg-authShowBtn" style={{ textDecoration: "none", padding: "10px 14px" }}>
-            Health
-          </a>
-          <a href="/app/admin/performance" className="otg-authShowBtn" style={{ textDecoration: "none", padding: "10px 14px" }}>
-            Performance
-          </a>
-          <a href="/app/admin/openai-billing" className="otg-authShowBtn" style={{ textDecoration: "none", padding: "10px 14px" }}>
-            OpenAI Billing
-          </a>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
-          <a href="/app/admin/users" style={tileStyle}>
-            <div className="otg-cardTitle" style={{ margin: 0 }}>Admin Users</div>
-            <div className="otg-help" style={{ marginTop: 8 }}>
-              Delete users, inspect accounts, and reset stuck generation state.
-            </div>
-          </a>
-
-          <a href="/app/admin/gallery" style={tileStyle}>
-            <div className="otg-cardTitle" style={{ margin: 0 }}>Full Gallery</div>
-            <div className="otg-help" style={{ marginTop: 8 }}>
-              Browse all supported images and videos from the RTX 3090 and RTX 5060 Ti ComfyUI output roots.
-            </div>
-          </a>
-
-          <a href="/app/admin/health" style={tileStyle}>
-            <div className="otg-cardTitle" style={{ margin: 0 }}>Health Center</div>
-            <div className="otg-help" style={{ marginTop: 8 }}>
-              Check Comfy targets, ffmpeg, IndexTTS2, Ollama, Hunyuan, and background removal services.
-            </div>
-          </a>
-
-          <a href="/app/admin/performance" style={tileStyle}>
-            <div className="otg-cardTitle" style={{ margin: 0 }}>Performance Center</div>
-            <div className="otg-help" style={{ marginTop: 8 }}>
-              Inspect storage size, thumbnail cache, route cache coverage, and dependency status.
-            </div>
-          </a>
-
-          <a href="/app/admin/openai-billing" style={tileStyle}>
-            <div className="otg-cardTitle" style={{ margin: 0 }}>OpenAI Billing & Usage</div>
-            <div className="otg-help" style={{ marginTop: 8 }}>
-              Track OpenAI costs, credits, feature attribution, official sync status, and spending controls.
-            </div>
-          </a>
-        </div>
-      </section>
-    </main>
-  );
+  return <AdminShell title="Admin Panel" description="Application control center"><AdminSummary /><nav aria-label="Admin sections" className={styles.grid}>{sections.map(([title, description, route]) => <article className={styles.card} key={route}><h2>{title}</h2><p className={styles.muted}>{description}</p><a className={styles.button} href={route} aria-label={`Open ${title}`}>Open</a></article>)}</nav></AdminShell>;
 }

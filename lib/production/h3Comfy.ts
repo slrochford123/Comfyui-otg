@@ -461,6 +461,8 @@ export async function submitH3PromptToBaseUrl(args: {
   workerId?: string;
   fetcher?: typeof fetch;
   preSubmitCleanup?: "free" | null;
+  releaseIdlePeer?: boolean;
+  beforeSubmit?: () => Promise<void>;
   onAccepted?: (
     promptId: string,
   ) => Promise<void> | void;
@@ -498,7 +500,8 @@ export async function submitH3PromptToBaseUrl(args: {
       ownerId:
         args.jobId,
       purpose: "video",
-      releaseIdlePeer: true,
+      releaseIdlePeer: args.releaseIdlePeer ?? true,
+      beforeSubmit: args.beforeSubmit,
       preSubmitCleanup:
         args.preSubmitCleanup
         ?? null,
@@ -609,6 +612,8 @@ export async function submitH3Prompt(args: {
   workerId?: string;
   fetcher?: typeof fetch;
   preSubmitCleanup?: "free" | null;
+  releaseIdlePeer?: boolean;
+  beforeSubmit?: () => Promise<void>;
   onAccepted?: (
     promptId: string,
   ) => Promise<void> | void;
@@ -623,6 +628,8 @@ export async function submitH3Prompt(args: {
     workerId: args.workerId,
     fetcher: args.fetcher,
     preSubmitCleanup: args.preSubmitCleanup,
+    releaseIdlePeer: args.releaseIdlePeer,
+    beforeSubmit: args.beforeSubmit,
     onAccepted: args.onAccepted,
   });
 }

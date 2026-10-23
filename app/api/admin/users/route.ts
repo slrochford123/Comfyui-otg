@@ -50,7 +50,7 @@ export async function GET(_req: NextRequest) {
     ensureMigrations();
 
     const rows = db
-      .prepare("SELECT id, email, username, created_at FROM users ORDER BY datetime(created_at) DESC")
+      .prepare("SELECT id, email, username, created_at, current_session_issued_at FROM users ORDER BY datetime(created_at) DESC")
       .all() as any[];
 
     const users = rows.map((r) => ({
@@ -58,6 +58,9 @@ export async function GET(_req: NextRequest) {
       email: r.email,
       username: r.username ?? null,
       createdAt: r.created_at,
+      lastSignInAt: r.current_session_issued_at || null,
+      role: [...HARD_CODED_ADMINS, ...ADMIN_IDENTIFIERS].includes(String(r.email || "").toLowerCase()) || [...HARD_CODED_ADMINS, ...ADMIN_IDENTIFIERS].includes(String(r.username || "").toLowerCase()) ? "Admin" : "Standard",
+      status: "Registered",
       protected: [...HARD_CODED_ADMINS,...ADMIN_IDENTIFIERS].includes(String(r.email||"").toLowerCase()) || [...HARD_CODED_ADMINS,...ADMIN_IDENTIFIERS].includes(String(r.username||"").toLowerCase()),
     }));
 

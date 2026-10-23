@@ -73,7 +73,7 @@ def image_dimensions(file_path: Path) -> tuple[int, int] | None:
     return None
 
 
-def list_media(limit: int) -> tuple[list[dict], int]:
+def list_media(limit: int, offset: int = 0, search: str = "", kind_filter: str = "all", sort: str = "newest") -> tuple[list[dict], int]:
     records: list[dict] = []
     for base, dirs, files in os.walk(ROOT, followlinks=False):
         dirs[:] = sorted(name for name in dirs if not name.startswith(".") and not (Path(base) / name).is_symlink())
@@ -100,9 +100,18 @@ def list_media(limit: int) -> tuple[list[dict], int]:
                 dimensions = image_dimensions(resolved)
                 if dimensions:
                     record["width"], record["height"] = dimensions
+            if kind_filter != "all" and record["kind"] != kind_filter:
+                continue
+            if search and search.casefold() not in record["rel"].casefold():
+                continue
             records.append(record)
-    records.sort(key=lambda item: (-item["mtimeMs"], item["rel"]))
-    return records[:limit], len(records)
+    if sort == "oldest":
+        records.sort(key=lambda item: (item["mtimeMs"], item["rel"]))
+    elif sort == "name":
+        records.sort(key=lambda item: (item["name"].casefold(), item["rel"]))
+    else:
+        records.sort(key=lambda item: (-item["mtimeMs"], item["rel"]))
+    return records[offset:offset + limit], len(records)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -164,8 +173,15 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/gallery/list":
             try:
                 limit = min(1000, max(1, int(query.get("limit", ["100"])[0])))
-                items, count = list_media(limit)
-                self.send_json(200, {"ok": True, "count": count, "hasMore": count > len(items), "items": items})
+                offset = max(0, int(query.get("offset", ["0"])[0]))
+                search = query.get("search", [""])[0][:200]
+                kind = query.get("media", ["all"])[0]
+                sort = query.get("sort", ["newest"])[0]
+                if kind not in {"all", "image", "video"} or sort not in {"newest", "oldest", "name"}:
+                    self.send_json(400, {"ok": False, "error": "invalid gallery filter"})
+                    return
+                items, count = list_media(limit, offset, search, kind, sort)
+                self.send_json(200, {"ok": True, "queryVersion": 2, "offset": offset, "count": count, "hasMore": count > offset + len(items), "items": items})
             except (OSError, ValueError) as error:
                 self.send_json(500, {"ok": False, "error": str(error)})
             return

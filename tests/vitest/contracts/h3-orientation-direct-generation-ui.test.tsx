@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -30,9 +31,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function openLegacyManual() {
+  fireEvent.click(screen.getByRole("button", { name: "Manual Mode" }));
+  const legacy = document.querySelector('[data-otg="h3-legacy-manual-tools"]') as HTMLElement;
+  expect(legacy.hidden).toBe(false);
+  return within(legacy);
+}
+
 function writePrompt() {
+  const legacy = document.querySelector('[data-otg="h3-legacy-manual-tools"]') as HTMLElement;
   fireEvent.change(
-    screen.getByPlaceholderText("Describe the scene, action, camera, dialogue, and sound."),
+    within(legacy).getByPlaceholderText("Describe the scene, action, camera, dialogue, and sound."),
     { target: { value: "Two samurai fight in moonlight." } },
   );
 }
@@ -40,6 +49,7 @@ function writePrompt() {
 describe("H3 orientation and optional Builder UI", () => {
   it("defaults to one landscape selection and retains portrait across modes", () => {
     render(<H3Panel />);
+    const screen = openLegacyManual();
     const landscape = screen.getByRole("button", { name: "Landscape" });
     const portrait = screen.getByRole("button", { name: "Portrait" });
 
@@ -55,6 +65,7 @@ describe("H3 orientation and optional Builder UI", () => {
 
   it("enables direct T2V from raw text without Enhance or Prompt Builder", () => {
     render(<H3Panel />);
+    const screen = openLegacyManual();
     expect(screen.getByRole("button", { name: /Add Prompt and Required Inputs/ }).hasAttribute("disabled")).toBe(true);
     writePrompt();
     expect(screen.getByRole("button", { name: "Generate Video" }).hasAttribute("disabled")).toBe(false);
@@ -104,6 +115,7 @@ describe("H3 orientation and optional Builder UI", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<H3Panel />);
+    const screen = openLegacyManual();
     writePrompt();
     fireEvent.click(screen.getByRole("button", { name: "Portrait" }));
     fireEvent.click(screen.getByRole("button", { name: "Generate Video" }));
@@ -155,6 +167,7 @@ describe("H3 orientation and optional Builder UI", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<H3Panel />);
+    const screen = openLegacyManual();
     writePrompt();
     fireEvent.click(screen.getByRole("button", { name: /Prompt Builder/ }));
     await screen.findByText("Ollama Suggestion");
@@ -168,10 +181,11 @@ describe("H3 orientation and optional Builder UI", () => {
 
   it("enables direct I2V only after a First Image is present", () => {
     render(<H3Panel />);
+    const screen = openLegacyManual();
     fireEvent.click(screen.getByRole("tab", { name: /Image/ }));
     writePrompt();
     expect(screen.getByRole("button", { name: /Add Prompt and Required Inputs/ }).hasAttribute("disabled")).toBe(true);
-    const upload = document.querySelector('input[type="file"][accept^="image/*"]') as HTMLInputElement;
+    const upload = document.querySelector('[data-otg="h3-legacy-manual-tools"] input[type="file"][accept^="image/*"]') as HTMLInputElement;
     fireEvent.change(upload, {
       target: { files: [new File(["image"], "first.png", { type: "image/png" })] },
     });
@@ -180,10 +194,11 @@ describe("H3 orientation and optional Builder UI", () => {
 
   it("enables direct R2V only after a native reference is present", () => {
     render(<H3Panel />);
+    const screen = openLegacyManual();
     fireEvent.click(screen.getByRole("tab", { name: /Reference/ }));
     writePrompt();
     expect(screen.getByRole("button", { name: /Add Prompt and Required Inputs/ }).hasAttribute("disabled")).toBe(true);
-    const upload = document.querySelector('input[type="file"][accept^="image/*"]') as HTMLInputElement;
+    const upload = document.querySelector('[data-otg="h3-legacy-manual-tools"] input[type="file"][accept^="image/*"]') as HTMLInputElement;
     fireEvent.change(upload, {
       target: { files: [new File(["image"], "hero.png", { type: "image/png" })] },
     });
@@ -192,6 +207,7 @@ describe("H3 orientation and optional Builder UI", () => {
 
   it("persists H3 prompt and controls until the user resets the generator", async () => {
     render(<H3Panel authenticatedOwnerKey="persist-contract" />);
+    let screen = openLegacyManual();
     writePrompt();
     fireEvent.click(screen.getByRole("button", { name: "Portrait" }));
     fireEvent.click(screen.getByRole("button", { name: "10 sec" }));
@@ -202,6 +218,7 @@ describe("H3 orientation and optional Builder UI", () => {
 
     cleanup();
     render(<H3Panel authenticatedOwnerKey="persist-contract" />);
+    screen = openLegacyManual();
 
     await waitFor(() => {
       expect(

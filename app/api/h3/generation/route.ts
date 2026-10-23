@@ -56,6 +56,8 @@ type H3StagedGenerationMedia = {
 type H3ReferenceVideoClipBounds = {
   maxWidth: number;
   maxHeight: number;
+  studioClipSeconds?: 5 | 10;
+  preserveSourceAudio?: boolean;
 };
 
 function noStore(payload: unknown, init?: ResponseInit) {
@@ -87,6 +89,10 @@ function h3ReferenceVideoClipBounds(config: Record<string, unknown>): H3Referenc
   return {
     maxWidth: dimensions.width,
     maxHeight: dimensions.height,
+    ...(config.studioPlan && typeof config.studioPlan === "object" && (config.studioPlan as { workflowId?: string }).workflowId === "reference-edit" ? {
+      studioClipSeconds: ((config.studioPlan as { durationSeconds?: unknown }).durationSeconds === 10 ? 10 : 5),
+      preserveSourceAudio: (config.studioPlan as { audio?: string }).audio === "original",
+    } : {}),
   };
 }
 
@@ -179,7 +185,10 @@ async function toH3Reference(
   }
 
   const includeAudio = audioFlags[index] === true;
-  const clip = await trimH3ReferenceVideoClip({
+  const clip = videoClipBounds?.studioClipSeconds
+    ? await (await import("@/lib/h3StudioAudio")).prepareH3StudioReferenceClip(saved.path, videoClipStarts[index] || 0, videoClipBounds.studioClipSeconds,
+      videoClipBounds.maxWidth, videoClipBounds.maxHeight, includeAudio || videoClipBounds.preserveSourceAudio === true)
+    : await trimH3ReferenceVideoClip({
     inputPath: saved.path,
     outputDir: path.join(path.dirname(saved.path), "clips"),
     outputPrefix: `${path.parse(saved.name).name || `video-${index + 1}`}`,
@@ -293,6 +302,10 @@ async function startGenerationJob(
       config,
     );
 
+  if (config.studioPlan !== undefined) {
+    throw new Error("Auto/Manual plans require the exact media review and consent in H3 Studio. Submit through its reviewed generation action.");
+  }
+
   const input = validateH3DirectInput({
     mode: generation.mode,
     quality: generation.quality,
@@ -373,11 +386,14 @@ export async function GET(req: NextRequest) {
     const owner = await getOwnerContext(req);
     const { ownerKey } = owner;
     const id = String(req.nextUrl.searchParams.get("jobId") || "").trim();
-    const job = id ? await getH3DirectJob(ownerKey, id) : await getLatestH3DirectJob(ownerKey);
+    let job = id ? await getH3DirectJob(ownerKey, id) : await getLatestH3DirectJob(ownerKey);
     if (!job) {
       return id
         ? noStore({ ok: false, error: "H3 generation job not found." }, { status: 404 })
         : noStore({ ok: true, job: null });
+    }
+    if (job.input?.studioPlan && !job.promptId && ["submitting", "unknown"].includes(job.studioSubmissionState || "")) {
+      job = await (await import("@/lib/h3DirectJobs")).reconcileH3StudioSubmission(ownerKey, job.id) || job;
     }
     ensureH3DirectJobRunner(job);
     return noStore({ ok: true, job: h3DirectPublicStatus(job) });
@@ -405,10 +421,13 @@ export async function POST(req: NextRequest) {
       if (body?.action === "retry") {
         const source = await getH3DirectJob(ownerKey, String(body.jobId || ""));
         if (!source) throw new Error("H3 generation job not found.");
+        if (source.input.studioPlan) throw new Error("Preview a fresh Auto/Manual plan using the retained references, then confirm a new generation. Unresolved backend submissions cannot be retried automatically.");
+        if (source.input.videoEdit?.temporarySource || source.input.studioSource?.temporarySource) throw new Error("Retry this edit from its prepared video selection, or select the source again if it has expired.");
         const retryInput = {
           ...source.input,
           seed: freshH3RetrySeed(source.input.seed),
         };
+        if (retryInput.studioPlan) retryInput.studioPlan = { ...retryInput.studioPlan, seed: retryInput.seed };
         const retry = await createH3DirectJob(ownerKey, retryInput, source.galleryOwner || owner);
         startH3DirectJob(retry);
         return noStore({ ok: true, job: h3DirectPublicStatus(retry) }, { status: 202 });

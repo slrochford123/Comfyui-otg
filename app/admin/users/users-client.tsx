@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { adminStyles as styles } from "@/app/app/admin/AdminShell";
 
 
-type UserRow = { id: string; email: string; username: string | null; createdAt: string; protected?: boolean };
+type UserRow = { id: string; email: string; username: string | null; createdAt: string; protected?: boolean; role?: string; status?: string; lastSignInAt?: string | null };
 type ApiResponse =
   | { ok: true; count: number; users: UserRow[] }
   | { ok: false; error: string; detail?: string };
 
 export default function AdminUsersClient() {
+  const actionPending = useRef(false);
   const [q, setQ] = useState("");
   const [data, setData] = useState<UserRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -49,9 +51,11 @@ export default function AdminUsersClient() {
   }, [q, data]);
 
   async function deleteUser(u: UserRow) {
+    if (actionPending.current) return;
     if(u.protected)return;
     const ok = confirm(`Delete this account?\n\nEmail: ${u.email}\nUsername: ${u.username || "—"}\n\nThis cannot be undone.`);
     if (!ok) return;
+    actionPending.current = true;
 
     setBusyId(u.id);
     setErr(null);
@@ -71,15 +75,18 @@ export default function AdminUsersClient() {
     } catch (e: any) {
       setErr(e?.message || "Delete failed.");
     } finally {
+      actionPending.current = false;
       setBusyId(null);
     }
   }
 
   async function resetUserState(u: UserRow) {
+    if (actionPending.current) return;
     const ok = confirm(
       `Reset this user's "currently running" state?\n\nEmail: ${u.email}\nUsername: ${u.username || "—"}\n\nThis unlocks Generate if they are stuck.`
     );
     if (!ok) return;
+    actionPending.current = true;
 
     setBusyResetId(u.id);
     setErr(null);
@@ -99,19 +106,20 @@ export default function AdminUsersClient() {
     } catch (e: any) {
       setErr(e?.message || "Reset failed.");
     } finally {
+      actionPending.current = false;
       setBusyResetId(null);
     }
   }
 
   return (
   <div>
-    <div style={{ marginBottom: 16, display: "flex", gap: 12 }}>
+    <div style={{ marginBottom: 16, display: "flex", gap: 12, flexWrap: "wrap" }}>
       <a
-        href="/app"
+        href="/app/admin"
         className="otg-authShowBtn"
         style={{ textDecoration: "none", padding: "10px 14px" }}
       >
-        ← Back to App
+        ← Admin Panel
       </a>
 
       <a
@@ -131,13 +139,14 @@ export default function AdminUsersClient() {
       </a>
     </div>
 
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
         <input
           className="otg-authInput"
           placeholder="Search email or username…"
+          aria-label="Search users"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          style={{ flex: 1 }}
+          style={{ flex: "1 1 200px", minWidth: 0 }}
         />
         <button className="otg-authShowBtn" onClick={load} type="button">
           Refresh
@@ -165,6 +174,8 @@ export default function AdminUsersClient() {
       <div className="otg-adminCell otg-adminUser">
         <div className="otg-adminLabel">Username</div>
         <div className="otg-adminValue">{u.username || "—"}</div>
+        <p className={styles.muted}>{u.role || (u.protected ? "Admin" : "Standard")} · {u.status || "Registered"}</p>
+        {u.lastSignInAt ? <p className={styles.muted}>Last sign-in: {new Date(u.lastSignInAt).toLocaleString()}</p> : null}
       </div>
 
       <div className="otg-adminCell otg-adminCreated">
@@ -179,7 +190,7 @@ export default function AdminUsersClient() {
           className="otg-authShowBtn"
           type="button"
           onClick={() => resetUserState(u)}
-          disabled={busyResetId === u.id || !u.username}
+          disabled={Boolean(busyId || busyResetId) || !u.username}
           style={{ marginRight: 10, padding: "10px 14px" }}
           title={!u.username ? "User has no username; cannot reset state." : ""}
         >
@@ -189,7 +200,7 @@ export default function AdminUsersClient() {
           className="otg-adminDeleteBtn"
           type="button"
           onClick={() => deleteUser(u)}
-          disabled={busyId === u.id || u.protected}
+          disabled={Boolean(busyId || busyResetId) || u.protected}
           title={u.protected ? "Administrator account protected from deletion." : undefined}
         >
           {u.protected ? "Protected Admin" : busyId === u.id ? "Deleting…" : "Delete"}

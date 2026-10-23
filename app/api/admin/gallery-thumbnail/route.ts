@@ -8,6 +8,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { NextRequest, NextResponse } from "next/server";
+import sharp from "sharp";
 
 import { requireAdmin } from "@/app/api/admin/_requireAdmin";
 import {
@@ -25,6 +26,7 @@ export const revalidate = 0;
 const execFileAsync = promisify(execFile);
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".mov", ".mkv"]);
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 
 const THUMBNAIL_CACHE_ROOT = path.join(
   os.tmpdir(),
@@ -99,7 +101,7 @@ export async function GET(request: NextRequest) {
     !rel ||
     !VIDEO_EXTENSIONS.has(
       path.extname(rel).toLowerCase()
-    )
+    ) && !IMAGE_EXTENSIONS.has(path.extname(rel).toLowerCase())
   ) {
     return NextResponse.json(
       {
@@ -186,7 +188,9 @@ export async function GET(request: NextRequest) {
             ffmpegInputPath = resolved.path;
           }
 
-          await execFileAsync(
+          if (IMAGE_EXTENSIONS.has(path.extname(rel).toLowerCase())) {
+            await sharp(ffmpegInputPath, { limitInputPixels: 100_000_000, animated: false }).rotate().resize({ width: 640, height: 640, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 78 }).toFile(tempJpegPath);
+          } else await execFileAsync(
             process.env.FFMPEG_PATH || "ffmpeg",
             [
               "-hide_banner",

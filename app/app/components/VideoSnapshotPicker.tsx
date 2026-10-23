@@ -1,6 +1,6 @@
 "use client";
 
-import {
+import React, {
   useEffect,
   useMemo,
   useRef,
@@ -177,6 +177,29 @@ async function waitForDisplayedFrame(
   );
 }
 
+export async function seekSnapshotBoundary(video: HTMLVideoElement, boundary: "first" | "last") {
+  if (!Number.isFinite(video.duration) || video.duration <= 0) throw new Error("The source video duration is unavailable.");
+  const target = boundary === "first" ? 0 : Math.max(0, video.duration - 0.001);
+  video.pause();
+  if (!video.seeking && Math.abs(video.currentTime - target) < 0.0005) return;
+  await new Promise<void>((resolve, reject) => {
+    const finish = (error?: Error) => {
+      window.clearTimeout(timer);
+      video.removeEventListener("seeked", onSeeked);
+      video.removeEventListener("error", onError);
+      error ? reject(error) : resolve();
+    };
+    const onSeeked = () => {
+      if (!video.seeking && Math.abs(video.currentTime - target) < 0.05) finish();
+    };
+    const onError = () => finish(new Error("This video frame could not be decoded."));
+    const timer = window.setTimeout(() => finish(new Error("Seeking the video frame timed out. Try again.")), 5000);
+    video.addEventListener("seeked", onSeeked);
+    video.addEventListener("error", onError);
+    try { video.currentTime = target; } catch { finish(new Error("This video frame could not be selected.")); }
+  });
+}
+
 async function canvasPng(
   canvas: HTMLCanvasElement,
 ) {
@@ -325,6 +348,9 @@ export default function VideoSnapshotPicker({
     useRef<HTMLVideoElement | null>(
       null,
     );
+  const captureGuard = useRef(false);
+  const captureEpoch = useRef(0);
+  useEffect(() => () => { captureEpoch.current++; }, []);
 
   const [sourceFile, setSourceFile] =
     useState<File | null>(
@@ -385,6 +411,7 @@ export default function VideoSnapshotPicker({
     () => {
       if (open) return;
 
+      captureEpoch.current++;
       setSourceFile(null);
       setDuration(0);
       setCurrentTime(0);
@@ -432,6 +459,7 @@ export default function VideoSnapshotPicker({
   function chooseVideo(
     file: File,
   ) {
+    if (captureGuard.current) return;
     if (
       !file.type.startsWith(
         "video/",
@@ -496,7 +524,7 @@ export default function VideoSnapshotPicker({
     video.currentTime = next;
   }
 
-  async function captureFrame() {
+  async function captureFrame(boundary?: "first" | "last") {
     const video =
       videoRef.current;
 
@@ -506,17 +534,25 @@ export default function VideoSnapshotPicker({
       || !ready
       || seeking
       || capturing
+      || captureGuard.current
     ) {
       return null;
     }
 
     setMessage("");
+    captureGuard.current = true;
     setCapturing(true);
     const captureStartedAt =
       performance.now();
 
     try {
       video.pause();
+      if (boundary) {
+        setSeeking(true);
+        await seekSnapshotBoundary(video, boundary);
+        setCurrentTime(video.currentTime);
+        setSeeking(false);
+      }
 
       await waitForDisplayedFrame(
         video,
@@ -642,15 +678,18 @@ export default function VideoSnapshotPicker({
 
       return null;
     } finally {
+      captureGuard.current = false;
+      setSeeking(false);
       setCapturing(false);
     }
   }
 
-  async function useSnapshot() {
+  async function useSnapshot(boundary?: "first" | "last") {
+    const epoch = captureEpoch.current;
     const result =
-      await captureFrame();
+      await captureFrame(boundary);
 
-    if (!result) {
+    if (!result || epoch !== captureEpoch.current) {
       return;
     }
 
@@ -658,16 +697,20 @@ export default function VideoSnapshotPicker({
       `Captured frame in ${result.captureDurationMs} ms. Saving snapshot...`,
     );
 
-    await onSnapshot(result);
-
-    onClose();
+    try {
+      await onSnapshot(result);
+      onClose();
+    } catch {
+      setMessage("The frame was captured but could not be inserted. Try again.");
+    }
   }
 
   async function downloadSnapshot() {
+    const epoch = captureEpoch.current;
     const result =
       await captureFrame();
 
-    if (!result) {
+    if (!result || epoch !== captureEpoch.current) {
       return;
     }
 
@@ -694,13 +737,13 @@ export default function VideoSnapshotPicker({
 
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/75 p-3 backdrop-blur-sm sm:p-6"
+      className="fixed inset-0 z-[12000] flex items-center justify-center overflow-y-auto bg-black/75 p-3 backdrop-blur-sm sm:p-6"
       role="dialog"
       aria-modal="true"
       aria-label="Snapshot from Video"
       data-otg="video-snapshot-picker"
     >
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl border border-white/10 bg-zinc-950 shadow-2xl">
+      <div className="max-h-[calc(100dvh-1.5rem)] w-full max-w-2xl overflow-y-auto rounded-xl border border-white/10 bg-zinc-950 shadow-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
           <div>
             <div className="text-sm font-black text-white">
@@ -757,7 +800,7 @@ export default function VideoSnapshotPicker({
               <div className="overflow-hidden rounded-lg border border-white/10 bg-black">
                 <video
                   ref={videoRef}
-                  src={sourceUrl}
+                  src={sourceUrl || undefined}
                   playsInline
                   preload="auto"
                   className="aspect-video max-h-[55vh] w-full bg-black object-contain"
@@ -888,6 +931,11 @@ export default function VideoSnapshotPicker({
                 </button>
               </div>
 
+              <div className="grid grid-cols-2 gap-2" aria-label="Use video boundary frame as input image">
+                <button type="button" disabled={!ready || seeking || capturing} onClick={() => void useSnapshot("first")} className="min-h-11 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-sm font-bold text-cyan-100 disabled:opacity-35">Use First Frame</button>
+                <button type="button" disabled={!ready || seeking || capturing} onClick={() => void useSnapshot("last")} className="min-h-11 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-sm font-bold text-cyan-100 disabled:opacity-35">Use Last Frame</button>
+              </div>
+              <p className="text-xs text-zinc-400">Select the video's first or last frame and insert it as the chosen image input.</p>
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-4">
                 <label className="min-h-9 cursor-pointer rounded-md border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-black text-zinc-300 transition hover:border-white/25 hover:text-white">
                   Replace Video
@@ -911,7 +959,7 @@ export default function VideoSnapshotPicker({
                   />
                 </label>
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     disabled={capturing}

@@ -36,6 +36,21 @@ def healthy():
             if response.status != 200:
                 raise ValueError('TEST health failed.')
 
+def require_idle_workers():
+    """Read-only drain gate. Never stop/cancel an owner's backend work for deployment."""
+    for host, port in (('100.75.162.64', 8188), ('100.75.162.64', 8189), ('100.98.212.116', 8188)):
+        try:
+            with urllib.request.urlopen('http://' + host + ':' + str(port) + '/queue', timeout=5) as response:
+                queue = json.load(response)
+            if not isinstance(queue.get('queue_running'), list) or not isinstance(queue.get('queue_pending'), list):
+                raise ValueError('Unverified worker queue; TEST activation refused.')
+            if queue['queue_running'] or queue['queue_pending']:
+                raise ValueError('Owner generation is active or queued; wait for completion before TEST activation. Nothing was interrupted.')
+        except ValueError:
+            raise
+        except Exception:
+            raise ValueError('Worker queue unavailable; TEST activation refused without changing the service.') from None
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--expected-current', required=True)
@@ -74,6 +89,7 @@ def main():
             raise ValueError('Expected Node22.23.4 executable is unavailable.')
         probe = "const D=require(process.argv[1]+'/node_modules/better-sqlite3');new D(':memory:').close();require(process.argv[1]+'/node_modules/sharp')({create:{width:2,height:2,channels:3,background:'red'}}).png().toBuffer().catch(()=>process.exit(1));"
         command([str(NODE), '-e', probe, str(candidate)])
+        require_idle_workers()
         old_pid = command(['/usr/bin/systemctl', 'show', TEST_UNIT, '-p', 'MainPID', '--value'])
         old_exe = (PROC / old_pid / 'exe').resolve(strict=True)
         command(['/usr/bin/systemctl', 'daemon-reload'])

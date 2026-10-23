@@ -2,6 +2,7 @@
 
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { adminStyles as styles } from "../admin/AdminShell";
 
 type SourceId = "comfy-3090" | "comfy-5060";
 type SourceFilter = "all" | SourceId;
@@ -50,31 +51,40 @@ export default function AdminGallerySourcesPanel() {
   const [viewerId, setViewerId] = useState("");
   const [deletingId, setDeletingId] = useState("");
   const [mounted, setMounted] = useState(false);
+  const requestVersion = useRef(0);
+  const appending = useRef(false);
+  const itemCount = useRef(0);
+  itemCount.current = items.length;
 
   const load = useCallback(async (append = false) => {
+    if (append && appending.current) return;
+    if (append) appending.current = true;
+    const version = ++requestVersion.current;
     append ? setLoadingMore(true) : setLoading(true);
     setMessage("");
     try {
-      const offset = append ? items.length : 0;
-      const params = new URLSearchParams({ source: sourceFilter, offset: String(offset), limit: String(PAGE_SIZE) });
+      const offset = append ? itemCount.current : 0;
+      const params = new URLSearchParams({ source: sourceFilter, offset: String(offset), limit: String(PAGE_SIZE), search, media: mediaFilter === "images" ? "image" : mediaFilter === "videos" ? "video" : "all", sort });
       const response = await fetch(`/api/admin/gallery-sources?${params.toString()}`, { cache: "no-store", credentials: "include" });
       const data = await response.json() as Payload;
+      if (version !== requestVersion.current) return;
       if (!response.ok) throw new Error(data.error || `Full Gallery load failed (${response.status}).`);
       setItems((current) => append ? dedupeItems([...current, ...(data.items || [])]) : dedupeItems(data.items || []));
       setStatuses(data.statuses || []);
       setHasMore(Boolean(data.hasMore));
       if (!data.ok) setMessage("No configured Full Gallery source is currently healthy.");
     } catch (error) {
+      if (version !== requestVersion.current) return;
       if (!append) setItems([]);
       setMessage(error instanceof Error ? error.message : "Unable to load Admin Full Gallery.");
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      appending.current = false;
+      if (version === requestVersion.current) { setLoading(false); setLoadingMore(false); }
     }
-  }, [items.length, sourceFilter]);
+  }, [sourceFilter, mediaFilter, search, sort]);
 
   useEffect(() => { setMounted(true); }, []);
-  useEffect(() => { void load(false); }, [sourceFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { requestVersion.current++; setItems([]); setViewerId(""); const timer = window.setTimeout(() => void load(false), 250); return () => { requestVersion.current++; window.clearTimeout(timer); }; }, [load]);
 
   const visibleItems = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -132,20 +142,15 @@ export default function AdminGallerySourcesPanel() {
 
   return (
     <section className="space-y-4">
-      <div className="rounded-[28px] border border-white/10 bg-black/45 p-5">
+      <div className={styles.card}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-200/70">Settings / Admin</p>
-            <h1 className="mt-2 text-4xl font-black tracking-tight text-white">Full Gallery</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">Administrator-only, read-through browsing of both configured ComfyUI output filesystems. Files are never copied into the normal Gallery.</p>
+            <h2>Full Gallery</h2>
+            <p className={styles.muted}>Search both output libraries. Source files remain in their original location; owner identity is not inferred from filenames.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <a href="/app/admin" className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white no-underline hover:bg-white/10">Admin</a>
-            <button type="button" onClick={() => void load(false)} disabled={loading} className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-50">
+            <button type="button" onClick={() => void load(false)} disabled={loading} className={styles.button}>
               {loading ? "Refreshing..." : "Refresh"}
-            </button>
-            <button type="button" disabled title="Full Gallery reads source files directly; content synchronization does not apply." className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white opacity-50">
-              Update Content
             </button>
           </div>
         </div>
@@ -159,7 +164,7 @@ export default function AdminGallerySourcesPanel() {
         </div>
 
         <div className="mt-4 grid gap-3 md:grid-cols-4">
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by name" className={controlClass} />
+          <input aria-label="Search complete Gallery" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by name" className={controlClass} />
           <select value={mediaFilter} onChange={(event) => setMediaFilter(event.target.value as MediaFilter)} className={controlClass}>
             <option value="all">All</option><option value="images">Images</option><option value="videos">Videos</option>
           </select>
@@ -175,15 +180,16 @@ export default function AdminGallerySourcesPanel() {
       <div className="grid gap-3 md:grid-cols-2">
         {statuses.map((status) => (
           <div key={status.id} className={`rounded-[20px] border p-4 ${status.ok ? "border-emerald-400/20 bg-emerald-500/10" : "border-red-400/20 bg-red-500/10"}`}>
-            <div className="flex items-center justify-between gap-3"><span className="font-black text-white">{status.label}</span><span className="text-xs font-black uppercase text-white/65">{status.ok ? "Healthy" : "Unavailable"}</span></div>
-            <div className="mt-1 text-sm text-white/65">{status.ok ? `${status.count} supported media files reported` : status.error || "Source unavailable."}</div>
+            <div className="flex flex-wrap items-center justify-between gap-3"><span className="font-semibold text-[var(--color-text)]">{status.label}</span><span className="text-xs font-semibold uppercase text-[var(--color-text-muted)]">{status.ok ? "Available" : "Unavailable"}</span></div>
+            <div className="mt-1 text-sm text-[var(--color-text-muted)]">{status.ok ? `${status.count} matching media files reported` : "Source needs attention."}</div>
+            {status.error ? <details className={styles.diagnostics}><summary>Source diagnostics</summary><p>{status.error}</p></details> : null}
           </div>
         ))}
       </div>
 
-      {message ? <div className="rounded-[18px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/75">{message}</div> : null}
-      {loading ? <div className="rounded-[22px] border border-white/10 bg-black/35 p-6 text-center text-white/60">Loading Full Gallery…</div> : null}
-      {!loading && !visibleItems.length ? <div className="rounded-[22px] border border-dashed border-white/10 bg-black/30 p-6 text-center text-white/60">No supported media files match this view.</div> : null}
+      {message ? <div role="status" className={styles.card}>{message}</div> : null}
+      {loading ? <div className={styles.card}>Loading Full Gallery…</div> : null}
+      {!loading && !visibleItems.length ? <div className={styles.card}>No supported media files match this view.</div> : null}
 
       <div className={viewMode === "list" ? "space-y-3" : viewMode === "grid" ? "grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-5" : "grid gap-4 md:grid-cols-2 xl:grid-cols-3"}>
         {visibleItems.map((item) => (
@@ -191,7 +197,7 @@ export default function AdminGallerySourcesPanel() {
         ))}
       </div>
 
-      {hasMore ? <div className="flex justify-center"><button type="button" onClick={() => void load(true)} disabled={loadingMore} className="rounded-full border border-white/10 bg-white/5 px-5 py-3 font-semibold text-white hover:bg-white/10 disabled:opacity-50">{loadingMore ? "Loading..." : "Load More"}</button></div> : null}
+      {hasMore ? <div className="flex justify-center"><button type="button" onClick={() => void load(true)} disabled={loadingMore || loading} className={styles.button}>{loadingMore ? "Loading..." : "Load More"}</button></div> : null}
 
       {mounted && viewerItem ? createPortal(
         <MixedMediaViewer item={viewerItem} index={viewerIndex} total={visibleItems.length} canPrev={viewerIndex > 0} canNext={viewerIndex < visibleItems.length - 1} onPrev={() => moveViewer(-1)} onNext={() => moveViewer(1)} onClose={() => setViewerId("")} />,
@@ -202,28 +208,22 @@ export default function AdminGallerySourcesPanel() {
 }
 
 function MediaCard({ item, compact, list, deleting, onOpen, onDelete }: { item: Item; compact: boolean; list: boolean; deleting: boolean; onOpen: () => void; onDelete: () => void }) {
-  const disabledReason = "This Standard Gallery action is disabled because Full Gallery items are filesystem-backed and have no normal Gallery record.";
   return (
-    <article className={`overflow-hidden rounded-[24px] border border-white/10 bg-black/35 ${list ? "flex flex-col gap-3 p-3 md:flex-row md:items-center" : "p-3"}`}>
+    <article className={`overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] ${list ? "flex flex-col gap-3 p-3 md:flex-row md:items-center" : "p-3"}`}>
       <button type="button" onClick={onOpen} className={list ? "min-w-0 flex-1 text-left" : "block w-full text-left"}>
         {!list ? <div className={compact ? "aspect-square overflow-hidden rounded-[18px] bg-black/60" : "aspect-[4/3] overflow-hidden rounded-[18px] bg-black/60"}>
           {item.kind === "video"
             ? <img src={videoThumbnailUrl(item)} alt={`${item.name} video thumbnail`} loading="lazy" className="h-full w-full object-contain" />
-            : <img src={item.url} alt={item.name} loading="lazy" className="h-full w-full object-contain" />}
+            : <img src={videoThumbnailUrl(item)} alt={item.name} loading="lazy" className="h-full w-full object-contain" />}
         </div> : null}
         <div className={list ? "" : "mt-3"}>
-          <div className="flex flex-wrap items-start justify-between gap-2"><span className="break-all font-semibold text-white/90">{item.name}</span><SourceBadge label={item.sourceLabel} /></div>
-          <div className="mt-1 break-all text-xs text-white/45">{item.rel}</div>
-          <div className="mt-1 text-xs text-white/45">{new Date(item.mtimeMs).toLocaleString()} · {formatBytes(item.bytes)} · {item.kind === "video" ? "Video" : "Image"}</div>
+          <div className="flex flex-wrap items-start justify-between gap-2"><span className="break-all font-semibold text-[var(--color-text)]">{item.name}</span><SourceBadge label={item.sourceLabel} /></div>
+          <div className="mt-1 text-xs text-[var(--color-text-muted)]">{new Date(item.mtimeMs).toLocaleString()} · {formatBytes(item.bytes)} · {item.kind === "video" ? "Video" : "Image"}</div>
         </div>
       </button>
       <div className={`flex flex-wrap gap-2 ${list ? "md:shrink-0" : "mt-3"}`}>
         <a href={downloadAdminGalleryUrl(item)} download={item.name} className={actionClass}>Download</a>
-        <button type="button" disabled title={disabledReason} className={disabledActionClass}><IconHeart />Heart</button>
-        {item.kind === "image" ? <><button type="button" disabled title={disabledReason} className={disabledActionClass}>Edit</button><button type="button" disabled title={disabledReason} className={disabledActionClass}>Animate</button><button type="button" disabled title={disabledReason} className={disabledActionClass}>Characters</button></> : <button type="button" disabled title={disabledReason} className={disabledActionClass}>Extend</button>}
-        <button type="button" disabled title={disabledReason} className={disabledActionClass}>Rename</button>
-        <button type="button" disabled title={disabledReason} className={disabledActionClass}>Redo</button>
-        <button type="button" onClick={onDelete} disabled={deleting} className="rounded-full border border-red-400/20 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-100 hover:bg-red-500/15 disabled:opacity-50">{deleting ? "Deleting..." : "Delete"}</button>
+        <button type="button" onClick={onDelete} disabled={deleting} className="min-h-11 rounded-xl border border-[var(--color-error)] bg-[var(--color-surface)] px-3 py-2 text-xs font-semibold text-[var(--color-error)] disabled:opacity-50">{deleting ? "Deleting..." : "Delete"}</button>
       </div>
     </article>
   );
@@ -251,7 +251,7 @@ function MixedMediaViewer({ item, index, total, canPrev, canNext, onPrev, onNext
   </div>;
 }
 
-function SourceBadge({ label }: { label: string }) { return <span className="shrink-0 rounded-full border border-cyan-400/25 bg-cyan-500/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-cyan-100">{label}</span>; }
+function SourceBadge({ label }: { label: string }) { return <span className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[10px] font-semibold text-[var(--color-text-muted)]">{label}</span>; }
 function IconHeart() { return <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden="true"><path d="M12 20.5s-7-4.35-7-10a4 4 0 0 1 7-2.47A4 4 0 0 1 19 10.5c0 5.65-7 10-7 10Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>; }
 function downloadAdminGalleryUrl(item: Item) {
   const separator = item.url.includes("?") ? "&" : "?";
@@ -270,9 +270,9 @@ function videoThumbnailUrl(item: Item) {
 function dedupeItems(items: Item[]) { const seen = new Set<string>(); return items.filter((item) => !seen.has(item.id) && seen.add(item.id)); }
 function formatBytes(value: number) { if (value < 1024) return `${value} B`; if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`; if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MB`; return `${(value / 1024 ** 3).toFixed(1)} GB`; }
 
-const controlClass = "rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45";
-const activePill = "rounded-full border border-cyan-300/50 bg-cyan-500/15 px-4 py-2 text-sm font-black text-cyan-50";
-const inactivePill = "rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/75 hover:bg-white/10";
-const actionClass = "rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/85 no-underline hover:bg-white/10";
+const controlClass = "min-h-11 min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--color-text)] outline-none";
+const activePill = "min-h-11 rounded-xl border border-[var(--color-accent)] bg-[var(--color-surface-elevated)] px-4 py-2 text-sm font-bold text-[var(--color-text)]";
+const inactivePill = "min-h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-sm text-[var(--color-text-muted)]";
+const actionClass = "inline-flex min-h-11 items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs font-semibold text-[var(--color-text)] no-underline";
 const disabledActionClass = "inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/80 opacity-50";
 const viewerButtonClass = "rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:px-4";

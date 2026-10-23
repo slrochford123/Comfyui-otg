@@ -1,0 +1,21 @@
+.root { --admin-radius: 14px; min-width: 0; color: var(--color-text); background: var(--color-background); }
+.root *, .root *::before, .root *::after { box-sizing: border-box; }
+.root main, .root section, .root article, .root fieldset, .root form, .root label, .root header, .root input, .root select, .root textarea { min-width: 0; max-width: 100%; }
+.root input:not([type=checkbox]):not([type=radio]), .root select, .root textarea { color: var(--color-text); background: var(--color-surface-elevated); min-height: 44px; }
+.root button, .root summary { min-height: 44px; }
+.shell { width: 100%; max-width: 1280px; margin: 0 auto; padding: 16px 16px 96px; }
+.shell h1 { font-size: clamp(1.4rem, 5vw, 1.9rem); line-height: 1.25; margin: 12px 0; }
+.shell h2 { font-size: 1.125rem; margin: 0 0 12px; }
+.shell p { overflow-wrap: anywhere; }
+.header { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 18px; }
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
+.card { border: 1px solid var(--color-border); border-radius: var(--admin-radius); background: var(--color-card); padding: 16px; min-width: 0; }
+.button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 14px; border: 1px solid var(--color-border); border-radius: 10px; color: var(--color-text); background: var(--color-surface); text-decoration: none; }
+.badge { display: inline-block; font-size: .75rem; border-radius: 8px; padding: 4px 8px; border: 1px solid currentColor; }
+.muted { color: var(--color-text-muted); font-size: .875rem; }
+.diagnostics { margin-top: 12px; overflow-wrap: anywhere; color: var(--color-text-muted); font-size: .85rem; }
+.diagnostics summary { display: flex; align-items: center; cursor: pointer; }
+.billingColumns { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, .8fr); gap: 16px; align-items: start; margin-bottom: 16px; }
+.root table { color: var(--color-text); }
+.root label { overflow-wrap: anywhere; }
+@media (max-width: 800px) { .billingColumns { grid-template-columns: minmax(0, 1fr); } .shell { padding: 12px 12px 96px; } }

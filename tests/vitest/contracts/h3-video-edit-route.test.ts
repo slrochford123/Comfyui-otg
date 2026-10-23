@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 const m = vi.hoisted(() => ({ session: vi.fn(), owner: vi.fn(), probe: vi.fn(), create: vi.fn(), list: vi.fn(), start: vi.fn(), write: vi.fn(), mkdir: vi.fn() }));
 vi.mock("@/lib/sessionUser", () => ({ requireSessionUser: m.session }));
 vi.mock("@/lib/ownerKey", () => ({ getOwnerContext: m.owner }));
-vi.mock("node:fs/promises", () => ({ default: { mkdir: m.mkdir, writeFile: m.write } }));
+vi.mock("node:fs/promises", () => ({ default: { mkdir: m.mkdir, writeFile: m.write, rm: vi.fn().mockResolvedValue(undefined) } }));
 vi.mock("@/lib/videoFrame", () => ({ probeVideoInfo: m.probe }));
 vi.mock("@/lib/h3DirectJobs", () => ({ createH3DirectJob: m.create, h3DirectPublicStatus: (j: any) => j, listH3DirectJobs: m.list, startH3DirectJob: m.start }));
 async function post(options: { duration?: number; filename?: string; type?: string; prompt?: string; blankFile?: boolean } = {}) {

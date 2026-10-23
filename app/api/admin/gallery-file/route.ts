@@ -115,7 +115,7 @@ function localHeaders(args: { contentType: string; fileName: string; fileSize: n
     "Content-Type": args.contentType,
     "Content-Length": String(args.end - args.start + 1),
     "Accept-Ranges": "bytes",
-    "Cache-Control": "private, no-store, max-age=0",
+    "Cache-Control": "private, max-age=300, must-revalidate",
     "X-Content-Type-Options": "nosniff",
   });
   if (args.partial) headers.set("Content-Range", `bytes ${args.start}-${args.end}/${args.fileSize}`);
@@ -129,7 +129,7 @@ function proxyHeaders(upstream: Headers, rel: string, download: boolean) {
     const value = upstream.get(name);
     if (value) headers.set(name, value);
   }
-  headers.set("Cache-Control", "private, no-store, max-age=0");
+  headers.set("Cache-Control", "private, max-age=300, must-revalidate");
   headers.set("X-Content-Type-Options", "nosniff");
   if (download) headers.set("Content-Disposition", `attachment; filename="${safeDispositionName(path.posix.basename(rel))}"`);
   return headers;
