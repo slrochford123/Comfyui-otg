@@ -10,6 +10,7 @@ import AdminGpuControls from "./components/AdminGpuControls";
 import { uiStatusTone } from "@/lib/uiStatusTone";
 import MediaPreviewPanel from "./components/MediaPreviewPanel";
 import SpeechInputButton from "./components/SpeechInputButton";
+import BuildVersionFooter from "./components/BuildVersionFooter";
 import type { GalleryActionKind } from "./components/GalleryWorkspace";
 import {
   APP_COLOR_MODE_KEY,
@@ -7966,6 +7967,7 @@ async function handleAskAi() {
                   <div className="rounded-[18px] border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100/85">{deleteAccountMessage}</div>
                 ) : null}
               </Card>
+              <BuildVersionFooter />
             </div>
           </div>
         ) : null}
