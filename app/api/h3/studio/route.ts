@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/sessionUser";
 import { SessionInvalidError } from "@/lib/ownerKey";
-import { assertH3StudioTest, h3StudioCatalog, h3Stage1cDecisions, inspectH3StudioInventory, readH3StudioEvidence, listH3StudioQualifiedPlans, H3_UPSTREAM_OWNER_ATTESTATION } from "@/lib/h3StudioRegistry";
+import { h3StudioCatalog, h3Stage1cDecisions, inspectH3StudioInventory, readH3StudioEvidence, listH3StudioQualifiedPlans, H3_UPSTREAM_OWNER_ATTESTATION } from "@/lib/h3StudioRegistry";
+import { assertH3StudioAvailable, h3StudioProduction } from "@/lib/h3StudioAdmission";
 import { parseH3StudioPlan, reconcileH3StudioPlan, H3_STUDIO_WORKFLOWS } from "@/lib/h3StudioPlan";
 import { h3StudioOwnerExperimental } from "@/lib/h3StudioExperimental";
 import type { H3PlannerCapability } from "@/lib/h3StudioPlanner";
@@ -18,21 +19,21 @@ const json = (value: unknown, status = 200) => NextResponse.json(value, { status
 function failure(error: unknown) {
   const status = error instanceof SessionInvalidError ? 401 : Number((error as { status?: number })?.status || 400);
   // Never serialize upstream HTTP internals, hostnames or filesystem errors.
-  return json({ ok: false, error: status === 401 ? "Sign in to use H3 Studio." : status === 404 ? "H3 Studio is available in TEST only." : "H3 plan could not be validated. Check the selected workflow, qualified assets and required media." }, status);
+  return json({ ok: false, error: status === 401 ? "Sign in to use H3 Studio." : "H3 plan could not be validated. Check the selected workflow, installed models and required media." }, status);
 }
 export async function GET(request: NextRequest) {
   try {
-    const user = await requireSessionUser(request); assertH3StudioTest();
+    const user = await requireSessionUser(request); assertH3StudioAvailable();
     const inventory = await inspectH3StudioInventory();
     const decisions = h3Stage1cDecisions();
     return json({ ok: true, catalog: h3StudioCatalog(inventory), workflows: H3_STUDIO_WORKFLOWS,
       counts: { selected: decisions.selected.length, maybe: decisions.maybe.length, skip: decisions.skipped.length, undecided: decisions.undecided.length },
-      observedAt: inventory.observedAt, upstreamAuthorization: H3_UPSTREAM_OWNER_ATTESTATION, experimental: h3StudioOwnerExperimental(user.ownerKey), qualificationState: "per-plan-validation-required", gpu: "RTX 3090" });
+      observedAt: inventory.observedAt, ...(!h3StudioProduction() ? { upstreamAuthorization: H3_UPSTREAM_OWNER_ATTESTATION } : {}), experimental: h3StudioOwnerExperimental(user.ownerKey), directGeneration: h3StudioProduction(), qualificationState: h3StudioProduction() ? "installed-workflow-validation" : "per-plan-validation-required", gpu: "RTX 3090" });
   } catch (error) { return failure(error); }
 }
 export async function POST(request: NextRequest) {
   try {
-    const user = await requireSessionUser(request); assertH3StudioTest();
+    const user = await requireSessionUser(request); assertH3StudioAvailable();
     const body = await readH3StudioJson(request, 20_000);
     if (!["preview", "quote", "director"].includes(String(body.action))) return json({ ok: false, error: "Unknown H3 planning action." }, 400);
     if (Object.keys(body).some(k => !["action", "plan", "mediaIds", "externalMediaConsent", "quoteId", "plannerConsent"].includes(k))) throw new Error("Unknown planning field.");
@@ -52,12 +53,12 @@ export async function POST(request: NextRequest) {
         { executionDigest: studioReviewedExecutionDigest(built.graph), credits: built.manifest.estimatedCredits, seconds: built.manifest.estimatedSeconds });
       return json({ ok: true, review: { id: review.id, mediaFingerprint: media.fingerprint, expiresAt: review.expiresAt }, manifest: built.manifest, graph: sanitizeH3StudioGraph(built.graph),
       estimate: { generationCredits: built.manifest.estimatedCredits, generationSeconds: built.manifest.estimatedSeconds,
-        explanation: built.manifest.experimental ? "Owner Experimental Mode: installed configuration, not physically qualified. Local GPU credit cost is 0; runtime is a rough existing-engine estimate, not a measurement. No generation has been submitted." : built.manifest.executable ? "Estimate from the recorded qualification for this configuration; actual runtime may vary. No generation has been submitted." : "This configuration is not yet executable. No generation has been submitted; missing measurements are not estimated by AI." } });
+        explanation: h3StudioProduction() ? "Installed workflow. Local GPU credit cost is 0; processing time is an estimate, not a measurement. No generation has been submitted." : built.manifest.experimental ? "Owner Experimental Mode: installed configuration, not physically qualified. Local GPU credit cost is 0; runtime is a rough existing-engine estimate, not a measurement. No generation has been submitted." : built.manifest.executable ? "Estimate from the recorded qualification for this configuration; actual runtime may vary. No generation has been submitted." : "This configuration is not yet executable. No generation has been submitted; missing measurements are not estimated by AI." } });
     }
     // Enumerate only actually qualified, recorded configurations, never a speculative
     // Cartesian product of checkpoint/LoRA/profile choices.
     const candidates: unknown[] = [plan, ...listH3StudioQualifiedPlans(evidence)];
-    if (experimental) for (const workflow of H3_STUDIO_WORKFLOWS) for (const checkpoint of ["standard", "singularity"] as const) for (const profile of ["native", "ref2va-8step", "fl2va-8step"] as const) {
+    if (experimental || h3StudioProduction()) for (const workflow of H3_STUDIO_WORKFLOWS) for (const checkpoint of ["standard", "singularity"] as const) for (const profile of ["native", "ref2va-8step", "fl2va-8step"] as const) {
       try { candidates.push(reconcileH3StudioPlan(plan, { workflowId: workflow.id, checkpoint, profile, loras: [] })); } catch { /* Strict registered combinations only. */ }
     }
     const available: H3PlannerCapability[] = [];
@@ -68,7 +69,7 @@ export async function POST(request: NextRequest) {
         const result = compileH3StudioPlan(candidate, studioBoundCompilerInput(candidate, media), inventory, evidence, access);
         const family = H3_STUDIO_WORKFLOWS.find(w => w.id === candidate.workflowId)!.family;
         if (result.manifest.executable && !available.some(c => c.id === result.manifest.qualificationFingerprint)) available.push({ id: result.manifest.qualificationFingerprint, plan: candidate, qualificationFingerprint: result.manifest.qualificationFingerprint,
-          ...(experimental ? { experimental: true, allowedLoras: h3StudioCatalog(inventory, evidence).filter(l => !l.blockedReasons.length && (l.family === family || l.family === "both") && l.strength).map(l => ({ id: l.id, name: l.name, minStrength: l.strength!.min, maxStrength: l.strength!.max })) } : {}) });
+          ...(experimental || h3StudioProduction() ? { experimental, installedWorkflow: h3StudioProduction(), allowedLoras: h3StudioCatalog(inventory, evidence).filter(l => !l.blockedReasons.length && (l.family === family || l.family === "both") && l.strength).map(l => ({ id: l.id, name: l.name, minStrength: l.strength!.min, maxStrength: l.strength!.max })) } : {}) });
       } catch { /* Unavailable/incompatible records are not offered to the director. */ }
     }
     const references = await studioPlannerReferences(media, false);

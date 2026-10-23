@@ -2,12 +2,14 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import ledger from "@/lib/h3Stage1cLedger.json";
 import provenance from "@/lib/h3Stage1cProvenance.json";
+import installedStage1c from "@/lib/h3Stage1cInstalled.json";
 import { readH3LoraCatalog } from "@/lib/h3LoraCatalogServer";
 import { H3_BACKEND_PROFILES, h3TurboLoraForMode } from "@/lib/production/h3Workflows";
 import { qualificationEnvironment } from "@/lib/runtime/configPaths";
 import { H3_STUDIO_WORKFLOWS, parseH3StudioPlan, studioDimensions, type H3StudioPlan } from "@/lib/h3StudioPlan";
 import { H3_STUDIO_COMPILER_VERSION, h3StudioDigest, h3StudioQualificationFingerprint, h3StudioQualificationRequestBinding, stableH3StudioJson, isH3StudioSha256, validH3StudioDependency, type H3StudioDependency } from "@/lib/h3StudioIdentity";
 import type { H3PromptGraph } from "@/lib/production/h3Workflows";
+import { h3StudioProduction } from "@/lib/h3StudioAdmission";
 
 export type H3StudioRightsClearance = { status: "owner-attested" | "documented"; scope: "private-test";
   environment: "test"; target: "3090"; ownerKey: string; reference: string };
@@ -87,6 +89,8 @@ export function readH3StudioOwnerJson(file: string, maxBytes = 1_000_000): unkno
   return JSON.parse(readH3StudioOwnerBytes(file, maxBytes).toString("utf8"));
 }
 export function readH3StudioEvidence(): H3StudioEvidence | null {
+  // Never read or import a TEST permission/qualification file in PROD.
+  if (h3StudioProduction()) return null;
   assertH3StudioTest();
   const file = process.env.OTG_H3_STUDIO_EVIDENCE_FILE;
   if (!file) return null;
@@ -107,7 +111,7 @@ export async function inspectH3StudioInventory(qualificationJob?: { qualificatio
   }
   // object_info cannot prove hashes/capacity. Absent owner inspection receipt fails closed.
   let receipt: Partial<H3StudioInventory> = {};
-  try { if (process.env.OTG_H3_STUDIO_INVENTORY_FILE) receipt = readH3StudioOwnerJson(process.env.OTG_H3_STUDIO_INVENTORY_FILE) as Partial<H3StudioInventory>; } catch { /* blocked below */ }
+  try { if (!h3StudioProduction() && process.env.OTG_H3_STUDIO_INVENTORY_FILE) receipt = readH3StudioOwnerJson(process.env.OTG_H3_STUDIO_INVENTORY_FILE) as Partial<H3StudioInventory>; } catch { /* blocked below */ }
   let device: H3StudioInventory["device"];
   try {
     const response = await fetch(`${base}/system_stats`, { cache: "no-store", signal: AbortSignal.timeout(8_000) });
@@ -151,15 +155,19 @@ export function h3StudioCatalog(inventory: H3StudioInventory, evidence = readH3S
     const sourceFile = record?.files.find(file => file.primary) || (record?.files.length === 1 ? record.files[0] : undefined);
     const proofSource = record?.files.find(file => proof && file.name === proof.filename.split("/").at(-1));
     const valid = validAssetEvidence(proof) && validH3StudioRights(proof.rights, evidence?.upstreamAuthorization.ownerKey) && !!proofSource && proofSource.bytes === proof.bytes && proofSource.sha256?.toLowerCase() === proof.sha256;
-    const filename = valid ? proof.filename : entry.fileNames || sourceFile?.name || null;
+    const production = h3StudioProduction();
+    const installedVersion = installedStage1c.entries.find(model => model.versionId === entry.versionId && model.modelId === entry.modelId);
+    const registered = production ? policies.find(policy => policy.id === `stage1c-${entry.versionId}` || policy.filename === installedVersion?.filename) : undefined;
+    const filename = production && registered ? registered.filename : valid ? proof.filename : entry.fileNames || sourceFile?.name || null;
     // Exact path first; basename is only a discovery lead, never an enablement grant.
     const matches = filename ? [...inventory.loras].filter(name => name === filename || name.split("/").at(-1) === filename) : [];
     const installed = matches.length > 0;
-    const legacy = valid ? policies.find(policy => policy.filename === proof.filename && policy.enabled && policy.approvedForH3 && policy.compatibilityStatus === "approved") : undefined;
+    const legacy = (valid || production) ? policies.find(policy => policy.filename === filename && policy.enabled && policy.approvedForH3 && policy.compatibilityStatus === "approved") : undefined;
     const reasons: string[] = [];
     if (!filename) reasons.push("FILENAME_UNRESOLVED");
     else if (!installed) reasons.push("NOT_LOCATED_ON_3090");
-    if (!valid) reasons.push("HASH_AND_SEPARATE_LORA_RIGHTS_REQUIRED");
+    if (!valid && !production) reasons.push("HASH_AND_SEPARATE_LORA_RIGHTS_REQUIRED");
+    if (production && filename && !inventory.loras.has(filename)) reasons.push("EXACT_WORKER_PATH_NOT_LISTED");
     if (valid && !inventory.loras.has(proof.filename)) reasons.push("EXACT_WORKER_PATH_NOT_LISTED");
     if (!legacy) reasons.push("CANONICAL_POLICY_REVIEW_REQUIRED");
     if ([3219346, 3219337, 3297123, 3294126].includes(entry.versionId)) reasons.push("ACCELERATION_ADAPTER_USE_MATCHING_PROFILE_NOT_STYLE_STACK");
@@ -167,7 +175,8 @@ export function h3StudioCatalog(inventory: H3StudioInventory, evidence = readH3S
       category: entry.category, categories: [...new Set([entry.category, ...entry.catalogCategories])], source: entry.url,
       filename, estimatedBytes: Math.round(entry.sizeMB * 1024 * 1024), installation: !filename ? "filename-unresolved" : installed ? "listed-by-worker" : "not-located",
       sha256: valid ? proof.sha256 : null, rights: valid ? proof.rights.status : "unresolved", runtime: "unverified",
-      family: valid ? proof.family : null, strength: valid ? { min: proof.minStrength, max: proof.maxStrength } : null,
+      family: production && legacy ? legacy.approvedForR2V && (legacy.approvedForT2V || legacy.approvedForI2V) ? "both" : legacy.approvedForR2V ? "Ref2VA" : "FL2VA" : valid ? proof.family : null,
+      strength: production && legacy ? { min: legacy.minStrength, max: legacy.maxStrength } : valid ? { min: proof.minStrength, max: proof.maxStrength } : null,
       sourceDeclaredSha256: sourceFile?.sha256 || null, filenameConflict: record?.filenameConflict || false,
       licenseMetadataAvailable: !!record && !("error" in record.licenseMetadata),
       legacyPolicyId: legacy?.id || null, blockedReasons: reasons };
@@ -239,7 +248,7 @@ export function validateStudioReadiness(plan: H3StudioPlan, inventory: H3StudioI
   if (plan.profile === "ref2va-8step" && !inventory.loras.has(H3_REF2VA_8STEP_FILE)) reasons.push("MATCHING_REF2VA_8STEP_ADAPTER_MISSING");
   if (plan.profile === "fl2va-8step" && !inventory.loras.has(H3_FL2VA_8STEP_FILE)) reasons.push("MATCHING_FL2VA_8STEP_ADAPTER_MISSING");
   if (plan.attention === "project-sla" && !inventory.nodes.has("H3SLAAttention")) reasons.push("PROJECT_SLA_NODE_MISSING");
-  if (!isH3StudioEvidenceV2(evidence)) reasons.push("ASSET_PROVENANCE_AND_PRIVATE_TEST_AUTHORIZATION_REQUIRED");
+  if (!h3StudioProduction() && !isH3StudioEvidenceV2(evidence)) reasons.push("ASSET_PROVENANCE_AND_PRIVATE_TEST_AUTHORIZATION_REQUIRED");
   const catalog = h3StudioCatalog(inventory, evidence);
   const family = H3_STUDIO_WORKFLOWS.find(w => w.id === plan.workflowId)!.family;
   for (const selection of plan.loras.filter(l => l.enabled)) {

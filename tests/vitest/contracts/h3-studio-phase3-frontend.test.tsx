@@ -57,6 +57,18 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Phase 3 H3 frontend", () => {
+  it("creates a PROD Manual video directly, with no review or acceptance checkbox", async () => {
+    const original = server.getMockImplementation()!;
+    server.mockImplementation((url, init) => String(url) === "/api/h3/studio" && !init?.method
+      ? Promise.resolve(json({ ok: true, catalog, experimental: false, directGeneration: true })) : original(url, init));
+    render(<H3StudioControls ownerKey="qa-prod" controller="manual" />);
+    await screen.findByRole("button", { name: "View Plan (optional)" });
+    intent(); fireEvent.click(screen.getByRole("button", { name: "Create Video" }));
+    await screen.findByRole("region", { name: "H3 Studio job" });
+    expect(calls("/api/h3/studio/execute")).toHaveLength(1);
+    const request = body("/api/h3/studio/execute"); expect(request.reviewId).toBeUndefined(); expect(request.generationConsent).toBeUndefined();
+    expect(screen.queryByLabelText(/I approve one generation/)).not.toBeInTheDocument(); expect(calls("/api/h3/studio")).toHaveLength(0);
+  });
   it("shows a director capability limitation without parsing a null plan or offering generation", async () => {
     const original = server.getMockImplementation()!;
     server.mockImplementation((url, init) => {

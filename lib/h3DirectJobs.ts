@@ -579,8 +579,9 @@ async function execute(job: H3DirectJob) {
     let studioBuildInput: Parameters<typeof import("@/lib/h3StudioCompiler").compileH3StudioPlan>[1] | undefined;
     if (job.input.studioPlan) {
       const { compileH3StudioPlan } = await import("@/lib/h3StudioCompiler");
-      const { inspectH3StudioInventory, readH3StudioEvidence, assertH3StudioTest } = await import("@/lib/h3StudioRegistry");
-      assertH3StudioTest();
+      const { inspectH3StudioInventory, readH3StudioEvidence } = await import("@/lib/h3StudioRegistry");
+      const { assertH3StudioAvailable } = await import("@/lib/h3StudioAdmission");
+      assertH3StudioAvailable();
       studioBuildInput = { backend: selectedBackend, mode: job.input.mode,
         h3Quality: job.input.quality, orientation: job.input.orientation, durationSeconds: job.input.durationSeconds,
         finalPrompt: promptWithReferences(job.input), seed: job.input.seed, outputPrefix: `otg_h3_direct/${safeSegment(job.id)}`,

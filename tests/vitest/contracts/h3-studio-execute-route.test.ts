@@ -4,14 +4,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { DEFAULT_H3_STUDIO_PLAN } from "@/lib/h3StudioPlan";
-const m = vi.hoisted(() => ({ root: "", session: vi.fn(), owner: vi.fn(), media: vi.fn(), validateMedia: vi.fn(), compile: vi.fn(), review: vi.fn(), claim: vi.fn(), prior: vi.fn(), create: vi.fn(), start: vi.fn() }));
+const m = vi.hoisted(() => ({ root: "", session: vi.fn(), owner: vi.fn(), media: vi.fn(), validateMedia: vi.fn(), compile: vi.fn(), review: vi.fn(), issueReview: vi.fn(), claim: vi.fn(), prior: vi.fn(), create: vi.fn(), start: vi.fn() }));
 vi.mock("@/lib/paths", () => ({ get OTG_DATA_ROOT() { return m.root; }, safeSegment: (s: string) => s.replace(/[^a-z0-9_-]/g, "_") }));
 vi.mock("@/lib/h3VideoTrimSession", () => ({ videoTrimSession: m.session }));
 vi.mock("@/lib/ownerKey", () => ({ getOwnerContext: m.owner }));
 vi.mock("@/lib/h3StudioMedia", () => ({ resolveStudioMedia: m.media, validateStudioMediaPlan: m.validateMedia, studioBoundCompilerInput: () => ({}), studioFileSha256: vi.fn() }));
 vi.mock("@/lib/h3StudioCompiler", () => ({ compileH3StudioPlan: m.compile }));
 vi.mock("@/lib/h3StudioRegistry", () => ({ assertH3StudioTest: () => { if (process.env.OTG_ENV !== "test") throw Error("Not TEST"); }, inspectH3StudioInventory: async () => ({}), readH3StudioEvidence: () => null, h3StudioCatalog: () => [] }));
-vi.mock("@/lib/h3StudioReview", () => ({ validateStudioReview: m.review, claimStudioReview: m.claim, studioReviewedExecutionDigest: () => "execution", studioRequestHash: () => "plan" }));
+vi.mock("@/lib/h3StudioReview", () => ({ createStudioReview: m.issueReview, validateStudioReview: m.review, claimStudioReview: m.claim, studioReviewedExecutionDigest: () => "execution", studioRequestHash: () => "plan" }));
 vi.mock("@/lib/h3DirectJobs", () => ({ listH3DirectJobs: m.prior, createH3DirectJob: m.create, startH3DirectJob: m.start, h3DirectPublicStatus: (job: unknown) => job, validateH3DirectInput: (i: unknown) => i }));
 import { POST } from "@/app/api/h3/studio/execute/route";
 const plan = { ...DEFAULT_H3_STUDIO_PLAN, originalPrompt: "A QA kite", prompt: "A QA kite" };
@@ -23,6 +23,7 @@ beforeEach(async () => {
   m.media.mockResolvedValue({ fingerprint: "media", mediaIds: [], items: [] });
   m.compile.mockReturnValue({ graph: {}, manifest: { executable: true, qualificationFingerprint: "qualification", submissionGraphSha256: "graph", estimatedCredits: 0, estimatedSeconds: 20, width: 608, height: 352 } });
   m.review.mockResolvedValue({}); m.claim.mockResolvedValue(async () => {}); m.prior.mockResolvedValue([]);
+  m.issueReview.mockResolvedValue({ id: "internal-receipt" });
   m.create.mockImplementation(async (_owner, input) => ({ id: "h3-direct-qa", status: "queued", input }));
 });
 afterEach(async () => { await fs.rm(m.root, { recursive: true, force: true }); vi.unstubAllEnvs(); });
@@ -30,7 +31,15 @@ describe("reviewed H3 Studio generation admission", () => {
   it("denies unauthenticated requests before inspecting media or starting work", async () => {
     m.session.mockRejectedValue(new Error("Unauthorized")); expect((await post()).status).toBe(401); expect(m.media).not.toHaveBeenCalled(); expect(m.start).not.toHaveBeenCalled();
   });
-  it("denies non-TEST execution", async () => { vi.stubEnv("OTG_ENV", "prod"); expect((await post()).status).toBe(400); expect(m.start).not.toHaveBeenCalled(); });
+  it("allows ordinary PROD creation without a user review ID or approval checkbox", async () => {
+    vi.stubEnv("OTG_ENV", "prod");
+    expect((await post({ plan, mediaIds: [], requestId: "prod-request-123" })).status).toBe(202);
+    expect(m.issueReview).toHaveBeenCalledTimes(1); expect(m.review.mock.calls[0][2]).toBe("internal-receipt"); expect(m.start).toHaveBeenCalledTimes(1);
+  });
+  it("still denies unauthorized PROD creation before models or job creation", async () => {
+    vi.stubEnv("OTG_ENV", "prod"); m.session.mockRejectedValue(new Error("Unauthorized"));
+    expect((await post({ plan, mediaIds: [], requestId: "prod-request-123" })).status).toBe(401); expect(m.compile).not.toHaveBeenCalled(); expect(m.start).not.toHaveBeenCalled();
+  });
   it.each([{ generationConsent: false }, { target: "5060ti" }, { graph: {} }, { path: "/private" }])("rejects missing consent or injected execution controls", async patch => {
     expect((await post({ ...body, ...patch })).status).toBe(400); expect(m.start).not.toHaveBeenCalled();
   });
@@ -51,7 +60,7 @@ describe("reviewed H3 Studio generation admission", () => {
     expect(m.review).toHaveBeenCalledWith("qa-owner", "qa-session", "qa-review", plan, "media", "qualification", "graph", { executionDigest: "execution", credits: 0, seconds: 20 });
   });
   it("returns a prior exact request without launching a duplicate generation", async () => {
-    m.prior.mockResolvedValue([{ id: "old", input: { studioMedia: { requestId: body.requestId } } }]);
+    m.prior.mockResolvedValue([{ id: "old", input: { studioMedia: { requestId: body.requestId, planHash: "plan", fingerprint: "media" } } }]);
     expect((await post()).status).toBe(200); expect(m.create).not.toHaveBeenCalled();
   });
   it("blocks a new job while a prior backend acceptance is unresolved", async () => {

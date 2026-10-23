@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+vi.mock("@/lib/h3StudioAdmission", () => ({ assertH3StudioAvailable: m.test }));
 const m = vi.hoisted(() => ({ session: vi.fn(), test: vi.fn(), read: vi.fn(), probe: vi.fn(), prior: vi.fn(), register: vi.fn(), remove: vi.fn(), compile: vi.fn(), execute: vi.fn(), stat: vi.fn(), readFile: vi.fn(), review: vi.fn() }));
 vi.mock("node:fs/promises", () => ({ default: { stat: m.stat, readFile: m.readFile } }));
 vi.mock("@/lib/h3VideoTrimSession", () => ({ videoTrimSession: m.session }));
@@ -32,7 +33,7 @@ describe("manual Edit Video direct creation", () => {
     expect(m.remove).toHaveBeenCalledWith("qa", "session", "media");
   });
   it("denies missing session before reading any media", async () => { m.session.mockRejectedValue(Error("Unauthorized")); expect((await post()).status).toBe(401); expect(m.read).not.toHaveBeenCalled(); });
-  it("denies non-TEST and another session's source", async () => {
+  it("denies an unavailable deployment and another session's source", async () => {
     m.test.mockImplementationOnce(() => { throw Error("Not TEST"); }); expect((await post()).status).toBe(400);
     m.read.mockRejectedValue(Error("Owner mismatch")); expect((await post()).status).toBe(400); expect(m.execute).not.toHaveBeenCalled();
   });

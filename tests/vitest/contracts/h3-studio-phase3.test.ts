@@ -185,7 +185,7 @@ describe("v2 provenance, runtime and physical graph evidence are independent", (
     expect(result.manifest.readyForQualification).toBe(true); expect(result.manifest.executable).toBe(false);
     expect(evidence.qualifications).toEqual({});
     evidence.loras[id].rights = { ...rights, ownerKey: "other-owner" };
-    expect(() => compileH3StudioPlan(p, h3StudioPreviewInput(p), inventory, evidence)).toThrow(/not qualified/);
+    expect(() => compileH3StudioPlan(p, h3StudioPreviewInput(p), inventory, evidence)).toThrow(/not available/);
   });
   it("permits first qualification prerequisites without marking executable and includes tiny VAE", () => {
     const { built } = readyFixture(); expect(built.manifest.readyForQualification).toBe(true); expect(built.manifest.executable).toBe(false);

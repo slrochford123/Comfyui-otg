@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+vi.mock("@/lib/h3StudioAdmission", () => ({ assertH3StudioAvailable: m.test }));
 import { DEFAULT_H3_STUDIO_PLAN, automaticH3Plan } from "@/lib/h3StudioPlan";
 import { compileH3StudioPlan, h3StudioPreviewInput } from "@/lib/h3StudioCompiler";
 const m = vi.hoisted(() => ({ session: vi.fn(), test: vi.fn(), media: vi.fn(), prior: vi.fn(), compile: vi.fn(), execute: vi.fn(), review: vi.fn() }));
@@ -34,7 +35,7 @@ describe("one-click authenticated Auto admission", () => {
     expect(m.compile.mock.calls[0][0]).toMatchObject({ workflowId, profile, steps: 8, attention: "project-sla" });
   });
   it("rejects missing authentication before inspecting media", async () => { m.session.mockRejectedValue(Error("Unauthorized")); expect((await post()).status).toBe(401); expect(m.media).not.toHaveBeenCalled(); });
-  it("rejects non-TEST, foreign references and unexecutable configurations", async () => {
+  it("rejects an unavailable deployment, foreign references and unexecutable configurations", async () => {
     m.test.mockImplementationOnce(() => { throw Error("Not TEST"); }); expect((await post()).status).toBe(400);
     m.media.mockRejectedValueOnce(Error("Foreign media")); expect((await post()).status).toBe(400);
     m.compile.mockReturnValueOnce({ manifest: { executable: false, blockedReasons: ["MODEL_MISSING"] } }); expect((await post()).status).toBe(400);

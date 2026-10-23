@@ -6,7 +6,8 @@ import { readVideoTrim } from "@/lib/h3VideoTrim";
 import { probeVideoInfo } from "@/lib/videoFrame";
 import { parseSimpleVideoEdit, simpleVideoEditPlan } from "@/lib/h3SimpleVideoEdit";
 import { readH3StudioJson } from "@/lib/h3StudioRequests";
-import { assertH3StudioTest, inspectH3StudioInventory, readH3StudioEvidence } from "@/lib/h3StudioRegistry";
+import { inspectH3StudioInventory, readH3StudioEvidence } from "@/lib/h3StudioRegistry";
+import { assertH3StudioAvailable } from "@/lib/h3StudioAdmission";
 import { registerStudioMedia, removeStudioMedia, resolveStudioMedia, studioBoundCompilerInput } from "@/lib/h3StudioMedia";
 import { compileH3StudioPlan } from "@/lib/h3StudioCompiler";
 import { createStudioReview, studioReviewedExecutionDigest } from "@/lib/h3StudioReview";
@@ -19,7 +20,7 @@ const preparing = new Set<string>();
 export async function POST(request: NextRequest) {
   let owner = "", session = "", mediaId = "", locked = false;
   try {
-    const scope = await videoTrimSession(request); assertH3StudioTest();
+    const scope = await videoTrimSession(request); assertH3StudioAvailable();
     owner = scope.owner; session = scope.session;
     const input = parseSimpleVideoEdit(await readH3StudioJson(request));
     if (preparing.has(owner)) return NextResponse.json({ error: "A video edit is being prepared." }, { status: 409, headers });
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
     mediaId = asset.id;
     const media = await resolveStudioMedia(owner, session, [mediaId], true);
     const compiled = compileH3StudioPlan(plan, studioBoundCompilerInput(plan, media), await inspectH3StudioInventory(), readH3StudioEvidence(), { ownerKey: owner });
-    if (!compiled.manifest.executable) return NextResponse.json({ error: "This edit configuration is unavailable. Check the installed H3 models and TEST owner access.", reasons: compiled.manifest.blockedReasons }, { status: 400, headers });
+    if (!compiled.manifest.executable) return NextResponse.json({ error: "This edit configuration is unavailable. Check the required clip, installed H3 models and worker status.", reasons: compiled.manifest.blockedReasons }, { status: 400, headers });
     if (!Object.values(compiled.graph).some(node => node.class_type === "ModelPreviewOverrideKJ")) throw Error("Generation preview is unavailable.");
     // Internal exact-input receipt, not a second user-facing review or approval step.
     const review = await createStudioReview(owner, session, plan, media.fingerprint, compiled.manifest.qualificationFingerprint, compiled.manifest.submissionGraphSha256,

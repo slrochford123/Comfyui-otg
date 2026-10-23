@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 
 import { OTG_DATA_ROOT, ensureDir } from "@/lib/paths";
 import type { H3StudioLoraSelection } from "@/lib/h3Studio";
+import installedStage1c from "@/lib/h3Stage1cInstalled.json";
+import { h3StudioProduction } from "@/lib/h3StudioAdmission";
 import {
   H3_BACKEND_PROFILES,
   type ProductionV2H3BackendId,
@@ -193,6 +195,15 @@ function normalizeEntry(
 }
 
 export function readH3LoraCatalog(): H3LoraCatalogFile {
+  const defaults: H3LoraCatalogEntry[] = h3StudioProduction() ? installedStage1c.entries
+    .filter(entry => ![3219346, 3219337, 3297123, 3294126].includes(entry.versionId))
+    .map(entry => normalizeEntry({ id: `stage1c-${entry.versionId}`, displayName: entry.displayName, filename: entry.filename,
+      description: "Installed Stage 1C model version. Output quality is not certified.", enabled: true, approvedForH3: true,
+      approvedForT2V: entry.family !== "Ref2VA", approvedForI2V: entry.family !== "Ref2VA", approvedForR2V: entry.family !== "FL2VA",
+      defaultStrength: entry.defaultStrength, minStrength: entry.minStrength, maxStrength: entry.maxStrength,
+      recommendedMin: entry.minStrength, recommendedMax: entry.maxStrength, triggerWords: entry.triggerWords,
+      triggerRequired: false, discoveredOn: ["rtx3090"], missingOn: [], compatibilityStatus: "approved" }))
+    .filter((entry): entry is H3LoraCatalogEntry => entry !== null) : [];
   try {
     const parsed = JSON.parse(fs.readFileSync(catalogFile(), "utf8"));
     const entries = Array.isArray(parsed?.entries)
@@ -210,14 +221,16 @@ export function readH3LoraCatalog(): H3LoraCatalogFile {
           Number(parsed?.maxSelections) || H3_OPTIONAL_LORA_DEFAULT_MAX,
         ),
       ),
-      entries,
+      // Add registered definitions only. Preserve explicit existing Admin edits,
+      // including disabled entries; live worker inventory still gates each job.
+      entries: [...entries, ...defaults.filter(entry => !entries.some(current => current.id === entry.id || current.filename === entry.filename))],
     };
   } catch {
     return {
       version: 1,
       updatedAt: "",
       maxSelections: H3_OPTIONAL_LORA_DEFAULT_MAX,
-      entries: [],
+      entries: defaults,
     };
   }
 }

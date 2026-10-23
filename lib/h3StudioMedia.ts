@@ -6,7 +6,7 @@ import path from "node:path";
 import sharp from "sharp";
 import { OTG_DATA_ROOT } from "@/lib/paths";
 import { resolveFfmpegPath, resolveFfprobePath, runCmd } from "@/lib/ffmpeg";
-import { assertH3StudioTest } from "@/lib/h3StudioRegistry";
+import { assertH3StudioAvailable } from "@/lib/h3StudioAdmission";
 import type { H3StudioPlan } from "@/lib/h3StudioPlan";
 import type { H3WorkflowBuildInput } from "@/lib/production/h3Workflows";
 import { buildH3StudioLockedReferences, composeH3StudioFinalPrompt } from "@/lib/h3Studio";
@@ -66,7 +66,7 @@ async function reserveStudioMedia(owner: string, id: string, bytes: number) {
   } finally { await handle.close(); await fsp.rm(lock, { force: true }); }
 }
 function mediaDirectory(owner: string, id: string) {
-  assertH3StudioTest();
+  assertH3StudioAvailable();
   if (!UUID.test(id)) throw new Error("Choose the reference again.");
   return path.join(studioPrivateOwnerRoot(owner), "media", id);
 }
@@ -101,7 +101,7 @@ async function probe(file: string, kind: StudioMediaAsset["kind"]): Promise<Stud
   return { durationSeconds, hasAudio: audio, ...(video ? { width: Number(video.width), height: Number(video.height), fps: rate[1] ? rate[0] / rate[1] : 0 } : {}) };
 }
 export async function registerStudioMedia(owner: string, session: string, file: File, config: Partial<StudioMediaAsset> = {}, signal?: AbortSignal) {
-  assertH3StudioTest(); signal?.throwIfAborted();
+  assertH3StudioAvailable(); signal?.throwIfAborted();
   const ext = path.extname(file.name).toLowerCase();
   const kind = /\.(png|jpe?g|webp)$/.test(ext) ? "image" : /\.(mp4|mov|mkv|webm|m4v)$/.test(ext) ? "video" : /\.(wav|mp3|ogg|flac|m4a)$/.test(ext) ? "audio" : null;
   if (!kind || !file.size || file.size > H3_STUDIO_MEDIA_MAX_BYTES || (kind === "image" && file.size > 20 * 1024 ** 2)) throw new Error("Choose a supported image (up to 20 MB), video or audio file (up to 128 MB).");

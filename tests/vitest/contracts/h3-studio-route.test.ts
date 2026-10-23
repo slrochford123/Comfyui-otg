@@ -20,7 +20,14 @@ afterEach(() => vi.unstubAllEnvs());
 describe("H3 Studio authenticated TEST-only preview route", () => {
   it("denies an unauthenticated catalog request before worker access", async () => { m.session.mockRejectedValue(new SessionInvalidError()); expect((await GET(new NextRequest("http://localhost:3001/api/h3/studio"))).status).toBe(401); expect(m.inventory).not.toHaveBeenCalled(); });
   it("denies unauthenticated planning before paid calls", async () => { m.session.mockRejectedValue(new SessionInvalidError()); expect((await post({ action: "director", plan })).status).toBe(401); expect(m.paid).not.toHaveBeenCalled(); });
-  it("fails closed outside TEST before any inventory or paid access", async () => { vi.stubEnv("OTG_ENV", "prod"); expect((await post({ action: "preview", plan })).status).toBe(404); expect(m.inventory).not.toHaveBeenCalled(); });
+  it("fails closed for an unknown deployment before any inventory or paid access", async () => { vi.stubEnv("OTG_ENV", "staging"); vi.stubEnv("NODE_ENV", "production"); expect((await post({ action: "preview", plan })).status).toBe(404); expect(m.inventory).not.toHaveBeenCalled(); });
+  it("offers ordinary PROD generation without exporting TEST owner authorization", async () => {
+    vi.stubEnv("OTG_ENV", "prod");
+    const response = await GET(new NextRequest("http://localhost:3000/api/h3/studio"));
+    const data = await response.json(); expect(response.status).toBe(200);
+    expect(data.directGeneration).toBe(true); expect(data.experimental).toBe(false);
+    expect(data.upstreamAuthorization).toBeUndefined(); expect(m.paid).not.toHaveBeenCalled();
+  });
   it("allows a signed-in user a path-free 60-entry catalog without approving any asset", async () => {
     const r = await GET(new NextRequest("http://localhost:3001/api/h3/studio")); const body = await r.json();
     expect(r.status).toBe(200); expect(body.catalog).toHaveLength(60); expect(body.counts).toEqual({ selected: 60, maybe: 4, skip: 76, undecided: 13 });

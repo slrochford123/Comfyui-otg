@@ -61,7 +61,7 @@ describe("H3 canonical catalog / compiler", () => {
   });
   it("does not activate an unqualified LoRA, including disabled entries forced through an API", () => {
     const p = { ...plan, loras: [{ id: "civitai-2966038-3360700", strength: 1, enabled: true }] };
-    expect(() => compileH3StudioPlan(p, h3StudioPreviewInput(p), inventory, null)).toThrow(/not qualified/);
+    expect(() => compileH3StudioPlan(p, h3StudioPreviewInput(p), inventory, null)).toThrow(/not available/);
   });
   it("requires exact workflow provenance, model hash, physical job and measured quote", () => {
     const first = compileH3StudioPlan(plan, h3StudioPreviewInput(plan), inventory, null);

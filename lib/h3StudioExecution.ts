@@ -5,10 +5,11 @@ import path from "node:path";
 import { videoTrimSession } from "@/lib/h3VideoTrimSession";
 import { getOwnerContext } from "@/lib/ownerKey";
 import { parseH3StudioPlan, studioTemplateDuration } from "@/lib/h3StudioPlan";
-import { assertH3StudioTest, inspectH3StudioInventory, readH3StudioEvidence, h3StudioCatalog } from "@/lib/h3StudioRegistry";
+import { inspectH3StudioInventory, readH3StudioEvidence, h3StudioCatalog } from "@/lib/h3StudioRegistry";
+import { assertH3StudioAvailable, h3StudioProduction } from "@/lib/h3StudioAdmission";
 import { compileH3StudioPlan } from "@/lib/h3StudioCompiler";
 import { resolveStudioMedia, studioBoundCompilerInput, studioFileSha256, validateStudioMediaPlan } from "@/lib/h3StudioMedia";
-import { validateStudioReview, claimStudioReview, studioReviewedExecutionDigest } from "@/lib/h3StudioReview";
+import { createStudioReview, validateStudioReview, claimStudioReview, studioReviewedExecutionDigest } from "@/lib/h3StudioReview";
 import { createH3DirectJob, h3DirectPublicStatus, listH3DirectJobs, startH3DirectJob, validateH3DirectInput, type H3DirectReference } from "@/lib/h3DirectJobs";
 import { OTG_DATA_ROOT, safeSegment } from "@/lib/paths";
 import { DEFAULT_H3_ADVANCED_SETTINGS } from "@/lib/production/h3Settings";
@@ -16,27 +17,38 @@ import { prepareH3StudioReferenceClip } from "@/lib/h3StudioAudio";
 import { readH3StudioJson } from "@/lib/h3StudioRequests";
 const headers = { "Cache-Control": "private, no-store" };
 const pending = new Set<string>();
-export type StudioExecutionRequest = { plan: unknown; mediaIds: unknown; reviewId: string; requestId: string; generationConsent: boolean };
+export type StudioExecutionRequest = { plan: unknown; mediaIds: unknown; reviewId?: string; requestId: string; generationConsent?: boolean };
 export async function executeH3Studio(request: NextRequest, suppliedBody?: StudioExecutionRequest, simpleEdit?: { sourceId: string; requestFingerprint: string }, autoRequestFingerprint?: string) {
   let lockedOwner = "", directory = "", accepted = false, releaseReview: (() => Promise<void>) | undefined;
   try {
-    const scope = await videoTrimSession(request); assertH3StudioTest();
+    const scope = await videoTrimSession(request); assertH3StudioAvailable();
     const owner = await getOwnerContext(request);
     if (pending.has(scope.owner)) return NextResponse.json({ error: "An H3 submission is being prepared." }, { status: 409, headers });
     pending.add(scope.owner); lockedOwner = scope.owner;
     const body = suppliedBody ?? await readH3StudioJson(request) as StudioExecutionRequest;
-    if (Object.keys(body).some(k => !["plan", "mediaIds", "reviewId", "requestId", "generationConsent"].includes(k)) || body.generationConsent !== true || !/^[a-zA-Z0-9_-]{8,100}$/.test(body.requestId || "")) throw new Error("Review the generation estimate and explicitly approve this job.");
+    if (Object.keys(body).some(k => !["plan", "mediaIds", "reviewId", "requestId", "generationConsent"].includes(k)) || !h3StudioProduction() && body.generationConsent !== true || !/^[a-zA-Z0-9_-]{8,100}$/.test(body.requestId || "")) throw new Error("Invalid generation request.");
     const priorJobs = await listH3DirectJobs(scope.owner);
     const prior = priorJobs.find(j => j.input.studioMedia?.requestId === body.requestId);
-    if (prior) return NextResponse.json({ ok: true, job: h3DirectPublicStatus(prior) }, { headers });
+    if (prior) {
+      const { studioRequestHash } = await import("@/lib/h3StudioReview");
+      const priorMedia = prior.input.studioMedia!;
+      const currentMedia = await resolveStudioMedia(scope.owner, scope.session, body.mediaIds, true);
+      if (studioRequestHash(parseH3StudioPlan(body.plan)) !== priorMedia.planHash || currentMedia.fingerprint !== priorMedia.fingerprint) return NextResponse.json({ error: "This request ID belongs to different inputs. Start a new video." }, { status: 409, headers });
+      return NextResponse.json({ ok: true, job: h3DirectPublicStatus(prior) }, { headers });
+    }
     if (priorJobs.some(j => j.input.studioPlan && ["submitting", "unknown"].includes(j.studioSubmissionState || "") && !j.promptId)) throw new Error("An earlier backend submission is unresolved. Reconcile it before submitting again.");
     const plan = parseH3StudioPlan(body.plan);
     const media = await resolveStudioMedia(scope.owner, scope.session, body.mediaIds, true);
     validateStudioMediaPlan(plan, media);
     const inventory = await inspectH3StudioInventory(), evidence = readH3StudioEvidence();
     const compiled = compileH3StudioPlan(plan, studioBoundCompilerInput(plan, media), inventory, evidence, { ownerKey: scope.owner });
-    if (!compiled.manifest.executable) throw new Error("This exact configuration is not physically qualified.");
+    if (!compiled.manifest.executable) throw new Error("The required models, worker or workflow inputs are unavailable.");
     const receipt = { executionDigest: studioReviewedExecutionDigest(compiled.graph), credits: compiled.manifest.estimatedCredits, seconds: compiled.manifest.estimatedSeconds };
+    if (h3StudioProduction() && !suppliedBody) {
+      // Create Video binds the exact validated inputs internally. This receipt is
+      // an anti-stale/replay safeguard, not an acceptance checkbox or qualification.
+      body.reviewId = (await createStudioReview(scope.owner, scope.session, plan, media.fingerprint, compiled.manifest.qualificationFingerprint, compiled.manifest.submissionGraphSha256, receipt)).id;
+    }
     await validateStudioReview(scope.owner, scope.session, String(body.reviewId || ""), plan, media.fingerprint, compiled.manifest.qualificationFingerprint, compiled.manifest.submissionGraphSha256, receipt);
     releaseReview = await claimStudioReview(scope.owner, String(body.reviewId));
     directory = path.join(OTG_DATA_ROOT, "h3-direct", safeSegment(scope.owner), "uploads", crypto.randomUUID());
@@ -63,7 +75,7 @@ export async function executeH3Studio(request: NextRequest, suppliedBody?: Studi
     const catalog = h3StudioCatalog(inventory, evidence);
     const optionalLoras = plan.loras.filter(l => l.enabled).map(l => ({ id: catalog.find(c => c.id === l.id)!.legacyPolicyId!, strength: l.strength }));
     const mode = plan.workflowId === "native-t2v" ? "h3-text-to-video" : plan.workflowId === "native-i2v" ? "h3-image-to-video" : "h3-reference-to-video";
-    const input = validateH3DirectInput({ studioPlan: plan, studioMedia: { requestId: body.requestId, reviewId: body.reviewId, fingerprint: media.fingerprint, qualificationFingerprint: compiled.manifest.qualificationFingerprint, receipt, planHash: (await import("@/lib/h3StudioReview")).studioRequestHash(plan), directory, files, ...(simpleEdit ? { simpleEdit } : {}), ...(autoRequestFingerprint ? { autoRequestFingerprint } : {}) },
+    const input = validateH3DirectInput({ studioPlan: plan, studioMedia: { requestId: body.requestId, reviewId: body.reviewId!, fingerprint: media.fingerprint, qualificationFingerprint: compiled.manifest.qualificationFingerprint, receipt, planHash: (await import("@/lib/h3StudioReview")).studioRequestHash(plan), directory, files, ...(simpleEdit ? { simpleEdit } : {}), ...(autoRequestFingerprint ? { autoRequestFingerprint } : {}) },
       mode, quality: plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq", orientation: plan.orientation, durationSeconds: studioTemplateDuration(plan.durationSeconds), prompt: plan.prompt, seed: plan.seed, optionalLoras,
       h3Settings: { ...DEFAULT_H3_ADVANCED_SETTINGS, renderMode: plan.profile === "native" ? "native" : "turbo", checkpointMode: plan.checkpoint, combatLoraEnabled: plan.combatEnabled }, rifeInterpolation60Fps: false,
       firstImage: refs.find(r => r.role === "first")?.ref || null, lastImage: refs.find(r => r.role === "last")?.ref || null,
@@ -75,7 +87,7 @@ export async function executeH3Studio(request: NextRequest, suppliedBody?: Studi
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     const auth = /session|unauthorized/i.test(message);
-    return NextResponse.json({ ok: false, error: auth ? "Sign in to generate." : /earlier backend submission/.test(message) ? "An earlier backend submission is unresolved. Reconcile it before submitting again." : simpleEdit || autoRequestFingerprint ? "The video could not start. Keep your inputs selected and retry; if it repeats, check TEST model and owner access." : "The plan or references are no longer ready. Preview a fresh qualified plan and confirm its estimate." }, { status: auth ? 401 : 400, headers });
+    return NextResponse.json({ ok: false, error: auth ? "Sign in to generate." : /earlier backend submission/.test(message) ? "An earlier backend submission is unresolved. Reconcile it before submitting again." : "The video could not start. Check the prompt, references, installed models and worker status, then retry." }, { status: auth ? 401 : 400, headers });
   } finally {
     if (!accepted && directory) await fs.rm(directory, { recursive: true, force: true });
     if (!accepted) await releaseReview?.();

@@ -61,6 +61,7 @@ export default function H3StudioControls({ ownerKey, controller: controlledContr
   const sourcesRef = useRef<Source[]>([]);
   const [catalog, setCatalog] = useState<H3StudioCatalogItem[]>([]);
   const [experimental, setExperimental] = useState(false);
+  const [directGeneration, setDirectGeneration] = useState(false);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -133,8 +134,8 @@ export default function H3StudioControls({ ownerKey, controller: controlledContr
     const signal = new AbortController();
     setPlan({ ...DEFAULT_H3_STUDIO_PLAN, workflowId: videoEditControls ? "reference-edit" : "native-t2v" }); setCatalog([]); setPreview(null); setQuote(null); setMessage(""); setPresets([]); setDirectorPlanReady(false); setConsent(false); setExternalMediaConsent(false); revision.current++;
     sourcesRef.current = []; setSources([]); jobRef.current = null; setJob(null); historyRef.current = []; setHistory([]); submittedPlan.current = null; setGenerationConsent(false); setClarification("");
-    setExperimental(false); setAutoSettings(null);
-    fetch("/api/h3/studio", { signal: signal.signal, credentials: "include" }).then(responseJson).then(data => { if (!signal.signal.aborted) { setCatalog(data.catalog || []); setExperimental(data.experimental === true); } }).catch(() => { if (!signal.signal.aborted) setMessage("Catalog unavailable. Preview will check current workflow availability."); });
+    setExperimental(false); setDirectGeneration(false); setAutoSettings(null);
+    fetch("/api/h3/studio", { signal: signal.signal, credentials: "include" }).then(responseJson).then(data => { if (!signal.signal.aborted) { setCatalog(data.catalog || []); setExperimental(data.experimental === true); setDirectGeneration(data.directGeneration === true); } }).catch(() => { if (!signal.signal.aborted) setMessage("Catalog unavailable. Preview will check current workflow availability."); });
     try { const stored = JSON.parse(localStorage.getItem(storageKey) || "[]"); if (Array.isArray(stored)) setPresets(stored.slice(0, 20).map(p => ({ name: String(p.name).slice(0, 60), plan: parseH3StudioPlan(p.plan) }))); } catch { /* Ignore invalid/obsolete device presets. */ }
     try {
       const stored = JSON.parse(localStorage.getItem(historyKey) || "[]");
@@ -246,15 +247,17 @@ export default function H3StudioControls({ ownerKey, controller: controlledContr
     } catch (error) { if (!signal.signal.aborted && revision.current === current) setMessage(error instanceof Error ? error.message : "Plan unavailable."); }
     finally { inFlight.current = false; setBusy(false); }
   }
-  async function execute() {
-    if (jobGuard.current || inFlight.current || isActive(jobRef.current) || !preview?.manifest.executable || !preview.review?.id || !mediaReady || mediaIssue || !generationConsent || clarification) return;
+  async function execute(retainedPlan?: H3StudioPlan) {
+    if (jobGuard.current || inFlight.current || isActive(jobRef.current) || !directGeneration && (!preview?.manifest.executable || !preview.review?.id || !generationConsent) || !mediaReady || mediaIssue || clarification) return;
+    let draft: H3StudioPlan;
+    try { draft = parseH3StudioPlan(retainedPlan || plan); } catch (error) { setMessage(error instanceof Error ? error.message : "Check your prompt and settings."); return; }
     jobGuard.current = true; setJobBusy(true); setMessage("");
     const signal = new AbortController(); jobAbort.current = signal;
     // Retain the key after uncertain failures so a repeated submit cannot duplicate a job.
     requestId.current ||= newClientRequestId();
     try {
-      const data = await responseJson(await fetch("/api/h3/studio/execute", { method: "POST", credentials: "include", signal: signal.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plan, reviewId: preview.review.id, mediaIds: sourcesRef.current.map(source => source.asset!.id), requestId: requestId.current, generationConsent: true }) }));
-      if (!signal.signal.aborted) { acceptJob(data.job); submittedPlan.current = { jobId: data.job.id, plan, mediaIdentity: mediaIdentity() }; setPreview(null); setQuote(null); setConsent(false); setGenerationConsent(false); }
+      const data = await responseJson(await fetch("/api/h3/studio/execute", { method: "POST", credentials: "include", signal: signal.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plan: draft, ...(!directGeneration ? { reviewId: preview!.review.id, generationConsent: true } : {}), mediaIds: sourcesRef.current.map(source => source.asset!.id), requestId: requestId.current }) }));
+      if (!signal.signal.aborted) { acceptJob(data.job); submittedPlan.current = { jobId: data.job.id, plan: draft, mediaIdentity: mediaIdentity() }; setPreview(null); setQuote(null); setConsent(false); setGenerationConsent(false); }
     } catch (error) { if (!signal.signal.aborted) setMessage(error instanceof Error ? error.message : "Submission status unknown. Try the same submit again to reconnect."); }
     finally { jobGuard.current = false; setJobBusy(false); }
   }
@@ -281,6 +284,7 @@ export default function H3StudioControls({ ownerKey, controller: controlledContr
     if (!retained || retained.jobId !== jobRef.current?.id || retained.mediaIdentity !== mediaIdentity()) { setMessage("Restore the source media and preview a new plan before generating again."); return; }
     setPlan(retained.plan); setDirectorPlanReady(true); setGenerationConsent(false);
     if (controller === "auto") { requestId.current = null; void createAutomatic(retained.plan); return; }
+    if (directGeneration) { requestId.current = null; void execute(retained.plan); return; }
     void request("preview", retained.plan);
   }
   async function jobAction(action: "refresh" | "cancel" | "gallery", id = jobRef.current?.id) {
@@ -313,7 +317,7 @@ export default function H3StudioControls({ ownerKey, controller: controlledContr
   const dimensions = studioDimensions(plan);
   const ref2va = plan.workflowId === "native-r2v" || plan.workflowId === "reference-edit";
   const shown = catalog.filter(l => (!category || l.categories.includes(category)) && `${l.name} ${l.version} ${l.category}`.toLowerCase().includes(query.toLowerCase()));
-  const planActions = <div className={css.row}><button type="button" disabled={busy || !mediaReady || !!mediaIssue || !plan.originalPrompt.trim() || !!clarification} onClick={() => controller === "auto" ? void createAutomatic() : void request("preview")}>{busy ? "Preparing video…" : controller === "auto" || videoEditControls ? "Create Video" : "Preview Video Plan (no cost)"}</button><button type="button" disabled={busy} onClick={() => change({ ...DEFAULT_H3_STUDIO_PLAN })}>Reset plan (keep media)</button></div>;
+  const planActions = <div className={css.row}><button type="button" disabled={busy || jobBusy || active || !mediaReady || !!mediaIssue || !plan.originalPrompt.trim() || !!clarification} onClick={() => controller === "auto" ? void createAutomatic() : directGeneration ? void execute() : void request("preview")}>{busy || jobBusy ? "Preparing video…" : controller === "auto" || videoEditControls || directGeneration ? "Create Video" : "Preview Video Plan (no cost)"}</button>{directGeneration && controller === "manual" ? <button type="button" disabled={busy || jobBusy || active || !mediaReady || !!mediaIssue || !plan.originalPrompt.trim()} onClick={() => void request("preview")}>View Plan (optional)</button> : null}<button type="button" disabled={busy || jobBusy || active} onClick={() => change({ ...DEFAULT_H3_STUDIO_PLAN })}>Reset plan (keep media)</button></div>;
   return <section className={css.studio} aria-label="H3 Auto and Manual controllers">
     <h2>{videoEditControls ? "H3 Reference Video Edit" : "H3 Video Studio"}</h2>
     <div className={css.controller} aria-label="Studio controller"><button type="button" aria-pressed={controller === "auto"} onClick={() => setController("auto")}>Auto Mode</button><button type="button" aria-pressed={controller === "manual"} onClick={() => setController("manual")}>Manual Mode</button></div>
@@ -337,7 +341,7 @@ export default function H3StudioControls({ ownerKey, controller: controlledContr
       <label>SLA attention<input type="checkbox" checked={plan.attention === "project-sla"} onChange={e => change({ attention: e.target.checked ? "project-sla" : "dense" })} /></label>
       <p className={css.notice}>0.2 MP: 608 × 352 · 0.6 MP: 1056 × 608 · 1 MP: 1344 × 768. Portrait reverses dimensions. Turbo uses the matching Ref2VA 8-step adapter; Native does not load it.</p>
     </div> : null}
-    {videoEditControls ? <>{planActions}{mediaIssue ? <p role="status">{mediaIssue}</p> : <p className={css.notice}>Create Video reviews the edit locally first; approve the generation estimate to submit it.</p>}</> : null}
+    {videoEditControls ? <>{planActions}{mediaIssue ? <p role="status">{mediaIssue}</p> : <p className={css.notice}>{directGeneration ? "Create Video starts your edit using the selected inputs." : "Create Video reviews the edit locally first; approve the generation estimate to submit it."}</p>}</> : null}
     <fieldset className={css.fields} aria-label="Source media">
       <legend>Optional source media</legend>
       <div className={css.grid}>{(videoEditControls ? ["image", "audio"] as const : ["image", "video", "audio"] as const).map(kind => <label key={kind}>Add {kind} references<input type="file" accept={MEDIA_ACCEPT[kind]} multiple onChange={event => { addSources(event.target.files, kind, "reference"); event.target.value = ""; }} /></label>)}</div>
@@ -387,7 +391,15 @@ export default function H3StudioControls({ ownerKey, controller: controlledContr
     </details>}
     {!videoEditControls ? planActions : null}
     </fieldset>
-    {controller === "manual" && preview ? <div className={css.status} ref={reviewedPlanElement} tabIndex={-1} aria-label="Reviewed video plan"><strong>Video Plan</strong><p>{plan.prompt}</p><p>{plan.workflowId} · {preview.manifest.steps} steps · {preview.manifest.sampler}</p><p>{preview.estimate.explanation}</p><p>Generation credits: {preview.estimate.generationCredits ?? "not measured"} · Runtime estimate: {preview.estimate.generationSeconds == null ? "not measured" : `${preview.estimate.generationSeconds} seconds`}</p>{preview.manifest.blockedReasons.length ? <ul>{preview.manifest.blockedReasons.map(reason => <li key={reason}>{reason}</li>)}</ul> : null}<label><input type="checkbox" checked={generationConsent} disabled={!preview.manifest.executable || active || jobBusy} onChange={event => setGenerationConsent(event.target.checked)} />I approve one generation at the displayed generation estimate.</label><div className={css.row}><button type="button" disabled={active || jobBusy} onClick={() => { setController("manual"); onOpenManualControls?.(); }}>Edit Plan in Manual</button><button type="button" disabled={!preview.manifest.executable || !mediaReady || !generationConsent || busy || active || jobBusy} onClick={() => void execute()}>{jobBusy ? "Submitting…" : "Generate reviewed video"}</button></div>{controller === "manual" ? <details><summary>Inspect sanitized API graph / manifest</summary><pre>{JSON.stringify(preview, null, 2)}</pre><button type="button" onClick={() => { const url = URL.createObjectURL(new Blob([JSON.stringify(preview, null, 2)], { type: "application/json" })); const link = document.createElement("a"); link.href = url; link.download = "h3-plan.json"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }}>Export sanitized plan</button></details> : null}</div> : null}
+    {controller === "manual" && preview ? <div className={css.status} ref={reviewedPlanElement} tabIndex={-1} aria-label="Reviewed video plan">
+      <strong>Video Plan</strong><p>{plan.prompt}</p><p>{plan.workflowId} · {preview.manifest.steps} steps · {preview.manifest.sampler}</p>
+      <p>{preview.estimate.explanation}</p><p>Generation credits: {preview.estimate.generationCredits ?? "not measured"} · Runtime estimate: {preview.estimate.generationSeconds == null ? "not measured" : `${preview.estimate.generationSeconds} seconds`}</p>
+      {preview.manifest.blockedReasons.length ? <ul>{preview.manifest.blockedReasons.map(reason => <li key={reason}>{reason}</li>)}</ul> : null}
+      {!directGeneration ? <label><input type="checkbox" checked={generationConsent} disabled={!preview.manifest.executable || active || jobBusy} onChange={event => setGenerationConsent(event.target.checked)} />I approve one generation at the displayed generation estimate.</label> : null}
+      <div className={css.row}><button type="button" disabled={active || jobBusy} onClick={() => { setController("manual"); onOpenManualControls?.(); }}>Edit Plan in Manual</button>
+        <button type="button" disabled={!preview.manifest.executable || !mediaReady || !directGeneration && !generationConsent || busy || active || jobBusy} onClick={() => void execute()}>{jobBusy ? "Submitting…" : directGeneration ? "Create Video" : "Generate reviewed video"}</button></div>
+      <details><summary>Inspect sanitized API graph / manifest</summary><pre>{JSON.stringify(preview, null, 2)}</pre><button type="button" onClick={() => { const url = URL.createObjectURL(new Blob([JSON.stringify(preview, null, 2)], { type: "application/json" })); const link = document.createElement("a"); link.href = url; link.download = "h3-plan.json"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }}>Export sanitized plan</button></details>
+    </div> : null}
     </div>
     {controller === "auto" && autoSettings ? <details className={css.status}><summary>Video settings</summary><p>{plan.workflowId} · SLA Attention · 8-step Turbo</p><p>{dimensions.width} × {dimensions.height} · {plan.durationSeconds} seconds</p><p>{autoSettings.estimate.explanation}</p><button type="button" disabled={active || jobBusy || busy} onClick={() => { setController("manual"); onOpenManualControls?.(); }}>Edit Plan in Manual</button></details> : null}
     {message ? <p role="status">{message}</p> : null}

@@ -5,6 +5,7 @@ import { h3StudioCatalog, H3_REF2VA_8STEP_FILE, studioCheckpoint, studioTemplate
   type H3StudioInventory, type H3StudioEvidence } from "@/lib/h3StudioRegistry";
 import { validateH3LoraSelections } from "@/lib/h3LoraCatalogServer";
 import { h3StudioOwnerExperimental } from "@/lib/h3StudioExperimental";
+import { h3StudioProduction } from "@/lib/h3StudioAdmission";
 import { getH3ProductionTimeEstimate } from "@/lib/production/h3ProductionRecipes";
 import { H3_STUDIO_ASSET_FIELDS, H3_STUDIO_COMPILER_VERSION, h3StudioBoundGraphDigest, h3StudioQualificationFingerprint,
   validH3StudioDependency, type H3StudioDependency } from "@/lib/h3StudioIdentity";
@@ -27,7 +28,8 @@ export function composeH3StudioExecutionPrompt(prompt: string, plan: Pick<H3Stud
 export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput, inventory: H3StudioInventory, evidence: H3StudioEvidence | null, access?: { ownerKey: string }) {
   const plan = parseH3StudioPlan(value);
   const ownerExperimental = h3StudioOwnerExperimental(access?.ownerKey);
-  evidence = isH3StudioEvidenceV2(evidence) ? evidence : null;
+  const production = h3StudioProduction();
+  evidence = !production && isH3StudioEvidenceV2(evidence) ? evidence : null;
   if (input.backend !== "rtx3090") throw new Error("H3 Studio is pinned to RTX 3090; no fallback is permitted.");
   const workflow = H3_STUDIO_WORKFLOWS.find(w => w.id === plan.workflowId)!;
   if (workflow.mode !== input.mode) throw new Error("Plan and media workflow do not match.");
@@ -37,15 +39,15 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
     const proof = entry && evidence?.loras?.[entry.id];
     // Do not compile an unresolved file, even for a preview.
     const observed = entry?.filename ? inventory.assets?.[entry.filename] : undefined;
-    if (!entry || entry.blockedReasons.length || !proof || !observed || observed.sha256 !== proof.sha256 || observed.bytes !== proof.bytes) throw new Error(`LoRA is not qualified: ${selection.id}`);
-    return { id: entry.legacyPolicyId!, label: entry.name, filename: proof.filename, strength: selection.strength, triggerPhrases: [], experimental: false };
+    if (!entry || entry.blockedReasons.length || !entry.filename || (!production && (!proof || !observed || observed.sha256 !== proof.sha256 || observed.bytes !== proof.bytes))) throw new Error(`LoRA is not available: ${selection.id}`);
+    return { id: entry.legacyPolicyId!, label: entry.name, filename: entry.filename, strength: selection.strength, triggerPhrases: [], experimental: false };
   });
   const native = plan.profile === "native";
   const resolvedPolicies = validateH3LoraSelections(optionalLoras.map(l => ({ id: l.id, strength: l.strength })), workflow.mode).resolved;
   for (const policy of resolvedPolicies) {
-    if (!ownerExperimental && policy.triggerRequired && policy.triggerWords.length && !policy.triggerWords.some(word => plan.prompt.toLocaleLowerCase().includes(word.trim().toLocaleLowerCase()))) throw new Error(`Required LoRA trigger is missing: ${policy.label}`);
+    if (!ownerExperimental && !production && policy.triggerRequired && policy.triggerWords.length && !policy.triggerWords.some(word => plan.prompt.toLocaleLowerCase().includes(word.trim().toLocaleLowerCase()))) throw new Error(`Required LoRA trigger is missing: ${policy.label}`);
   }
-  const triggerHints = ownerExperimental ? resolvedPolicies.flatMap(policy => policy.triggerWords).filter(word => word.trim() && !input.finalPrompt.toLowerCase().includes(word.trim().toLowerCase())) : [];
+  const triggerHints = ownerExperimental || production ? resolvedPolicies.flatMap(policy => policy.triggerWords).filter(word => word.trim() && !input.finalPrompt.toLowerCase().includes(word.trim().toLowerCase())) : [];
   const finalPrompt = [input.finalPrompt, ...new Set(triggerHints)].join("\n");
   const built = buildH3Workflow({ ...input, backend: "rtx3090", finalPrompt: composeH3StudioExecutionPrompt(finalPrompt, plan), seed: plan.seed,
     durationSeconds: studioTemplateDuration(plan.durationSeconds), h3Quality: plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq",
@@ -94,6 +96,12 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   for (const node of Object.values(graph)) {
     const field = H3_STUDIO_ASSET_FIELDS[node.class_type]; if (!field) continue;
     const filename = String(node.inputs[field]);
+    if (production) {
+      // The web host need not mount the render host's model directory. Query the
+      // pinned worker's exact loader choices instead of TEST local-stat receipts.
+      if (!inventory.files?.has(filename)) readinessReasons.push(`WORKER_MODEL_MISSING:${filename}`);
+      continue;
+    }
     const asset = evidence?.assets?.[filename];
     const observed = inventory.assets?.[filename];
     if (validH3StudioDependency(observed)) {
@@ -125,8 +133,8 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   // First run needs fresh explicit capacity. Existing qualifications use measured
   // peak against live total capacity; resident models need not be unloaded.
   const blockedReasons = [...prerequisiteReasons];
-  if (!qualified && !experimental) blockedReasons.push("QUALIFICATION_RECORD_REQUIRED", "EXACT_WORKFLOW_PHYSICAL_QUALIFICATION_REQUIRED");
-  else if (!qualified && experimental) {
+  if (!qualified && !experimental && !production) blockedReasons.push("QUALIFICATION_RECORD_REQUIRED", "EXACT_WORKFLOW_PHYSICAL_QUALIFICATION_REQUIRED");
+  else if (production || !qualified && experimental) {
     const device = inventory.device;
     if (!device || !fresh(device.observedAt) || !/RTX\s*3090/i.test(device.gpuName) || !(device.totalVramBytes > 0) || !(device.totalRamBytes > 0)) blockedReasons.push("LIVE_3090_CAPACITY_CHECK_REQUIRED");
   }
@@ -145,8 +153,8 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
       compilerVersion: H3_STUDIO_COMPILER_VERSION, automaticRealism: plan.checkpoint === "singularity", dependencies,
       boundGraphDigest, submissionGraphSha256: boundGraphDigest, qualificationFingerprint, readyForQualification, readinessReasons: [...new Set(readinessReasons)],
       requiredVramBytes: readyForQualification ? capacity!.requiredVramBytes : qualified?.telemetry.peakVramBytes ?? null,
-      experimental: experimental && !qualified, executionBasis: qualified ? "physically-qualified" : experimental ? "owner-experimental" : "qualification-required",
-      estimatedCredits: qualified?.generationCredits ?? (experimental ? 0 : null), estimatedSeconds: qualified?.measuredSeconds ?? (experimental ? getH3ProductionTimeEstimate(workflow.mode, studioTemplateDuration(plan.durationSeconds), plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq", "rtx3090").seconds : null),
+      experimental: experimental && !qualified, executionBasis: production ? "installed-workflow" : qualified ? "physically-qualified" : experimental ? "owner-experimental" : "qualification-required",
+      estimatedCredits: qualified?.generationCredits ?? (experimental || production ? 0 : null), estimatedSeconds: qualified?.measuredSeconds ?? (experimental || production ? getH3ProductionTimeEstimate(workflow.mode, studioTemplateDuration(plan.durationSeconds), plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq", "rtx3090").seconds : null),
       missingNodes, blockedReasons, executable: blockedReasons.length === 0 } };
 }
 /** Preview inputs are placeholders only; they never reach /prompt. */
