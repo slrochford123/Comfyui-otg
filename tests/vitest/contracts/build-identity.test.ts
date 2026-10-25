@@ -15,20 +15,20 @@ function fixture(record?: unknown) {
 }
 afterEach(() => { for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
 describe("owner-facing build identity and append-only release history", () => {
-  it("identifies this release as Build 2 independently of package semver", () => {
-    expect(BUILD_VERSION).toBe("2");
-    expect(readBuildIdentity(fixture())).toMatchObject({ buildVersion: "2", softwareVersion: "2.0.1", commit: null, releaseName: null });
+  it("identifies this release as Build 2.01 independently of package semver", () => {
+    expect(BUILD_VERSION).toBe("2.01");
+    expect(readBuildIdentity(fixture())).toMatchObject({ buildVersion: BUILD_VERSION, softwareVersion: "2.0.1", commit: null, releaseName: null });
   });
   it("reads the exact packaged release identity but never private provenance fields", () => {
-    const identity = readBuildIdentity(fixture({ buildVersion: "2", commit: "a".repeat(40), name: "prod-build-2-aaaaaaaaaaaa", builtAt: "2026-10-23T22:00:00Z", secret: "private-fixture", paths: ["/private"] }));
-    expect(identity).toMatchObject({ commit: "a".repeat(40), releaseName: "prod-build-2-aaaaaaaaaaaa", builtAt: "2026-10-23T22:00:00Z" });
+    const identity = readBuildIdentity(fixture({ buildVersion: BUILD_VERSION, commit: "a".repeat(40), name: "prod-build-2.01-aaaaaaaaaaaa", builtAt: "2026-10-25T22:00:00Z", secret: "private-fixture", paths: ["/private"] }));
+    expect(identity).toMatchObject({ commit: "a".repeat(40), releaseName: "prod-build-2.01-aaaaaaaaaaaa", builtAt: "2026-10-25T22:00:00Z" });
     expect(JSON.stringify(identity)).not.toContain("private-fixture"); expect(JSON.stringify(identity)).not.toContain("/private");
   });
   it("does not reuse a different build's provenance", () => {
     expect(readBuildIdentity(fixture({ buildVersion: "1", commit: "a".repeat(40), name: "old" })).commit).toBeNull();
   });
   it("rejects filesystem paths and invalid revisions in displayed metadata", () => {
-    expect(readBuildIdentity(fixture({ buildVersion: "2", commit: "not-a-commit", name: "/private/release", builtAt: "wrong" }))).toMatchObject({ commit: null, releaseName: null, builtAt: null });
+    expect(readBuildIdentity(fixture({ buildVersion: BUILD_VERSION, commit: "not-a-commit", name: "/private/release", builtAt: "wrong" }))).toMatchObject({ commit: null, releaseName: null, builtAt: null });
   });
   it("ignores malformed and symlinked provenance", () => {
     const root = fixture(); fs.writeFileSync(path.join(root, "bad"), "{"); fs.symlinkSync("bad", path.join(root, "RELEASE_PROVENANCE.json"));

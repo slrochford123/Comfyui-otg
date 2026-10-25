@@ -1,4 +1,5 @@
 import type { ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
+import { h3CandidateBackends, parseH3TargetBackend } from "@/lib/h3GpuRouting";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -50,6 +51,7 @@ export type H3BodySwapMedia = {
 };
 
 export type H3BodySwapJobInput = {
+  targetBackend?: "rtx3090" | "rtx5060ti";
   mode: "h3-body-swap";
   quality: H3Quality;
   orientation: H3Orientation;
@@ -204,6 +206,7 @@ function isRunnableH3BodySwapStatus(status: H3BodySwapJob["status"]) {
 }
 
 export function validateH3BodySwapJobInput(input: H3BodySwapJobInput) {
+  parseH3TargetBackend(input.targetBackend);
   const normalized = validateH3BodySwapRequest(input);
   if (!Number.isSafeInteger(input.seed) || input.seed < 0) {
     throw new Error("Body Swap seed must be a non-negative safe integer.");
@@ -575,7 +578,7 @@ async function remuxOriginalAudio(job: H3BodySwapJob, visualPath: string) {
 
 async function submitNewBodySwapPrompt(job: H3BodySwapJob) {
   const backendProbes: H3BodySwapBackendProbe[] = [];
-  for (const backend of H3_BODY_SWAP_BACKEND_PRIORITY) {
+  for (const backend of h3CandidateBackends(job.input.targetBackend, H3_BODY_SWAP_BACKEND_PRIORITY, id => id === "rtx3090-comfy-kitchen" ? "rtx3090" : "rtx5060ti")) {
     const profile = bodySwapBackendProfile(backend);
     await updateJob(job.ownerKey, job.id, {
       status: "preparing",

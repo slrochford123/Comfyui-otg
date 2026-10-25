@@ -1,6 +1,10 @@
 import fs from "node:fs";
 
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { requireSessionUser } from "@/lib/sessionUser";
+import { parseH3TargetBackend } from "@/lib/h3GpuRouting";
+import { H3_BACKEND_PROFILES } from "@/lib/production/h3Workflows";
 
 import { normalizeH3RefModLibraryEntry } from "@/lib/h3SpecialModes/refMods";
 import { readH3RefModSidecar } from "@/lib/h3SpecialModes/refModCreation";
@@ -23,9 +27,13 @@ function noStore(payload: unknown, init?: ResponseInit) {
   });
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const baseUrl = DEFAULT_REFMOD_LIBRARY_URL.replace(/\/+$/, "");
+    try { await requireSessionUser(request); } catch { return noStore({ ok: false, error: "Sign in to read your RefMod library.", entries: [] }, { status: 401 }); }
+    let target;
+    try { target = parseH3TargetBackend(request.nextUrl.searchParams.get("backend") ?? undefined); }
+    catch { return noStore({ ok: false, error: "Choose RTX 3090 or RTX 5060 Ti.", entries: [] }, { status: 400 }); }
+    const baseUrl = (target ? H3_BACKEND_PROFILES[target].baseUrl : DEFAULT_REFMOD_LIBRARY_URL).replace(/\/+$/, "");
     const response = await fetch(`${baseUrl}/refmods/library`, {
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),
@@ -37,13 +45,13 @@ export async function GET() {
     const entries = Array.isArray(raw)
       ? raw.map((entry) => {
           const normalized = normalizeH3RefModLibraryEntry(entry);
-          if (normalized.file && fs.existsSync(normalized.file)) {
+          if (target !== "rtx5060ti" && normalized.file && fs.existsSync(normalized.file)) {
             const stat = fs.statSync(normalized.file);
             normalized.sizeBytes = stat.size;
             normalized.createdAt = stat.birthtime.toISOString();
             normalized.modifiedAt = stat.mtime.toISOString();
           }
-          const sidecar = readH3RefModSidecar(normalized.name);
+          const sidecar = target === "rtx5060ti" ? null : readH3RefModSidecar(normalized.name);
           if (sidecar) {
             normalized.sourceType = "otg-created";
             normalized.characterId = sidecar.characterId || null;
@@ -60,7 +68,7 @@ export async function GET() {
           return normalized;
         })
       : [];
-    return noStore({ ok: true, backend: baseUrl, entries });
+    return noStore({ ok: true, backend: target || baseUrl, entries });
   } catch (error) {
     return noStore({
       ok: false,

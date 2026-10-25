@@ -45,6 +45,7 @@ const loraProperties = {
   strength: { type: "number", minimum: 0, maximum: 2 }, enabled: { type: "boolean" },
 };
 const planProperties = {
+  backend: enumeration(["rtx3090", "rtx5060ti"]),
   version: enumeration([DEFAULT_H3_STUDIO_PLAN.version]), workflowId: enumeration(H3_STUDIO_WORKFLOWS.map(w => w.id)),
   checkpoint: enumeration(["standard", "singularity"]), profile: enumeration(Object.keys(H3_STUDIO_PROFILES)),
   quality: enumeration(["0.2", "0.6", "1"]), orientation: enumeration(["landscape", "portrait"]),

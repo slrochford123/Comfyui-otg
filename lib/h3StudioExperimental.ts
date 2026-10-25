@@ -1,6 +1,6 @@
 import fs from "node:fs";
 /** Explicit private owner opt-in, never inferred from Admin, NODE_ENV or browser flags. */
-export function h3StudioOwnerExperimental(ownerKey?: string): boolean {
+export function h3StudioOwnerExperimental(ownerKey?: string, backend: "rtx3090" | "rtx5060ti" = "rtx3090"): boolean {
   if (process.env.OTG_ENV !== "test" || !ownerKey || !process.getuid || process.getuid() === 0) return false;
   const file = process.env.OTG_H3_STUDIO_EXPERIMENTAL_FILE;
   if (!file?.startsWith("/")) return false;
@@ -10,7 +10,8 @@ export function h3StudioOwnerExperimental(ownerKey?: string): boolean {
       const stat = fs.fstatSync(fd);
       if (!stat.isFile() || stat.uid !== process.getuid() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600 || stat.size > 16_000) return false;
       const policy = JSON.parse(fs.readFileSync(fd, "utf8"));
-      return policy.schemaVersion === 1 && policy.enabled === true && policy.environment === "test" && policy.target === "3090"
+      const targets = Array.isArray(policy.targets) ? policy.targets : [policy.target];
+      return policy.schemaVersion === 1 && policy.enabled === true && policy.environment === "test" && targets.includes(backend === "rtx3090" ? "3090" : "5060ti")
         && Array.isArray(policy.ownerKeys) && policy.ownerKeys.includes(ownerKey) && typeof policy.authorizationReference === "string" && !!policy.authorizationReference.trim();
     } finally { fs.closeSync(fd); }
   } catch { return false; }

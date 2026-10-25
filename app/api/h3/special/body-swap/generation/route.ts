@@ -209,6 +209,7 @@ async function startGenerationJob(
 ) {
   const generation = readH3BodySwapGenerationConfig(config);
   const input = validateH3BodySwapJobInput({
+    targetBackend: (await import("@/lib/h3GpuRouting")).parseH3TargetBackend(config.targetBackend),
     ...generation,
     sourceVideo: media.sourceVideo!,
     replacementImage: media.replacementImage!,

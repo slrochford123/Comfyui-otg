@@ -1,7 +1,7 @@
 import { buildH3Workflow, loadH3WorkflowTemplate, h3TurboLoraForMode, type H3WorkflowBuildInput, type H3PromptGraph } from "@/lib/production/h3Workflows";
-import { parseH3StudioPlan, H3_STUDIO_WORKFLOWS, studioDimensions, studioFrames, studioTemplateDuration, type H3StudioPlan } from "@/lib/h3StudioPlan";
+import { parseH3StudioPlan, H3_STUDIO_WORKFLOWS, studioDimensions, studioFrames, studioTemplateDuration, studioBackend, studioGpuPattern, type H3StudioPlan } from "@/lib/h3StudioPlan";
 import { h3StudioCatalog, H3_REF2VA_8STEP_FILE, studioCheckpoint, studioTemplateHash, validateStudioReadiness,
-  exactH3StudioQualification, isH3StudioEvidenceV2, validH3StudioRights, matchesH3StudioAssetFile,
+  exactH3StudioQualification, isH3StudioEvidenceV2, validH3StudioRights, matchesH3StudioInventoryAsset,
   type H3StudioInventory, type H3StudioEvidence } from "@/lib/h3StudioRegistry";
 import { validateH3LoraSelections } from "@/lib/h3LoraCatalogServer";
 import { h3StudioOwnerExperimental } from "@/lib/h3StudioExperimental";
@@ -27,10 +27,11 @@ export function composeH3StudioExecutionPrompt(prompt: string, plan: Pick<H3Stud
 
 export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput, inventory: H3StudioInventory, evidence: H3StudioEvidence | null, access?: { ownerKey: string }) {
   const plan = parseH3StudioPlan(value);
-  const ownerExperimental = h3StudioOwnerExperimental(access?.ownerKey);
+  const backend = studioBackend(plan), gpuPattern = studioGpuPattern(backend);
+  const ownerExperimental = h3StudioOwnerExperimental(access?.ownerKey, backend);
   const production = h3StudioProduction();
   evidence = !production && isH3StudioEvidenceV2(evidence) ? evidence : null;
-  if (input.backend !== "rtx3090") throw new Error("H3 Studio is pinned to RTX 3090; no fallback is permitted.");
+  if (input.backend !== backend || inventory.backend && inventory.backend !== backend) throw new Error(`H3 plan selects ${backend}; the workflow and worker must use that selected GPU. No fallback is permitted.`);
   const workflow = H3_STUDIO_WORKFLOWS.find(w => w.id === plan.workflowId)!;
   if (workflow.mode !== input.mode) throw new Error("Plan and media workflow do not match.");
   const catalog = h3StudioCatalog(inventory, evidence);
@@ -49,7 +50,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   }
   const triggerHints = ownerExperimental || production ? resolvedPolicies.flatMap(policy => policy.triggerWords).filter(word => word.trim() && !input.finalPrompt.toLowerCase().includes(word.trim().toLowerCase())) : [];
   const finalPrompt = [input.finalPrompt, ...new Set(triggerHints)].join("\n");
-  const built = buildH3Workflow({ ...input, backend: "rtx3090", finalPrompt: composeH3StudioExecutionPrompt(finalPrompt, plan), seed: plan.seed,
+  const built = buildH3Workflow({ ...input, backend, finalPrompt: composeH3StudioExecutionPrompt(finalPrompt, plan), seed: plan.seed,
     durationSeconds: studioTemplateDuration(plan.durationSeconds), h3Quality: plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq",
     orientation: plan.orientation, optionalLoras,
     h3Settings: { renderMode: native ? "native" : "turbo", checkpointMode: plan.checkpoint, combatLoraEnabled: plan.combatEnabled,
@@ -88,7 +89,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   // The installed project SLA node is not a SolAttnPatch alias. Dense is explicit.
   graph["41"].inputs.enabled = plan.attention === "project-sla";
   if (plan.audio === "mute" || plan.audio === "original") delete graph["34"].inputs.audio;
-  const templateSha256 = studioTemplateHash(loadH3WorkflowTemplate("rtx3090", workflow.mode, studioTemplateDuration(plan.durationSeconds), plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq"));
+  const templateSha256 = studioTemplateHash(loadH3WorkflowTemplate(backend, workflow.mode, studioTemplateDuration(plan.durationSeconds), plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq"));
   const readinessReasons = validateStudioReadiness(plan, inventory, evidence, templateSha256);
   // Implicit accelerators, Singularity/Realism/Combat, encoder and VAEs need their
   // own provenance/rights too; approving the base checkpoint is not transitive.
@@ -112,7 +113,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
     }
     if (!validH3StudioDependency(asset) || asset.filename !== filename || !validH3StudioRights(asset.rights, evidence?.upstreamAuthorization.ownerKey)
       || !validH3StudioDependency(observed) || observed.filename !== filename || asset.sha256 !== observed.sha256 || asset.bytes !== observed.bytes
-      || !matchesH3StudioAssetFile(inventory.assetFiles?.[filename], observed?.bytes || 0)
+      || !matchesH3StudioInventoryAsset(inventory, filename, observed?.bytes || 0)
       || !inventory.files?.has(filename)) readinessReasons.push(`DEPENDENCY_PROVENANCE_REQUIRED:${filename}`);
   }
   const missingNodes = [...new Set(Object.values(graph).map(n => n.class_type))].filter(n => !inventory.nodes.has(n));
@@ -122,12 +123,12 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   const fresh = (date: string | undefined) => !!date && Date.now() - Date.parse(date) >= 0 && Date.now() - Date.parse(date) <= 15 * 60_000;
   const prerequisiteReasons = [...new Set(readinessReasons)];
   const capacity = inventory.capacity;
-  if (!capacity || capacity.fingerprint !== qualificationFingerprint || !capacity.gpuUuid || !/RTX\s*3090/i.test(capacity.gpuName)
+  if (!capacity || capacity.fingerprint !== qualificationFingerprint || !capacity.gpuUuid || !gpuPattern.test(capacity.gpuName)
     || !fresh(capacity.observedAt) || !Number.isSafeInteger(capacity.requiredVramBytes) || capacity.requiredVramBytes <= 0
     || !Number.isSafeInteger(capacity.totalVramBytes) || capacity.totalVramBytes < capacity.requiredVramBytes
     || !Number.isSafeInteger(capacity.freeVramBytes) || capacity.freeVramBytes < capacity.requiredVramBytes
     || capacity.freeVramBytes > capacity.totalVramBytes) readinessReasons.push("EXACT_CONFIGURATION_CAPACITY_CHECK_REQUIRED");
-  const qualified = exactH3StudioQualification(evidence, { fingerprint: qualificationFingerprint, templateSha256, dependencies });
+  const qualified = exactH3StudioQualification(evidence, { fingerprint: qualificationFingerprint, templateSha256, dependencies, backend });
   // Owner may evaluate installed valid configurations without inventing physical evidence.
   const experimental = ownerExperimental;
   // First run needs fresh explicit capacity. Existing qualifications use measured
@@ -136,17 +137,17 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   if (!qualified && !experimental && !production) blockedReasons.push("QUALIFICATION_RECORD_REQUIRED", "EXACT_WORKFLOW_PHYSICAL_QUALIFICATION_REQUIRED");
   else if (production || !qualified && experimental) {
     const device = inventory.device;
-    if (!device || !fresh(device.observedAt) || !/RTX\s*3090/i.test(device.gpuName) || !(device.totalVramBytes > 0) || !(device.totalRamBytes > 0)) blockedReasons.push("LIVE_3090_CAPACITY_CHECK_REQUIRED");
+    if (!device || !fresh(device.observedAt) || !gpuPattern.test(device.gpuName) || !(device.totalVramBytes > 0) || !(device.totalRamBytes > 0)) blockedReasons.push(backend === "rtx3090" ? "LIVE_3090_CAPACITY_CHECK_REQUIRED" : "LIVE_5060TI_CAPACITY_CHECK_REQUIRED");
   }
   else if (qualified) {
     const device = inventory.device;
-    if (!device || !fresh(device.observedAt) || !/RTX\s*3090/i.test(device.gpuName) || !Number.isSafeInteger(device.totalVramBytes)
+    if (!device || !fresh(device.observedAt) || !gpuPattern.test(device.gpuName) || !Number.isSafeInteger(device.totalVramBytes)
       || !Number.isSafeInteger(device.totalRamBytes) || device.totalRamBytes < qualified.telemetry.peakRamBytes
-      || device.totalVramBytes < qualified.telemetry.peakVramBytes || (device.gpuUuid && device.gpuUuid !== qualified.gpuUuid)) blockedReasons.push("LIVE_3090_CAPACITY_CHECK_REQUIRED");
+      || device.totalVramBytes < qualified.telemetry.peakVramBytes || (device.gpuUuid && device.gpuUuid !== qualified.gpuUuid)) blockedReasons.push(backend === "rtx3090" ? "LIVE_3090_CAPACITY_CHECK_REQUIRED" : "LIVE_5060TI_CAPACITY_CHECK_REQUIRED");
   }
   const readyForQualification = readinessReasons.length === 0;
   return { ...built, graph, workflowId: `h3-studio:${plan.workflowId}:v1`, nativeWidth: dimensions.width, nativeHeight: dimensions.height,
-    manifest: { version: plan.version, plan, gpu: "rtx3090" as const, ...dimensions, frames: studioFrames(plan.durationSeconds), fps: 24,
+    manifest: { version: plan.version, plan, gpu: backend, ...dimensions, frames: studioFrames(plan.durationSeconds), fps: 24,
       model: studioCheckpoint(plan), templateSha256, steps: plan.steps, sampler: plan.sampler,
       scheduler: plan.scheduler, shifts: { video: native ? 6 : 12, audio: 3 }, attention: plan.attention,
       audio: plan.audio, modelSha256: dependencies.find(d => d.filename === studioCheckpoint(plan))?.sha256 || null,
@@ -154,13 +155,13 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
       boundGraphDigest, submissionGraphSha256: boundGraphDigest, qualificationFingerprint, readyForQualification, readinessReasons: [...new Set(readinessReasons)],
       requiredVramBytes: readyForQualification ? capacity!.requiredVramBytes : qualified?.telemetry.peakVramBytes ?? null,
       experimental: experimental && !qualified, executionBasis: production ? "installed-workflow" : qualified ? "physically-qualified" : experimental ? "owner-experimental" : "qualification-required",
-      estimatedCredits: qualified?.generationCredits ?? (experimental || production ? 0 : null), estimatedSeconds: qualified?.measuredSeconds ?? (experimental || production ? getH3ProductionTimeEstimate(workflow.mode, studioTemplateDuration(plan.durationSeconds), plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq", "rtx3090").seconds : null),
+      estimatedCredits: qualified?.generationCredits ?? (experimental || production ? 0 : null), estimatedSeconds: qualified?.measuredSeconds ?? (experimental || production ? getH3ProductionTimeEstimate(workflow.mode, studioTemplateDuration(plan.durationSeconds), plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq", backend).seconds : null),
       missingNodes, blockedReasons, executable: blockedReasons.length === 0 } };
 }
 /** Preview inputs are placeholders only; they never reach /prompt. */
 export function h3StudioPreviewInput(plan: H3StudioPlan): H3WorkflowBuildInput {
   const workflow = H3_STUDIO_WORKFLOWS.find(w => w.id === plan.workflowId)!;
-  return { backend: "rtx3090", mode: workflow.mode, h3Quality: "lq", durationSeconds: studioTemplateDuration(plan.durationSeconds),
+  return { backend: studioBackend(plan), mode: workflow.mode, h3Quality: "lq", durationSeconds: studioTemplateDuration(plan.durationSeconds),
     finalPrompt: plan.prompt, seed: plan.seed, outputPrefix: "h3-studio/preview", startImageFilename: workflow.media === "image" ? "first.png" : undefined,
     videoReferences: workflow.media === "video" || workflow.media === "reference" ? [{ uploadedFilename: "source.mp4", includeAudio: false }] : undefined };
 }

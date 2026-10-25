@@ -1,4 +1,5 @@
 import type { H3CheckpointMode } from "@/lib/production/h3Settings";
+import { h3CandidateBackends, parseH3TargetBackend } from "@/lib/h3GpuRouting";
 import type { ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -45,6 +46,7 @@ export type H3RealismReference = {
 };
 
 export type H3RealismJobInput = {
+  targetBackend?: ProductionV2H3BackendId;
   mode: "h3-realism";
   quality: H3Quality;
   orientation: H3Orientation;
@@ -176,6 +178,7 @@ function isRunnableH3RealismStatus(status: H3RealismJob["status"]) {
 }
 
 export function validateH3RealismJobInput(input: H3RealismJobInput) {
+  parseH3TargetBackend(input.targetBackend);
   const checkpointMode: H3CheckpointMode =
     input.checkpointMode === "singularity"
       ? "singularity"
@@ -511,7 +514,7 @@ async function uploadReference(job: H3RealismJob, backend: ProductionV2H3Backend
 
 async function submitNewRealismPrompt(job: H3RealismJob) {
   const backendProbes: H3RealismBackendProbe[] = [];
-  for (const backend of H3_REALISM_BACKEND_PRIORITY) {
+  for (const backend of h3CandidateBackends(job.input.targetBackend, H3_REALISM_BACKEND_PRIORITY)) {
     await updateJob(job.ownerKey, job.id, {
       status: "preparing",
       statusMessage: `Preparing inputs for ${H3_BACKEND_PROFILES[backend].label}`,

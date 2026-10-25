@@ -12,7 +12,7 @@ type Preview = { manifest: { executable: boolean; experimental?: boolean; blocke
 type Quote = { id: string; estimatedUsd: number | null; qualified: boolean; unavailable: string[] };
 type Job = { id: string; status: string; statusMessage: string; progressPercent?: number | null; error?: string | null; videoUrl?: string | null; galleryUrl?: string | null; galleryStatus?: string; galleryError?: string | null; nativeResolution?: string | null; approximatePreview?: { imageUrl: string; label: string } | null };
 type HistoryItem = Pick<Job, "id" | "status" | "statusMessage">;
-type Props = { ownerKey: string; controller?: H3StudioController; onControllerChange?: (controller: H3StudioController) => void; manualMenu?: boolean; onOpenManualControls?: () => void; onBackToStudio?: () => void; initialSourceVideo?: File; videoEditControls?: boolean; sourceBlockMessage?: string; onBusyChange?: (busy: boolean) => void };
+type Props = { ownerKey: string; backend?: H3StudioPlan["backend"]; onBackendChange?: (backend: NonNullable<H3StudioPlan["backend"]>) => void; controller?: H3StudioController; onControllerChange?: (controller: H3StudioController) => void; manualMenu?: boolean; onOpenManualControls?: () => void; onBackToStudio?: () => void; initialSourceVideo?: File; videoEditControls?: boolean; sourceBlockMessage?: string; onBusyChange?: (busy: boolean) => void };
 const isActive = (job: Job | null) => !!job && !["completed", "failed", "canceled"].includes(job.status);
 const MEDIA_ACCEPT = { image: ".png,.jpg,.jpeg,.webp", video: ".mp4,.mov,.mkv,.webm,.m4v", audio: ".wav,.mp3,.ogg,.flac,.m4a" };
 function sourceError(file: File, kind: Source["kind"]) {
@@ -50,11 +50,13 @@ function SourcePreview({ source }: { source: Source }) {
   if (source.kind === "video") return <video ref={node => { element.current = node; }} className={css.media} controls playsInline preload="metadata" />;
   return <audio ref={node => { element.current = node; }} className={css.media} controls preload="metadata" />;
 }
-export default function H3StudioControls({ ownerKey, controller: controlledController, onControllerChange, manualMenu = false, onOpenManualControls, onBackToStudio, initialSourceVideo, videoEditControls = false, sourceBlockMessage = "", onBusyChange }: Props) {
+export default function H3StudioControls({ ownerKey, backend: controlledBackend, onBackendChange, controller: controlledController, onControllerChange, manualMenu = false, onOpenManualControls, onBackToStudio, initialSourceVideo, videoEditControls = false, sourceBlockMessage = "", onBusyChange }: Props) {
   const [localController, setLocalController] = useState<H3StudioController>("auto");
   const controller = controlledController ?? localController;
   function setController(next: H3StudioController) { setLocalController(next); onControllerChange?.(next); }
-  const [plan, setPlan] = useState<H3StudioPlan>(() => ({ ...DEFAULT_H3_STUDIO_PLAN, workflowId: videoEditControls ? "reference-edit" : "native-t2v" }));
+  const [plan, setPlan] = useState<H3StudioPlan>(() => ({ ...DEFAULT_H3_STUDIO_PLAN, backend: controlledBackend ?? "rtx3090", workflowId: videoEditControls ? "reference-edit" : "native-t2v" }));
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const backend = plan.backend ?? "rtx3090";
   const reviewedPlanElement = useRef<HTMLDivElement>(null);
   const [sources, setSources] = useState<Source[]>([]);
   const [snapshotRole, setSnapshotRole] = useState<Source["role"] | null>(null);
@@ -135,7 +137,6 @@ export default function H3StudioControls({ ownerKey, controller: controlledContr
     setPlan({ ...DEFAULT_H3_STUDIO_PLAN, workflowId: videoEditControls ? "reference-edit" : "native-t2v" }); setCatalog([]); setPreview(null); setQuote(null); setMessage(""); setPresets([]); setDirectorPlanReady(false); setConsent(false); setExternalMediaConsent(false); revision.current++;
     sourcesRef.current = []; setSources([]); jobRef.current = null; setJob(null); historyRef.current = []; setHistory([]); submittedPlan.current = null; setGenerationConsent(false); setClarification("");
     setExperimental(false); setDirectGeneration(false); setAutoSettings(null);
-    fetch("/api/h3/studio", { signal: signal.signal, credentials: "include" }).then(responseJson).then(data => { if (!signal.signal.aborted) { setCatalog(data.catalog || []); setExperimental(data.experimental === true); setDirectGeneration(data.directGeneration === true); } }).catch(() => { if (!signal.signal.aborted) setMessage("Catalog unavailable. Preview will check current workflow availability."); });
     try { const stored = JSON.parse(localStorage.getItem(storageKey) || "[]"); if (Array.isArray(stored)) setPresets(stored.slice(0, 20).map(p => ({ name: String(p.name).slice(0, 60), plan: parseH3StudioPlan(p.plan) }))); } catch { /* Ignore invalid/obsolete device presets. */ }
     try {
       const stored = JSON.parse(localStorage.getItem(historyKey) || "[]");
@@ -147,6 +148,19 @@ export default function H3StudioControls({ ownerKey, controller: controlledContr
     } catch { /* Ignore obsolete history. */ }
     return () => { signal.abort(); abort.current?.abort(); jobAbort.current?.abort(); };
   }, [storageKey, historyKey, acceptJob, videoEditControls]);
+  useEffect(() => {
+    if (controlledBackend && controlledBackend !== backend) { invalidate(); setPlan(current => ({ ...current, backend: controlledBackend })); }
+  }, [controlledBackend, backend, invalidate]);
+  useEffect(() => {
+    const signal = new AbortController();setCatalogLoading(true);setCatalog([]);
+    fetch(backend === "rtx3090" ? "/api/h3/studio" : "/api/h3/studio?backend=rtx5060ti", { signal: signal.signal, credentials: "include" }).then(responseJson).then(data => {
+      if (signal.signal.aborted) return;
+      setCatalog(data.catalog || []);setExperimental(data.experimental === true);setDirectGeneration(data.directGeneration === true);
+      setPlan(current => reconcileDraft(current, {}, data.catalog || []));
+    }).catch(() => { if (!signal.signal.aborted) setMessage("Catalog unavailable for the selected GPU. Check worker readiness before creating video."); })
+      .finally(() => { if (!signal.signal.aborted) setCatalogLoading(false); });
+    return () => signal.abort();
+  }, [backend, ownerKey]);
   useEffect(() => {
     if (!initialSourceVideo && !videoEditControls) return;
     invalidate(); setExternalMediaConsent(false);
@@ -201,7 +215,10 @@ export default function H3StudioControls({ ownerKey, controller: controlledContr
   }, [jobId, jobStatus, galleryStatus, acceptJob]);
   function change(patch: Partial<H3StudioPlan>) {
     invalidate();
-    try { setPlan(reconcileDraft(plan, videoEditControls ? { ...patch, workflowId: "reference-edit" } : controller === "auto" ? { workflowId: sourceWorkflow(sourcesRef.current), ...patch } : patch, catalog)); }
+    try {
+      const next = reconcileDraft(plan, videoEditControls ? { ...patch, workflowId: "reference-edit" } : controller === "auto" ? { workflowId: sourceWorkflow(sourcesRef.current), ...patch } : patch, catalog);
+      setPlan(next);if (patch.backend) onBackendChange?.(patch.backend);
+    }
     catch (error) { setMessage(error instanceof Error ? error.message : "Check the selected settings."); }
   }
   const media = { first: sources.some(source => source.role === "first"), images: sources.filter(source => source.kind === "image" && source.role === "reference").length, videos: sources.filter(source => source.kind === "video").length, audios: sources.filter(source => source.kind === "audio").length };
@@ -321,13 +338,14 @@ export default function H3StudioControls({ ownerKey, controller: controlledContr
   return <section className={css.studio} aria-label="H3 Auto and Manual controllers">
     <h2>{videoEditControls ? "H3 Reference Video Edit" : "H3 Video Studio"}</h2>
     <div className={css.controller} aria-label="Studio controller"><button type="button" aria-pressed={controller === "auto"} onClick={() => setController("auto")}>Auto Mode</button><button type="button" aria-pressed={controller === "manual"} onClick={() => setController("manual")}>Manual Mode</button></div>
+    <label className={css.notice}>Rendering GPU<select aria-label="H3 rendering GPU" disabled={busy || jobBusy || active || catalogLoading} value={backend} onChange={e => change({ backend: e.target.value as NonNullable<H3StudioPlan["backend"]> })}><option value="rtx3090">RTX 3090</option><option value="rtx5060ti">RTX 5060 Ti</option></select></label>
     {manualMenu ? <p className={css.notice}>Choose an H3 Studio option below, or select Manual for complete creative controls.</p> : null}
     {/* Keep drafts/media mounted when returning to the original Studio menu. Job polling and Safe Cancel stay visible below. */}
     <div hidden={manualMenu} data-otg="h3-studio-plan-controls">
     {controller === "manual" && onBackToStudio ? <button type="button" onClick={onBackToStudio}>Back to H3 Studio</button> : null}
-    {experimental ? <p role="status" className={css.notice}>Owner Experimental Mode · private TEST · RTX 3090 only. Installed configurations may be run before generation testing. Outputs and quality are unverified.</p> : null}
+    {experimental ? <p role="status" className={css.notice}>Owner Experimental Mode · private TEST · {backend === "rtx3090" ? "RTX 3090" : "RTX 5060 Ti"}. Installed configurations may be run before generation testing. Outputs and quality are unverified.</p> : null}
     <p className={css.notice}>{controller === "auto" ? "Describe your video and add optional media. Create Video starts one generation using SLA Attention and a matching 8-step Turbo workflow." : "Complete manual controls · choose a workflow, compatible models, references and creative settings."}</p>
-    <fieldset className={css.fields} disabled={active || jobBusy || busy}>
+    <fieldset className={css.fields} disabled={active || jobBusy || busy || catalogLoading}>
     <label>{videoEditControls ? "Edit prompt" : "Video description"}<textarea aria-label={videoEditControls ? "Reference video edit prompt" : undefined} rows={4} maxLength={4000} value={plan.originalPrompt} onChange={e => change({ originalPrompt: e.target.value, prompt: e.target.value })} /></label>
     {clarification ? <p role="status">{clarification} Update the video description to answer, then request a new plan.</p> : null}
     <div className={css.grid}>
@@ -360,7 +378,7 @@ export default function H3StudioControls({ ownerKey, controller: controlledContr
       <p className={css.notice}>PNG, JPEG and WebP images up to 20 MB; video and audio up to 128 MB. Images can be first/last frames or references. Video references use the selected clip start and duration. Media stays private unless you approve sharing with the optional AI Director.</p>
     </fieldset>
     {!videoEditControls && mediaIssue ? <p role="status">{mediaIssue}</p> : null}
-    <p className={css.notice}>{dimensions.width} × {dimensions.height} · 24 FPS · {studioFrames(plan.durationSeconds)} generation frames · RTX 3090 only. Temporal-grid surplus is trimmed explicitly to the requested duration.</p>
+    <p className={css.notice}>{dimensions.width} × {dimensions.height} · 24 FPS · {studioFrames(plan.durationSeconds)} generation frames · {backend === "rtx3090" ? "RTX 3090" : "RTX 5060 Ti"}. Temporal-grid surplus is trimmed explicitly to the requested duration. Jobs stay on your selected GPU; they do not switch automatically.</p>
     {plan.workflowId === "reference-edit" ? <p className={css.notice}>Source fit: preserve aspect ratio and pad to the selected canvas. Reference-guided editing can reinterpret motion and identity; it is not a frame-perfect structural filter.</p> : null}
     {controller === "manual" ? <>
       <label>Generation prompt<textarea rows={4} maxLength={4000} value={plan.prompt} onChange={e => change({ prompt: e.target.value })} /></label>

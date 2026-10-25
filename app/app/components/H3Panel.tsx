@@ -96,6 +96,7 @@ type MediaInput = H3StudioReferenceDescriptor & {
   clipStartSeconds?: number;
 };
 type H3GenerationConfig = {
+  targetBackend?: "rtx3090" | "rtx5060ti";
   studioPlan?: H3StudioPlan;
   mode: Mode;
   quality: H3Quality;
@@ -1004,6 +1005,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const [studioController, setStudioController] = useState<H3StudioController>("auto");
   const [manualControlsOpen, setManualControlsOpen] = useState(false);
   const [studioBusy, setStudioBusy] = useState(false);
+  const [h3Backend, setH3Backend] = useState<"rtx3090" | "rtx5060ti">("rtx3090");
+  const refModLibraryAbort = useRef<AbortController | null>(null);
+  useEffect(() => { refModLibraryAbort.current?.abort();setRefModLibraryStatus("idle");setRefModLibrary([]); }, [h3Backend]);
+  useEffect(() => () => refModLibraryAbort.current?.abort(), []);
   const [studioSnapshot, setStudioSnapshot] = useState<{ owner: string; plan: H3StudioPlan } | null>(null);
   const [studioControllerEpoch, setStudioControllerEpoch] = useState(0);
   const validatedStudioPlan = studioSnapshot?.owner === storageOwnerKey ? studioSnapshot.plan : null;
@@ -1856,15 +1861,16 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   }, [modeCapabilities.supportsOptionalLoras, studioMode]);
   useEffect(() => {
     if (studioMode !== "h3-refmods" || refModLibraryStatus !== "idle") return;
-    let cancelled = false;
+    const controller = new AbortController();refModLibraryAbort.current?.abort();refModLibraryAbort.current = controller;
     setRefModLibraryStatus("loading");
-    void fetch("/api/h3/special/refmods/library", {
+    void fetch(`/api/h3/special/refmods/library?backend=${h3Backend}`, {
       cache: "no-store",
       credentials: "include",
+      signal: controller.signal,
     })
       .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
       .then(({ ok, data }) => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         if (!ok || !data.ok) throw new Error(data.error || "Could not read RefMod library.");
         setRefModLibrary(Array.isArray(data.entries) ? data.entries : []);
         setRefModLibraryStatus("ready");
@@ -1873,7 +1879,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         );
       })
       .catch((error) => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         setRefModLibraryStatus("error");
         setRefModLibraryMessage(
           error instanceof Error
@@ -1881,10 +1887,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
             : "Could not read RefMod library.",
         );
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [studioMode, refModLibraryStatus]);
+  }, [studioMode, refModLibraryStatus, h3Backend]);
   useEffect(() => {
     function consume(entry: H3RefModLibraryEntry | null) {
       if (!entry?.name) return;
@@ -2780,6 +2783,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   }
   function h3GenerationConfig(): H3GenerationConfig {
     return {
+      targetBackend: h3Backend,
       ...(validatedStudioPlan ? { studioPlan: validatedStudioPlan, seed: validatedStudioPlan.seed } : {}),
       mode,
       quality,
@@ -2825,6 +2829,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   }
   function h3RealismGenerationConfig() {
     return {
+      targetBackend: h3Backend,
       mode: "h3-realism",
       quality,
       orientation,
@@ -2881,6 +2886,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   }
   function h3BodySwapGenerationConfig() {
     return {
+      targetBackend: h3Backend,
       mode: "h3-body-swap",
       quality,
       orientation,
@@ -2911,6 +2917,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   }
   function h3RefModsGenerationConfig() {
     return {
+      targetBackend: h3Backend,
       mode: "h3-refmods",
       quality,
       orientation,
@@ -3997,10 +4004,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       className="mx-auto max-w-7xl space-y-4 pb-28 pt-8 md:pt-0"
       data-testid="h3-panel"
     >
-      <H3StudioControls key={`${storageOwnerKey}:${studioControllerEpoch}`} ownerKey={storageOwnerKey} controller={studioController} onControllerChange={next => { setStudioController(next); setManualControlsOpen(false); }} manualMenu={studioController === "manual" && !manualControlsOpen} onOpenManualControls={() => setManualControlsOpen(true)} onBackToStudio={() => setManualControlsOpen(false)} onBusyChange={setStudioBusy} />
+      <H3StudioControls key={`${storageOwnerKey}:${studioControllerEpoch}`} ownerKey={storageOwnerKey} backend={h3Backend} onBackendChange={setH3Backend} controller={studioController} onControllerChange={next => { setStudioController(next); setManualControlsOpen(false); }} manualMenu={studioController === "manual" && !manualControlsOpen} onOpenManualControls={() => setManualControlsOpen(true)} onBackToStudio={() => setManualControlsOpen(false)} onBusyChange={setStudioBusy} />
       <div hidden={studioController !== "manual" || manualControlsOpen} data-otg="h3-legacy-manual-tools" className="space-y-4">
       {validatedStudioPlan ? <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 text-[var(--color-text)]" aria-label="Applied H3 Studio plan"><p>Applied plan: {validatedStudioPlan.workflowId} · {validatedStudioPlan.durationSeconds}s · {validatedStudioPlan.quality} MP. The editable generation prompt below is the approved plan prompt; the original intent remains in its manifest. Changed settings require a fresh plan.</p><button type="button" className="min-h-11 px-3" onClick={() => setValidatedStudioPlan(null)}>Stop using applied studio plan</button></section> : null}
-      {videoEditOpen ? <H3VideoEditPanel key={storageOwnerKey} authenticatedOwnerKey={storageOwnerKey} studioBusy={studioBusy} onBack={() => setVideoEditOpen(false)} /> : <>
+      {videoEditOpen ? <H3VideoEditPanel key={storageOwnerKey} backend={h3Backend} authenticatedOwnerKey={storageOwnerKey} studioBusy={studioBusy} onBack={() => setVideoEditOpen(false)} /> : <>
       <section className="relative overflow-hidden rounded-[8px] border border-violet-300/20 bg-[linear-gradient(135deg,#100d25_0%,#09101b_55%,#071216_100%)] px-4 py-5 shadow-[0_20px_60px_rgba(76,29,149,.18)]">
         <div className="absolute inset-y-0 right-0 w-1 bg-gradient-to-b from-violet-300 via-cyan-300 to-transparent" />
         <p className="text-xs font-black uppercase text-violet-200">

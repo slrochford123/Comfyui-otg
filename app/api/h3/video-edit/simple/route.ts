@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
     const asset = await registerStudioMedia(owner, session, new File([await fs.readFile(source.path)], `selection${path.extname(source.path)}`, { type: "video/mp4" }), { role: "reference", description: "Selected source video to edit", includeAudio: false, clipStartSeconds: 0 }, request.signal);
     mediaId = asset.id;
     const media = await resolveStudioMedia(owner, session, [mediaId], true);
-    const compiled = compileH3StudioPlan(plan, studioBoundCompilerInput(plan, media), await inspectH3StudioInventory(), readH3StudioEvidence(), { ownerKey: owner });
+    const compiled = compileH3StudioPlan(plan, studioBoundCompilerInput(plan, media), await inspectH3StudioInventory(undefined, plan.backend), readH3StudioEvidence(plan.backend), { ownerKey: owner });
     if (!compiled.manifest.executable) return NextResponse.json({ error: "This edit configuration is unavailable. Check the required clip, installed H3 models and worker status.", reasons: compiled.manifest.blockedReasons }, { status: 400, headers });
     if (!Object.values(compiled.graph).some(node => node.class_type === "ModelPreviewOverrideKJ")) throw Error("Generation preview is unavailable.");
     // Internal exact-input receipt, not a second user-facing review or approval step.

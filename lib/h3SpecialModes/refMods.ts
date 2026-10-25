@@ -78,6 +78,7 @@ export type H3RefModLibraryEntry = {
 };
 
 export type H3RefModsRequestInput = {
+  targetBackend?: "rtx3090" | "rtx5060ti";
   mode?: unknown;
   quality?: unknown;
   orientation?: unknown;

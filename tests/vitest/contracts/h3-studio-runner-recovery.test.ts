@@ -40,8 +40,8 @@ vi.mock("@/lib/production/h3Comfy", () => ({
 }));
 vi.mock("@/lib/production/h3GenerationScheduler", () => ({ chooseProductionV2H3Backend: m.choose }));
 vi.mock("@/lib/production/h3Workflows", () => ({
-  buildH3Workflow: m.build, H3_BACKEND_PRIORITY: ["rtx3090"],
-  H3_BACKEND_PROFILES: { rtx3090: { baseUrl: "http://comfy.invalid:8189", label: "Mock 3090" } },
+  buildH3Workflow: m.build, H3_BACKEND_PRIORITY: ["rtx3090", "rtx5060ti"],
+  H3_BACKEND_PROFILES: { rtx3090: { baseUrl: "http://comfy.invalid:8189", label: "Mock 3090" }, rtx5060ti: { baseUrl: "http://comfy-5060.invalid:8188", label: "Mock 5060 Ti" } },
   H3_MAX_AUDIO_REFERENCES: 3, H3_MAX_IMAGE_REFERENCES: 9, H3_MAX_VIDEO_REFERENCES: 3,
 }));
 vi.mock("@/lib/production/h3Loras", () => ({ DEFAULT_PRODUCTION_V2_H3_USER_LORAS: [] }));
@@ -205,6 +205,14 @@ afterEach(async () => {
 });
 
 describe("H3 Studio real runner recovery with isolated persistence", () => {
+  it('sends a 5060 Studio plan only to that GPU and revalidates inventory on the same target', async () => {
+    plan = { ...plan,backend:'rtx5060ti' };
+    m.inspect.mockImplementation(async backend => ({ backend,compatible:true }));m.choose.mockReturnValue('rtx5060ti');
+    const job = await createJob();start(job);await idle(job);
+    expect(m.inspect.mock.calls.every(([backend]) => backend === 'rtx5060ti')).toBe(true);
+    expect(m.submit).toHaveBeenCalledWith(expect.objectContaining({ backend:'rtx5060ti' }));
+    expect(m.inventory.mock.calls.every(([,backend]) => backend === 'rtx5060ti')).toBe(true);
+  });
   it("retains repeated cancellation while submission is in flight and records late acceptance before cancellation", async () => {
     const entered = gate(), accept = gate(), recorded = gate(), finish = gate();
     m.submit.mockImplementation(async args => {

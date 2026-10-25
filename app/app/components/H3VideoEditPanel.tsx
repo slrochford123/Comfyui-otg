@@ -10,7 +10,7 @@ function previewUrl(value?: string) {
   return /^data:(?:image\/(?:jpeg|png|webp|gif)|video\/(?:mp4|webm));base64,[a-zA-Z0-9+/=\s]+$/.test(value) ? value : undefined;
 }
 export function trimTime(seconds: number) { return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${(seconds % 60).toFixed(2).padStart(5, "0")}`; }
-export default function H3VideoEditPanel({ onBack, authenticatedOwnerKey = "", studioBusy = false }: { onBack: () => void; authenticatedOwnerKey?: string; studioBusy?: boolean }) {
+export default function H3VideoEditPanel({ onBack, backend = "rtx3090", authenticatedOwnerKey = "", studioBusy = false }: { onBack: () => void; backend?: "rtx3090" | "rtx5060ti"; authenticatedOwnerKey?: string; studioBusy?: boolean }) {
   const [quality, setQuality] = useState("0.6");
   const [file, setFile] = useState<File | null>(null);
   const [source, setSource] = useState("");
@@ -34,7 +34,7 @@ export default function H3VideoEditPanel({ onBack, authenticatedOwnerKey = "", s
   const picker = useRef<HTMLInputElement>(null);
   const output = useRef<HTMLVideoElement>(null);
   const requestId = useRef("");
-  useEffect(() => { requestId.current = ""; }, [selection?.id, prompt, quality]);
+  useEffect(() => { requestId.current = ""; }, [selection?.id, prompt, quality, backend]);
   function removeAsset(id: string) { ownedAssets.current.delete(id); void fetch("/api/h3/video-edit/source", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, remove: true }), keepalive: true }); }
   useEffect(() => () => { operationAbort.current?.abort(); if (sourceRef.current) URL.revokeObjectURL(sourceRef.current); for (const id of ownedAssets.current) { void fetch("/api/h3/video-edit/source", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, remove: true }), keepalive: true }); } }, []);
   const active = !!job && !["completed", "canceled", "failed"].includes(job.status);
@@ -124,7 +124,7 @@ export default function H3VideoEditPanel({ onBack, authenticatedOwnerKey = "", s
       else {
         if (!selection || !prompt.trim()) throw Error("Choose and prepare a 2–10-second video selection and enter an edit prompt.");
         if (action === "retry" || !requestId.current) requestId.current = newClientRequestId();
-        response = await fetch("/api/h3/video-edit/simple", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceId: selection.id, prompt: prompt.trim(), quality, requestId: requestId.current }) });
+        response = await fetch("/api/h3/video-edit/simple", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceId: selection.id, prompt: prompt.trim(), quality, backend, requestId: requestId.current }) });
       }
       const result = await response.json(); if (!response.ok) throw Error(result.error || "H3 edit failed.");
       if (action === "gallery" && !result.job && job) setJob((await json(await fetch(`/api/h3/generation?jobId=${encodeURIComponent(job.id)}`, { cache: "no-store" }))).job);

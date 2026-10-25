@@ -8,7 +8,7 @@ import { DEFAULT_H3_ADVANCED_SETTINGS, normalizeH3AdvancedSettings } from "@/lib
 import type { H3DirectJobInput, H3DirectReference } from "@/lib/h3DirectJobs";
 
 // Bump whenever compiler behavior or normalization changes.
-export const H3_STUDIO_COMPILER_VERSION = "h3-studio-compiler-v2.2";
+export const H3_STUDIO_COMPILER_VERSION = "h3-studio-compiler-v2.3-dual-gpu";
 export type H3StudioDependency = { filename: string; sha256: string; bytes: number };
 export function stableH3StudioJson(value: unknown): string {
   if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);

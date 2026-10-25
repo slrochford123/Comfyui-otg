@@ -172,7 +172,7 @@ export function studioBoundCompilerInput(plan: H3StudioPlan, media: StudioMediaS
     firstImageName: media.items.find(i => i.asset.role === "first")?.asset.name,
     lastImageName: media.items.find(i => i.asset.role === "last")?.asset.name,
     references: refs.map(({ asset: a }) => ({ id: a.id, kind: a.kind, name: a.name, description: a.description, includeAudio: a.includeAudio })) });
-  return { backend: "rtx3090", mode, h3Quality: plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq", durationSeconds: studioTemplateDuration(plan.durationSeconds), orientation: plan.orientation, finalPrompt: composeH3StudioFinalPrompt(locked, plan.prompt), seed: plan.seed, outputPrefix: "h3-studio/review",
+  return { backend: plan.backend ?? "rtx3090", mode, h3Quality: plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq", durationSeconds: studioTemplateDuration(plan.durationSeconds), orientation: plan.orientation, finalPrompt: composeH3StudioFinalPrompt(locked, plan.prompt), seed: plan.seed, outputPrefix: "h3-studio/review",
     startImageFilename: media.items.find(i => i.asset.role === "first")?.asset.id,
     lastImageFilename: media.items.find(i => i.asset.role === "last")?.asset.id,
     references: refs.filter(i => i.asset.kind === "image").map(({ asset: a }, index) => ({ id: a.id, name: a.name, description: a.description, uploadedFilename: a.id, sourceKind: "production-upload" as const, sourceId: a.id, workflowImage: a.id, generationSourceType: "production-upload" as const, pictureSlot: (index + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9, subjectSlot: (index + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 })),

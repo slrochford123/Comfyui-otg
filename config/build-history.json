@@ -1,12 +1,18 @@
 {
   "schemaVersion": 1,
-  "current": "2",
+  "current": "2.01",
   "builds": [
     {
       "version": "2",
       "date": "2026-10-23",
       "summary": "H3 Studio, video trimming, Snapshot and Admin control-center update.",
       "sourceBaseCommit": "e2a4f742c7dc360b527ef6b5c1f638092b1263b0"
+    },
+    {
+      "version": "2.01",
+      "date": "2026-10-25",
+      "summary": "Explicit dual-GPU H3 Auto/Manual, Edit Video and special-mode routing; target-bound recovery and model inventory integrity.",
+      "sourceBaseCommit": "a3f9ca4148914be60aaab44b556902a3ff2b5d53"
     }
   ]
 }

@@ -14,6 +14,8 @@ export const H3_STUDIO_PROFILES = {
   "fl2va-8step": { sampler: "res_multistep", scheduler: "simple", steps: 8 },
 } as const;
 export type H3StudioPlan = {
+  /** Omitted only by legacy saved plans; normalized to RTX 3090. */
+  backend?: "rtx3090" | "rtx5060ti";
   version: typeof H3_STUDIO_VERSION;
   workflowId: H3StudioWorkflowId;
   checkpoint: "standard" | "singularity";
@@ -36,6 +38,7 @@ export type H3StudioPlan = {
   steps: 20 | 8;
 };
 export const DEFAULT_H3_STUDIO_PLAN: H3StudioPlan = {
+  backend: "rtx3090",
   version: H3_STUDIO_VERSION, workflowId: "native-t2v", checkpoint: "standard", profile: "native",
   quality: "0.6", orientation: "landscape", durationSeconds: 5, fps: 24, seed: 424242,
   prompt: "", originalPrompt: "", loras: [], attention: "project-sla", audio: "generated", combatEnabled: false,
@@ -58,10 +61,11 @@ export function parseH3StudioPlan(value: unknown): H3StudioPlan {
   const raw = object(value);
   // v1 saved plans predate these controls. Only the added fields get defaults.
   const profileDefaults = H3_STUDIO_PROFILES[raw.profile as keyof typeof H3_STUDIO_PROFILES] || H3_STUDIO_PROFILES.native;
-  const p: Record<string, unknown> = { camera: "none", motion: "none", ...profileDefaults, ...raw };
+  const p: Record<string, unknown> = { backend: "rtx3090", camera: "none", motion: "none", ...profileDefaults, ...raw };
   if (Object.keys(p).some(key => !Object.hasOwn(DEFAULT_H3_STUDIO_PLAN, key))) throw new Error("Unknown H3 plan field.");
   if (Object.keys(DEFAULT_H3_STUDIO_PLAN).some(key => !Object.hasOwn(p, key))) throw new Error("Incomplete H3 plan.");
   const enums: Record<string, readonly unknown[]> = {
+    backend: ["rtx3090", "rtx5060ti"],
     version: [H3_STUDIO_VERSION], workflowId: H3_STUDIO_WORKFLOWS.map(w => w.id), checkpoint: ["standard", "singularity"],
     profile: Object.keys(H3_STUDIO_PROFILES), quality: Object.keys(H3_STUDIO_SIZES), orientation: ["landscape", "portrait"],
     fps: [24], attention: ["project-sla", "dense"], audio: ["generated", "original", "mute"],
@@ -91,6 +95,8 @@ export function parseH3StudioPlan(value: unknown): H3StudioPlan {
   if (plan.sampler !== registered.sampler || plan.scheduler !== registered.scheduler || plan.steps !== registered.steps) throw new Error("Sampler, scheduler and steps must match the registered profile.");
   return plan;
 }
+export function studioBackend(plan: Pick<H3StudioPlan, "backend">) { return plan.backend ?? "rtx3090"; }
+export function studioGpuPattern(backend: "rtx3090" | "rtx5060ti") { return backend === "rtx3090" ? /RTX\s*3090/i : /RTX\s*5060\s*Ti/i; }
 export type H3StudioReconcileCatalogItem = { id: string; family: "FL2VA" | "Ref2VA" | "both" | null;
   strength: { min: number; max: number } | null; blockedReasons?: string[] };
 /** A controller patch is reconciled once, before strict parsing/preview. Never mutates either input. */

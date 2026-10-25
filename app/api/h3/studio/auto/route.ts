@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     // Browser/manual/AI settings cannot disable Auto's SLA + family-matched Turbo 8.
     const plan = automaticH3Plan(draft, workflow);
     validateStudioMediaPlan(plan, media);
-    const built = compileH3StudioPlan(plan, studioBoundCompilerInput(plan, media), await inspectH3StudioInventory(), readH3StudioEvidence(), { ownerKey: scope.owner });
+    const built = compileH3StudioPlan(plan, studioBoundCompilerInput(plan, media), await inspectH3StudioInventory(undefined, plan.backend), readH3StudioEvidence(plan.backend), { ownerKey: scope.owner });
     if (!built.manifest.executable) return NextResponse.json({ error: "These inputs are not ready to generate. Check the required media, installed models and worker status.", reasons: built.manifest.blockedReasons }, { status: 400, headers });
     const receipt = { executionDigest: studioReviewedExecutionDigest(built.graph), credits: built.manifest.estimatedCredits, seconds: built.manifest.estimatedSeconds };
     // Preserve exact-input authorization internally; Create Video itself is consent

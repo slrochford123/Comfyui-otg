@@ -21,6 +21,15 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 function setup() { render(<H3StudioControls ownerKey="qa" />); fireEvent.change(screen.getByLabelText("Video description"), { target: { value: "A red kite" } }); }
 describe("Auto creates from one explicit click, without a review checkpoint", () => {
+  it("passes the explicit 5060 target from Auto and retains it when switching to Manual", async () => {
+    setup();await waitFor(() => expect(screen.getByLabelText('H3 rendering GPU')).not.toBeDisabled());
+    fireEvent.change(screen.getByLabelText('H3 rendering GPU'),{ target:{ value:'rtx5060ti' } });
+    await waitFor(() => expect(server.mock.calls.some(([url]) => url === '/api/h3/studio?backend=rtx5060ti')).toBe(true));
+    fireEvent.click(screen.getByRole('button',{ name:'Manual Mode' }));expect(screen.getByLabelText('H3 rendering GPU')).toHaveValue('rtx5060ti');
+    fireEvent.click(screen.getByRole('button',{ name:'Auto Mode' }));
+    fireEvent.click(screen.getByRole('button',{ name:'Create Video' }));
+    await screen.findByText('Generating video');expect(JSON.parse(calls()[0][1].body).plan.backend).toBe('rtx5060ti');
+  });
   it("labels retry as a real new generation and gives it a new identity", async () => {
     server.mockImplementation(async (url, init) => url === "/api/h3/studio/auto" ? json({ job: { ...job, status: "completed", statusMessage: "Video complete" }, plan: JSON.parse(init.body).plan }) : json({ catalog: [] }));
     setup(); fireEvent.click(screen.getByRole("button", { name: "Create Video" })); await screen.findByText("Video complete");

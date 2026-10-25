@@ -40,7 +40,7 @@ export async function executeH3Studio(request: NextRequest, suppliedBody?: Studi
     const plan = parseH3StudioPlan(body.plan);
     const media = await resolveStudioMedia(scope.owner, scope.session, body.mediaIds, true);
     validateStudioMediaPlan(plan, media);
-    const inventory = await inspectH3StudioInventory(), evidence = readH3StudioEvidence();
+    const inventory = await inspectH3StudioInventory(undefined, plan.backend), evidence = readH3StudioEvidence(plan.backend);
     const compiled = compileH3StudioPlan(plan, studioBoundCompilerInput(plan, media), inventory, evidence, { ownerKey: scope.owner });
     if (!compiled.manifest.executable) throw new Error("The required models, worker or workflow inputs are unavailable.");
     const receipt = { executionDigest: studioReviewedExecutionDigest(compiled.graph), credits: compiled.manifest.estimatedCredits, seconds: compiled.manifest.estimatedSeconds };

@@ -49,7 +49,7 @@ describe("H3 Edit Video tab uses the attached reference architecture", () => {
     const calls = server.mock.calls.filter(([url]) => url === "/api/h3/video-edit/simple");
     expect(calls).toHaveLength(1);
     expect(JSON.parse(calls[0][1].body)).toMatchObject({ sourceId: "selection", prompt: "Make the coat blue", quality: "1" });
-    expect(Object.keys(JSON.parse(calls[0][1].body)).sort()).toEqual(["prompt", "quality", "requestId", "sourceId"]);
+    expect(Object.keys(JSON.parse(calls[0][1].body)).sort()).toEqual(["backend", "prompt", "quality", "requestId", "sourceId"]);
     expect(screen.getByRole("link", { name: "Download Video" })).toHaveAttribute("href", "/api/h3/generation/media?jobId=job&download=1");
     expect(screen.getByRole("button", { name: "Expand Video" })).toBeVisible();
     expect(screen.getByText(/Saved to Gallery/)).toBeVisible();

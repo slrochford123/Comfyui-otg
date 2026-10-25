@@ -3,6 +3,7 @@ import {
   type ResolvedH3OptionalLora,
 } from "@/lib/h3LoraCatalogServer";
 import crypto from "node:crypto";
+import { h3CandidateBackends, parseH3TargetBackend } from "@/lib/h3GpuRouting";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -56,6 +57,7 @@ import {
 } from "@/lib/paths";
 
 export type H3RefModsJobInput = {
+  targetBackend?: ProductionV2H3BackendId;
   mode: "h3-refmods";
   quality: H3Quality;
   orientation: H3Orientation;
@@ -111,15 +113,15 @@ function state() {
   return globalState[GLOBAL_KEY];
 }
 
-async function selectH3RefModsBackend() {
-  if (H3_REFMODS_BASE_URL) {
+async function selectH3RefModsBackend(target?: ProductionV2H3BackendId) {
+  if (H3_REFMODS_BASE_URL && !target) {
     const forcedBaseUrl = H3_REFMODS_BASE_URL.replace(/\/+$/, "");
     const backend = (Object.keys(H3_BACKEND_PROFILES) as ProductionV2H3BackendId[])
       .find((candidate) => H3_BACKEND_PROFILES[candidate].baseUrl === forcedBaseUrl) || "rtx3090";
     return { backend, baseUrl: forcedBaseUrl };
   }
   const probes = await Promise.all(
-    H3_BACKEND_PRIORITY.map((backend) => inspectH3BackendCompatibility(backend)),
+    h3CandidateBackends(target, H3_BACKEND_PRIORITY).map((backend) => inspectH3BackendCompatibility(backend)),
   );
   const byId = new Map(probes.map((probe) => [probe.backend, probe]));
   const backend =
@@ -170,12 +172,12 @@ async function missingRefModsForBackend(baseUrl: string, refMods: H3RefModsJobIn
   return required.filter((name) => !choices.has(name));
 }
 
-async function selectH3RefModsBackendForSlots(refMods: H3RefModsJobInput["refMods"]) {
-  const selected = await selectH3RefModsBackend();
+async function selectH3RefModsBackendForSlots(refMods: H3RefModsJobInput["refMods"], target?: ProductionV2H3BackendId) {
+  const selected = await selectH3RefModsBackend(target);
   const selectedMissing = await missingRefModsForBackend(selected.baseUrl, refMods);
   if (!selectedMissing.length) return selected;
 
-  for (const backend of H3_BACKEND_PRIORITY) {
+  for (const backend of h3CandidateBackends(target, H3_BACKEND_PRIORITY)) {
     if (backend === selected.backend) continue;
     const baseUrl = H3_BACKEND_PROFILES[backend].baseUrl;
     const missing = await missingRefModsForBackend(baseUrl, refMods).catch(() => selectedMissing);
@@ -259,6 +261,7 @@ export function validateH3RefModsJobInput(input: H3RefModsRequestInput): H3RefMo
   }
   return {
     mode: "h3-refmods",
+    targetBackend: parseH3TargetBackend(input.targetBackend),
     quality: normalized.quality,
     orientation: normalized.orientation,
     durationSeconds: normalized.durationSeconds,
@@ -461,7 +464,7 @@ async function execute(job: H3RefModsJob) {
       error: null,
     });
   } else {
-    const selected = await selectH3RefModsBackendForSlots(persisted.input.refMods);
+    const selected = await selectH3RefModsBackendForSlots(persisted.input.refMods, persisted.input.targetBackend);
     await updateJob(job.ownerKey, job.id, {
       status: "preparing",
       statusMessage: `Preparing RefMods T2V workflow for ${H3_BACKEND_PROFILES[selected.backend].label}`,
@@ -601,6 +604,7 @@ export function ensureH3RefModsJobRunner(job: H3RefModsJob | null | undefined) {
 
 export function retryH3RefModsJob(source: H3RefModsJob) {
   return createH3RefModsJob(source.ownerKey, {
+    targetBackend: source.input.targetBackend,
     mode: "h3-refmods",
     quality: source.input.quality,
     orientation: source.input.orientation,

@@ -24,11 +24,13 @@ function failure(error: unknown) {
 export async function GET(request: NextRequest) {
   try {
     const user = await requireSessionUser(request); assertH3StudioAvailable();
-    const inventory = await inspectH3StudioInventory();
+    const backend = request.nextUrl.searchParams.get("backend") ?? "rtx3090";
+    if (backend !== "rtx3090" && backend !== "rtx5060ti") return json({ ok: false, error: "Choose RTX 3090 or RTX 5060 Ti." }, 400);
+    const inventory = await inspectH3StudioInventory(undefined, backend);
     const decisions = h3Stage1cDecisions();
     return json({ ok: true, catalog: h3StudioCatalog(inventory), workflows: H3_STUDIO_WORKFLOWS,
       counts: { selected: decisions.selected.length, maybe: decisions.maybe.length, skip: decisions.skipped.length, undecided: decisions.undecided.length },
-      observedAt: inventory.observedAt, ...(!h3StudioProduction() ? { upstreamAuthorization: H3_UPSTREAM_OWNER_ATTESTATION } : {}), experimental: h3StudioOwnerExperimental(user.ownerKey), directGeneration: h3StudioProduction(), qualificationState: h3StudioProduction() ? "installed-workflow-validation" : "per-plan-validation-required", gpu: "RTX 3090" });
+      observedAt: inventory.observedAt, ...(!h3StudioProduction() ? { upstreamAuthorization: H3_UPSTREAM_OWNER_ATTESTATION } : {}), experimental: h3StudioOwnerExperimental(user.ownerKey, backend), directGeneration: h3StudioProduction(), qualificationState: h3StudioProduction() ? "installed-workflow-validation" : "per-plan-validation-required", backend, gpu: backend === "rtx3090" ? "RTX 3090" : "RTX 5060 Ti" });
   } catch (error) { return failure(error); }
 }
 export async function POST(request: NextRequest) {
@@ -42,11 +44,11 @@ export async function POST(request: NextRequest) {
     const plan = parseH3StudioPlan(body.plan);
     const media = await resolveStudioMedia(user.ownerKey, scope.session, body.mediaIds || [], true);
     validateStudioMediaPlan(plan, media);
-    const inventory = await inspectH3StudioInventory();
-    const evidence = readH3StudioEvidence();
+    const inventory = await inspectH3StudioInventory(undefined, plan.backend);
+    const evidence = readH3StudioEvidence(plan.backend);
     const boundInput = studioBoundCompilerInput(plan, media);
     const access = { ownerKey: user.ownerKey };
-    const experimental = h3StudioOwnerExperimental(user.ownerKey);
+    const experimental = h3StudioOwnerExperimental(user.ownerKey, plan.backend);
     const built = compileH3StudioPlan(plan, boundInput, inventory, evidence, access);
     if (body.action === "preview") {
       const review = await createStudioReview(user.ownerKey, scope.session, plan, media.fingerprint, built.manifest.qualificationFingerprint, built.manifest.submissionGraphSha256,
@@ -64,7 +66,7 @@ export async function POST(request: NextRequest) {
     const available: H3PlannerCapability[] = [];
     for (const value of candidates.slice(0, 256)) {
       try {
-        const candidate = parseH3StudioPlan({ ...(value as object), prompt: plan.prompt, originalPrompt: plan.originalPrompt, seed: plan.seed });
+        const candidate = parseH3StudioPlan({ ...(value as object), backend: plan.backend, prompt: plan.prompt, originalPrompt: plan.originalPrompt, seed: plan.seed });
         validateStudioMediaPlan(candidate, media);
         const result = compileH3StudioPlan(candidate, studioBoundCompilerInput(candidate, media), inventory, evidence, access);
         const family = H3_STUDIO_WORKFLOWS.find(w => w.id === candidate.workflowId)!.family;

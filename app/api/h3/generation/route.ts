@@ -307,6 +307,7 @@ async function startGenerationJob(
   }
 
   const input = validateH3DirectInput({
+    ...(config.targetBackend !== undefined ? { targetBackend: config.targetBackend as import("@/lib/production/h3Workflows").ProductionV2H3BackendId } : {}),
     mode: generation.mode,
     quality: generation.quality,
     orientation: generation.orientation,

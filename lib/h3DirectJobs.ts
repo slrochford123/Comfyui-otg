@@ -24,7 +24,7 @@ import { DEFAULT_PRODUCTION_V2_H3_USER_LORAS } from "@/lib/production/h3Loras";
 import { validateH3LoraSelections, type ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
 import type { H3StudioLoraSelection } from "@/lib/h3Studio";
 import { buildH3StudioLockedReferences, composeH3StudioFinalPrompt } from "@/lib/h3Studio";
-import { studioDimensions } from "@/lib/h3StudioPlan";
+import { studioDimensions, studioBackend, parseH3StudioPlan } from "@/lib/h3StudioPlan";
 import { hasH3StudioQualificationAdmission } from "@/lib/h3StudioQualification";
 import {
   getH3NativeDimensions,
@@ -57,6 +57,7 @@ export type H3DirectReference = {
 };
 
 export type H3DirectJobInput = {
+  targetBackend?: ProductionV2H3BackendId;
   studioPlan?: import("@/lib/h3StudioPlan").H3StudioPlan;
   /** Classification only; never an admission grant. Only the local CLI can authorize. */
   studioQualification?: { fingerprint: string };
@@ -197,11 +198,11 @@ export async function getLatestH3DirectJob(ownerKey: string) {
 /** Read-only backend reconciliation. Never resubmits, interrupts, frees or resets. */
 export async function reconcileH3StudioSubmission(ownerKey: string, id: string) {
   const current = await getH3DirectJob(ownerKey, id);
-  if (!current || !current.input.studioPlan || current.backend !== "rtx3090" || current.promptId
+  if (!current || !current.input.studioPlan || current.backend !== studioBackend(current.input.studioPlan) || current.promptId
     || !["submitting", "unknown"].includes(current.studioSubmissionState || "") || !current.clientId) return current;
   if (state().running.has(id)) return current; // The original POST may still be resolving.
   try {
-    const base = H3_BACKEND_PROFILES.rtx3090.baseUrl;
+    const base = H3_BACKEND_PROFILES[current.backend].baseUrl;
     const [queueResponse, historyResponse] = await Promise.all(["/queue", "/history?max_items=200"].map(p => fetch(base + p, { cache: "no-store", signal: AbortSignal.timeout(10_000) })));
     if (!queueResponse.ok || !historyResponse.ok) return current;
     const queue = await queueResponse.json(), history = await historyResponse.json();
@@ -446,7 +447,8 @@ async function execute(job: H3DirectJob) {
   const qualification = await import("@/lib/h3StudioQualification");
   const qualificationJob = !!job.input.studioPlan && qualification.hasH3StudioQualificationAdmission(job.id, job.ownerKey);
   if (job.input.studioPlan && !job.input.studioMedia && !qualificationJob) throw new Error("Reviewed owner-bound H3 Studio media is required.");
-  if (job.input.studioPlan && persisted.backend && persisted.backend !== "rtx3090") throw new Error("H3 Studio cannot resume on a non-3090 backend.");
+  const requestedBackend = job.input.studioPlan ? studioBackend(job.input.studioPlan) : job.input.targetBackend;
+  if (requestedBackend && persisted.backend && persisted.backend !== requestedBackend) throw new Error("H3 cannot resume on a different GPU from the selected target.");
   if (job.input.studioPlan && !persisted.promptId && ["submitting", "unknown"].includes(persisted.studioSubmissionState || "")) throw new Error("Backend submission is unresolved; automatic resubmission is disabled.");
   const checkBoundMedia = async () => {
     const media = job.input.studioMedia; if (!media) return;
@@ -489,7 +491,7 @@ async function execute(job: H3DirectJob) {
     const userLoraFilenames = optionalLoras.map((lora) => lora.filename);
     const probes = await Promise.all(
 
-      H3_BACKEND_PRIORITY.filter(candidate => !(job.input.videoEdit || job.input.studioPlan) || candidate === "rtx3090").map((candidate) =>
+      H3_BACKEND_PRIORITY.filter(candidate => requestedBackend ? candidate === requestedBackend : !job.input.videoEdit || candidate === "rtx3090").map((candidate) =>
 
         inspectH3BackendCompatibility(candidate, {
 
@@ -507,6 +509,7 @@ async function execute(job: H3DirectJob) {
 
     );
     backend = chooseProductionV2H3Backend(probes);
+    if (backend && requestedBackend && backend !== requestedBackend) throw new Error("The selected H3 worker changed; no GPU fallback is permitted.");
     if (!backend) {
       const details = probes.map((probe) => `${probe.backend}: ${probe.reason}`).join("; ");
       throw new Error(`No compatible H3 GPU is available. ${details}`);
@@ -588,7 +591,7 @@ async function execute(job: H3DirectJob) {
         startImageFilename: firstImageFilename, lastImageFilename, references, voices,
         videoReferences: job.input.videos.map((item, index) => ({ uploadedFilename: videoFilenames[index], includeAudio: item.includeAudio === true })) };
       const result = compileH3StudioPlan(job.input.studioPlan, studioBuildInput,
-        await inspectH3StudioInventory(qualificationJob ? { qualificationJobId: job.id, ownerKey: job.ownerKey } : undefined), readH3StudioEvidence(), { ownerKey: job.ownerKey });
+        await inspectH3StudioInventory(qualificationJob ? { qualificationJobId: job.id, ownerKey: job.ownerKey } : undefined, selectedBackend), readH3StudioEvidence(selectedBackend), { ownerKey: job.ownerKey });
       const qualifying = qualificationJob && qualification.isStudioQualificationJob(job.id, result.manifest.qualificationFingerprint);
       if ((!result.manifest.executable && !(qualifying && result.manifest.readyForQualification)) || (job.input.studioMedia && job.input.studioMedia.qualificationFingerprint !== result.manifest.qualificationFingerprint)) throw new Error("H3 plan qualification changed; no backend job was submitted.");
       await updateJob(job.ownerKey, job.id, { studioManifest: result.manifest });
@@ -630,7 +633,7 @@ async function execute(job: H3DirectJob) {
           const { inspectH3StudioInventory, readH3StudioEvidence } = await import("@/lib/h3StudioRegistry");
           if (!studioBuildInput || !job.input.studioPlan) throw new Error("Studio inputs are missing.");
           const checked = compileH3StudioPlan(job.input.studioPlan, studioBuildInput,
-            await inspectH3StudioInventory(qualificationJob ? { qualificationJobId: job.id, ownerKey: job.ownerKey } : undefined), readH3StudioEvidence(), { ownerKey: job.ownerKey });
+            await inspectH3StudioInventory(qualificationJob ? { qualificationJobId: job.id, ownerKey: job.ownerKey } : undefined, selectedBackend), readH3StudioEvidence(selectedBackend), { ownerKey: job.ownerKey });
           if (checked.manifest.qualificationFingerprint !== studioCompilation.manifest.qualificationFingerprint
             || checked.manifest.boundGraphDigest !== studioCompilation.manifest.boundGraphDigest
             || (!checked.manifest.executable && !(qualificationJob && checked.manifest.readyForQualification))) throw new Error("Qualification or dependencies changed during admission.");
@@ -834,6 +837,11 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
 }
 
 export function validateH3DirectInput(input: H3DirectJobInput) {
+  if (input.targetBackend !== undefined && !["rtx3090", "rtx5060ti"].includes(input.targetBackend)) throw new Error("Choose RTX 3090 or RTX 5060 Ti.");
+  if (input.studioPlan) {
+    input.studioPlan = parseH3StudioPlan(input.studioPlan);
+    if (input.targetBackend && input.targetBackend !== studioBackend(input.studioPlan)) throw new Error("Conflicting H3 GPU targets.");
+  }
   if (input.videoEdit) h3VideoEditFrameCount(input.videoEdit.durationSeconds);
   input.rifeInterpolation60Fps = normalizeH3RifeInterpolation60Fps(input.rifeInterpolation60Fps);
   if (!input.prompt.trim()) throw new Error("Enter a prompt before generating.");

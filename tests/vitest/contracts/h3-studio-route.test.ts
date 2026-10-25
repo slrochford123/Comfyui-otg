@@ -18,6 +18,13 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("H3 Studio authenticated TEST-only preview route", () => {
+  it('uses the selected 5060 worker for the catalog',async () => {
+    const response=await GET(new NextRequest('http://localhost:3001/api/h3/studio?backend=rtx5060ti'));
+    expect(response.status).toBe(200);expect(m.inventory).toHaveBeenCalledWith(undefined,'rtx5060ti');expect((await response.json()).gpu).toBe('RTX 5060 Ti');
+  });
+  it('rejects an arbitrary worker target before querying a worker',async () => {
+    expect((await GET(new NextRequest('http://localhost:3001/api/h3/studio?backend=http://evil'))).status).toBe(400);expect(m.inventory).not.toHaveBeenCalled();
+  });
   it("denies an unauthenticated catalog request before worker access", async () => { m.session.mockRejectedValue(new SessionInvalidError()); expect((await GET(new NextRequest("http://localhost:3001/api/h3/studio"))).status).toBe(401); expect(m.inventory).not.toHaveBeenCalled(); });
   it("denies unauthenticated planning before paid calls", async () => { m.session.mockRejectedValue(new SessionInvalidError()); expect((await post({ action: "director", plan })).status).toBe(401); expect(m.paid).not.toHaveBeenCalled(); });
   it("fails closed for an unknown deployment before any inventory or paid access", async () => { vi.stubEnv("OTG_ENV", "staging"); vi.stubEnv("NODE_ENV", "production"); expect((await post({ action: "preview", plan })).status).toBe(404); expect(m.inventory).not.toHaveBeenCalled(); });

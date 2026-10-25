@@ -1,4 +1,5 @@
 import { validateH3LoraSelections } from "@/lib/h3LoraCatalogServer";
+import { parseH3TargetBackend } from "@/lib/h3GpuRouting";
 import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -298,6 +299,7 @@ async function startGenerationJob(
 ) {
   const generation = readH3RealismGenerationConfig(config);
   const input = validateH3RealismJobInput({
+    targetBackend: parseH3TargetBackend(config.targetBackend),
     ...generation,
     references: [
       ...media.images,
