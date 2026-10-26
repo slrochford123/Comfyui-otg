@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.02",
+  "current": "2.03",
   "builds": [
     {
       "version": "2",
@@ -19,6 +19,12 @@
       "date": "2026-10-26",
       "summary": "Selected FastH3 OmniRef reference generation on both GPUs, Auto execution-profile consistency and live-preview transport.",
       "sourceBaseCommit": "a930bcd7854bd6cb823afc9755c942aa586e1e63"
+    },
+    {
+      "version": "2.03",
+      "date": "2026-10-26",
+      "summary": "Restore independent legacy H3 rendering; add explicit FastH3, 53 compatible optional LoRAs, automatic trigger injection and researched strength guidance.",
+      "sourceBaseCommit": "1b310e503ca6569d345af531c0f906d0d24f9a05"
     }
   ]
 }

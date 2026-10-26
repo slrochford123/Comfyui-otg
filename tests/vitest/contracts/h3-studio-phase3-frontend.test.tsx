@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import H3StudioControls from "@/app/app/components/H3StudioControls";
+import installedH3 from "@/lib/h3Stage1cInstalled.json";
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 const preview = (id = "review-1", executable = true) => ({ ok: true, review: { id, mediaFingerprint: "server-media-fingerprint" }, manifest: { executable, blockedReasons: executable ? [] : ["PHYSICAL_QUALIFICATION_REQUIRED"], steps: 20, sampler: "res_multistep" }, graph: {}, estimate: { explanation: "No generation submitted", generationCredits: 2, generationSeconds: 30 } });
@@ -57,6 +58,74 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Phase 3 H3 frontend", () => {
+  it("starts a researched slider at four, exposes its signed range and explains automatic triggers", async () => {
+    const entry = installedH3.entries.find(e => e.versionId === 3389300)!;
+    const available = [{ ...catalog[0], id: `civitai-${entry.modelId}-${entry.versionId}`, filename: entry.filename, name: entry.displayName,
+      defaultStrength: entry.defaultStrength, guidance: entry.guidance, triggerWords: entry.triggerWords, strength: { min: -8, max: 8 } }];
+    const original = server.getMockImplementation()!;
+    server.mockImplementation((url, init) => String(url) === "/api/h3/studio" && !init?.method ? Promise.resolve(json({ ok: true, catalog: available, experimental: true })) : original(url, init));
+    render(<H3StudioControls ownerKey="qa" controller="manual" />);
+    await screen.findByText(entry.displayName);
+    fireEvent.change(screen.getByLabelText("Workflow"), { target: { value: "native-r2v" } });
+    fireEvent.click(screen.getByRole("button", { name: `Add ${entry.displayName}` }));
+    expect(screen.getByLabelText("Strength")).toHaveValue(4);
+    expect(screen.getByLabelText("Strength")).toHaveAttribute("min", "-8");
+    expect(screen.getByLabelText("Strength")).toHaveAttribute("max", "8");
+    fireEvent.change(screen.getByLabelText("Strength"), { target: { value: "-4" } });
+    expect(screen.getByLabelText("Strength")).toHaveValue(-4);
+    expect(screen.getByText(/No verified trigger to add/)).toBeInTheDocument();
+  });
+  it("allows compatible FastH3 LoRAs with nonzero defaults, strengths, enabled states and ordering", async () => {
+    const entries = installedH3.entries.filter(entry => entry.fastH3).slice(0, 2);
+    const available = entries.map(entry => ({ ...catalog[0], id: `civitai-${entry.modelId}-${entry.versionId}`, filename: entry.filename, name: entry.displayName, family: entry.family, strength: { min: 0, max: 2 } }));
+    const original = server.getMockImplementation()!;
+    server.mockImplementation((url, init) => String(url) === "/api/h3/studio" && !init?.method ? Promise.resolve(json({ ok: true, catalog: available })) : original(url, init));
+    render(<H3StudioControls ownerKey="qa" controller="manual" />);
+    await screen.findByText(/60 loaded/); intent();
+    fireEvent.change(screen.getByLabelText("Workflow"), { target: { value: "native-r2v" } });
+    fireEvent.change(screen.getByLabelText("Checkpoint"), { target: { value: "fasth3" } });
+    (screen.getByText(/Selected LoRA catalog/).closest("details") as HTMLDetailsElement).open = true;
+    for (const entry of entries) {
+      const button = screen.getByRole("button", { name: `Add ${entry.displayName}` });
+      expect(button).toBeEnabled(); fireEvent.click(button);
+    }
+    expect(screen.getAllByLabelText("Strength")[0]).toHaveValue(entries[0].defaultStrength);
+    fireEvent.change(screen.getAllByLabelText("Strength")[0], { target: { value: ".75" } });
+    fireEvent.click(screen.getAllByLabelText("Enabled")[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Move LoRA 2 earlier" }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview Video Plan (no cost)" }));
+    await screen.findByLabelText("Reviewed video plan");
+    expect(body().plan).toMatchObject({ checkpoint: "fasth3", steps: 8, attention: "vsa", loras: [
+      { id: available[1].id, strength: entries[1].defaultStrength, enabled: true }, { id: available[0].id, strength: .75, enabled: false },
+    ] });
+    fireEvent.change(screen.getByLabelText("Checkpoint"), { target: { value: "standard" } });
+    expect(screen.getAllByLabelText("Strength")).toHaveLength(2);
+    expect(screen.getByLabelText("Acceleration")).toHaveValue("native");
+  });
+  it.each(["native", "ref2va-8step"])("restores the Manual %s profile after explicit FastH3 selection", async profile => {
+    render(<H3StudioControls ownerKey="qa" controller="manual" />);
+    await screen.findByText(/60 loaded/); intent();
+    fireEvent.change(screen.getByLabelText("Workflow"), { target: { value: "native-r2v" } });
+    fireEvent.change(screen.getByLabelText("Checkpoint"), { target: { value: "singularity" } });
+    fireEvent.click(screen.getByLabelText("Independent Combat V2"));
+    fireEvent.change(screen.getByLabelText("Acceleration"), { target: { value: profile } });
+    fireEvent.change(screen.getByLabelText("Checkpoint"), { target: { value: "fasth3" } });
+    expect(screen.getByLabelText("Acceleration")).toBeDisabled();
+    expect(screen.getByLabelText("Steps")).toHaveValue(8);
+    expect(screen.getByLabelText("Sampler")).toHaveValue("euler");
+    expect(screen.queryByLabelText("Native H3 SLA")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Independent Combat V2")).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText("Checkpoint"), { target: { value: "singularity" } });
+    expect(screen.getByLabelText("Acceleration")).toHaveValue(profile);
+    expect(screen.getByLabelText("Acceleration")).not.toBeDisabled();
+    expect(screen.getByLabelText("Steps")).toHaveValue(profile === "native" ? 20 : 8);
+    expect(screen.getByLabelText("Native H3 SLA")).toBeChecked();
+    expect(screen.getByLabelText("Independent Combat V2")).toBeChecked();
+    fireEvent.change(screen.getByLabelText("Checkpoint"), { target: { value: "fasth3" } });
+    fireEvent.change(screen.getByLabelText("Workflow"), { target: { value: "native-i2v" } });
+    expect(screen.getByLabelText("Checkpoint")).toHaveValue("standard");
+    expect(screen.getByLabelText("Native H3 SLA")).toBeChecked();
+  });
   it("creates a PROD Manual video directly, with no review or acceptance checkbox", async () => {
     const original = server.getMockImplementation()!;
     server.mockImplementation((url, init) => String(url) === "/api/h3/studio" && !init?.method

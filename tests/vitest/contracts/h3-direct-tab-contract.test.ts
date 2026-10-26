@@ -146,7 +146,8 @@ describe("H3 direct-generation tab contract", () => {
     expect(panel).not.toContain("videoClipDurationSeconds");
     expect(panel).toContain("Source videos can be up to 20 minutes.");
     expect(panel).toContain('aria-label="Reference video 5-second start time"');
-    expect(panel).toContain("getH3NativeDimensions(value, orientation).width");
+    expect(panel).toContain("getH3NativeDimensions(value, orientation)");
+    expect(panel).toContain("fastH3Selected ? getH3GenerationDimensions");
     expect(panel).toContain("SH · Scene Hunter");
     expect(panel).toContain("Generate Scene Hunter");
     expect(panel).toContain("aria-label={`${label} orientation`}");

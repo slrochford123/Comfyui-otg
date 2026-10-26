@@ -10,7 +10,7 @@ const base = { ...DEFAULT_H3_STUDIO_PLAN, prompt: "A fire dragon flies", origina
 afterEach(() => vi.unstubAllEnvs());
 describe("owner-selected OmniRef C integration", () => {
   it("ships matching Production/Story Creator reference export examples, without benchmark media", () => {
-    for (const [file, backend] of [["production-v2/minimax_h3_r2v_rtx3090.json", "rtx3090"], ["production-v2/minimax_h3_r2v_rtx5060ti.json", "rtx5060ti"], ["story-creator/h3-story-preview-r2v-api.json", "rtx3090"]] as const) {
+    for (const [file, backend] of [["production-v2/fasth3_omniref_r2v_rtx3090.json", "rtx3090"], ["production-v2/fasth3_omniref_r2v_rtx5060ti.json", "rtx5060ti"]] as const) {
       const graph = JSON.parse(fs.readFileSync(`comfy_workflows/internal/${file}`, "utf8"));
       expect(graph["30"].inputs.unet_name).toBe(H3_OMNIREF.checkpoint);
       expect(graph["15"].inputs.clip_name).toBe(h3OmniRefEncoder(backend));
@@ -20,7 +20,7 @@ describe("owner-selected OmniRef C integration", () => {
   });
   it.each(["rtx3090", "rtx5060ti"] as const)("binds the actual C profile and live preview on %s", backend => {
     vi.stubEnv("OTG_ENV", "prod");
-    const plan = automaticH3Plan({ ...base, backend, workflowId: "native-r2v", quality: "1", checkpoint: "singularity", profile: "native" });
+    const plan = automaticH3Plan(reconcileH3StudioPlan({ ...base, backend, workflowId: "native-r2v", quality: "1" }, { checkpoint: "fasth3" }));
     const { graph, manifest } = compileH3StudioPlan(plan, h3StudioPreviewInput(plan), { nodes: new Set(), models: new Set(), loras: new Set(), observedAt: new Date().toISOString() }, null);
     expect(graph["30"].inputs.unet_name).toBe(H3_OMNIREF.checkpoint);
     expect(graph["15"].inputs.clip_name).toBe(h3OmniRefEncoder(backend));
@@ -33,16 +33,18 @@ describe("owner-selected OmniRef C integration", () => {
     expect(graph["39"].inputs).toMatchObject({ width: 1344, height: 768, length: 124 });
     expect(graph["36"]).toBeUndefined(); expect(graph["9001"]).toBeUndefined();
     expect(manifest).toMatchObject({ gpu: backend, model: H3_OMNIREF.checkpoint, steps: 8, attention: "vsa" });
-    expect(h3ExpectedAssetChoicesForBackend(backend)).toContainEqual(["UNETLoader", "unet_name", H3_OMNIREF.checkpoint]);
+    expect(h3ExpectedAssetChoicesForBackend(backend, [], "fasth3")).toContainEqual(["UNETLoader", "unet_name", H3_OMNIREF.checkpoint]);
+    expect(h3ExpectedAssetChoicesForBackend(backend)).not.toContainEqual(["UNETLoader", "unet_name", H3_OMNIREF.checkpoint]);
   });
-  it("migrates old reference presets and clears dependent VSA when leaving reference generation", () => {
+  it("preserves legacy presets and clears dependent VSA when leaving explicit FastH3", () => {
     const p = parseH3StudioPlan({ ...base, workflowId: "native-r2v", checkpoint: "singularity", combatEnabled: true });
-    expect(p).toMatchObject({ checkpoint: "standard", attention: "vsa", profile: "ref2va-8step", combatEnabled: false, steps: 8 });
-    expect(reconcileH3StudioPlan(p, { workflowId: "native-i2v" }).attention).toBe("project-sla");
+    expect(p).toMatchObject({ checkpoint: "singularity", attention: "project-sla", profile: "native", combatEnabled: true, steps: 20 });
+    const fast = reconcileH3StudioPlan(p, { checkpoint: "fasth3" });
+    expect(reconcileH3StudioPlan(fast, { workflowId: "native-i2v" })).toMatchObject({ checkpoint: "standard", attention: "project-sla" });
     expect(() => parseH3StudioPlan({ ...base, attention: "vsa" })).toThrow();
   });
-  it("routes the ordinary legacy/Production builder through C while preserving authorized media and frame-0 guide", () => {
-    const { graph, nativeWidth, steps } = buildH3Workflow({ backend: "rtx3090", mode: "h3-reference-to-video", h3Quality: "hq", durationSeconds: 5, finalPrompt: "Follow <Video 1>", seed: 424242, outputPrefix: "fixture/output", startImageFilename: "owner-last.png", videoReferences: [{ uploadedFilename: "owner-source.mp4", includeAudio: true }] });
+  it("routes only explicit FastH3 through C while preserving authorized media and frame-0 guide", () => {
+    const { graph, nativeWidth, steps } = buildH3Workflow({ backend: "rtx3090", mode: "h3-reference-to-video", h3Settings: { checkpointMode: "fasth3" }, h3Quality: "hq", durationSeconds: 5, finalPrompt: "Follow <Video 1>", seed: 424242, outputPrefix: "fixture/output", startImageFilename: "owner-last.png", videoReferences: [{ uploadedFilename: "owner-source.mp4", includeAudio: true }] });
     expect(graph["30"].inputs.unet_name).toBe(H3_OMNIREF.checkpoint); expect(nativeWidth).toBe(1344); expect(steps).toBe(8);
     expect(graph["60"].inputs.file).toBe("owner-source.mp4"); expect(graph["40"].inputs.image).toBe("owner-last.png");
     expect(graph["32"].inputs.conditioning).toEqual(["93", 0]);

@@ -25,8 +25,8 @@ describe("ordinary PROD H3 Studio admission, not a TEST permission bypass", () =
     expect(result.manifest.executable).toBe(true); expect(result.manifest.blockedReasons).toEqual([]);
     expect(result.manifest.executionBasis).toBe("installed-workflow"); expect(result.manifest.experimental).toBe(false);
     expect(result.manifest.gpu).toBe("rtx3090"); expect(result.graph["24"].inputs.steps).toBe(8);
-    if (workflowId === "native-r2v") expect(result.graph["omni_vsa"].inputs.selection).toBe("vsa");
-    else expect(result.graph["41"].inputs.enabled).toBe(true);
+    expect(result.graph["omni_vsa"]).toBeUndefined();
+    expect(result.graph["41"].inputs.enabled).toBe(true);
     expect(result.manifest.estimatedCredits).toBe(0);
   });
   it("never reads TEST evidence or enables TEST experimental permission on PROD", () => {

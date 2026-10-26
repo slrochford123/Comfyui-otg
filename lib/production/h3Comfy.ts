@@ -179,9 +179,8 @@ export async function inspectH3BackendCompatibility(
   ];
 
   const selectedAdvancedCheckpoint =
-    resolvedH3Settings.checkpoint
-      === H3_SINGULARITY_CHECKPOINT
-      ? H3_SINGULARITY_CHECKPOINT
+    resolvedH3Settings.checkpoint !== "standard"
+      ? resolvedH3Settings.checkpoint
       : (
           resolvedH3Settings.settings.renderMode
             === "native"
@@ -272,7 +271,8 @@ export async function inspectH3BackendCompatibility(
     let dependencyState = process.env.NODE_ENV === "test" ? null : compatibilityCache.get(cacheKey);
     if (!dependencyState || dependencyState.expiresAt <= Date.now()) {
       const requiredNodeClasses = [...new Set([
-        ...h3RequiredNodeClassesForBackend(backend),
+        ...h3RequiredNodeClassesForBackend(backend, resolvedH3Settings.settings.checkpointMode),
+        ...(userLoraFilenames.length ? ["LoraLoaderModelOnly"] : []),
         ...(requirements.requireVsr ? H3_VSR_REQUIRED_NODE_CLASSES : []),
         ...(requirements.requireRife60Fps ? h3RifeRequiredNodeClassesForProbe(backend) : []),
           ...optionNodeClasses,
@@ -318,6 +318,8 @@ export async function inspectH3BackendCompatibility(
           backend,
 
           userLoraFilenames,
+
+          resolvedH3Settings.settings.checkpointMode,
 
         ),
 

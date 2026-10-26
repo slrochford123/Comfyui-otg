@@ -4,6 +4,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { H3LoraCatalogEntry } from "@/lib/h3LoraCatalogServer";
+import { fastH3LoraBlockReason } from "@/lib/h3FastLora";
+import { h3LoraDefaultStrength } from "@/lib/h3LoraGuidance";
 import {
   buildH3StudioLockedReferences,
   composeH3StudioFinalPrompt,
@@ -30,6 +32,7 @@ import {
   type H3AdvancedSettings,
 } from "@/lib/production/h3Settings";
 import {
+  getH3GenerationDimensions,
   getH3NativeDimensions,
   getH3ProductionTimeEstimate,
   H3_ORIENTATION_OPTIONS,
@@ -1258,7 +1261,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     lockedReferences,
     generationPrompt,
   );
-  const nativeDimensions = getH3NativeDimensions(quality, orientation);
+  const fastH3Selected = studioMode === "h3-reference-to-video" && h3Settings.checkpointMode === "fasth3";
+  const nativeDimensions = fastH3Selected && quality === "hq"
+    ? orientation === "portrait" ? { width: 768, height: 1344 } : { width: 1344, height: 768 }
+    : getH3NativeDimensions(quality, orientation);
   const realismCompiledPrompt = useMemo(() => {
     if (!realismPrompt.trim()) return "";
     try {
@@ -2086,6 +2092,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     setRealismPeopleEnabled(preset.peopleRealismEnabled);
   }
   function selectStudioMode(nextMode: H3StudioMode) {
+    if (nextMode !== "h3-reference-to-video" && h3Settings.checkpointMode === "fasth3") setH3Settings(current => ({ ...current, checkpointMode: "standard" }));
     setStudioMode(nextMode);
     if (isLegacyH3Mode(nextMode)) {
       setMode(nextMode);
@@ -2641,13 +2648,18 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   function addLora(id: string) {
     const entry = catalog.find((item) => item.id === id);
     if (!entry || selectedLoras.some((item) => item.id === id)) return;
+    const initialStrength = h3LoraDefaultStrength(entry.filename, entry.defaultStrength, entry.minStrength, entry.maxStrength, mode);
+    if (fastH3Selected) {
+      const reason = fastH3LoraBlockReason(entry.filename, initialStrength);
+      if (reason) return setMessage(reason);
+    }
     if (selectedLoras.length >= maxLoras)
       return setMessage(
         `You can select at most ${maxLoras} optional H3 LoRAs.`,
       );
     setSelectedLoras((current) => [
       ...current,
-      { id, strength: entry.defaultStrength },
+      { id, strength: initialStrength },
     ]);
   }
 
@@ -3695,7 +3707,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               onClick={() => setQuality(value)}
             >
               <span className="block font-black">
-                {value === "sh" ? "SH · Scene Hunter" : QUALITY_LABELS[value]} · {getH3NativeDimensions(value, orientation).width}x{getH3NativeDimensions(value, orientation).height}
+                {value === "sh" ? "SH · Scene Hunter" : QUALITY_LABELS[value]} · {(fastH3Selected ? getH3GenerationDimensions("h3-reference-to-video", value, orientation) : getH3NativeDimensions(value, orientation)).width}x{(fastH3Selected ? getH3GenerationDimensions("h3-reference-to-video", value, orientation) : getH3NativeDimensions(value, orientation)).height}
               </span>
               <span className="mt-1 block text-[11px] font-bold leading-4 text-white/45">
                 {QUALITY_DETAILS[value]}
@@ -3849,7 +3861,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           data-otg="h3-advanced-controls-panel"
         >
           <H3AdvancedControls
-            fixedReferenceProfile={studioMode === "h3-reference-to-video"}
+            allowFastH3={studioMode === "h3-reference-to-video"}
+            fastH3BlockedReason={selectedLoras.map(selection => fastH3LoraBlockReason(catalog.find(entry => entry.id === selection.id)?.filename, selection.strength)).find(reason => reason !== null) || undefined}
             value={h3Settings}
             onChange={setH3Settings}
             referenceOptions={refModReferenceOptions}
@@ -3859,15 +3872,15 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
 
         <div className="mt-4 rounded-[6px] border border-cyan-300/25 bg-cyan-300/10 p-3">
           <p className="text-sm font-black">
-            {studioMode === "h3-reference-to-video" ? "FastH3 OmniRef · 8-step" : h3Settings.renderMode === "native"
+            {fastH3Selected ? "FastH3 OmniRef · 8-step · Euler" : h3Settings.renderMode === "native"
               ? "MiniMax H3 Native · 20-step"
               : "MiniMax H3 Turbo · 8-step"}
           </p>
           <p className="text-xs text-white/60">
-            {studioMode === "h3-reference-to-video" ? "Selected C profile · VSA attention" : h3Settings.checkpointMode === "singularity"
-              ? `Singularity · Realism On · Combat ${h3Settings.combatLoraEnabled ? "On" : "Off"}`
+            {fastH3Selected ? "Dedicated configuration C · VSA attention · no legacy acceleration LoRA" : h3Settings.checkpointMode === "singularity"
+              ? `Singularity v1.3 · Realism On · Combat ${h3Settings.combatLoraEnabled ? "On" : "Off"}`
               : "Standard model"}{" "}
-            {studioMode !== "h3-reference-to-video" ? " · SLA attention" : null}
+            {!fastH3Selected ? " · SLA attention" : null}
           </p>
         </div>
           </>
@@ -3884,6 +3897,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           </div>
           <select
             className={`${field} mt-2`}
+            disabled={active}
             value=""
             onChange={(event) => addLora(event.target.value)}
           >
@@ -3894,8 +3908,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   !selectedLoras.some((item) => item.id === entry.id),
               )
               .map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.displayName}
+                <option key={entry.id} value={entry.id} disabled={fastH3Selected && !!fastH3LoraBlockReason(entry.filename)}>
+                  {entry.displayName}{fastH3Selected && fastH3LoraBlockReason(entry.filename) ? " · incompatible with FastH3" : ""}
                 </option>
               ))}
           </select>
@@ -3967,31 +3981,13 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   />
                 </div>
                 <p className="mt-2 text-[11px] text-white/45">
-                  Recommended {entry.recommendedMin}-{entry.recommendedMax}.
+                  {entry.guidance?.strengthStatus === "not-published" ? "Author strength not published; starting value is a local default." : `Recommended ${entry.recommendedMin}-${entry.recommendedMax}.`}
                   Available: {entry.discoveredOn.join(", ")}.
                 </p>
                 {entry.triggerWords.length ? (
-                  <button
-                    className={`${command} mt-2`}
-                    onClick={() =>
-                      replaceOriginal(
-                        [
-                          originalPrompt,
-                          ...entry.triggerWords.filter(
-                            (word) =>
-                              !originalPrompt
-                                .toLowerCase()
-                                .includes(word.toLowerCase()),
-                          ),
-                        ]
-                          .filter(Boolean)
-                          .join("\n"),
-                      )
-                    }
-                  >
-                    Add recommended trigger words
-                  </button>
+                  <p className="mt-2 break-words text-xs text-white/60">Triggers added automatically to the generation prompt: {entry.triggerWords.join(" · ")}</p>
                 ) : null}
+                {entry.guidance ? <details className="mt-2 text-xs text-white/50"><summary>Author guidance</summary><p className="break-words">{entry.guidance.notes}</p><a href={entry.guidance.source} target="_blank" rel="noopener noreferrer">Exact model version</a></details> : null}
               </article>
             );
           })}

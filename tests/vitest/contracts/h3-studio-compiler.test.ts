@@ -10,11 +10,7 @@ describe("H3 canonical catalog / compiler", () => {
     const p = automaticH3Plan({ ...plan, workflowId });
     const { graph } = compileH3StudioPlan(p, h3StudioPreviewInput(p), inventory, null);
     expect(graph["24"].inputs.steps).toBe(8);
-    if (workflowId === "native-r2v") {
-      expect(graph["omni_vsa"]).toMatchObject({ class_type: "BlockSparseAttention", inputs: { selection: "vsa" } });
-      expect(graph["36"]).toBeUndefined();
-      expect(graph["38"].inputs.model).toEqual(["30", 0]);
-    } else {
+    {
       expect(graph["41"]).toMatchObject({ class_type: "H3SLAAttention", inputs: { enabled: true } });
       expect(graph["36"].inputs.lora_name).toMatch(workflowId === "native-t2v" || workflowId === "native-i2v" ? /fl2v_turbo_8step/ : /ref2v_turbo_8step/);
       expect(graph["36"].inputs.model).toEqual(["30", 0]);
@@ -39,13 +35,13 @@ describe("H3 canonical catalog / compiler", () => {
     const result = compileH3StudioPlan(p, h3StudioPreviewInput(p), inventory, null);
     expect(result.graph["39"].inputs.width).toBe(result.manifest.width);
     expect(result.graph["39"].inputs.height).toBe(result.manifest.height);
-    expect(result.graph["24"].inputs.steps).toBe(workflowId === "native-r2v" ? 8 : 20); expect(result.graph["18"].inputs.sampler_name).toBe(workflowId === "native-r2v" ? "euler" : "res_multistep");
+    expect(result.graph["24"].inputs.steps).toBe(20); expect(result.graph["18"].inputs.sampler_name).toBe("res_multistep");
     expect(result.graph["36"]).toBeUndefined(); expect(result.manifest.executable).toBe(false);
     expect(result.manifest.blockedReasons).toContain("QUALIFICATION_RECORD_REQUIRED");
   });
   it("pins RTX 3090 instead of falling back to the app host", () => expect(() => compileH3StudioPlan(plan, { ...h3StudioPreviewInput(plan), backend: "rtx5060ti" }, inventory, null)).toThrow(/3090/));
   it("uses OmniRef without requiring the old Ref2VA acceleration adapter", () => {
-    const p: H3StudioPlan = { ...plan, workflowId: "native-r2v", profile: "ref2va-8step", ...H3_STUDIO_PROFILES["ref2va-8step"] };
+    const p: H3StudioPlan = { ...plan, workflowId: "native-r2v", checkpoint: "fasth3", attention: "vsa", profile: "ref2va-8step", ...H3_STUDIO_PROFILES["ref2va-8step"] };
     const result = compileH3StudioPlan(p, h3StudioPreviewInput(p), inventory, null);
     expect(result.manifest.blockedReasons).not.toContain("MATCHING_REF2VA_8STEP_ADAPTER_MISSING");
     expect(result.graph["36"]).toBeUndefined();

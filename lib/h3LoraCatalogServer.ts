@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { OTG_DATA_ROOT, ensureDir } from "@/lib/paths";
 import type { H3StudioLoraSelection } from "@/lib/h3Studio";
 import installedStage1c from "@/lib/h3Stage1cInstalled.json";
+import { installedH3LoraGuidance } from "@/lib/h3LoraGuidance";
 import { h3StudioProduction } from "@/lib/h3StudioAdmission";
 import {
   H3_BACKEND_PROFILES,
@@ -56,6 +57,7 @@ export type H3LoraCatalogEntry = {
   recommendedMax: number;
   triggerWords: string[];
   triggerRequired: boolean;
+  guidance?: { source: string; notes: string; strengthStatus: string; triggerStatus: string };
   previewImage: string;
   notes: string;
   discoveredOn: ProductionV2H3BackendId[];
@@ -132,10 +134,14 @@ function normalizeEntry(
     .trim()
     .replaceAll("\\", "/");
   if (!id || !MODEL_EXTENSIONS.test(filename)) return null;
-  const minStrength = bounded(value.minStrength, 0);
-  const maxStrength = bounded(value.maxStrength, 1.2, minStrength);
+  const registered = installedH3LoraGuidance(filename);
+  const floor = registered?.minStrength ?? 0;
+  const ceiling = registered?.maxStrength ?? 2;
+  const legacySliderDefaults = floor < 0 && value.minStrength === 0 && value.maxStrength === 2;
+  const minStrength = bounded(legacySliderDefaults ? floor : value.minStrength, 0, floor, ceiling);
+  const maxStrength = bounded(legacySliderDefaults ? ceiling : value.maxStrength, 1.2, minStrength, ceiling);
   const defaultStrength = bounded(
-    value.defaultStrength,
+    legacySliderDefaults && value.defaultStrength === 1 ? registered?.defaultStrength : value.defaultStrength,
     1,
     minStrength,
     maxStrength,
@@ -156,18 +162,19 @@ function normalizeEntry(
     minStrength,
     maxStrength,
     recommendedMin: bounded(
-      value.recommendedMin,
+      registered?.guidance.recommendedMin ?? value.recommendedMin,
       defaultStrength,
       minStrength,
       maxStrength,
     ),
     recommendedMax: bounded(
-      value.recommendedMax,
+      registered?.guidance.recommendedMax ?? value.recommendedMax,
       defaultStrength,
       minStrength,
       maxStrength,
     ),
-    triggerWords: Array.isArray(value.triggerWords)
+    ...(registered ? { guidance: registered.guidance } : {}),
+    triggerWords: registered ? registered.triggerWords : Array.isArray(value.triggerWords)
       ? value.triggerWords
           .map(String)
           .map((item) => item.trim())
@@ -201,7 +208,7 @@ export function readH3LoraCatalog(): H3LoraCatalogFile {
       description: "Installed Stage 1C model version. Output quality is not certified.", enabled: true, approvedForH3: true,
       approvedForT2V: entry.family !== "Ref2VA", approvedForI2V: entry.family !== "Ref2VA", approvedForR2V: entry.family !== "FL2VA",
       defaultStrength: entry.defaultStrength, minStrength: entry.minStrength, maxStrength: entry.maxStrength,
-      recommendedMin: entry.minStrength, recommendedMax: entry.maxStrength, triggerWords: entry.triggerWords,
+      recommendedMin: entry.guidance.recommendedMin ?? entry.defaultStrength, recommendedMax: entry.guidance.recommendedMax ?? entry.defaultStrength, triggerWords: entry.triggerWords,
       triggerRequired: false, discoveredOn: ["rtx3090"], missingOn: [], compatibilityStatus: "approved" }))
     .filter((entry): entry is H3LoraCatalogEntry => entry !== null) : [];
   try {

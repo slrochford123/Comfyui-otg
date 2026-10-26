@@ -1,5 +1,6 @@
 export type H3RenderMode = "turbo" | "native";
-export type H3CheckpointMode = "standard" | "singularity";
+import { H3_OMNIREF } from "@/lib/h3OmniRef";
+export type H3CheckpointMode = "standard" | "singularity" | "fasth3";
 export type H3RefModStrength = "balanced" | "strong";
 
 export type H3AdvancedSettings = {
@@ -22,13 +23,13 @@ export type H3ResolvedRenderSettings = {
   sampler: "euler" | "res_multistep";
   scheduler: "simple";
   turboLora: boolean;
-  checkpoint: "standard" | "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors";
+  checkpoint: "standard" | "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors" | typeof H3_OMNIREF.checkpoint;
   singularityLoras: Array<{
     label: string;
     filename: string;
     strength: number;
   }>;
-  attentionPath: "sla";
+  attentionPath: "sla" | "vsa";
   refModRetention: 0.7 | 1.0 | null;
   motionLabInject: 0.48 | null;
 };
@@ -64,7 +65,7 @@ export function normalizeH3AdvancedSettings(
 ): H3AdvancedSettings {
   const record = cleanObject(value);
   const checkpointMode =
-    record.checkpointMode === "singularity" ? "singularity" : "standard";
+    record.checkpointMode === "fasth3" ? "fasth3" : record.checkpointMode === "singularity" ? "singularity" : "standard";
   const renderMode =
     record.renderMode === "native" ? "native" : "turbo";
   const refMod = cleanObject(record.refMod);
@@ -117,7 +118,8 @@ export function resolveH3RenderSettings(
   referenceCount = 0,
 ): H3ResolvedRenderSettings {
   const settings = normalizeH3AdvancedSettings(value, referenceCount);
-  const native = settings.renderMode === "native";
+  const fast = settings.checkpointMode === "fasth3";
+  const native = !fast && settings.renderMode === "native";
   const singularity = settings.checkpointMode === "singularity";
 
   return {
@@ -125,8 +127,8 @@ export function resolveH3RenderSettings(
     steps: native ? 20 : 8,
     sampler: native ? "res_multistep" : "euler",
     scheduler: "simple",
-    turboLora: !native,
-    checkpoint: singularity ? H3_SINGULARITY_CHECKPOINT : "standard",
+    turboLora: !native && !fast,
+    checkpoint: fast ? H3_OMNIREF.checkpoint : singularity ? H3_SINGULARITY_CHECKPOINT : "standard",
     singularityLoras: singularity
       ? [
           ...(settings.combatLoraEnabled
@@ -141,11 +143,11 @@ export function resolveH3RenderSettings(
           { label: "Realism", filename: H3_REALISM_TEST19_LORA, strength: 0.7 },
         ]
       : [],
-    attentionPath: "sla",
+    attentionPath: fast ? "vsa" : "sla",
     refModRetention:
-      settings.refMod.enabled
+      !fast && settings.refMod.enabled
         ? settings.refMod.strength === "strong" ? 1 : 0.7
         : null,
-    motionLabInject: settings.motionLab.enabled ? 0.48 : null,
+    motionLabInject: !fast && settings.motionLab.enabled ? 0.48 : null,
   };
 }

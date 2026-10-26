@@ -51,7 +51,7 @@
   },
   "15": {
     "inputs": {
-      "clip_name": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
       "type": "minimax",
       "device": "default"
     },
@@ -163,7 +163,7 @@
   },
   "30": {
     "inputs": {
-      "unet_name": "fasth3_omniref_8step_pruned_int8_convrot.safetensors",
+      "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -216,12 +216,26 @@
       "title": "Create Video"
     }
   },
-  "38": {
+  "36": {
+    "class_type": "LoraLoaderModelOnly",
     "inputs": {
-      "shift_video": 12,
-      "shift_audio": 3,
       "model": [
         "30",
+        0
+      ],
+      "lora_name": "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
+      "strength_model": 1
+    },
+    "_meta": {
+      "title": "OTG H3 Turbo 8-step LoRA"
+    }
+  },
+  "38": {
+    "inputs": {
+      "shift_video": 6,
+      "shift_audio": 3,
+      "model": [
+        "36",
         0
       ]
     },
@@ -233,7 +247,7 @@
   "39": {
     "inputs": {
       "prompt": "Use <Picture 1> as <Subject 1>. Describe the desired motion here.",
-      "width": 1344,
+      "width": 1376,
       "height": 768,
       "length": 124,
       "ref_image_size": "match",
@@ -260,13 +274,29 @@
     }
   },
   "41": {
-    "class_type": "ModelAttentionBackend",
+    "class_type": "H3SLAAttention",
     "inputs": {
+      "sparsity_ratio": 0.85,
+      "block_size": "64",
+      "min_seq_len": 8192,
+      "dense_last_steps": 0,
+      "protect_audio": true,
+      "enabled": true,
+      "dense_steps": "0",
+      "dense_backend": "sage:qk_int8_pv_fp16_cuda",
+      "disable_fp16_accum": true,
+      "stabilize_motion": false,
+      "reference_protection": "Off",
+      "tail_correction": false,
+      "use_int8_qk": true,
+      "engine": "comfy_kitchen",
       "model": [
         "38",
         0
-      ],
-      "attention": "comfy kitchen attention"
+      ]
+    },
+    "_meta": {
+      "title": "OTG H3 SLA Attention"
     }
   },
   "80": {
@@ -288,7 +318,7 @@
       "preview_fps": 8,
       "tiny_vae": "taeh3.safetensors",
       "model": [
-        "omni_vsa",
+        "41",
         0
       ]
     },
@@ -307,24 +337,6 @@
     },
     "_meta": {
       "title": "OTG terminal video preview"
-    }
-  },
-  "omni_vsa": {
-    "class_type": "BlockSparseAttention",
-    "inputs": {
-      "model": [
-        "41",
-        0
-      ],
-      "selection": "vsa",
-      "selection.keep_percent": 10,
-      "start_percent": 0,
-      "end_percent": 1,
-      "dense_blocks": "",
-      "min_tokens": 12288,
-      "extra_tokens": 256,
-      "sink_conditioning": "exact_kv_and_rows",
-      "verbose": true
     }
   }
 }

@@ -22,7 +22,8 @@ type Props = {
   referenceOptions?: ReferenceOption[];
   disabled?: boolean;
   variant?: "h3-panel" | "production";
-  fixedReferenceProfile?: boolean;
+  allowFastH3?: boolean;
+  fastH3BlockedReason?: string;
 };
 
 const TOOLTIPS = {
@@ -39,9 +40,11 @@ export default function H3AdvancedControls({
   referenceOptions = [],
   disabled = false,
   variant = "h3-panel",
-  fixedReferenceProfile = false,
+  allowFastH3 = false,
+  fastH3BlockedReason,
 }: Props) {
   const settings = normalizeH3AdvancedSettings(value, referenceOptions.length);
+  const fast = settings.checkpointMode === "fasth3";
   const buttonBase = variant === "production"
     ? "min-h-10 rounded-lg border px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-45"
     : "rounded-[8px] border px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-45";
@@ -67,7 +70,8 @@ export default function H3AdvancedControls({
   }
 
   function setCheckpointMode(checkpointMode: H3CheckpointMode) {
-    onChange(selectH3CheckpointMode(settings, checkpointMode, referenceOptions.length));
+    const next = selectH3CheckpointMode(settings, checkpointMode, referenceOptions.length);
+    onChange(checkpointMode === "fasth3" ? { ...next, refMod: { ...next.refMod, enabled: false }, motionLab: { enabled: false } } : next);
   }
 
   function setRefModStrength(strength: H3RefModStrength) {
@@ -82,19 +86,20 @@ export default function H3AdvancedControls({
 
   return (
     <div className="space-y-4" data-otg="h3-advanced-controls">
-      {fixedReferenceProfile ? <p className="col-span-2 text-sm">FastH3 OmniRef · 8 steps · VSA attention · selected C profile</p> : null}
-      <div hidden={fixedReferenceProfile}>
+      {fast ? <p className="col-span-2 text-sm">FastH3 · 8 Steps · Euler · VSA attention · dedicated configuration C</p> : null}
+      <div hidden={fast}>
         <div className="mb-2 text-xs font-black uppercase text-white/50">Render</div>
         <div className="grid grid-cols-2 gap-2" role="group" aria-label="H3 render mode">
           <button type="button" title={TOOLTIPS.turbo} disabled={disabled} aria-pressed={settings.renderMode === "turbo"} className={buttonClass(settings.renderMode === "turbo")} onClick={() => setRenderMode("turbo")}>Turbo</button>
           <button type="button" title={TOOLTIPS.native} disabled={disabled} aria-pressed={settings.renderMode === "native"} className={buttonClass(settings.renderMode === "native")} onClick={() => setRenderMode("native")}>Native</button>
         </div>
       </div>
-      <div hidden={fixedReferenceProfile}>
+      <div>
         <div className="mb-2 text-xs font-black uppercase text-white/50">Model</div>
-        <div className="grid grid-cols-2 gap-2" role="group" aria-label="H3 model">
+        <div className={`grid ${allowFastH3 ? "grid-cols-3" : "grid-cols-2"} gap-2`} role="group" aria-label="H3 model">
           <button type="button" disabled={disabled} aria-pressed={settings.checkpointMode === "standard"} className={buttonClass(settings.checkpointMode === "standard")} onClick={() => setCheckpointMode("standard")}>Standard</button>
           <button type="button" title={TOOLTIPS.singularity} disabled={disabled} aria-pressed={settings.checkpointMode === "singularity"} className={buttonClass(settings.checkpointMode === "singularity")} onClick={() => setCheckpointMode("singularity")}>Singularity</button>
+          {allowFastH3 ? <button type="button" title={fastH3BlockedReason || "Dedicated FastH3 OmniRef configuration C; eight Euler steps and VSA."} disabled={disabled || !!fastH3BlockedReason} aria-pressed={fast} className={buttonClass(fast)} onClick={() => setCheckpointMode("fasth3")}>FastH3</button> : null}
             {settings.checkpointMode === "singularity" ? (
               <label
                 className="col-span-2 flex items-center gap-2 rounded-[8px] border border-white/10 bg-black/25 px-3 py-2 text-sm text-white/75"
@@ -119,13 +124,14 @@ export default function H3AdvancedControls({
             ) : null}
         </div>
       </div>
+      {allowFastH3 && fastH3BlockedReason ? <p role="status" className="text-xs text-amber-200">{fastH3BlockedReason}</p> : null}
       <div>
         <div className="mb-2 text-xs font-black uppercase text-white/50">Enhance</div>
         <div className="grid grid-cols-2 gap-2" role="group" aria-label="H3 enhancements">
           <button
             type="button"
             title={TOOLTIPS.refMod}
-            disabled={disabled || !refModAvailable}
+            disabled={disabled || fast || !refModAvailable}
             aria-pressed={settings.refMod.enabled}
             className={buttonClass(settings.refMod.enabled)}
             onClick={() => update({ ...settings, refMod: { ...settings.refMod, enabled: !settings.refMod.enabled } })}
@@ -135,7 +141,7 @@ export default function H3AdvancedControls({
           <button
             type="button"
             title={TOOLTIPS.motion}
-            disabled={disabled}
+            disabled={disabled || fast}
             aria-pressed={settings.motionLab.enabled}
             className={buttonClass(settings.motionLab.enabled)}
             onClick={() => update({ ...settings, motionLab: { enabled: !settings.motionLab.enabled } })}
@@ -144,6 +150,7 @@ export default function H3AdvancedControls({
           </button>
         </div>
       </div>
+      {fast ? <p className="text-xs text-white/60">Compatible catalog LoRAs can be stacked explicitly below. Output quality is untested. RefMod and Motion enhancements remain unavailable for FastH3.</p> : null}
       {settings.refMod.enabled ? (
         <div className="grid gap-4 sm:grid-cols-2" data-otg="h3-refmod-options">
           <div>

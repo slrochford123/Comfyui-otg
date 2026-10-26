@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { fastH3LoraBlockReason } from "@/lib/h3FastLora";
 import { requireSessionUser } from "@/lib/sessionUser";
 import { SessionInvalidError } from "@/lib/ownerKey";
 import { h3StudioCatalog, h3Stage1cDecisions, inspectH3StudioInventory, readH3StudioEvidence, listH3StudioQualifiedPlans, H3_UPSTREAM_OWNER_ATTESTATION } from "@/lib/h3StudioRegistry";
@@ -71,7 +72,7 @@ export async function POST(request: NextRequest) {
         const result = compileH3StudioPlan(candidate, studioBoundCompilerInput(candidate, media), inventory, evidence, access);
         const family = H3_STUDIO_WORKFLOWS.find(w => w.id === candidate.workflowId)!.family;
         if (result.manifest.executable && !available.some(c => c.id === result.manifest.qualificationFingerprint)) available.push({ id: result.manifest.qualificationFingerprint, plan: candidate, qualificationFingerprint: result.manifest.qualificationFingerprint,
-          ...(experimental || h3StudioProduction() ? { experimental, installedWorkflow: h3StudioProduction(), allowedLoras: h3StudioCatalog(inventory, evidence).filter(l => !l.blockedReasons.length && (l.family === family || l.family === "both") && l.strength).map(l => ({ id: l.id, name: l.name, minStrength: l.strength!.min, maxStrength: l.strength!.max })) } : {}) });
+          ...(experimental || h3StudioProduction() ? { experimental, installedWorkflow: h3StudioProduction(), allowedLoras: h3StudioCatalog(inventory, evidence).filter(l => !l.blockedReasons.length && (l.family === family || l.family === "both") && l.strength && (candidate.checkpoint !== "fasth3" || !fastH3LoraBlockReason(l.filename))).map(l => ({ id: l.id, name: l.name, minStrength: l.strength!.min, maxStrength: l.strength!.max, recommendedStrength: l.defaultStrength, triggerWords: l.triggerWords })) } : {}) });
       } catch { /* Unavailable/incompatible records are not offered to the director. */ }
     }
     const references = await studioPlannerReferences(media, false);

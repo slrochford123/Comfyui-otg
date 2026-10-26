@@ -1,5 +1,7 @@
 import { buildH3Workflow, loadH3WorkflowTemplate, h3TurboLoraForMode, type H3WorkflowBuildInput, type H3PromptGraph } from "@/lib/production/h3Workflows";
 import { applyH3OmniRef } from "@/lib/h3OmniRef";
+import { assertFastH3Loras } from "@/lib/h3FastLora";
+import { applyH3LoraTriggers } from "@/lib/h3LoraGuidance";
 import { parseH3StudioPlan, H3_STUDIO_WORKFLOWS, studioDimensions, studioFrames, studioTemplateDuration, studioBackend, studioGpuPattern, type H3StudioPlan } from "@/lib/h3StudioPlan";
 import { h3StudioCatalog, H3_REF2VA_8STEP_FILE, studioCheckpoint, studioTemplateHash, validateStudioReadiness,
   exactH3StudioQualification, isH3StudioEvidenceV2, validH3StudioRights, matchesH3StudioInventoryAsset,
@@ -45,12 +47,9 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
     return { id: entry.legacyPolicyId!, label: entry.name, filename: entry.filename, strength: selection.strength, triggerPhrases: [], experimental: false };
   });
   const native = plan.profile === "native";
+  if (plan.checkpoint === "fasth3") assertFastH3Loras(optionalLoras);
   const resolvedPolicies = validateH3LoraSelections(optionalLoras.map(l => ({ id: l.id, strength: l.strength })), workflow.mode).resolved;
-  for (const policy of resolvedPolicies) {
-    if (!ownerExperimental && !production && policy.triggerRequired && policy.triggerWords.length && !policy.triggerWords.some(word => plan.prompt.toLocaleLowerCase().includes(word.trim().toLocaleLowerCase()))) throw new Error(`Required LoRA trigger is missing: ${policy.label}`);
-  }
-  const triggerHints = ownerExperimental || production ? resolvedPolicies.flatMap(policy => policy.triggerWords).filter(word => word.trim() && !input.finalPrompt.toLowerCase().includes(word.trim().toLowerCase())) : [];
-  const finalPrompt = [input.finalPrompt, ...new Set(triggerHints)].join("\n");
+  const finalPrompt = applyH3LoraTriggers(input.finalPrompt, resolvedPolicies);
   const built = buildH3Workflow({ ...input, backend, finalPrompt: composeH3StudioExecutionPrompt(finalPrompt, plan), seed: plan.seed,
     durationSeconds: studioTemplateDuration(plan.durationSeconds), h3Quality: plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq",
     orientation: plan.orientation, optionalLoras, preserveLegacyReference: plan.workflowId === "reference-edit",
@@ -63,7 +62,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   graph["18"].inputs.sampler_name = plan.sampler;
   graph["38"].inputs.shift_video = native ? 6 : 12;
   graph["38"].inputs.shift_audio = 3;
-  if (!native && plan.workflowId !== "native-r2v") {
+  if (!native && plan.checkpoint !== "fasth3") {
     if (plan.profile === "fl2va-8step") {
       // Standard Turbo's legacy graph uses a fast checkpoint. Studio instead
       // selects its registered base checkpoint plus the matching FL2VA adapter.
@@ -89,7 +88,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   graph["34"].inputs.fps = 24;
   // The installed project SLA node is not a SolAttnPatch alias. Dense is explicit.
   graph["41"].inputs.enabled = plan.attention === "project-sla";
-  if (plan.workflowId === "native-r2v") {
+  if (plan.checkpoint === "fasth3") {
     // The base builder already applied this exact profile; reapply after Studio
     // mutations so neither a saved plan nor AI can restore the old sampler/model.
     delete graph["omni_vsa"];

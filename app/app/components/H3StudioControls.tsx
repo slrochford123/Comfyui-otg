@@ -2,6 +2,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { DEFAULT_H3_STUDIO_PLAN, H3_STUDIO_WORKFLOWS, automaticH3Plan, makeLocalH3Plan, parseH3StudioPlan, reconcileH3StudioPlan, studioDimensions, studioFrames, type H3StudioPlan } from "@/lib/h3StudioPlan";
 import type { H3StudioCatalogItem } from "@/lib/h3StudioRegistry";
+import { fastH3LoraBlockReason } from "@/lib/h3FastLora";
+import { h3LoraDefaultStrength } from "@/lib/h3LoraGuidance";
 import { newClientRequestId } from "@/lib/client/requestId";
 import css from "./H3StudioControls.module.css";
 import VideoSnapshotPicker from "./VideoSnapshotPicker";
@@ -55,6 +57,7 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
   const controller = controlledController ?? localController;
   function setController(next: H3StudioController) { setLocalController(next); onControllerChange?.(next); }
   const [plan, setPlan] = useState<H3StudioPlan>(() => ({ ...DEFAULT_H3_STUDIO_PLAN, backend: controlledBackend ?? "rtx3090", workflowId: videoEditControls ? "reference-edit" : "native-t2v" }));
+  const legacyModelSettings = useRef<Pick<H3StudioPlan, "profile" | "attention" | "combatEnabled"> | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const backend = plan.backend ?? "rtx3090";
   const reviewedPlanElement = useRef<HTMLDivElement>(null);
@@ -137,6 +140,7 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
     setPlan({ ...DEFAULT_H3_STUDIO_PLAN, workflowId: videoEditControls ? "reference-edit" : "native-t2v" }); setCatalog([]); setPreview(null); setQuote(null); setMessage(""); setPresets([]); setDirectorPlanReady(false); setConsent(false); setExternalMediaConsent(false); revision.current++;
     sourcesRef.current = []; setSources([]); jobRef.current = null; setJob(null); historyRef.current = []; setHistory([]); submittedPlan.current = null; setGenerationConsent(false); setClarification("");
     setExperimental(false); setDirectGeneration(false); setAutoSettings(null);
+    legacyModelSettings.current = null;
     try { const stored = JSON.parse(localStorage.getItem(storageKey) || "[]"); if (Array.isArray(stored)) setPresets(stored.slice(0, 20).map(p => ({ name: String(p.name).slice(0, 60), plan: parseH3StudioPlan(p.plan) }))); } catch { /* Ignore invalid/obsolete device presets. */ }
     try {
       const stored = JSON.parse(localStorage.getItem(historyKey) || "[]");
@@ -216,6 +220,14 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
   function change(patch: Partial<H3StudioPlan>) {
     invalidate();
     try {
+      if (patch.checkpoint === "fasth3" && plan.checkpoint !== "fasth3") {
+        const blocked = plan.loras.filter(lora => lora.enabled).map(lora => fastH3LoraBlockReason(catalog.find(entry => entry.id === lora.id)?.filename, lora.strength)).find(Boolean);
+        if (blocked) throw new Error(blocked);
+        legacyModelSettings.current = { profile: plan.profile, attention: plan.attention, combatEnabled: plan.combatEnabled };
+      }
+      if (plan.checkpoint === "fasth3" && (patch.checkpoint && patch.checkpoint !== "fasth3" || patch.workflowId && patch.workflowId !== "native-r2v")) {
+        patch = { ...(legacyModelSettings.current || { profile: "native", attention: "project-sla" }), ...patch };
+      }
       const next = reconcileDraft(plan, videoEditControls ? { ...patch, workflowId: "reference-edit" } : controller === "auto" ? { workflowId: sourceWorkflow(sourcesRef.current), ...patch } : patch, catalog);
       setPlan(next);if (patch.backend) onBackendChange?.(patch.backend);
     }
@@ -333,7 +345,7 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
   }
   const dimensions = studioDimensions(plan);
   const ref2va = plan.workflowId === "native-r2v" || plan.workflowId === "reference-edit";
-  const omniRef = plan.workflowId === "native-r2v";
+  const omniRef = plan.checkpoint === "fasth3";
   const shown = catalog.filter(l => (!category || l.categories.includes(category)) && `${l.name} ${l.version} ${l.category}`.toLowerCase().includes(query.toLowerCase()));
   const planActions = <div className={css.row}><button type="button" disabled={busy || jobBusy || active || !mediaReady || !!mediaIssue || !plan.originalPrompt.trim() || !!clarification} onClick={() => controller === "auto" ? void createAutomatic() : directGeneration ? void execute() : void request("preview")}>{busy || jobBusy ? "Preparing video…" : controller === "auto" || videoEditControls || directGeneration ? "Create Video" : "Preview Video Plan (no cost)"}</button>{directGeneration && controller === "manual" ? <button type="button" disabled={busy || jobBusy || active || !mediaReady || !!mediaIssue || !plan.originalPrompt.trim()} onClick={() => void request("preview")}>View Plan (optional)</button> : null}<button type="button" disabled={busy || jobBusy || active} onClick={() => change({ ...DEFAULT_H3_STUDIO_PLAN })}>Reset plan (keep media)</button></div>;
   return <section className={css.studio} aria-label="H3 Auto and Manual controllers">
@@ -345,11 +357,12 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
     <div hidden={manualMenu} data-otg="h3-studio-plan-controls">
     {controller === "manual" && onBackToStudio ? <button type="button" onClick={onBackToStudio}>Back to H3 Studio</button> : null}
     {experimental ? <p role="status" className={css.notice}>Owner Experimental Mode · private TEST · {backend === "rtx3090" ? "RTX 3090" : "RTX 5060 Ti"}. Installed configurations may be run before generation testing. Outputs and quality are unverified.</p> : null}
-    <p className={css.notice}>{controller === "auto" ? "Describe your video and add optional media. Create Video starts one generation using SLA Attention and a matching 8-step Turbo workflow." : "Complete manual controls · choose a workflow, compatible models, references and creative settings."}</p>
+    <p className={css.notice}>{controller === "auto" ? omniRef ? "Create Video uses the explicitly selected FastH3 OmniRef configuration C: eight Euler steps and VSA attention." : "Describe your video and add optional media. Create Video starts one generation using SLA Attention and a matching 8-step Turbo workflow." : "Complete manual controls · choose a workflow, compatible models, references and creative settings."}</p>
     <fieldset className={css.fields} disabled={active || jobBusy || busy || catalogLoading}>
     <label>{videoEditControls ? "Edit prompt" : "Video description"}<textarea aria-label={videoEditControls ? "Reference video edit prompt" : undefined} rows={4} maxLength={4000} value={plan.originalPrompt} onChange={e => change({ originalPrompt: e.target.value, prompt: e.target.value })} /></label>
     {clarification ? <p role="status">{clarification} Update the video description to answer, then request a new plan.</p> : null}
     <div className={css.grid}>
+      {controller === "auto" && plan.workflowId === "native-r2v" ? <label>Model<select value={plan.checkpoint} onChange={e => change({ checkpoint: e.target.value as H3StudioPlan["checkpoint"] })}><option value="standard">Standard</option><option value="singularity">Singularity v1.3</option><option value="fasth3">FastH3 OmniRef · dedicated 8 steps</option></select></label> : null}
       <label>{videoEditControls ? "Resolution (MP)" : "Quality"}<select value={plan.quality} onChange={e => change({ quality: e.target.value as H3StudioPlan["quality"] })}><option value="0.2">0.2 MP</option><option value="0.6">0.6 MP</option><option value="1">1 MP</option></select></label>
       <label>Aspect<select value={plan.orientation} onChange={e => change({ orientation: e.target.value as H3StudioPlan["orientation"] })}><option value="landscape">Landscape</option><option value="portrait">Portrait</option></select></label>
       <label>Duration<select value={plan.durationSeconds} onChange={e => change({ durationSeconds: Number(e.target.value) as 5 | 10 })}><option value={5}>5 seconds</option><option value={10}>10 seconds</option></select></label>
@@ -385,9 +398,9 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
       <label>Generation prompt<textarea rows={4} maxLength={4000} value={plan.prompt} onChange={e => change({ prompt: e.target.value })} /></label>
       <div className={css.grid}>
         <label>Workflow<select value={plan.workflowId} disabled={videoEditControls} onChange={e => change({ workflowId: e.target.value as H3StudioPlan["workflowId"] })}>{H3_STUDIO_WORKFLOWS.map(w => <option key={w.id} value={w.id}>{w.label}</option>)}</select></label>
-        <label>Checkpoint<select value={plan.checkpoint} disabled={omniRef} onChange={e => change({ checkpoint: e.target.value as H3StudioPlan["checkpoint"] })}><option value="standard">{omniRef ? "FastH3 OmniRef INT8 · selected C" : "Native H3 (INT8)"}</option><option value="singularity" disabled={!ref2va || omniRef}>Singularity v1.3 (Ref2VA)</option></select></label>
-        <label>Acceleration<select value={plan.profile} disabled={omniRef} onChange={e => change({ profile: e.target.value as H3StudioPlan["profile"] })}><option value="fl2va-8step" disabled={ref2va}>FL2VA 8-step Turbo</option><option value="native">Native · 20 steps</option><option value="ref2va-8step" disabled={!ref2va}>{omniRef ? "OmniRef · distilled 8 steps (no adapter)" : "Ref2VA · 8-step adapter"}</option></select></label>
-        {omniRef ? <p className={css.notice}>VSA attention · 10% keep · Euler / simple · 8 steps. Reference generation uses the selected OmniRef workflow, not Singularity or the old Turbo adapter.</p> : <label>Native H3 SLA<input type="checkbox" checked={plan.attention === "project-sla"} onChange={e => change({ attention: e.target.checked ? "project-sla" : "dense" })} /></label>}
+        <label>Checkpoint<select value={plan.checkpoint} onChange={e => change({ checkpoint: e.target.value as H3StudioPlan["checkpoint"] })}><option value="standard">Native H3 (INT8)</option><option value="singularity" disabled={!ref2va}>Singularity v1.3 (Ref2VA)</option><option value="fasth3" disabled={plan.workflowId !== "native-r2v"}>FastH3 OmniRef · configuration C</option></select></label>
+        <label>Acceleration<select value={plan.profile} disabled={omniRef} onChange={e => change({ profile: e.target.value as H3StudioPlan["profile"] })}><option value="fl2va-8step" disabled={ref2va}>FL2VA 8-step Turbo</option><option value="native">Native · 20 steps</option><option value="ref2va-8step" disabled={!ref2va}>{omniRef ? "FastH3 · 8 Steps (no legacy adapter)" : "Ref2VA · 8-step adapter"}</option></select></label>
+        {omniRef ? <p className={css.notice}>FastH3 OmniRef · configuration C · VSA attention · 10% keep · Euler / simple · 8 steps. Standard and Singularity remain separate choices.</p> : <label>Native H3 SLA<input type="checkbox" checked={plan.attention === "project-sla"} onChange={e => change({ attention: e.target.checked ? "project-sla" : "dense" })} /></label>}
         <label>Seed<input type="number" min={0} max={Number.MAX_SAFE_INTEGER} step={1} value={plan.seed} onChange={e => change({ seed: Number(e.target.value) })} /></label>
         <label>Independent Combat V2<input type="checkbox" disabled={plan.checkpoint !== "singularity"} checked={plan.combatEnabled} onChange={e => change({ combatEnabled: e.target.checked })} /></label>
         <label>Camera<select value={plan.camera} onChange={e => change({ camera: e.target.value as H3StudioPlan["camera"] })}>{["none", "static", "pan", "dolly", "tracking"].map(value => <option key={value}>{value}</option>)}</select></label>
@@ -398,9 +411,12 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
       <details><summary>Selected LoRA catalog ({catalog.length} of 60 loaded)</summary>
         <label>Search LoRAs<input value={query} onChange={e => setQuery(e.target.value)} /></label>
         <label>Category<select value={category} onChange={e => setCategory(e.target.value)}><option value="">All researched categories</option>{[...new Set(catalog.flatMap(l => l.categories))].sort().map(c => <option key={c}>{c}</option>)}</select></label>
-        <ul className={css.catalog}>{shown.map(l => <li key={l.id}><strong>{l.name}</strong><p>{l.version} · {l.installation} · {l.rights}</p><p className={css.notice}>{l.blockedReasons.join(" · ") || "Installed · experimental, generation untested"}</p><button type="button" disabled={!!l.blockedReasons.length || plan.loras.length >= 3 || plan.loras.some(s => s.id === l.id)} onClick={() => change({ loras: [...plan.loras, { id: l.id, strength: l.strength?.min ?? 1, enabled: true }] })}>Add {l.name}</button></li>)}</ul>
+        <ul className={css.catalog}>{shown.map(l => {
+          const fastReason = omniRef ? fastH3LoraBlockReason(l.filename) : null;
+          return <li key={l.id}><strong>{l.name}</strong><p>{l.version} · {l.installation} · {l.rights}</p><p className={css.notice}>{l.blockedReasons.join(" · ") || fastReason || (omniRef ? "FastH3 model targets checked · output quality untested" : "Installed · experimental, generation untested")}</p><p className={css.notice}>{l.guidance?.strengthStatus === "author-guidance" ? `Starting strength ${l.defaultStrength}; see author guidance for context.` : "No author strength published; starting value is a local default."} {l.triggerWords?.length ? `Triggers added automatically: ${l.triggerWords.join(" · ")}` : "No verified trigger to add."}</p>{l.guidance ? <details><summary>Author guidance</summary><p className={css.notice}>{l.guidance.notes}</p><a href={l.guidance.source} target="_blank" rel="noopener noreferrer">Exact model version</a></details> : null}<button type="button" disabled={!!fastReason || !!l.blockedReasons.length || plan.loras.length >= 3 || plan.loras.some(s => s.id === l.id)} onClick={() => change({ loras: [...plan.loras, { id: l.id, strength: h3LoraDefaultStrength(l.filename, l.defaultStrength, l.strength?.min, l.strength?.max, H3_STUDIO_WORKFLOWS.find(w => w.id === plan.workflowId)?.mode), enabled: true }] })}>Add {l.name}</button></li>;
+        })}</ul>
       </details>
-      <ol className={css.stack}>{plan.loras.map((l, i) => <li key={l.id}><span>{catalog.find(c => c.id === l.id)?.name || l.id}</span><label>Enabled<input type="checkbox" checked={l.enabled} onChange={e => change({ loras: plan.loras.map((v, n) => n === i ? { ...v, enabled: e.target.checked } : v) })} /></label><label>Strength<input type="number" min={0} max={2} step={0.05} value={l.strength} onChange={e => change({ loras: plan.loras.map((v, n) => n === i ? { ...v, strength: Number(e.target.value) } : v) })} /></label><div className={css.row}><button type="button" disabled={i === 0} aria-label={`Move LoRA ${i + 1} earlier`} onClick={() => reorder(i, -1)}>Earlier</button><button type="button" disabled={i === plan.loras.length - 1} aria-label={`Move LoRA ${i + 1} later`} onClick={() => reorder(i, 1)}>Later</button></div><button type="button" onClick={() => change({ loras: plan.loras.filter((_, n) => n !== i) })}>Remove LoRA {i + 1}</button></li>)}</ol>
+      <ol className={css.stack}>{plan.loras.map((l, i) => <li key={l.id}><span>{catalog.find(c => c.id === l.id)?.name || l.id}</span><label>Enabled<input type="checkbox" checked={l.enabled} onChange={e => change({ loras: plan.loras.map((v, n) => n === i ? { ...v, enabled: e.target.checked } : v) })} /></label><label>Strength<input type="number" min={catalog.find(c => c.id === l.id)?.strength?.min ?? 0} max={catalog.find(c => c.id === l.id)?.strength?.max ?? 2} step={0.05} value={l.strength} onChange={e => change({ loras: plan.loras.map((v, n) => n === i ? { ...v, strength: Number(e.target.value) } : v) })} /></label><div className={css.row}><button type="button" disabled={i === 0} aria-label={`Move LoRA ${i + 1} earlier`} onClick={() => reorder(i, -1)}>Earlier</button><button type="button" disabled={i === plan.loras.length - 1} aria-label={`Move LoRA ${i + 1} later`} onClick={() => reorder(i, 1)}>Later</button></div><button type="button" onClick={() => change({ loras: plan.loras.filter((_, n) => n !== i) })}>Remove LoRA {i + 1}</button></li>)}</ol>
       <details><summary>Reusable device presets</summary><label>Preset name<input maxLength={60} value={presetName} onChange={e => setPresetName(e.target.value)} /></label><button type="button" onClick={savePreset}>Save preset</button>{presets.map(p => <div className={css.row} key={p.name}><button type="button" onClick={() => change(p.plan)}>Load {p.name}</button><button type="button" onClick={() => { const next = presets.filter(v => v.name !== p.name); try { localStorage.setItem(storageKey, JSON.stringify(next)); setPresets(next); } catch { setMessage("Device storage unavailable."); } }}>Delete preset {p.name}</button></div>)}</details>
     </> : <details><summary>Optional AI Director</summary>
       <p className={css.notice}>Get an estimate before approving a paid planner call. Generation remains separately authorized; owner experiments do not imply qualification.</p>
@@ -420,7 +436,7 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
       <details><summary>Inspect sanitized API graph / manifest</summary><pre>{JSON.stringify(preview, null, 2)}</pre><button type="button" onClick={() => { const url = URL.createObjectURL(new Blob([JSON.stringify(preview, null, 2)], { type: "application/json" })); const link = document.createElement("a"); link.href = url; link.download = "h3-plan.json"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }}>Export sanitized plan</button></details>
     </div> : null}
     </div>
-    {controller === "auto" && autoSettings ? <details className={css.status}><summary>Video settings</summary><p>{plan.workflowId} · SLA Attention · 8-step Turbo</p><p>{dimensions.width} × {dimensions.height} · {plan.durationSeconds} seconds</p><p>{autoSettings.estimate.explanation}</p><button type="button" disabled={active || jobBusy || busy} onClick={() => { setController("manual"); onOpenManualControls?.(); }}>Edit Plan in Manual</button></details> : null}
+    {controller === "auto" && autoSettings ? <details className={css.status}><summary>Video settings</summary><p>{plan.workflowId} · {omniRef ? "FastH3 OmniRef · VSA · Euler · dedicated 8 steps" : `${plan.checkpoint === "singularity" ? "Singularity v1.3 · Realism enabled" : "Standard"} · SLA Attention · 8-step Turbo`}</p><p>{dimensions.width} × {dimensions.height} · {plan.durationSeconds} seconds</p><p>{autoSettings.estimate.explanation}</p><button type="button" disabled={active || jobBusy || busy} onClick={() => { setController("manual"); onOpenManualControls?.(); }}>Edit Plan in Manual</button></details> : null}
     {message ? <p role="status">{message}</p> : null}
     {job ? <section className={css.status} aria-label="H3 Studio job">
       <h3>{job.statusMessage || job.status}</h3><p className={css.notice}>Job {job.id} · {job.status}</p>

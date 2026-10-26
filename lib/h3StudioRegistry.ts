@@ -74,6 +74,7 @@ export type H3StudioCatalogItem = {
   family: "FL2VA" | "Ref2VA" | "both" | null; strength: { min: number; max: number } | null;
   legacyPolicyId: string | null; blockedReasons: string[];
   sourceDeclaredSha256: string | null; filenameConflict: boolean; licenseMetadataAvailable: boolean;
+  defaultStrength?: number; triggerWords?: string[]; guidance?: { source: string; notes: string; strengthStatus: string; triggerStatus: string };
 };
 export function assertH3StudioTest() {
   if (qualificationEnvironment() !== "test") throw Object.assign(new Error("H3 Auto/Manual is available in TEST only."), { status: 404 });
@@ -202,14 +203,17 @@ export function h3StudioCatalog(inventory: H3StudioInventory, evidence = readH3S
       filename, estimatedBytes: Math.round(entry.sizeMB * 1024 * 1024), installation: !filename ? "filename-unresolved" : installed ? "listed-by-worker" : "not-located",
       sha256: valid ? proof.sha256 : null, rights: valid ? proof.rights.status : "unresolved", runtime: "unverified",
       family: production && legacy ? legacy.approvedForR2V && (legacy.approvedForT2V || legacy.approvedForI2V) ? "both" : legacy.approvedForR2V ? "Ref2VA" : "FL2VA" : valid ? proof.family : null,
-      strength: production && legacy ? { min: legacy.minStrength, max: legacy.maxStrength } : valid ? { min: proof.minStrength, max: proof.maxStrength } : null,
+      strength: legacy ? { min: legacy.minStrength, max: legacy.maxStrength } : valid ? { min: proof.minStrength, max: proof.maxStrength } : null,
+      defaultStrength: installedVersion?.defaultStrength ?? legacy?.defaultStrength ?? 1,
+      triggerWords: installedVersion?.triggerWords ?? legacy?.triggerWords ?? [],
+      ...(installedVersion ? { guidance: installedVersion.guidance } : {}),
       sourceDeclaredSha256: sourceFile?.sha256 || null, filenameConflict: record?.filenameConflict || false,
       licenseMetadataAvailable: !!record && !("error" in record.licenseMetadata),
       legacyPolicyId: legacy?.id || null, blockedReasons: reasons };
   });
 }
 export function studioCheckpoint(plan: H3StudioPlan) {
-  if (plan.workflowId === "native-r2v") return H3_OMNIREF.checkpoint;
+  if (plan.checkpoint === "fasth3") return H3_OMNIREF.checkpoint;
   if (plan.checkpoint === "singularity") return "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors";
   const family = H3_STUDIO_WORKFLOWS.find(w => w.id === plan.workflowId)!.family;
   return family === "Ref2VA" ? "minimax_h3_ref2va_pruned_int8_convrot.safetensors" : "minimax_h3_fl2va_pruned_int8_convrot.safetensors";
@@ -273,7 +277,7 @@ export function validateStudioReadiness(plan: H3StudioPlan, inventory: H3StudioI
   const reasons: string[] = [];
   if (!inventory.models.has(studioCheckpoint(plan))) reasons.push(studioBackend(plan) === "rtx5060ti" ? "CHECKPOINT_NOT_LISTED_ON_5060TI" : "CHECKPOINT_NOT_LISTED_ON_3090");
   if (!h3StudioProduction() && evidence?.target !== (studioBackend(plan) === "rtx5060ti" ? "5060ti" : "3090")) reasons.push("TARGET_ASSET_PROVENANCE_REQUIRED");
-  if (plan.workflowId !== "native-r2v" && plan.profile === "ref2va-8step" && !inventory.loras.has(H3_REF2VA_8STEP_FILE)) reasons.push("MATCHING_REF2VA_8STEP_ADAPTER_MISSING");
+  if (plan.checkpoint !== "fasth3" && plan.profile === "ref2va-8step" && !inventory.loras.has(H3_REF2VA_8STEP_FILE)) reasons.push("MATCHING_REF2VA_8STEP_ADAPTER_MISSING");
   if (plan.attention === "vsa" && !inventory.nodes.has("BlockSparseAttention")) reasons.push("VSA_NODE_MISSING");
   if (plan.profile === "fl2va-8step" && !inventory.loras.has(H3_FL2VA_8STEP_FILE)) reasons.push("MATCHING_FL2VA_8STEP_ADAPTER_MISSING");
   if (plan.attention === "project-sla" && !inventory.nodes.has("H3SLAAttention")) reasons.push("PROJECT_SLA_NODE_MISSING");

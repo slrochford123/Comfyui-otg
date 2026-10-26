@@ -121,15 +121,6 @@ function state() {
   return globalState[GLOBAL_KEY];
 }
 
-function validateRequiredLoraTriggers(input: H3DirectJobInput, resolved: ResolvedH3OptionalLora[]) {
-  const prompt = input.prompt.toLocaleLowerCase();
-  for (const lora of resolved) {
-    if (!lora.triggerRequired || !lora.triggerWords.length) continue;
-    const found = lora.triggerWords.some((trigger) => prompt.includes(trigger.trim().toLocaleLowerCase()));
-    if (!found) throw new Error(`H3 LoRA ${lora.label} requires one of these trigger words: ${lora.triggerWords.join(", ")}.`);
-  }
-}
-
 function jobsDir(ownerKey: string) {
   const dir = safeJoin(OTG_DATA_ROOT, "h3-direct", safeSegment(ownerKey), "jobs");
   ensureDir(dir);
@@ -462,7 +453,6 @@ async function execute(job: H3DirectJob) {
     for (const file of media.files) if (path.dirname(file.path) !== media.directory || !/^[a-f0-9]{64}$/.test(file.sha256) || await studioFileSha256(file.path) !== file.sha256) throw new Error("Studio reference bytes changed; submit a fresh reviewed plan.");
   };
   const optionalLoras: ResolvedH3OptionalLora[] = validateH3LoraSelections(persisted.input.optionalLoras, persisted.input.mode).resolved;
-  validateRequiredLoraTriggers(persisted.input, optionalLoras);
 
   let backend = persisted.backend;
   let promptId = persisted.promptId;
@@ -854,6 +844,7 @@ export function validateH3DirectInput(input: H3DirectJobInput) {
   if (input.videos.length > H3_MAX_VIDEO_REFERENCES) throw new Error(`H3 supports at most ${H3_MAX_VIDEO_REFERENCES} video references.`);
   if (input.audios.length > H3_MAX_AUDIO_REFERENCES) throw new Error(`H3 supports at most ${H3_MAX_AUDIO_REFERENCES} audio references.`);
   const optionalLoras = validateH3LoraSelections(input.optionalLoras, input.mode).resolved;
-  validateRequiredLoraTriggers(input, optionalLoras);
+  // The shared compiler injects catalog triggers into the final, media-bound
+  // prompt. Do not mutate the stored creative prompt or require a second approval.
   return input;
 }
