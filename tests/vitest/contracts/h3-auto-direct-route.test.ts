@@ -32,7 +32,7 @@ describe("one-click authenticated Auto admission", () => {
   it.each([["image", "first", "native-i2v", "fl2va-8step"], ["image", "reference", "native-r2v", "ref2va-8step"], ["video", "reference", "reference-edit", "ref2va-8step"]])("uses actual authorized %s/%s media to select %s", async (kind, role, workflowId, profile) => {
     m.media.mockResolvedValue({ fingerprint: "exact-media", items: [{ asset: { kind, role } }] });
     expect((await post({ mediaIds: ["media"] })).status).toBe(202);
-    expect(m.compile.mock.calls[0][0]).toMatchObject({ workflowId, profile, steps: 8, attention: "project-sla" });
+    expect(m.compile.mock.calls[0][0]).toMatchObject({ workflowId, profile, steps: 8, attention: workflowId === "native-r2v" ? "vsa" : "project-sla" });
   });
   it("rejects missing authentication before inspecting media", async () => { m.session.mockRejectedValue(Error("Unauthorized")); expect((await post()).status).toBe(401); expect(m.media).not.toHaveBeenCalled(); });
   it("rejects an unavailable deployment, foreign references and unexecutable configurations", async () => {

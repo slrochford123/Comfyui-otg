@@ -332,6 +332,7 @@ describe(
               [
                 "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
                 "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+                "fasth3_omniref_8step_pruned_int8_convrot.safetensors",
               ],
             ];
           } else if (
@@ -340,6 +341,7 @@ describe(
             input.required.clip_name = [
               [
                 "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+                "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
               ],
             ];
           } else if (

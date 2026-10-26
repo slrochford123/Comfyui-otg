@@ -22,6 +22,7 @@ type Props = {
   referenceOptions?: ReferenceOption[];
   disabled?: boolean;
   variant?: "h3-panel" | "production";
+  fixedReferenceProfile?: boolean;
 };
 
 const TOOLTIPS = {
@@ -38,6 +39,7 @@ export default function H3AdvancedControls({
   referenceOptions = [],
   disabled = false,
   variant = "h3-panel",
+  fixedReferenceProfile = false,
 }: Props) {
   const settings = normalizeH3AdvancedSettings(value, referenceOptions.length);
   const buttonBase = variant === "production"
@@ -80,14 +82,15 @@ export default function H3AdvancedControls({
 
   return (
     <div className="space-y-4" data-otg="h3-advanced-controls">
-      <div>
+      {fixedReferenceProfile ? <p className="col-span-2 text-sm">FastH3 OmniRef · 8 steps · VSA attention · selected C profile</p> : null}
+      <div hidden={fixedReferenceProfile}>
         <div className="mb-2 text-xs font-black uppercase text-white/50">Render</div>
         <div className="grid grid-cols-2 gap-2" role="group" aria-label="H3 render mode">
           <button type="button" title={TOOLTIPS.turbo} disabled={disabled} aria-pressed={settings.renderMode === "turbo"} className={buttonClass(settings.renderMode === "turbo")} onClick={() => setRenderMode("turbo")}>Turbo</button>
           <button type="button" title={TOOLTIPS.native} disabled={disabled} aria-pressed={settings.renderMode === "native"} className={buttonClass(settings.renderMode === "native")} onClick={() => setRenderMode("native")}>Native</button>
         </div>
       </div>
-      <div>
+      <div hidden={fixedReferenceProfile}>
         <div className="mb-2 text-xs font-black uppercase text-white/50">Model</div>
         <div className="grid grid-cols-2 gap-2" role="group" aria-label="H3 model">
           <button type="button" disabled={disabled} aria-pressed={settings.checkpointMode === "standard"} className={buttonClass(settings.checkpointMode === "standard")} onClick={() => setCheckpointMode("standard")}>Standard</button>

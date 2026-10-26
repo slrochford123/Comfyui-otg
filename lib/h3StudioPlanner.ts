@@ -52,7 +52,7 @@ const planProperties = {
   durationSeconds: enumeration([5, 10]), fps: enumeration([24]), seed: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
   prompt: { type: "string", minLength: 1, maxLength: 4000 }, originalPrompt: { type: "string", minLength: 1, maxLength: 4000 },
   loras: { type: "array", maxItems: 3, items: { type: "object", additionalProperties: false, required: Object.keys(loraProperties), properties: loraProperties } },
-  attention: enumeration(["project-sla", "dense"]), audio: enumeration(["generated", "original", "mute"]), combatEnabled: { type: "boolean" },
+  attention: enumeration(["project-sla", "dense", "vsa"]), audio: enumeration(["generated", "original", "mute"]), combatEnabled: { type: "boolean" },
   camera: enumeration(["none", "static", "pan", "dolly", "tracking"]), motion: enumeration(["none", "subtle", "dynamic"]),
   sampler: enumeration(["res_multistep", "euler"]), scheduler: enumeration(["simple"]), steps: enumeration([20, 8]),
 };

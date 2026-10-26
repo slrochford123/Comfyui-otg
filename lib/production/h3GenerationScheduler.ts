@@ -53,8 +53,11 @@ import {
   type ProductionV2H3BackendId,
 } from "@/lib/production/h3Workflows";
 import { productionV2H3UserLoraFilenames } from "@/lib/production/h3Loras";
+import { H3_OMNIREF } from "@/lib/h3OmniRef";
 import {
   getH3ProductionRecipe,
+  getH3GenerationDimensions,
+  normalizeH3Orientation,
   getH3ProductionTimeEstimate,
 } from "@/lib/production/h3ProductionRecipes";
 import { productionV2Store } from "@/lib/production/v2Store";
@@ -91,6 +94,10 @@ function clean(value: unknown) {
 function qualifiedNativeDimensions(
   job: ProductionV2GenerationJob,
 ) {
+  if (job.workflowId?.startsWith(H3_OMNIREF.id)) {
+    const d = getH3GenerationDimensions(job.mode, job.payload.h3Quality, normalizeH3Orientation(job.payload.orientation));
+    return { nativeWidth: d.width, nativeHeight: d.height };
+  }
   const duration =
     job.payload.durationSeconds;
 
@@ -1243,8 +1250,9 @@ export function productionV2GenerationPublicStatus(job: ProductionV2GenerationJo
   const progress = readComfyPromptProgress(job.comfyPromptId);
 
   const hasVsrFinal = Boolean(job.vsrBackend && job.vsrPromptId);
-  const finalWidth = hasVsrFinal ? H3_FINAL_WIDTH : (recipe?.nativeWidth || null);
-  const finalHeight = hasVsrFinal ? H3_FINAL_HEIGHT : (recipe?.nativeHeight || null);
+  const native = recipe ? qualifiedNativeDimensions(job) : null;
+  const finalWidth = hasVsrFinal ? H3_FINAL_WIDTH : (native?.nativeWidth || null);
+  const finalHeight = hasVsrFinal ? H3_FINAL_HEIGHT : (native?.nativeHeight || null);
   const finalFps = hasVsrFinal ? h3FinalFpsForRife(job.payload.rifeInterpolation60Fps) : H3_RIFE_NATIVE_FPS;
   return {
     id: job.id,
@@ -1258,7 +1266,7 @@ export function productionV2GenerationPublicStatus(job: ProductionV2GenerationJo
     backend: job.backend,
     backendLabel: job.backend ? H3_BACKEND_PROFILES[job.backend].label : null,
     h3Quality: job.payload.h3Quality,
-    nativeResolution: recipe ? `${recipe.nativeWidth}x${recipe.nativeHeight}` : null,
+    nativeResolution: native ? `${native.nativeWidth}x${native.nativeHeight}` : null,
     etaSeconds: estimate?.seconds ?? null,
     etaMinSeconds: estimate?.minSeconds ?? null,
     etaMaxSeconds: estimate?.maxSeconds ?? null,

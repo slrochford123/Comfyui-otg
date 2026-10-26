@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { applyH3OmniRef, H3_OMNIREF, h3OmniRefEncoder } from "@/lib/h3OmniRef";
 import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import {
   DEFAULT_H3_ADVANCED_SETTINGS,
@@ -185,7 +186,7 @@ export const H3_REQUIRED_NODE_CLASSES = H3_COMMON_REQUIRED_NODE_CLASSES;
 export function h3RequiredNodeClassesForBackend(
   _backend: ProductionV2H3BackendId,
 ): string[] {
-  return [...H3_COMMON_REQUIRED_NODE_CLASSES];
+  return [...H3_COMMON_REQUIRED_NODE_CLASSES, "ModelAttentionBackend", "BlockSparseAttention"];
 }
 
 /**
@@ -244,6 +245,7 @@ export function h3ExpectedAssetChoicesForBackend(
     result.push(["LoraLoaderModelOnly", "lora_name", expected] as const);
   }
 
+  result.push(["UNETLoader", "unet_name", H3_OMNIREF.checkpoint], ["CLIPLoader", "clip_name", h3OmniRefEncoder(backend)]);
   return result;
 }
 
@@ -575,6 +577,8 @@ function assertReferencePromptMatchesManifest(
 }
 
 export type H3WorkflowBuildInput = {
+  /** Internal structural/reference editor keeps its separate existing architecture. */
+  preserveLegacyReference?: boolean;
   backend: ProductionV2H3BackendId;
   mode: ProductionV2H3Mode;
   h3Quality: H3Quality;
@@ -1221,10 +1225,15 @@ export function buildH3Workflow(input: H3WorkflowBuildInput) {
 
   const contract = H3_WORKFLOW_CONTRACTS[input.mode];
   const orientation = normalizeH3Orientation(input.orientation);
-  const nativeDimensions = getH3NativeDimensions(
+  const nativeDimensions: { width: number; height: number } = getH3NativeDimensions(
     input.h3Quality,
     orientation,
   );
+  const omniRef = input.mode === "h3-reference-to-video" && input.operation !== "visual-edit" && !input.preserveLegacyReference;
+  if (omniRef && input.h3Quality === "hq") {
+    nativeDimensions.width = orientation === "portrait" ? 768 : 1344;
+    nativeDimensions.height = orientation === "portrait" ? 1344 : 768;
+  }
   graph[contract.conditioningNodeId].inputs.width = nativeDimensions.width;
   graph[contract.conditioningNodeId].inputs.height = nativeDimensions.height;
   const prompt = clean(input.finalPrompt);
@@ -1550,11 +1559,12 @@ export function buildH3Workflow(input: H3WorkflowBuildInput) {
     });
   }
 
+  if (omniRef) applyH3OmniRef(graph, input.backend);
   ensureTerminalVideoPreviewNode(graph);
 
   return {
     workflowId:
-      input.operation === "visual-edit"
+      omniRef ? `${H3_OMNIREF.id}:${input.backend}:${input.durationSeconds}:${input.h3Quality}` : input.operation === "visual-edit"
         ? `${recipe.recipeId}-visual-edit`
         : recipe.recipeId,
     workflowFile:
@@ -1562,7 +1572,7 @@ export function buildH3Workflow(input: H3WorkflowBuildInput) {
     recipeId: recipe.recipeId,
     nativeWidth: nativeDimensions.width,
     nativeHeight: nativeDimensions.height,
-    steps: resolved.steps,
+    steps: omniRef ? 8 : resolved.steps,
     preSubmitCleanup: recipe.preSubmitCleanup,
     frameCount:
       h3FrameCountForDuration(input.durationSeconds),

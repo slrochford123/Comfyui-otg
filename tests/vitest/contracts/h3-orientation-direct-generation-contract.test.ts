@@ -93,7 +93,7 @@ describe("H3 orientation and direct-generation contracts", () => {
       for (const quality of ["sh", "lq", "hq"] as const) {
         const landscape = build(mode, quality, "landscape");
         const portrait = build(mode, quality, "portrait");
-        const expected = getH3NativeDimensions(quality, "portrait");
+        const expected = mode === "h3-reference-to-video" && quality === "hq" ? { width: 768, height: 1344 } : getH3NativeDimensions(quality, "portrait");
 
         expect(portrait.workflowId).toBe(landscape.workflowId);
         expect(portrait.workflowFile).toBe(landscape.workflowFile);

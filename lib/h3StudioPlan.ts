@@ -28,7 +28,7 @@ export type H3StudioPlan = {
   prompt: string;
   originalPrompt: string;
   loras: Array<{ id: string; strength: number; enabled: boolean }>;
-  attention: "project-sla" | "dense";
+  attention: "project-sla" | "dense" | "vsa";
   audio: "generated" | "original" | "mute";
   combatEnabled: boolean;
   camera: "none" | "static" | "pan" | "dolly" | "tracking";
@@ -68,7 +68,7 @@ export function parseH3StudioPlan(value: unknown): H3StudioPlan {
     backend: ["rtx3090", "rtx5060ti"],
     version: [H3_STUDIO_VERSION], workflowId: H3_STUDIO_WORKFLOWS.map(w => w.id), checkpoint: ["standard", "singularity"],
     profile: Object.keys(H3_STUDIO_PROFILES), quality: Object.keys(H3_STUDIO_SIZES), orientation: ["landscape", "portrait"],
-    fps: [24], attention: ["project-sla", "dense"], audio: ["generated", "original", "mute"],
+    fps: [24], attention: ["project-sla", "dense", "vsa"], audio: ["generated", "original", "mute"],
     camera: ["none", "static", "pan", "dolly", "tracking"], motion: ["none", "subtle", "dynamic"],
     sampler: ["res_multistep", "euler"], scheduler: ["simple"], steps: [20, 8],
   };
@@ -84,6 +84,13 @@ export function parseH3StudioPlan(value: unknown): H3StudioPlan {
     ids.add(l.id);
   }
   const plan = structuredClone(p) as H3StudioPlan;
+  // Migrate saved reference plans to the selected execution standard. Do not
+  // carry a Singularity/native selector into a different executable checkpoint.
+  if (plan.workflowId === "native-r2v") Object.assign(plan, {
+    checkpoint: "standard", profile: "ref2va-8step", attention: "vsa", combatEnabled: false,
+    ...H3_STUDIO_PROFILES["ref2va-8step"],
+  });
+  else if (plan.attention === "vsa") throw new Error("VSA is registered for OmniRef reference generation only.");
   if (!Number.isFinite(plan.durationSeconds) || (plan.workflowId === "reference-edit" ? plan.durationSeconds < 2 || plan.durationSeconds > 10 : ![5, 10].includes(plan.durationSeconds))) throw new Error("Unsupported H3 durationSeconds.");
   const workflow = H3_STUDIO_WORKFLOWS.find(w => w.id === plan.workflowId)!;
   if (plan.profile === "ref2va-8step" && workflow.family !== "Ref2VA") throw new Error("Ref2VA 8-step cannot be applied to FL2VA.");
@@ -108,6 +115,7 @@ export function reconcileH3StudioPlan(plan: H3StudioPlan, patch: Partial<H3Studi
   const workflow = H3_STUDIO_WORKFLOWS.find(w => w.id === next.workflowId);
   if (!workflow) throw new Error("Unsupported H3 workflowId.");
   if (workflow.id !== "reference-edit" && ![5, 10].includes(next.durationSeconds)) next.durationSeconds = studioTemplateDuration(next.durationSeconds);
+  if (next.workflowId !== "native-r2v" && next.attention === "vsa") next.attention = "project-sla";
   if (workflow.family !== "Ref2VA") {
     next.checkpoint = "standard";
     if (next.profile === "ref2va-8step") next.profile = "native";
@@ -136,5 +144,5 @@ export function makeLocalH3Plan(description: string, media: { first: boolean; im
 /** Auto has one fixed execution standard, independent of saved/manual/AI settings. */
 export function automaticH3Plan(plan: H3StudioPlan, workflowId = plan.workflowId) {
   const ref = H3_STUDIO_WORKFLOWS.find(w => w.id === workflowId)?.family === "Ref2VA";
-  return reconcileH3StudioPlan(plan, { workflowId, attention: "project-sla", profile: ref ? "ref2va-8step" : "fl2va-8step" });
+  return reconcileH3StudioPlan(plan, { workflowId, attention: workflowId === "native-r2v" ? "vsa" : "project-sla", profile: ref ? "ref2va-8step" : "fl2va-8step" });
 }

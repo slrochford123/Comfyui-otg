@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_H3_STUDIO_PLAN, H3_STUDIO_PROFILES, type H3StudioPlan } from "@/lib/h3StudioPlan";
+import { DEFAULT_H3_STUDIO_PLAN, H3_STUDIO_PROFILES, parseH3StudioPlan, type H3StudioPlan } from "@/lib/h3StudioPlan";
 const mock = vi.hoisted(() => ({ call: vi.fn(), estimate: vi.fn(), model: "mock-cost-model" }));
 vi.mock("@/lib/openai/provider", () => ({
   createOpenAIText: mock.call, openAIModels: () => ({ h3: mock.model }), estimateOpenAIUsageCost: mock.estimate,
@@ -180,7 +180,7 @@ describe("H3 Responses planner boundaries", () => {
       ...H3_STUDIO_PROFILES["ref2va-8step"], combatEnabled: true, camera: "tracking", motion: "dynamic",
       loras: [{ id: "civitai-123-456", strength: .75, enabled: true }] };
     mock.call.mockResolvedValue(response(reply(selected)));
-    expect((await planH3WithDirector(owner(), plan, frameMedia, [capability(selected, "qualified-ref8")], true)).plan).toEqual(selected);
+    expect((await planH3WithDirector(owner(), plan, frameMedia, [capability(selected, "qualified-ref8")], true)).plan).toEqual(parseH3StudioPlan(selected));
   });
   it("does not allow mixing individually registered camera and motion settings", async () => {
     const candidates = [capability({ camera: "tracking" }), capability({ motion: "dynamic" }, "dynamic-only")];

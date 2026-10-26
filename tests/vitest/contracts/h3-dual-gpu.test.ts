@@ -21,8 +21,13 @@ describe('H3 explicitly selected dual-GPU architecture', () => {
       const plan = automaticH3Plan({ ...base, backend, workflowId: workflow.id, quality, orientation });
       const result = compileH3StudioPlan(plan, h3StudioPreviewInput(plan), installed(plan), null);
       expect(result.manifest.executable).toBe(true);expect(result.manifest.gpu).toBe(backend);
-      expect(result.graph['24'].inputs.steps).toBe(8);expect(result.graph['41'].inputs.enabled).toBe(true);
-      expect(String(result.graph['36'].inputs.lora_name)).toMatch(workflow.family === 'Ref2VA' ? /ref2v_turbo_8step/ : /fl2v_turbo_8step/);
+      expect(result.graph['24'].inputs.steps).toBe(8);
+      if (workflow.id === 'native-r2v') {
+        expect(result.graph['omni_vsa'].inputs.selection).toBe('vsa'); expect(result.graph['36']).toBeUndefined();
+      } else {
+        expect(result.graph['41'].inputs.enabled).toBe(true);
+        expect(String(result.graph['36'].inputs.lora_name)).toMatch(workflow.family === 'Ref2VA' ? /ref2v_turbo_8step/ : /fl2v_turbo_8step/);
+      }
     }
   });
   it('never interprets web-host identity as the requested GPU or silently switches', () => {

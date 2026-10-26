@@ -15,8 +15,8 @@ function fixture(record?: unknown) {
 }
 afterEach(() => { for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
 describe("owner-facing build identity and append-only release history", () => {
-  it("identifies this release as Build 2.01 independently of package semver", () => {
-    expect(BUILD_VERSION).toBe("2.01");
+  it("identifies this release as Build 2.02 independently of package semver", () => {
+    expect(BUILD_VERSION).toBe("2.02");
     expect(readBuildIdentity(fixture())).toMatchObject({ buildVersion: BUILD_VERSION, softwareVersion: "2.0.1", commit: null, releaseName: null });
   });
   it("reads the exact packaged release identity but never private provenance fields", () => {

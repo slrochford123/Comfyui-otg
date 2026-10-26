@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.01",
+  "current": "2.02",
   "builds": [
     {
       "version": "2",
@@ -13,6 +13,12 @@
       "date": "2026-10-25",
       "summary": "Explicit dual-GPU H3 Auto/Manual, Edit Video and special-mode routing; target-bound recovery and model inventory integrity.",
       "sourceBaseCommit": "a3f9ca4148914be60aaab44b556902a3ff2b5d53"
+    },
+    {
+      "version": "2.02",
+      "date": "2026-10-26",
+      "summary": "Selected FastH3 OmniRef reference generation on both GPUs, Auto execution-profile consistency and live-preview transport.",
+      "sourceBaseCommit": "a930bcd7854bd6cb823afc9755c942aa586e1e63"
     }
   ]
 }

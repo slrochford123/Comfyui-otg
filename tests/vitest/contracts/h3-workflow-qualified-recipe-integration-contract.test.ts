@@ -65,36 +65,36 @@ describe("H3 exact Scene Hunter/LQ/HQ workflow integration", () => {
 
             expect(built.recipeId).toBe(recipe.recipeId);
             expect(built.workflowFile).toBe(recipe.workflowFile);
-            expect(built.nativeWidth).toBe(recipe.nativeWidth);
+            const width = mode === "h3-reference-to-video" && quality === "hq" ? 1344 : recipe.nativeWidth;
+            expect(built.nativeWidth).toBe(width);
             expect(built.nativeHeight).toBe(recipe.nativeHeight);
             expect(built.steps).toBe(8);
             expect(built.preSubmitCleanup).toBeNull();
             expect(built.graph["24"].inputs.steps).toBe(8);
             expect(built.graph["24"].inputs.scheduler).toBe("simple");
             expect(built.graph["18"].inputs.sampler_name).toBe(recipe.sampler);
-            expect(built.graph["39"].inputs.width).toBe(recipe.nativeWidth);
+            expect(built.graph["39"].inputs.width).toBe(width);
             expect(built.graph["39"].inputs.height).toBe(recipe.nativeHeight);
             expect(built.graph["39"].inputs.length).toBe(recipe.frameCount);
             expect(built.graph["30"].inputs.unet_name).toBe(
               mode === "h3-reference-to-video"
-                ? "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+                ? "fasth3_omniref_8step_pruned_int8_convrot.safetensors"
                 : "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors",
             );
             if (mode === "h3-reference-to-video") {
-              expect(built.graph["36"].class_type).toBe("LoraLoaderModelOnly");
-              expect(built.graph["36"].inputs.lora_name).toBe("minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors");
-              expect(built.graph["38"].inputs.model).toEqual(["36", 0]);
+              expect(built.graph["36"]).toBeUndefined();
+              expect(built.graph["38"].inputs.model).toEqual(["30", 0]);
             } else {
               expect(built.graph["38"].inputs.model).toEqual(["30", 0]);
             }
-            expect(built.graph["38"].inputs.shift_video).toBe(recipe.videoSigmaShift);
+            expect(built.graph["38"].inputs.shift_video).toBe(mode === "h3-reference-to-video" ? 12 : recipe.videoSigmaShift);
             expect(built.graph["38"].inputs.shift_audio).toBe(3);
-            expect(built.graph["41"].class_type).toBe("H3SLAAttention");
-            expect(built.graph["41"].inputs.engine).toBe("comfy_kitchen");
+            expect(built.graph["41"].class_type).toBe(mode === "h3-reference-to-video" ? "ModelAttentionBackend" : "H3SLAAttention");
+            if (mode !== "h3-reference-to-video") expect(built.graph["41"].inputs.engine).toBe("comfy_kitchen");
             expect(built.graph["164"].class_type).toBe("ModelPreviewOverrideKJ");
             expect(built.graph["164"].inputs.tiny_vae).toBe("taeh3.safetensors");
             expect(Object.values(built.graph).some((node) => node.class_type === "SpectrumApplyMiniMaxH3")).toBe(false);
-            expect(Object.values(built.graph).some((node) => node.class_type === "H3SLAAttention")).toBe(true);
+            expect(Object.values(built.graph).some((node) => node.class_type === "H3SLAAttention")).toBe(mode !== "h3-reference-to-video");
           }
         }
       }
@@ -107,9 +107,9 @@ describe("H3 exact Scene Hunter/LQ/HQ workflow integration", () => {
     const gpu3090 = build("rtx3090", "h3-reference-to-video", 10, "hq");
     for (const built of [gpu5060, gpu3090]) {
       expect(built.graph["39"].class_type).toBe("MiniMaxH3ReferenceToVideo");
-      expect(built.graph["41"].class_type).toBe("H3SLAAttention");
-      expect(built.graph["41"].inputs.engine).toBe("comfy_kitchen");
-      expect(built.graph["164"].inputs.model).toEqual(["41", 0]);
+      expect(built.graph["41"].class_type).toBe("ModelAttentionBackend");
+      expect(built.graph["omni_vsa"].inputs.selection).toBe("vsa");
+      expect(built.graph["164"].inputs.model).toEqual(["omni_vsa", 0]);
       expect(built.graph["24"].inputs.model).toEqual(["164", 0]);
       expect(built.graph["32"].inputs.model).toEqual(["164", 0]);
     }

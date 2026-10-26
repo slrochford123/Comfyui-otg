@@ -196,6 +196,12 @@ export function getH3NativeDimensions(
     : { width: landscape.width, height: landscape.height };
 }
 
+/** Generation R2V uses the owner-selected C canvas; other families are unchanged. */
+export function getH3GenerationDimensions(mode: H3ProductionMode, quality: H3Quality, orientation: H3Orientation): { width: number; height: number } {
+  if (mode === "h3-reference-to-video" && quality === "hq") return orientation === "portrait" ? { width: 768, height: 1344 } : { width: 1344, height: 768 };
+  return getH3NativeDimensions(quality, orientation);
+}
+
 export function getH3ProductionRecipe(
   mode: H3ProductionMode,
   durationSeconds: H3ProductionDuration,

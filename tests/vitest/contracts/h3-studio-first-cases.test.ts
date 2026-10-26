@@ -36,7 +36,8 @@ describe("local-only first-case proposals", () => {
     const r2v = proposals[1]; expect(r2v.jobInput.images).toHaveLength(1); expect(r2v.compilerInput.references).toHaveLength(1);
     expect(r2v.compilerInput.finalPrompt).toContain("<Picture 1>"); expect(r2v.compilerInput.finalPrompt).toContain("<Subject 1>");
     expect(r2v.compilerInput.references[0].uploadedFilename).toBeTruthy();
-    expect(r2v.assetRights["minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"]).toMatchObject({ status: "OWNER_REVIEW_REQUIRED", reference: "" });
+    expect(r2v.assetRights["fasth3_omniref_8step_pruned_int8_convrot.safetensors"]).toMatchObject({ status: "OWNER_REVIEW_REQUIRED", reference: "" });
+    expect(r2v.assetRights["minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"]).toBeUndefined();
     expect(fs.statSync(result.syntheticQaImage).mode & 0o777).toBe(0o600);
     expect(read(result.syntheticQaImage).subarray(0,8).toString("hex")).toBe("89504e470d0a1a0a");
   });

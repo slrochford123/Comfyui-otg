@@ -3849,6 +3849,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           data-otg="h3-advanced-controls-panel"
         >
           <H3AdvancedControls
+            fixedReferenceProfile={studioMode === "h3-reference-to-video"}
             value={h3Settings}
             onChange={setH3Settings}
             referenceOptions={refModReferenceOptions}
@@ -3858,15 +3859,15 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
 
         <div className="mt-4 rounded-[6px] border border-cyan-300/25 bg-cyan-300/10 p-3">
           <p className="text-sm font-black">
-            {h3Settings.renderMode === "native"
+            {studioMode === "h3-reference-to-video" ? "FastH3 OmniRef · 8-step" : h3Settings.renderMode === "native"
               ? "MiniMax H3 Native · 20-step"
               : "MiniMax H3 Turbo · 8-step"}
           </p>
           <p className="text-xs text-white/60">
-            {h3Settings.checkpointMode === "singularity"
+            {studioMode === "h3-reference-to-video" ? "Selected C profile · VSA attention" : h3Settings.checkpointMode === "singularity"
               ? `Singularity · Realism On · Combat ${h3Settings.combatLoraEnabled ? "On" : "Off"}`
               : "Standard model"}{" "}
-            · SLA attention
+            {studioMode !== "h3-reference-to-video" ? " · SLA attention" : null}
           </p>
         </div>
           </>

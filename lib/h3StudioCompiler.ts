@@ -1,4 +1,5 @@
 import { buildH3Workflow, loadH3WorkflowTemplate, h3TurboLoraForMode, type H3WorkflowBuildInput, type H3PromptGraph } from "@/lib/production/h3Workflows";
+import { applyH3OmniRef } from "@/lib/h3OmniRef";
 import { parseH3StudioPlan, H3_STUDIO_WORKFLOWS, studioDimensions, studioFrames, studioTemplateDuration, studioBackend, studioGpuPattern, type H3StudioPlan } from "@/lib/h3StudioPlan";
 import { h3StudioCatalog, H3_REF2VA_8STEP_FILE, studioCheckpoint, studioTemplateHash, validateStudioReadiness,
   exactH3StudioQualification, isH3StudioEvidenceV2, validH3StudioRights, matchesH3StudioInventoryAsset,
@@ -52,7 +53,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   const finalPrompt = [input.finalPrompt, ...new Set(triggerHints)].join("\n");
   const built = buildH3Workflow({ ...input, backend, finalPrompt: composeH3StudioExecutionPrompt(finalPrompt, plan), seed: plan.seed,
     durationSeconds: studioTemplateDuration(plan.durationSeconds), h3Quality: plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq",
-    orientation: plan.orientation, optionalLoras,
+    orientation: plan.orientation, optionalLoras, preserveLegacyReference: plan.workflowId === "reference-edit",
     h3Settings: { renderMode: native ? "native" : "turbo", checkpointMode: plan.checkpoint, combatLoraEnabled: plan.combatEnabled,
       refMod: { enabled: false, strength: "balanced" }, motionLab: { enabled: false } } });
   const graph = built.graph;
@@ -62,7 +63,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   graph["18"].inputs.sampler_name = plan.sampler;
   graph["38"].inputs.shift_video = native ? 6 : 12;
   graph["38"].inputs.shift_audio = 3;
-  if (!native) {
+  if (!native && plan.workflowId !== "native-r2v") {
     if (plan.profile === "fl2va-8step") {
       // Standard Turbo's legacy graph uses a fast checkpoint. Studio instead
       // selects its registered base checkpoint plus the matching FL2VA adapter.
@@ -88,6 +89,12 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   graph["34"].inputs.fps = 24;
   // The installed project SLA node is not a SolAttnPatch alias. Dense is explicit.
   graph["41"].inputs.enabled = plan.attention === "project-sla";
+  if (plan.workflowId === "native-r2v") {
+    // The base builder already applied this exact profile; reapply after Studio
+    // mutations so neither a saved plan nor AI can restore the old sampler/model.
+    delete graph["omni_vsa"];
+    applyH3OmniRef(graph, backend);
+  }
   if (plan.audio === "mute" || plan.audio === "original") delete graph["34"].inputs.audio;
   const templateSha256 = studioTemplateHash(loadH3WorkflowTemplate(backend, workflow.mode, studioTemplateDuration(plan.durationSeconds), plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq"));
   const readinessReasons = validateStudioReadiness(plan, inventory, evidence, templateSha256);

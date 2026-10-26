@@ -448,7 +448,7 @@ export function applyComfyBinaryPreviewEvent(data: unknown, context: { clientId?
   }
 
   if (imageOffset >= buffer.length) return false;
-  const safeMimeType = mimeType.startsWith("image/") ? mimeType : "image/jpeg";
+  const safeMimeType = ["image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4", "video/webm"].includes(mimeType) ? mimeType : "image/jpeg";
   const promptId = String(metadata.prompt_id || metadata.promptId || "").trim() || findPromptForClient(context);
   if (!promptId) return false;
 
