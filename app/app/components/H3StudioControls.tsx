@@ -8,6 +8,7 @@ import { h3LoraDefaultStrength } from "@/lib/h3LoraGuidance";
 import { newClientRequestId } from "@/lib/client/requestId";
 import css from "./H3StudioControls.module.css";
 import VideoSnapshotPicker from "./VideoSnapshotPicker";
+import H3SpeedIndicator from "./H3SpeedIndicator";
 export type H3StudioController = "auto" | "manual";
 type Asset = { id: string; kind: "image" | "video" | "audio"; role: "first" | "last" | "reference"; name: string; sha256: string; version: number | string; metadata: { durationSeconds?: number; width?: number; height?: number; hasAudio?: boolean }; url: string };
 type Source = { id: string; file: File; kind: Asset["kind"]; role: Asset["role"]; description: string; includeAudio: boolean; clipStartSeconds: number; revision: number; asset?: Asset; registrationAsset?: Asset; error?: string };
@@ -429,7 +430,8 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
     </fieldset>
     {controller === "manual" && preview ? <div className={css.status} ref={reviewedPlanElement} tabIndex={-1} aria-label="Reviewed video plan">
       <strong>Video Plan</strong><p>{plan.prompt}</p><p>{plan.workflowId} · {preview.manifest.steps} steps · {preview.manifest.sampler}</p>
-      <p>{preview.estimate.explanation}</p><p>Generation credits: {preview.estimate.generationCredits ?? "not measured"} · Runtime estimate: {preview.estimate.generationSeconds == null ? "not measured" : `${preview.estimate.generationSeconds} seconds`}</p>
+      <p>{preview.estimate.explanation}</p><p>Generation credits: {preview.estimate.generationCredits ?? "not measured"}</p>
+      <H3SpeedIndicator settings={{ checkpointMode: plan.checkpoint, renderMode: plan.profile === "native" ? "native" : "turbo" }} quality={plan.quality} />
       {preview.manifest.blockedReasons.length ? <ul>{preview.manifest.blockedReasons.map(reason => <li key={reason}>{reason}</li>)}</ul> : null}
       {!directGeneration ? <label><input type="checkbox" checked={generationConsent} disabled={!preview.manifest.executable || active || jobBusy} onChange={event => setGenerationConsent(event.target.checked)} />I approve one generation at the displayed generation estimate.</label> : null}
       <div className={css.row}><button type="button" disabled={active || jobBusy} onClick={() => { setController("manual"); onOpenManualControls?.(); }}>Edit Plan in Manual</button>

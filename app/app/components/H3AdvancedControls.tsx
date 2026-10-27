@@ -25,6 +25,7 @@ type Props = {
   variant?: "h3-panel" | "production";
   allowFastH3?: boolean;
   fastH3BlockedReason?: string;
+  afterModelControls?: React.ReactNode;
 };
 
 const TOOLTIPS = {
@@ -43,13 +44,14 @@ export default function H3AdvancedControls({
   variant = "h3-panel",
   allowFastH3 = false,
   fastH3BlockedReason,
+  afterModelControls,
 }: Props) {
   const settings = normalizeH3AdvancedSettings(value, referenceOptions.length);
   const fast = isH3OmniRefMode(settings.checkpointMode);
   const selfLift = settings.checkpointMode === "selflift";
   const buttonBase = variant === "production"
     ? "min-h-10 rounded-lg border px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-45"
-    : "rounded-[8px] border px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-45";
+    : "min-h-11 rounded-[8px] border px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-45";
   const activeClass = variant === "production"
     ? "production-v2-control-active"
     : "border-cyan-300 bg-cyan-300/10 text-white shadow-[0_0_18px_rgba(34,211,238,0.12)]";
@@ -130,6 +132,7 @@ export default function H3AdvancedControls({
         </div>
       </div>
       {allowFastH3 && fastH3BlockedReason ? <p role="status" className="text-xs text-amber-200">{fastH3BlockedReason}</p> : null}
+      {afterModelControls}
       <div>
         <div className="mb-2 text-xs font-black uppercase text-white/50">Enhance</div>
         <div className="grid grid-cols-2 gap-2" role="group" aria-label="H3 enhancements">

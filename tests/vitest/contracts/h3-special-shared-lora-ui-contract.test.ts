@@ -28,14 +28,8 @@ describe("H3 special-mode shared optional LoRA UI", () => {
   });
 
   it("does not expose legacy model controls when Turbo/Native is unsupported", () => {
-    expect(panel).toContain(
-      "{modeCapabilities.supportsTurboNative ? (",
-    );
-    expect(panel).toContain(
-      '? "LoRAs and Creative Controls"',
-    );
-    expect(panel).toContain(
-      ': "Optional H3 LoRAs"',
-    );
+    expect(panel).toContain("if (!modeCapabilities.supportsTurboNative) return null;");
+    expect(panel).toContain('data-otg="h3-optional-loras"');
+    expect(panel).not.toContain("LoRAs and Creative Controls");
   });
 });

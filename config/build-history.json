@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.04",
+  "current": "2.05",
   "builds": [
     {
       "version": "2",
@@ -31,6 +31,12 @@
       "date": "2026-10-27",
       "summary": "Add independent SelfLift progressive FastH3 OmniRef reference generation; retain legacy Native/Turbo and Singularity choices.",
       "sourceBaseCommit": "ffea70a53cdf80e4b6ef430f519122155acb2e93"
+    },
+    {
+      "version": "2.05",
+      "date": "2026-10-27",
+      "summary": "Always-visible H3 model and render choices, separate optional LoRA disclosure, and consistent Fast/Medium/Slow speed indicators.",
+      "sourceBaseCommit": "e194faf367429ffe9baaa3a4487866abfba4350a"
     }
   ]
 }

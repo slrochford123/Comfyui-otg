@@ -22,6 +22,7 @@ import {
 } from "@/lib/h3StylePresets";
 import { H3StylePresetPicker } from "./H3StylePresetPicker";
 import H3AdvancedControls from "./H3AdvancedControls";
+import H3SpeedIndicator from "./H3SpeedIndicator";
 import H3VideoEditPanel from "./H3VideoEditPanel";
 import H3StudioControls, { type H3StudioController } from "./H3StudioControls";
 import type { H3StudioPlan } from "@/lib/h3StudioPlan";
@@ -35,7 +36,6 @@ import {
 import {
   getH3GenerationDimensions,
   getH3NativeDimensions,
-  getH3ProductionTimeEstimate,
   H3_ORIENTATION_OPTIONS,
   H3_PRODUCTION_DURATION_OPTIONS,
   H3_QUALITY_OPTIONS,
@@ -1155,11 +1155,6 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         peopleRealismEnabled: realismPeopleEnabled,
       }),
     [realismPreset, realismSpeedLora, realismPeopleEnabled],
-  );
-  const estimate = useMemo(
-    () =>
-      getH3ProductionTimeEstimate(mode, duration, quality, job?.backend as any),
-    [mode, duration, quality, job?.backend],
   );
   const descriptors = references.map(
     ({ id, kind, name, description, includeAudio, clipStartSeconds }) => ({
@@ -3691,7 +3686,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     );
   }
 
-  function renderSharedOutputControls(label: string, details?: React.ReactNode) {
+  function renderSharedOutputControls(label: string, details?: React.ReactNode, afterDuration?: React.ReactNode) {
     return (
       <>
         <p className="mb-2 mt-3 text-xs font-bold text-white/50">Quality</p>
@@ -3735,6 +3730,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
             </button>
           ))}
         </div>
+        {afterDuration}
         <p className="mb-2 mt-4 text-xs font-bold text-white/50">
           Orientation
         </p>
@@ -3846,17 +3842,9 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     );
   }
 
-  function renderLegacyModelControls() {
-    if (!modeCapabilities.supportsTurboNative && !modeCapabilities.supportsOptionalLoras) return null;
+  function renderVisibleModelControls() {
+    if (!modeCapabilities.supportsTurboNative) return null;
     return (
-      <details className={surface}>
-        <summary className="cursor-pointer text-sm font-black">
-          {modeCapabilities.supportsTurboNative
-            ? "LoRAs and Creative Controls"
-            : "Optional H3 LoRAs"}
-        </summary>
-        {modeCapabilities.supportsTurboNative ? (
-          <>
         <div
           className="mt-4"
           data-otg="h3-advanced-controls-panel"
@@ -3868,10 +3856,9 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
             onChange={setH3Settings}
             referenceOptions={refModReferenceOptions}
             disabled={active}
-          />
-        </div>
-
-        <div className="mt-4 rounded-[6px] border border-cyan-300/25 bg-cyan-300/10 p-3">
+            afterModelControls={<>
+        <H3SpeedIndicator settings={h3Settings} quality={quality} />
+        <div className="rounded-[6px] border border-cyan-300/25 bg-cyan-300/10 p-3">
           <p className="text-sm font-black">
             {fastH3Selected ? `${h3Settings.checkpointMode === "selflift" ? "SelfLift / " : ""}FastH3 OmniRef · 8-step · Euler` : h3Settings.renderMode === "native"
               ? "MiniMax H3 Native · 20-step"
@@ -3884,9 +3871,17 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
             {!fastH3Selected ? " · SLA attention" : null}
           </p>
         </div>
-          </>
-        ) : null}
+            </>}
+          />
+        </div>
+    );
+  }
 
+  function renderLegacyModelControls() {
+    if (!modeCapabilities.supportsOptionalLoras) return null;
+    return (
+      <details className={surface} data-otg="h3-optional-loras">
+        <summary className="min-h-11 cursor-pointer py-3 text-sm font-black">Optional H3 LoRAs</summary>
         <div className="mt-4">
           <div className="flex items-center justify-between">
             <p className="text-xs font-black uppercase text-white/50">
@@ -5573,15 +5568,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               <div className="mt-4 rounded-[6px] border border-white/10 bg-black/30 p-3 text-sm text-white/60">
                 <span className="font-semibold text-white/80">Canvas:</span>{" "}
                 {nativeDimensions.width}x{nativeDimensions.height}
-                <br />
-                <span className="font-semibold text-white/80">Estimate:</span> ~
-                {formatDuration(estimate.minSeconds)} to{" "}
-                {formatDuration(estimate.maxSeconds)}
-                <br />
-                <span className="text-xs">
-                  Actual time varies by GPU and queue. Portrait inherits the matching landscape estimate and is not independently benchmarked.
-                </span>
               </div>,
+              renderVisibleModelControls(),
             )}
           </section>
           {renderLegacyModelControls()}

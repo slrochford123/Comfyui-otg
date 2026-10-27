@@ -41,6 +41,41 @@ function openLegacyManual() {
 }
 
 describe("H3 persistent mutually-exclusive selections", () => {
+  it("keeps model/render and live speed after duration, outside the separate LoRA disclosure", () => {
+    render(<H3Panel />);
+    const ui = openLegacyManual();
+    fireEvent.click(ui.getByRole("tab", { name: /Reference/ }));
+    const quality = ui.getByRole("group", { name: "H3 quality" });
+    const duration = ui.getByRole("group", { name: "H3 duration" });
+    const model = ui.getByRole("group", { name: "H3 model" });
+    const renderMode = ui.getByRole("group", { name: "H3 render mode" });
+    const orientation = ui.getByRole("group", { name: "H3 orientation" });
+    const speed = () => document.querySelector('[data-otg="h3-generation-speed"]')!;
+    const loras = document.querySelector('[data-otg="h3-optional-loras"]') as HTMLDetailsElement;
+    const before = (first: Element, second: Element) => expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    before(quality, duration);
+    before(duration, renderMode);
+    before(duration, model);
+    before(model, speed());
+    before(speed(), orientation);
+    before(orientation, loras);
+    for (const control of [model, renderMode, speed()]) expect(control.closest("details")).toBeNull();
+    expect(loras.open).toBe(false);
+    expect(within(loras).getByText("+ Add approved LoRA")).toBeTruthy();
+    expect(loras.querySelector('[aria-label="H3 model"]')).toBeNull();
+    expect(loras.querySelector('[aria-label="H3 render mode"]')).toBeNull();
+    fireEvent.click(within(quality).getByRole("button", { name: /HQ/ }));
+    fireEvent.click(ui.getByRole("button", { name: "Native", exact: true }));
+    expect(speed().getAttribute("data-speed")).toBe("slow");
+    fireEvent.click(ui.getByRole("button", { name: "SelfLift", exact: true }));
+    expect(speed().getAttribute("data-speed")).toBe("fast");
+    expect(loras.open).toBe(false);
+    fireEvent.click(ui.getByRole("button", { name: "Singularity", exact: true }));
+    expect(ui.getByRole("button", { name: "Native", exact: true }).getAttribute("aria-pressed")).toBe("true");
+    expect(ui.getByRole("checkbox", { name: /Combat LoRA/ })).toBeTruthy();
+    expect(speed().getAttribute("data-speed")).toBe("slow");
+  });
+
   it("retains exactly one selected mode", () => {
     render(<H3Panel />);
     const screen = openLegacyManual();
