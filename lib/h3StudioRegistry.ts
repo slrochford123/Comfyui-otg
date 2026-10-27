@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { H3_OMNIREF } from "@/lib/h3OmniRef";
+import { H3_OMNIREF, isH3OmniRefMode } from "@/lib/h3OmniRef";
+import { H3_SELF_LIFT } from "@/lib/h3SelfLift";
 import ledger from "@/lib/h3Stage1cLedger.json";
 import provenance from "@/lib/h3Stage1cProvenance.json";
 import installedStage1c from "@/lib/h3Stage1cInstalled.json";
@@ -162,7 +163,7 @@ export async function inspectH3StudioInventory(qualificationJob?: { qualificatio
   }
   return { backend, remoteAssetVerification, nodes: new Set(Object.keys(info)), models: new Set(choices("UNETLoader", "unet_name")),
     loras: new Set(choices("LoraLoaderModelOnly", "lora_name")), observedAt: new Date().toISOString(),
-    files: new Set([...choices("UNETLoader", "unet_name"), ...choices("CLIPLoader", "clip_name"), ...choices("VAELoader", "vae_name"), ...choices("LoraLoaderModelOnly", "lora_name"), ...choices("ModelPreviewOverrideKJ", "tiny_vae")]),
+    files: new Set([...choices("UNETLoader", "unet_name"), ...choices("CLIPLoader", "clip_name"), ...choices("VAELoader", "vae_name"), ...choices("LoraLoaderModelOnly", "lora_name"), ...choices("ModelPreviewOverrideKJ", "tiny_vae"), ...choices(H3_SELF_LIFT.nodeClass, "upscaler_model")]),
     assets: receipt?.assets, assetFiles: receipt?.assetFiles, assetObservedAt: receipt?.assetObservedAt, capacity, device };
 }
 export const h3Stage1cDecisions = () => ({ selected: ledger.decisions.filter(d => d.decision === "SELECT"),
@@ -213,7 +214,7 @@ export function h3StudioCatalog(inventory: H3StudioInventory, evidence = readH3S
   });
 }
 export function studioCheckpoint(plan: H3StudioPlan) {
-  if (plan.checkpoint === "fasth3") return H3_OMNIREF.checkpoint;
+  if (isH3OmniRefMode(plan.checkpoint)) return H3_OMNIREF.checkpoint;
   if (plan.checkpoint === "singularity") return "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors";
   const family = H3_STUDIO_WORKFLOWS.find(w => w.id === plan.workflowId)!.family;
   return family === "Ref2VA" ? "minimax_h3_ref2va_pruned_int8_convrot.safetensors" : "minimax_h3_fl2va_pruned_int8_convrot.safetensors";
@@ -277,7 +278,11 @@ export function validateStudioReadiness(plan: H3StudioPlan, inventory: H3StudioI
   const reasons: string[] = [];
   if (!inventory.models.has(studioCheckpoint(plan))) reasons.push(studioBackend(plan) === "rtx5060ti" ? "CHECKPOINT_NOT_LISTED_ON_5060TI" : "CHECKPOINT_NOT_LISTED_ON_3090");
   if (!h3StudioProduction() && evidence?.target !== (studioBackend(plan) === "rtx5060ti" ? "5060ti" : "3090")) reasons.push("TARGET_ASSET_PROVENANCE_REQUIRED");
-  if (plan.checkpoint !== "fasth3" && plan.profile === "ref2va-8step" && !inventory.loras.has(H3_REF2VA_8STEP_FILE)) reasons.push("MATCHING_REF2VA_8STEP_ADAPTER_MISSING");
+  if (!isH3OmniRefMode(plan.checkpoint) && plan.profile === "ref2va-8step" && !inventory.loras.has(H3_REF2VA_8STEP_FILE)) reasons.push("MATCHING_REF2VA_8STEP_ADAPTER_MISSING");
+  if (plan.checkpoint === "selflift") {
+    if (!inventory.nodes.has(H3_SELF_LIFT.nodeClass)) reasons.push("SELFLIFT_NODE_MISSING_ON_SELECTED_GPU");
+    if (!inventory.files?.has(H3_SELF_LIFT.upscaler)) reasons.push("SELFLIFT_LATENT_LIFTER_MISSING_ON_SELECTED_GPU");
+  }
   if (plan.attention === "vsa" && !inventory.nodes.has("BlockSparseAttention")) reasons.push("VSA_NODE_MISSING");
   if (plan.profile === "fl2va-8step" && !inventory.loras.has(H3_FL2VA_8STEP_FILE)) reasons.push("MATCHING_FL2VA_8STEP_ADAPTER_MISSING");
   if (plan.attention === "project-sla" && !inventory.nodes.has("H3SLAAttention")) reasons.push("PROJECT_SLA_NODE_MISSING");

@@ -13,12 +13,17 @@ def command(args, timeout=30):
 
 def final_override_name(dropins):
     names = [Path(p).name for p in dropins]
-    # Extending the entire maximum filename sorts strictly after that filename,
-    # including the exact zzzz/zzzzz Node20 legacy overrides. Re-check effective
-    # ExecStart after reload as defense against new/concurrent overrides.
-    result = max(names + ['zz-slr-runtime.conf']) + '.slr-runtime.conf'
-    if len(result.encode()) > 240:
-        raise ValueError('Drop-in name is too long; review existing overrides.')
+    # Advance the leading z prefix, not the entire previous filename. Repeated
+    # deployments previously accumulated .slr-runtime.conf until the filename
+    # limit blocked activation. Preserve every existing override; create one
+    # short, exclusive, lexically later file and still verify effective ExecStart.
+    latest = max(names + ['zz-slr-runtime.conf'])
+    if not re.fullmatch(r'[a-zA-Z0-9_.-]+', latest):
+        raise ValueError('Unsupported drop-in name; review precedence explicitly.')
+    leading_z = len(latest) - len(latest.lstrip('z'))
+    result = 'z' * (leading_z + 1) + '-slr-runtime.conf'
+    if result <= latest or len(result.encode()) > 240:
+        raise ValueError('Cannot safely advance drop-in precedence; review existing overrides.')
     return result
 
 def assert_exec_start(raw, node, entry):

@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
     // Enumerate only actually qualified, recorded configurations, never a speculative
     // Cartesian product of checkpoint/LoRA/profile choices.
     const candidates: unknown[] = [plan, ...listH3StudioQualifiedPlans(evidence)];
-    if (experimental || h3StudioProduction()) for (const workflow of H3_STUDIO_WORKFLOWS) for (const checkpoint of ["standard", "singularity"] as const) for (const profile of ["native", "ref2va-8step", "fl2va-8step"] as const) {
+    if (experimental || h3StudioProduction()) for (const workflow of H3_STUDIO_WORKFLOWS) for (const checkpoint of ["standard", "singularity", "fasth3", "selflift"] as const) for (const profile of ["native", "ref2va-8step", "fl2va-8step"] as const) {
       try { candidates.push(reconcileH3StudioPlan(plan, { workflowId: workflow.id, checkpoint, profile, loras: [] })); } catch { /* Strict registered combinations only. */ }
     }
     const available: H3PlannerCapability[] = [];
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
         const result = compileH3StudioPlan(candidate, studioBoundCompilerInput(candidate, media), inventory, evidence, access);
         const family = H3_STUDIO_WORKFLOWS.find(w => w.id === candidate.workflowId)!.family;
         if (result.manifest.executable && !available.some(c => c.id === result.manifest.qualificationFingerprint)) available.push({ id: result.manifest.qualificationFingerprint, plan: candidate, qualificationFingerprint: result.manifest.qualificationFingerprint,
-          ...(experimental || h3StudioProduction() ? { experimental, installedWorkflow: h3StudioProduction(), allowedLoras: h3StudioCatalog(inventory, evidence).filter(l => !l.blockedReasons.length && (l.family === family || l.family === "both") && l.strength && (candidate.checkpoint !== "fasth3" || !fastH3LoraBlockReason(l.filename))).map(l => ({ id: l.id, name: l.name, minStrength: l.strength!.min, maxStrength: l.strength!.max, recommendedStrength: l.defaultStrength, triggerWords: l.triggerWords })) } : {}) });
+          ...(experimental || h3StudioProduction() ? { experimental, installedWorkflow: h3StudioProduction(), allowedLoras: h3StudioCatalog(inventory, evidence).filter(l => !l.blockedReasons.length && (l.family === family || l.family === "both") && l.strength && (!["fasth3", "selflift"].includes(candidate.checkpoint) || !fastH3LoraBlockReason(l.filename))).map(l => ({ id: l.id, name: l.name, minStrength: l.strength!.min, maxStrength: l.strength!.max, recommendedStrength: l.defaultStrength, triggerWords: l.triggerWords })) } : {}) });
       } catch { /* Unavailable/incompatible records are not offered to the director. */ }
     }
     const references = await studioPlannerReferences(media, false);

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.03",
+  "current": "2.04",
   "builds": [
     {
       "version": "2",
@@ -25,6 +25,12 @@
       "date": "2026-10-26",
       "summary": "Restore independent legacy H3 rendering; add explicit FastH3, 53 compatible optional LoRAs, automatic trigger injection and researched strength guidance.",
       "sourceBaseCommit": "1b310e503ca6569d345af531c0f906d0d24f9a05"
+    },
+    {
+      "version": "2.04",
+      "date": "2026-10-27",
+      "summary": "Add independent SelfLift progressive FastH3 OmniRef reference generation; retain legacy Native/Turbo and Singularity choices.",
+      "sourceBaseCommit": "ffea70a53cdf80e4b6ef430f519122155acb2e93"
     }
   ]
 }

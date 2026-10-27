@@ -1,5 +1,9 @@
 import type { H3PromptGraph, ProductionV2H3BackendId } from "@/lib/production/h3Workflows";
 
+export function isH3OmniRefMode(value: unknown): value is "fasth3" | "selflift" {
+  return value === "fasth3" || value === "selflift";
+}
+
 /** Owner-selected C benchmark. Not a Ref2VA/FL2VA acceleration adapter. */
 export const H3_OMNIREF = {
   id: "fasth3-omniref-r2v-c-v1",

@@ -1,5 +1,5 @@
 import { buildH3Workflow, loadH3WorkflowTemplate, h3TurboLoraForMode, type H3WorkflowBuildInput, type H3PromptGraph } from "@/lib/production/h3Workflows";
-import { applyH3OmniRef } from "@/lib/h3OmniRef";
+import { applyH3OmniRef, isH3OmniRefMode } from "@/lib/h3OmniRef";
 import { assertFastH3Loras } from "@/lib/h3FastLora";
 import { applyH3LoraTriggers } from "@/lib/h3LoraGuidance";
 import { parseH3StudioPlan, H3_STUDIO_WORKFLOWS, studioDimensions, studioFrames, studioTemplateDuration, studioBackend, studioGpuPattern, type H3StudioPlan } from "@/lib/h3StudioPlan";
@@ -47,7 +47,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
     return { id: entry.legacyPolicyId!, label: entry.name, filename: entry.filename, strength: selection.strength, triggerPhrases: [], experimental: false };
   });
   const native = plan.profile === "native";
-  if (plan.checkpoint === "fasth3") assertFastH3Loras(optionalLoras);
+  if (isH3OmniRefMode(plan.checkpoint)) assertFastH3Loras(optionalLoras);
   const resolvedPolicies = validateH3LoraSelections(optionalLoras.map(l => ({ id: l.id, strength: l.strength })), workflow.mode).resolved;
   const finalPrompt = applyH3LoraTriggers(input.finalPrompt, resolvedPolicies);
   const built = buildH3Workflow({ ...input, backend, finalPrompt: composeH3StudioExecutionPrompt(finalPrompt, plan), seed: plan.seed,
@@ -62,7 +62,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   graph["18"].inputs.sampler_name = plan.sampler;
   graph["38"].inputs.shift_video = native ? 6 : 12;
   graph["38"].inputs.shift_audio = 3;
-  if (!native && plan.checkpoint !== "fasth3") {
+  if (!native && !isH3OmniRefMode(plan.checkpoint)) {
     if (plan.profile === "fl2va-8step") {
       // Standard Turbo's legacy graph uses a fast checkpoint. Studio instead
       // selects its registered base checkpoint plus the matching FL2VA adapter.
@@ -88,7 +88,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   graph["34"].inputs.fps = 24;
   // The installed project SLA node is not a SolAttnPatch alias. Dense is explicit.
   graph["41"].inputs.enabled = plan.attention === "project-sla";
-  if (plan.checkpoint === "fasth3") {
+  if (isH3OmniRefMode(plan.checkpoint)) {
     // The base builder already applied this exact profile; reapply after Studio
     // mutations so neither a saved plan nor AI can restore the old sampler/model.
     delete graph["omni_vsa"];

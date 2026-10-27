@@ -1,6 +1,6 @@
 export type H3RenderMode = "turbo" | "native";
-import { H3_OMNIREF } from "@/lib/h3OmniRef";
-export type H3CheckpointMode = "standard" | "singularity" | "fasth3";
+import { H3_OMNIREF, isH3OmniRefMode } from "@/lib/h3OmniRef";
+export type H3CheckpointMode = "standard" | "singularity" | "fasth3" | "selflift";
 export type H3RefModStrength = "balanced" | "strong";
 
 export type H3AdvancedSettings = {
@@ -65,7 +65,7 @@ export function normalizeH3AdvancedSettings(
 ): H3AdvancedSettings {
   const record = cleanObject(value);
   const checkpointMode =
-    record.checkpointMode === "fasth3" ? "fasth3" : record.checkpointMode === "singularity" ? "singularity" : "standard";
+    isH3OmniRefMode(record.checkpointMode) ? record.checkpointMode : record.checkpointMode === "singularity" ? "singularity" : "standard";
   const renderMode =
     record.renderMode === "native" ? "native" : "turbo";
   const refMod = cleanObject(record.refMod);
@@ -118,7 +118,7 @@ export function resolveH3RenderSettings(
   referenceCount = 0,
 ): H3ResolvedRenderSettings {
   const settings = normalizeH3AdvancedSettings(value, referenceCount);
-  const fast = settings.checkpointMode === "fasth3";
+  const fast = isH3OmniRefMode(settings.checkpointMode);
   const native = !fast && settings.renderMode === "native";
   const singularity = settings.checkpointMode === "singularity";
 

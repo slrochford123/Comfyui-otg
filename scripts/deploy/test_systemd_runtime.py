@@ -60,6 +60,23 @@ class RuntimePrecedenceTests(unittest.TestCase):
     def test_later_owner_override_is_also_outsorted(self):
         old = ['zzzzzz-compat-node22.conf', 'zzzzzzzzzz-legacy-node20.conf']
         self.assertGreater(runtime.final_override_name(old), max(old))
+    def test_actual_accumulated_override_is_replaced_by_short_later_name(self):
+        old = 'zzzzzz-compat-node22.conf' + '.slr-runtime.conf' * 13
+        selected = runtime.final_override_name(['/etc/systemd/system/otg-test.service.d/' + old])
+        self.assertGreater(selected, old)
+        self.assertEqual(selected, 'zzzzzzz-slr-runtime.conf')
+        self.assertLess(len(selected), 64)
+    def test_many_successive_deployments_do_not_accumulate_suffixes(self):
+        names = ['zzzzzz-compat-node22.conf' + '.slr-runtime.conf' * 13]
+        for _ in range(100):
+            selected = runtime.final_override_name(names)
+            self.assertGreater(selected, max(names))
+            self.assertLess(len(selected), 240)
+            self.assertEqual(selected.count('.conf'), 1)
+            names.append(selected)
+    def test_unsupported_unicode_precedence_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, 'Unsupported'):
+            runtime.final_override_name(['\u00e9-owner.conf'])
     def test_checks_effective_command_after_reload_and_reverts_if_wrong(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); legacy=root/'zzzzz-test-managed-node20.conf'

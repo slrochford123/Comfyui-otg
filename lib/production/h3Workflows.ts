@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { applyH3OmniRef, H3_OMNIREF, h3OmniRefEncoder } from "@/lib/h3OmniRef";
+import { applyH3OmniRef, H3_OMNIREF, h3OmniRefEncoder, isH3OmniRefMode } from "@/lib/h3OmniRef";
+import { applyH3SelfLift, H3_SELF_LIFT } from "@/lib/h3SelfLift";
 import { assertFastH3Loras } from "@/lib/h3FastLora";
 import { applyH3LoraTriggers } from "@/lib/h3LoraGuidance";
 import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
@@ -189,8 +190,8 @@ export function h3RequiredNodeClassesForBackend(
   _backend: ProductionV2H3BackendId,
   checkpointMode: H3AdvancedSettings["checkpointMode"] = "standard",
 ): string[] {
-  return checkpointMode === "fasth3"
-    ? [...H3_COMMON_REQUIRED_NODE_CLASSES.filter(name => name !== "H3SLAAttention" && name !== "LoraLoaderModelOnly"), "ModelAttentionBackend", "BlockSparseAttention"]
+  return isH3OmniRefMode(checkpointMode)
+    ? [...H3_COMMON_REQUIRED_NODE_CLASSES.filter(name => name !== "H3SLAAttention" && name !== "LoraLoaderModelOnly"), "ModelAttentionBackend", "BlockSparseAttention", ...(checkpointMode === "selflift" ? [H3_SELF_LIFT.nodeClass, "ConditioningZeroOut"] : [])]
     : [...H3_COMMON_REQUIRED_NODE_CLASSES];
 }
 
@@ -227,7 +228,7 @@ export function h3ExpectedAssetChoicesForBackend(
     );
 
     for (const node of Object.values(graph)) {
-      if (checkpointMode === "fasth3" && ["UNETLoader", "CLIPLoader", "LoraLoaderModelOnly"].includes(node.class_type)) continue;
+      if (isH3OmniRefMode(checkpointMode) && ["UNETLoader", "CLIPLoader", "LoraLoaderModelOnly"].includes(node.class_type)) continue;
       const inputNames = checkedInputs[node.class_type] || [];
 
       for (const inputName of inputNames) {
@@ -252,7 +253,8 @@ export function h3ExpectedAssetChoicesForBackend(
     result.push(["LoraLoaderModelOnly", "lora_name", expected] as const);
   }
 
-  if (checkpointMode === "fasth3") result.push(["UNETLoader", "unet_name", H3_OMNIREF.checkpoint], ["CLIPLoader", "clip_name", h3OmniRefEncoder(backend)]);
+  if (isH3OmniRefMode(checkpointMode)) result.push(["UNETLoader", "unet_name", H3_OMNIREF.checkpoint], ["CLIPLoader", "clip_name", h3OmniRefEncoder(backend)]);
+  if (checkpointMode === "selflift") result.push([H3_SELF_LIFT.nodeClass, "upscaler_model", H3_SELF_LIFT.upscaler]);
   return result;
 }
 
@@ -1184,9 +1186,10 @@ export function buildH3Workflow(input: H3WorkflowBuildInput) {
       input.references?.length || 0,
     );
 
-  const fastH3 = normalizedSettings.checkpointMode === "fasth3";
+  const selfLift = normalizedSettings.checkpointMode === "selflift";
+  const fastH3 = isH3OmniRefMode(normalizedSettings.checkpointMode);
   if (fastH3 && (input.mode !== "h3-reference-to-video" || input.operation === "visual-edit" || input.preserveLegacyReference)) {
-    throw new Error("FastH3 OmniRef is available only for Reference-to-Video, not Text, Image or Edit Video.");
+    throw new Error("FastH3 / SelfLift OmniRef is available only for Reference-to-Video, not Text, Image or Edit Video.");
   }
   if (fastH3 && (normalizedSettings.refMod.enabled || normalizedSettings.motionLab.enabled
     || resolveProductionV2H3UserLoras(input.userLoras).length > 0)) {
@@ -1582,11 +1585,12 @@ export function buildH3Workflow(input: H3WorkflowBuildInput) {
   }
 
   if (omniRef) applyH3OmniRef(graph, input.backend);
+  if (selfLift) applyH3SelfLift(graph);
   ensureTerminalVideoPreviewNode(graph);
 
   return {
     workflowId:
-      omniRef ? `${H3_OMNIREF.id}:${input.backend}:${input.durationSeconds}:${input.h3Quality}` : input.operation === "visual-edit"
+      omniRef ? `${selfLift ? H3_SELF_LIFT.id : H3_OMNIREF.id}:${input.backend}:${input.durationSeconds}:${input.h3Quality}` : input.operation === "visual-edit"
         ? `${recipe.recipeId}-visual-edit`
         : recipe.recipeId,
     workflowFile:

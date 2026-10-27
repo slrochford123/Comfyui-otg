@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 
 import type { H3LoraCatalogEntry } from "@/lib/h3LoraCatalogServer";
 import { fastH3LoraBlockReason } from "@/lib/h3FastLora";
+import { isH3OmniRefMode } from "@/lib/h3OmniRef";
 import { h3LoraDefaultStrength } from "@/lib/h3LoraGuidance";
 import {
   buildH3StudioLockedReferences,
@@ -1261,7 +1262,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     lockedReferences,
     generationPrompt,
   );
-  const fastH3Selected = studioMode === "h3-reference-to-video" && h3Settings.checkpointMode === "fasth3";
+  const fastH3Selected = studioMode === "h3-reference-to-video" && isH3OmniRefMode(h3Settings.checkpointMode);
   const nativeDimensions = fastH3Selected && quality === "hq"
     ? orientation === "portrait" ? { width: 768, height: 1344 } : { width: 1344, height: 768 }
     : getH3NativeDimensions(quality, orientation);
@@ -2092,7 +2093,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     setRealismPeopleEnabled(preset.peopleRealismEnabled);
   }
   function selectStudioMode(nextMode: H3StudioMode) {
-    if (nextMode !== "h3-reference-to-video" && h3Settings.checkpointMode === "fasth3") setH3Settings(current => ({ ...current, checkpointMode: "standard" }));
+    if (nextMode !== "h3-reference-to-video" && isH3OmniRefMode(h3Settings.checkpointMode)) setH3Settings(current => ({ ...current, checkpointMode: "standard" }));
     setStudioMode(nextMode);
     if (isLegacyH3Mode(nextMode)) {
       setMode(nextMode);
@@ -3872,12 +3873,12 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
 
         <div className="mt-4 rounded-[6px] border border-cyan-300/25 bg-cyan-300/10 p-3">
           <p className="text-sm font-black">
-            {fastH3Selected ? "FastH3 OmniRef · 8-step · Euler" : h3Settings.renderMode === "native"
+            {fastH3Selected ? `${h3Settings.checkpointMode === "selflift" ? "SelfLift / " : ""}FastH3 OmniRef · 8-step · Euler` : h3Settings.renderMode === "native"
               ? "MiniMax H3 Native · 20-step"
               : "MiniMax H3 Turbo · 8-step"}
           </p>
           <p className="text-xs text-white/60">
-            {fastH3Selected ? "Dedicated configuration C · VSA attention · no legacy acceleration LoRA" : h3Settings.checkpointMode === "singularity"
+            {fastH3Selected ? `${h3Settings.checkpointMode === "selflift" ? "6 half-resolution + 2 full-resolution steps · learned latent lift" : "Dedicated configuration C"} · VSA attention · no legacy acceleration LoRA` : h3Settings.checkpointMode === "singularity"
               ? `Singularity v1.3 · Realism On · Combat ${h3Settings.combatLoraEnabled ? "On" : "Off"}`
               : "Standard model"}{" "}
             {!fastH3Selected ? " · SLA attention" : null}

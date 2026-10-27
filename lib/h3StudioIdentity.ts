@@ -8,7 +8,7 @@ import { DEFAULT_H3_ADVANCED_SETTINGS, normalizeH3AdvancedSettings } from "@/lib
 import type { H3DirectJobInput, H3DirectReference } from "@/lib/h3DirectJobs";
 
 // Bump whenever compiler behavior or normalization changes.
-export const H3_STUDIO_COMPILER_VERSION = "h3-studio-compiler-v2.4-omniref";
+export const H3_STUDIO_COMPILER_VERSION = "h3-studio-compiler-v2.5-selflift";
 export type H3StudioDependency = { filename: string; sha256: string; bytes: number };
 export function stableH3StudioJson(value: unknown): string {
   if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
@@ -50,6 +50,7 @@ export function validH3StudioDependency(value: unknown): value is H3StudioDepend
 export const H3_STUDIO_ASSET_FIELDS: Record<string, string> = {
   UNETLoader: "unet_name", CLIPLoader: "clip_name", VAELoader: "vae_name", LoraLoaderModelOnly: "lora_name",
   ModelPreviewOverrideKJ: "tiny_vae",
+  SelfLiftH3Sampler: "upscaler_model",
 };
 /** Exact graph, including all inputs, media names, prompt, seed, prefix and metadata. */
 export function h3StudioBoundGraphDigest(graph: H3PromptGraph) { return h3StudioDigest(graph); }
@@ -58,7 +59,7 @@ export function normalizeH3StudioQualificationGraph(graph: H3PromptGraph): H3Pro
   const normalized = structuredClone(graph);
   const variables: Record<string, readonly string[]> = {
     MiniMaxH3ImageToVideo: ["prompt"], MiniMaxH3ReferenceToVideo: ["prompt"],
-    RandomNoise: ["noise_seed"], LoadImage: ["image"], LoadAudio: ["audio"], LoadVideo: ["file"], SaveVideo: ["filename_prefix"],
+    RandomNoise: ["noise_seed"], SelfLiftH3Sampler: ["seed"], LoadImage: ["image"], LoadAudio: ["audio"], LoadVideo: ["file"], SaveVideo: ["filename_prefix"],
   };
   for (const node of Object.values(normalized)) {
     for (const field of variables[node.class_type] || []) {

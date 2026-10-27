@@ -237,6 +237,7 @@ export async function inspectH3BackendCompatibility(
   ];
 
   const optionCacheKey = JSON.stringify({
+    checkpointMode: resolvedH3Settings.settings.checkpointMode,
     mode: requirements.mode || null,
 
     renderMode:

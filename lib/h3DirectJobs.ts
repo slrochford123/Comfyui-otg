@@ -50,6 +50,7 @@ import {
 import { buildH3Workflow, H3_BACKEND_PRIORITY, H3_BACKEND_PROFILES, H3_MAX_AUDIO_REFERENCES, H3_MAX_IMAGE_REFERENCES, H3_MAX_VIDEO_REFERENCES, type ProductionV2H3BackendId, type ProductionV2H3Mode } from "@/lib/production/h3Workflows";
 import { getH3GenerationDimensions } from "@/lib/production/h3ProductionRecipes";
 import { H3_OMNIREF } from "@/lib/h3OmniRef";
+import { H3_SELF_LIFT } from "@/lib/h3SelfLift";
 
 export type H3DirectReference = {
   path: string;
@@ -356,7 +357,7 @@ export async function saveH3DirectJobToGallery(
     }
 
     const stat = fs.statSync(targetPath);
-    const dimensions = job.input.studioPlan ? studioDimensions(job.input.studioPlan) : job.workflowId?.startsWith(H3_OMNIREF.id) ? getH3GenerationDimensions(job.input.mode, job.input.quality, normalizeH3Orientation(job.input.orientation)) : getH3NativeDimensions(job.input.quality, normalizeH3Orientation(job.input.orientation));
+    const dimensions = job.input.studioPlan ? studioDimensions(job.input.studioPlan) : (job.workflowId?.startsWith(H3_OMNIREF.id) || job.workflowId?.startsWith(H3_SELF_LIFT.id)) ? getH3GenerationDimensions(job.input.mode, job.input.quality, normalizeH3Orientation(job.input.orientation)) : getH3NativeDimensions(job.input.quality, normalizeH3Orientation(job.input.orientation));
     writeMetaForFile(targetPath, {
       originalName: savedName,
       renamedName: savedName,
@@ -779,7 +780,7 @@ export function ensureH3DirectJobRunner(job: H3DirectJob | null | undefined) {
 
 export function h3DirectPublicStatus(job: H3DirectJob) {
   const orientation = normalizeH3Orientation(job.input.orientation);
-  const nativeDimensions = job.input.studioPlan ? studioDimensions(job.input.studioPlan) : job.workflowId?.startsWith(H3_OMNIREF.id) ? getH3GenerationDimensions(job.input.mode, job.input.quality, orientation) : getH3NativeDimensions(job.input.quality, orientation);
+  const nativeDimensions = job.input.studioPlan ? studioDimensions(job.input.studioPlan) : (job.workflowId?.startsWith(H3_OMNIREF.id) || job.workflowId?.startsWith(H3_SELF_LIFT.id)) ? getH3GenerationDimensions(job.input.mode, job.input.quality, orientation) : getH3NativeDimensions(job.input.quality, orientation);
   const estimate = getH3ProductionTimeEstimate(job.input.mode, job.input.durationSeconds, job.input.quality, job.backend);
   const progress = readComfyPromptProgress(job.promptId);
   return {

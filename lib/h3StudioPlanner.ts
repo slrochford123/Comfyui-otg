@@ -48,7 +48,7 @@ const loraProperties = {
 const planProperties = {
   backend: enumeration(["rtx3090", "rtx5060ti"]),
   version: enumeration([DEFAULT_H3_STUDIO_PLAN.version]), workflowId: enumeration(H3_STUDIO_WORKFLOWS.map(w => w.id)),
-  checkpoint: enumeration(["standard", "singularity", "fasth3"]), profile: enumeration(Object.keys(H3_STUDIO_PROFILES)),
+  checkpoint: enumeration(["standard", "singularity", "fasth3", "selflift"]), profile: enumeration(Object.keys(H3_STUDIO_PROFILES)),
   quality: enumeration(["0.2", "0.6", "1"]), orientation: enumeration(["landscape", "portrait"]),
   durationSeconds: enumeration([5, 10]), fps: enumeration([24]), seed: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
   prompt: { type: "string", minLength: 1, maxLength: 4000 }, originalPrompt: { type: "string", minLength: 1, maxLength: 4000 },
