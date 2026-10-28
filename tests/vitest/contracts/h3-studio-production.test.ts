@@ -53,7 +53,7 @@ describe("ordinary PROD H3 Studio admission, not a TEST permission bypass", () =
     const inv = inventoryFor(); inv.loras = new Set(installed.entries.map(entry => entry.filename));
     const catalog = h3StudioCatalog(inv, null);
     expect(catalog.filter(entry => !entry.blockedReasons.length)).toHaveLength(53);
-    expect(catalog.filter(entry => [3342524, 3280337, 3398426].includes(entry.versionId)).every(entry => entry.blockedReasons.length)).toBe(true);
+    expect(catalog.filter(entry => [3342524, 3280337, 3398426].includes(entry.versionId ?? -1)).every(entry => entry.blockedReasons.length)).toBe(true);
     const entry = catalog.find(entry => !entry.blockedReasons.length)!; inv.loras.delete(entry.filename!);
     expect(h3StudioCatalog(inv, null).find(current => current.id === entry.id)!.blockedReasons).toContain("EXACT_WORKER_PATH_NOT_LISTED");
   });

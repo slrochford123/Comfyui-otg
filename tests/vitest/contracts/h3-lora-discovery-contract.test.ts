@@ -272,7 +272,7 @@ describe("H3 LoRA policy and deletion boundaries", () => {
     await deleteH3LoraFiles("selected", ["rtx3090"]);
     expect(fs.existsSync(target)).toBe(false);
     expect(fs.readFileSync(neighbor, "utf8")).toBe("neighbor");
-    expect(readH3LoraCatalog().entries[0]).toMatchObject({
+    expect(readH3LoraCatalog().entries.find(entry => entry.id === "selected")).toMatchObject({
       enabled: false,
       approvedForH3: false,
       discoveredOn: [],

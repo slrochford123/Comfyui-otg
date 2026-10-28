@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.05",
+  "current": "2.06",
   "builds": [
     {
       "version": "2",
@@ -37,6 +37,12 @@
       "date": "2026-10-27",
       "summary": "Always-visible H3 model and render choices, separate optional LoRA disclosure, and consistent Fast/Medium/Slow speed indicators.",
       "sourceBaseCommit": "e194faf367429ffe9baaa3a4487866abfba4350a"
+    },
+    {
+      "version": "2.06",
+      "date": "2026-10-27",
+      "summary": "Shared installed H3 style LoRAs across legacy, FastH3 and SelfLift profiles on both GPUs; target-aware discovery, compatible strengths and trigger guidance.",
+      "sourceBaseCommit": "0079dae680ec366977d19a03fc9a6d7beb580298"
     }
   ]
 }

@@ -40,7 +40,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   const catalog = h3StudioCatalog(inventory, evidence);
   const optionalLoras = plan.loras.filter(l => l.enabled).map(selection => {
     const entry = catalog.find(l => l.id === selection.id);
-    const proof = entry && evidence?.loras?.[entry.id];
+    const proof = entry && (evidence?.loras?.[entry.id] || (entry.modelId === null && entry.filename ? evidence?.assets?.[entry.filename] : undefined));
     // Do not compile an unresolved file, even for a preview.
     const observed = entry?.filename ? inventory.assets?.[entry.filename] : undefined;
     if (!entry || entry.blockedReasons.length || !entry.filename || (!production && (!proof || !observed || observed.sha256 !== proof.sha256 || observed.bytes !== proof.bytes))) throw new Error(`LoRA is not available: ${selection.id}`);
@@ -48,7 +48,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   });
   const native = plan.profile === "native";
   if (isH3OmniRefMode(plan.checkpoint)) assertFastH3Loras(optionalLoras);
-  const resolvedPolicies = validateH3LoraSelections(optionalLoras.map(l => ({ id: l.id, strength: l.strength })), workflow.mode).resolved;
+  const resolvedPolicies = validateH3LoraSelections(optionalLoras.map(l => ({ id: l.id, strength: l.strength })), workflow.mode, { backend, files: inventory.loras }).resolved;
   const finalPrompt = applyH3LoraTriggers(input.finalPrompt, resolvedPolicies);
   const built = buildH3Workflow({ ...input, backend, finalPrompt: composeH3StudioExecutionPrompt(finalPrompt, plan), seed: plan.seed,
     durationSeconds: studioTemplateDuration(plan.durationSeconds), h3Quality: plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq",

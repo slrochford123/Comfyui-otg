@@ -1,5 +1,344 @@
 {
   "schemaVersion": 1,
+  "additionalInstalled": [
+    {
+      "id": "gurren",
+      "filename": "GL_H3_V1-step00017250.safetensors",
+      "aliases": [],
+      "sha256": "0682224eec5081347d94659be0e955245c13d835aa48c2092405109fe716706f",
+      "bytes": 298260840,
+      "displayName": "Gurren",
+      "family": "both",
+      "minStrength": 0,
+      "maxStrength": 1.2,
+      "defaultStrength": 1,
+      "triggerWords": [
+        "2d anime style",
+        "Gurren Lagann Style"
+      ],
+      "fastH3": {
+        "checkpointSha256": "851b2dc9670ed864b7f1e951ac9da047d83b1c04ded9bfcc1a9e5bba0ee33f80",
+        "adapterSha256": "0682224eec5081347d94659be0e955245c13d835aa48c2092405109fe716706f",
+        "matchedTargets": 200,
+        "validation": "key-shape-and-file-hash-only-not-generation"
+      },
+      "allModelTargets": {
+        "standard-fl2va": 200,
+        "standard-ref2va": 200,
+        "singularity": 200,
+        "fasth3": 200
+      }
+    },
+    {
+      "id": "combat",
+      "filename": "H3_Combat_V2.safetensors",
+      "aliases": [],
+      "sha256": "5b3edb09e9d6029439badf9bc9db4ba4a355ae679b0810888de82c4793c0bac8",
+      "bytes": 155110280,
+      "displayName": "Combat Motion",
+      "family": "both",
+      "minStrength": 0,
+      "maxStrength": 1.2,
+      "defaultStrength": 0.7,
+      "triggerWords": [
+        "prfight2"
+      ],
+      "fastH3": {
+        "checkpointSha256": "851b2dc9670ed864b7f1e951ac9da047d83b1c04ded9bfcc1a9e5bba0ee33f80",
+        "adapterSha256": "5b3edb09e9d6029439badf9bc9db4ba4a355ae679b0810888de82c4793c0bac8",
+        "matchedTargets": 208,
+        "validation": "key-shape-and-file-hash-only-not-generation"
+      },
+      "allModelTargets": {
+        "standard-fl2va": 208,
+        "standard-ref2va": 208,
+        "singularity": 208,
+        "fasth3": 208
+      }
+    },
+    {
+      "id": "h3-deeper-7820d29cf1",
+      "filename": "MiniMax-H3/lora/H3_Deeper.safetensors",
+      "aliases": [
+        "H3_Deeper.safetensors"
+      ],
+      "sha256": "e85ab40e9b7267f92cab8f9e066e7b448791290146518c0e8414a87168218a4f",
+      "bytes": 155110264,
+      "displayName": "H3 Deeper",
+      "family": "both",
+      "minStrength": 0,
+      "maxStrength": 1.2,
+      "defaultStrength": 1,
+      "triggerWords": [],
+      "fastH3": {
+        "checkpointSha256": "851b2dc9670ed864b7f1e951ac9da047d83b1c04ded9bfcc1a9e5bba0ee33f80",
+        "adapterSha256": "e85ab40e9b7267f92cab8f9e066e7b448791290146518c0e8414a87168218a4f",
+        "matchedTargets": 208,
+        "validation": "key-shape-and-file-hash-only-not-generation"
+      },
+      "allModelTargets": {
+        "standard-fl2va": 208,
+        "standard-ref2va": 208,
+        "singularity": 208,
+        "fasth3": 208
+      }
+    },
+    {
+      "id": "mm-h3-bjob-v3-d420ab218b",
+      "filename": "MiniMax-H3/lora/MM-H3 - Bjob v3.safetensors",
+      "aliases": [
+        "MM-H3 - Bjob v3.safetensors"
+      ],
+      "sha256": "fbb93a67b429c79145c95598e9ac38388ad49d6df1c09c96cf989cce99277d53",
+      "bytes": 310191544,
+      "displayName": "MM H3 Bjob v3",
+      "family": "both",
+      "minStrength": 0,
+      "maxStrength": 1.2,
+      "defaultStrength": 1,
+      "triggerWords": [],
+      "fastH3": {
+        "checkpointSha256": "851b2dc9670ed864b7f1e951ac9da047d83b1c04ded9bfcc1a9e5bba0ee33f80",
+        "adapterSha256": "fbb93a67b429c79145c95598e9ac38388ad49d6df1c09c96cf989cce99277d53",
+        "matchedTargets": 208,
+        "validation": "key-shape-and-file-hash-only-not-generation"
+      },
+      "allModelTargets": {
+        "standard-fl2va": 208,
+        "standard-ref2va": 208,
+        "singularity": 208,
+        "fasth3": 208
+      }
+    },
+    {
+      "id": "hmcs-v2-0fc80e82cc",
+      "filename": "MiniMax-H3/HMCS_V2.safetensors",
+      "aliases": [],
+      "sha256": "1a5b7948bb97f27737e62c3dd5497a3afb77517f230787f45e45c7d8fe3dc24d",
+      "bytes": 626294968,
+      "displayName": "HMCS V2",
+      "family": "Ref2VA",
+      "minStrength": 0,
+      "maxStrength": 1.2,
+      "defaultStrength": 1,
+      "triggerWords": [],
+      "fastH3": {
+        "checkpointSha256": "851b2dc9670ed864b7f1e951ac9da047d83b1c04ded9bfcc1a9e5bba0ee33f80",
+        "adapterSha256": "1a5b7948bb97f27737e62c3dd5497a3afb77517f230787f45e45c7d8fe3dc24d",
+        "matchedTargets": 208,
+        "validation": "key-shape-and-file-hash-only-not-generation"
+      },
+      "allModelTargets": {
+        "standard-fl2va": 208,
+        "standard-ref2va": 208,
+        "singularity": 208,
+        "fasth3": 208
+      }
+    },
+    {
+      "id": "minimax-h3-combat-lora-a9504cc159",
+      "filename": "MiniMax-H3/MiniMax_H3_Combat_LoRA.safetensors",
+      "aliases": [],
+      "sha256": "8cec1cf4cbc2cb75e9a62ad702bc56dfee26c1efef8641d0418fe9821335eaef",
+      "bytes": 155110296,
+      "displayName": "MiniMax H3 Combat LoRA",
+      "family": "both",
+      "minStrength": 0,
+      "maxStrength": 1.2,
+      "defaultStrength": 1,
+      "triggerWords": [],
+      "fastH3": {
+        "checkpointSha256": "851b2dc9670ed864b7f1e951ac9da047d83b1c04ded9bfcc1a9e5bba0ee33f80",
+        "adapterSha256": "8cec1cf4cbc2cb75e9a62ad702bc56dfee26c1efef8641d0418fe9821335eaef",
+        "matchedTargets": 208,
+        "validation": "key-shape-and-file-hash-only-not-generation"
+      },
+      "allModelTargets": {
+        "standard-fl2va": 208,
+        "standard-ref2va": 208,
+        "singularity": 208,
+        "fasth3": 208
+      }
+    },
+    {
+      "id": "aftermidnight-ref2va-h3-sexytime-ran-eb1eddaf33",
+      "filename": "MiniMax-H3/lora/AfterMidnight_ref2va_h3_sexytime_rank64-v1.2.safetensors",
+      "aliases": [],
+      "sha256": "82226a7c7f0b4631092f9270fa33d078c985a2d757895fcbe8f3fca8881bef59",
+      "bytes": 1192828320,
+      "displayName": "AfterMidnight ref2va h3 sexytime rank64 v1.2",
+      "family": "Ref2VA",
+      "minStrength": 0,
+      "maxStrength": 1.2,
+      "defaultStrength": 1,
+      "triggerWords": [],
+      "fastH3": {
+        "checkpointSha256": "851b2dc9670ed864b7f1e951ac9da047d83b1c04ded9bfcc1a9e5bba0ee33f80",
+        "adapterSha256": "82226a7c7f0b4631092f9270fa33d078c985a2d757895fcbe8f3fca8881bef59",
+        "matchedTargets": 200,
+        "validation": "key-shape-and-file-hash-only-not-generation"
+      },
+      "allModelTargets": {
+        "standard-fl2va": 200,
+        "standard-ref2va": 200,
+        "singularity": 200,
+        "fasth3": 200
+      }
+    },
+    {
+      "id": "mini-dick-fix-v1-89c464ab29",
+      "filename": "MiniMax-H3/lora/Mini_Dick_Fix_V1.safetensors",
+      "aliases": [],
+      "sha256": "8d7286d73cdbbee1b82d925db85d73dae8bd52c35d7d674ed5fc47cd9b568ee7",
+      "bytes": 155110280,
+      "displayName": "Mini Dick Fix V1",
+      "family": "both",
+      "minStrength": 0,
+      "maxStrength": 1.2,
+      "defaultStrength": 1,
+      "triggerWords": [],
+      "fastH3": {
+        "checkpointSha256": "851b2dc9670ed864b7f1e951ac9da047d83b1c04ded9bfcc1a9e5bba0ee33f80",
+        "adapterSha256": "8d7286d73cdbbee1b82d925db85d73dae8bd52c35d7d674ed5fc47cd9b568ee7",
+        "matchedTargets": 208,
+        "validation": "key-shape-and-file-hash-only-not-generation"
+      },
+      "allModelTargets": {
+        "standard-fl2va": 208,
+        "standard-ref2va": 208,
+        "singularity": 208,
+        "fasth3": 208
+      }
+    },
+    {
+      "id": "minimax-dt1-b55fc6719f",
+      "filename": "MiniMax-H3/lora/Minimax DT1.safetensors",
+      "aliases": [],
+      "sha256": "1fd239662f6290255b0bb3a220764fb53aab2859378f7fd3024030c1e1991cb2",
+      "bytes": 298263792,
+      "displayName": "Minimax DT1",
+      "family": "both",
+      "minStrength": 0,
+      "maxStrength": 1.2,
+      "defaultStrength": 1,
+      "triggerWords": [],
+      "fastH3": {
+        "checkpointSha256": "851b2dc9670ed864b7f1e951ac9da047d83b1c04ded9bfcc1a9e5bba0ee33f80",
+        "adapterSha256": "1fd239662f6290255b0bb3a220764fb53aab2859378f7fd3024030c1e1991cb2",
+        "matchedTargets": 200,
+        "validation": "key-shape-and-file-hash-only-not-generation"
+      },
+      "allModelTargets": {
+        "standard-fl2va": 200,
+        "standard-ref2va": 200,
+        "singularity": 200,
+        "fasth3": 200
+      }
+    },
+    {
+      "id": "mystic-mmh3-v4-2bd65f0da6",
+      "filename": "MiniMax-H3/lora/Mystic_MMH3-V4.safetensors",
+      "aliases": [
+        "MysticXXX_MMH3-V4.safetensors",
+        "Mystic_MMH3-V4.safetensors"
+      ],
+      "sha256": "fc3e856d14c6c19557c888f48662d591e4794e281233ec0d987be5003068afba",
+      "bytes": 155095800,
+      "displayName": "Mystic MMH3 V4",
+      "family": "both",
+      "minStrength": 0,
+      "maxStrength": 0.6,
+      "defaultStrength": 0.6,
+      "triggerWords": [],
+      "fastH3": {
+        "checkpointSha256": "851b2dc9670ed864b7f1e951ac9da047d83b1c04ded9bfcc1a9e5bba0ee33f80",
+        "adapterSha256": "fc3e856d14c6c19557c888f48662d591e4794e281233ec0d987be5003068afba",
+        "matchedTargets": 104,
+        "validation": "key-shape-and-file-hash-only-not-generation"
+      },
+      "allModelTargets": {
+        "standard-fl2va": 104,
+        "standard-ref2va": 104,
+        "singularity": 104,
+        "fasth3": 104
+      }
+    },
+    {
+      "id": "plora-h3-v2-step00006300-e07963a409",
+      "filename": "MiniMax-H3/lora/PLORA_H3_V2-step00006300.safetensors",
+      "aliases": [],
+      "sha256": "e35d38864013bf30bfe75719a5dea2ce54e3f67a51d6ca1c702a1fffaea8b590",
+      "bytes": 298262984,
+      "displayName": "PLORA H3 V2 step00006300",
+      "family": "both",
+      "minStrength": 0,
+      "maxStrength": 1.2,
+      "defaultStrength": 1,
+      "triggerWords": [],
+      "fastH3": {
+        "checkpointSha256": "851b2dc9670ed864b7f1e951ac9da047d83b1c04ded9bfcc1a9e5bba0ee33f80",
+        "adapterSha256": "e35d38864013bf30bfe75719a5dea2ce54e3f67a51d6ca1c702a1fffaea8b590",
+        "matchedTargets": 200,
+        "validation": "key-shape-and-file-hash-only-not-generation"
+      },
+      "allModelTargets": {
+        "standard-fl2va": 200,
+        "standard-ref2va": 200,
+        "singularity": 200,
+        "fasth3": 200
+      }
+    },
+    {
+      "id": "minimax-h3-lms-v1-0-r64-0053e6df01",
+      "filename": "MiniMax-H3/minimax_h3_lms_v1.0_r64.safetensors",
+      "aliases": [],
+      "sha256": "16f3195bc6bffa431c0598dc2031e520ba058b4fcbc9f104db9e3fdfdeacf60c",
+      "bytes": 1239664536,
+      "displayName": "minimax h3 lms v1.0 r64",
+      "family": "both",
+      "minStrength": 0,
+      "maxStrength": 1.2,
+      "defaultStrength": 1,
+      "triggerWords": [],
+      "fastH3": {
+        "checkpointSha256": "851b2dc9670ed864b7f1e951ac9da047d83b1c04ded9bfcc1a9e5bba0ee33f80",
+        "adapterSha256": "16f3195bc6bffa431c0598dc2031e520ba058b4fcbc9f104db9e3fdfdeacf60c",
+        "matchedTargets": 258,
+        "validation": "key-shape-and-file-hash-only-not-generation"
+      },
+      "allModelTargets": {
+        "standard-fl2va": 258,
+        "standard-ref2va": 258,
+        "singularity": 258,
+        "fasth3": 258
+      }
+    },
+    {
+      "id": "installed-h3-4b2a3f420ae804c0",
+      "filename": "h3_character_swap_pro4500_1000.safetensors",
+      "aliases": [],
+      "sha256": "4b2a3f420ae804c0aa3422761ff84dbd1bf52eef6900ffab6d2e66df63cb4e79",
+      "bytes": 155110320,
+      "displayName": "h3_character_swap_pro4500_1000",
+      "family": "Ref2VA",
+      "minStrength": 0,
+      "maxStrength": 2,
+      "defaultStrength": 1,
+      "triggerWords": [],
+      "fastH3": {
+        "checkpointSha256": "851b2dc9670ed864b7f1e951ac9da047d83b1c04ded9bfcc1a9e5bba0ee33f80",
+        "adapterSha256": "4b2a3f420ae804c0aa3422761ff84dbd1bf52eef6900ffab6d2e66df63cb4e79",
+        "matchedTargets": 208,
+        "validation": "key-shape-and-file-hash-only-not-generation"
+      },
+      "allModelTargets": {
+        "standard-fl2va": 208,
+        "standard-ref2va": 208,
+        "singularity": 208,
+        "fasth3": 208
+      }
+    }
+  ],
   "description": "Exact installed model identities with version-specific, source-linked author guidance. Metadata and structural compatibility are not physical output qualification.",
   "entries": [
     {

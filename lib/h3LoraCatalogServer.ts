@@ -9,6 +9,7 @@ import type { H3StudioLoraSelection } from "@/lib/h3Studio";
 import installedStage1c from "@/lib/h3Stage1cInstalled.json";
 import { installedH3LoraGuidance } from "@/lib/h3LoraGuidance";
 import { h3StudioProduction } from "@/lib/h3StudioAdmission";
+import { registeredH3Lora } from "@/lib/h3RegisteredLoras";
 import {
   H3_BACKEND_PROFILES,
   type ProductionV2H3BackendId,
@@ -211,6 +212,19 @@ export function readH3LoraCatalog(): H3LoraCatalogFile {
       recommendedMin: entry.guidance.recommendedMin ?? entry.defaultStrength, recommendedMax: entry.guidance.recommendedMax ?? entry.defaultStrength, triggerWords: entry.triggerWords,
       triggerRequired: false, discoveredOn: ["rtx3090"], missingOn: [], compatibilityStatus: "approved" }))
     .filter((entry): entry is H3LoraCatalogEntry => entry !== null) : [];
+  // Existing installed H3 adapters use the same policy store and loader chain.
+  // Preserve explicit Admin disable/review choices when merging below.
+  defaults.push(...installedStage1c.additionalInstalled.map(entry => normalizeEntry({
+    id: entry.id, displayName: entry.displayName, filename: entry.filename,
+    description: "Installed H3 adapter; model targets checked. Output quality and third-party license not independently certified.",
+    enabled: true, approvedForH3: true, approvedForT2V: entry.family !== "Ref2VA",
+    approvedForI2V: entry.family !== "Ref2VA", approvedForR2V: entry.family !== "FL2VA",
+    defaultStrength: entry.defaultStrength, minStrength: entry.minStrength, maxStrength: entry.maxStrength,
+    recommendedMin: entry.defaultStrength, recommendedMax: entry.defaultStrength,
+    triggerWords: entry.triggerWords, triggerRequired: false,
+    discoveredOn: [], missingOn: [], compatibilityStatus: "approved",
+    notes: "Existing installation; starting strength/triggers retain the existing policy, not newly researched author guidance.",
+  })).filter((entry): entry is H3LoraCatalogEntry => entry !== null));
   try {
     const parsed = JSON.parse(fs.readFileSync(catalogFile(), "utf8"));
     const entries = Array.isArray(parsed?.entries)
@@ -282,7 +296,7 @@ function allowedForMode(entry: H3LoraCatalogEntry, mode: H3LoraRequestMode) {
       : entry.approvedForR2V;
 }
 
-export function publicH3LoraCatalog(mode?: H3LoraRequestMode) {
+export function publicH3LoraCatalog(mode?: H3LoraRequestMode, backend?: ProductionV2H3BackendId) {
   const catalog = readH3LoraCatalog();
   return {
     ...catalog,
@@ -292,7 +306,7 @@ export function publicH3LoraCatalog(mode?: H3LoraRequestMode) {
         entry.approvedForH3 &&
         entry.compatibilityStatus === "approved" &&
         (!mode || allowedForMode(entry, mode)) &&
-        entry.discoveredOn.length > 0,
+        entry.discoveredOn.length > 0 && (!backend || entry.discoveredOn.includes(backend)),
     ),
   };
 }
@@ -300,6 +314,7 @@ export function publicH3LoraCatalog(mode?: H3LoraRequestMode) {
 export function validateH3LoraSelections(
   value: unknown,
   mode: H3LoraRequestMode,
+  liveWorker?: { backend: ProductionV2H3BackendId; files: ReadonlySet<string> },
 ) {
   const catalog = readH3LoraCatalog();
   const requested = Array.isArray(value)
@@ -331,9 +346,9 @@ export function validateH3LoraSelections(
       throw new Error(
         `H3 LoRA ${entry.displayName} is not approved for this generation mode.`,
       );
-    if (!entry.discoveredOn.length)
+    if (liveWorker ? !liveWorker.files.has(entry.filename) : !entry.discoveredOn.length)
       throw new Error(
-        `H3 LoRA ${entry.displayName} is not installed on an H3 backend.`,
+        `H3 LoRA ${entry.displayName} is not installed on ${liveWorker?.backend || "an H3 backend"}.`,
       );
     const strength = Number(selection.strength);
     if (
@@ -360,6 +375,13 @@ export function canonicalH3OptionalLoraFilename(value: unknown) {
   const filename = String(value || "")
     .trim()
     .replaceAll("\\", "/");
+  // Exact hash-audited root names (Realism, Combat, Gurren, Motion Repair,
+  // etc.) are valid ComfyUI loader names too. Never admit arbitrary root files.
+  const registered = registeredH3Lora(filename);
+  if (registered) {
+    if ([3219346, 3219337, 3297123, 3294126].includes(registered.versionId || 0)) return null;
+    return filename;
+  }
   if (!filename.toLowerCase().startsWith(H3_LORA_PREFIX.toLowerCase()))
     return null;
   const relative = filename.slice(H3_LORA_PREFIX.length);
@@ -564,7 +586,7 @@ export function resolveH3LoraDeleteTarget(
   filename: string,
 ) {
   const canonical = canonicalH3OptionalLoraFilename(filename);
-  if (!canonical)
+  if (!canonical || !canonical.startsWith(H3_LORA_PREFIX))
     throw new Error(
       "Only optional model files inside the MiniMax-H3 LoRA folder may be deleted.",
     );

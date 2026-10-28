@@ -1,4 +1,5 @@
 import installed from "@/lib/h3Stage1cInstalled.json";
+import { registeredH3Lora } from "@/lib/h3RegisteredLoras";
 
 const byFile = new Map(installed.entries.map(entry => [entry.filename, entry]));
 const byId = new Map(installed.entries.map(entry => [`civitai-${entry.modelId}-${entry.versionId}`, entry]));
@@ -9,7 +10,7 @@ export function installedH3LoraGuidance(filename: string | null | undefined) {
 
 /** Wider signed ranges belong only to exact, author-documented slider versions. */
 export function h3RegisteredLoraStrengthBounds(id: string) {
-  const entry = byId.get(id);
+  const entry = byId.get(id) || installed.additionalInstalled.find(entry => entry.id === id);
   return { min: entry?.minStrength ?? 0, max: entry?.maxStrength ?? 2 };
 }
 
@@ -37,7 +38,9 @@ export function applyH3LoraTriggers(prompt: string, selections: readonly H3Promp
   for (const selection of selections) {
     if (selection.enabled === false || selection.strength === 0) continue;
     const entry = installedH3LoraGuidance(selection.filename);
-    const words = entry ? entry.triggerWords : selection.triggerWords || [];
+    // Keep structured legacy Combat normal/high-action/finisher semantics.
+    // Stage 1C author guidance still overrides stale caller trigger lists.
+    const words = entry ? entry.triggerWords : selection.triggerWords ?? registeredH3Lora(selection.filename)?.triggerWords ?? [];
     for (const raw of words) {
       const word = raw.trim();
       // Never insert an unfilled author prompt template or control characters.

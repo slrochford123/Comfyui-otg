@@ -1191,11 +1191,12 @@ export function buildH3Workflow(input: H3WorkflowBuildInput) {
   if (fastH3 && (input.mode !== "h3-reference-to-video" || input.operation === "visual-edit" || input.preserveLegacyReference)) {
     throw new Error("FastH3 / SelfLift OmniRef is available only for Reference-to-Video, not Text, Image or Edit Video.");
   }
-  if (fastH3 && (normalizedSettings.refMod.enabled || normalizedSettings.motionLab.enabled
-    || resolveProductionV2H3UserLoras(input.userLoras).length > 0)) {
-    throw new Error("FastH3 does not support legacy enhancements; choose compatible optional LoRAs explicitly from the catalog.");
+  if (fastH3 && (normalizedSettings.refMod.enabled || normalizedSettings.motionLab.enabled)) {
+    throw new Error("FastH3 does not support RefMod or Motion Lab enhancements.");
   }
-  if (fastH3) assertFastH3Loras(input.optionalLoras || []);
+  if (fastH3) assertFastH3Loras([
+    ...resolveProductionV2H3UserLoras(input.userLoras), ...(input.optionalLoras || []),
+  ]);
 
   const graph = loadH3WorkflowTemplate(
     input.backend,

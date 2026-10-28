@@ -15,12 +15,12 @@ function fixture(record?: unknown) {
 }
 afterEach(() => { for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
 describe("owner-facing build identity and append-only release history", () => {
-  it("identifies this release as Build 2.05 independently of package semver", () => {
-    expect(BUILD_VERSION).toBe("2.05");
+  it("identifies this release as Build 2.06 independently of package semver", () => {
+    expect(BUILD_VERSION).toBe("2.06");
     expect(readBuildIdentity(fixture())).toMatchObject({ buildVersion: BUILD_VERSION, softwareVersion: "2.0.1", commit: null, releaseName: null });
   });
-  it("retains the earlier rollback build history when appending Build 2.05", () => {
-    expect(readBuildIdentity(fixture()).history.map(build => build.version)).toEqual(["2", "2.01", "2.02", "2.03", "2.04", "2.05"]);
+  it("retains the earlier rollback build history when appending Build 2.06", () => {
+    expect(readBuildIdentity(fixture()).history.map(build => build.version)).toEqual(["2", "2.01", "2.02", "2.03", "2.04", "2.05", "2.06"]);
   });
   it("reads the exact packaged release identity but never private provenance fields", () => {
     const identity = readBuildIdentity(fixture({ buildVersion: BUILD_VERSION, commit: "a".repeat(40), name: "prod-build-2.01-aaaaaaaaaaaa", builtAt: "2026-10-25T22:00:00Z", secret: "private-fixture", paths: ["/private"] }));

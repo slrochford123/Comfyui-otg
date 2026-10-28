@@ -2,6 +2,7 @@
 import { assertFastH3StudioLoras } from "@/lib/h3FastLora";
 import { h3RegisteredLoraStrengthBounds } from "@/lib/h3LoraGuidance";
 import { isH3OmniRefMode } from "@/lib/h3OmniRef";
+import { isRegisteredInstalledH3LoraId } from "@/lib/h3RegisteredLoras";
 export const H3_STUDIO_VERSION = "h3-studio-v1";
 export const H3_STUDIO_SIZES = { "0.2": [608, 352], "0.6": [1056, 608], "1": [1344, 768] } as const;
 export const H3_STUDIO_WORKFLOWS = [
@@ -82,7 +83,7 @@ export function parseH3StudioPlan(value: unknown): H3StudioPlan {
   const ids = new Set<string>();
   for (const entry of p.loras) {
     const l = object(entry);
-    if (Object.keys(l).sort().join() !== "enabled,id,strength" || typeof l.id !== "string" || !/^civitai-\d+-\d+$/.test(l.id) || ids.has(l.id)
+    if (Object.keys(l).sort().join() !== "enabled,id,strength" || typeof l.id !== "string" || !(/^civitai-\d+-\d+$/.test(l.id) || isRegisteredInstalledH3LoraId(l.id)) || ids.has(l.id)
       || typeof l.enabled !== "boolean" || typeof l.strength !== "number" || !Number.isFinite(l.strength)
       || l.strength < h3RegisteredLoraStrengthBounds(l.id).min || l.strength > h3RegisteredLoraStrengthBounds(l.id).max) throw new Error("Invalid, duplicate or unapproved LoRA selection.");
     ids.add(l.id);

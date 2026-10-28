@@ -40,7 +40,7 @@ describe("five independent rendering configurations", () => {
     expect(h3RequiredNodeClassesForBackend(backend, "fasth3")).not.toContain("H3SLAAttention");
     expect(h3RequiredNodeClassesForBackend(backend)).not.toContain("BlockSparseAttention");
   });
-  it("never inherits legacy LoRAs and preserves the stored legacy render selection", () => {
+  it("never implicitly inherits legacy LoRAs, permits explicitly selected compatible adapters and preserves the stored legacy render selection", () => {
     const settings = { ...DEFAULT_H3_ADVANCED_SETTINGS, checkpointMode: "fasth3" as const, renderMode: "native" as const };
     const result = resolveH3RenderSettings(settings);
     expect(result).toMatchObject({ steps: 8, sampler: "euler", turboLora: false, attentionPath: "vsa", singularityLoras: [] });
@@ -49,7 +49,9 @@ describe("five independent rendering configurations", () => {
     expect(graph["30"].inputs.unet_name).toBe(H3_OMNIREF.checkpoint);
     expect(graph["36"]).toBeUndefined(); expect(graph["9001"]).toBeUndefined(); expect(graph["9002"]).toBeUndefined();
     for (const userLoras of [{ visualStyle: "realism" }, { combatMode: "normal" }, { motionRepair: { enabled: true } }]) {
-      expect(() => buildH3Workflow({ ...base, h3Settings: settings, userLoras: userLoras as never })).toThrow(/legacy enhancements/);
+      const selected = buildH3Workflow({ ...base, h3Settings: settings, userLoras: userLoras as never }).graph;
+      expect(selected["70"].class_type).toBe("LoraLoaderModelOnly");
+      expect(selected["38"].inputs.model).toEqual(["70", 0]);
     }
     for (const mode of ["h3-text-to-video", "h3-image-to-video"] as const) expect(() => buildH3Workflow({ ...base, mode, h3Settings: settings })).toThrow(/only for Reference/);
   });

@@ -1831,11 +1831,13 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       setMaxLoras(0);
       return;
     }
-    void fetch(`/api/h3/loras?mode=${encodeURIComponent(studioMode)}`, {
-      cache: "no-store",
+    const controller = new AbortController();
+    void fetch(`/api/h3/loras?mode=${encodeURIComponent(studioMode)}&backend=${h3Backend}`, {
+      cache: "no-store", signal: controller.signal,
     })
       .then((res) => res.json())
       .then((data) => {
+        if (controller.signal.aborted) return;
         const entries = Array.isArray(data.entries) ? data.entries : [];
         setCatalog(entries);
         setMaxLoras(Number(data.maxSelections) || 3);
@@ -1857,10 +1859,11 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           );
         });
       })
-      .catch(() =>
-        setMessage("The approved H3 LoRA catalog could not be loaded."),
-      );
-  }, [modeCapabilities.supportsOptionalLoras, studioMode]);
+      .catch(() => {
+        if (!controller.signal.aborted) setMessage("The approved H3 LoRA catalog could not be loaded.");
+      });
+    return () => controller.abort();
+  }, [modeCapabilities.supportsOptionalLoras, studioMode, h3Backend]);
   useEffect(() => {
     if (studioMode !== "h3-refmods" || refModLibraryStatus !== "idle") return;
     const controller = new AbortController();refModLibraryAbort.current?.abort();refModLibraryAbort.current = controller;
