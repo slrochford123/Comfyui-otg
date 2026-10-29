@@ -284,7 +284,7 @@
   },
   "192": {
     "inputs": {
-      "unet_name": "Minimax-h3_Singularity_ref2va_v1.3_int8.safetensors",
+      "unet_name": "Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",

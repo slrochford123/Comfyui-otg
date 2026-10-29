@@ -178,6 +178,7 @@ function wait(ms: number) {
 
 export default function EditVideoSwapCharactersPanel({ onRefreshGallery }: Props) {
   const [engine, setEngine] = React.useState<SwapEngine>("scail2");
+  const [h3Backend, setH3Backend] = React.useState<"rtx3090" | "rtx5060ti">("rtx3090");
   const [selectedVideo, setSelectedVideo] = React.useState<SelectedVideo | null>(null);
   const [galleryOpen, setGalleryOpen] = React.useState(false);
   const [galleryBusy, setGalleryBusy] = React.useState(false);
@@ -406,6 +407,7 @@ export default function EditVideoSwapCharactersPanel({ onRefreshGallery }: Props
 
     const form = new FormData();
     form.set("engine", engine);
+    if (engine === "minimax-h3") form.set("targetBackend", h3Backend);
     form.set("video_source", selectedVideo.source);
     form.set("video_name", selectedVideo.fileName);
     form.set("video_title", selectedVideo.title);
@@ -509,6 +511,28 @@ export default function EditVideoSwapCharactersPanel({ onRefreshGallery }: Props
           );
         })}
       </div>
+
+      {engine === "minimax-h3" ? (
+        <div className="mt-5 rounded-[22px] border border-white/10 bg-white/[0.035] p-4">
+          <label htmlFor="swap-h3-backend" className="text-xs font-black uppercase tracking-[0.18em] text-white/70">MiniMax H3 GPU</label>
+          <select
+            id="swap-h3-backend"
+            value={h3Backend}
+            disabled={busy}
+            onChange={(event) => {
+              const backend = event.target.value;
+              if (backend !== "rtx3090" && backend !== "rtx5060ti") return;
+              setH3Backend(backend);
+              clearOutputs();
+            }}
+            className="mt-2 min-h-11 w-full rounded-[16px] border border-white/15 bg-slate-950 px-3 py-2 text-base text-white"
+          >
+            <option value="rtx3090">RTX 3090</option>
+            <option value="rtx5060ti">RTX 5060 Ti</option>
+          </select>
+          <p className="mt-2 text-sm text-white/60">Only the selected GPU is used. There is no automatic GPU fallback.</p>
+        </div>
+      ) : null}
 
       <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
         <div className="rounded-[24px] border border-white/10 bg-white/[0.035] p-4">

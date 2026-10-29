@@ -627,6 +627,7 @@ async function runH3Submit(args: {
   const durationSeconds = H3_REFERENCE_VIDEO_CLIP_SECONDS as H3ProductionDuration;
   const sourceShape = await probeVideoInfo(args.inputVideo.path);
   const input = validateH3DirectInput({
+    targetBackend: args.request.targetBackend,
     mode: "h3-reference-to-video",
     quality: "lq",
     orientation: (sourceShape.height || 0) > (sourceShape.width || 0) ? "portrait" : "landscape",

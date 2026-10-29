@@ -49,6 +49,27 @@ class GalleryPagingTests(unittest.TestCase):
         (self.root / "alias.png").symlink_to(self.root / "a.png")
         self.assertEqual(self.agent.list_media(100)[1], 4)
 
+    def test_every_output_kind_and_literal_percent_paths(self):
+        for name in ["100% café 🐉.mp4", "frame.exr", "voice.flac", "archive.zip", "workflow.json", ".keep", "no-extension"]:
+            (self.root / name).write_bytes(b"fixture")
+            self.assertTrue(self.agent.safe_media_path(name)[0].is_file())
+        self.assertEqual(self.agent.list_media(100)[1], 11)
+        self.assertEqual(self.agent.list_media(100, kind_filter="audio")[1], 1)
+        self.assertEqual(self.agent.list_media(100, kind_filter="other")[1], 4)
+
+    def test_beyond_first_thousand(self):
+        for i in range(1005):
+            (self.root / f"file-{i:04}.mp4").write_bytes(b"x")
+        files, count = self.agent.list_media(1000, offset=1000)
+        self.assertEqual(count, 1009)
+        self.assertEqual(len(files), 9)
+
+    def test_ranges(self):
+        self.assertEqual(self.agent.parse_range("bytes=5-",10),(5,9))
+        self.assertEqual(self.agent.parse_range("bytes=-2",10),(8,9))
+        self.assertIsNone(self.agent.parse_range("bytes=20-",10))
+        self.assertIsNone(self.agent.parse_range("bytes=0-",0))
+
 
 if __name__ == "__main__":
     unittest.main()

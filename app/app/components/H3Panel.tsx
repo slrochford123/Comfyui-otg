@@ -30,6 +30,7 @@ import SpeechInputButton from "./SpeechInputButton";
 import VideoSnapshotPicker from "./VideoSnapshotPicker";
 import {
   DEFAULT_H3_ADVANCED_SETTINGS,
+  H3_SINGULARITY_LABEL,
   normalizeH3AdvancedSettings,
   type H3AdvancedSettings,
 } from "@/lib/production/h3Settings";
@@ -3804,14 +3805,14 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               setRealismPeopleEnabled(true);
             }}
           >
-            Singularity
+            {H3_SINGULARITY_LABEL}
           </button>
         </div>
 
         <div className="mt-3 rounded-[6px] border border-white/10 bg-black/30 p-3">
           <p className="text-sm font-black">
             {singularity
-              ? "MiniMax H3 Singularity"
+              ? `MiniMax H3 ${H3_SINGULARITY_LABEL}`
               : "MiniMax H3 Standard R2V"}
           </p>
 
@@ -3869,7 +3870,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           </p>
           <p className="text-xs text-white/60">
             {fastH3Selected ? `${h3Settings.checkpointMode === "selflift" ? "6 half-resolution + 2 full-resolution steps · learned latent lift" : "Dedicated configuration C"} · VSA attention · no legacy acceleration LoRA` : h3Settings.checkpointMode === "singularity"
-              ? `Singularity v1.3 · Realism On · Combat ${h3Settings.combatLoraEnabled ? "On" : "Off"}`
+              ? `${H3_SINGULARITY_LABEL} · Realism On · Combat ${h3Settings.combatLoraEnabled ? "On" : "Off"}`
               : "Standard model"}{" "}
             {!fastH3Selected ? " · SLA attention" : null}
           </p>

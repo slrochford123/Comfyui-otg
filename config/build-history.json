@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.06",
+  "current": "2.07",
   "builds": [
     {
       "version": "2",
@@ -43,6 +43,12 @@
       "date": "2026-10-27",
       "summary": "Shared installed H3 style LoRAs across legacy, FastH3 and SelfLift profiles on both GPUs; target-aware discovery, compatible strengths and trigger guidance.",
       "sourceBaseCommit": "0079dae680ec366977d19a03fc9a6d7beb580298"
+    },
+    {
+      "version": "2.07",
+      "date": "2026-10-29",
+      "summary": "Singularity v2 publisher-pruned INT8 checkpoint across existing Singularity routes; retain Native/Turbo steps, SLA, Realism and independent Combat. TEST candidate includes prior Body Swap and Admin Gallery fixes.",
+      "sourceBaseCommit": "99aa38335a8c4d18c6c802629d604b8e27d4c5fd"
     }
   ]
 }

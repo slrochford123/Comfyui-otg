@@ -1,3 +1,6 @@
+import { parseH3TargetBackend } from "@/lib/h3GpuRouting";
+import type { ProductionV2H3BackendId } from "@/lib/production/h3Workflows";
+
 export type SwapEngine = "scail2" | "minimax-h3";
 
 export const SWAP_WORKFLOW_CLIP_SECONDS = 5;
@@ -14,6 +17,7 @@ export type SwapMapping = {
 
 export type SwapPlanRequest = {
   engine: SwapEngine;
+  targetBackend?: ProductionV2H3BackendId;
   videoSource: string;
   videoScope: string;
   sourceTitle: string;
@@ -30,6 +34,7 @@ export type SwapPlanResult = {
   ok: true;
   mode: "planning" | "submitted";
   engine: SwapEngine;
+  targetBackend?: ProductionV2H3BackendId;
   source: {
     title: string;
     fileName: string;
@@ -211,6 +216,7 @@ export function buildSwapPlan(input: SwapPlanRequest, mode: "planning" | "submit
     ok: true,
     mode,
     engine: input.engine,
+    ...(input.engine === "minimax-h3" && input.targetBackend ? { targetBackend: input.targetBackend } : {}),
     source: {
       title: input.sourceTitle,
       fileName: input.sourceName,
@@ -238,6 +244,11 @@ export function buildSwapPlan(input: SwapPlanRequest, mode: "planning" | "submit
 
 export function buildSwapPlanFromForm(form: FormData): SwapPlanBuildResult {
   const engine = cleanEngine(form.get("engine"));
+  let targetBackend: ProductionV2H3BackendId | undefined;
+  if (engine === "minimax-h3") {
+    try { targetBackend = parseH3TargetBackend(form.get("targetBackend") ?? undefined); }
+    catch { return { ok: false, error: "Choose RTX 3090 or RTX 5060 Ti.", status: 400 }; }
+  }
   const videoSource = cleanText(form.get("video_source"));
   const videoScope = cleanText(form.get("video_scope"));
   const sourceTitle = cleanText(form.get("video_title"), "source video");
@@ -281,6 +292,7 @@ export function buildSwapPlanFromForm(form: FormData): SwapPlanBuildResult {
 
   const request: SwapPlanRequest = {
     engine,
+    ...(targetBackend ? { targetBackend } : {}),
     videoSource,
     videoScope,
     sourceTitle,

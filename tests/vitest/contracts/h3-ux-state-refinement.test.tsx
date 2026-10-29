@@ -70,7 +70,7 @@ describe("H3 persistent mutually-exclusive selections", () => {
     fireEvent.click(ui.getByRole("button", { name: "SelfLift", exact: true }));
     expect(speed().getAttribute("data-speed")).toBe("fast");
     expect(loras.open).toBe(false);
-    fireEvent.click(ui.getByRole("button", { name: "Singularity", exact: true }));
+    fireEvent.click(ui.getByRole("button", { name: "Singularity v2", exact: true }));
     expect(ui.getByRole("button", { name: "Native", exact: true }).getAttribute("aria-pressed")).toBe("true");
     expect(ui.getByRole("checkbox", { name: /Combat LoRA/ })).toBeTruthy();
     expect(speed().getAttribute("data-speed")).toBe("slow");

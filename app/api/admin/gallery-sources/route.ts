@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/app/api/admin/_requireAdmin";
-import { isAdminGallerySourceId, listAdminGallery } from "@/lib/adminGallerySources";
+import { AdminGallerySnapshotExpiredError, isAdminGallerySourceId, listAdminGallery, type AdminGalleryMediaKind } from "@/lib/adminGallerySources";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,13 +19,14 @@ export async function GET(request: NextRequest) {
   try {
     const media = request.nextUrl.searchParams.get("media") || "all";
     const sort = request.nextUrl.searchParams.get("sort") || "newest";
-    if (!["all", "image", "video"].includes(media) || !["newest", "oldest", "name"].includes(sort)) return NextResponse.json({ error: "Invalid Gallery filter." }, { status: 400 });
+    if (!["all", "image", "video", "audio", "other"].includes(media) || !["newest", "oldest", "name"].includes(sort)) return NextResponse.json({ error: "Invalid Gallery filter." }, { status: 400 });
     const result = await listAdminGallery({
       source: requestedSource,
       offset: Number(request.nextUrl.searchParams.get("offset") || 0),
       limit: Number(request.nextUrl.searchParams.get("limit") || 48),
       search: (request.nextUrl.searchParams.get("search") || "").trim().slice(0, 200),
-      media: media as "all" | "image" | "video",
+      media: media as "all" | AdminGalleryMediaKind,
+      snapshotId: request.nextUrl.searchParams.get("snapshot") || undefined,
       sort: sort as "newest" | "oldest" | "name",
     });
     return NextResponse.json(result, {
@@ -33,6 +34,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to list Admin Full Gallery.";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    return NextResponse.json({ ok: false, error: message }, { status: error instanceof AdminGallerySnapshotExpiredError ? 409 : 500 });
   }
 }

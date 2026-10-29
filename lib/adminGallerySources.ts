@@ -1,8 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
+import { adminGalleryMediaKind, adminGalleryMime, type AdminGalleryMediaKind } from "@/lib/adminGalleryMedia";
+export type { AdminGalleryMediaKind } from "@/lib/adminGalleryMedia";
 
 export type AdminGallerySourceId = "comfy-3090" | "comfy-5060";
-export type AdminGalleryMediaKind = "image" | "video";
 export type AdminGalleryQuery = { search?: string; media?: "all" | AdminGalleryMediaKind; sort?: "newest" | "oldest" | "name" };
 
 export type AdminGallerySourceDefinition = {
@@ -44,11 +46,13 @@ export type AdminGalleryPage = {
   offset: number;
   limit: number;
   hasMore: boolean;
+  nextOffset: number;
+  snapshotId: string;
 };
 
-const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
-const VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".mov", ".mkv"]);
-const MEDIA_EXTENSIONS = new Set([...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS]);
+const snapshots = new Map<string, { expires: number; query: string; items: AdminGalleryItem[]; results: Awaited<ReturnType<typeof listOneSource>>[] }>();
+const SNAPSHOT_TTL_MS = 30 * 60_000;
+export class AdminGallerySnapshotExpiredError extends Error {}
 
 export const ADMIN_GALLERY_SOURCES: AdminGallerySourceDefinition[] = [
   {
@@ -112,33 +116,17 @@ export function adminGallerySourceById(value: string): AdminGallerySourceDefinit
 }
 
 export function contentTypeForAdminGalleryPath(filePath: string) {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === ".png") return "image/png";
-  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
-  if (ext === ".webp") return "image/webp";
-  if (ext === ".gif") return "image/gif";
-  if (ext === ".mp4") return "video/mp4";
-  if (ext === ".webm") return "video/webm";
-  if (ext === ".mov") return "video/quicktime";
-  if (ext === ".mkv") return "video/x-matroska";
-  return "application/octet-stream";
+  return adminGalleryMime(filePath);
 }
 
 export function mediaKindForName(name: string): AdminGalleryMediaKind | null {
-  const ext = path.extname(name).toLowerCase();
-  if (IMAGE_EXTENSIONS.has(ext)) return "image";
-  if (VIDEO_EXTENSIONS.has(ext)) return "video";
-  return null;
+  return adminGalleryMediaKind(name);
 }
 
 export function normalizeAdminGalleryRelPath(value: string) {
-  let decoded = "";
-  try {
-    decoded = decodeURIComponent(String(value || ""));
-  } catch {
-    return "";
-  }
-  const normalized = decoded.replace(/\\/g, "/").replace(/^\/+/, "");
+  // URLSearchParams already decoded the URL exactly once. Literal '%' and
+  // encoded-looking filenames must not be decoded again.
+  const normalized = String(value || "").replace(/\\/g, "/");
   const parts = normalized.split("/");
   if (!normalized || normalized.includes("\0")) return "";
   if (parts.some((part) => !part || part === "." || part === "..")) return "";
@@ -150,6 +138,7 @@ export async function listAdminGallery(args: {
   source?: AdminGallerySourceId | "all";
   offset?: number;
   limit?: number;
+  snapshotId?: string;
 } & AdminGalleryQuery): Promise<AdminGalleryPage> {
   const offset = clampOffset(args.offset);
   const limit = clampLimit(args.limit);
@@ -159,11 +148,23 @@ export async function listAdminGallery(args: {
   const selected = args.source && args.source !== "all"
     ? [adminGallerySourceById(args.source)]
     : sources;
-  const fetchLimit = offset + limit + 1;
-  const results = await Promise.all(selected.map((source) => listOneSource(source, fetchLimit, args)));
+  for (const [id, snapshot] of snapshots) if (snapshot.expires < Date.now()) snapshots.delete(id);
+  const query = JSON.stringify([args.source || "all", args.media || "all", args.search || "", args.sort || "newest", selected.map(s => [s.id, configuredLocalRoot(s.id), configuredRemoteUrl(s.id)])]);
+  let snapshotId = args.snapshotId || "";
+  let snapshot = snapshotId ? snapshots.get(snapshotId) : undefined;
+  if (snapshotId && (!snapshot || snapshot.query !== query)) throw new AdminGallerySnapshotExpiredError("Gallery listing expired or filters changed. Refresh to start a new complete listing.");
+  if (!snapshot) {
+  const results = await Promise.all(selected.map((source) => listOneSource(source, Number.POSITIVE_INFINITY, args)));
   const items = results
     .flatMap((result) => result.items)
     .sort((a, b) => args.sort === "oldest" ? -compareAdminGalleryItems(a, b) : args.sort === "name" ? a.name.localeCompare(b.name) || compareAdminGalleryItems(a, b) : compareAdminGalleryItems(a, b));
+    snapshot = { items, results, query, expires: Date.now() + SNAPSHOT_TTL_MS };
+    snapshotId = crypto.randomUUID();
+    // Bound metadata snapshots, not library size. Paging has no item-count cap.
+    if (snapshots.size >= 16) snapshots.delete(snapshots.keys().next().value!);
+    snapshots.set(snapshotId, snapshot);
+  }
+  const {items, results} = snapshot;
   const pageItems = items.slice(offset, offset + limit);
   return {
     ok: results.some((result) => result.ok),
@@ -178,7 +179,9 @@ export async function listAdminGallery(args: {
     })),
     offset,
     limit,
-    hasMore: items.length > offset + limit || results.some((result) => result.hasMore),
+    hasMore: items.length > offset + pageItems.length,
+    nextOffset: offset + pageItems.length,
+    snapshotId,
   };
 }
 
@@ -186,7 +189,7 @@ export async function resolveLocalAdminGalleryFile(sourceId: AdminGallerySourceI
   const source = adminGallerySourceById(sourceId);
   if (source.kind !== "local") throw new Error("Source is not local.");
   const rel = normalizeAdminGalleryRelPath(relValue);
-  if (!rel || !MEDIA_EXTENSIONS.has(path.extname(rel).toLowerCase())) {
+  if (!rel) {
     throw new Error("Invalid or unsupported gallery file path.");
   }
   const root = await localRootForSource(sourceId);
@@ -200,6 +203,8 @@ export async function resolveLocalAdminGalleryFile(sourceId: AdminGallerySourceI
 }
 
 export async function deleteAdminGalleryFile(sourceId: AdminGallerySourceId, relValue: string) {
+  // This repair expands browsing/downloads, not destructive capabilities.
+  if (!/\.(png|jpe?g|webp|gif|mp4|webm|mov|mkv)$/i.test(relValue)) throw new Error("Deletion is not enabled for this output file type.");
   const source = adminGallerySourceById(sourceId);
   if (source.kind === "remote-agent") {
     const rel = requireRel(relValue);
@@ -220,18 +225,23 @@ export async function deleteAdminGalleryFile(sourceId: AdminGallerySourceId, rel
 export async function fetchRemoteAdminGalleryFile(
   sourceId: AdminGallerySourceId,
   relValue: string,
-  init?: { method?: "GET" | "HEAD"; range?: string | null }
+  init?: { method?: "GET" | "HEAD"; range?: string | null; ifRange?: string | null; signal?: AbortSignal }
 ) {
   const rel = requireRel(relValue);
   const headers = remoteAgentHeaders(sourceId);
   if (init?.range) headers.Range = init.range;
-  const response = await fetch(remoteAgentUrl(sourceId, "/gallery/file", { rel }), {
+  if (init?.ifRange) headers["If-Range"] = init.ifRange;
+  const controller = new AbortController();
+  // Bound response-header wait, not the lifetime of a large download.
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  let response: Response;
+  try { response = await fetch(remoteAgentUrl(sourceId, "/gallery/file", { rel }), {
     method: init?.method || "GET",
     cache: "no-store",
     headers,
-    signal: AbortSignal.timeout(120_000),
-  });
-  if (!response.ok && response.status !== 206) {
+    signal: init?.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal,
+  }); } finally { clearTimeout(timer); }
+  if (!response.ok && response.status !== 416) {
     throw new Error(await remoteError(response, "Remote gallery file failed"));
   }
   return response;
@@ -272,7 +282,6 @@ async function walkLocal(root: string, current: string, source: AdminGallerySour
   const entries = await fs.readdir(current, { withFileTypes: true });
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
-    if (entry.name.startsWith(".")) continue;
     const candidate = path.join(current, entry.name);
     if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) {
@@ -282,7 +291,8 @@ async function walkLocal(root: string, current: string, source: AdminGallerySour
     if (!entry.isFile()) continue;
     const kind = mediaKindForName(entry.name);
     if (!kind) continue;
-    const stat = await fs.stat(candidate);
+    const stat = await fs.stat(candidate).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+    if (!stat) continue;
     const rel = path.relative(root, candidate).split(path.sep).join("/");
     items.push(toItem(source, { rel, name: entry.name, kind, bytes: stat.size, mtimeMs: stat.mtimeMs }));
   }
@@ -290,6 +300,7 @@ async function walkLocal(root: string, current: string, source: AdminGallerySour
 
 async function listRemoteSource(source: AdminGallerySourceDefinition, limit: number, query: AdminGalleryQuery) {
   const all: AdminGalleryItem[] = [];
+  const seen = new Set<string>();
   let offset = 0, count = 0, hasMore = true;
   while (hasMore && all.length < limit) {
   const response = await fetch(remoteAgentUrl(source.id, "/gallery/list", { limit: "1000", offset: String(offset), search: query.search || "", media: query.media || "all", sort: query.sort || "newest" }), {
@@ -306,12 +317,14 @@ async function listRemoteSource(source: AdminGallerySourceDefinition, limit: num
     items?: Array<{ rel?: string; name?: string; kind?: string; mimeType?: string; bytes?: number; mtimeMs?: number; width?: number; height?: number; durationSeconds?: number }>;
   };
   if (!payload.ok) throw new Error("Remote gallery source returned ok=false.");
-  if (payload.queryVersion !== 2 && payload.hasMore && (offset > 0 || query.search || query.media && query.media !== "all" || query.sort && query.sort !== "newest")) throw new Error("Gallery agent update required for complete-library search, sorting and paging.");
+  if (payload.queryVersion !== 3) throw new Error("Gallery agent update required for complete-library files, search, sorting and paging (protocol 3).");
   const items: AdminGalleryItem[] = [];
   for (const raw of payload.items || []) {
     const rel = normalizeAdminGalleryRelPath(String(raw.rel || ""));
     const kind = mediaKindForName(rel);
     if (!rel || !kind || raw.kind !== kind) continue;
+    if (seen.has(rel)) throw new Error("Gallery changed during listing or agent repeated a page. Refresh to retry.");
+    seen.add(rel);
     items.push(toItem(source, {
       rel,
       name: path.posix.basename(rel),
@@ -324,16 +337,12 @@ async function listRemoteSource(source: AdminGallerySourceDefinition, limit: num
       durationSeconds: finitePositive(raw.durationSeconds),
     }));
   }
-  if (payload.queryVersion !== 2 && !payload.hasMore) {
-    const filtered = items.filter(item => (!query.media || query.media === "all" || query.media === item.kind) && (!query.search || item.rel.toLowerCase().includes(query.search.toLowerCase())));
-    filtered.sort((a, b) => query.sort === "oldest" ? -compareAdminGalleryItems(a, b) : query.sort === "name" ? a.name.localeCompare(b.name) || compareAdminGalleryItems(a, b) : compareAdminGalleryItems(a, b));
-    return { count: filtered.length, items: filtered.slice(0, limit), hasMore: filtered.length > limit };
-  }
   all.push(...items.slice(0, Math.max(0, limit - all.length)));
   count = finiteNonNegative(payload.count) || all.length;
   hasMore = Boolean(payload.hasMore);
+  if (!items.length && hasMore) throw new Error("Gallery agent returned a non-advancing page; refresh or update the agent.");
   if (!items.length) break;
-  offset += items.length;
+  offset += (payload.items || []).length;
   }
   return { count, items: all, hasMore };
 }
@@ -401,7 +410,7 @@ function remoteAgentHeaders(sourceId: AdminGallerySourceId) {
 
 function requireRel(value: string) {
   const rel = normalizeAdminGalleryRelPath(value);
-  if (!rel || !MEDIA_EXTENSIONS.has(path.extname(rel).toLowerCase())) throw new Error("Invalid or unsupported gallery file path.");
+  if (!rel) throw new Error("Invalid gallery file path.");
   return rel;
 }
 

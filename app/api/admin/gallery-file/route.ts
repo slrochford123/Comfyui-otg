@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/app/api/admin/_requireAdmin";
+import { adminGalleryAttachment, adminGalleryMediaKind } from "@/lib/adminGalleryMedia";
 import {
   adminGallerySourceById,
   contentTypeForAdminGalleryPath,
@@ -57,13 +58,17 @@ async function serve(request: NextRequest, headOnly: boolean) {
       const upstream = await fetchRemoteAdminGalleryFile(sourceId, rel, {
         method: headOnly ? "HEAD" : "GET",
         range: request.headers.get("range"),
+        ifRange: request.headers.get("if-range"),
+        signal: request.signal,
       });
       const headers = proxyHeaders(upstream.headers, rel, request.nextUrl.searchParams.get("download") === "1");
-      return new NextResponse(headOnly ? null : upstream.body, { status: upstream.status, headers });
+      return new NextResponse(headOnly || upstream.status === 416 ? null : upstream.body, { status: upstream.status, headers });
     }
 
     const resolved = await resolveLocalAdminGalleryFile(sourceId, rel);
-    const range = parseSingleRange(request.headers.get("range"), resolved.stat.size);
+    const etag = `"${resolved.stat.size.toString(16)}-${resolved.stat.mtimeMs.toString(16)}"`;
+    const ifRange = request.headers.get("if-range");
+    const range = parseSingleRange(!ifRange || ifRange === etag || ifRange === resolved.stat.mtime.toUTCString() ? request.headers.get("range") : null, resolved.stat.size);
     if (range === "invalid") {
       return new NextResponse(null, {
         status: 416,
@@ -81,7 +86,9 @@ async function serve(request: NextRequest, headOnly: boolean) {
       partial: Boolean(range),
       download: request.nextUrl.searchParams.get("download") === "1",
     });
-    if (headOnly) return new NextResponse(null, { status: range ? 206 : 200, headers });
+    headers.set("ETag", etag);
+    headers.set("Last-Modified", resolved.stat.mtime.toUTCString());
+    if (headOnly || resolved.stat.size === 0) return new NextResponse(null, { status: range ? 206 : 200, headers });
     const nodeStream = fs.createReadStream(resolved.path, { start, end });
     const body = Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
     return new NextResponse(body, { status: range ? 206 : 200, headers });
@@ -119,10 +126,9 @@ function localHeaders(args: { contentType: string; fileName: string; fileSize: n
     "X-Content-Type-Options": "nosniff",
   });
   if (args.partial) headers.set("Content-Range", `bytes ${args.start}-${args.end}/${args.fileSize}`);
-  if (args.download) headers.set("Content-Disposition", `attachment; filename="${safeDispositionName(args.fileName)}"`);
+  if (args.download || adminGalleryMediaKind(args.fileName) === "other" || /\.svg$/i.test(args.fileName)) headers.set("Content-Disposition", adminGalleryAttachment(args.fileName));
   return headers;
 }
-
 function proxyHeaders(upstream: Headers, rel: string, download: boolean) {
   const headers = new Headers();
   for (const name of ["content-type", "content-length", "content-range", "accept-ranges", "last-modified", "etag"]) {
@@ -131,10 +137,6 @@ function proxyHeaders(upstream: Headers, rel: string, download: boolean) {
   }
   headers.set("Cache-Control", "private, max-age=300, must-revalidate");
   headers.set("X-Content-Type-Options", "nosniff");
-  if (download) headers.set("Content-Disposition", `attachment; filename="${safeDispositionName(path.posix.basename(rel))}"`);
+  if (download || adminGalleryMediaKind(rel) === "other" || /\.svg$/i.test(rel)) headers.set("Content-Disposition", adminGalleryAttachment(rel));
   return headers;
-}
-
-function safeDispositionName(fileName: string) {
-  return path.basename(fileName).replace(/["\r\n]/g, "_");
 }

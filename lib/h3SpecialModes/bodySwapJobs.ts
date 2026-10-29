@@ -36,6 +36,7 @@ import {
   type H3BodySwapCreativeDirectionInput,
 } from "@/lib/h3SpecialModes/bodySwap";
 import { buildH3BodySwapWorkflow, type H3BodySwapBuiltWorkflow } from "@/lib/h3SpecialModes/bodySwapWorkflow";
+import { withH3BodySwapUploadVideo } from "@/lib/h3SpecialModes/bodySwapUploadVideo";
 import { H3_BACKEND_PROFILES } from "@/lib/production/h3Workflows";
 
 type ObjectInfo = Record<string, {
@@ -522,12 +523,12 @@ export async function inspectH3BodySwapBackendCompatibility(
 async function uploadBodySwapInputs(job: H3BodySwapJob, backend: H3BodySwapBackendId) {
   const profile = bodySwapBackendProfile(backend);
   const [sourceVideoFilename, replacementImageFilename] = await Promise.all([
-    uploadH3InputToBaseUrl({
+    withH3BodySwapUploadVideo(job.input.sourceVideo.path, (sourcePath) => uploadH3InputToBaseUrl({
       baseUrl: profile.baseUrl,
-      sourcePath: job.input.sourceVideo.path,
+      sourcePath,
       mediaType: "video",
       uploadName: `${job.id}_source_video`,
-    }),
+    })),
     uploadH3InputToBaseUrl({
       baseUrl: profile.baseUrl,
       sourcePath: job.input.replacementImage.path,

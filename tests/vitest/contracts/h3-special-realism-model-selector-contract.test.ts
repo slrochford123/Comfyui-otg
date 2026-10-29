@@ -48,7 +48,8 @@ describe("H3 Realism Standard / Singularity model selector", () => {
       "checkpointMode: h3Settings.checkpointMode",
     );
     expect(panel).toContain("Combat V2 LoRA");
-    expect(panel).toContain("MiniMax H3 Singularity");
+    expect(panel).toContain("H3_SINGULARITY_LABEL");
+    expect(source("lib/production/h3Settings.ts")).toContain('H3_SINGULARITY_LABEL = "Singularity v2"');
     expect(route).toContain("checkpointMode:");
     expect(route).toContain("combatLoraEnabled:");
   });

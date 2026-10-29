@@ -10,6 +10,8 @@ import mimetypes
 import os
 from pathlib import Path
 import struct
+import email.utils
+import stat as stat_module
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -22,21 +24,31 @@ ROOT = Path(
 TOKEN = os.environ.get("OTG_ADMIN_GALLERY_AGENT_TOKEN", "").strip()
 BIND = os.environ.get("OTG_ADMIN_GALLERY_AGENT_BIND", "100.98.212.116").strip()
 PORT = int(os.environ.get("OTG_ADMIN_GALLERY_AGENT_PORT", "8798"))
-EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mov", ".mkv"}
 MIME = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif",
     ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska",
+    ".avif": "image/avif", ".bmp": "image/bmp", ".tif": "image/tiff", ".tiff": "image/tiff",
+    ".heic": "image/heic", ".heif": "image/heif", ".exr": "image/x-exr", ".jxl": "image/jxl", ".svg": "image/svg+xml",
+    ".avi": "video/x-msvideo", ".m4v": "video/x-m4v", ".mpeg": "video/mpeg", ".mpg": "video/mpeg",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac", ".ogg": "audio/ogg",
+    ".opus": "audio/ogg", ".m4a": "audio/mp4", ".aac": "audio/aac", ".aiff": "audio/aiff",
 }
 
 
+def media_kind(name: str) -> str:
+    mime = MIME.get(Path(name).suffix.lower(), "application/octet-stream")
+    return mime.split("/", 1)[0] if mime.startswith(("image/", "video/", "audio/")) else "other"
+
+
 def safe_media_path(raw: str) -> tuple[Path, str]:
-    rel = unquote(raw or "").replace("\\", "/").lstrip("/")
+    # parse_qs already decoded the URL. Preserve literal percent filenames.
+    rel = (raw or "").replace("\\", "/")
     parts = rel.split("/")
     if not rel or any(not part or part in {".", ".."} for part in parts) or ":" in parts[0]:
         raise ValueError("invalid relative path")
     candidate = (ROOT / rel).resolve(strict=True)
     candidate.relative_to(ROOT)
-    if not candidate.is_file() or candidate.suffix.lower() not in EXTENSIONS:
+    if not candidate.is_file():
         raise ValueError("unsupported or missing media file")
     return candidate, candidate.relative_to(ROOT).as_posix()
 
@@ -75,24 +87,28 @@ def image_dimensions(file_path: Path) -> tuple[int, int] | None:
 
 def list_media(limit: int, offset: int = 0, search: str = "", kind_filter: str = "all", sort: str = "newest") -> tuple[list[dict], int]:
     records: list[dict] = []
-    for base, dirs, files in os.walk(ROOT, followlinks=False):
-        dirs[:] = sorted(name for name in dirs if not name.startswith(".") and not (Path(base) / name).is_symlink())
+    def scan_error(error):
+        raise error
+    for base, dirs, files in os.walk(ROOT, followlinks=False, onerror=scan_error):
+        dirs[:] = sorted(name for name in dirs if not (Path(base) / name).is_symlink())
         for name in sorted(files):
             file_path = Path(base) / name
-            if name.startswith(".") or file_path.is_symlink() or file_path.suffix.lower() not in EXTENSIONS:
+            if file_path.is_symlink():
                 continue
             try:
                 resolved = file_path.resolve(strict=True)
                 resolved.relative_to(ROOT)
                 stat = resolved.stat()
-            except (OSError, ValueError):
+            except FileNotFoundError:
                 continue
-            kind = "image" if resolved.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"} else "video"
+            if not stat_module.S_ISREG(stat.st_mode):
+                continue
+            kind = media_kind(resolved.name)
             record = {
                 "rel": resolved.relative_to(ROOT).as_posix(),
                 "name": resolved.name,
                 "kind": kind,
-                "mimeType": MIME[resolved.suffix.lower()],
+                "mimeType": MIME.get(resolved.suffix.lower(), "application/octet-stream"),
                 "bytes": stat.st_size,
                 "mtimeMs": stat.st_mtime_ns / 1_000_000,
             }
@@ -157,6 +173,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             file_path, rel = safe_media_path(parse_qs(parsed.query).get("rel", [""])[0])
+            if file_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mov", ".mkv"}:
+                raise ValueError("deletion is not enabled for this file type")
             file_path.unlink()
             self.send_json(200, {"ok": True, "rel": rel})
         except (OSError, ValueError) as error:
@@ -177,11 +195,11 @@ class Handler(BaseHTTPRequestHandler):
                 search = query.get("search", [""])[0][:200]
                 kind = query.get("media", ["all"])[0]
                 sort = query.get("sort", ["newest"])[0]
-                if kind not in {"all", "image", "video"} or sort not in {"newest", "oldest", "name"}:
+                if kind not in {"all", "image", "video", "audio", "other"} or sort not in {"newest", "oldest", "name"}:
                     self.send_json(400, {"ok": False, "error": "invalid gallery filter"})
                     return
                 items, count = list_media(limit, offset, search, kind, sort)
-                self.send_json(200, {"ok": True, "queryVersion": 2, "offset": offset, "count": count, "hasMore": count > offset + len(items), "items": items})
+                self.send_json(200, {"ok": True, "queryVersion": 3, "offset": offset, "count": count, "hasMore": count > offset + len(items), "items": items})
             except (OSError, ValueError) as error:
                 self.send_json(500, {"ok": False, "error": str(error)})
             return
@@ -193,25 +211,36 @@ class Handler(BaseHTTPRequestHandler):
     def serve_file(self, raw_rel: str, head_only: bool) -> None:
         try:
             file_path, _ = safe_media_path(raw_rel)
-            size = file_path.stat().st_size
+            stat = file_path.stat()
+            size = stat.st_size
+            etag = f'"{size:x}-{stat.st_mtime_ns:x}"'
+            modified = email.utils.formatdate(stat.st_mtime, usegmt=True)
             start, end, partial = 0, size - 1, False
             range_header = self.headers.get("Range")
+            if self.headers.get("If-Range") not in {None, etag, modified}:
+                range_header = None
             if range_header:
                 parsed_range = parse_range(range_header, size)
                 if parsed_range is None:
                     self.send_response(416)
                     self.send_header("Content-Range", f"bytes */{size}")
                     self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
                 start, end = parsed_range
                 partial = True
             self.send_response(206 if partial else 200)
-            self.send_header("Content-Type", MIME[file_path.suffix.lower()])
+            self.send_header("Content-Type", MIME.get(file_path.suffix.lower(), "application/octet-stream"))
             self.send_header("Content-Length", str(end - start + 1))
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Cache-Control", "private, no-store, max-age=0")
             self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("ETag", etag)
+            self.send_header("Last-Modified", modified)
+            if media_kind(file_path.name) == "other" or file_path.suffix.lower() == ".svg":
+                from urllib.parse import quote
+                self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + quote(file_path.name, safe=""))
             if partial:
                 self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
             self.end_headers()

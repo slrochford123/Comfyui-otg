@@ -6,7 +6,7 @@ import { adminStyles as styles } from "../admin/AdminShell";
 
 type SourceId = "comfy-3090" | "comfy-5060";
 type SourceFilter = "all" | SourceId;
-type MediaFilter = "all" | "images" | "videos";
+type MediaFilter = "all" | "images" | "videos" | "audio" | "other";
 type Sort = "newest" | "oldest" | "name";
 type ViewMode = "default" | "grid" | "list";
 
@@ -18,7 +18,7 @@ type Item = {
   sourceLabel: string;
   name: string;
   rel: string;
-  kind: "image" | "video";
+  kind: "image" | "video" | "audio" | "other";
   mimeType: string;
   bytes: number;
   mtimeMs: number;
@@ -27,7 +27,7 @@ type Item = {
   durationSeconds?: number;
   url: string;
 };
-type Payload = { ok: boolean; items?: Item[]; sources?: Source[]; statuses?: Status[]; hasMore?: boolean; error?: string };
+type Payload = { ok: boolean; items?: Item[]; sources?: Source[]; statuses?: Status[]; hasMore?: boolean; nextOffset?: number; snapshotId?: string; error?: string };
 
 const PAGE_SIZE = 48;
 const SOURCE_OPTIONS: Array<{ id: SourceFilter; label: string }> = [
@@ -53,58 +53,62 @@ export default function AdminGallerySourcesPanel() {
   const [mounted, setMounted] = useState(false);
   const requestVersion = useRef(0);
   const appending = useRef(false);
-  const itemCount = useRef(0);
-  itemCount.current = items.length;
+  const nextOffset = useRef(0);
+  const snapshotId = useRef("");
 
   const load = useCallback(async (append = false) => {
-    if (append && appending.current) return;
-    if (append) appending.current = true;
+    if (append && appending.current) return null;
+    appending.current = append;
     const version = ++requestVersion.current;
     append ? setLoadingMore(true) : setLoading(true);
     setMessage("");
     try {
-      const offset = append ? itemCount.current : 0;
-      const params = new URLSearchParams({ source: sourceFilter, offset: String(offset), limit: String(PAGE_SIZE), search, media: mediaFilter === "images" ? "image" : mediaFilter === "videos" ? "video" : "all", sort });
+      const offset = append ? nextOffset.current : 0;
+      const params = new URLSearchParams({ source: sourceFilter, offset: String(offset), limit: String(PAGE_SIZE), search, media: mediaFilter === "images" ? "image" : mediaFilter === "videos" ? "video" : mediaFilter, sort });
+      if (append && snapshotId.current) params.set("snapshot", snapshotId.current);
       const response = await fetch(`/api/admin/gallery-sources?${params.toString()}`, { cache: "no-store", credentials: "include" });
       const data = await response.json() as Payload;
-      if (version !== requestVersion.current) return;
+      if (version !== requestVersion.current) return null;
       if (!response.ok) throw new Error(data.error || `Full Gallery load failed (${response.status}).`);
       setItems((current) => append ? dedupeItems([...current, ...(data.items || [])]) : dedupeItems(data.items || []));
       setStatuses(data.statuses || []);
       setHasMore(Boolean(data.hasMore));
+      nextOffset.current = data.nextOffset ?? offset + (data.items || []).length;
+      snapshotId.current = data.snapshotId || "";
       if (!data.ok) setMessage("No configured Full Gallery source is currently healthy.");
+      return data.items || [];
     } catch (error) {
-      if (version !== requestVersion.current) return;
+      if (version !== requestVersion.current) return null;
       if (!append) setItems([]);
       setMessage(error instanceof Error ? error.message : "Unable to load Admin Full Gallery.");
+      return null;
     } finally {
-      appending.current = false;
-      if (version === requestVersion.current) { setLoading(false); setLoadingMore(false); }
+      if (version === requestVersion.current) { appending.current = false; setLoading(false); setLoadingMore(false); }
     }
   }, [sourceFilter, mediaFilter, search, sort]);
 
   useEffect(() => { setMounted(true); }, []);
-  useEffect(() => { requestVersion.current++; setItems([]); setViewerId(""); const timer = window.setTimeout(() => void load(false), 250); return () => { requestVersion.current++; window.clearTimeout(timer); }; }, [load]);
+  useEffect(() => { requestVersion.current++; appending.current = false; nextOffset.current = 0; snapshotId.current = ""; setItems([]); setHasMore(false); setLoadingMore(false); setViewerId(""); const timer = window.setTimeout(() => void load(false), 250); return () => { requestVersion.current++; window.clearTimeout(timer); }; }, [load]);
 
   const visibleItems = useMemo(() => {
     const query = search.trim().toLowerCase();
     return items
-      .filter((item) => mediaFilter === "all" || (mediaFilter === "images" ? item.kind === "image" : item.kind === "video"))
-      .filter((item) => !query || item.name.toLowerCase().includes(query) || item.rel.toLowerCase().includes(query))
-      .sort((a, b) => sort === "oldest"
-        ? a.mtimeMs - b.mtimeMs || a.id.localeCompare(b.id)
-        : sort === "name"
-          ? a.name.localeCompare(b.name) || a.id.localeCompare(b.id)
-          : b.mtimeMs - a.mtimeMs || a.id.localeCompare(b.id));
+      .filter((item) => mediaFilter === "all" || item.kind === (mediaFilter === "images" ? "image" : mediaFilter === "videos" ? "video" : mediaFilter))
+      .filter((item) => !query || item.name.toLowerCase().includes(query) || item.rel.toLowerCase().includes(query));
   }, [items, mediaFilter, search, sort]);
 
   const viewerIndex = visibleItems.findIndex((item) => item.id === viewerId);
   const viewerItem = viewerIndex >= 0 ? visibleItems[viewerIndex] : null;
-  const moveViewer = useCallback((direction: -1 | 1) => {
+  const moveViewer = useCallback(async (direction: -1 | 1) => {
     if (viewerIndex < 0) return;
     const next = visibleItems[viewerIndex + direction];
     if (next) setViewerId(next.id);
-  }, [viewerIndex, visibleItems]);
+    else if (direction === 1 && hasMore && !loadingMore) {
+      const page = await load(true);
+      const unseen = page?.find(item => !visibleItems.some(current => current.id === item.id));
+      if (unseen) setViewerId(unseen.id);
+    }
+  }, [viewerIndex, visibleItems, hasMore, loadingMore, load]);
 
   useEffect(() => {
     if (!viewerItem) return;
@@ -166,7 +170,7 @@ export default function AdminGallerySourcesPanel() {
         <div className="mt-4 grid gap-3 md:grid-cols-4">
           <input aria-label="Search complete Gallery" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by name" className={controlClass} />
           <select value={mediaFilter} onChange={(event) => setMediaFilter(event.target.value as MediaFilter)} className={controlClass}>
-            <option value="all">All</option><option value="images">Images</option><option value="videos">Videos</option>
+            <option value="all">All files</option><option value="images">Images</option><option value="videos">Videos</option><option value="audio">Audio</option><option value="other">Other files</option>
           </select>
           <select value={sort} onChange={(event) => setSort(event.target.value as Sort)} className={controlClass}>
             <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name</option>
@@ -181,7 +185,7 @@ export default function AdminGallerySourcesPanel() {
         {statuses.map((status) => (
           <div key={status.id} className={`rounded-[20px] border p-4 ${status.ok ? "border-emerald-400/20 bg-emerald-500/10" : "border-red-400/20 bg-red-500/10"}`}>
             <div className="flex flex-wrap items-center justify-between gap-3"><span className="font-semibold text-[var(--color-text)]">{status.label}</span><span className="text-xs font-semibold uppercase text-[var(--color-text-muted)]">{status.ok ? "Available" : "Unavailable"}</span></div>
-            <div className="mt-1 text-sm text-[var(--color-text-muted)]">{status.ok ? `${status.count} matching media files reported` : "Source needs attention."}</div>
+            <div className="mt-1 text-sm text-[var(--color-text-muted)]">{status.ok ? `${status.count} matching files reported` : "Source needs attention."}</div>
             {status.error ? <details className={styles.diagnostics}><summary>Source diagnostics</summary><p>{status.error}</p></details> : null}
           </div>
         ))}
@@ -189,7 +193,7 @@ export default function AdminGallerySourcesPanel() {
 
       {message ? <div role="status" className={styles.card}>{message}</div> : null}
       {loading ? <div className={styles.card}>Loading Full Gallery…</div> : null}
-      {!loading && !visibleItems.length ? <div className={styles.card}>No supported media files match this view.</div> : null}
+      {!loading && !visibleItems.length ? <div className={styles.card}>No files match this view.</div> : null}
 
       <div className={viewMode === "list" ? "space-y-3" : viewMode === "grid" ? "grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-5" : "grid gap-4 md:grid-cols-2 xl:grid-cols-3"}>
         {visibleItems.map((item) => (
@@ -200,7 +204,7 @@ export default function AdminGallerySourcesPanel() {
       {hasMore ? <div className="flex justify-center"><button type="button" onClick={() => void load(true)} disabled={loadingMore || loading} className={styles.button}>{loadingMore ? "Loading..." : "Load More"}</button></div> : null}
 
       {mounted && viewerItem ? createPortal(
-        <MixedMediaViewer item={viewerItem} index={viewerIndex} total={visibleItems.length} canPrev={viewerIndex > 0} canNext={viewerIndex < visibleItems.length - 1} onPrev={() => moveViewer(-1)} onNext={() => moveViewer(1)} onClose={() => setViewerId("")} />,
+        <MixedMediaViewer item={viewerItem} index={viewerIndex} total={Math.max(visibleItems.length, statuses.reduce((n, s) => n + s.count, 0))} canPrev={viewerIndex > 0} canNext={!loadingMore && (viewerIndex < visibleItems.length - 1 || hasMore)} loadingMore={loadingMore} message={message} onPrev={() => void moveViewer(-1)} onNext={() => void moveViewer(1)} onClose={() => setViewerId("")} />,
         document.body,
       ) : null}
     </section>
@@ -214,22 +218,24 @@ function MediaCard({ item, compact, list, deleting, onOpen, onDelete }: { item: 
         {!list ? <div className={compact ? "aspect-square overflow-hidden rounded-[18px] bg-black/60" : "aspect-[4/3] overflow-hidden rounded-[18px] bg-black/60"}>
           {item.kind === "video"
             ? <img src={videoThumbnailUrl(item)} alt={`${item.name} video thumbnail`} loading="lazy" className="h-full w-full object-contain" />
-            : <img src={videoThumbnailUrl(item)} alt={item.name} loading="lazy" className="h-full w-full object-contain" />}
+            : canDisplayImage(item) ? <img src={item.url} alt={item.name} loading="lazy" className="h-full w-full object-contain" />
+            : <div className="flex h-full items-center justify-center p-4 text-center text-sm">{item.kind === "audio" ? "Audio" : "File"} · Download available</div>}
         </div> : null}
         <div className={list ? "" : "mt-3"}>
           <div className="flex flex-wrap items-start justify-between gap-2"><span className="break-all font-semibold text-[var(--color-text)]">{item.name}</span><SourceBadge label={item.sourceLabel} /></div>
-          <div className="mt-1 text-xs text-[var(--color-text-muted)]">{new Date(item.mtimeMs).toLocaleString()} · {formatBytes(item.bytes)} · {item.kind === "video" ? "Video" : "Image"}</div>
+          <div className="mt-1 break-all text-xs text-[var(--color-text-muted)]">{item.rel}</div>
+          <div className="mt-1 text-xs text-[var(--color-text-muted)]">{new Date(item.mtimeMs).toLocaleString()} · {formatBytes(item.bytes)} · {item.kind}</div>
         </div>
       </button>
       <div className={`flex flex-wrap gap-2 ${list ? "md:shrink-0" : "mt-3"}`}>
         <a href={downloadAdminGalleryUrl(item)} download={item.name} className={actionClass}>Download</a>
-        <button type="button" onClick={onDelete} disabled={deleting} className="min-h-11 rounded-xl border border-[var(--color-error)] bg-[var(--color-surface)] px-3 py-2 text-xs font-semibold text-[var(--color-error)] disabled:opacity-50">{deleting ? "Deleting..." : "Delete"}</button>
+        {/\.(png|jpe?g|webp|gif|mp4|webm|mov|mkv)$/i.test(item.name) ? <button type="button" onClick={onDelete} disabled={deleting} className="min-h-11 rounded-xl border border-[var(--color-error)] bg-[var(--color-surface)] px-3 py-2 text-xs font-semibold text-[var(--color-error)] disabled:opacity-50">{deleting ? "Deleting..." : "Delete"}</button> : null}
       </div>
     </article>
   );
 }
 
-function MixedMediaViewer({ item, index, total, canPrev, canNext, onPrev, onNext, onClose }: { item: Item; index: number; total: number; canPrev: boolean; canNext: boolean; onPrev: () => void; onNext: () => void; onClose: () => void }) {
+function MixedMediaViewer({ item, index, total, canPrev, canNext, loadingMore, message, onPrev, onNext, onClose }: { item: Item; index: number; total: number; canPrev: boolean; canNext: boolean; loadingMore: boolean; message: string; onPrev: () => void; onNext: () => void; onClose: () => void }) {
   const touch = useRef<{ x: number; y: number } | null>(null);
   return <div className="fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/90 p-2 sm:p-4" role="dialog" aria-modal="true" aria-label={`Full Gallery viewer: ${item.name}`} onClick={onClose}>
     <div className="flex max-h-[100dvh] w-full max-w-6xl flex-col gap-3 rounded-[20px] border border-white/10 bg-[#060912] p-3 sm:max-h-[92vh] sm:rounded-[28px] sm:p-4" onClick={(event) => event.stopPropagation()}>
@@ -238,20 +244,24 @@ function MixedMediaViewer({ item, index, total, canPrev, canNext, onPrev, onNext
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <button type="button" onClick={onPrev} disabled={!canPrev} className={viewerButtonClass}>Prev</button>
           <button type="button" onClick={onNext} disabled={!canNext} className={viewerButtonClass}>Next</button>
+          <a href={downloadAdminGalleryUrl(item)} download={item.name} className={viewerButtonClass}>Download</a>
           <button type="button" onClick={onClose} className={viewerButtonClass}>Close</button>
         </div>
       </div>
       <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[18px] border border-white/10 bg-black/65" onTouchStart={(event) => { const point = event.changedTouches[0]; if (point) touch.current = { x: point.clientX, y: point.clientY }; }} onTouchEnd={(event) => { const start = touch.current; touch.current = null; const point = event.changedTouches[0]; if (!start || !point) return; const dx = point.clientX - start.x; const dy = point.clientY - start.y; if (Math.abs(dx) >= 60 && Math.abs(dx) > Math.abs(dy)) dx < 0 ? onNext() : onPrev(); }}>
         {canPrev ? <button type="button" onClick={onPrev} aria-label="Previous item" className="absolute left-2 top-1/2 z-10 -translate-y-1/2 rounded-full border border-white/10 bg-black/55 px-3 py-3 text-white">{"<"}</button> : null}
-        {item.kind === "video" ? <video key={item.id} src={item.url} className="max-h-[78dvh] w-full object-contain" controls autoPlay playsInline preload="metadata" /> : <img key={item.id} src={item.url} alt={item.name} className="max-h-[78dvh] w-full object-contain" />}
+        {item.kind === "video" ? <video key={item.id} src={item.url} className="max-h-[78dvh] w-full object-contain" controls autoPlay playsInline preload="metadata" /> : item.kind === "audio" ? <audio key={item.id} src={item.url} controls preload="metadata" /> : canDisplayImage(item) ? <img key={item.id} src={item.url} alt={item.name} className="max-h-[78dvh] w-full object-contain" /> : <div className="p-8 text-center text-white">Preview unavailable for this file type. Use Download to open the original file.</div>}
         {canNext ? <button type="button" onClick={onNext} aria-label="Next item" className="absolute right-2 top-1/2 z-10 -translate-y-1/2 rounded-full border border-white/10 bg-black/55 px-3 py-3 text-white">{">"}</button> : null}
       </div>
       {total > 1 ? <div className="text-center text-xs text-white/45">Swipe left or right, or use the arrow keys, to move through the gallery without closing the viewer.</div> : null}
+      {loadingMore ? <div role="status" className="text-center text-white">Loading the next page…</div> : null}
+      {message ? <div role="status" className="text-center text-white">{message}</div> : null}
     </div>
   </div>;
 }
 
 function SourceBadge({ label }: { label: string }) { return <span className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[10px] font-semibold text-[var(--color-text-muted)]">{label}</span>; }
+function canDisplayImage(item: Item) { return item.kind === "image" && /\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(item.name); }
 function IconHeart() { return <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden="true"><path d="M12 20.5s-7-4.35-7-10a4 4 0 0 1 7-2.47A4 4 0 0 1 19 10.5c0 5.65-7 10-7 10Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>; }
 function downloadAdminGalleryUrl(item: Item) {
   const separator = item.url.includes("?") ? "&" : "?";

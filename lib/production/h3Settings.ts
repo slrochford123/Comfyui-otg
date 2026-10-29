@@ -23,7 +23,7 @@ export type H3ResolvedRenderSettings = {
   sampler: "euler" | "res_multistep";
   scheduler: "simple";
   turboLora: boolean;
-  checkpoint: "standard" | "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors" | typeof H3_OMNIREF.checkpoint;
+  checkpoint: "standard" | typeof H3_SINGULARITY_CHECKPOINT | typeof H3_OMNIREF.checkpoint;
   singularityLoras: Array<{
     label: string;
     filename: string;
@@ -48,7 +48,15 @@ export const DEFAULT_H3_ADVANCED_SETTINGS: H3AdvancedSettings = {
 };
 
 export const H3_SINGULARITY_CHECKPOINT =
-  "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors" as const;
+  "Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors" as const;
+export const H3_SINGULARITY_LABEL = "Singularity v2" as const;
+// Publisher-hosted pruned INT8; do not alias v1.3 to this filename.
+export const H3_SINGULARITY_SOURCE = {
+  repository: "WarmBloodAban/Minimax-h3_Singularity",
+  revision: "1259cf16cd0b655ba691a32fb46a409142762972",
+  sha256: "d7637c2c35cd30facd9e93778c491f6d82f91c4a441aecbdb4c384a62a5f3d9f",
+  bytes: 20967647456,
+} as const;
 export const H3_COMBAT_V2_LORA = "H3_Combat_V2.safetensors" as const;
 export const H3_REALISM_TEST19_LORA =
   "h3-realism-people-t2v-i2v-r2v.safetensors" as const;
