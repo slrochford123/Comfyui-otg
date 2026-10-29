@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.09",
+  "current": "2.10",
   "builds": [
     {
       "version": "2",
@@ -61,6 +61,12 @@
       "date": "2026-10-29",
       "summary": "TEST-only Unified Audio Editing: cinematic three-stem separation, non-destructive multitrack mixing, AuK voices and character reuse, private music/Foley generation, track-specific cleanup and owner-scoped durable processing. Not approved for GitHub or PROD.",
       "sourceBaseCommit": "82b83035d67c244663b97666bd7f42226d65b18a"
+    },
+    {
+      "version": "2.10",
+      "date": "2026-10-29",
+      "summary": "TEST qualification checkpoint: native Comfy API reliability, 3090-first media routing and durable queues; preserve Unified Audio startup when packaging. Production enablement and restricted audio models remain gated.",
+      "sourceBaseCommit": "786dded43454464c36de92759c51f5ef0638dc0b"
     }
   ]
 }

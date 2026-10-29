@@ -16,6 +16,12 @@ child.once('exit',code=>{
   fs.cpSync(path.join(source,'.next/standalone'),candidate,{recursive:true,filter:file=>!/^\.env(?:[.-]|$)/.test(path.basename(file))});
   fs.cpSync(path.join(source,'.next/static'),path.join(candidate,'.next/static'),{recursive:true});
   for(const name of ['public','config','comfy_workflows','workflows','lib','scripts'])if(fs.existsSync(path.join(source,name)))fs.cpSync(path.join(source,name),path.join(candidate,name),{recursive:true});
+  // Standalone Next output does not preserve the prior audio release's server
+  // prefix. Reapply the existing TEST-only bootstrap to every media candidate.
+  // Its own OTG_ENV guard keeps this from enabling experimental audio on PROD.
+  const server=path.join(candidate,'server.js'),bootstrap="require('./scripts/audio-editing-release-bootstrap.cjs');\n";
+  const original=fs.readFileSync(server,'utf8');
+  if(!original.startsWith(bootstrap))fs.writeFileSync(server,bootstrap+original);
   fs.writeFileSync(path.join(root,final?'candidate-final.json':'candidate.json'),JSON.stringify({source,candidate,buildId:fs.readFileSync(path.join(candidate,'.next/BUILD_ID'),'utf8').trim(),
     builtAt:new Date().toISOString(),testActivated:false,prodChanged:false,githubPushed:false,versionBumpPendingQualification:true},null,2),{mode:0o600});
   console.log(JSON.stringify({ok:true,candidate,activated:false}));

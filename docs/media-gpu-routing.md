@@ -1,6 +1,6 @@
 # Unified media GPU routing — TEST candidate
 
-Date: October 29, 2026. This is an isolated qualification candidate, not an activated release or a claim that every legacy tool is dual-GPU capable.
+Date: October 29, 2026. Historical implementation and qualification record; not a claim that every legacy tool is dual-GPU capable. The owner subsequently activated the 2.09 media candidate on TEST. See `build-2.10-release-status.md` for current activation, packaging repair, publication authorization and unresolved production gates. Earlier activation/publication holds below describe the state when those checks ran.
 
 ## Requested policy
 

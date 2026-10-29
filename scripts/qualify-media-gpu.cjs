@@ -61,6 +61,12 @@ async function until(test){for(let i=0;i<100;i++){if(await test())return;await s
   await startApp();const owner=await account(),other=await account();
   assert.equal((await fetch(base+'/api/media-gpu')).status,401);
   const ready=await(await request(owner,'/api/media-gpu')).json();assert.equal(ready.enabled,true);check('Authenticated GPU controls enabled; anonymous access rejected');
+  const identityResponse=await request(owner,'/api/app/build');assert(identityResponse.ok);
+  const identity=await identityResponse.json();assert.equal(identity.buildVersion,JSON.parse(fs.readFileSync(path.join(candidate,'config/build-history.json'))).current);
+  check('Authenticated build identity matches the packaged build history');
+  const audioResponse=await request(owner,'/api/edit-video/audio');assert(audioResponse.ok,'Packaged TEST audio bootstrap must preserve working Audio Editing');
+  const audio=await audioResponse.json();assert.equal(audio.ok,true);assert.equal(audio.capabilities?.enabled,true);
+  check('Authenticated Audio Editing remains enabled in the media candidate');
   const first=await submit(owner);await until(()=>states[0].posts.includes(first));check('Automatic selects idle 3090');
   await until(()=>states[0].history.has(first));
   states[0].busy=true;
