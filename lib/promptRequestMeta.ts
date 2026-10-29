@@ -5,6 +5,9 @@ import { OTG_DATA_ROOT, ensureDir, readJsonSafe, safeSegment, writeJsonSafe } fr
 export type PromptRequestMeta = {
   promptId: string;
   ownerKey: string;
+  comfyBaseUrl?: string | null;
+  comfyClientId?: string | null;
+  totalNodes?: number | null;
   username?: string | null;
   deviceId?: string | null;
   title?: string | null;

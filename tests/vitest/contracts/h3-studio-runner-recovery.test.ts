@@ -205,6 +205,40 @@ afterEach(async () => {
 });
 
 describe("H3 Studio real runner recovery with isolated persistence", () => {
+  it("recovers a failed application record whose accepted native job still runs", async () => {
+    const original = await createJob(); const input = { ...original.input }; delete input.studioPlan; delete input.studioMedia;
+    const job = await persist(original, { input, status: "failed", backend: "rtx5060ti", promptId: "accepted-native", studioSubmissionState: "accepted" });
+    m.fetch.mockResolvedValue(Response.json({ queue_running: [[0, "accepted-native"]], queue_pending: [] }));
+    expect(await engine.recoverH3DirectBeforeRetry(job)).toMatchObject({ id: job.id, status: "submitted", promptId: "accepted-native" });
+    expect(m.submit).not.toHaveBeenCalled();
+  });
+  it("refuses a duplicate retry when the accepted worker outcome is missing", async () => {
+    const original = await createJob(); const input = { ...original.input }; delete input.studioPlan; delete input.studioMedia;
+    const job = await persist(original, { input, status: "failed", backend: "rtx5060ti", promptId: "missing-native", studioSubmissionState: "accepted" });
+    m.fetch.mockResolvedValue(Response.json({ queue_running: [], queue_pending: [] })); m.history.mockResolvedValue({ state: "pending" });
+    await expect(engine.recoverH3DirectBeforeRetry(job)).rejects.toThrow(/unresolved/);
+    expect(m.submit).not.toHaveBeenCalled();
+  });
+  it("protects ordinary H3 from duplicate retries after ambiguous acceptance", async () => {
+    const original = await createJob();
+    const input = { ...original.input }; delete input.studioPlan; delete input.studioMedia;
+    const job = await persist(original, { input, status: "failed", backend: "rtx3090", clientId: "native-client", studioSubmissionState: "unknown", promptId: null });
+    const response = await generation.POST(new NextRequest("http://localhost:3001/api/h3/generation", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "retry", jobId: job.id }),
+    }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toMatch(/unresolved/);
+    expect(m.submit).not.toHaveBeenCalled(); expect(await engine.listH3DirectJobs(OWNER)).toHaveLength(1);
+  });
+  it("recovers an ordinary accepted H3 prompt without substituting another workflow", async () => {
+    const original = await createJob(); const input = { ...original.input }; delete input.studioPlan; delete input.studioMedia;
+    const job = await persist(original, { input, status: "failed", backend: "rtx5060ti", clientId: "native-client", studioSubmissionState: "unknown", promptId: null });
+    m.fetch.mockImplementation(async url => String(url).includes("/queue")
+      ? Response.json({ queue_running: [[0, "accepted-native", {}, { client_id: "native-client" }]], queue_pending: [] })
+      : Response.json({}));
+    expect(await engine.reconcileH3StudioSubmission(OWNER, job.id)).toMatchObject({ backend: "rtx5060ti", promptId: "accepted-native", studioSubmissionState: "accepted" });
+    expect(m.submit).not.toHaveBeenCalled();
+  });
   it('sends a 5060 Studio plan only to that GPU and revalidates inventory on the same target', async () => {
     plan = { ...plan,backend:'rtx5060ti' };
     m.inspect.mockImplementation(async backend => ({ backend,compatible:true }));m.choose.mockReturnValue('rtx5060ti');

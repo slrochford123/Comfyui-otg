@@ -2,6 +2,8 @@
 import React from "react";
 import {afterEach,describe,it,expect,vi} from "vitest";
 import {render,screen,fireEvent,act,cleanup} from "@testing-library/react";
+// This suite covers the explicitly retained legacy panel, not Unified Audio.
+vi.hoisted(() => { process.env.NEXT_PUBLIC_AUDIO_LEGACY_UI = "1"; });
 vi.mock("@/app/app/components/EditVideoRemoveMusicPanel",()=>({default:()=>null}));
 vi.mock("@/app/app/components/EditVideoEditAnythingPanel",()=>({default:()=>null}));
 vi.mock("@/app/app/components/EditVideoWooshPanel",()=>({default:()=>null}));

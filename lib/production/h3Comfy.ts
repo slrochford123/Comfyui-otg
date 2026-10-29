@@ -27,6 +27,7 @@ import {
 } from "@/lib/comfyProgress";
 import { submitComfyPromptWithGpuLease } from "@/lib/workers/comfyPromptLease";
 import { retrieveRemoteComfyMedia } from "@/lib/storyCreator/remoteComfyMedia";
+import { readComfyJson } from "@/lib/comfyTransport";
 
 type ObjectInfo = Record<string, {
   input?: {
@@ -655,9 +656,7 @@ export async function getH3PromptHistoryFromBaseUrl(
   fetcher: typeof fetch = fetch,
   outputNodeId = "5",
 ) {
-  const response = await fetchWithTimeout(fetcher, `${baseUrl.replace(/\/+$/, "")}/history/${encodeURIComponent(promptId)}`, {}, 15_000);
-  if (!response.ok) throw new Error(`ComfyUI history returned HTTP ${response.status}.`);
-  const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+  const payload = await readComfyJson(baseUrl, `/history/${encodeURIComponent(promptId)}`, { fetcher, timeoutMs: 15_000 });
   const entry = payload?.[promptId] as Record<string, unknown> | undefined;
   if (!entry) return { state: "pending" as const, entry: null, video: null };
   const status = entry.status as { completed?: boolean; status_str?: string; messages?: unknown[] } | undefined;

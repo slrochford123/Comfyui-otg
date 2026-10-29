@@ -5,6 +5,7 @@ import { ensureGalleryMetaForFile, readMetaForFile } from "@/lib/gallery";
 import { warmGalleryThumb } from "@/lib/galleryThumbs";
 import { markError, markReady, readState, writeState } from "@/lib/contentState";
 import { readPromptRequestMeta } from "@/lib/promptRequestMeta";
+import { readComfyJson } from "@/lib/comfyTransport";
 
 type JobLine = {
   ts?: number;
@@ -43,6 +44,7 @@ type SyncArgs = {
   comfyBaseUrl?: string;
   imageComfyBaseUrl?: string;
   videoComfyBaseUrl?: string;
+  updateCurrentState?: boolean;
 };
 
 type ReadMediaResult =
@@ -356,11 +358,7 @@ function resolveSyncComfyBaseUrl(args: SyncArgs, job: JobLine | null) {
 }
 
 async function fetchHistory(comfyBaseUrl: string, promptId: string) {
-  const r = await fetch(`${comfyBaseUrl.replace(/\/+$/, "")}/history/${encodeURIComponent(promptId)}`, {
-    cache: "no-store",
-  });
-  if (!r.ok) return null;
-  return await r.json().catch(() => null);
+  return await readComfyJson<Record<string, any>>(comfyBaseUrl, `/history/${encodeURIComponent(promptId)}`);
 }
 
 function extractMediaPayloads(entry: any): MediaPayload[] {
@@ -412,8 +410,9 @@ async function readPreferredBytes(comfyBaseUrl: string, payload: MediaPayload): 
     viewUrl.searchParams.set("subfolder", payload.subfolder);
   }
 
-  const r = await fetch(viewUrl.toString(), { cache: "no-store" });
-  if (!r.ok) {
+  const r = await fetch(viewUrl.toString(), { cache: "no-store", redirect: "error", signal: AbortSignal.timeout(120_000) });
+  if (!r.ok || r.status === 206) {
+    await r.body?.cancel().catch(() => undefined);
     return {
       ok: false,
       status: r.status,
@@ -421,9 +420,14 @@ async function readPreferredBytes(comfyBaseUrl: string, payload: MediaPayload): 
     };
   }
 
+  const bytes = Buffer.from(await r.arrayBuffer());
+  const expected = Number(r.headers.get("content-length") || 0);
+  if (!bytes.length || (expected > 0 && expected !== bytes.length)) {
+    throw new Error("ComfyUI output transfer was incomplete. Retry collecting this result, not generation.");
+  }
   return {
     ok: true,
-    bytes: Buffer.from(await r.arrayBuffer()),
+    bytes,
     source: "view",
   };
 }
@@ -622,6 +626,8 @@ function importedPayloadKeysForPrompt(destDir: string, promptId: string) {
         const raw = fs.readFileSync(path.join(destDir, file), "utf-8");
         const meta = JSON.parse(raw);
         if (String(meta?.sourcePromptId || "").trim() !== promptId) continue;
+        const mediaPath = path.join(destDir, file.slice(0, -".meta.json".length));
+        if (!fs.existsSync(mediaPath) || !fs.statSync(mediaPath).isFile() || fs.statSync(mediaPath).size === 0) continue;
         const payloadKey = String(meta?.sourcePayloadKey || "").trim();
         if (payloadKey) keys.add(payloadKey);
       } catch {
@@ -800,6 +806,8 @@ export async function syncPromptOutputsForOwner(args: SyncArgs): Promise<{
   }
 
   const state = readState(args.ownerKey);
+  const mayUpdateState = () => args.updateCurrentState !== false
+    && (!readState(args.ownerKey)?.promptId || readState(args.ownerKey)?.promptId === promptId);
   const galleryDir = chooseGalleryDir(args.username, args.deviceId);
   fs.mkdirSync(galleryDir, { recursive: true });
 
@@ -811,7 +819,7 @@ export async function syncPromptOutputsForOwner(args: SyncArgs): Promise<{
 
   if (entry?.status?.status_str && String(entry.status.status_str).toLowerCase().includes("error")) {
     const message = String(entry.status.status_str || "ComfyUI reported an error");
-    markError(args.ownerKey, message);
+    if (mayUpdateState()) markError(args.ownerKey, message);
     return { ok: false, promptId, status: "error", saved: [], error: message };
   }
 
@@ -839,8 +847,8 @@ export async function syncPromptOutputsForOwner(args: SyncArgs): Promise<{
   const payloadsToImport = selectedPayloads.filter((payload) => !importedPayloadKeys.has(payloadLookupKey(payload)));
 
   if (!payloadsToImport.length && selectedPayloadKeys.size > 0) {
-    const primaryExisting = primarySavedNameForPrompt(galleryDir, promptId) || state?.fileName || null;
-    writeState(args.ownerKey, {
+    const primaryExisting = primarySavedNameForPrompt(galleryDir, promptId);
+    if (mayUpdateState()) writeState(args.ownerKey, {
       promptId,
       fileName: primaryExisting,
       status: primaryExisting ? "done" : state?.status || "idle",
@@ -857,7 +865,7 @@ export async function syncPromptOutputsForOwner(args: SyncArgs): Promise<{
 
   const syncContext = resolvePromptSyncContext(promptId, args.ownerKey, state, job);
   if (shouldSuppressGeneralGalleryImport(syncContext.submitPayload)) {
-    writeState(args.ownerKey, {
+    if (mayUpdateState()) writeState(args.ownerKey, {
       promptId,
       fileName: state?.fileName || null,
       status: state?.status || "idle",
@@ -960,16 +968,16 @@ export async function syncPromptOutputsForOwner(args: SyncArgs): Promise<{
 
   const importedAfterSave = importedPayloadKeysForPrompt(galleryDir, promptId);
   const fullySynced = Array.from(selectedPayloadKeys).every((key) => importedAfterSave.has(key));
-  const primary = saved[0] || primarySavedNameForPrompt(galleryDir, promptId) || state?.fileName || null;
+  const primary = saved[0] || primarySavedNameForPrompt(galleryDir, promptId);
 
-  if (primary) {
+  if (primary && fullySynced && mayUpdateState()) {
     markReady(args.ownerKey, primary);
   }
 
-  writeState(args.ownerKey, {
+  if (mayUpdateState()) writeState(args.ownerKey, {
     promptId,
     fileName: primary,
-    status: primary ? "done" : state?.status || "idle",
+    status: primary && fullySynced ? "done" : "running",
     lastSyncedPromptId: fullySynced ? promptId : null,
   });
 

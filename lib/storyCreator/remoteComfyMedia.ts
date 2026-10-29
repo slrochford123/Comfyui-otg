@@ -157,6 +157,8 @@ export async function retrieveRemoteComfyMedia(args: {
   destinationPath: string;
   kind: ProtectedMediaKind;
   maxBytes?: number;
+  timeoutMs?: number;
+  signal?: AbortSignal;
   fetcher?: typeof fetch;
 }): Promise<PublishedProtectedMedia> {
   const baseUrl = assertTrustedBaseUrl(args.baseUrl, args.trustedBaseUrls);
@@ -176,12 +178,21 @@ export async function retrieveRemoteComfyMedia(args: {
   url.searchParams.set("filename", file.filename);
   url.searchParams.set("type", file.type);
   if (file.subfolder) url.searchParams.set("subfolder", file.subfolder);
-  const response = await (args.fetcher || fetch)(url, { cache: "no-store" });
-  if (!response.ok) throw new Error(`ComfyUI output retrieval failed with HTTP ${response.status}.`);
+  // The deadline must cover the body, not just receipt of HTTP headers.
+  const deadline = AbortSignal.timeout(args.timeoutMs ?? 120_000);
+  const signal = args.signal ? AbortSignal.any([args.signal, deadline]) : deadline;
+  const response = await (args.fetcher || fetch)(url, { cache: "no-store", redirect: "error", signal });
+  if (!response.ok || response.status === 206) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`ComfyUI output retrieval failed with HTTP ${response.status}.`);
+  }
   if (!response.body) throw new Error("ComfyUI output response had no body.");
   const maxBytes = args.maxBytes || (args.kind === "image" ? 100 * 1024 * 1024 : 4 * 1024 * 1024 * 1024);
   const contentLength = Number(response.headers.get("content-length") || 0);
-  if (contentLength > maxBytes) throw new Error(`ComfyUI ${args.kind} output exceeds the protected-media size limit.`);
+  if (contentLength > maxBytes) {
+    await response.body.cancel().catch(() => undefined);
+    throw new Error(`ComfyUI ${args.kind} output exceeds the protected-media size limit.`);
+  }
 
   const tempPath = `${destinationPath}.${randomUUID()}.tmp`;
   let total = 0;
@@ -206,8 +217,10 @@ export async function retrieveRemoteComfyMedia(args: {
       Readable.fromWeb(response.body as never),
       validator,
       fs.createWriteStream(tempPath, { flags: "wx", mode: 0o600 }),
+      { signal },
     );
     if (total <= 0) throw new Error("ComfyUI output was empty.");
+    if (contentLength > 0 && total !== contentLength) throw new Error("ComfyUI output transfer was incomplete; retry downloading the existing result, not generation.");
     const contentType = detectedContentType(args.kind, Buffer.concat(headerChunks));
     const sha256 = hash.digest("hex");
     const published = await publishTemp(tempPath, destinationPath, args.kind, sha256);

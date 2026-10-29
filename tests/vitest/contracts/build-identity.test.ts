@@ -15,12 +15,17 @@ function fixture(record?: unknown) {
 }
 afterEach(() => { for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
 describe("owner-facing build identity and append-only release history", () => {
-  it("identifies this release as Build 2.08 independently of package semver", () => {
-    expect(BUILD_VERSION).toBe("2.08");
+  it("identifies the current recorded build independently of package semver", () => {
+    const recorded = JSON.parse(fs.readFileSync(path.join(process.cwd(), "config/build-history.json"), "utf8"));
+    expect(BUILD_VERSION).toBe(recorded.current);
+    expect(BUILD_VERSION).toBe(recorded.builds.at(-1).version);
     expect(readBuildIdentity(fixture())).toMatchObject({ buildVersion: BUILD_VERSION, softwareVersion: "2.0.1", commit: null, releaseName: null });
   });
-  it("retains the earlier rollback build history when appending Build 2.08", () => {
-    expect(readBuildIdentity(fixture()).history.map(build => build.version)).toEqual(["2", "2.01", "2.02", "2.03", "2.04", "2.05", "2.06", "2.07", "2.08"]);
+  it("retains rollback history while permitting append-only later builds", () => {
+    const versions = readBuildIdentity(fixture()).history.map(build => build.version);
+    expect(versions.slice(0, 9)).toEqual(["2", "2.01", "2.02", "2.03", "2.04", "2.05", "2.06", "2.07", "2.08"]);
+    const ordinals = versions.map(historyTool.ordinal);
+    expect(ordinals.every((value: number, index: number) => index === 0 || value > ordinals[index - 1])).toBe(true);
   });
   it("reads the exact packaged release identity but never private provenance fields", () => {
     const identity = readBuildIdentity(fixture({ buildVersion: BUILD_VERSION, commit: "a".repeat(40), name: "prod-build-2.01-aaaaaaaaaaaa", builtAt: "2026-10-25T22:00:00Z", secret: "private-fixture", paths: ["/private"] }));

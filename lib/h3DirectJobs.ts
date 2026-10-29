@@ -4,6 +4,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { cancelComfyPrompt } from "@/lib/comfySafeCancel";
+import { readComfyQueue } from "@/lib/comfyTransport";
 import { clearGalleryListCache, safeGalleryName, writeMetaForFile, type GallerySource } from "@/lib/gallery";
 import type { OwnerContext } from "@/lib/ownerKey";
 import { deviceGalleryDir, ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment, userGalleryDir } from "@/lib/paths";
@@ -192,7 +193,7 @@ export async function getLatestH3DirectJob(ownerKey: string) {
 /** Read-only backend reconciliation. Never resubmits, interrupts, frees or resets. */
 export async function reconcileH3StudioSubmission(ownerKey: string, id: string) {
   const current = await getH3DirectJob(ownerKey, id);
-  if (!current || !current.input.studioPlan || current.backend !== studioBackend(current.input.studioPlan) || current.promptId
+  if (!current || !current.backend || (current.input.studioPlan && current.backend !== studioBackend(current.input.studioPlan)) || current.promptId
     || !["submitting", "unknown"].includes(current.studioSubmissionState || "") || !current.clientId) return current;
   if (state().running.has(id)) return current; // The original POST may still be resolving.
   try {
@@ -212,6 +213,22 @@ export async function reconcileH3StudioSubmission(ownerKey: string, id: string) 
 
 function isRunnableH3DirectStatus(status: H3DirectJob["status"]) {
   return ["queued", "preparing", "submitted", "running", "finalizing", "canceling"].includes(status);
+}
+
+/** A failed browser/app request is not proof that its accepted GPU job failed. */
+export async function recoverH3DirectBeforeRetry(job: H3DirectJob): Promise<H3DirectJob | null> {
+  if (!job.backend || !job.promptId || job.status === "completed") return null;
+  const [queue, history] = await Promise.all([
+    readComfyQueue(H3_BACKEND_PROFILES[job.backend].baseUrl),
+    getH3PromptHistory(job.backend, job.promptId),
+  ]);
+  const active = [...queue.queue_running, ...queue.queue_pending].some(entry => Array.isArray(entry) && entry[1] === job.promptId);
+  if (active || history.state === "running" || history.state === "completed") {
+    return updateJob(job.ownerKey, job.id, { status: "submitted", error: null, completedAt: null,
+      statusMessage: "Recovering the original accepted generation; no duplicate was submitted." });
+  }
+  if (history.state !== "failed") throw new Error("The original accepted prompt has no recoverable history. Its outcome is unresolved; no duplicate was submitted.");
+  return null;
 }
 
 export async function cancelH3DirectJob(ownerKey: string, id: string) {
@@ -443,7 +460,7 @@ async function execute(job: H3DirectJob) {
   if (job.input.studioPlan && !job.input.studioMedia && !qualificationJob) throw new Error("Reviewed owner-bound H3 Studio media is required.");
   const requestedBackend = job.input.studioPlan ? studioBackend(job.input.studioPlan) : job.input.targetBackend;
   if (requestedBackend && persisted.backend && persisted.backend !== requestedBackend) throw new Error("H3 cannot resume on a different GPU from the selected target.");
-  if (job.input.studioPlan && !persisted.promptId && ["submitting", "unknown"].includes(persisted.studioSubmissionState || "")) throw new Error("Backend submission is unresolved; automatic resubmission is disabled.");
+  if (!persisted.promptId && ["submitting", "unknown"].includes(persisted.studioSubmissionState || "")) throw new Error("Backend submission is unresolved; automatic resubmission is disabled.");
   const checkBoundMedia = async () => {
     const media = job.input.studioMedia; if (!media) return;
     const expected = path.join(OTG_DATA_ROOT, "h3-direct", safeSegment(job.ownerKey), "uploads");
@@ -616,6 +633,10 @@ async function execute(job: H3DirectJob) {
       ownerKey: job.ownerKey,
       deviceId: job.galleryOwner?.deviceId || null,
       workerId: "h3-direct",
+      onAccepted: async (acceptedPromptId: string) => {
+        const latest = await getH3DirectJob(job.ownerKey, job.id);
+        await updateJob(job.ownerKey, job.id, { promptId: acceptedPromptId, clientId, studioSubmissionState: "accepted", status: latest?.cancelRequestedAt || ["canceling", "canceled"].includes(latest?.status || "") ? "canceling" : "submitted", statusMessage: "Accepted by ComfyUI; prompt identity recorded" });
+      },
       ...(job.input.studioPlan ? {
         releaseIdlePeer: false,
         beforeSubmit: async () => {
@@ -652,14 +673,16 @@ async function execute(job: H3DirectJob) {
           }
           await updateJob(job.ownerKey, job.id, { studioSubmissionState: "submitting", clientId, workflowId: built.workflowId, workflowFile: built.workflowFile });
         },
-        onAccepted: async (acceptedPromptId: string) => {
+      } : {
+        beforeSubmit: async () => {
           const latest = await getH3DirectJob(job.ownerKey, job.id);
-          await updateJob(job.ownerKey, job.id, { promptId: acceptedPromptId, clientId, studioSubmissionState: "accepted", status: latest?.cancelRequestedAt || ["canceling", "canceled"].includes(latest?.status || "") ? "canceling" : "submitted", statusMessage: "Accepted by ComfyUI; prompt identity recorded" });
+          if (!latest || latest.cancelRequestedAt || ["canceling", "canceled"].includes(latest.status)) throw new Error("Canceled before backend submission.");
+          await updateJob(job.ownerKey, job.id, { studioSubmissionState: "submitting", clientId, workflowId: built.workflowId, workflowFile: built.workflowFile });
         },
-      } : {}),
+      }),
     });
     if (!submitted.accepted) {
-      if (job.input.studioPlan && [400, 401, 403, 404, 413, 422, 429].includes(submitted.status)) await updateJob(job.ownerKey, job.id, { studioSubmissionState: "rejected" });
+      if ([400, 401, 403, 404, 413, 422, 429].includes(submitted.status)) await updateJob(job.ownerKey, job.id, { studioSubmissionState: "rejected" });
       throw new Error(submitted.error);
     }
     backend = selectedBackend;
@@ -756,7 +779,7 @@ export function startH3DirectJob(job: H3DirectJob) {
   void execute(job)
     .catch(async (error) => {
       const current = await getH3DirectJob(job.ownerKey, job.id);
-      const uncertain = !!job.input.studioPlan && current?.studioSubmissionState === "submitting" && !current.promptId;
+      const uncertain = current?.studioSubmissionState === "submitting" && !current.promptId;
       if (!uncertain && !current?.promptId && ["canceling", "canceled"].includes(current?.status || "")) {
         await updateJob(job.ownerKey, job.id, { status: "canceled", statusMessage: "Canceled before backend submission", error: null, completedAt: new Date().toISOString() });
         return;
@@ -765,7 +788,7 @@ export function startH3DirectJob(job: H3DirectJob) {
         status: "failed",
         statusMessage: uncertain ? "Submission state unknown; backend reconciliation required before retry" : "Generation failed",
         ...(uncertain ? { studioSubmissionState: "unknown" as const } : {}),
-        error: job.input.studioPlan ? uncertain ? "Backend acceptance is unresolved. Refresh to reconcile the original job; do not generate a duplicate." : "H3 Studio could not complete. Recheck readiness and references before a deliberately reviewed retry." : error instanceof Error ? error.message : String(error),
+        error: uncertain ? "Backend acceptance is unresolved. Refresh to reconcile the original job; do not generate a duplicate." : job.input.studioPlan ? "H3 Studio could not complete. Recheck readiness and references before a deliberately reviewed retry." : error instanceof Error ? error.message : String(error),
         completedAt: new Date().toISOString(),
       }).catch(() => undefined);
     })
@@ -800,7 +823,7 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
     workflowId: job.workflowId,
     workflowFile: job.workflowFile,
     ...(job.studioManifest ? { studioManifest: job.studioManifest } : {}),
-    ...(job.input.studioPlan ? { submissionState: job.studioSubmissionState || null, cancellationRequested: !!job.cancelRequestedAt } : {}),
+    submissionState: job.studioSubmissionState || null, cancellationRequested: !!job.cancelRequestedAt,
     nativeResolution: job.input.videoEdit ? `${job.input.videoEdit.width}x${job.input.videoEdit.height}` : `${nativeDimensions.width}x${nativeDimensions.height}`,
     etaSeconds: estimate.seconds,
     etaMinSeconds: estimate.minSeconds,

@@ -5,7 +5,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 
-import { cancelH3DirectJob, createH3DirectJob, ensureH3DirectJobRunner, getH3DirectJob, getLatestH3DirectJob, h3DirectPublicStatus, startH3DirectJob, validateH3DirectInput, type H3DirectReference } from "@/lib/h3DirectJobs";
+import { cancelH3DirectJob, createH3DirectJob, ensureH3DirectJobRunner, getH3DirectJob, getLatestH3DirectJob, h3DirectPublicStatus, recoverH3DirectBeforeRetry, startH3DirectJob, validateH3DirectInput, type H3DirectReference } from "@/lib/h3DirectJobs";
 import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { requireSessionUser } from "@/lib/sessionUser";
 import {
@@ -393,7 +393,7 @@ export async function GET(req: NextRequest) {
         ? noStore({ ok: false, error: "H3 generation job not found." }, { status: 404 })
         : noStore({ ok: true, job: null });
     }
-    if (job.input?.studioPlan && !job.promptId && ["submitting", "unknown"].includes(job.studioSubmissionState || "")) {
+    if (!job.promptId && ["submitting", "unknown"].includes(job.studioSubmissionState || "")) {
       job = await (await import("@/lib/h3DirectJobs")).reconcileH3StudioSubmission(ownerKey, job.id) || job;
     }
     ensureH3DirectJobRunner(job);
@@ -422,7 +422,15 @@ export async function POST(req: NextRequest) {
       if (body?.action === "retry") {
         const source = await getH3DirectJob(ownerKey, String(body.jobId || ""));
         if (!source) throw new Error("H3 generation job not found.");
+        if (["submitting", "unknown"].includes(source.studioSubmissionState || "") || !["failed", "canceled", "completed"].includes(source.status)) {
+          throw new Error("The original generation is active or its backend acceptance is unresolved. Refresh that job; do not submit a duplicate.");
+        }
         if (source.input.studioPlan) throw new Error("Preview a fresh Auto/Manual plan using the retained references, then confirm a new generation. Unresolved backend submissions cannot be retried automatically.");
+        const recovered = await recoverH3DirectBeforeRetry(source);
+        if (recovered) {
+          ensureH3DirectJobRunner(recovered);
+          return noStore({ ok: true, job: h3DirectPublicStatus(recovered), recovered: true }, { status: 202 });
+        }
         if (source.input.videoEdit?.temporarySource || source.input.studioSource?.temporarySource) throw new Error("Retry this edit from its prepared video selection, or select the source again if it has expired.");
         const retryInput = {
           ...source.input,

@@ -31,6 +31,16 @@ afterEach(() => {
 });
 
 describe("Story Creator protected remote media finalization", () => {
+  it("does not publish a truncated body, partial response, or stalled stream", async () => {
+    const storageRoot = root();
+    const destinationPath = path.join(storageRoot, "clip.mp4");
+    const args = { baseUrl: "http://worker", trustedBaseUrls: ["http://worker"], file: { filename: "clip.mp4" }, storageRoot, destinationPath, kind: "video" as const };
+    await expect(retrieveRemoteComfyMedia({ ...args, fetcher: (async () => new Response(mp4, { headers: { "content-length": String(mp4.length + 10) } })) as typeof fetch })).rejects.toThrow(/incomplete/);
+    await expect(retrieveRemoteComfyMedia({ ...args, fetcher: (async () => new Response(mp4, { status: 206 })) as typeof fetch })).rejects.toThrow(/206/);
+    await expect(retrieveRemoteComfyMedia({ ...args, timeoutMs: 20, fetcher: (async () => new Response(new ReadableStream({ start(c) { c.enqueue(mp4); } }))) as typeof fetch })).rejects.toThrow();
+    expect(fs.existsSync(destinationPath)).toBe(false);
+    expect(fs.readdirSync(storageRoot)).toEqual([]);
+  });
   it("retrieves a trusted remote image atomically and reuses duplicate finalization", async () => {
     const storageRoot = root();
     const destinationPath = path.join(storageRoot, "owner", "project", "version.png");

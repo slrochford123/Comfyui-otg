@@ -4,6 +4,9 @@ import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { markError, readState, resetState } from "@/lib/contentState";
 import { readComfyPromptProgress } from "@/lib/comfyProgress";
 import { syncPromptOutputsForOwner } from "@/lib/comfyGallerySync";
+import { readPromptRequestMeta } from "@/lib/promptRequestMeta";
+import { readComfyQueue } from "@/lib/comfyTransport";
+import { ensureComfyClientProgressMonitor, recordComfyPromptSubmitted } from "@/lib/comfyProgress";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,6 +32,16 @@ export async function GET(req: NextRequest) {
   const requestedPromptId = String(req.nextUrl.searchParams.get("promptId") || req.nextUrl.searchParams.get("prompt_id") || "").trim();
   const stateStatus = String(state?.status || "idle").toLowerCase();
   const statePromptId = String(state?.promptId || "").trim();
+  const knownProgress = readComfyPromptProgress(requestedPromptId || statePromptId);
+  const requestMeta = requestedPromptId ? readPromptRequestMeta(owner.ownerKey, requestedPromptId) : null;
+  if (requestedPromptId && requestedPromptId !== statePromptId
+    && knownProgress?.ownerKey !== owner.ownerKey
+    && (requestMeta?.ownerKey !== owner.ownerKey || requestMeta?.promptId !== requestedPromptId)) {
+    return Response.json({ ok: false, error: "Generation not found" }, { status: 404 });
+  }
+  if (knownProgress?.ownerKey && knownProgress.ownerKey !== owner.ownerKey) {
+    return Response.json({ ok: false, error: "Generation not found" }, { status: 404 });
+  }
 
   if (!requestedPromptId && stateStatus !== "running") {
     const status: "idle" | "complete" | "error" =
@@ -77,14 +90,21 @@ export async function GET(req: NextRequest) {
     requestedPromptId ||
     statePromptId ||
     null;
-  const comfyProgress = readComfyPromptProgress(prompt_id);
-  const comfyBaseUrl = String(comfyProgress?.comfyBaseUrl || state?.comfyBaseUrl || baseUrl)
+  const isCurrentPrompt = prompt_id === statePromptId;
+  const meta = requestMeta || (prompt_id ? readPromptRequestMeta(owner.ownerKey, prompt_id) : null);
+  const comfyBaseUrl = String(knownProgress?.comfyBaseUrl || meta?.comfyBaseUrl || (isCurrentPrompt ? state?.comfyBaseUrl : null) || baseUrl)
     .trim()
     .replace(/\/+$/, "");
+  const clientId = knownProgress?.clientId || meta?.comfyClientId || (isCurrentPrompt ? state?.comfyClientId : null);
+  if (prompt_id && clientId) {
+    if (!knownProgress) recordComfyPromptSubmitted({ promptId: prompt_id, ownerKey: owner.ownerKey,
+      deviceId: owner.deviceId, clientId, comfyBaseUrl, totalNodes: meta?.totalNodes ?? state?.totalNodes });
+    ensureComfyClientProgressMonitor({ comfyBaseUrl, clientId });
+  }
+  const comfyProgress = readComfyPromptProgress(prompt_id);
 
   try {
-    const queueResp = await fetch(`${comfyBaseUrl}/queue`, { cache: "no-store" });
-    const queueJson = await queueResp.json().catch(() => ({}));
+    const queueJson = await readComfyQueue(comfyBaseUrl, { signal: req.signal });
 
     const runningCount =
       Array.isArray((queueJson as any)?.queue_running) ? (queueJson as any).queue_running.length :
@@ -115,6 +135,7 @@ export async function GET(req: NextRequest) {
         username: owner.username,
         deviceId: owner.deviceId,
         comfyBaseUrl,
+        updateCurrentState: isCurrentPrompt,
       });
 
       if (syncRes.status === "error") {
@@ -128,7 +149,7 @@ export async function GET(req: NextRequest) {
       prompt_error = comfyProgress.error;
     }
 
-    if (prompt_error) {
+    if (prompt_error && isCurrentPrompt) {
       markError(owner.ownerKey, prompt_error);
     }
 
@@ -141,6 +162,7 @@ export async function GET(req: NextRequest) {
     const startedAtMs = Number(nextState?.startedAt || state?.startedAt || 0);
     const staleWithoutQueue =
       !!prompt_id &&
+      isCurrentPrompt &&
       queue_remaining === 0 &&
       nextState?.status === "running" &&
       !prompt_complete &&
@@ -153,12 +175,12 @@ export async function GET(req: NextRequest) {
     }
 
     let status: "idle" | "running" | "complete" | "error" = "idle";
-    if (prompt_error || nextState?.status === "error") {
+    if (prompt_error || (isCurrentPrompt && nextState?.status === "error")) {
       status = "error";
-    } else if (nextState?.status === "done" || prompt_complete || comfyProgress?.status === "complete") {
+    } else if ((isCurrentPrompt && nextState?.status === "done") || prompt_complete) {
       status = "complete";
     } else if (
-      nextState?.status === "running" ||
+      (isCurrentPrompt && nextState?.status === "running") ||
       comfyProgress?.status === "running" ||
       comfyProgress?.status === "queued" ||
       queue_remaining > 0 ||
@@ -176,7 +198,7 @@ export async function GET(req: NextRequest) {
         ? 100
         : status === "error"
           ? clampPercent(comfyProgress?.percent ?? nextState?.progressPercent ?? 100)
-          : clampPercent(comfyProgress?.percent ?? nextState?.progressPercent ?? 0);
+          : Math.min(99, clampPercent(comfyProgress?.percent ?? nextState?.progressPercent ?? 0));
 
     return Response.json({
       ok: true,
@@ -206,7 +228,7 @@ export async function GET(req: NextRequest) {
       comfyBaseUrl,
       comfyClientId: comfyProgress?.clientId || nextState?.comfyClientId || null,
       approximatePreview: status === "running" ? comfyProgress?.approximatePreview || null : null,
-      fileName: nextState?.fileName || null,
+      fileName: isCurrentPrompt ? nextState?.fileName || null : null,
       ownerKey: owner.ownerKey,
       scope: owner.scope,
       username: owner.username,
@@ -214,15 +236,15 @@ export async function GET(req: NextRequest) {
     });
   } catch (e: any) {
     return Response.json({
-      ok: true,
-      status: "idle",
-      running: false,
+      ok: false,
+      status: "reconnecting",
+      running: true,
       queue: 0,
       queue_remaining: 0,
-      pct: 0,
-      percent: 0,
-      progressPercent: 0,
-      prompt_id: state?.promptId || null,
+      pct: Math.min(99, comfyProgress?.percent ?? state?.progressPercent ?? 0),
+      percent: Math.min(99, comfyProgress?.percent ?? state?.progressPercent ?? 0),
+      progressPercent: Math.min(99, comfyProgress?.percent ?? state?.progressPercent ?? 0),
+      prompt_id,
       prompt_complete: false,
       prompt_error: null,
       nodeName: null,
@@ -245,6 +267,7 @@ export async function GET(req: NextRequest) {
       username: owner.username,
       deviceId: owner.deviceId,
       error: String(e?.message || e),
+      retryable: true,
     });
   }
 }

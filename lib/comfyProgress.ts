@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { writePromptRequestMeta } from "@/lib/promptRequestMeta";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -62,8 +63,17 @@ type ComfyPromptProgressRecord = {
 type ComfyProgressGlobal = typeof globalThis & {
   __otgComfyProgressStore?: {
     prompts: Map<string, ComfyPromptProgressRecord>;
-    clientMonitors: Map<string, { ws: any; openedAt: number; closeTimer: ReturnType<typeof setTimeout> | null; openPromise: Promise<boolean> }>;
+    clientMonitors: Map<string, ComfyClientMonitor>;
   };
+};
+
+type ComfyClientMonitor = {
+  ws: any;
+  openedAt: number;
+  closeTimer: ReturnType<typeof setTimeout> | null;
+  retryTimer: ReturnType<typeof setTimeout> | null;
+  openPromise: Promise<boolean>;
+  stopped: boolean;
 };
 
 const g = globalThis as ComfyProgressGlobal;
@@ -220,6 +230,12 @@ export function recordComfyPromptSubmitted(args: {
   if (record.status !== "running" && record.status !== "complete" && record.status !== "error") {
     record.status = "queued";
   }
+  // Keep attribution across application restarts; never rely on the live socket
+  // store as the authorization source for a historical prompt.
+  writePromptRequestMeta(args.ownerKey, promptId, {
+    comfyBaseUrl: record.comfyBaseUrl, comfyClientId: record.clientId,
+    totalNodes: record.totalNodes, deviceId: args.deviceId,
+  });
   return readComfyPromptProgress(promptId);
 }
 
@@ -245,7 +261,8 @@ function findPromptForClient(args: {
     if (record.clientId !== clientId) continue;
     if (normalizeBaseUrl(record.comfyBaseUrl) !== comfyBaseUrl) continue;
     if (record.status !== "queued" && record.status !== "running") continue;
-    if (!best || (record.lastUpdateAt || 0) > (best.lastUpdateAt || 0)) {
+    if (!best || (record.status === "running" && best.status !== "running")
+      || (record.status === best.status && (record.lastUpdateAt || 0) > (best.lastUpdateAt || 0))) {
       best = record;
     }
   }
@@ -266,6 +283,8 @@ function applyComfyEvent(payload: any, context: { clientId?: string | null; comf
   if (!promptId) return;
 
   const record = getOrCreateRecord(promptId);
+  if (!matchesEventContext(record, context)) return;
+  if (record.status === "complete" || record.status === "error") return;
   const now = Date.now();
   record.lastUpdateAt = now;
 
@@ -282,7 +301,7 @@ function applyComfyEvent(payload: any, context: { clientId?: string | null; comf
       const imageUrl = rawImage.startsWith("data:")
         ? rawImage
         : `data:${safeMimeType};base64,${rawImage}`;
-      record.status = record.status === "complete" ? "complete" : "running";
+      record.status = "running";
       record.approximatePreview = {
         label: "Approximate Preview",
         imageUrl,
@@ -314,7 +333,7 @@ function applyComfyEvent(payload: any, context: { clientId?: string | null; comf
       record.cachedNodes.add(id);
       record.doneNodes.add(id);
     }
-    record.status = record.status === "complete" ? "complete" : "running";
+    record.status = "running";
     return;
   }
 
@@ -330,6 +349,7 @@ function applyComfyEvent(payload: any, context: { clientId?: string | null; comf
 
     const nodeId = String(data?.node || data?.display_node || "").trim();
     if (nodeId) {
+      if (record.currentNodeId && record.currentNodeId !== nodeId) markDone(record, record.currentNodeId);
       record.status = "running";
       record.currentNodeId = nodeId;
       record.currentNodeValue = 0;
@@ -384,7 +404,7 @@ function applyComfyEvent(payload: any, context: { clientId?: string | null; comf
 
   if (type === "executed") {
     markDone(record, data?.node || data?.display_node);
-    record.status = record.status === "complete" ? "complete" : "running";
+    record.status = "running";
     return;
   }
 
@@ -402,6 +422,15 @@ function applyComfyEvent(payload: any, context: { clientId?: string | null; comf
     record.completedAt = now;
     record.error = String(data?.exception_message || data?.message || type);
   }
+}
+
+function matchesEventContext(record: ComfyPromptProgressRecord, context: { clientId?: string | null; comfyBaseUrl?: string | null }) {
+  const base = normalizeBaseUrl(context.comfyBaseUrl);
+  if (base && record.comfyBaseUrl && base !== record.comfyBaseUrl) return false;
+  if (context.clientId && record.clientId && context.clientId !== record.clientId) return false;
+  record.comfyBaseUrl ||= base;
+  record.clientId ||= context.clientId || null;
+  return true;
 }
 
 function bufferFromBinaryMessage(data: unknown): Buffer | null {
@@ -453,9 +482,11 @@ export function applyComfyBinaryPreviewEvent(data: unknown, context: { clientId?
   if (!promptId) return false;
 
   const record = getOrCreateRecord(promptId);
+  if (!matchesEventContext(record, context)) return false;
+  if (record.status === "complete" || record.status === "error") return false;
   const now = Date.now();
   record.lastUpdateAt = now;
-  record.status = record.status === "complete" ? "complete" : "running";
+  record.status = "running";
   record.approximatePreview = {
     label: "Approximate Preview",
     imageUrl: `data:${safeMimeType};base64,${buffer.subarray(imageOffset).toString("base64")}`,
@@ -472,6 +503,7 @@ export function applyComfyBinaryPreviewEvent(data: unknown, context: { clientId?
 }
 
 function parseMessageData(data: unknown) {
+  if (Buffer.isBuffer(data)) data = data.toString("utf8");
   if (typeof data === "string") {
     try {
       return JSON.parse(data);
@@ -497,35 +529,23 @@ export function ensureComfyClientProgressMonitor(args: {
   const key = `${baseUrl}|${clientId}`;
   const existing = progressStore.clientMonitors.get(key);
   const openState = Number(WebSocketCtor.OPEN ?? 1);
-  if (existing && existing.ws.readyState === openState) return true;
-  if (existing) {
-    try {
-      existing.ws.close();
-    } catch {}
-    if (existing.closeTimer) clearTimeout(existing.closeTimer);
-    progressStore.clientMonitors.delete(key);
-  }
-
-  const ws = new WebSocketCtor(`${toWsBase(baseUrl)}/ws?clientId=${encodeURIComponent(clientId)}`);
-  let resolveOpen: (value: boolean) => void = () => {};
-  const openPromise = new Promise<boolean>((resolve) => {
-    resolveOpen = resolve;
-  });
-  const monitor = {
-    ws,
+  if (existing && !existing.stopped && (existing.retryTimer || [0, openState].includes(existing.ws?.readyState))) return true;
+  stopComfyClientProgressMonitor({ comfyBaseUrl: baseUrl, clientId });
+  const monitor: ComfyClientMonitor = {
+    ws: null,
     openedAt: Date.now(),
     closeTimer: null as ReturnType<typeof setTimeout> | null,
-    openPromise,
+    retryTimer: null,
+    openPromise: Promise.resolve(false),
+    stopped: false,
   };
   progressStore.clientMonitors.set(key, monitor);
 
   const idleTimeoutMs = Math.max(30_000, Math.min(6 * 60 * 60_000, Number(args.idleTimeoutMs || 90 * 60_000)));
   monitor.closeTimer = setTimeout(() => {
-    try {
-      ws.close();
-    } catch {}
-    progressStore.clientMonitors.delete(key);
+    if (progressStore.clientMonitors.get(key) === monitor) stopComfyClientProgressMonitor({ comfyBaseUrl: baseUrl, clientId });
   }, idleTimeoutMs);
+  monitor.closeTimer.unref?.();
 
   const eventContext = {
     clientId,
@@ -537,38 +557,56 @@ export function ensureComfyClientProgressMonitor(args: {
     const payload = parseMessageData(data);
     if (payload) applyComfyEvent(payload, eventContext);
   };
-  const handleOpen = () => resolveOpen(true);
-  const handleError = () => {
-    resolveOpen(false);
-    progressStore.clientMonitors.delete(key);
-    if (monitor.closeTimer) clearTimeout(monitor.closeTimer);
+  let attempts = 0;
+  const connect = () => {
+    if (monitor.stopped || progressStore.clientMonitors.get(key) !== monitor) return;
+    monitor.retryTimer = null;
+    let resolveOpen: (value: boolean) => void = () => {};
+    monitor.openPromise = new Promise<boolean>(resolve => { resolveOpen = resolve; });
+    let ended = false;
+    const disconnected = () => {
+      if (ended) return;
+      ended = true;
+      resolveOpen(false);
+      if (monitor.stopped || progressStore.clientMonitors.get(key) !== monitor) return;
+      try { monitor.ws?.close(); } catch {}
+      monitor.retryTimer = setTimeout(connect, Math.min(30_000, 500 * 2 ** Math.min(attempts++, 6)));
+      monitor.retryTimer.unref?.();
+    };
+    try {
+      const ws = new WebSocketCtor(`${toWsBase(baseUrl)}/ws?clientId=${encodeURIComponent(clientId)}`);
+      ws.binaryType = "arraybuffer";
+      monitor.ws = ws;
+      const handleOpen = () => { if (!ended) { attempts = 0; resolveOpen(true); } };
+      const receive = (data: unknown) => { if (!ended && !monitor.stopped) handleMessage(data); };
+      // ws supports both APIs. Register only one, otherwise every event is applied twice.
+      if (typeof ws.on === "function") {
+        ws.on("message", receive);
+        ws.on("open", handleOpen);
+        ws.on("error", disconnected);
+        ws.on("close", disconnected);
+      } else {
+        ws.onmessage = (event: any) => receive(event.data);
+        ws.onopen = handleOpen;
+        ws.onerror = disconnected;
+        ws.onclose = disconnected;
+      }
+    } catch { disconnected(); }
   };
-  const handleClose = () => {
-    resolveOpen(false);
-    progressStore.clientMonitors.delete(key);
-    if (monitor.closeTimer) clearTimeout(monitor.closeTimer);
-  };
-
-  ws.onmessage = (event: any) => {
-    if (applyComfyBinaryPreviewEvent(event?.data, eventContext)) return;
-    const payload = parseMessageData(event?.data);
-    if (payload) applyComfyEvent(payload, eventContext);
-  };
-
-  ws.onopen = handleOpen;
-
-  ws.onerror = handleError;
-
-  ws.onclose = handleClose;
-
-  if (typeof ws.on === "function") {
-    ws.on("message", handleMessage);
-    ws.on("open", handleOpen);
-    ws.on("error", handleError);
-    ws.on("close", handleClose);
-  }
+  connect();
 
   return true;
+}
+
+export function stopComfyClientProgressMonitor(args: { comfyBaseUrl: string; clientId: string }) {
+  const key = `${normalizeBaseUrl(args.comfyBaseUrl)}|${args.clientId}`;
+  const monitor = store().clientMonitors.get(key);
+  if (!monitor) return;
+  monitor.stopped = true;
+  if (monitor.closeTimer) clearTimeout(monitor.closeTimer);
+  if (monitor.retryTimer) clearTimeout(monitor.retryTimer);
+  store().clientMonitors.delete(key);
+  try { monitor.ws?.close(); } catch {}
 }
 
 export async function waitForComfyClientProgressMonitor(args: {
@@ -587,8 +625,8 @@ export async function waitForComfyClientProgressMonitor(args: {
   if (monitor.ws.readyState === openState) return true;
 
   const timeoutMs = Math.max(100, Math.min(5000, Number(args.timeoutMs || 1500)));
-  return await Promise.race([
-    monitor.openPromise,
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
-  ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([monitor.openPromise, new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), timeoutMs); })]);
+  } finally { if (timer) clearTimeout(timer); }
 }

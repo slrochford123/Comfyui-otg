@@ -1,4 +1,4 @@
-type Queue = { queue_running: unknown[]; queue_pending: unknown[] };
+import { readComfyQueue } from "@/lib/comfyTransport";
 export type ComfyCancelResult = { status:'canceled'|'canceling'|'completed'; mode:'queued'|'running'|'absent'; confirmedAt?:string };
 export class ComfyCancelSafetyError extends Error { status=409; }
 const inFlight = new Map<string,Promise<ComfyCancelResult>>();
@@ -8,11 +8,7 @@ async function json(url:string,init?:RequestInit) {
   if(!r.ok) throw new Error(`Comfy cancellation verification failed (${r.status}).`);
   return r;
 }
-async function queue(base:string):Promise<Queue> {
-  const q=await (await json(base+'/queue')).json();
-  if(!Array.isArray(q.queue_running)||!Array.isArray(q.queue_pending))throw new Error('Comfy queue state is unavailable. Cancellation is not confirmed.');
-  return q;
-}
+const queue = readComfyQueue;
 export function cancelComfyPrompt(baseUrl:string,promptId:string,options:{timeoutMs?:number;pollMs?:number}={}):Promise<ComfyCancelResult> {
   if(!promptId)return Promise.reject(new Error('A prompt ID is required to cancel backend work.'));
   const base=baseUrl.replace(/\/+$/,'');const key=base+':'+promptId;
@@ -22,13 +18,19 @@ export function cancelComfyPrompt(baseUrl:string,promptId:string,options:{timeou
     const running=initial.queue_running.some(e=>id(e)===promptId);
     const pending=initial.queue_pending.some(e=>id(e)===promptId);
     const mode=running?'running':pending?'queued':'absent';
-    if(pending)await json(base+'/queue',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({delete:[promptId]})});
-    // Recheck immediately before interruption. Older workers may ignore prompt_id,
-    // so a worker-wide interrupt is permitted only with no unrelated queued work.
-    const checked=await queue(base);
-    if(checked.queue_running.some(e=>id(e)===promptId)) {
-      if([...checked.queue_running,...checked.queue_pending].some(e=>id(e)!==promptId))throw new ComfyCancelSafetyError('Cannot safely interrupt this running job while another task is using the worker. Queued jobs can be removed individually.');
-      await json(base+'/interrupt',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt_id:promptId})});
+    if(running || pending) {
+      const response = await fetch(base+'/api/jobs/'+encodeURIComponent(promptId)+'/cancel', {
+        method:'POST',cache:'no-store',redirect:'error',signal:AbortSignal.timeout(8000),
+      });
+      if(response.status===404 || response.status===405) {
+        // Never fall back to a worker-wide interrupt: between a queue snapshot
+        // and interruption, an unrelated prompt may have started.
+        if(pending)await json(base+'/queue',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({delete:[promptId]})});
+        const checked=await queue(base);
+        if(checked.queue_running.some(e=>id(e)===promptId))throw new ComfyCancelSafetyError('Cannot safely interrupt: this worker lacks atomic per-job cancellation. No unrelated work was interrupted.');
+      } else if(!response.ok || typeof (await response.json()).cancelled !== 'boolean') {
+        throw new Error('ComfyUI did not confirm a valid per-job cancellation request.');
+      }
     }
     const deadline=Date.now()+(options.timeoutMs??30000);let cleared=0;
     do {
@@ -38,6 +40,7 @@ export function cancelComfyPrompt(baseUrl:string,promptId:string,options:{timeou
         const h=await (await json(base+'/history/'+encodeURIComponent(promptId))).json();
         const record=h[promptId];
         const completed=record?.status?.completed===true&&record?.status?.status_str==='success';
+        if(mode==='absent' && !record)throw new ComfyCancelSafetyError('The prompt is absent from queue and history; cancellation cannot be confirmed. Reconcile the original job without resubmitting.');
         return {status:completed?'completed':'canceled',mode,confirmedAt:new Date().toISOString()};
       }
       await new Promise(r=>setTimeout(r,options.pollMs??500));
