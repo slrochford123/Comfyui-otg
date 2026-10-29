@@ -25,6 +25,8 @@ Prior per-engine inference and quality evidence remains in `unified-audio-valida
 
 ## Guarded activation order
 
+The TEST owner-activation helper was corrected after the first sudo attempt: Python subprocess credential keywords must be `user`/`group`, not Node-style `uid`/`gid`. The helper also clears supplementary groups before its unprivileged authority probe. Root-branch argument validation, non-root behavior, busy-authority refusal and failed-transport refusal have dedicated regression tests. This deployment-helper repair does not rebuild or alter the pinned application artifact; its commit and build ID remain unchanged. The previous non-root check did not exercise the failing sudo-only branch. Actual sudo activation remains an owner action.
+
 1. Stage the exact qualified build on TEST and PROD without switching either service.
 2. Owner runs the supplied guarded TEST command on **shawn / the 3090 PC**. It adds only the shared authority configuration and restarts only `otg-test.service`, retaining TEST data/auth and a rollback record.
 3. Owner runs the supplied guarded PROD command on **SLR / the 5060 Ti PC**. It independently authenticates to TEST and verifies the exact version, commit, build asset and shared authority identity before stopping anything.

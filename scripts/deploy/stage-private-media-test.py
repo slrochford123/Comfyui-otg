@@ -34,7 +34,7 @@ def adapt_activation(text):
     cfg=json.loads(ADMISSION.read_text())
     for gpu in ('rtx3090','rtx5060ti'):
         args=['/usr/bin/ssh',*cfg['sshOptions'],'-o','BatchMode=yes','-o','ConnectTimeout=5','--',cfg['target'],'/usr/bin/python3 '+cfg['script']]
-        extra={'uid':1000,'gid':1000} if os.geteuid()==0 else {}
+        extra={'user':1000,'group':1000,'extra_groups':()} if os.geteuid()==0 else {}
         response=subprocess.run(args,input=(json.dumps({'action':'status','gpu':gpu,'owner':'00000000-0000-0000-0000-000000000000'})+'\\n').encode(),capture_output=True,timeout=15,
             env={'PATH':'/usr/bin:/bin','HOME':'/home/shawn-rochford','LANG':'C.UTF-8'},**extra)
         if response.returncode or json.loads(response.stdout).get('busy') is not False:fail('A shared GPU reservation is active or unavailable; nothing was interrupted.')
