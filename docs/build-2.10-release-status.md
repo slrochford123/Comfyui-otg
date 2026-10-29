@@ -37,6 +37,8 @@ PROD is still on `slr`, Build 2.08, PID 106784. Its existing reverse-3090 connec
 
 `scripts/deploy/check-private-research-readiness.py` performs this root-only inspection without deployment. It reuses only the existing PROD SSH target/key/config for a bounded read-only Python/filesystem probe on shawn, checks local audio runtime paths, native queues, PROD health, and unchanged PID/pointer/config hashes. It does not install packages, initialize models, generate content, modify credentials or restart anything. It writes only a private diagnostic next to the script. A successful diagnostic is not activation; production-specific runtime/queue changes still require implementation and qualification.
 
+The first owner run exposed a checker compatibility defect: SLR's `/usr/bin/python3` is Python 3.10.12, which has no `hashlib.file_digest`. Replaced that helper with streamed SHA256, added empty/small/multi-block hash fixtures and an isolated full-main diagnostic test, and retained the original deployment guards. Unexpected diagnostic errors now include only function/line location, not protected configuration or a raw traceback. No Python/system upgrade or PROD restart is needed for this repair.
+
 ## Evidence
 
 Live authenticated check: `/home/shawn-rochford/AI/research/build-2.10-checkpoint-20261029-zuXmn9qx/live-test-qualification.json`.

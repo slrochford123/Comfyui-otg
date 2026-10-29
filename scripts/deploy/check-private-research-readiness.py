@@ -11,6 +11,7 @@ import re
 import shlex
 import socket
 import subprocess
+import traceback
 import urllib.request
 
 UNIT='otg-prod.service'
@@ -30,7 +31,12 @@ def process_env(pid):
     return dict(part.decode().split('=',1) for part in Path('/proc',pid,'environ').read_bytes().split(b'\0') if b'=' in part)
 
 def fingerprint(file):
-    with file.open('rb') as handle: return hashlib.file_digest(handle,'sha256').hexdigest()
+    # Ubuntu 22.04's /usr/bin/python3 is 3.10; file_digest requires 3.11.
+    # Stream instead of reading protected configuration into a large buffer.
+    digest=hashlib.sha256()
+    with file.open('rb') as handle:
+        for block in iter(lambda:handle.read(1024*1024),b''): digest.update(block)
+    return digest.hexdigest()
 
 def config_summary(file):
     """Allowlist non-secret readiness facts; never return arbitrary config values."""
@@ -127,5 +133,7 @@ def main():
 if __name__=='__main__':
     try: main()
     except Exception as error:
-        print('Read-only PROD readiness check refused: '+(str(error) if isinstance(error,RuntimeError) else type(error).__name__))
+        frames=traceback.extract_tb(error.__traceback__)
+        location=(' at '+frames[-1].name+':'+str(frames[-1].lineno)) if frames else ''
+        print('Read-only PROD readiness check refused: '+(str(error) if isinstance(error,RuntimeError) else type(error).__name__+location))
         raise SystemExit(1)
