@@ -9,6 +9,10 @@ import EditVideoVoiceDubbingPanel from "./EditVideoVoiceDubbingPanel";
 import EditVideoExtractAudioPanel from "./EditVideoExtractAudioPanel";
 import EditVideoSwapCharactersPanel from "./EditVideoSwapCharactersPanel";
 import LtxStudiosPanel from "./LtxStudiosPanel";
+import UnifiedAudioEditingPanel from "./UnifiedAudioEditingPanel";
+
+// Retain the previous UI as an explicit rollback switch during TEST qualification.
+const legacyAudioUi = process.env.NEXT_PUBLIC_AUDIO_LEGACY_UI === "1";
 
 type GalleryVideoItem = {
   fileName?: string;
@@ -177,6 +181,7 @@ function ordinal(position: number) {
 
 export default function EditVideoPanel({ onRefreshGallery }: Props) {
   const [activeTool, setActiveTool] = React.useState<"stitch" | "audio" | "voice" | "extract" | "remove" | "video" | "swap" | "ltx">("stitch");
+  const [dialogueSource,setDialogueSource] = React.useState<{path:string;name:string;url:string}|undefined>();
   const [slots, setSlots] = React.useState<StitchSlot[]>(() => createEmptySlots());
   const [galleryPickerSlot, setGalleryPickerSlot] = React.useState<number | null>(null);
   const [audioGalleryOpen, setAudioGalleryOpen] = React.useState(false);
@@ -215,7 +220,7 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
     try{const r=await fetch("/api/edit-video/ace-music",{cache:"no-store"});const data=await r.json();if(!r.ok||!data.ok)throw Error("Unavailable");if(sequence===aceStatusSequence.current)setAceService(data);}
     catch{if(sequence===aceStatusSequence.current)setAceService(null);}
   },[]);
-  React.useEffect(()=>{if(activeTool!=="audio")return;void refreshAceService();const timer=setInterval(()=>void refreshAceService(),5000);return()=>{clearInterval(timer);aceStatusSequence.current++;};},[activeTool,refreshAceService]);
+  React.useEffect(()=>{if(activeTool!=="audio"||!legacyAudioUi)return;void refreshAceService();const timer=setInterval(()=>void refreshAceService(),5000);return()=>{clearInterval(timer);aceStatusSequence.current++;};},[activeTool,refreshAceService]);
   const [musicGeneratorMode, setMusicGeneratorMode] = React.useState<AceMusicMode>("reference");
   const [musicGeneratorDuration, setMusicGeneratorDuration] = React.useState(30);
   const [musicGeneratorBpm, setMusicGeneratorBpm] = React.useState(95);
@@ -878,8 +883,6 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
             { id: "stitch", label: "Stitch Video", disabled: false },
             { id: "audio", label: "Audio Editing", disabled: false },
             { id: "voice", label: "Dialogue Replacement", disabled: false },
-            { id: "extract", label: "Extract Audio", disabled: false },
-            { id: "remove", label: "Remove Music" },
             { id: "video", label: "Video Editing", disabled: false },
             { id: "swap", label: "Swap Characters", disabled: false },
             { id: "ltx", label: "LTX Studios", disabled: false },
@@ -1110,7 +1113,11 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
       ) : null}
 
 
-      {activeTool === "audio" ? (
+      {!legacyAudioUi && (activeTool === "audio" || activeTool === "extract" || activeTool === "remove") ? (
+        <UnifiedAudioEditingPanel onOpenDialogue={source => {setDialogueSource(source);setActiveTool("voice");}} />
+      ) : null}
+
+      {activeTool === "audio" && legacyAudioUi ? (
         <section className="rounded-[28px] border border-white/10 bg-black/45 p-4 md:p-5">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
             <div>
@@ -1530,14 +1537,14 @@ export default function EditVideoPanel({ onRefreshGallery }: Props) {
 
 
       {activeTool === "voice" ? (
-        <EditVideoVoiceDubbingPanel onSaved={onRefreshGallery} />
+        <EditVideoVoiceDubbingPanel onSaved={onRefreshGallery} initialSource={dialogueSource} />
       ) : null}
 
-      {activeTool === "extract" ? (
+      {activeTool === "extract" && legacyAudioUi ? (
         <EditVideoExtractAudioPanel onSaved={onRefreshGallery} />
       ) : null}
 
-      {activeTool === "remove" ? (
+      {activeTool === "remove" && legacyAudioUi ? (
         <EditVideoRemoveMusicPanel onRefreshGallery={onRefreshGallery} />
       ) : null}
 

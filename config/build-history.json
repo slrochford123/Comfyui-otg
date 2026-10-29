@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.08",
+  "current": "2.09",
   "builds": [
     {
       "version": "2",
@@ -55,6 +55,12 @@
       "date": "2026-10-29",
       "summary": "Compact Singularity version selector: independent v1.3 and v2 checkpoints with preserved Native/Turbo, Realism, Combat and existing H3 features on both GPUs.",
       "sourceBaseCommit": "546740cb6335addf44512a7e63b13ff4d4c079ba"
+    },
+    {
+      "version": "2.09",
+      "date": "2026-10-29",
+      "summary": "TEST-only Unified Audio Editing: cinematic three-stem separation, non-destructive multitrack mixing, AuK voices and character reuse, private music/Foley generation, track-specific cleanup and owner-scoped durable processing. Not approved for GitHub or PROD.",
+      "sourceBaseCommit": "82b83035d67c244663b97666bd7f42226d65b18a"
     }
   ]
 }

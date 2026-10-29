@@ -1,8 +1,12 @@
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { resolveFfmpegPath, runCmd } from "@/lib/ffmpeg";
+import fs from "node:fs";
+import { requireSessionUser, SessionInvalidError } from "@/lib/sessionUser";
+import { productionAudioMediaReadable } from "@/lib/productionAudioAccess";
+import { OTG_DATA_ROOT, safeSegment } from "@/lib/paths";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,11 +29,16 @@ async function runFfmpeg(args: string[]): Promise<void> {
   }
 }
 
-export async function POST(req: Request): Promise<NextResponse> {
+export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
+    const user = await requireSessionUser(req);
     const { videoPath } = (await req.json()) as EnhanceAudioRequest;
     const input = assertVideoPath(videoPath);
-    const output = input.replace(/\.mp4$/i, "_enhanced.mp4");
+    if (!await productionAudioMediaReadable(req, input)) return NextResponse.json({ok:false,error:"Source media unavailable for this account."},{status:404});
+    const jobId = randomUUID();
+    const dir = path.join(OTG_DATA_ROOT, "edit_video_jobs", safeSegment(user.ownerKey), jobId);
+    fs.mkdirSync(dir, {recursive:true,mode:0o700});
+    const output = path.join(dir,"enhanced.mp4");
     const tempPrefix = path.join(os.tmpdir(), `otg-enhance-${randomUUID()}`);
     const audio = `${tempPrefix}.wav`;
     const enhanced = `${tempPrefix}-enhanced.wav`;
@@ -45,8 +54,9 @@ export async function POST(req: Request): Promise<NextResponse> {
     ]);
     await runFfmpeg(["-y", "-i", input, "-i", enhanced, "-c:v", "copy", "-map", "0:v:0", "-map", "1:a:0", output]);
 
-    return NextResponse.json({ ok: true, output });
+    return NextResponse.json({ ok: true, output, jobId, fileName:"enhanced.mp4", url:`/api/edit-video/file?jobId=${jobId}&name=enhanced.mp4` });
   } catch (error) {
+    if (error instanceof SessionInvalidError) return NextResponse.json({ok:false,error:"Unauthorized"},{status:401});
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : "Failed to enhance audio." },
       { status: 500 },

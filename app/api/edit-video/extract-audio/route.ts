@@ -132,7 +132,8 @@ export async function POST(req: NextRequest) {
     const outputPath = safeJoin(galleryRoot, fileName);
     await saveUpload(video, inputPath);
 
-    const args = ["-y", "-i", inputPath, "-vn", "-ac", "1", "-ar", "44100"];
+    // Preserve channel layout; voice engines may derive a mono input separately.
+    const args = ["-y", "-i", inputPath, "-vn", "-map", "0:a:0", "-ar", "48000"];
     if (mode === "enhance") {
       args.push("-af", process.env.EXTRACT_AUDIO_ENHANCE_FILTER || DEFAULT_ENHANCE_FILTER);
     }

@@ -143,9 +143,12 @@ async function findSourceVideo(body: any, request: NextRequest, workDir: string)
 }
 
 async function muxDubbedAudio(sourceVideoPath: string, dubbedAudioPath: string, outputPath: string) {
+  const {stdout}=await execFileAsync(process.env.OTG_FFPROBE_BIN||"ffprobe",["-v","error","-show_entries","format=duration","-of","default=noprint_wrappers=1:nokey=1",sourceVideoPath],{timeout:30000});
+  const duration=Number(stdout.trim());
+  if(!Number.isFinite(duration)||duration<=0)throw Error("Cannot verify source video duration; original retained.");
   await execFileAsync(
     FFMPEG_BIN,
-    ["-y", "-i", sourceVideoPath, "-i", dubbedAudioPath, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-shortest", outputPath],
+    ["-y", "-i", sourceVideoPath, "-i", dubbedAudioPath, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-af",`apad,atrim=0:${duration}`,"-t",String(duration), outputPath],
     { timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 * 20, windowsHide: true },
   );
 }

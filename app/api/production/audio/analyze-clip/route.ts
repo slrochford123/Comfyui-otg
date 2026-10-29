@@ -8,6 +8,7 @@ import { SessionInvalidError } from "@/lib/ownerKey";
 import { productionAudioOwner, productionAudioMediaReadable, ProductionAudioAccessError } from "@/lib/productionAudioAccess";
 import { safeSegment } from "@/lib/paths";
 import { runtimePath, voicePython } from "@/lib/runtime/configPaths";
+import { acquireAuxiliary3090, AuxiliaryGpuBusyError } from "@/lib/workers/auxiliary3090Lease";
 import {
   productionAudioAnalysisRoot,
   productionAudioGalleryRoots,
@@ -611,6 +612,7 @@ function buildEstimatedSpeakerLanes(
 }
 
 export async function POST(request: NextRequest) {
+  let releaseGpu:(()=>void)|undefined;
   try {
     const ownerKey = await productionAudioOwner(request);
     const runId = `audio_${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -652,6 +654,10 @@ export async function POST(request: NextRequest) {
     const extractedWav = path.join(workDir, "source_mono_16k.wav");
     await extractMonoWav(sourcePath, extractedWav);
 
+    // The unified TEST handoff must not start the legacy Demucs/diarization
+    // chain outside the same physical-GPU admission domain as voice tools.
+    if(process.env.OTG_ENV==="test"&&process.env.OTG_AUDIO_EDITING_ENABLED==="1")
+      releaseGpu=await acquireAuxiliary3090(`audio-analysis:${ownerKey}:${runId}`);
     const demucs = await tryDemucs(sourcePath, workDir);
     const analysisWav = demucs?.vocalsPath || extractedWav;
     const expectedSpeakerCount = clampExpectedSpeakerCount(
@@ -715,6 +721,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error: any) {
+    if (error instanceof AuxiliaryGpuBusyError) return NextResponse.json({ok:false,error:error.message},{status:409});
     if (error instanceof SessionInvalidError) return NextResponse.json({ok:false,error:"Unauthorized"},{status:401});
     if (error instanceof ProductionAudioAccessError) return NextResponse.json({ok:false,error:error.message},{status:404});
     return NextResponse.json(
@@ -724,5 +731,5 @@ export async function POST(request: NextRequest) {
       },
       { status: 500 }
     );
-  }
+  } finally {releaseGpu?.();}
 }

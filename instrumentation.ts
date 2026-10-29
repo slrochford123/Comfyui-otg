@@ -6,12 +6,11 @@
  */
 
 export async function register() {
-  if (
-    process.env.NEXT_RUNTIME
-    !== "nodejs"
-  ) {
-    return;
-  }
+  // Keep Node imports inside the positive runtime branch so Edge compilation
+  // does not attempt to bundle SQLite/fs. An isolated audio development server
+  // must not start a second scheduler over the existing TEST queues.
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+  if (process.env.OTG_AUDIO_ISOLATED_DEV === "1") return;
 
   const {
     bootstrapQwenDurableScheduler,
@@ -34,4 +33,5 @@ export async function register() {
     );
 
   bootstrapProductionV2PromptOperationScheduler();
+  }
 }

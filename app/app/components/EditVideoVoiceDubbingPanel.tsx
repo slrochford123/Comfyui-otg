@@ -104,8 +104,10 @@ function PillButton({
 
 export default function EditVideoVoiceDubbingPanel({
   onSaved,
+  initialSource,
 }: {
   onSaved?: () => void;
+  initialSource?: {path:string;name:string;url:string};
 }) {
   void onSaved;
   const [mode, setMode] = React.useState<WorkflowMode>("convert");
@@ -113,14 +115,15 @@ export default function EditVideoVoiceDubbingPanel({
   const [modelsBusy, setModelsBusy] = React.useState(false);
   const [modelsError, setModelsError] = React.useState("");
   const [videoFile, setVideoFile] = React.useState<File | null>(null);
-  const [videoUrl, setVideoUrl] = React.useState("");
+  const [videoUrl, setVideoUrl] = React.useState(initialSource?.url||"");
+  const [serverSource,setServerSource] = React.useState(initialSource);
   const [analysis, setAnalysis] = React.useState<ClipAnalysis | null>(null);
   const [analysisBusy, setAnalysisBusy] = React.useState(false);
   const [expectedSpeakerCount, setExpectedSpeakerCount] = React.useState("auto");
   const [mappings, setMappings] = React.useState<Record<string, LaneMapping>>({});
   const [title, setTitle] = React.useState("voice_converted_video");
   const [busy, setBusy] = React.useState(false);
-  const [status, setStatus] = React.useState("");
+  const [status, setStatus] = React.useState(initialSource?"Current Audio Editing video is ready. Click Analyze Speech.":"");
   const [error, setError] = React.useState("");
   const [result, setResult] = React.useState<DubResult | null>(null);
   const [quickVoiceName, setQuickVoiceName] = React.useState("");
@@ -174,6 +177,7 @@ export default function EditVideoVoiceDubbingPanel({
     }
     if (videoUrl.startsWith("blob:")) URL.revokeObjectURL(videoUrl);
     setVideoFile(file);
+    setServerSource(undefined);
     const nextUrl = URL.createObjectURL(file);
     videoUrlRef.current = nextUrl;
     setVideoUrl(nextUrl);
@@ -185,7 +189,7 @@ export default function EditVideoVoiceDubbingPanel({
   }
 
   async function analyzeSpeech() {
-    if (!videoFile) {
+    if (!videoFile&&!serverSource) {
       setError("Upload a video first.");
       return;
     }
@@ -195,9 +199,11 @@ export default function EditVideoVoiceDubbingPanel({
     setStatus("Analyzing speech, separating dialogue, and detecting speakers...");
     try {
       const form = new FormData();
-      form.append("video", videoFile, videoFile.name);
+      if(videoFile)form.append("video", videoFile, videoFile.name);
       if (expectedSpeakerCount !== "auto") form.append("expectedSpeakerCount", expectedSpeakerCount);
-      const response = await fetch("/api/production/audio/analyze-clip", { method: "POST", body: form, credentials: "include", cache: "no-store" });
+      const response = await fetch("/api/production/audio/analyze-clip", { method: "POST",
+        ...(videoFile?{body:form}:{headers:{"Content-Type":"application/json"},body:JSON.stringify({sourcePath:serverSource!.path,sourceFileName:serverSource!.name,...(expectedSpeakerCount!=="auto"?{expectedSpeakerCount}:{})})}),
+        credentials: "include", cache: "no-store" });
       const data = (await response.json().catch(() => ({}))) as ClipAnalysis & { error?: string };
       if (!response.ok || data?.ok === false) throw new Error(data?.error || "Speech analysis failed.");
       const lanes = Array.isArray(data.voices) ? data.voices : [];
@@ -321,7 +327,7 @@ export default function EditVideoVoiceDubbingPanel({
         cache: "no-store",
         body: JSON.stringify({
           sourcePath: analysis.sourcePath,
-          sourceFileName: analysis.sourceFileName || videoFile?.name || "source-video.mp4",
+          sourceFileName: analysis.sourceFileName || videoFile?.name || serverSource?.name || "source-video.mp4",
           title: safeTitle(title),
           voiceMappings: mappingsToSend,
           audioClipAnalysis: analysis,
@@ -365,12 +371,12 @@ export default function EditVideoVoiceDubbingPanel({
       <div className="mt-5 rounded-[22px] border border-white/10 bg-black/30 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div><h3 className="text-sm font-black text-white">1. Upload the source video</h3><p className="mt-1 text-xs text-white/50">No audio extraction or reattachment is required from the user.</p></div>
-          <label className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-white/5 px-5 py-2.5 text-sm font-semibold text-white hover:bg-white/10">{videoFile ? "Choose a different video" : "Upload Video"}<input type="file" accept="video/*,.mp4,.webm,.mov,.mkv" className="hidden" onChange={(event) => setVideo(event.target.files?.[0] || null)} /></label>
+          <label className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-white/5 px-5 py-2.5 text-sm font-semibold text-white hover:bg-white/10">{videoFile||serverSource ? "Choose a different video" : "Upload Video"}<input type="file" accept="video/*,.mp4,.webm,.mov,.mkv" className="hidden" onChange={(event) => setVideo(event.target.files?.[0] || null)} /></label>
         </div>
         {videoUrl ? <video src={videoUrl} controls preload="metadata" className="mt-4 max-h-[420px] w-full rounded-[18px] border border-white/10 bg-black object-contain" /> : <div className="mt-4 rounded-[18px] border border-dashed border-white/10 bg-black/25 px-4 py-10 text-center text-sm text-white/40">Choose the H3 video you want to edit.</div>}
         <div className="mt-4 flex flex-wrap items-end gap-3">
           <label className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Speaker count<select value={expectedSpeakerCount} onChange={(event) => setExpectedSpeakerCount(event.target.value)} className="mt-2 block min-h-11 rounded-[14px] border border-white/10 bg-black/45 px-3 text-sm font-semibold normal-case tracking-normal text-white outline-none"><option value="auto">Auto detect</option><option value="1">1 speaker</option><option value="2">2 speakers</option><option value="3">3 speakers</option><option value="4">4 speakers</option><option value="5">5 speakers</option></select></label>
-          <PillButton disabled={analysisBusy || !videoFile} onClick={() => void analyzeSpeech()}>{analysisBusy ? "Analyzing..." : "Analyze Speech"}</PillButton>
+          <PillButton disabled={analysisBusy || (!videoFile&&!serverSource)} onClick={() => void analyzeSpeech()}>{analysisBusy ? "Analyzing..." : "Analyze Speech"}</PillButton>
         </div>
       </div>
 

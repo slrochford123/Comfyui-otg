@@ -8,7 +8,8 @@ import { getOwnerContext, SessionInvalidError } from "@/lib/ownerKey";
 import { requireSessionUser } from "@/lib/sessionUser";
 import {productionAudioMediaReadable,ProductionAudioAccessError} from "@/lib/productionAudioAccess";
 import { OTG_DATA_ROOT, ensureDir, safeSegment } from "@/lib/paths";
-import { resolveFfmpegPath, resolveFfprobePath, runCmd } from "@/lib/ffmpeg";
+import { resolveFfmpegPath, resolveFfprobePath, runCmd, probeDurationSeconds } from "@/lib/ffmpeg";
+import { numberWithin } from "@/lib/audioEditing/contracts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,8 +67,10 @@ async function processMultipart(req: NextRequest) {
   const { videoPath, musicPath, videoLabel } = await resolveMultipartInputs(req, form, inputDir);
   const keepOriginal = String(form.get("keep_original_audio") || "0") === "1";
   const loopMusic = String(form.get("loop_music") || "0") === "1";
-  const videoVolume = Math.max(0, Math.min(1, Number(form.get("video_volume") || 1) || 1));
-  const musicVolume = Math.max(0, Math.min(1, Number(form.get("music_volume") || 0.25) || 0.25));
+  const videoVolume = numberWithin(form.get("video_volume"), 1, 0, 1);
+  const musicVolume = numberWithin(form.get("music_volume"), 0.25, 0, 1);
+  const duration = await probeDurationSeconds(videoPath);
+  if (duration === null || !(duration > 0)) throw new Error("The source video duration could not be verified.");
   const originalHasAudio = await hasAudio(videoPath);
   const outputFileName = `${cleanStem(String(form.get("title") || "video_with_music"), "video_with_music")}.mp4`;
   const outputPath = path.join(dir, outputFileName);
@@ -77,9 +80,9 @@ async function processMultipart(req: NextRequest) {
   if (keepOriginal && originalHasAudio) {
     args.push("-filter_complex", `[0:a]volume=${videoVolume}[v];[1:a]volume=${musicVolume}[m];[v][m]amix=inputs=2:duration=first:dropout_transition=2[a]`, "-map", "0:v:0", "-map", "[a]");
   } else {
-    args.push("-filter_complex", `[1:a]volume=${musicVolume}[m]`, "-map", "0:v:0", "-map", "[m]");
+    args.push("-filter_complex", `[1:a]volume=${musicVolume},apad,atrim=duration=${duration}[m]`, "-map", "0:v:0", "-map", "[m]");
   }
-  args.push("-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", outputPath);
+  args.push("-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", String(duration), "-movflags", "+faststart", outputPath);
   const result = await runCmd(resolveFfmpegPath(), args, { timeoutMs: 10 * 60 * 1000 });
   if (result.code !== 0) throw new Error(result.stderr || result.stdout || "FFmpeg audio mix failed.");
   const stat = fs.statSync(outputPath);
@@ -92,8 +95,10 @@ async function processLegacyJson(req: NextRequest) {
   if(!await productionAudioMediaReadable(req,video)||!await productionAudioMediaReadable(req,music))throw new ProductionAudioAccessError();
   const owner=await getOwnerContext(req);const jobId=randomUUID();const dir=path.join(jobRoot(owner.ownerKey),jobId);ensureDir(dir);
   const fileName="video_with_music.mp4",output=path.join(dir,fileName);
-  const filter=await hasAudio(video)?"[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2[a]":"[1:a]anull[a]";
-  const result = await runCmd(resolveFfmpegPath(), ["-y", "-i", video, "-i", music, "-filter_complex", filter,"-map","0:v:0","-map","[a]", "-c:v", "copy","-c:a","aac","-shortest", output], { timeoutMs: 10 * 60 * 1000 });
+  const duration = await probeDurationSeconds(video);
+  if (duration === null || !(duration > 0)) throw new Error("The source video duration could not be verified.");
+  const filter=await hasAudio(video)?`[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2,apad,atrim=duration=${duration}[a]`:`[1:a]apad,atrim=duration=${duration}[a]`;
+  const result = await runCmd(resolveFfmpegPath(), ["-y", "-i", video, "-i", music, "-filter_complex", filter,"-map","0:v:0","-map","[a]", "-c:v", "copy","-c:a","aac","-t", String(duration), output], { timeoutMs: 10 * 60 * 1000 });
   if (result.code !== 0) throw new Error(result.stderr || result.stdout || "FFmpeg failed.");
   return NextResponse.json({ ok: true, output,jobId,fileName,url:`/api/edit-video/file?jobId=${jobId}&name=${fileName}` });
 }
