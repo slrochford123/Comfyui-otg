@@ -1,3 +1,4 @@
+import { isH3SingularityMode } from "@/lib/production/h3Settings";
 import { buildH3Workflow, loadH3WorkflowTemplate, h3TurboLoraForMode, type H3WorkflowBuildInput, type H3PromptGraph } from "@/lib/production/h3Workflows";
 import { applyH3OmniRef, isH3OmniRefMode } from "@/lib/h3OmniRef";
 import { assertFastH3Loras } from "@/lib/h3FastLora";
@@ -157,7 +158,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
       model: studioCheckpoint(plan), templateSha256, steps: plan.steps, sampler: plan.sampler,
       scheduler: plan.scheduler, shifts: { video: native ? 6 : 12, audio: 3 }, attention: plan.attention,
       audio: plan.audio, modelSha256: dependencies.find(d => d.filename === studioCheckpoint(plan))?.sha256 || null,
-      compilerVersion: H3_STUDIO_COMPILER_VERSION, automaticRealism: plan.checkpoint === "singularity", dependencies,
+      compilerVersion: H3_STUDIO_COMPILER_VERSION, automaticRealism: isH3SingularityMode(plan.checkpoint), dependencies,
       boundGraphDigest, submissionGraphSha256: boundGraphDigest, qualificationFingerprint, readyForQualification, readinessReasons: [...new Set(readinessReasons)],
       requiredVramBytes: readyForQualification ? capacity!.requiredVramBytes : qualified?.telemetry.peakVramBytes ?? null,
       experimental: experimental && !qualified, executionBasis: production ? "installed-workflow" : qualified ? "physically-qualified" : experimental ? "owner-experimental" : "qualification-required",

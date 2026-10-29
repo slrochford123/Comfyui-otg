@@ -24,9 +24,9 @@ describe("H3 Realism Standard / Singularity model selector", () => {
     expect(workflow).toContain(
       "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
     );
-    expect(workflow).toContain("H3_SINGULARITY_CHECKPOINT");
+    expect(workflow).toContain("h3SingularityCheckpoint");
     expect(workflow).toContain(
-      'checkpointMode === "singularity"',
+      'isH3SingularityMode(checkpointMode)',
     );
   });
 
@@ -48,7 +48,7 @@ describe("H3 Realism Standard / Singularity model selector", () => {
       "checkpointMode: h3Settings.checkpointMode",
     );
     expect(panel).toContain("Combat V2 LoRA");
-    expect(panel).toContain("H3_SINGULARITY_LABEL");
+    expect(panel).toContain("h3SingularityLabel");
     expect(source("lib/production/h3Settings.ts")).toContain('H3_SINGULARITY_LABEL = "Singularity v2"');
     expect(route).toContain("checkpointMode:");
     expect(route).toContain("combatLoraEnabled:");

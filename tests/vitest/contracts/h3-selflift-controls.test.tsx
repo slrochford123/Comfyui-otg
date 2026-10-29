@@ -14,7 +14,7 @@ describe("SelfLift is an additive mobile-friendly selection", () => {
     }
     render(<Harness />);
     expect(screen.getByRole("group", { name: "H3 model" })).toHaveClass("grid-cols-2");
-    for (const name of ["Standard", "Singularity v2", "FastH3", "SelfLift"]) expect(screen.getByRole("button", { name, exact: true })).toBeVisible();
+    for (const name of ["Standard", "FastH3", "SelfLift"]) expect(screen.getByRole("button", { name, exact: true })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "SelfLift", exact: true }));
     expect(screen.getByRole("button", { name: "SelfLift", exact: true })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText(/SelfLift · 8 Steps · 6 low \+ 2 full resolution/)).toBeVisible();
@@ -22,7 +22,7 @@ describe("SelfLift is an additive mobile-friendly selection", () => {
     expect(screen.getByRole("button", { name: "Motion", exact: true })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "FastH3", exact: true }));
     expect(screen.getByRole("button", { name: "SelfLift", exact: true })).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(screen.getByRole("button", { name: "Singularity v2", exact: true }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Singularity version" }), { target: { value: "singularity" } });
     expect(screen.getByRole("button", { name: renderMode === "native" ? "Native" : "Turbo", exact: true })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("checkbox", { name: /Combat LoRA/ })).toBeChecked();
   });

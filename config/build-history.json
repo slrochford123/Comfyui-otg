@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.07",
+  "current": "2.08",
   "builds": [
     {
       "version": "2",
@@ -49,6 +49,12 @@
       "date": "2026-10-29",
       "summary": "Singularity v2 publisher-pruned INT8 checkpoint across existing Singularity routes; retain Native/Turbo steps, SLA, Realism and independent Combat. TEST candidate includes prior Body Swap and Admin Gallery fixes.",
       "sourceBaseCommit": "99aa38335a8c4d18c6c802629d604b8e27d4c5fd"
+    },
+    {
+      "version": "2.08",
+      "date": "2026-10-29",
+      "summary": "Compact Singularity version selector: independent v1.3 and v2 checkpoints with preserved Native/Turbo, Realism, Combat and existing H3 features on both GPUs.",
+      "sourceBaseCommit": "546740cb6335addf44512a7e63b13ff4d4c079ba"
     }
   ]
 }

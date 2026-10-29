@@ -70,10 +70,14 @@ describe("H3 persistent mutually-exclusive selections", () => {
     fireEvent.click(ui.getByRole("button", { name: "SelfLift", exact: true }));
     expect(speed().getAttribute("data-speed")).toBe("fast");
     expect(loras.open).toBe(false);
-    fireEvent.click(ui.getByRole("button", { name: "Singularity v2", exact: true }));
+    fireEvent.change(ui.getByRole("combobox", { name: "Singularity version" }), { target: { value: "singularity" } });
     expect(ui.getByRole("button", { name: "Native", exact: true }).getAttribute("aria-pressed")).toBe("true");
     expect(ui.getByRole("checkbox", { name: /Combat LoRA/ })).toBeTruthy();
     expect(speed().getAttribute("data-speed")).toBe("slow");
+    fireEvent.change(ui.getByRole("combobox", { name: "Singularity version" }), { target: { value: "singularity-v1.3" } });
+    expect(ui.getByRole("combobox", { name: "Singularity version" }).getAttribute("data-selected")).toBe("true");
+    expect(ui.getByText(/Singularity v1.3 · Realism On/)).toBeTruthy();
+    expect(ui.getByRole("button", { name: "Native", exact: true }).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("retains exactly one selected mode", () => {

@@ -1,10 +1,11 @@
 "use client";
 
 import React from "react";
+import H3SingularitySelector from "./H3SingularitySelector";
 import { isH3OmniRefMode } from "@/lib/h3OmniRef";
 
 import {
-  H3_SINGULARITY_LABEL,
+  isH3SingularityMode,
   normalizeH3AdvancedSettings,
   selectH3CheckpointMode,
   selectH3RenderMode,
@@ -32,7 +33,6 @@ type Props = {
 const TOOLTIPS = {
   turbo: "Faster H3 rendering with reduced sampling.",
   native: "Higher-detail H3 rendering using native sampling.",
-  singularity: "Singularity v2: publisher pruned INT8 H3 model, with automatic Realism and optional Combat.",
   refMod: "Strengthen a selected visual reference.",
   motion: "Recover additional detail during fast movement.",
 } as const;
@@ -103,12 +103,12 @@ export default function H3AdvancedControls({
         <div className="mb-2 text-xs font-black uppercase text-white/50">Model</div>
         <div className="grid grid-cols-2 gap-2" role="group" aria-label="H3 model">
           <button type="button" disabled={disabled} aria-pressed={settings.checkpointMode === "standard"} className={buttonClass(settings.checkpointMode === "standard")} onClick={() => setCheckpointMode("standard")}>Standard</button>
-          <button type="button" title={TOOLTIPS.singularity} disabled={disabled} aria-pressed={settings.checkpointMode === "singularity"} className={buttonClass(settings.checkpointMode === "singularity")} onClick={() => setCheckpointMode("singularity")}>{H3_SINGULARITY_LABEL}</button>
+          <H3SingularitySelector value={settings.checkpointMode} disabled={disabled} className={buttonClass(isH3SingularityMode(settings.checkpointMode))} onChange={setCheckpointMode} />
           {allowFastH3 ? <>
             <button type="button" title={fastH3BlockedReason || "Dedicated FastH3 OmniRef configuration C; eight Euler steps and VSA."} disabled={disabled || !!fastH3BlockedReason} aria-pressed={settings.checkpointMode === "fasth3"} className={buttonClass(settings.checkpointMode === "fasth3")} onClick={() => setCheckpointMode("fasth3")}>FastH3</button>
             <button type="button" title={fastH3BlockedReason || "Experimental SelfLift on FastH3 OmniRef: six half-resolution steps, learned latent lift, two full-resolution steps. Requires the selected worker's SelfLift node and lifter."} disabled={disabled || !!fastH3BlockedReason} aria-pressed={selfLift} className={buttonClass(selfLift)} onClick={() => setCheckpointMode("selflift")}>SelfLift</button>
           </> : null}
-            {settings.checkpointMode === "singularity" ? (
+            {isH3SingularityMode(settings.checkpointMode) ? (
               <label
                 className="col-span-2 flex items-center gap-2 rounded-[8px] border border-white/10 bg-black/25 px-3 py-2 text-sm text-white/75"
                 data-otg="h3-singularity-combat-toggle"

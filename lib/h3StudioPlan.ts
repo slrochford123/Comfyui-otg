@@ -1,3 +1,4 @@
+import { isH3SingularityMode } from "@/lib/production/h3Settings";
 /** Public, path-free plan contract. Both controllers feed the existing H3 engine. */
 import { assertFastH3StudioLoras } from "@/lib/h3FastLora";
 import { h3RegisteredLoraStrengthBounds } from "@/lib/h3LoraGuidance";
@@ -22,7 +23,7 @@ export type H3StudioPlan = {
   backend?: "rtx3090" | "rtx5060ti";
   version: typeof H3_STUDIO_VERSION;
   workflowId: H3StudioWorkflowId;
-  checkpoint: "standard" | "singularity" | "fasth3" | "selflift";
+  checkpoint: "standard" | "singularity" | "singularity-v1.3" | "fasth3" | "selflift";
   profile: "native" | "ref2va-8step" | "fl2va-8step";
   quality: keyof typeof H3_STUDIO_SIZES;
   orientation: "landscape" | "portrait";
@@ -70,7 +71,7 @@ export function parseH3StudioPlan(value: unknown): H3StudioPlan {
   if (Object.keys(DEFAULT_H3_STUDIO_PLAN).some(key => !Object.hasOwn(p, key))) throw new Error("Incomplete H3 plan.");
   const enums: Record<string, readonly unknown[]> = {
     backend: ["rtx3090", "rtx5060ti"],
-    version: [H3_STUDIO_VERSION], workflowId: H3_STUDIO_WORKFLOWS.map(w => w.id), checkpoint: ["standard", "singularity", "fasth3", "selflift"],
+    version: [H3_STUDIO_VERSION], workflowId: H3_STUDIO_WORKFLOWS.map(w => w.id), checkpoint: ["standard", "singularity", "singularity-v1.3", "fasth3", "selflift"],
     profile: Object.keys(H3_STUDIO_PROFILES), quality: Object.keys(H3_STUDIO_SIZES), orientation: ["landscape", "portrait"],
     fps: [24], attention: ["project-sla", "dense", "vsa"], audio: ["generated", "original", "mute"],
     camera: ["none", "static", "pan", "dolly", "tracking"], motion: ["none", "subtle", "dynamic"],
@@ -100,8 +101,8 @@ export function parseH3StudioPlan(value: unknown): H3StudioPlan {
   const workflow = H3_STUDIO_WORKFLOWS.find(w => w.id === plan.workflowId)!;
   if (plan.profile === "ref2va-8step" && workflow.family !== "Ref2VA") throw new Error("Ref2VA 8-step cannot be applied to FL2VA.");
   if (plan.profile === "fl2va-8step" && workflow.family !== "FL2VA") throw new Error("FL2VA 8-step cannot be applied to Ref2VA.");
-  if (plan.checkpoint === "singularity" && workflow.family !== "Ref2VA") throw new Error("This Singularity checkpoint is Ref2VA only.");
-  if (plan.combatEnabled && plan.checkpoint !== "singularity") throw new Error("Combat V2 requires the qualified Singularity path.");
+  if (isH3SingularityMode(plan.checkpoint) && workflow.family !== "Ref2VA") throw new Error("This Singularity checkpoint is Ref2VA only.");
+  if (plan.combatEnabled && !isH3SingularityMode(plan.checkpoint)) throw new Error("Combat V2 requires the qualified Singularity path.");
   if (plan.audio === "original" && plan.workflowId !== "reference-edit") throw new Error("Original audio requires a source-video edit.");
   const registered = H3_STUDIO_PROFILES[plan.profile];
   if (plan.sampler !== registered.sampler || plan.scheduler !== registered.scheduler || plan.steps !== registered.steps) throw new Error("Sampler, scheduler and steps must match the registered profile.");
@@ -113,7 +114,7 @@ export type H3StudioReconcileCatalogItem = { id: string; family: "FL2VA" | "Ref2
   strength: { min: number; max: number } | null; blockedReasons?: string[] };
 /** A controller patch is reconciled once, before strict parsing/preview. Never mutates either input. */
 export function reconcileH3StudioPlan(plan: H3StudioPlan, patch: Partial<H3StudioPlan>, catalog?: readonly H3StudioReconcileCatalogItem[]): H3StudioPlan {
-  const registered: Record<string, readonly unknown[]> = { checkpoint: ["standard", "singularity", "fasth3", "selflift"], profile: Object.keys(H3_STUDIO_PROFILES),
+  const registered: Record<string, readonly unknown[]> = { checkpoint: ["standard", "singularity", "singularity-v1.3", "fasth3", "selflift"], profile: Object.keys(H3_STUDIO_PROFILES),
     sampler: ["res_multistep", "euler"], scheduler: ["simple"], steps: [8, 20] };
   for (const [key, values] of Object.entries(registered)) if (Object.hasOwn(patch, key) && !values.includes((patch as Record<string, unknown>)[key])) throw new Error(`Unsupported H3 ${key}.`);
   const next = { ...plan, ...object(patch) } as H3StudioPlan;
@@ -128,7 +129,7 @@ export function reconcileH3StudioPlan(plan: H3StudioPlan, patch: Partial<H3Studi
     if (next.profile === "ref2va-8step") next.profile = "native";
   }
   if (workflow.family === "Ref2VA" && next.profile === "fl2va-8step") next.profile = "native";
-  if (next.checkpoint !== "singularity") next.combatEnabled = false;
+  if (!isH3SingularityMode(next.checkpoint)) next.combatEnabled = false;
   if (next.workflowId !== "reference-edit" && next.audio === "original") next.audio = "generated";
   if (next.profile !== plan.profile || patch.profile !== undefined || patch.workflowId !== undefined || patch.checkpoint !== undefined) {
     const registered = H3_STUDIO_PROFILES[next.profile];

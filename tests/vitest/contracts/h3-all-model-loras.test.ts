@@ -15,6 +15,7 @@ const styles = registeredH3Loras.filter(entry => !h3AccelerationLora(entry));
 const profiles = [
   { checkpointMode: "standard", renderMode: "native" }, { checkpointMode: "standard", renderMode: "turbo" },
   { checkpointMode: "singularity", renderMode: "native" }, { checkpointMode: "singularity", renderMode: "turbo" },
+  { checkpointMode: "singularity-v1.3", renderMode: "native" }, { checkpointMode: "singularity-v1.3", renderMode: "turbo" },
   { checkpointMode: "fasth3", renderMode: "turbo" }, { checkpointMode: "selflift", renderMode: "turbo" },
 ] as const;
 const roots: string[] = [];
@@ -28,7 +29,7 @@ describe("shared H3 adapters across model choices and GPUs", () => {
     for (const entry of installed.entries.filter(h3AccelerationLora)) expect(fastH3LoraBlockReason(entry.filename)).toMatch(/acceleration/);
     expect(fastH3LoraBlockReason("../unknown.safetensors")).toMatch(/exact installed/);
   });
-  it.each(["rtx3090", "rtx5060ti"] as const)("compiles every style through all six rendering profiles on %s", backend => {
+  it.each(["rtx3090", "rtx5060ti"] as const)("compiles every style through all eight rendering profiles on %s", backend => {
     for (const entry of styles) for (const h3Settings of profiles) {
       const { graph } = buildH3Workflow({ backend, mode: "h3-reference-to-video", h3Quality: "sh", durationSeconds: 5,
         finalPrompt: "<Picture 1> is <Subject 1>. A dragon flies.", seed: 42, outputPrefix: "fixture/all-model-loras", h3Settings,

@@ -1,8 +1,9 @@
+import { isH3SingularityMode } from "@/lib/production/h3Settings";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { H3_OMNIREF, isH3OmniRefMode } from "@/lib/h3OmniRef";
 import { H3_SELF_LIFT } from "@/lib/h3SelfLift";
-import { H3_SINGULARITY_CHECKPOINT } from "@/lib/production/h3Settings";
+import { h3SingularityCheckpoint } from "@/lib/production/h3Settings";
 import ledger from "@/lib/h3Stage1cLedger.json";
 import provenance from "@/lib/h3Stage1cProvenance.json";
 import installedStage1c from "@/lib/h3Stage1cInstalled.json";
@@ -241,7 +242,7 @@ export function h3StudioCatalog(inventory: H3StudioInventory, evidence = readH3S
 }
 export function studioCheckpoint(plan: H3StudioPlan) {
   if (isH3OmniRefMode(plan.checkpoint)) return H3_OMNIREF.checkpoint;
-  if (plan.checkpoint === "singularity") return H3_SINGULARITY_CHECKPOINT;
+  if (isH3SingularityMode(plan.checkpoint)) return h3SingularityCheckpoint(plan.checkpoint);
   const family = H3_STUDIO_WORKFLOWS.find(w => w.id === plan.workflowId)!.family;
   return family === "Ref2VA" ? "minimax_h3_ref2va_pruned_int8_convrot.safetensors" : "minimax_h3_fl2va_pruned_int8_convrot.safetensors";
 }

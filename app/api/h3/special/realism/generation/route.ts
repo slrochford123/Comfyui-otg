@@ -1,3 +1,4 @@
+import { isH3SingularityMode, type H3CheckpointMode } from "@/lib/production/h3Settings";
 import { validateH3LoraSelections } from "@/lib/h3LoraCatalogServer";
 import { parseH3TargetBackend } from "@/lib/h3GpuRouting";
 import crypto from "node:crypto";
@@ -263,9 +264,9 @@ function readH3RealismGenerationConfig(
   if (!H3_ORIENTATION_OPTIONS.includes(orientation)) throw new Error("Choose Landscape or Portrait orientation.");
   if (!H3_PRODUCTION_DURATION_OPTIONS.includes(durationSeconds)) throw new Error("Choose a 5- or 10-second duration.");
 
-  const checkpointMode: "standard" | "singularity" =
-    config.checkpointMode === "singularity"
-      ? "singularity"
+  const checkpointMode: H3CheckpointMode =
+    isH3SingularityMode(config.checkpointMode)
+      ? config.checkpointMode
       : "standard";
 
   return {
@@ -279,7 +280,7 @@ function readH3RealismGenerationConfig(
     seed: Number.isSafeInteger(Number(config.seed)) && Number(config.seed) >= 0 ? Number(config.seed) : crypto.randomBytes(6).readUIntBE(0, 6),
     checkpointMode,
     combatLoraEnabled:
-      checkpointMode === "singularity"
+      isH3SingularityMode(checkpointMode)
       && config.combatLoraEnabled === true,
     loraSettings: config.loraSettings && typeof config.loraSettings === "object"
       ? config.loraSettings as Record<string, unknown>

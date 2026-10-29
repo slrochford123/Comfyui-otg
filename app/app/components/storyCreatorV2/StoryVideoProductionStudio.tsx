@@ -63,7 +63,7 @@ export function StoryVideoProductionStudio({ projectId, record, mode }: Props) {
   const [selectedReferences, setSelectedReferences] = useState<string[]>([]);
   const [visualStyle, setVisualStyle] = useState<"none" | "realism" | "gurren">("none");
   const [combatMode, setCombatMode] = useState<"off" | "normal" | "high-action" | "finisher">("off");
-  const [singularity, setSingularity] = useState(false);
+  const [singularity, setSingularity] = useState<"standard" | "singularity" | "singularity-v1.3">("standard");
   const [motionRepair, setMotionRepair] = useState(false);
   const [rife, setRife] = useState(false);
   const [preparedTakeId, setPreparedTakeId] = useState("");
@@ -157,7 +157,7 @@ export function StoryVideoProductionStudio({ projectId, record, mode }: Props) {
       },
       h3Settings: {
         renderMode: "turbo",
-        checkpointMode: singularity ? "singularity" : "standard",
+        checkpointMode: singularity,
         combatLoraEnabled: combatMode !== "off",
         refMod: { enabled: false, strength: "balanced" },
         motionLab: { enabled: false },
@@ -293,7 +293,15 @@ export function StoryVideoProductionStudio({ projectId, record, mode }: Props) {
           <label><span className="mb-2 block text-xs font-black uppercase text-white/45">Combat V2</span><select value={combatMode} onChange={(event) => setCombatMode(event.target.value as typeof combatMode)} className="min-h-11 w-full rounded-lg border border-white/12 bg-[#0b0d14] px-3 text-sm text-white"><option value="off">Off</option><option value="normal">Normal</option><option value="high-action">High action</option><option value="finisher">Finisher</option></select></label>
         </div>
         <div className="mt-4 flex flex-wrap gap-4 text-sm text-white/65">
-          <label className="flex items-center gap-2"><input type="checkbox" checked={singularity} onChange={(event) => setSingularity(event.target.checked)} /> Singularity</label>
+          <label className="flex items-center gap-2">Model
+            <select value={singularity} onChange={event => {
+              const value = event.target.value;
+              if (value === "standard" || value === "singularity" || value === "singularity-v1.3") setSingularity(value);
+            }}>
+              <option value="standard">Standard</option>
+              <optgroup label="Singularity"><option value="singularity-v1.3">v1.3</option><option value="singularity">v2</option></optgroup>
+            </select>
+          </label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={motionRepair} onChange={(event) => setMotionRepair(event.target.checked)} /> Motion Repair</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={rife} onChange={(event) => setRife(event.target.checked)} /> 60 FPS</label>
         </div>

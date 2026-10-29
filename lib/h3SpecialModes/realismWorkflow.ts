@@ -1,6 +1,7 @@
+import { isH3SingularityMode } from "@/lib/production/h3Settings";
 import {
   H3_COMBAT_V2_LORA,
-  H3_SINGULARITY_CHECKPOINT,
+  h3SingularityCheckpoint,
   type H3CheckpointMode,
 } from "@/lib/production/h3Settings";
 import type { ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
@@ -73,8 +74,6 @@ const SAMPLER_SELECT_NODE_ID = "255";
 const BASE_MODEL_NODE_ID = "192";
 const LOCAL_REALISM_STANDARD_CHECKPOINT =
   "minimax_h3_ref2va_pruned_int8_convrot.safetensors";
-const LOCAL_REALISM_SINGULARITY_CHECKPOINT =
-  H3_SINGULARITY_CHECKPOINT;
 const ACTIVE_SPEED_LORA_NODE_ID = "53";
 const PEOPLE_LORA_NODE_ID = "337";
 const ATTENTION_PATCH_NODE_ID = "58";
@@ -158,8 +157,8 @@ function setLocalModelAssets(
     BASE_MODEL_NODE_ID,
     "UNETLoader",
   ).inputs!.unet_name =
-    checkpointMode === "singularity"
-      ? LOCAL_REALISM_SINGULARITY_CHECKPOINT
+    isH3SingularityMode(checkpointMode)
+      ? h3SingularityCheckpoint(checkpointMode)
       : LOCAL_REALISM_STANDARD_CHECKPOINT;
 }
 
@@ -328,12 +327,12 @@ export function buildH3RealismWorkflow(
   input: H3RealismWorkflowInput,
 ): H3RealismBuiltWorkflow {
   const checkpointMode: H3CheckpointMode =
-    input.checkpointMode === "singularity"
-      ? "singularity"
+    isH3SingularityMode(input.checkpointMode)
+      ? input.checkpointMode
       : "standard";
 
   const effectiveLoraSettings: H3RealismLoraSettingsInput | undefined =
-    checkpointMode === "singularity"
+    isH3SingularityMode(checkpointMode)
       ? {
           ...(input.loraSettings || {}),
           peopleRealismEnabled: true,
@@ -356,7 +355,7 @@ export function buildH3RealismWorkflow(
 
   applySingularityCombatLora(
     graph,
-    checkpointMode === "singularity"
+    isH3SingularityMode(checkpointMode)
       && input.combatLoraEnabled === true,
   );
 

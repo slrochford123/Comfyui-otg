@@ -1,3 +1,4 @@
+import { isH3SingularityMode } from "@/lib/production/h3Settings";
 import type { H3CheckpointMode } from "@/lib/production/h3Settings";
 import { h3CandidateBackends, parseH3TargetBackend } from "@/lib/h3GpuRouting";
 import type { ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
@@ -180,8 +181,8 @@ function isRunnableH3RealismStatus(status: H3RealismJob["status"]) {
 export function validateH3RealismJobInput(input: H3RealismJobInput) {
   parseH3TargetBackend(input.targetBackend);
   const checkpointMode: H3CheckpointMode =
-    input.checkpointMode === "singularity"
-      ? "singularity"
+    isH3SingularityMode(input.checkpointMode)
+      ? input.checkpointMode
       : "standard";
 
   const normalized = validateH3RealismRequest({
@@ -204,7 +205,7 @@ export function validateH3RealismJobInput(input: H3RealismJobInput) {
     rifeInterpolation60Fps: normalizeH3RifeInterpolation60Fps(input.rifeInterpolation60Fps),
     checkpointMode,
     combatLoraEnabled:
-      checkpointMode === "singularity"
+      isH3SingularityMode(checkpointMode)
       && input.combatLoraEnabled === true,
     references: input.references,
     loraSettings: input.loraSettings,

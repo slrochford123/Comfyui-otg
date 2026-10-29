@@ -1,6 +1,11 @@
 export type H3RenderMode = "turbo" | "native";
 import { H3_OMNIREF, isH3OmniRefMode } from "@/lib/h3OmniRef";
-export type H3CheckpointMode = "standard" | "singularity" | "fasth3" | "selflift";
+// Existing persisted "singularity" continues to mean v2; v1.3 is explicit.
+export type H3CheckpointMode = "standard" | "singularity" | "singularity-v1.3" | "fasth3" | "selflift";
+export type H3SingularityMode = Extract<H3CheckpointMode, "singularity" | "singularity-v1.3">;
+export function isH3SingularityMode(value: unknown): value is H3SingularityMode {
+  return value === "singularity" || value === "singularity-v1.3";
+}
 export type H3RefModStrength = "balanced" | "strong";
 
 export type H3AdvancedSettings = {
@@ -23,7 +28,7 @@ export type H3ResolvedRenderSettings = {
   sampler: "euler" | "res_multistep";
   scheduler: "simple";
   turboLora: boolean;
-  checkpoint: "standard" | typeof H3_SINGULARITY_CHECKPOINT | typeof H3_OMNIREF.checkpoint;
+  checkpoint: "standard" | typeof H3_SINGULARITY_CHECKPOINT | typeof H3_SINGULARITY_V13_CHECKPOINT | typeof H3_OMNIREF.checkpoint;
   singularityLoras: Array<{
     label: string;
     filename: string;
@@ -50,6 +55,15 @@ export const DEFAULT_H3_ADVANCED_SETTINGS: H3AdvancedSettings = {
 export const H3_SINGULARITY_CHECKPOINT =
   "Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors" as const;
 export const H3_SINGULARITY_LABEL = "Singularity v2" as const;
+export const H3_SINGULARITY_V13_CHECKPOINT =
+  "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors" as const;
+export const H3_SINGULARITY_V13_SHA256 = "412a7b126595a958964193f3b42513d7cf2df4196ef04223a0f05e3622949cce" as const;
+export function h3SingularityCheckpoint(mode: H3SingularityMode) {
+  return mode === "singularity-v1.3" ? H3_SINGULARITY_V13_CHECKPOINT : H3_SINGULARITY_CHECKPOINT;
+}
+export function h3SingularityLabel(mode: unknown) {
+  return mode === "singularity-v1.3" ? "Singularity v1.3" : H3_SINGULARITY_LABEL;
+}
 // Publisher-hosted pruned INT8; do not alias v1.3 to this filename.
 export const H3_SINGULARITY_SOURCE = {
   repository: "WarmBloodAban/Minimax-h3_Singularity",
@@ -73,7 +87,7 @@ export function normalizeH3AdvancedSettings(
 ): H3AdvancedSettings {
   const record = cleanObject(value);
   const checkpointMode =
-    isH3OmniRefMode(record.checkpointMode) ? record.checkpointMode : record.checkpointMode === "singularity" ? "singularity" : "standard";
+    isH3OmniRefMode(record.checkpointMode) || isH3SingularityMode(record.checkpointMode) ? record.checkpointMode : "standard";
   const renderMode =
     record.renderMode === "native" ? "native" : "turbo";
   const refMod = cleanObject(record.refMod);
@@ -128,7 +142,7 @@ export function resolveH3RenderSettings(
   const settings = normalizeH3AdvancedSettings(value, referenceCount);
   const fast = isH3OmniRefMode(settings.checkpointMode);
   const native = !fast && settings.renderMode === "native";
-  const singularity = settings.checkpointMode === "singularity";
+  const singularity = isH3SingularityMode(settings.checkpointMode);
 
   return {
     settings,
@@ -136,7 +150,7 @@ export function resolveH3RenderSettings(
     sampler: native ? "res_multistep" : "euler",
     scheduler: "simple",
     turboLora: !native && !fast,
-    checkpoint: fast ? H3_OMNIREF.checkpoint : singularity ? H3_SINGULARITY_CHECKPOINT : "standard",
+    checkpoint: fast ? H3_OMNIREF.checkpoint : isH3SingularityMode(settings.checkpointMode) ? h3SingularityCheckpoint(settings.checkpointMode) : "standard",
     singularityLoras: singularity
       ? [
           ...(settings.combatLoraEnabled

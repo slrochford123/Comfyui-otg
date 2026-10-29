@@ -1,3 +1,4 @@
+import { isH3SingularityMode } from "@/lib/production/h3Settings";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -16,7 +17,6 @@ import {
 } from "@/lib/production/h3Workflows";
 import {
   DEFAULT_H3_ADVANCED_SETTINGS,
-  H3_SINGULARITY_CHECKPOINT,
   resolveH3RenderSettings,
   type H3AdvancedSettings,
 } from "@/lib/production/h3Settings";
@@ -195,8 +195,7 @@ export async function inspectH3BackendCompatibility(
   const selectedAdvancedTurboLora =
     resolvedH3Settings.settings.renderMode
       === "turbo"
-    && resolvedH3Settings.settings.checkpointMode
-      === "singularity"
+    && isH3SingularityMode(resolvedH3Settings.settings.checkpointMode)
     && requirements.mode
       ? h3TurboLoraForMode(
           requirements.mode,

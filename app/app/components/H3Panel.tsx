@@ -1,4 +1,5 @@
 "use client";
+import { isH3SingularityMode } from "@/lib/production/h3Settings";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -22,6 +23,7 @@ import {
 } from "@/lib/h3StylePresets";
 import { H3StylePresetPicker } from "./H3StylePresetPicker";
 import H3AdvancedControls from "./H3AdvancedControls";
+import H3SingularitySelector from "./H3SingularitySelector";
 import H3SpeedIndicator from "./H3SpeedIndicator";
 import H3VideoEditPanel from "./H3VideoEditPanel";
 import H3StudioControls, { type H3StudioController } from "./H3StudioControls";
@@ -30,7 +32,7 @@ import SpeechInputButton from "./SpeechInputButton";
 import VideoSnapshotPicker from "./VideoSnapshotPicker";
 import {
   DEFAULT_H3_ADVANCED_SETTINGS,
-  H3_SINGULARITY_LABEL,
+  h3SingularityLabel,
   normalizeH3AdvancedSettings,
   type H3AdvancedSettings,
 } from "@/lib/production/h3Settings";
@@ -2853,7 +2855,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       creative: h3CreativeDirection,
       checkpointMode: h3Settings.checkpointMode,
       combatLoraEnabled:
-        h3Settings.checkpointMode === "singularity"
+        isH3SingularityMode(h3Settings.checkpointMode)
         && h3Settings.combatLoraEnabled,
       optionalLoras: selectedLoras,
       loraSettings: {
@@ -3769,7 +3771,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     }
 
     const singularity =
-      h3Settings.checkpointMode === "singularity";
+      isH3SingularityMode(h3Settings.checkpointMode);
 
     return (
       <section
@@ -3794,25 +3796,24 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
             Standard
           </button>
 
-          <button
+          <H3SingularitySelector
+            value={h3Settings.checkpointMode}
             className={`${command} ${singularity ? primary : ""}`}
             disabled={active}
-            onClick={() => {
+            onChange={(checkpointMode) => {
               setH3Settings({
                 ...h3Settings,
-                checkpointMode: "singularity",
+                checkpointMode,
               });
               setRealismPeopleEnabled(true);
             }}
-          >
-            {H3_SINGULARITY_LABEL}
-          </button>
+          />
         </div>
 
         <div className="mt-3 rounded-[6px] border border-white/10 bg-black/30 p-3">
           <p className="text-sm font-black">
             {singularity
-              ? `MiniMax H3 ${H3_SINGULARITY_LABEL}`
+              ? `MiniMax H3 ${h3SingularityLabel(h3Settings.checkpointMode)}`
               : "MiniMax H3 Standard R2V"}
           </p>
 
@@ -3869,8 +3870,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               : "MiniMax H3 Turbo · 8-step"}
           </p>
           <p className="text-xs text-white/60">
-            {fastH3Selected ? `${h3Settings.checkpointMode === "selflift" ? "6 half-resolution + 2 full-resolution steps · learned latent lift" : "Dedicated configuration C"} · VSA attention · no legacy acceleration LoRA` : h3Settings.checkpointMode === "singularity"
-              ? `${H3_SINGULARITY_LABEL} · Realism On · Combat ${h3Settings.combatLoraEnabled ? "On" : "Off"}`
+            {fastH3Selected ? `${h3Settings.checkpointMode === "selflift" ? "6 half-resolution + 2 full-resolution steps · learned latent lift" : "Dedicated configuration C"} · VSA attention · no legacy acceleration LoRA` : isH3SingularityMode(h3Settings.checkpointMode)
+              ? `${h3SingularityLabel(h3Settings.checkpointMode)} · Realism On · Combat ${h3Settings.combatLoraEnabled ? "On" : "Off"}`
               : "Standard model"}{" "}
             {!fastH3Selected ? " · SLA attention" : null}
           </p>

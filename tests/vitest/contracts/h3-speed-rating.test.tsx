@@ -64,7 +64,7 @@ describe("owner-defined H3 speed ratings", () => {
     rating("medium");
     fireEvent.click(screen.getByRole("button", { name: "Turbo", exact: true })); rating("fast");
     fireEvent.click(screen.getByRole("button", { name: "1 MP", exact: true })); rating("medium");
-    fireEvent.click(screen.getByRole("button", { name: "Singularity v2", exact: true })); rating("medium");
+    fireEvent.change(screen.getByRole("combobox", { name: "Singularity version" }), { target: { value: "singularity" } }); rating("medium");
     fireEvent.click(screen.getByRole("button", { name: "Native", exact: true })); rating("slow");
     fireEvent.click(screen.getByRole("button", { name: "SelfLift", exact: true })); rating("fast");
     fireEvent.click(screen.getByRole("button", { name: "FastH3", exact: true })); rating("slow");

@@ -1,3 +1,4 @@
+import { isH3SingularityMode } from "@/lib/production/h3Settings";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -8,7 +9,7 @@ import { DEFAULT_H3_ADVANCED_SETTINGS, normalizeH3AdvancedSettings } from "@/lib
 import type { H3DirectJobInput, H3DirectReference } from "@/lib/h3DirectJobs";
 
 // Bump whenever compiler behavior or normalization changes.
-export const H3_STUDIO_COMPILER_VERSION = "h3-studio-compiler-v2.6-singularity2";
+export const H3_STUDIO_COMPILER_VERSION = "h3-studio-compiler-v2.7-singularity-versions";
 export type H3StudioDependency = { filename: string; sha256: string; bytes: number };
 export function stableH3StudioJson(value: unknown): string {
   if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
@@ -75,7 +76,7 @@ export function h3StudioQualificationFingerprint(input: { plan: H3StudioPlan; gr
   const { prompt: _prompt, originalPrompt: _originalPrompt, seed: _seed, ...configuration } = input.plan;
   return h3StudioDigest({ schemaVersion: 2, compilerVersion: input.compilerVersion || H3_STUDIO_COMPILER_VERSION,
     family: H3_STUDIO_WORKFLOWS.find(w => w.id === input.plan.workflowId)?.family || "invalid",
-    automaticRealism: input.plan.checkpoint === "singularity", configuration,
+    automaticRealism: isH3SingularityMode(input.plan.checkpoint), configuration,
     templateSha256: input.templateSha256, graph: normalizeH3StudioQualificationGraph(input.graph),
     dependencies: [...input.dependencies].sort((a, b) => a.filename.localeCompare(b.filename)) });
 }

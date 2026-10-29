@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
     // Enumerate only actually qualified, recorded configurations, never a speculative
     // Cartesian product of checkpoint/LoRA/profile choices.
     const candidates: unknown[] = [plan, ...listH3StudioQualifiedPlans(evidence)];
-    if (experimental || h3StudioProduction()) for (const workflow of H3_STUDIO_WORKFLOWS) for (const checkpoint of ["standard", "singularity", "fasth3", "selflift"] as const) for (const profile of ["native", "ref2va-8step", "fl2va-8step"] as const) {
+    if (experimental || h3StudioProduction()) for (const workflow of H3_STUDIO_WORKFLOWS) for (const checkpoint of ["standard", "singularity", "singularity-v1.3", "fasth3", "selflift"] as const) for (const profile of ["native", "ref2va-8step", "fl2va-8step"] as const) {
       try { candidates.push(reconcileH3StudioPlan(plan, { workflowId: workflow.id, checkpoint, profile, loras: [] })); } catch { /* Strict registered combinations only. */ }
     }
     const available: H3PlannerCapability[] = [];

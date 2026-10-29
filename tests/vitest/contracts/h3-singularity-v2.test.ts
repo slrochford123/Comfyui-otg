@@ -52,7 +52,7 @@ describe("publisher Singularity v2 migration", () => {
     expect(fs.readFileSync("comfy_workflows/internal/h3-special/realism.api.json", "utf8")).not.toContain("v1.3");
     for (const file of ["H3Panel", "H3AdvancedControls", "H3StudioControls"]) {
       const source = fs.readFileSync(`app/app/components/${file}.tsx`, "utf8");
-      expect(source).toContain("H3_SINGULARITY_LABEL");
+      expect(source).toContain(file === "H3AdvancedControls" ? "H3SingularitySelector" : "h3SingularityLabel");
       expect(source).not.toContain("Singularity v1.3");
     }
   });

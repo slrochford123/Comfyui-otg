@@ -1,3 +1,4 @@
+import { isH3SingularityMode } from "@/lib/production/h3Settings";
 import fs from "node:fs";
 import path from "node:path";
 import { applyH3OmniRef, H3_OMNIREF, h3OmniRefEncoder, isH3OmniRefMode } from "@/lib/h3OmniRef";
@@ -7,7 +8,6 @@ import { applyH3LoraTriggers } from "@/lib/h3LoraGuidance";
 import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import {
   DEFAULT_H3_ADVANCED_SETTINGS,
-  H3_SINGULARITY_CHECKPOINT,
   normalizeH3AdvancedSettings,
   resolveH3RenderSettings,
   type H3AdvancedSettings,
@@ -824,7 +824,7 @@ function applyH3ResolvedRenderSettings(
   const settings = resolved.settings;
   const native = settings.renderMode === "native";
   const singularity =
-    settings.checkpointMode === "singularity";
+    isH3SingularityMode(settings.checkpointMode);
 
   graph["24"].inputs.steps = resolved.steps;
   graph["24"].inputs.scheduler = "simple";
@@ -844,7 +844,7 @@ function applyH3ResolvedRenderSettings(
 
   if (singularity) {
     graph["30"].inputs.unet_name =
-      H3_SINGULARITY_CHECKPOINT;
+      resolved.checkpoint;
   } else if (native) {
     graph["30"].inputs.unet_name =
       h3NativeCheckpointForBackend(
