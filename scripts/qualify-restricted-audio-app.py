@@ -23,7 +23,9 @@ def main():
     if socket.gethostname() != "slr" or os.geteuid() == 0:
         raise RuntimeError("Use the unprivileged SLR operator")
     os.umask(0o077)
-    app, node, engine = (Path(p).resolve(strict=True) for p in sys.argv[1:])
+    app, node, engine = (Path(p).resolve(strict=True) for p in sys.argv[1:4])
+    production_mode="--production" in sys.argv
+    admission=next((arg.split("=",1)[1] for arg in sys.argv[4:] if arg.startswith("--admission=")),None)
     root = app.parent
     data = root / "http-data"
     data.mkdir(mode=0o700)  # New evidence only, never reuse accounts/job caches.
@@ -61,6 +63,9 @@ def main():
            "OTG_SHAWN_PROCESS_PROBE_TARGET": "otg-shawn",
            "OTG_SHAWN_PROCESS_PROBE_IDENTITY_FILE": "/home/slrochford123/.ssh/id_ed25519_otg_cluster_slr_to_shawn",
            "OTG_SHAWN_PROCESS_PROBE_SSH_CONFIG": "/home/slrochford123/.ssh/config"}
+    if production_mode:env.update(OTG_ENV="prod",OTG_PRIVATE_RESEARCH_MEDIA="1")
+    if admission:env["OTG_MEDIA_ADMISSION_CONFIG"]=admission
+    report["environment"]=env["OTG_ENV"]
     cookie = ""
 
     def api(route, body=None, gpu="auto", raw=None, content_type=None):
@@ -119,6 +124,10 @@ def main():
                 caps = json.load(response)
             assert caps["capabilities"]["pythonReady"] and caps["capabilities"]["enabled"]
             check("Explicit SLR audio runtime survived standalone TEST bootstrap")
+            if admission:
+                with api("/api/media-gpu") as response:gpu_state=json.load(response)
+                assert gpu_state['enabled'] and gpu_state['sharedAdmission']['authorityId']==json.loads(Path(admission).read_text())['authorityId']
+                check("Shared physical admission enabled in real deployment environment")
             with api("/api/edit-video/audio", {"action": "new"}) as response:
                 session = json.load(response)["session"]["id"]
             video = root / "original-synthetic-test.mp4"
@@ -147,7 +156,17 @@ def main():
                 assert len(contents) > 48000 and asset["channels"] == 2 and abs(asset["duration"] - 2) < .002
                 report["inference"].append({"gpu": gpu, "jobId": job["id"], "seconds": time.monotonic() - started,
                     "bytes": len(contents), "sha256": hashlib.sha256(contents).hexdigest(), "duration": asset["duration"], "channels": asset["channels"]})
+                report['inference'][-1]['transport']='restricted-ssh' if config.get('transports',{}).get(gpu,{}).get('protocol')=='slr-audio-v1' else 'native'
                 check("Real queued " + gpu + " restoration, session reconciliation and authenticated download")
+            if admission:
+                import sqlite3
+                ledger=Path(json.loads(Path(admission).read_text())['script']).parent/'admission.sqlite'
+                for _ in range(20):
+                    with sqlite3.connect(ledger.resolve().as_uri()+'?mode=ro',uri=True) as db:remaining=db.execute('SELECT count(*) FROM grants').fetchone()[0]
+                    if remaining==0:break
+                    time.sleep(.5)
+                else:raise RuntimeError("Admission release was not confirmed; authority left intact")
+                check("Both terminal GPU reservations released before private QA shutdown")
             report["passed"] = True
     finally:
         if server is not None and server.poll() is None:

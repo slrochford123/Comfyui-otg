@@ -29,6 +29,24 @@ beforeEach(()=>{
 });
 afterEach(()=>{closeMediaGpuQueueForTests();setResourceLockStorePathForTests(null);vi.unstubAllGlobals();vi.unstubAllEnvs();fs.rmSync(directory,{recursive:true,force:true});});
 describe("shared physical media routing",()=>{
+  it("serializes independent TEST and PROD queue databases through the installed shared authority",async()=>{
+    const authority=path.join(directory,"authority");fs.mkdirSync(authority);
+    fs.copyFileSync("scripts/media-gpu-admission.py",path.join(authority,"media-gpu-admission.py"));
+    const cfg=path.join(directory,"admission.json");fs.writeFileSync(cfg,JSON.stringify({mode:"local",script:path.join(authority,"media-gpu-admission.py")}));
+    vi.stubEnv("OTG_MEDIA_ADMISSION_CONFIG",cfg);
+    const queueA=path.join(directory,"a.sqlite"),queueB=path.join(directory,"b.sqlite");
+    const select=(name:"a"|"b")=>{closeMediaGpuQueueForTests();vi.stubEnv("OTG_MEDIA_GPU_QUEUE_DB",name==="a"?queueA:queueB);setResourceLockStorePathForTests(path.join(directory,name+"-locks.sqlite"));};
+    select("a");const first=await(await enqueueComfyMedia(payload())).json();await tickMediaGpuQueue();
+    for(let i=0;i<30&&mocks.submit.mock.calls.length<1;i++)await flush();
+    expect(mocks.submit).toHaveBeenCalledTimes(1);
+    select("b");const second=await(await enqueueComfyMedia(payload())).json();await tickMediaGpuQueue();
+    expect(getMediaQueueJob(second.prompt_id)?.status).toBe("queued");expect(mocks.submit).toHaveBeenCalledTimes(1);
+    select("a");histories.set(first.prompt_id,{status:{completed:true,status_str:"success"}});
+    await tickMediaGpuQueue();await tickMediaGpuQueue();
+    select("b");await tickMediaGpuQueue();for(let i=0;i<30&&mocks.submit.mock.calls.length<2;i++)await flush();
+    expect(mocks.submit).toHaveBeenCalledTimes(2);
+    expect(getMediaQueueJob(second.prompt_id)?.admissionToken).toBeGreaterThan(1);
+  });
   it("retains an unconfirmed remote audio reservation rather than dispatching another job",async()=>{
     mocks.audioExecute.mockRejectedValue(Error("Remote SSH disconnected"));mocks.audioState.mockReturnValue("unknown");
     const job=enqueueMediaJob({gpu:"rtx3090",kind:"audio",payload:{owner:"qa",sessionId:"session",jobId:"job"}});

@@ -10,17 +10,22 @@ import type { WorkerResourceLockId } from "@/lib/workers/workerCatalog";
 import { voiceGpuFileBusy } from "@/lib/workers/voiceGpuFileLease";
 import { mediaQueueEnabled, enqueueMediaJob, getMediaQueueJob, cancelQueuedMediaJob, preferMediaGpu, type AudioMediaPayload } from "@/lib/workers/mediaGpuQueue";
 import { mediaGpuCandidates, type MediaGpu } from "@/lib/mediaGpuRouting";
-import { audioTransportReady, audioWorkerScript } from "./transport";
+import { audioTransportReady, audioWorkerScript, audioControllerPython } from "./transport";
+import { privateMediaFeatureEnabled } from "@/lib/privateMediaRuntime";
 
 export type AudioOperation = "import" | "separate" | "mix" | "enhance" | "speech" | "extract" | "music" | "effects";
 type Manifest = { id: string; sessionId: string; operation: AudioOperation; gpu: AudioGpu; source?: string;
   session: AudioSession; params: Record<string, unknown>; createdAt: string; pid?: number };
 export type AudioJobStatus = { id: string; status: "queued" | "running" | "completed" | "failed" | "canceled";
   stage: string; progress: number; elapsedSeconds?: number; assets?: AudioAsset[]; };
-export const engineConfigPath = () => process.env.OTG_AUDIO_ENGINE_CONFIG || "/home/shawn-rochford/AI/runtime/test/unified-audio/engines.json";
+export const engineConfigPath = () => {
+  if(process.env.OTG_ENV!=="test" && !path.isAbsolute(process.env.OTG_AUDIO_ENGINE_CONFIG||""))
+    throw Error("The deployment's isolated audio runtime is not configured.");
+  return process.env.OTG_AUDIO_ENGINE_CONFIG || "/home/shawn-rochford/AI/runtime/test/unified-audio/engines.json";
+};
 export function engineConfig() { return JSON.parse(fs.readFileSync(engineConfigPath(), "utf8")); }
 export function assertAudioTestEnabled() {
-  if (process.env.OTG_ENV !== "test" || process.env.OTG_AUDIO_EDITING_ENABLED !== "1") throw Error("Unified Audio Editing is available only in the configured TEST environment.");
+  if (!privateMediaFeatureEnabled("OTG_AUDIO_EDITING_ENABLED")) throw Error("Unified Audio Editing is not enabled on this deployment.");
 }
 export function capabilities() {
   try {
@@ -59,7 +64,7 @@ export function reconcileJob(owner: string, sessionId: string, id: string) {
     } else state.stage="Canceling the isolated operation; original media retained.";
   }
   const queue = getMediaQueueJob(id);
-  const awaitingDispatch = queue && ["queued","dispatching"].includes(queue.status) && !manifest.pid;
+  const awaitingDispatch = queue && ["queued","dispatching","unknown"].includes(queue.status) && !manifest.pid;
   if (queue?.status === "failed" && state.status !== "completed") {
     state = {...state,status:"failed",stage:queue.error || "The queued audio operation failed."}; atomicJson(statusFile,state);
   }
@@ -131,6 +136,7 @@ async function startReservedJob(owner: string, sessionId: string, operation: Aud
   if (existing) throw Error("This session already has an active operation. Wait or cancel it first.");
   const cfg = engineConfig();
   const ai = ["separate","speech","music","effects"].includes(operation) || operation === "enhance" && params.engine === "mossformer";
+  if(ai&&gpu==="cpu"&&process.getuid?.()===0)throw Error("Select Automatic or a qualified GPU for AI audio processing on this deployment.");
   const capability = operation === "speech" && params.variant === "base" ? "speech-base"
     : operation === "enhance" && params.engine === "mossformer" ? "enhance-mossformer"
     : operation === "separate" && params.engine === "bandit" ? "separate-bandit" : operation;
@@ -168,10 +174,10 @@ async function startReservedJob(owner: string, sessionId: string, operation: Aud
     const temp=path.join(root,"temp");fs.mkdirSync(temp,{recursive:true,mode:0o700});
     const workerEnv:NodeJS.ProcessEnv={NODE_ENV:process.env.NODE_ENV||"production",PATH:process.env.PATH,HOME:process.env.HOME,LANG:process.env.LANG||"C.UTF-8",
       ...(process.env.SSH_AUTH_SOCK?{SSH_AUTH_SOCK:process.env.SSH_AUTH_SOCK}:{}),
-      OTG_AUDIO_ENGINE_CONFIG:engineConfigPath(),OMP_NUM_THREADS:"4",MKL_NUM_THREADS:"4",TMPDIR:temp,
+      OTG_AUDIO_ENGINE_CONFIG:engineConfigPath(),OMP_NUM_THREADS:"4",MKL_NUM_THREADS:"4",TMPDIR:temp,PYTHONNOUSERSITE:"1",PYTHONDONTWRITEBYTECODE:"1",
       HF_HUB_OFFLINE:"1",TRANSFORMERS_OFFLINE:"1",HF_HOME:path.join(cache,"huggingface"),
       TORCH_HOME:path.join(cache,"torch"),TRITON_CACHE_DIR:path.join(cache,"triton"),XDG_CACHE_HOME:path.join(cache,"xdg")};
-    const child = spawn(cfg.python,[script,file],{detached:true,stdio:["ignore",log,log],
+    const child = spawn(audioControllerPython(cfg),[script,file],{detached:true,stdio:["ignore",log,log],
       env:workerEnv});
     fs.closeSync(log);
     manifest.pid = child.pid;
@@ -222,11 +228,11 @@ export async function executeQueuedAudioJob(payload: AudioMediaPayload, gpu: Med
   fs.mkdirSync(temp,{recursive:true,mode:0o700});
   const env:NodeJS.ProcessEnv={NODE_ENV:process.env.NODE_ENV||"production",PATH:process.env.PATH,HOME:process.env.HOME,LANG:process.env.LANG||"C.UTF-8",
     ...(process.env.SSH_AUTH_SOCK?{SSH_AUTH_SOCK:process.env.SSH_AUTH_SOCK}:{}),OTG_AUDIO_ENGINE_CONFIG:engineConfigPath(),
-    OMP_NUM_THREADS:"4",MKL_NUM_THREADS:"4",TMPDIR:temp,HF_HUB_OFFLINE:"1",TRANSFORMERS_OFFLINE:"1",
+    OMP_NUM_THREADS:"4",MKL_NUM_THREADS:"4",TMPDIR:temp,PYTHONNOUSERSITE:"1",PYTHONDONTWRITEBYTECODE:"1",HF_HUB_OFFLINE:"1",TRANSFORMERS_OFFLINE:"1",
     HF_HOME:path.join(cache,"huggingface"),TORCH_HOME:path.join(cache,"torch"),TRITON_CACHE_DIR:path.join(cache,"triton"),XDG_CACHE_HOME:path.join(cache,"xdg")};
   try {
     await new Promise<void>((resolve,reject)=>{
-      const child=spawn(cfg.python,[script,file],{detached:true,stdio:["ignore",log,log],env});
+      const child=spawn(audioControllerPython(cfg),[script,file],{detached:true,stdio:["ignore",log,log],env});
       manifest.pid=child.pid;atomicJson(file,manifest);
       child.once("error",()=>reject(Error("The isolated audio worker could not start.")));
       child.once("exit",()=>{

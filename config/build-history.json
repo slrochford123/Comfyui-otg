@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.11",
+  "current": "2.12",
   "builds": [
     {
       "version": "2",
@@ -73,6 +73,12 @@
       "date": "2026-10-29",
       "summary": "Restricted research audio-worker SSH channel, host-aware GPU audio routing, verified transfer receipts and reservation retention for uncertain remote execution. TEST candidate; production enablement remains pending qualification.",
       "sourceBaseCommit": "af79f1ac6c3ee519f751612e39fdf6ba0f5ae8a1"
+    },
+    {
+      "version": "2.12",
+      "date": "2026-10-29",
+      "summary": "Explicit personal-research production media enablement; persistent shared TEST/PROD physical-GPU admission and fenced release/recovery, retaining authentication, model mappings and existing production data.",
+      "sourceBaseCommit": "12ae58d53552f69ba2da39e1830556817cd7c19c"
     }
   ]
 }

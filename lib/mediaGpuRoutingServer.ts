@@ -1,8 +1,9 @@
 import { cookies } from "next/headers";
 import { MEDIA_GPU_COOKIE, parseMediaGpuChoice, type MediaGpuChoice } from "./mediaGpuRouting";
+import { privateMediaFeatureEnabled } from "./privateMediaRuntime";
 
 export function mediaGpuRoutingEnabled() {
-  return process.env.OTG_ENV === "test" && process.env.OTG_MEDIA_GPU_ROUTING === "1";
+  return privateMediaFeatureEnabled("OTG_MEDIA_GPU_ROUTING");
 }
 /** Only media submission handlers call this; chat/story routes are unchanged. */
 export async function requestedMediaGpu(legacy?: unknown): Promise<MediaGpuChoice> {

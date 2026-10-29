@@ -8,14 +8,23 @@ export type AudioRuntimeConfig = {
   transports?: Partial<Record<Exclude<AudioGpu,"cpu">,{protocol?:string;qualified?:boolean}>>;
 };
 export function audioTransportReady(config:AudioRuntimeConfig,gpu:AudioGpu) {
-  if(gpu==="cpu"||gpu===(config.localGpu||"rtx3090"))return true;
+  if(gpu==="cpu")return true;
   if(config.transports?.[gpu]?.protocol==="slr-audio-v1")return config.transports[gpu]?.qualified===true;
+  if(gpu===(config.localGpu||"rtx3090"))return true;
   return !config.localGpu && gpu==="rtx5060ti" && config.remote?.qualified===true;
 }
 export function audioWorkerScript(config:AudioRuntimeConfig,gpu:AudioGpu,cwd=process.cwd()) {
   if(!audioTransportReady(config,gpu))throw Error("The selected GPU audio connection is not qualified; existing workloads remain untouched.");
+  if(gpu!=="cpu"&&config.transports?.[gpu]?.protocol==="slr-audio-v1")return path.join(cwd,"scripts/audio-editing-restricted-remote.py");
+  if(gpu!=="cpu"&&process.getuid?.()===0&&process.env.OTG_ENV==="prod")throw Error("An unprivileged GPU audio worker is required on this deployment.");
   if(gpu==="cpu"||gpu===(config.localGpu||"rtx3090"))
     return process.env.OTG_AUDIO_WORKER_SCRIPT||path.join(cwd,"scripts/audio-editing-worker.py");
   return path.join(cwd,"scripts",config.transports?.[gpu]?.protocol==="slr-audio-v1"
     ?"audio-editing-restricted-remote.py":"audio-editing-remote.py");
+}
+export function audioControllerPython(config:{python:string}) {
+  // PROD's existing root web service must never execute an operator-writable
+  // Python interpreter. Its controllers/CPU processing use only stdlib+FFmpeg;
+  // AI inference is delegated through restricted SSH to unprivileged workers.
+  return process.getuid?.()===0?"/usr/bin/python3":config.python;
 }

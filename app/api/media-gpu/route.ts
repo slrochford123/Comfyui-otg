@@ -5,6 +5,7 @@ import { mediaQueueEnabled, queuedMediaJobs, probeMediaGpu, getMediaQueueJob, ty
 import { readPromptRequestMeta } from "@/lib/promptRequestMeta";
 import { cancelComfyPrompt } from "@/lib/comfySafeCancel";
 import { cancelJob } from "@/lib/audioEditing/jobs";
+import {sharedMediaAdmissionConfigured,sharedMediaAdmissionIdentity} from "@/lib/workers/mediaGpuAdmission";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
 const json=(data:unknown,status=200)=>NextResponse.json(data,{status,headers:{"Cache-Control":"private, no-store"}});
@@ -18,13 +19,13 @@ export async function GET(request:NextRequest) {
     const jobs=queuedMediaJobs();
     const devices=await Promise.all(MEDIA_GPUS.map(async gpu=>({gpu,label:mediaGpuLabel(gpu),...await probeMediaGpu(gpu),
       queued:jobs.filter(job=>job.gpu===gpu&&job.status==="queued").length})));
-    return json({enabled:true,devices,jobs:jobs.filter(job=>owns(user.ownerKey,job)).map(job=>({id:job.id,gpu:job.gpu,kind:job.kind,status:job.status,error:job.error}))});
+    return json({enabled:true,sharedAdmission:{configured:sharedMediaAdmissionConfigured(),authorityId:sharedMediaAdmissionIdentity()},devices,jobs:jobs.filter(job=>owns(user.ownerKey,job)).map(job=>({id:job.id,gpu:job.gpu,kind:job.kind,status:job.status,error:job.error}))});
   }catch{return json({enabled:false,error:"Sign in to view your GPU queue."},401);}
 }
 export async function POST(request:NextRequest) {
   try {
     const user=await requireSessionUser(request);
-    if(!mediaQueueEnabled())return json({error:"Media routing is not enabled on this TEST release."},404);
+    if(!mediaQueueEnabled())return json({error:"Media routing is not enabled on this deployment."},404);
     const body=await request.json();
     if(body.action!=="cancel"||typeof body.id!=="string")return json({error:"Choose a queued media job to cancel."},400);
     const job=getMediaQueueJob(body.id);
