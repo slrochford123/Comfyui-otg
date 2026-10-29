@@ -7,6 +7,7 @@ import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
 import AdminGpuControls from "./components/AdminGpuControls";
+import MediaGpuControl from "./components/MediaGpuControl";
 import { uiStatusTone } from "@/lib/uiStatusTone";
 import MediaPreviewPanel from "./components/MediaPreviewPanel";
 import SpeechInputButton from "./components/SpeechInputButton";
@@ -6301,6 +6302,7 @@ async function handleAskAi() {
             </div>
           </div>
         </header>
+        {["generate","h3","editvideo","voice","characters","backgrounds","assets"].includes(tab) ? <div className="mx-auto max-w-7xl px-4 py-2"><MediaGpuControl /></div> : null}
 
 
       <div className={cn(

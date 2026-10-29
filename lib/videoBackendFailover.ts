@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { mediaQueueEnabled, preferMediaGpu } from "@/lib/workers/mediaGpuQueue";
+import { mediaGpuCandidates, parseMediaGpuChoice, type MediaGpu } from "@/lib/mediaGpuRouting";
 import { compatibilityError, loadComfyCapabilityRegistry, resolveWorkflowCapability } from "@/lib/comfyCapabilities";
 import { normalizeVideoLoraFilename } from "@/lib/videoLoras";
 import {
@@ -380,6 +382,25 @@ export async function selectVideoBackend(
   }
 
   const primarySupport = workflowCapability.backendSupport[backends.primary.id];
+  if (mediaQueueEnabled() && descriptor.mediaGpuRouting === true) {
+    const choice=parseMediaGpuChoice(descriptor.gpuTarget);
+    const compatible=mediaGpuCandidates(choice,[backends.primary,backends.fallback].filter(backend=>
+      !missingSelectedLoras(backend.id,loraOptions).length && (backend.id === "rtx3090"
+        ? primaryVideoSupportAllowsAttempt(primarySupport,capabilityRegistry.policy.requireVerifiedWorkflow)
+        : compatibility.mode !== "3090_only" && workflowCapability.backendSupport[backend.id]?.state === "verified"))
+      .map(backend=>backend.id));
+    const healthy:MediaGpu[]=[];
+    for (const id of compatible) if ((await probeVideoBackend((id==="rtx3090"?backends.primary:backends.fallback).baseUrl)).ok) healthy.push(id);
+    const selected=await preferMediaGpu(healthy);
+    if (!selected) return {ok:false as const,status:503,error:choice==="auto"?"No compatible video GPU is available.":`The selected ${choice} cannot run this video workflow; no automatic GPU substitution was made.`,compatibility,workflowCapability,manifestVersion:capabilityRegistry.manifestVersion};
+    const backend=selected==="rtx3090"?backends.primary:backends.fallback;
+    const prepared=graph?clonePromptGraph(graph):graph;
+    const reductionsApplied=prepared && selected==="rtx5060ti" && compatibility.mode==="reduced"?applyFallbackReductions(prepared,compatibility.reductions):[];
+    const validation=prepared && selected==="rtx5060ti"?await validateFallbackWorkflow(prepared,compatibility,backend.baseUrl):null;
+    if(validation&&!validation.ok)return {ok:false as const,status:503,error:validation.error||"Selected GPU workflow validation failed.",compatibility,validation,workflowCapability,manifestVersion:capabilityRegistry.manifestVersion};
+    return {ok:true as const,backend,fallbackActive:selected==="rtx5060ti",fallbackReason:null,compatibility,graph:prepared,reductionsApplied,
+      primaryProbe:{ok:healthy.includes("rtx3090"),status:null,latencyMs:0,gpuName:null,error:null},fallbackProbe:null,validation,workflowCapability,manifestVersion:capabilityRegistry.manifestVersion};
+  }
   const primaryOccupancy = process.env.NODE_ENV === "test"
     ? { available: true, external: false, reason: "available" as const }
     : await detectShawnExternalOccupancy();

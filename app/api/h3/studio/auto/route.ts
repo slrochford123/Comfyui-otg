@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { routeH3MediaPlan } from "@/lib/h3MediaGpuRouting";
 import { h3StudioDigest } from "@/lib/h3StudioIdentity";
 import { videoTrimSession } from "@/lib/h3VideoTrimSession";
 import { inspectH3StudioInventory, readH3StudioEvidence } from "@/lib/h3StudioRegistry";
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
     const workflow = media.items.some(i => i.asset.kind === "video") ? "reference-edit"
       : media.items.some(i => i.asset.role === "first") ? "native-i2v" : media.items.length ? "native-r2v" : "native-t2v";
     // Browser/manual/AI settings cannot disable Auto's SLA + family-matched Turbo 8.
-    const plan = automaticH3Plan(draft, workflow);
+    const plan = await routeH3MediaPlan(automaticH3Plan(draft, workflow),media,scope.owner);
     validateStudioMediaPlan(plan, media);
     const built = compileH3StudioPlan(plan, studioBoundCompilerInput(plan, media), await inspectH3StudioInventory(undefined, plan.backend), readH3StudioEvidence(plan.backend), { ownerKey: scope.owner });
     if (!built.manifest.executable) return NextResponse.json({ error: "These inputs are not ready to generate. Check the required media, installed models and worker status.", reasons: built.manifest.blockedReasons }, { status: 400, headers });

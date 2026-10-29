@@ -1,3 +1,4 @@
+import {mediaQueueMessage} from "@/lib/workers/mediaGpuQueue";
 import crypto from "node:crypto";
 import { applyH3VideoEditGraph, prepareH3VideoEditSource, finalizeH3VideoEdit, h3VideoEditFrameCount } from "@/lib/h3VideoEdit";
 import fs from "node:fs";
@@ -198,6 +199,12 @@ export async function reconcileH3StudioSubmission(ownerKey: string, id: string) 
   if (state().running.has(id)) return current; // The original POST may still be resolving.
   try {
     const base = H3_BACKEND_PROFILES[current.backend].baseUrl;
+    const {queuedMediaJobs}=await import("@/lib/workers/mediaGpuQueue");
+    const queued=queuedMediaJobs().filter(job=>job.kind==="comfy" &&
+      (job.payload as {baseUrl:string;body:{client_id?:string}}).baseUrl===base &&
+      (job.payload as {body:{client_id?:string}}).body.client_id===current.clientId);
+    if(queued.length===1)return await updateJob(ownerKey,id,{promptId:queued[0].id,studioSubmissionState:"accepted",
+      status:current.cancelRequestedAt?"canceling":"submitted",statusMessage:"Recovered the original queued GPU request",error:null});
     const [queueResponse, historyResponse] = await Promise.all(["/queue", "/history?max_items=200"].map(p => fetch(base + p, { cache: "no-store", signal: AbortSignal.timeout(10_000) })));
     if (!queueResponse.ok || !historyResponse.ok) return current;
     const queue = await queueResponse.json(), history = await historyResponse.json();
@@ -518,6 +525,8 @@ async function execute(job: H3DirectJob) {
       ),
 
     );
+    const {mediaQueueEnabled,probeMediaGpu}=await import("@/lib/workers/mediaGpuQueue");
+    if(mediaQueueEnabled())await Promise.all(probes.map(async probe=>{if(probe.compatible)probe.idle=(await probeMediaGpu(probe.backend)).ready;}));
     backend = chooseProductionV2H3Backend(probes);
     if (backend && requestedBackend && backend !== requestedBackend) throw new Error("The selected H3 worker changed; no GPU fallback is permitted.");
     if (!backend) {
@@ -809,7 +818,7 @@ export function h3DirectPublicStatus(job: H3DirectJob) {
   return {
     id: job.id,
     status: job.status,
-    statusMessage: job.statusMessage,
+    statusMessage: mediaQueueMessage(job.promptId,job.statusMessage),
     mode: job.input.videoEdit ? "h3-video-to-video" : job.input.mode,
     quality: job.input.quality,
     orientation,

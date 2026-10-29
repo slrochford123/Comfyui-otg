@@ -962,6 +962,9 @@ async function chooseBackend(
 
   const local3090 =
     local3090BaseUrl(request);
+  const mediaBackend=await (await import("@/lib/images/mediaGpuBackend")).chooseMediaImageBackend({
+    primary3090:local3090,secondary5060:imagePrimary,allow5060:config.preferredBackend!=="local-3090",validate:base=>validateBackend(base,config)});
+  if(mediaBackend)return mediaBackend;
 
   if (
     config.preferredBackend ===
@@ -1222,7 +1225,7 @@ export async function POST(
 
     const startedAt = Date.now();
 
-    const target = config.id === "moss-image-sft" ? mossTarget(body.gpuTarget) : null;
+    const target = config.id === "moss-image-sft" ? await (await import("@/lib/images/mossBackend")).routeMossTarget(mossTarget(body.gpuTarget)) : null;
     const dimensions = target ? mossDimensions(body.width, body.height, "asset") : { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT };
     const seed = target ? mossSeed(body.seed, randomSeed()) : randomSeed();
 

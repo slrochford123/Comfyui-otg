@@ -555,6 +555,9 @@ async function validateBackend(baseUrl: string, config: ModelConfig) {
 async function chooseBackend(request: NextRequest, config: ModelConfig) {
   const imagePrimary = imagePrimaryBaseUrl();
   const local3090 = local3090BaseUrl(request);
+  const mediaBackend=await (await import("@/lib/images/mediaGpuBackend")).chooseMediaImageBackend({
+    primary3090:local3090,secondary5060:imagePrimary,allow5060:config.preferredBackend!=="local-3090",validate:base=>validateBackend(base,config)});
+  if(mediaBackend)return mediaBackend;
 
   if (config.preferredBackend === "local-3090") {
     const probe = await validateBackend(local3090, config);
@@ -715,7 +718,7 @@ export async function POST(request: NextRequest) {
     const config = MODEL_CONFIG[body.model];
     const outputSize = config.id === "moss-image-sft" ? mossDimensions(body.width, body.height, "character") : outputSizeForModel(config.id);
     const seed = config.id === "moss-image-sft" ? mossSeed(body.seed, randomSeed()) : randomSeed();
-    const target = config.id === "moss-image-sft" ? mossTarget(body.gpuTarget) : null;
+    const target = config.id === "moss-image-sft" ? await (await import("@/lib/images/mossBackend")).routeMossTarget(mossTarget(body.gpuTarget)) : null;
     const clientRequestId = String(body.clientRequestId || randomUUID()).trim();
     if (!isCharacterCreateRequestId(clientRequestId)) {
       return NextResponse.json(

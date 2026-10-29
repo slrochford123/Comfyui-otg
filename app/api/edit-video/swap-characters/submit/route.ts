@@ -650,6 +650,11 @@ export async function POST(req: NextRequest) {
   try {
     try { await requireSessionUser(req); } catch { throw new SessionInvalidError(); }
     const form = await req.formData();
+    const {mediaGpuRoutingEnabled,requestedH3MediaGpu}=await import("@/lib/mediaGpuRoutingServer");
+    if(mediaGpuRoutingEnabled()){
+      const gpu=await requestedH3MediaGpu();
+      if(gpu)form.set("targetBackend",gpu);else form.delete("targetBackend");
+    }
     const built = buildSwapPlanFromForm(form);
     if (!built.ok) return NextResponse.json({ ok: false, error: built.error }, { status: built.status });
 

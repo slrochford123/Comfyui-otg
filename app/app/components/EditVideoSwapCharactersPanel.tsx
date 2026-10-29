@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { MEDIA_GPU_ROUTING_UI_ENABLED } from "./MediaGpuControl";
 import { cn } from "@/lib/cn";
 
 type GalleryVideoItem = {
@@ -512,7 +513,7 @@ export default function EditVideoSwapCharactersPanel({ onRefreshGallery }: Props
         })}
       </div>
 
-      {engine === "minimax-h3" ? (
+      {engine === "minimax-h3" && !MEDIA_GPU_ROUTING_UI_ENABLED ? (
         <div className="mt-5 rounded-[22px] border border-white/10 bg-white/[0.035] p-4">
           <label htmlFor="swap-h3-backend" className="text-xs font-black uppercase tracking-[0.18em] text-white/70">MiniMax H3 GPU</label>
           <select

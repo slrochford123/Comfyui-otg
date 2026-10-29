@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { mediaQueueEnabled, preferMediaGpu } from "@/lib/workers/mediaGpuQueue";
+import { mediaGpuCandidates, parseMediaGpuChoice, type MediaGpu } from "@/lib/mediaGpuRouting";
 
 export const COMFY_SUPPORT_STATES = [
   "verified",
@@ -189,6 +191,19 @@ export async function selectManifestBackend(descriptor: Record<string, unknown>,
   if (!inputCheck.ok) return { ...inputCheck, status: 400, manifestVersion: registry.manifestVersion, workflow };
   const primary = registry.backends.find((backend) => backend.id === registry.policy.primaryBackendId)!;
   const fallback = registry.backends.find((backend) => backend.id === registry.policy.fallbackBackendId)!;
+  if (mediaQueueEnabled() && descriptor.mediaGpuRouting === true) {
+    const choice = parseMediaGpuChoice(descriptor.gpuTarget);
+    const compatible = mediaGpuCandidates(choice,[primary,fallback].filter(backend =>
+      backend.id === primary.id ? primaryManifestSupportAllowsAttempt(workflow,workflow.backendSupport[backend.id],registry.policy.requireVerifiedWorkflow)
+        : workflow.backendSupport[backend.id]?.state === "verified").map(backend=>backend.id as MediaGpu));
+    const healthy: MediaGpu[]=[];
+    for (const id of compatible) if ((await backendHealthy(registry.backends.find(backend=>backend.id===id)!)).ok) healthy.push(id);
+    const selected = await preferMediaGpu(healthy);
+    if (!selected) return {ok:false as const,status:503,error:choice === "auto" ? "No compatible media GPU is available for this workflow." : `The selected ${choice} cannot run this workflow. No automatic GPU substitution was made.`,manifestVersion:registry.manifestVersion,workflow};
+    const backend=registry.backends.find(candidate=>candidate.id===selected)!;
+    return {ok:true as const,backend,workflow,fallbackActive:selected===fallback.id,fallbackReason:null,
+      selectionReason:choice === "auto" ? "media_auto_3090_first" : "media_manual_pinned",manifestVersion:registry.manifestVersion};
+  }
   // OTG_CHARACTER_REFERENCE_EXPLICIT_GPU_V1
   const normalizedWorkflowId = normalizeWorkflowId(workflow.id);
   const requestedGpuTarget = String(descriptor.gpuTarget || "").trim().toLowerCase();

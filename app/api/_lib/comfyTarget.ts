@@ -166,6 +166,13 @@ export function configuredVoiceComfyBaseUrl(): string {
 
 export async function resolveVoiceComfyBaseUrl(): Promise<{ baseUrl: string; targetId: string | null }> {
   const baseUrl = configuredVoiceComfyBaseUrl();
+  const {mediaGpuRoutingEnabled,requestedMediaGpu}=await import("@/lib/mediaGpuRoutingServer");
+  if(mediaGpuRoutingEnabled()){
+    const selected=await requestedMediaGpu();
+    const physical=(await import("@/lib/workers/clusterGpu")).resolveComfyPhysicalGpu(baseUrl);
+    if(selected!=="auto"&&physical!==(selected==="rtx3090"?"shawn-3090":"slr-5060"))
+      throw Error("This legacy voice workflow is not configured for your selected GPU. Use a qualified speech engine in Audio Editing; no GPU or model was silently substituted.");
+  }
   const targets = comfyTargets();
   const found = targets.find((t) => normalizeUrlValue(t.baseUrl) === baseUrl);
   return { baseUrl, targetId: found?.id || null };

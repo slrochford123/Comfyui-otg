@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { mediaGpuRoutingEnabled, requestedMediaGpu } from "@/lib/mediaGpuRoutingServer";
 import { configuredComfyBaseUrlForJob, logComfyRouting } from "@/app/api/_lib/comfyTarget";
 import { selectManifestBackend } from "@/lib/comfyCapabilities";
 import {
@@ -4101,6 +4102,9 @@ function otgApplyNoGeneralGalleryPolicyToRecordV36BP3F(record: Record<string, un
 export async function POST(req: NextRequest) {
   const deviceId = getDeviceIdFromReq(req);
   const descriptor = await peekWorkflowDescriptor(req);
+  const excludedRouting = /storyboard|story.creator|story-creator/i.test([descriptor.requestKind,descriptor.workflowId,descriptor.label].join(" "));
+  const unifiedRouting = mediaGpuRoutingEnabled() && !excludedRouting;
+  const routedDescriptor = {...descriptor,...(unifiedRouting ? {mediaGpuRouting:true,gpuTarget:await requestedMediaGpu(descriptor.gpuTarget)} : {})};
   let route = configuredComfyBaseUrlForJob(descriptor);
   let videoSelection: Awaited<ReturnType<typeof selectVideoBackend>> | null = null;
   let manifestSelection: Awaited<ReturnType<typeof selectManifestBackend>> | null = null;
@@ -4123,7 +4127,7 @@ export async function POST(req: NextRequest) {
         installedByBackend: Object.fromEntries(inventories.map((inventory) => [inventory.backendId, inventory.items.map((item) => item.exactFilename)])),
       };
     }
-    videoSelection = await selectVideoBackend(descriptor as Record<string, unknown>, undefined, videoLoraRoutingOptions);
+    videoSelection = await selectVideoBackend(routedDescriptor, undefined, videoLoraRoutingOptions);
     if (!videoSelection.ok) {
       logVideoBackendJob("routing_rejected", {
         workflow: videoSelection.compatibility.id,
@@ -4133,11 +4137,10 @@ export async function POST(req: NextRequest) {
       return Response.json(videoSelection, { status: videoSelection.status });
     }
     route = { kind: "video", baseUrl: videoSelection.backend.baseUrl };
-  } else if (route.kind === "default") {
-    // Image jobs stay pinned to configuredImageComfyBaseUrl().
-    // Do not let generic manifest selection reroute image uploads or
-    // prompt submission to the RTX 3090 video lane.
-    manifestSelection = await selectManifestBackend(descriptor as Record<string, unknown>);
+  } else if (route.kind === "default" || unifiedRouting && route.kind === "image") {
+    // Legacy image routing stays unchanged outside TEST's explicit opt-in.
+    // Unified routing resolves a compatible GPU before parsing/uploading media.
+    manifestSelection = await selectManifestBackend(routedDescriptor);
     if (!manifestSelection.ok) {
       console.info("[comfy-backend]", {
         event: "routing_rejected",
@@ -4150,7 +4153,7 @@ export async function POST(req: NextRequest) {
     route = { kind: route.kind, baseUrl: manifestSelection.backend.url };
   }
   let COMFY_BASE_URL = route.baseUrl;
-  const fallbackRequestClone = route.kind === "video" ? (req.clone() as NextRequest) : null;
+  const fallbackRequestClone = route.kind === "video" && !(unifiedRouting && routedDescriptor.gpuTarget !== "auto") ? (req.clone() as NextRequest) : null;
   logComfyRouting("/api/comfy POST", descriptor, route);
   const comfyClientId = makeComfyClientId(deviceId);
   await waitForComfyClientProgressMonitor({ comfyBaseUrl: COMFY_BASE_URL, clientId: comfyClientId, timeoutMs: 1500 });
@@ -4663,6 +4666,7 @@ export async function POST(req: NextRequest) {
     upstream = await submitComfyPromptWith5060Lease({
       baseUrl: COMFY_BASE_URL,
       workerId: "api-comfy",
+      mediaQueueScope: unifiedRouting,
       init: {
         method: "POST",
         headers: { "content-type": "application/json" },

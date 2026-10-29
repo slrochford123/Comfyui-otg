@@ -11,6 +11,7 @@ import { newClientRequestId } from "@/lib/client/requestId";
 import css from "./H3StudioControls.module.css";
 import VideoSnapshotPicker from "./VideoSnapshotPicker";
 import H3SpeedIndicator from "./H3SpeedIndicator";
+import { MEDIA_GPU_ROUTING_UI_ENABLED } from "./MediaGpuControl";
 export type H3StudioController = "auto" | "manual";
 type Asset = { id: string; kind: "image" | "video" | "audio"; role: "first" | "last" | "reference"; name: string; sha256: string; version: number | string; metadata: { durationSeconds?: number; width?: number; height?: number; hasAudio?: boolean }; url: string };
 type Source = { id: string; file: File; kind: Asset["kind"]; role: Asset["role"]; description: string; includeAudio: boolean; clipStartSeconds: number; revision: number; asset?: Asset; registrationAsset?: Asset; error?: string };
@@ -275,7 +276,7 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
       }
       else {
         if (!data.review?.id || !data.review.mediaFingerprint) throw new Error("The server did not return a current media review. Preview again before generating.");
-        setPlan(draft); setPreview(data); requestId.current = null;
+        setPlan(parseH3StudioPlan(data.plan || draft)); setPreview(data); requestId.current = null;
       }
     } catch (error) { if (!signal.signal.aborted && revision.current === current) setMessage(error instanceof Error ? error.message : "Plan unavailable."); }
     finally { inFlight.current = false; setBusy(false); }
@@ -355,7 +356,7 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
   return <section className={css.studio} aria-label="H3 Auto and Manual controllers">
     <h2>{videoEditControls ? "H3 Reference Video Edit" : "H3 Video Studio"}</h2>
     <div className={css.controller} aria-label="Studio controller"><button type="button" aria-pressed={controller === "auto"} onClick={() => setController("auto")}>Auto Mode</button><button type="button" aria-pressed={controller === "manual"} onClick={() => setController("manual")}>Manual Mode</button></div>
-    <label className={css.notice}>Rendering GPU<select aria-label="H3 rendering GPU" disabled={busy || jobBusy || active || catalogLoading} value={backend} onChange={e => change({ backend: e.target.value as NonNullable<H3StudioPlan["backend"]> })}><option value="rtx3090">RTX 3090</option><option value="rtx5060ti">RTX 5060 Ti</option></select></label>
+    {MEDIA_GPU_ROUTING_UI_ENABLED ? <p className={css.notice}>Use Rendering GPU above. Automatic selects a compatible device before compiling the job; Manual stays on your selected device.</p> : <label className={css.notice}>Rendering GPU<select aria-label="H3 rendering GPU" disabled={busy || jobBusy || active || catalogLoading} value={backend} onChange={e => change({ backend: e.target.value as NonNullable<H3StudioPlan["backend"]> })}><option value="rtx3090">RTX 3090</option><option value="rtx5060ti">RTX 5060 Ti</option></select></label>}
     {manualMenu ? <p className={css.notice}>Choose an H3 Studio option below, or select Manual for complete creative controls.</p> : null}
     {/* Keep drafts/media mounted when returning to the original Studio menu. Job polling and Safe Cancel stay visible below. */}
     <div hidden={manualMenu} data-otg="h3-studio-plan-controls">

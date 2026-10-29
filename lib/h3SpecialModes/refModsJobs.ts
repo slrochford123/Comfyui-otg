@@ -1,3 +1,4 @@
+import {mediaQueueMessage} from "@/lib/workers/mediaGpuQueue";
 import {
   validateH3LoraSelections,
   type ResolvedH3OptionalLora,
@@ -114,7 +115,8 @@ function state() {
 }
 
 async function selectH3RefModsBackend(target?: ProductionV2H3BackendId) {
-  if (H3_REFMODS_BASE_URL && !target) {
+  const {mediaQueueEnabled,probeMediaGpu}=await import("@/lib/workers/mediaGpuQueue");
+  if (H3_REFMODS_BASE_URL && !target && !mediaQueueEnabled()) {
     const forcedBaseUrl = H3_REFMODS_BASE_URL.replace(/\/+$/, "");
     const backend = (Object.keys(H3_BACKEND_PROFILES) as ProductionV2H3BackendId[])
       .find((candidate) => H3_BACKEND_PROFILES[candidate].baseUrl === forcedBaseUrl) || "rtx3090";
@@ -124,6 +126,7 @@ async function selectH3RefModsBackend(target?: ProductionV2H3BackendId) {
     h3CandidateBackends(target, H3_BACKEND_PRIORITY).map((backend) => inspectH3BackendCompatibility(backend)),
   );
   const byId = new Map(probes.map((probe) => [probe.backend, probe]));
+  if(mediaQueueEnabled())await Promise.all(probes.map(async probe=>{if(probe.compatible)probe.idle=(await probeMediaGpu(probe.backend)).ready;}));
   const backend =
     H3_BACKEND_PRIORITY.find((candidate) => {
       const probe = byId.get(candidate);
@@ -627,7 +630,7 @@ export function h3RefModsPublicStatus(job: H3RefModsJob) {
   return {
     id: job.id,
     status: job.status,
-    statusMessage: job.statusMessage,
+    statusMessage: mediaQueueMessage(job.promptId,job.statusMessage),
     mode: job.input.mode,
     quality: job.input.quality,
     orientation,

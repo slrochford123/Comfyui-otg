@@ -656,6 +656,13 @@ export async function getH3PromptHistoryFromBaseUrl(
   fetcher: typeof fetch = fetch,
   outputNodeId = "5",
 ) {
+  const { getMediaQueueJob } = await import("@/lib/workers/mediaGpuQueue");
+  const local = getMediaQueueJob(promptId);
+  if (local?.kind === "comfy" && (local.payload as {baseUrl:string}).baseUrl === baseUrl.replace(/\/+$/, "")
+    && ["failed","canceled"].includes(local.status)) {
+    return { state: "failed" as const, entry: {status:{status_str:"error",completed:true,
+      messages:[["execution_error",{exception_message:local.error || "Generation canceled before GPU execution."}]]}}, video:null };
+  }
   const payload = await readComfyJson(baseUrl, `/history/${encodeURIComponent(promptId)}`, { fetcher, timeoutMs: 15_000 });
   const entry = payload?.[promptId] as Record<string, unknown> | undefined;
   if (!entry) return { state: "pending" as const, entry: null, video: null };

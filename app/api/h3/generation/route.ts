@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { requestedH3MediaGpu } from "@/lib/mediaGpuRoutingServer";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { NextRequest } from "next/server";
@@ -307,7 +308,7 @@ async function startGenerationJob(
   }
 
   const input = validateH3DirectInput({
-    ...(config.targetBackend !== undefined ? { targetBackend: config.targetBackend as import("@/lib/production/h3Workflows").ProductionV2H3BackendId } : {}),
+    targetBackend: await requestedH3MediaGpu(config.targetBackend),
     mode: generation.mode,
     quality: generation.quality,
     orientation: generation.orientation,

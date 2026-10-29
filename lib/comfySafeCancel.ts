@@ -1,4 +1,5 @@
 import { readComfyQueue } from "@/lib/comfyTransport";
+import { cancelQueuedMediaJob, getMediaQueueJob } from "@/lib/workers/mediaGpuQueue";
 export type ComfyCancelResult = { status:'canceled'|'canceling'|'completed'; mode:'queued'|'running'|'absent'; confirmedAt?:string };
 export class ComfyCancelSafetyError extends Error { status=409; }
 const inFlight = new Map<string,Promise<ComfyCancelResult>>();
@@ -14,6 +15,10 @@ export function cancelComfyPrompt(baseUrl:string,promptId:string,options:{timeou
   const base=baseUrl.replace(/\/+$/,'');const key=base+':'+promptId;
   const previous=inFlight.get(key);if(previous)return previous;
   const task=(async():Promise<ComfyCancelResult>=>{
+    if (cancelQueuedMediaJob(promptId,base)) return {status:'canceled',mode:'queued',confirmedAt:new Date().toISOString()};
+    const local = getMediaQueueJob(promptId);
+    if (local?.status === 'canceled' && local.kind === 'comfy' && (local.payload as {baseUrl:string}).baseUrl === base)
+      return {status:'canceled',mode:'queued',confirmedAt:new Date().toISOString()};
     const initial=await queue(base);
     const running=initial.queue_running.some(e=>id(e)===promptId);
     const pending=initial.queue_pending.some(e=>id(e)===promptId);

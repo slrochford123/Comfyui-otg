@@ -10,6 +10,8 @@ export async function register() {
   // does not attempt to bundle SQLite/fs. An isolated audio development server
   // must not start a second scheduler over the existing TEST queues.
   if (process.env.NEXT_RUNTIME === "nodejs") {
+  const { bootstrapMediaGpuQueue } = await import("./lib/workers/mediaGpuQueue");
+  bootstrapMediaGpuQueue();
   if (process.env.OTG_AUDIO_ISOLATED_DEV === "1") return;
 
   const {

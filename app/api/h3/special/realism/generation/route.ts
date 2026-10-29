@@ -300,7 +300,7 @@ async function startGenerationJob(
 ) {
   const generation = readH3RealismGenerationConfig(config);
   const input = validateH3RealismJobInput({
-    targetBackend: parseH3TargetBackend(config.targetBackend),
+    targetBackend: parseH3TargetBackend(await (await import("@/lib/mediaGpuRoutingServer")).requestedH3MediaGpu(config.targetBackend)),
     ...generation,
     references: [
       ...media.images,

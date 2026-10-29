@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { mediaGpuRoutingEnabled, requestedMediaGpu } from "@/lib/mediaGpuRoutingServer";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -173,7 +174,8 @@ export async function POST(request: NextRequest) {
       return json({ok:true,voice});
     }
     if (body.action !== "process") throw Error("Unknown audio operation.");
-    const gpu: AudioGpu = ["rtx3090","rtx5060ti","cpu"].includes(body.gpu)?body.gpu:"cpu";
+    const gpu: AudioGpu | "auto" = body.gpu === "cpu" ? "cpu" : mediaGpuRoutingEnabled()
+      ? await requestedMediaGpu(body.gpu) : ["rtx3090","rtx5060ti","cpu"].includes(body.gpu)?body.gpu:"cpu";
     let source = body.assetId ? assetFile(owner,session,String(body.assetId)) : undefined;
     const operation = String(body.operation);
     if (["import","separate","mix"].includes(operation)) {

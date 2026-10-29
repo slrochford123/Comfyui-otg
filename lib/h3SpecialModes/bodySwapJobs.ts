@@ -1,5 +1,6 @@
+import {mediaQueueMessage} from "@/lib/workers/mediaGpuQueue";
 import type { ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
-import { h3CandidateBackends, parseH3TargetBackend } from "@/lib/h3GpuRouting";
+import { prioritizeH3MediaBackends, h3CandidateBackends, parseH3TargetBackend } from "@/lib/h3GpuRouting";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -579,7 +580,7 @@ async function remuxOriginalAudio(job: H3BodySwapJob, visualPath: string) {
 
 async function submitNewBodySwapPrompt(job: H3BodySwapJob) {
   const backendProbes: H3BodySwapBackendProbe[] = [];
-  for (const backend of h3CandidateBackends(job.input.targetBackend, H3_BODY_SWAP_BACKEND_PRIORITY, id => id === "rtx3090-comfy-kitchen" ? "rtx3090" : "rtx5060ti")) {
+  for (const backend of await prioritizeH3MediaBackends(h3CandidateBackends(job.input.targetBackend, H3_BODY_SWAP_BACKEND_PRIORITY, id => id === "rtx3090-comfy-kitchen" ? "rtx3090" : "rtx5060ti"), id => id === "rtx3090-comfy-kitchen" ? "rtx3090" : "rtx5060ti")) {
     const profile = bodySwapBackendProfile(backend);
     await updateJob(job.ownerKey, job.id, {
       status: "preparing",
@@ -763,7 +764,7 @@ export function h3BodySwapPublicStatus(job: H3BodySwapJob) {
   return {
     id: job.id,
     status: job.status,
-    statusMessage: job.statusMessage,
+    statusMessage: mediaQueueMessage(job.promptId,job.statusMessage),
     mode: job.input.mode,
     quality: job.input.quality,
     orientation,

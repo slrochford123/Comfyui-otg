@@ -2,6 +2,7 @@
 import { isH3SingularityMode } from "@/lib/production/h3Settings";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import {useMediaGpuChoice,MEDIA_GPU_ROUTING_UI_ENABLED} from "./MediaGpuControl";
 import { createPortal } from "react-dom";
 
 import type { H3LoraCatalogEntry } from "@/lib/h3LoraCatalogServer";
@@ -1013,6 +1014,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const [manualControlsOpen, setManualControlsOpen] = useState(false);
   const [studioBusy, setStudioBusy] = useState(false);
   const [h3Backend, setH3Backend] = useState<"rtx3090" | "rtx5060ti">("rtx3090");
+  const [mediaGpuPreference]=useMediaGpuChoice();
+  useEffect(()=>{if(MEDIA_GPU_ROUTING_UI_ENABLED&&mediaGpuPreference!=="auto")setH3Backend(mediaGpuPreference);},[mediaGpuPreference]);
   const refModLibraryAbort = useRef<AbortController | null>(null);
   useEffect(() => { refModLibraryAbort.current?.abort();setRefModLibraryStatus("idle");setRefModLibrary([]); }, [h3Backend]);
   useEffect(() => () => refModLibraryAbort.current?.abort(), []);

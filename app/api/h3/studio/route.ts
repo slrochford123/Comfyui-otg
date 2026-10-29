@@ -5,6 +5,7 @@ import { SessionInvalidError } from "@/lib/ownerKey";
 import { h3StudioCatalog, h3Stage1cDecisions, inspectH3StudioInventory, readH3StudioEvidence, listH3StudioQualifiedPlans, H3_UPSTREAM_OWNER_ATTESTATION } from "@/lib/h3StudioRegistry";
 import { assertH3StudioAvailable, h3StudioProduction } from "@/lib/h3StudioAdmission";
 import { parseH3StudioPlan, reconcileH3StudioPlan, H3_STUDIO_WORKFLOWS } from "@/lib/h3StudioPlan";
+import { routeH3MediaPlan } from "@/lib/h3MediaGpuRouting";
 import { h3StudioOwnerExperimental } from "@/lib/h3StudioExperimental";
 import type { H3PlannerCapability } from "@/lib/h3StudioPlanner";
 import { compileH3StudioPlan, sanitizeH3StudioGraph } from "@/lib/h3StudioCompiler";
@@ -42,8 +43,9 @@ export async function POST(request: NextRequest) {
     if (Object.keys(body).some(k => !["action", "plan", "mediaIds", "externalMediaConsent", "quoteId", "plannerConsent"].includes(k))) throw new Error("Unknown planning field.");
     if (body.externalMediaConsent !== undefined && typeof body.externalMediaConsent !== "boolean") throw new Error("Invalid media consent.");
     const scope = await videoTrimSession(request);
-    const plan = parseH3StudioPlan(body.plan);
+    let plan = parseH3StudioPlan(body.plan);
     const media = await resolveStudioMedia(user.ownerKey, scope.session, body.mediaIds || [], true);
+    if (body.action === "preview") plan = await routeH3MediaPlan(plan,media,user.ownerKey);
     validateStudioMediaPlan(plan, media);
     const inventory = await inspectH3StudioInventory(undefined, plan.backend);
     const evidence = readH3StudioEvidence(plan.backend);
@@ -54,7 +56,7 @@ export async function POST(request: NextRequest) {
     if (body.action === "preview") {
       const review = await createStudioReview(user.ownerKey, scope.session, plan, media.fingerprint, built.manifest.qualificationFingerprint, built.manifest.submissionGraphSha256,
         { executionDigest: studioReviewedExecutionDigest(built.graph), credits: built.manifest.estimatedCredits, seconds: built.manifest.estimatedSeconds });
-      return json({ ok: true, review: { id: review.id, mediaFingerprint: media.fingerprint, expiresAt: review.expiresAt }, manifest: built.manifest, graph: sanitizeH3StudioGraph(built.graph),
+      return json({ ok: true, plan, review: { id: review.id, mediaFingerprint: media.fingerprint, expiresAt: review.expiresAt }, manifest: built.manifest, graph: sanitizeH3StudioGraph(built.graph),
       estimate: { generationCredits: built.manifest.estimatedCredits, generationSeconds: built.manifest.estimatedSeconds,
         explanation: h3StudioProduction() ? "Installed workflow. Local GPU credit cost is 0; processing time is an estimate, not a measurement. No generation has been submitted." : built.manifest.experimental ? "Owner Experimental Mode: installed configuration, not physically qualified. Local GPU credit cost is 0; runtime is a rough existing-engine estimate, not a measurement. No generation has been submitted." : built.manifest.executable ? "Estimate from the recorded qualification for this configuration; actual runtime may vary. No generation has been submitted." : "This configuration is not yet executable. No generation has been submitted; missing measurements are not estimated by AI." } });
     }

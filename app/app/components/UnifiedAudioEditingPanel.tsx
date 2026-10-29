@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useMediaGpuChoice, MEDIA_GPU_ROUTING_UI_ENABLED } from "./MediaGpuControl";
 import { STEMS, defaultTracks, numberWithin, type AudioSession, type AudioAsset, type AudioGpu, type Stem, type TimelineClip } from "@/lib/audioEditing/contracts";
 
 type Asset = AudioAsset & { url?: string };
@@ -29,6 +30,9 @@ export default function UnifiedAudioEditingPanel({onOpenDialogue,initialSection=
   const [error,setError] = useState("");
   const [notice,setNotice] = useState("");
   const [gpu,setGpu] = useState<AudioGpu>("rtx3090");
+  const [preference]=useMediaGpuChoice();
+  const routing=MEDIA_GPU_ROUTING_UI_ENABLED?preference:gpu;
+  const engineReady=(name:string)=>routing==="auto" ? !!(cap.engines[name]?.rtx3090||cap.engines[name]?.rtx5060ti) : !!cap.engines[name]?.[routing];
   const [comparison,setComparison] = useState("original");
   const [selectedAsset,setSelectedAsset] = useState("");
   const [audioCompare,setAudioCompare] = useState({assetId:"",original:false});
@@ -173,7 +177,8 @@ export default function UnifiedAudioEditingPanel({onOpenDialogue,initialSection=
   };
   const process = (operation:string,params:Record<string,unknown>={},assetId?:string) => execute(async()=>{
     const saved=await save();
-    const result=await api({action:"process",sessionId:saved.id,operation,params,assetId,gpu});
+    const cpu=["import","mix","extract"].includes(operation)||operation==="enhance"&&params.engine!=="mossformer";
+    const result=await api({action:"process",sessionId:saved.id,operation,params,assetId,gpu:cpu?"cpu":routing});
     await load(saved.id);
     if(result.cached)setNotice("Using the existing separated tracks; no AI inference was rerun.");
   });
@@ -234,7 +239,7 @@ export default function UnifiedAudioEditingPanel({onOpenDialogue,initialSection=
             {session.stems[stem]&&<audio className="mt-2 w-full" controls preload="none" src={`${ENDPOINT}?session=${session.id}&asset=${session.stems[stem]}`}/>}
           </div>)}</div>
           {source&&!source.channels&&<Help>This video has no original soundtrack. Use Add or Create to give it audio.</Help>}
-          <div className="flex flex-wrap gap-2"><button className={button} disabled={!source?.channels||!cap.engines[separator==="bandit"?"separate-bandit":"separate"]?.[gpu]} onClick={()=>void process("separate",{engine:separator})}>{STEMS.every(s=>session.stems[s])&&session.separation?.engine===(separator==="bandit"?"BandIt v2 English":"TIGER-DnR")?"Reuse separated tracks":"Separate tracks"}</button>
+          <div className="flex flex-wrap gap-2"><button className={button} disabled={!source?.channels||!engineReady(separator==="bandit"?"separate-bandit":"separate")} onClick={()=>void process("separate",{engine:separator})}>{STEMS.every(s=>session.stems[s])&&session.separation?.engine===(separator==="bandit"?"BandIt v2 English":"TIGER-DnR")?"Reuse separated tracks":"Separate tracks"}</button>
             <button className={button} onClick={()=>change({tracks:Object.fromEntries(STEMS.map(s=>[s,{...edit.tracks[s],keep:false,solo:false}])) as Edit["tracks"]})}>Mute all</button>
             <button className={button} onClick={()=>change({tracks:defaultTracks()})}>Reset tracks</button></div>
           {session.separation?.warnings.map(w=><Help key={w}>{w}</Help>)}
@@ -278,11 +283,11 @@ export default function UnifiedAudioEditingPanel({onOpenDialogue,initialSection=
             {!reference&&<label className="block text-sm">Describe the voice<textarea className={input} value={description} onChange={e=>setDescription(e.target.value)}/></label>}
             <details className="rounded-xl border border-white/15 p-3"><summary className="cursor-pointer text-sm font-semibold">Advanced speech settings</summary><div className="mt-2 grid gap-2 sm:grid-cols-2">
               <label className="text-xs">Delivery / emotion<input className={input} value={expression} onChange={e=>setExpression(e.target.value)} placeholder="e.g. comforting, deliberate pace"/><Help>Optional instruction, not a guaranteed emotion or pace control.</Help></label>
-              <label className="text-xs">AuK variant<select className={input} value={variant} onChange={e=>setVariant(e.target.value)}><option value="flash">AuK-Flash · 4 steps</option><option value="base" disabled={!cap.engines["speech-base"]?.[gpu]}>AuK Base · 32 steps{!cap.engines["speech-base"]?.[gpu]?" · not yet qualified":""}</option></select></label>
+              <label className="text-xs">AuK variant<select className={input} value={variant} onChange={e=>setVariant(e.target.value)}><option value="flash">AuK-Flash · 4 steps</option><option value="base" disabled={!engineReady("speech-base")}>AuK Base · 32 steps{!engineReady("speech-base")?" · not yet qualified":""}</option></select></label>
               <label className="text-xs">Short-segment length (seconds)<input className={input} type="number" min="0.5" max={gpu==="rtx5060ti"?5:8} step="0.5" value={Math.min(seconds,gpu==="rtx5060ti"?5:8)} onChange={e=>setSeconds(Number(e.target.value))}/><Help>Up to 5 seconds per segment on 5060 Ti, 8 on 3090. Longer dialogue is split and assembled automatically with a reused reference voice.</Help></label>
               <label className="text-xs">Seed<input className={input} type="number" min="0" value={seed} onChange={e=>setSeed(Number(e.target.value))}/><Help>Reuse a reference for voice identity. A seed alone does not guarantee consistency.</Help></label>
             </div></details>
-            <button className={button} disabled={!dialogue.trim()||!(variant==="base"?cap.engines["speech-base"]?.[gpu]:cap.engines.speech?.[gpu])} onClick={()=>void process("speech",{text:dialogue,description,expression,variant,seconds,seed,
+            <button className={button} disabled={!dialogue.trim()||!(variant==="base"?engineReady("speech-base"):engineReady("speech"))} onClick={()=>void process("speech",{text:dialogue,description,expression,variant,seconds,seed,
               ...(reference.startsWith("character:")?{characterId:reference.slice(10)}:reference.startsWith("voice:")?{voiceId:reference.slice(6)}:{})})}>Generate speech</button>
             <button className={`${button} ml-2`} onClick={()=>void execute(async()=>{if(source){await save();const data=await api({action:"prepare-dialogue",sessionId:session.id});onOpenDialogue(data.source);}else onOpenDialogue();})}>Dialogue replacement / trained voices</button>
             <Help>Use voices you own or are authorized to reproduce. Saving a reference does not train a voice model. No automatic lip-sync is claimed.</Help>
@@ -290,15 +295,15 @@ export default function UnifiedAudioEditingPanel({onOpenDialogue,initialSection=
             <label className="block text-sm">Describe the music<textarea className={`${input} min-h-24`} value={musicPrompt} maxLength={2000} onChange={e=>setMusicPrompt(e.target.value)}/></label>
             <label className="block text-sm">Music length (seconds)<input className={input} type="number" min="10" max="600" value={musicSeconds} onChange={e=>setMusicSeconds(Number(e.target.value))}/></label>
             <Help>ACE-Step 1.5 Turbo · 8 steps · instrumental. Describe mood, instruments, pace and environment. Generated music remains an editable asset; it never shortens your video.</Help>
-            <button className={button} disabled={!musicPrompt.trim()||!cap.engines.music?.[gpu]} onClick={()=>void process("music",{prompt:musicPrompt,seconds:musicSeconds,seed})}>Generate instrumental music</button>
-            {!cap.engines.music?.[gpu]&&<Help>This music engine has not been qualified on the selected device. Existing music can be uploaded or selected in Add.</Help>}
+            <button className={button} disabled={!musicPrompt.trim()||!engineReady("music")} onClick={()=>void process("music",{prompt:musicPrompt,seconds:musicSeconds,seed})}>Generate instrumental music</button>
+            {!engineReady("music")&&<Help>This music engine has not been qualified on the selected device. Existing music can be uploaded or selected in Add.</Help>}
           </>:<div className="space-y-3 rounded-xl border border-white/15 p-3">
             <label className="block text-sm">Sound effects<select className={input} value={effectsMode} onChange={e=>setEffectsMode(e.target.value)}><option value="automatic">Automatic — follow the visible action</option><option value="manual">Manual — describe a sound</option></select></label>
             <label className="block text-sm">{effectsMode==="automatic"?"Optional guidance":"Describe the sound"}<textarea className={`${input} min-h-24`} value={effectsPrompt} maxLength={2000} onChange={e=>setEffectsPrompt(e.target.value)} placeholder="A lion roaring, birds and a soft breeze. No music or dialogue."/></label>
             <label className="block text-sm">Length (seconds)<input className={input} type="number" min="0.1" max={effectsMode==="automatic"?Math.max(.1,(source?.duration||5)-cursor):600} step="0.1" value={effectsMode==="automatic"?Math.min(effectsSeconds,Math.max(.1,(source?.duration||5)-cursor)):effectsSeconds} onChange={e=>setEffectsSeconds(Number(e.target.value))}/></label>
             <Help>{effectsMode==="automatic"?"Starts at the video playhead. Video-conditioned AI follows visible motion; exact timing and recognition are not guaranteed. Longer selections are assembled from overlapping windows.":"Describe one effect or ambience. Add the result to the timeline to position it."}</Help>
             <Help>Sony Woosh weights are restricted to non-commercial evaluation. Available here only as an isolated private TEST experiment, not commercially cleared.</Help>
-            <button className={button} disabled={!cap.engines.effects?.[gpu]||(effectsMode==="automatic"&&!source)||(effectsMode==="manual"&&!effectsPrompt.trim())} onClick={()=>void process("effects",{mode:effectsMode,prompt:effectsPrompt,seconds:effectsSeconds,start:cursor,seed})}>Generate sound effects</button>
+            <button className={button} disabled={!engineReady("effects")||(effectsMode==="automatic"&&!source)||(effectsMode==="manual"&&!effectsPrompt.trim())} onClick={()=>void process("effects",{mode:effectsMode,prompt:effectsPrompt,seconds:effectsSeconds,start:cursor,seed})}>Generate sound effects</button>
           </div>}
         </>}
         {section==="Enhance"&&<>
@@ -308,10 +313,10 @@ export default function UnifiedAudioEditingPanel({onOpenDialogue,initialSection=
           <label className="block text-sm">Cleanup strength {Math.round(strength*100)}%<input className="w-full" type="range" min="0" max="100" value={strength*100} onChange={e=>setStrength(Number(e.target.value)/100)}/></label>
           <Help>Start low, especially for whispers, laughter, reverb and quiet effects. Speech cleanup is never applied automatically to another track.</Help>
           <details><summary className="min-h-11 cursor-pointer text-sm">Advanced enhancement settings</summary>
-            <label className="text-xs">Enhancement method<select className={input} value={enhanceEngine} onChange={e=>setEnhanceEngine(e.target.value)}><option value="ffmpeg">Conservative cleanup · CPU</option><option value="mossformer" disabled={target!=="speech"||!cap.engines["enhance-mossformer"]?.[gpu]}>MossFormer2 · speech restoration{!cap.engines["enhance-mossformer"]?.[gpu]?" · not yet qualified":""}</option></select></label>
+            <label className="text-xs">Enhancement method<select className={input} value={enhanceEngine} onChange={e=>setEnhanceEngine(e.target.value)}><option value="ffmpeg">Conservative cleanup · CPU</option><option value="mossformer" disabled={target!=="speech"||!engineReady("enhance-mossformer")}>MossFormer2 · speech restoration{!engineReady("enhance-mossformer")?" · not yet qualified":""}</option></select></label>
             <Help>Conservative cleanup uses transparent filters. MossFormer2 is a neural speech model: compare words, quiet speech and overlapping voices carefully.</Help>
           </details>
-          <button className={button} disabled={!selectedAsset||(enhanceEngine==="mossformer"&&(target!=="speech"||!cap.engines["enhance-mossformer"]?.[gpu]))} onClick={()=>void process("enhance",{target,strength,engine:enhanceEngine},selectedAsset)}>Enhance selected audio</button>
+          <button className={button} disabled={!selectedAsset||(enhanceEngine==="mossformer"&&(target!=="speech"||!engineReady("enhance-mossformer")))} onClick={()=>void process("enhance",{target,strength,engine:enhanceEngine},selectedAsset)}>Enhance selected audio</button>
         </>}
         {selected?.kind==="audio"&&<div className="rounded-xl border border-violet-400/30 p-3"><strong className="text-sm">{selected.name}</strong>
           {originalAudio&&<div className="my-2 flex flex-wrap gap-2"><button className={button} aria-pressed={audioCompare.assetId===selected.id&&audioCompare.original} onClick={()=>setAudioCompare({assetId:selected.id,original:true})}>Original audio</button><button className={button} aria-pressed={audioCompare.assetId!==selected.id||!audioCompare.original} onClick={()=>setAudioCompare({assetId:selected.id,original:false})}>Enhanced audio</button></div>}
@@ -340,8 +345,8 @@ export default function UnifiedAudioEditingPanel({onOpenDialogue,initialSection=
           {exported&&<><a className={button} href={urlFor(exported,true)}>Download video</a><button className={button} onClick={()=>void execute(async()=>{await api({action:"save-gallery",sessionId:session.id,assetId:exported.id});setNotice("Edited video saved to your gallery.");})}>Save video to gallery</button></>}
         </div>
         <details><summary className="min-h-11 cursor-pointer text-sm">Advanced processing & help</summary>
-          <label className="text-xs">AI processing device<select className={input} value={gpu} onChange={e=>setGpu(e.target.value as AudioGpu)}><option value="rtx3090">RTX 3090</option><option value="rtx5060ti">RTX 5060 Ti</option><option value="cpu">CPU where supported</option></select></label>
-          <label className="text-xs">Separation method<select className={input} value={separator} onChange={e=>setSeparator(e.target.value)}><option value="bandit" disabled={!cap.engines["separate-bandit"]?.[gpu]}>BandIt v2 · recommended{!cap.engines["separate-bandit"]?.[gpu]?" · unavailable on this device":""}</option><option value="tiger">TIGER-DnR · alternative</option></select></label>
+          {MEDIA_GPU_ROUTING_UI_ENABLED ? <Help>Use Rendering GPU above for Automatic or Manual routing. Mixing and conservative cleanup run on CPU.</Help> : <label className="text-xs">AI processing device<select className={input} value={gpu} onChange={e=>setGpu(e.target.value as AudioGpu)}><option value="rtx3090">RTX 3090</option><option value="rtx5060ti">RTX 5060 Ti</option><option value="cpu">CPU where supported</option></select></label>}
+          <label className="text-xs">Separation method<select className={input} value={separator} onChange={e=>setSeparator(e.target.value)}><option value="bandit" disabled={!engineReady("separate-bandit")}>BandIt v2 · recommended{!engineReady("separate-bandit")?" · unavailable on this device":""}</option><option value="tiger">TIGER-DnR · alternative</option></select></label>
           <Help>Separate again only when deliberately changing the separation method. BandIt v2 weights carry CC-BY-SA-4.0 terms. Neither method guarantees perfect isolation.</Help>
           <Help>Mixing/export runs on CPU. AI operations are admitted only when their selected engine is qualified and the GPU is available. Existing work is never interrupted. Saving sliders does not rerun separation.</Help>
           {cap.notes.map(n=><Help key={n}>{n}</Help>)}

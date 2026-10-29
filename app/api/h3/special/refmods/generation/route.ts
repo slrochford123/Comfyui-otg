@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
     const config = body?.config && typeof body.config === "object"
       ? body.config as Record<string, unknown>
       : {};
-    const job = await createH3RefModsJob(ownerKey, config, owner);
+    const job = await createH3RefModsJob(ownerKey, {...config,targetBackend:await (await import("@/lib/mediaGpuRoutingServer")).requestedH3MediaGpu(config.targetBackend)}, owner);
     startH3RefModsJob(job);
     return noStore({ ok: true, job: h3RefModsPublicStatus(job) }, { status: 202 });
   } catch (error) {

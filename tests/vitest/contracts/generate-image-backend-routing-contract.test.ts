@@ -49,7 +49,7 @@ describe("Generate image backend routing contract", () => {
     );
 
     expect(routingBlock).toContain(
-      '} else if (route.kind === "default") {',
+      '} else if (route.kind === "default" || unifiedRouting && route.kind === "image") {',
     );
 
     expect(routingBlock).not.toMatch(

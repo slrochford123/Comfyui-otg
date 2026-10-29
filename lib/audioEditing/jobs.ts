@@ -8,6 +8,8 @@ import { applyEnhancedTrack } from "./contracts";
 import { acquireResourceLock, releaseResourceLock, heartbeatResourceLock, type ResourceLock } from "@/lib/workers/resourceLocks";
 import type { WorkerResourceLockId } from "@/lib/workers/workerCatalog";
 import { voiceGpuFileBusy } from "@/lib/workers/voiceGpuFileLease";
+import { mediaQueueEnabled, enqueueMediaJob, getMediaQueueJob, cancelQueuedMediaJob, preferMediaGpu, type AudioMediaPayload } from "@/lib/workers/mediaGpuQueue";
+import { mediaGpuCandidates, type MediaGpu } from "@/lib/mediaGpuRouting";
 
 export type AudioOperation = "import" | "separate" | "mix" | "enhance" | "speech" | "extract" | "music" | "effects";
 type Manifest = { id: string; sessionId: string; operation: AudioOperation; gpu: AudioGpu; source?: string;
@@ -51,7 +53,12 @@ export function reconcileJob(owner: string, sessionId: string, id: string) {
       state={...state,status:"canceled",stage:"Canceled; original media retained.",progress:0};atomicJson(statusFile,state);
     } else state.stage="Canceling the isolated operation; original media retained.";
   }
-  if (["running","queued"].includes(state.status) && !isWorkerAlive(manifest,file) && Date.now()-Date.parse(manifest.createdAt)>10000) {
+  const queue = getMediaQueueJob(id);
+  const awaitingDispatch = queue && ["queued","dispatching"].includes(queue.status) && !manifest.pid;
+  if (queue?.status === "failed" && state.status !== "completed") {
+    state = {...state,status:"failed",stage:queue.error || "The queued audio operation failed."}; atomicJson(statusFile,state);
+  }
+  if (["running","queued"].includes(state.status) && !awaitingDispatch && !isWorkerAlive(manifest,file) && Date.now()-Date.parse(manifest.createdAt)>10000) {
     state = { id, status: "failed", stage: "The worker stopped. Your source and edits are safe; retry this operation.", progress: 0 };
     atomicJson(statusFile,state);
   }
@@ -105,7 +112,7 @@ async function admission(gpu: AudioGpu, id: string): Promise<ResourceLock[]> {
   } catch(error) { release(); throw error; }
 }
 export async function startJob(owner: string, sessionId: string, operation: AudioOperation, source: string | undefined,
-  params: Record<string, unknown>, gpu: AudioGpu = "cpu") {
+  params: Record<string, unknown>, gpu: AudioGpu | "auto" = "cpu") {
   // Reserve synchronously before the first await, across Node processes as well
   // as concurrent requests. Never steal a live process's admission reservation.
   const releaseReservation=reserveSessionStart(owner,sessionId);
@@ -113,7 +120,7 @@ export async function startJob(owner: string, sessionId: string, operation: Audi
   finally { releaseReservation(); }
 }
 async function startReservedJob(owner: string, sessionId: string, operation: AudioOperation, source: string | undefined,
-  params: Record<string, unknown>, gpu: AudioGpu) {
+  params: Record<string, unknown>, gpu: AudioGpu | "auto") {
   const session = readSession(owner,sessionId);
   const existing = sessionJobs(owner,sessionId).find(j=>j.status==="queued"||j.status==="running");
   if (existing) throw Error("This session already has an active operation. Wait or cancel it first.");
@@ -122,6 +129,13 @@ async function startReservedJob(owner: string, sessionId: string, operation: Aud
   const capability = operation === "speech" && params.variant === "base" ? "speech-base"
     : operation === "enhance" && params.engine === "mossformer" ? "enhance-mossformer"
     : operation === "separate" && params.engine === "bandit" ? "separate-bandit" : operation;
+  if (gpu === "auto") {
+    const supported = mediaGpuCandidates("auto",["rtx3090","rtx5060ti"].filter(candidate=>cfg.verified?.[capability]?.[candidate] &&
+      (candidate !== "rtx5060ti" || cfg.remote?.qualified)) as MediaGpu[]);
+    const selected = await preferMediaGpu(supported);
+    if (!selected) throw Error("This audio engine has no qualified GPU configuration. Existing workloads were not changed.");
+    gpu = selected;
+  }
   if (ai && !cfg.verified?.[capability]?.[gpu]) throw Error(`This operation has not been qualified on ${gpu}. Select an available engine.`);
   if (gpu === "rtx5060ti" && !cfg.remote?.qualified) throw Error("RTX 5060 Ti isolated audio transport is not yet qualified. Existing workloads remain untouched.");
   if (source) containedFile(sessionRoot(owner,sessionId),source);
@@ -130,6 +144,12 @@ async function startReservedJob(owner: string, sessionId: string, operation: Aud
   fs.mkdirSync(root,{recursive:true,mode:0o700});
   const manifest: Manifest = {id,sessionId,operation,gpu,source,params,session,createdAt:new Date().toISOString()};
   const file = path.join(root,"request.json");
+  if (mediaQueueEnabled() && gpu !== "cpu") {
+    atomicJson(file,manifest);
+    atomicJson(path.join(root,"status.json"),{id,status:"queued",stage:`Waiting for ${gpu === "rtx3090" ? "RTX 3090" : "RTX 5060 Ti"}`,progress:0});
+    enqueueMediaJob({id,gpu,kind:"audio",payload:{owner,sessionId,jobId:id}});
+    return {id,status:"queued",gpu};
+  }
   const locks = await admission(gpu,id);
   const release = ()=>locks.forEach(l=>releaseResourceLock(l.lockId,l.ownerId,l.fencingToken));
   try {
@@ -166,9 +186,44 @@ export function cancelJob(owner: string, sessionId: string, id: string) {
   const manifest = readManifest(owner,sessionId,id);
   const state = reconcileJob(owner,sessionId,id);
   if (!["queued","running"].includes(state.status)) return state;
+  cancelQueuedMediaJob(id);
   fs.writeFileSync(path.join(root,"cancel"),"cancel",{mode:0o600});
   if (isWorkerAlive(manifest,path.join(root,"request.json"))) {
     try { process.kill(-manifest.pid!,"SIGTERM"); } catch { /* already exited */ }
   }
   return {id,status:"canceled",stage:"Canceled; source media retained.",progress:0};
+}
+
+/** Dispatcher entrypoint. All paths are resolved from an owner-scoped manifest, never HTTP paths. */
+export async function executeQueuedAudioJob(payload: AudioMediaPayload, gpu: MediaGpu) {
+  const {owner,sessionId,jobId:id}=payload;
+  const root=jobDir(owner,sessionId,id),file=path.join(root,"request.json");
+  const manifest=readManifest(owner,sessionId,id);
+  if (manifest.id!==id || manifest.sessionId!==sessionId || manifest.gpu!==gpu) throw Error("Queued audio identity changed.");
+  if (fs.existsSync(path.join(root,"cancel"))) throw Error("Canceled before audio execution.");
+  if (manifest.pid) throw Error("This audio job already owns a worker; refusing duplicate execution.");
+  const cfg=engineConfig();
+  const script=gpu==="rtx5060ti"?path.join(process.cwd(),"scripts/audio-editing-remote.py")
+    :process.env.OTG_AUDIO_WORKER_SCRIPT||path.join(process.cwd(),"scripts/audio-editing-worker.py");
+  const log=fs.openSync(path.join(root,"worker.log"),"a",0o600);
+  const cache=path.join(path.dirname(engineConfigPath()),"engine-cache"),temp=path.join(root,"temp");
+  fs.mkdirSync(temp,{recursive:true,mode:0o700});
+  const env:NodeJS.ProcessEnv={NODE_ENV:process.env.NODE_ENV||"production",PATH:process.env.PATH,HOME:process.env.HOME,LANG:process.env.LANG||"C.UTF-8",
+    ...(process.env.SSH_AUTH_SOCK?{SSH_AUTH_SOCK:process.env.SSH_AUTH_SOCK}:{}),OTG_AUDIO_ENGINE_CONFIG:engineConfigPath(),
+    OMP_NUM_THREADS:"4",MKL_NUM_THREADS:"4",TMPDIR:temp,HF_HUB_OFFLINE:"1",TRANSFORMERS_OFFLINE:"1",
+    HF_HOME:path.join(cache,"huggingface"),TORCH_HOME:path.join(cache,"torch"),TRITON_CACHE_DIR:path.join(cache,"triton"),XDG_CACHE_HOME:path.join(cache,"xdg")};
+  try {
+    await new Promise<void>((resolve,reject)=>{
+      const child=spawn(cfg.python,[script,file],{detached:true,stdio:["ignore",log,log],env});
+      manifest.pid=child.pid;atomicJson(file,manifest);
+      child.once("error",()=>reject(Error("The isolated audio worker could not start.")));
+      child.once("exit",()=>{
+        const status=queuedAudioJobState(payload);
+        if(status==="completed")resolve();else reject(Error(status==="canceled"?"Audio operation canceled.":"Audio processing failed; inspect this operation's saved worker log."));
+      });
+    });
+  } finally {fs.closeSync(log);}
+}
+export function queuedAudioJobState(payload: AudioMediaPayload): string {
+  return reconcileJob(payload.owner,payload.sessionId,payload.jobId).status;
 }

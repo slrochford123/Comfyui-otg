@@ -9,6 +9,7 @@ import {
 } from "@/lib/workers/comfySubmissionCriticalSection";
 import { releaseIdle3090Peer } from "@/lib/workers/comfy3090Peer";
 import { acquireVoiceGpuFileLease } from "@/lib/workers/voiceGpuFileLease";
+import { mediaQueueEnabled, enqueueComfyMedia } from "./mediaGpuQueue";
 
 
 export class Comfy5060BusyError extends Error {
@@ -43,6 +44,9 @@ function normalizeBaseUrl(value: string): string {
 }
 
 export async function submitComfyPromptWithGpuLease(args: {
+  /** Internal dispatcher only. Never accepted from a browser request. */
+  queueDispatch?: boolean;
+  mediaQueueScope?: boolean;
   baseUrl: string;
   init: RequestInit;
   workerId: string;
@@ -61,6 +65,28 @@ export async function submitComfyPromptWithGpuLease(args: {
       promptId: string,
     ) => Promise<void> | void;
 }): Promise<Response> {
+  const inMediaScope = args.mediaQueueScope ?? /^(?:api-(?:comfy$|otg-generate$|characters?-|assets?-|background-)|h3-(?:direct$|body-swap$|realism$|refmods-)|edit-video-|character-animate-preview$)/.test(args.workerId);
+  if (mediaQueueEnabled() && inMediaScope && !args.queueDispatch) {
+    // HTTP-only fixed-tool adapters must not silently ignore the shared Manual
+    // selection. Durable H3 runners already persist their target in job input.
+    if(!args.workerId.startsWith("h3-")){
+      const {requestedMediaGpu}=await import("@/lib/mediaGpuRoutingServer");
+      const requested=await requestedMediaGpu();
+      const actual=resolveComfyPhysicalGpu(args.baseUrl);
+      if(requested!=="auto"&&actual!==(requested==="rtx3090"?"shawn-3090":"slr-5060"))
+        return Response.json({error:"This tool has no verified workflow mapping for the manually selected GPU. No job was submitted and no GPU or model was substituted."},{status:422});
+    }
+    const headers = new Headers(args.init.headers);
+    if ([...headers.keys()].some(key => !["content-type","accept"].includes(key))) {
+      throw new Error("This worker requires non-persistable submission credentials; media queue integration must be configured explicitly.");
+    }
+    if (typeof args.init.body !== "string") throw new Error("The media queue requires a serializable ComfyUI prompt.");
+    const body = JSON.parse(args.init.body);
+    if (!body?.prompt || typeof body.prompt !== "object" || Array.isArray(body.prompt)) throw new Error("A valid ComfyUI graph is required.");
+    await args.beforeSubmit?.();
+    return enqueueComfyMedia({baseUrl:args.baseUrl,body,workerId:args.workerId,
+      preSubmitCleanup:args.preSubmitCleanup,releaseIdlePeer:args.releaseIdlePeer},args.onPromptAccepted);
+  }
   // OTG_COMFY_PROMPT_QUEUE_ONLY_V1
   //
   // ComfyUI remains responsible for render-time FIFO queueing.

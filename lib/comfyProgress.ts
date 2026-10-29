@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { writePromptRequestMeta } from "@/lib/promptRequestMeta";
+import { getMediaQueueJob } from "@/lib/workers/mediaGpuQueue";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -167,6 +168,13 @@ export function readComfyPromptProgress(promptId: string | null | undefined): Co
   if (!key) return null;
   const record = store().prompts.get(key);
   if (!record) return null;
+
+  const queued = getMediaQueueJob(key);
+  if (queued?.status === "failed" || queued?.status === "canceled") {
+    record.status = "error";
+    record.error = queued.error || (queued.status === "canceled" ? "Canceled before GPU execution." : "Queued generation failed.");
+    record.completedAt ||= queued.updatedAt;
+  }
 
   const now = Date.now();
   const percent = computePercent(record);

@@ -6,6 +6,7 @@ import { readComfyPromptProgress } from "@/lib/comfyProgress";
 import { syncPromptOutputsForOwner } from "@/lib/comfyGallerySync";
 import { readPromptRequestMeta } from "@/lib/promptRequestMeta";
 import { readComfyQueue } from "@/lib/comfyTransport";
+import { getMediaQueueJob } from "@/lib/workers/mediaGpuQueue";
 import { ensureComfyClientProgressMonitor, recordComfyPromptSubmitted } from "@/lib/comfyProgress";
 
 export const runtime = "nodejs";
@@ -102,6 +103,7 @@ export async function GET(req: NextRequest) {
     ensureComfyClientProgressMonitor({ comfyBaseUrl, clientId });
   }
   const comfyProgress = readComfyPromptProgress(prompt_id);
+  const mediaQueueJob = prompt_id ? getMediaQueueJob(prompt_id) : null;
 
   try {
     const queueJson = await readComfyQueue(comfyBaseUrl, { signal: req.signal });
@@ -116,7 +118,7 @@ export async function GET(req: NextRequest) {
       Array.isArray((queueJson as any)?.pending) ? (queueJson as any).pending.length :
       0;
 
-    const queue_remaining = runningCount + pendingCount;
+    const queue_remaining = runningCount + pendingCount + (mediaQueueJob?.status === "queued" ? 1 : 0);
     let prompt_error: string | null = null;
     let prompt_complete = false;
 
@@ -167,6 +169,7 @@ export async function GET(req: NextRequest) {
       nextState?.status === "running" &&
       !prompt_complete &&
       !prompt_error &&
+      !mediaQueueJob &&
       startedAtMs > 0 &&
       Date.now() - startedAtMs > 30_000;
     if (staleWithoutQueue) {
@@ -206,6 +209,7 @@ export async function GET(req: NextRequest) {
       running: status === "running",
       queue: queue_remaining,
       queue_remaining,
+      mediaGpuQueue: mediaQueueJob ? {gpu:mediaQueueJob.gpu,status:mediaQueueJob.status,message:mediaQueueJob.error} : null,
       running_count: runningCount,
       pending_count: pendingCount,
       prompt_id: prompt_id || null,

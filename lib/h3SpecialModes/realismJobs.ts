@@ -1,6 +1,7 @@
+import {mediaQueueMessage} from "@/lib/workers/mediaGpuQueue";
 import { isH3SingularityMode } from "@/lib/production/h3Settings";
 import type { H3CheckpointMode } from "@/lib/production/h3Settings";
-import { h3CandidateBackends, parseH3TargetBackend } from "@/lib/h3GpuRouting";
+import { prioritizeH3MediaBackends, h3CandidateBackends, parseH3TargetBackend } from "@/lib/h3GpuRouting";
 import type { ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -515,7 +516,7 @@ async function uploadReference(job: H3RealismJob, backend: ProductionV2H3Backend
 
 async function submitNewRealismPrompt(job: H3RealismJob) {
   const backendProbes: H3RealismBackendProbe[] = [];
-  for (const backend of h3CandidateBackends(job.input.targetBackend, H3_REALISM_BACKEND_PRIORITY)) {
+  for (const backend of await prioritizeH3MediaBackends(h3CandidateBackends(job.input.targetBackend, H3_REALISM_BACKEND_PRIORITY))) {
     await updateJob(job.ownerKey, job.id, {
       status: "preparing",
       statusMessage: `Preparing inputs for ${H3_BACKEND_PROFILES[backend].label}`,
@@ -703,7 +704,7 @@ export function h3RealismPublicStatus(job: H3RealismJob) {
   return {
     id: job.id,
     status: job.status,
-    statusMessage: job.statusMessage,
+    statusMessage: mediaQueueMessage(job.promptId,job.statusMessage),
     mode: job.input.mode,
     quality: job.input.quality,
     orientation,

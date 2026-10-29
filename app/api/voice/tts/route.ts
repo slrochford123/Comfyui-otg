@@ -293,6 +293,7 @@ function assertOutput(outputPath: string, provider: TtsProvider) {
 }
 
 export async function POST(req: NextRequest) {
+  let releaseGpu:(()=>void)|null=null;
   try {
     const owner = await requireSessionUser(req);
     const form = await req.formData();
@@ -336,6 +337,7 @@ export async function POST(req: NextRequest) {
       out: outputPath,
     };
 
+    if((await import("@/lib/workers/mediaGpuQueue")).mediaQueueEnabled())releaseGpu=await(await import("@/lib/workers/auxiliary3090Lease")).acquireAuxiliary3090(jobId);
     if (provider === "omnivoice") await synthesizeOmniVoice(values, outputPath);
     else await synthesizeIndexTts2(values, outputPath);
     assertOutput(outputPath, provider);
@@ -372,5 +374,5 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     if (error instanceof SessionInvalidError) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     return NextResponse.json({ ok: false, error: error?.message || "Text-to-Speech failed" }, { status: 500 });
-  }
+  } finally {releaseGpu?.();}
 }

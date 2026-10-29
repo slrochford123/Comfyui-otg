@@ -442,7 +442,8 @@ export async function GET(req:NextRequest){
   try{
     await requireSessionUser(req).catch(()=>{throw new SessionInvalidError();});
     const [readiness,gpuBusy]=await Promise.all([aceStepReadiness(aceApiBase()),auxiliary3090Busy()]);
-    if(gpuBusy){readiness.busy=true;for(const preset of Object.values(readiness.presets))preset.ready=false;}
+    const queued=(await import("@/lib/workers/mediaGpuQueue")).mediaQueueEnabled();
+    if(gpuBusy&&!queued){readiness.busy=true;for(const preset of Object.values(readiness.presets))preset.ready=false;}
     return NextResponse.json({ok:true,...readiness},{headers:{"Cache-Control":"no-store"}});
   }catch(error){
     if(error instanceof SessionInvalidError)return NextResponse.json({ok:false,error:"Unauthorized"},{status:401});
