@@ -159,7 +159,12 @@ async function dispatch(job: MediaQueueJob) {
       const { executeQueuedAudioJob } = await import("@/lib/audioEditing/jobs");
       await executeQueuedAudioJob(job.payload as AudioMediaPayload,job.gpu);
       finish(job,"completed");
-    } catch(error) { finish(job,"failed",error instanceof Error?error.message:"Audio worker failed."); }
+    } catch(error) {
+      const { queuedAudioJobState } = await import("@/lib/audioEditing/jobs");
+      if(queuedAudioJobState(job.payload as AudioMediaPayload)==="unknown")
+        update(job.id,"unknown","Remote audio execution is unconfirmed; retaining the original reservation without retry.");
+      else finish(job,"failed",error instanceof Error?error.message:"Audio worker failed.");
+    }
     return;
   }
   const payload = job.payload as ComfyMediaPayload;

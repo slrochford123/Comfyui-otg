@@ -4,10 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import {mediaGpuCandidates,parseMediaGpuChoice} from "@/lib/mediaGpuRouting";
 import {setResourceLockStorePathForTests} from "@/lib/workers/resourceLocks";
-import {acquireExternalMediaGpu,cancelQueuedMediaJob,closeMediaGpuQueueForTests,enqueueComfyMedia,getMediaQueueJob,preferMediaGpu,probeMediaGpu,tickMediaGpuQueue,queuedMediaJobs} from "@/lib/workers/mediaGpuQueue";
-const mocks=vi.hoisted(()=>({submit:vi.fn(),voice:vi.fn(()=>false)}));
+import {acquireExternalMediaGpu,cancelQueuedMediaJob,closeMediaGpuQueueForTests,enqueueComfyMedia,enqueueMediaJob,getMediaQueueJob,preferMediaGpu,probeMediaGpu,tickMediaGpuQueue,queuedMediaJobs} from "@/lib/workers/mediaGpuQueue";
+const mocks=vi.hoisted(()=>({submit:vi.fn(),voice:vi.fn(()=>false),audioExecute:vi.fn(),audioState:vi.fn(()=>"completed")}));
 vi.mock("@/lib/workers/voiceGpuFileLease",()=>({voiceGpuFileBusy:mocks.voice}));
 vi.mock("@/lib/workers/comfyPromptLease",()=>({submitComfyPromptWithGpuLease:mocks.submit}));
+vi.mock("@/lib/audioEditing/jobs",()=>({executeQueuedAudioJob:mocks.audioExecute,queuedAudioJobState:mocks.audioState}));
 let directory:string;
 let busy=new Set<string>();
 let histories=new Map<string,unknown>();
@@ -20,6 +21,7 @@ beforeEach(()=>{
   setResourceLockStorePathForTests(path.join(directory,"locks.sqlite"));
   busy=new Set();histories=new Map();mocks.voice.mockReturnValue(false);
   mocks.submit.mockReset().mockImplementation(async(args)=>Response.json({prompt_id:JSON.parse(String(args.init.body)).prompt_id}));
+  mocks.audioExecute.mockReset().mockResolvedValue(undefined);mocks.audioState.mockReturnValue("completed");
   vi.stubGlobal("fetch",vi.fn(async(raw:string)=>{
     const url=String(raw);if(url.includes("/history/")){const id=url.split("/history/")[1];return Response.json(histories.has(id)?{[id]:histories.get(id)}:{});}
     return Response.json({queue_running:busy.has(new URL(url).origin)?[[0,"external",{},{}]]:[],queue_pending:[]});
@@ -27,6 +29,13 @@ beforeEach(()=>{
 });
 afterEach(()=>{closeMediaGpuQueueForTests();setResourceLockStorePathForTests(null);vi.unstubAllGlobals();vi.unstubAllEnvs();fs.rmSync(directory,{recursive:true,force:true});});
 describe("shared physical media routing",()=>{
+  it("retains an unconfirmed remote audio reservation rather than dispatching another job",async()=>{
+    mocks.audioExecute.mockRejectedValue(Error("Remote SSH disconnected"));mocks.audioState.mockReturnValue("unknown");
+    const job=enqueueMediaJob({gpu:"rtx3090",kind:"audio",payload:{owner:"qa",sessionId:"session",jobId:"job"}});
+    await enqueueComfyMedia(payload());await tickMediaGpuQueue();await flush();await tickMediaGpuQueue();
+    expect(getMediaQueueJob(job.id)?.status).toBe("unknown");
+    expect(mocks.submit).not.toHaveBeenCalled();expect(mocks.audioExecute).toHaveBeenCalledTimes(1);
+  });
   it("normalizes only public GPU choices, never worker URLs",()=>{
     expect(parseMediaGpuChoice("5060ti")).toBe("rtx5060ti");expect(parseMediaGpuChoice("http://evil")).toBe("auto");
     expect(mediaGpuCandidates("rtx5060ti",["rtx3090"])).toEqual([]);

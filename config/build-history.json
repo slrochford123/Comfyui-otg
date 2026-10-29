@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.10",
+  "current": "2.11",
   "builds": [
     {
       "version": "2",
@@ -67,6 +67,12 @@
       "date": "2026-10-29",
       "summary": "TEST qualification checkpoint: native Comfy API reliability, 3090-first media routing and durable queues; preserve Unified Audio startup when packaging. Production enablement and restricted audio models remain gated.",
       "sourceBaseCommit": "786dded43454464c36de92759c51f5ef0638dc0b"
+    },
+    {
+      "version": "2.11",
+      "date": "2026-10-29",
+      "summary": "Restricted research audio-worker SSH channel, host-aware GPU audio routing, verified transfer receipts and reservation retention for uncertain remote execution. TEST candidate; production enablement remains pending qualification.",
+      "sourceBaseCommit": "af79f1ac6c3ee519f751612e39fdf6ba0f5ae8a1"
     }
   ]
 }

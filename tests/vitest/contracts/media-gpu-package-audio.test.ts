@@ -23,6 +23,12 @@ describe("media candidate retains the existing TEST audio bootstrap", () => {
   it.each(["production", "prod", "development"])("leaves %s configuration unchanged", mode => {
     expect(environment(mode)).toEqual({ OTG_ENV: mode });
   });
+  it("preserves explicitly configured isolated host paths and the audio kill switch",()=>{
+    const env={OTG_ENV:"test",OTG_AUDIO_EDITING_ENABLED:"0",OTG_AUDIO_ENGINE_CONFIG:"/private/5060/engines.json",OTG_AUDIO_WORKER_SCRIPT:"/private/worker.py"};
+    const original={...env};
+    vm.runInNewContext(bootstrap,{process:{env},__dirname:"/release/scripts",require:()=>path});
+    expect(env).toEqual(original);
+  });
   it("packages the bootstrap after copying scripts and before reporting success", () => {
     const source = fs.readFileSync(path.join(process.cwd(), "scripts/build-media-gpu-candidate.cjs"), "utf8");
     const copy = source.indexOf("['public','config','comfy_workflows','workflows','lib','scripts']");

@@ -10,6 +10,7 @@ import type { WorkerResourceLockId } from "@/lib/workers/workerCatalog";
 import { voiceGpuFileBusy } from "@/lib/workers/voiceGpuFileLease";
 import { mediaQueueEnabled, enqueueMediaJob, getMediaQueueJob, cancelQueuedMediaJob, preferMediaGpu, type AudioMediaPayload } from "@/lib/workers/mediaGpuQueue";
 import { mediaGpuCandidates, type MediaGpu } from "@/lib/mediaGpuRouting";
+import { audioTransportReady, audioWorkerScript } from "./transport";
 
 export type AudioOperation = "import" | "separate" | "mix" | "enhance" | "speech" | "extract" | "music" | "effects";
 type Manifest = { id: string; sessionId: string; operation: AudioOperation; gpu: AudioGpu; source?: string;
@@ -37,7 +38,7 @@ function isWorkerAlive(manifest: Manifest, file: string) {
   if (!manifest.pid) return false;
   try {
     const args = fs.readFileSync(`/proc/${manifest.pid}/cmdline`, "utf8");
-    return args.includes(file) && (args.includes("audio-editing-worker.py") || args.includes("audio-editing-remote.py"));
+    return args.includes(file) && (args.includes("audio-editing-worker.py") || args.includes("audio-editing-remote.py") || args.includes("audio-editing-restricted-remote.py"));
   } catch { return false; }
 }
 export function reconcileJob(owner: string, sessionId: string, id: string) {
@@ -48,6 +49,10 @@ export function reconcileJob(owner: string, sessionId: string, id: string) {
   let state: AudioJobStatus = fs.existsSync(statusFile) ? JSON.parse(fs.readFileSync(statusFile,"utf8"))
     : { id, status: "queued", stage: "Starting", progress: 0 };
   if (["running","queued"].includes(state.status))state.elapsedSeconds=Math.max(state.elapsedSeconds||0,(Date.now()-Date.parse(manifest.createdAt))/1000);
+  if(remoteExecutionUnconfirmed(root)&&!isWorkerAlive(manifest,file)) {
+    state={...state,status:"running",stage:"Remote execution is unconfirmed; GPU reservation retained. No duplicate job will be submitted."};
+    atomicJson(statusFile,state);return state;
+  }
   if(["running","queued"].includes(state.status)&&fs.existsSync(path.join(root,"cancel"))) {
     if(!isWorkerAlive(manifest,file)) {
       state={...state,status:"canceled",stage:"Canceled; original media retained.",progress:0};atomicJson(statusFile,state);
@@ -131,13 +136,15 @@ async function startReservedJob(owner: string, sessionId: string, operation: Aud
     : operation === "separate" && params.engine === "bandit" ? "separate-bandit" : operation;
   if (gpu === "auto") {
     const supported = mediaGpuCandidates("auto",["rtx3090","rtx5060ti"].filter(candidate=>cfg.verified?.[capability]?.[candidate] &&
-      (candidate !== "rtx5060ti" || cfg.remote?.qualified)) as MediaGpu[]);
+      audioTransportReady(cfg,candidate as MediaGpu)) as MediaGpu[]);
     const selected = await preferMediaGpu(supported);
     if (!selected) throw Error("This audio engine has no qualified GPU configuration. Existing workloads were not changed.");
     gpu = selected;
   }
   if (ai && !cfg.verified?.[capability]?.[gpu]) throw Error(`This operation has not been qualified on ${gpu}. Select an available engine.`);
-  if (gpu === "rtx5060ti" && !cfg.remote?.qualified) throw Error("RTX 5060 Ti isolated audio transport is not yet qualified. Existing workloads remain untouched.");
+  if (!audioTransportReady(cfg,gpu)) throw Error("The selected GPU isolated audio connection is not qualified. Existing workloads remain untouched.");
+  if(gpu!=="cpu"&&cfg.transports?.[gpu]?.protocol==="slr-audio-v1"&&!mediaQueueEnabled())
+    throw Error("The restricted audio connection requires the durable GPU queue; no worker was started.");
   if (source) containedFile(sessionRoot(owner,sessionId),source);
   const id = crypto.randomUUID();
   const root = jobDir(owner,sessionId,id);
@@ -155,8 +162,7 @@ async function startReservedJob(owner: string, sessionId: string, operation: Aud
   try {
     atomicJson(file,manifest);
     atomicJson(path.join(root,"status.json"),{id,status:"queued",stage:"Starting isolated worker",progress:0});
-    const script = gpu === "rtx5060ti" ? path.join(process.cwd(),"scripts/audio-editing-remote.py")
-      : process.env.OTG_AUDIO_WORKER_SCRIPT || path.join(process.cwd(),"scripts/audio-editing-worker.py");
+    const script = audioWorkerScript(cfg,gpu);
     const log = fs.openSync(path.join(root,"worker.log"),"a",0o600);
     const cache=path.join(path.dirname(engineConfigPath()),"engine-cache");
     const temp=path.join(root,"temp");fs.mkdirSync(temp,{recursive:true,mode:0o700});
@@ -186,10 +192,17 @@ export function cancelJob(owner: string, sessionId: string, id: string) {
   const manifest = readManifest(owner,sessionId,id);
   const state = reconcileJob(owner,sessionId,id);
   if (!["queued","running"].includes(state.status)) return state;
+  if(remoteExecutionUnconfirmed(root)&&!isWorkerAlive(manifest,path.join(root,"request.json")))
+    throw Error("Remote execution is unconfirmed. Reconnect and reconcile this operation before releasing its GPU reservation.");
   cancelQueuedMediaJob(id);
   fs.writeFileSync(path.join(root,"cancel"),"cancel",{mode:0o600});
   if (isWorkerAlive(manifest,path.join(root,"request.json"))) {
-    try { process.kill(-manifest.pid!,"SIGTERM"); } catch { /* already exited */ }
+    // The restricted client must retain its SSH supervisor until remote exit is
+    // acknowledged. Signaling its whole group would sever that acknowledgement.
+    try {
+      const restricted=fs.readFileSync(`/proc/${manifest.pid}/cmdline`,"utf8").includes("audio-editing-restricted-remote.py");
+      process.kill(restricted?manifest.pid!:-manifest.pid!,"SIGTERM");
+    } catch { /* already exited */ }
   }
   return {id,status:"canceled",stage:"Canceled; source media retained.",progress:0};
 }
@@ -203,8 +216,7 @@ export async function executeQueuedAudioJob(payload: AudioMediaPayload, gpu: Med
   if (fs.existsSync(path.join(root,"cancel"))) throw Error("Canceled before audio execution.");
   if (manifest.pid) throw Error("This audio job already owns a worker; refusing duplicate execution.");
   const cfg=engineConfig();
-  const script=gpu==="rtx5060ti"?path.join(process.cwd(),"scripts/audio-editing-remote.py")
-    :process.env.OTG_AUDIO_WORKER_SCRIPT||path.join(process.cwd(),"scripts/audio-editing-worker.py");
+  const script=audioWorkerScript(cfg,gpu);
   const log=fs.openSync(path.join(root,"worker.log"),"a",0o600);
   const cache=path.join(path.dirname(engineConfigPath()),"engine-cache"),temp=path.join(root,"temp");
   fs.mkdirSync(temp,{recursive:true,mode:0o700});
@@ -225,5 +237,11 @@ export async function executeQueuedAudioJob(payload: AudioMediaPayload, gpu: Med
   } finally {fs.closeSync(log);}
 }
 export function queuedAudioJobState(payload: AudioMediaPayload): string {
+  if(remoteExecutionUnconfirmed(jobDir(payload.owner,payload.sessionId,payload.jobId)))return "unknown";
   return reconcileJob(payload.owner,payload.sessionId,payload.jobId).status;
+}
+function remoteExecutionUnconfirmed(root:string) {
+  const file=path.join(root,"remote-execution.json");
+  if(!fs.existsSync(file))return false;
+  try{return JSON.parse(fs.readFileSync(file,"utf8")).outcome==="pending";}catch{return true;}
 }
