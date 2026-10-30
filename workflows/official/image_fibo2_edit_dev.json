@@ -1,0 +1,101 @@
+{
+  "451": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "SLR-TEST-FIBO/fibo2_dev_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "453": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_4b_bf16.safetensors",
+      "type": "fibo2",
+      "device": "default"
+    }
+  },
+  "454": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    }
+  },
+  "457": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "458",
+        0
+      ],
+      "vae": [
+        "454",
+        0
+      ]
+    }
+  },
+  "458": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "451",
+        0
+      ],
+      "positive": [
+        "474",
+        0
+      ],
+      "negative": [
+        "474",
+        1
+      ],
+      "latent_image": [
+        "474",
+        2
+      ],
+      "seed": 424242,
+      "steps": 50,
+      "cfg": 5,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1
+    }
+  },
+  "461": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "457",
+        0
+      ],
+      "filename_prefix": "SLR_TEST_Images/image"
+    }
+  },
+  "470": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "source.png"
+    }
+  },
+  "474": {
+    "class_type": "TextEncodeFibo2",
+    "inputs": {
+      "clip": [
+        "453",
+        0
+      ],
+      "vae": [
+        "454",
+        0
+      ],
+      "prompt": "Describe the image or requested edit here.",
+      "negative_prompt": "",
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1,
+      "images.image_1": [
+        "470",
+        0
+      ]
+    }
+  }
+}

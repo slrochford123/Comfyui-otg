@@ -1,4 +1,8 @@
 "use client";
+import ImageEditingPanel from "./ImageEditingPanel";
+import ImageEditEngineSelect from "./ImageEditEngineSelect";
+import {runImageEdit} from "@/lib/client/imageEditing";
+import {runNativeImageEdit, nativeEditEngineLabel, type NativeEditEngine} from "@/lib/client/nativeImages";
 import MossGallerySaveButton from "./MossGallerySaveButton";
 import { mossOutputShape } from "@/lib/images/mossImage";
 
@@ -776,6 +780,7 @@ function clampCharacterBackgroundPreviewCountV36C(value: unknown) {
 // OTG_CHARACTER_BACKGROUND_STUDIO_UX_V36C
 
 type CharacterBackgroundPreviewCandidateV36E = {
+  editModel?: string;
   id: string;
   sourceType?: "generated" | "uploaded";
   removePeoplePromptId?: string;
@@ -841,9 +846,13 @@ type CharacterBackgroundProvider =
   | "boogu"
   | "mage-flow"
   | "qwen-image-2-1"
+  | "minimax-h3-image"
+  | "fibo2-dev"
   | "moss-image-sft";
 
 const CHARACTER_BACKGROUND_PROVIDER_PRESETS_V36E = [
+  {id: "minimax-h3-image" as const, label: "MiniMax H3 Image", description: "Local official H3 still-image template, 1344 × 768, 30 steps."},
+  {id: "fibo2-dev" as const, label: "Fibo 2.0 Dev · research", description: "Local Fibo Dev image creation, 1344 × 768, 50 steps. Non-commercial research."},
   { id: "moss-image-sft" as const, label: "MOSS-Image SFT (INT8)", description: "OpenMOSS SFT environment generation on your explicitly selected GPU." },
   {
     id: "ernie-image" as const,
@@ -886,7 +895,7 @@ function normalizeCharacterBackgroundProviderV1(
     provider === "krea-2" ||
     provider === "boogu" ||
     provider === "mage-flow" ||
-    provider === "qwen-image-2-1" || provider === "moss-image-sft"
+    provider === "qwen-image-2-1" || provider === "moss-image-sft" || provider === "minimax-h3-image" || provider === "fibo2-dev"
   ) {
     return provider;
   }
@@ -4212,6 +4221,7 @@ function CharacterBuilder({
   const [fullBodyStatus, setFullBodyStatus] = useState<FullBodyStatus>("not_required");
   const [missingGuidance, setMissingGuidance] = useState("");
   const [fullBodyPrompt, setFullBodyPrompt] = useState("");
+  const [completionEditEngine, setCompletionEditEngine] = useState<NativeEditEngine>("qwen");
   const [freeformFullBodyConfirmed, setFreeformFullBodyConfirmed] = useState(false);
   const [freeformCreateOrientation, setFreeformCreateOrientation] = useState<CharacterCreateOrientation>("portrait");
   const [backgroundRemovalStatus, setBackgroundRemovalStatus] = useState<"idle" | "running" | "done" | "warning">("idle");
@@ -4233,6 +4243,7 @@ function CharacterBuilder({
 
   const [characterBackgroundName, setCharacterBackgroundName] = useState("Scene Background");
   const [characterBackgroundBusy, setCharacterBackgroundBusy] = useState(false);
+  const [backgroundEditEngine, setBackgroundEditEngine] = useState<NativeEditEngine>("qwen");
 
   const characterBackgroundLifecycleBusyRefV36B = useRef(false);
 const [characterBackgroundStatus, setCharacterBackgroundStatus] = useState("");
@@ -4244,7 +4255,8 @@ const [characterBackgroundStatus, setCharacterBackgroundStatus] = useState("");
   const [characterBackgroundStudioOpen, setCharacterBackgroundStudioOpen] = useState(initialBackgroundStudioOpen);
   const [characterBackgroundProvider, setCharacterBackgroundProvider] = useState<CharacterBackgroundProvider>("ernie-image");
   const [mossSettings, setMossSettings] = useState(() => defaultMossSettings("background"));
-  const backgroundOutput = characterBackgroundProvider === "moss-image-sft" ? mossSettings : { width: 1280, height: 720 };
+  const backgroundOutput = characterBackgroundProvider === "moss-image-sft" ? mossSettings
+    : characterBackgroundProvider === "minimax-h3-image" || characterBackgroundProvider === "fibo2-dev" ? {width: 1344, height: 768} : { width: 1280, height: 720 };
   const [characterBackgroundPreviewCandidates, setCharacterBackgroundPreviewCandidates] = useState<CharacterBackgroundPreviewCandidateV36E[]>([]);
   const [selectedCharacterBackgroundCandidateId, setSelectedCharacterBackgroundCandidateId] = useState("");
   const [expandedCharacterBackgroundCandidateId, setExpandedCharacterBackgroundCandidateId] = useState("");
@@ -5748,9 +5760,24 @@ const [characterBackgroundStatus, setCharacterBackgroundStatus] = useState("");
     const removePeoplePrompt = "Remove all people, humans, persons, crowds, faces, bodies, and human figures. Fill removed areas naturally. Preserve the exact environment, architecture, furniture, lighting, scene composition, camera position, camera angle, background design, materials, color palette, perspective, and overall art style.";
 
     setCharacterBackgroundBusy(true);
-    setCharacterBackgroundStatus("Removing people from selected preview with Qwen Image Edit...");
+    setCharacterBackgroundStatus(`Removing people with ${nativeEditEngineLabel(backgroundEditEngine)}...`);
 
     try {
+      if (backgroundEditEngine !== "qwen") {
+        const response = await fetch(otgDisplayImageUrlV36BP6(backgroundPreviewProxySrcV36V(candidate)), {credentials: "include", cache: "no-store"});
+        if (!response.ok) throw Error("Could not read the selected background.");
+        const blob = await response.blob();
+        const output = await runImageEdit({engine: backgroundEditEngine, image: new File([blob], "background.png", {type: blob.type || "image/png"}),
+          prompt: removePeoplePrompt, seed: String(Math.floor(Math.random() * 2 ** 32))});
+        const edited: CharacterBackgroundPreviewCandidateV36E = {...candidate, id: `edit-${output.jobId}`,
+          name: `${candidate.name} — People Removed`, imagePath: output.serverPath, imageUrl: output.imageUrl,
+          displayImage: output.imageUrl, workflowImage: output.serverPath, promptId: output.promptId,
+          editModel: output.model, createdAt: new Date().toISOString()};
+        setCharacterBackgroundPreviewCandidates(current => appendGeneratedBackgroundCandidateFifo(current, edited, 5));
+        setSelectedCharacterBackgroundCandidateId(edited.id);
+        setCharacterBackgroundStatus("Cleaned background added as a new candidate. Original preserved.");
+        return;
+      }
       const body = new FormData();
       body.set("prompt", removePeoplePrompt);
       body.set("positivePrompt", removePeoplePrompt);
@@ -8703,10 +8730,12 @@ async function loadCharacters() {
       const instruction = buildUploadedFullBodyCompletionPrompt(characterAnatomyMode, fullBodyPrompt);
 
       setMessage("Generating full-body character from uploaded reference...");
-      const job = await submitUploadedFullBodyCompletionJob(instruction, sourceServerPath, characterAnatomyMode);
+      const nativeOutput = completionEditEngine !== "qwen" ? await runNativeImageEdit({model: completionEditEngine,
+        imageAPath: sourceServerPath, prompt: instruction, negativePrompt: negativePromptForUploadedFullBodyCompletion(characterAnatomyMode), seed: randomSeed()}) : null;
+      const job = nativeOutput || await submitUploadedFullBodyCompletionJob(instruction, sourceServerPath, characterAnatomyMode);
       setMessage("Full-body generation job submitted. Prompt ID: " + job.promptId + ". Waiting for output...");
 
-      const generated = await waitForCharacterImage(job.promptId);
+      const generated = nativeOutput ? {url: nativeOutput.imageUrl} : await waitForCharacterImage(job.promptId);
       const upload = await copyGeneratedImageToCharacterUpload(generated.url, id + ".png");
 
       const completedCandidate: CandidateImage = {
@@ -8716,7 +8745,7 @@ async function loadCharacters() {
         serverPath: upload.serverPath,
         internalPrompt: instruction,
         promptId: job.promptId,
-        workflowId: workflowForUploadedFullBodyCompletion(),
+        workflowId: completionEditEngine === "qwen" ? workflowForUploadedFullBodyCompletion() : `native/${completionEditEngine}`,
       };
 
       pushCandidate(completedCandidate);
@@ -12701,6 +12730,7 @@ async function saveCharacter() {
                     </button>
                   ) : (
                     <div className="space-y-4">
+                      <ImageEditEngineSelect value={completionEditEngine} onChange={setCompletionEditEngine} disabled={loading} />
                       <label className="block text-sm font-medium text-zinc-200">
                         {characterAnatomyMode === "freeform" ? "Describe the complete body or full form." : "Describe the missing full body."}
                       </label>
@@ -14890,10 +14920,23 @@ return (
                               </button>
                             )}
                           </div>
+                          <details className="p-3">
+                            <summary className="min-h-11 cursor-pointer font-bold">Edit selected background · Qwen / Fibo</summary>
+                            <ImageEditingPanel key={candidate.id} sourceUrl={otgDisplayImageUrlV36BP6(backgroundPreviewProxySrcV36V(candidate))} onComplete={output => {
+                              const edited: CharacterBackgroundPreviewCandidateV36E = {...candidate,
+                                id: `native-${output.jobId}`, name: `${candidate.name} — edited`, imagePath: output.serverPath,
+                                imageUrl: output.imageUrl, displayImage: output.imageUrl, workflowImage: output.serverPath,
+                                promptId: output.promptId, editModel: output.model, createdAt: new Date().toISOString()};
+                              setCharacterBackgroundPreviewCandidates(current => appendGeneratedBackgroundCandidateFifo(current, edited, 5));
+                              setSelectedCharacterBackgroundCandidateId(edited.id);
+                              setCharacterBackgroundStatus("Image edit ready as a new background candidate. Original preserved.");
+                            }} />
+                          </details>
                         </div>
                       );
                     })()}
 
+                    <div className="mt-3"><p className="text-xs text-white/60">Remove People model</p><ImageEditEngineSelect value={backgroundEditEngine} onChange={setBackgroundEditEngine} disabled={characterBackgroundBusy} /></div>
                     {characterBackgroundStatus ? (
                       <div className="mt-4 rounded-2xl border border-sky-300/15 bg-sky-300/[0.07] p-3 text-sm leading-6 text-sky-100/80">
                         {characterBackgroundStatus}

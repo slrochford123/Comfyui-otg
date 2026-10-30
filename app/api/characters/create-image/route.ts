@@ -7,6 +7,8 @@ import { getOwnerContext } from "@/lib/ownerKey";
 import { QWEN21_TURBO_LORA } from "@/lib/imageGenerateWorkflows";
 import { buildMossWorkflow, MOSS_FILES, MOSS_REQUIRED_NODES, mossDimensions, mossSeed, mossTarget, mossOutputShape } from "@/lib/images/mossImage";
 import { chooseMossBackend } from "@/lib/images/mossBackend";
+import {NATIVE_CREATE_CONFIGS, isNativeImageModel, buildNativeImageGraph, nativeImageDimensions} from "@/lib/images/nativeImageModels";
+import {chooseNativeImageBackend} from "@/lib/images/nativeImageBackend";
 import {
   isTelevisionAnimeStyleId,
   televisionAnimeStylePrompt,
@@ -49,6 +51,8 @@ type CharacterCreateModelId =
   | "boogu"
   | "mage-flow"
   | "qwen-image-2-1"
+  | "minimax-h3-image"
+  | "fibo2-dev"
   | "moss-image-sft";
 type CharacterStylePresetId =
   | "cartoon"
@@ -74,6 +78,7 @@ type ModelConfig = {
 };
 
 function outputSizeForModel(modelId: unknown) {
+  if (isNativeImageModel(modelId)) return nativeImageDimensions("character");
   if (modelId === "moss-image-sft") return mossDimensions(undefined, undefined, "character");
   return String(modelId || "") === "qwen-image-2-1"
     ? { width: QWEN_OUTPUT_WIDTH, height: OUTPUT_HEIGHT }
@@ -81,6 +86,7 @@ function outputSizeForModel(modelId: unknown) {
 }
 
 const MODEL_CONFIG: Record<CharacterCreateModelId, ModelConfig> = {
+  ...NATIVE_CREATE_CONFIGS,
   "moss-image-sft": {
     id: "moss-image-sft", label: "MOSS-Image SFT (INT8)",
     workflowFile: "workflows/characters/create/image_moss_image_sft_t2i.json",
@@ -798,7 +804,7 @@ export async function POST(request: NextRequest) {
       televisionAnimeStyle,
       threeDAnimationStyle,
     });
-    const graph = target ? buildMossWorkflow({ prompt, negativePrompt: String(body.negativePrompt || negativePrompt(body.mode)), ...outputSize, seed, target }) : mutateWorkflow({
+    const graph = isNativeImageModel(config.id) ? buildNativeImageGraph({model: config.id, prompt, ...outputSize, seed}) : target ? buildMossWorkflow({ prompt, negativePrompt: String(body.negativePrompt || negativePrompt(body.mode)), ...outputSize, seed, target }) : mutateWorkflow({
       graph: loadWorkflow(config),
       config,
       prompt,
@@ -808,7 +814,7 @@ export async function POST(request: NextRequest) {
 
     // Backend selection completes before POST /prompt. Never fail over after
     // submission begins; a lost HTTP response could otherwise duplicate work.
-    const backend = target ? await chooseMossBackend(target) : await chooseBackend(request, config);
+    const backend = isNativeImageModel(config.id) ? await chooseNativeImageBackend(config.id) : target ? await chooseMossBackend(target) : await chooseBackend(request, config);
     const promptId = await submitPrompt(backend.baseUrl, graph, target === "3090");
     markCharacterCreateRequestSubmitted(persistentRequestId, {
       promptId,
@@ -832,7 +838,7 @@ export async function POST(request: NextRequest) {
         seed,
         width: outputSize.width,
         height: outputSize.height,
-        ...(target ? mossOutputShape(outputSize.width, outputSize.height) : { orientation: "portrait", aspectRatio: "9:16" }),
+        ...(target || isNativeImageModel(config.id) ? mossOutputShape(outputSize.width, outputSize.height) : { orientation: "portrait", aspectRatio: "9:16" }),
         outputNodeId: config.outputNodeId,
         comfyBaseUrl: backend.baseUrl,
         backend: backend.label,

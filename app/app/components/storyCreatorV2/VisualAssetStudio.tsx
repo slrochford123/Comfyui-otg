@@ -1,6 +1,8 @@
 "use client";
 
 import Image from "next/image";
+import ImageEditEngineSelect from "../ImageEditEngineSelect";
+import {submitNativeImageEdit, nativeEditEngineLabel, type NativeEditEngine} from "@/lib/client/nativeImages";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { StoryProductionPlanRecord } from "@/lib/storyCreator/productionPlan";
@@ -101,6 +103,7 @@ export function VisualAssetStudio({
   const [shotId, setShotId] = useState("");
   const [editingAssetId, setEditingAssetId] = useState("");
   const [sourceVersionId, setSourceVersionId] = useState("");
+  const [editEngine, setEditEngine] = useState<NativeEditEngine>("qwen");
   const [referenceVersionIds, setReferenceVersionIds] = useState<string[]>([]);
   const [prepared, setPrepared] = useState<Prepared | null>(null);
   const [compareAssetId, setCompareAssetId] = useState("");
@@ -181,6 +184,7 @@ export function VisualAssetStudio({
         sourceVersionId: sourceVersionId || undefined,
         visualKind, name: name.trim(), prompt: prompt.trim(), artStyle,
         aspectRatio, referenceVersionIds, entityId: entityId || undefined,
+        editEngine,
         metadata: {
           planVersion: productionPlan?.version || null,
           sceneId: sceneId || null,
@@ -188,7 +192,7 @@ export function VisualAssetStudio({
         },
       });
       setPrepared(data as Prepared);
-      setNotice("Prepared and saved. Review the contract before starting Qwen.");
+      setNotice("Prepared and saved. Review the selected model before starting.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not prepare visual asset.");
     } finally { setBusy(false); }
@@ -212,6 +216,16 @@ export function VisualAssetStudio({
         const sourceResponse = await fetch(sourceUrl, { credentials: "include", cache: "no-store" });
         if (!sourceResponse.ok) throw new Error("Could not load the source image for editing.");
         const blob = await sourceResponse.blob();
+        const chosenEngine = prepared.version.provider.startsWith("fibo2-") ? prepared.version.provider as NativeEditEngine : "qwen";
+        if (chosenEngine !== "qwen") {
+          const result = await submitNativeImageEdit({model: chosenEngine,
+            image: new File([blob], "story-source.png", {type: blob.type || "image/png"}),
+            prompt: prepared.version.prompt, seed: String(Math.floor(Math.random() * 2 ** 32))});
+          await post({action: "record-submission", versionId: prepared.version.id, promptId: result.promptId,
+            response: result, endpoint: "/api/images/native"});
+          setNotice(`${nativeEditEngineLabel(chosenEngine)} job ${result.promptId} submitted.`);
+          resetDraft(); await load(); return;
+        }
         const form = new FormData();
         form.set("workflowId", "presets/image_qwen_image_2_1_image_edit");
         form.set("requestKind", "generate-qwen21-image-edit");
@@ -340,14 +354,20 @@ export function VisualAssetStudio({
     finally { setBusy(false); }
   }
 
+  const editReferenceCount = new Set([sourceVersionId, ...referenceVersionIds].filter(Boolean)).size;
+  const preparedFibo = prepared?.version.provider.startsWith("fibo2-") ? prepared.version.provider as NativeEditEngine : null;
+  const preparedSummary = preparedFibo
+    ? `${nativeEditEngineLabel(preparedFibo)} · ${preparedFibo === "fibo2-dev" ? "50 steps · CFG 5" : "4 steps · CFG 1"} · Euler · Auto / Manual GPU`
+    : `${prepared?.version.provider === "qwen-image-edit-2-1" ? "Qwen Image Edit 2.1 Turbo" : "Qwen Image 2.1 Turbo"} · 8 steps · CFG 1 · Auto / Manual GPU`;
   return (
     <section className="rounded-[20px] border border-cyan-300/15 bg-cyan-300/[0.035] p-4 xl:col-span-2">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><p className="text-xs font-black uppercase tracking-[0.16em] text-cyan-100/55">Visual Assets</p><h3 className="mt-2 text-lg font-black text-white">Qwen 2.1 Turbo Visual Asset Studio</h3></div>
+        <div><p className="text-xs font-black uppercase tracking-[0.16em] text-cyan-100/55">Visual Assets</p><h3 className="mt-2 text-lg font-black text-white">Visual Asset Studio · Qwen / Fibo</h3></div>
         <div className="flex flex-wrap gap-2"><span className="rounded-[10px] border border-white/10 px-3 py-2 text-xs text-white/55">{productionMode} mode</span><span className="rounded-[10px] border border-white/10 px-3 py-2 text-xs text-white/55">{assets.length} persistent assets</span></div>
       </div>
 
       {productionMode === "automatic" ? <button type="button" disabled={busy || productionPlan?.status !== "approved"} onClick={() => void planFromProduction()} className="mt-3 rounded-[12px] border border-emerald-300/25 bg-emerald-300/10 px-4 py-2.5 text-sm font-black text-emerald-50 disabled:opacity-40">Plan Required Visuals</button> : null}
+      {editReferenceCount > 0 ? <ImageEditEngineSelect value={editEngine} onChange={value => {setEditEngine(value); setPrepared(null);}} disabled={busy} referenceCount={editReferenceCount} /> : null}
 
       <div className="mt-4 rounded-[14px] border border-white/10 bg-black/25 p-3">
         <label className="block text-xs font-black uppercase tracking-[0.12em] text-white/45">Tell Story Director</label>
@@ -376,7 +396,7 @@ export function VisualAssetStudio({
         </div>
       </details>
 
-      {prepared ? <div className="mt-3 rounded-[14px] border border-amber-300/25 bg-amber-300/[0.06] p-4"><div className="text-xs font-black uppercase tracking-[0.12em] text-amber-100/65">Confirmation required</div><div className="mt-2 text-sm font-black text-white">{prepared.asset.name} · version {prepared.version.version}</div><p className="mt-2 text-sm leading-6 text-white/65">{prepared.version.prompt}</p><div className="mt-2 text-xs text-white/45">{prepared.version.provider === "qwen-image-edit-2-1" ? "Qwen Image Edit 2.1 Turbo" : "Qwen Image 2.1 Turbo"} · 8 steps · CFG 1 · RTX 5060 Ti · {String(prepared.version.metadata.aspectRatio || "landscape")} · {referenceVersionIds.length} selected references</div><button type="button" disabled={busy} onClick={() => void createImage()} className="mt-3 rounded-[12px] bg-amber-300 px-4 py-2.5 text-sm font-black text-black disabled:opacity-40">Create Image</button></div> : null}
+      {prepared ? <div className="mt-3 rounded-[14px] border border-amber-300/25 bg-amber-300/[0.06] p-4"><div className="text-xs font-black uppercase tracking-[0.12em] text-amber-100/65">Confirmation required</div><div className="mt-2 text-sm font-black text-white">{prepared.asset.name} · version {prepared.version.version}</div><p className="mt-2 text-sm leading-6 text-white/65">{prepared.version.prompt}</p><div className="mt-2 text-xs text-white/45">{preparedSummary} · {String(prepared.version.metadata.aspectRatio || "landscape")} · {referenceVersionIds.length} selected references</div><button type="button" disabled={busy} onClick={() => void createImage()} className="mt-3 rounded-[12px] bg-amber-300 px-4 py-2.5 text-sm font-black text-black disabled:opacity-40">Create Image</button></div> : null}
       {error ? <div className="mt-3 rounded-[12px] border border-red-400/20 bg-red-500/10 px-3 py-2 text-sm text-red-100">{error}</div> : null}
       {notice ? <div className="mt-3 rounded-[12px] border border-cyan-300/15 bg-cyan-300/[0.06] px-3 py-2 text-sm text-cyan-50/75">{notice}</div> : null}
 

@@ -139,6 +139,33 @@ describe("Story Creator Phase 5 visual asset behavior", () => {
     expect(store.listStoryGenerationJobs({ ownerKey, projectId: project.id })).toHaveLength(0);
   });
 
+  it("records Fibo as an independent edit model with correct steps and preserves Qwen defaults", () => {
+    const previousEnv = process.env.OTG_ENV; process.env.OTG_ENV = "test";
+    try {
+      const ownerKey = "fibo-story-owner";
+      const project = store.createStoryCreatorProject({ownerKey, title: "Fibo edits", format: "short", genre: "drama"});
+      const common = {ownerKey, projectId: project.id, visualKind: "character", name: "Reference", prompt: "Change jacket only"};
+      const first = store.attachStoryVisualUpload({...common, url: "", filePath: "/tmp/owned-one.png"});
+      const second = store.attachStoryVisualUpload({...common, url: "", filePath: "/tmp/owned-two.png"});
+      for (const engine of ["fibo2-edit-turbo", "fibo2-dev"]) {
+        const prepared = store.prepareStoryVisualGeneration({...common, assetId: first.asset.id,
+          parentVersionId: first.version.id, referenceVersionIds: [first.version.id], editEngine: engine});
+        expect(prepared.version).toMatchObject({provider: engine, model: engine, workflowId: `native/${engine}`, parentVersionId: first.version.id});
+        expect(prepared.version.metadata.imageEdit).toMatchObject({engine, steps: engine === "fibo2-dev" ? 50 : 4, sampler: "euler"});
+        expect(prepared.version.metadata.qwenTurbo).toBeUndefined();
+        const submitted = store.recordStoryVisualSubmission({...common, versionId: prepared.version.id, promptId: `prompt-${engine}`, response: {model: engine}, endpoint: "/api/images/native"});
+        expect(submitted.job.jobType).toBe("story-image-edit");
+      }
+      expect(() => store.prepareStoryVisualGeneration({...common, assetId: first.asset.id, parentVersionId: first.version.id,
+        referenceVersionIds: [second.version.id], editEngine: "fibo2-dev"})).toThrow(/one source/);
+      process.env.OTG_ENV = "prod";
+      expect(() => store.prepareStoryVisualGeneration({...common, assetId: first.asset.id, parentVersionId: first.version.id, editEngine: "fibo2-dev"})).toThrow(/private-research/);
+      const qwen = store.prepareStoryVisualGeneration({...common, assetId: first.asset.id, parentVersionId: first.version.id});
+      expect(qwen.version.provider).toBe("qwen-image-edit-2-1");
+      expect(store.getStoryVisualVersion({...common, versionId: first.version.id}).status).toBe("ready");
+    } finally {if (previousEnv === undefined) delete process.env.OTG_ENV; else process.env.OTG_ENV = previousEnv;}
+  });
+
   it("resolves a follow-up create-the-image command from recent Story Director context", () => {
     const entity = {
       id: "entity-athera", projectId: "project-context", ownerKey: "owner-context",

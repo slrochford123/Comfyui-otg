@@ -8,6 +8,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
 import AdminGpuControls from "./components/AdminGpuControls";
 import MediaGpuControl from "./components/MediaGpuControl";
+import ImageEditEngineSelect from "./components/ImageEditEngineSelect";
+import {runNativeImageEdit, saveNativeImageToGallery, type NativeEditEngine} from "@/lib/client/nativeImages";
 import { uiStatusTone } from "@/lib/uiStatusTone";
 import MediaPreviewPanel from "./components/MediaPreviewPanel";
 import SpeechInputButton from "./components/SpeechInputButton";
@@ -315,6 +317,7 @@ type EditModalState = {
   positivePrompt: string;
   negativePrompt: string;
   enhancing: boolean;
+  engine: NativeEditEngine;
 };
 
 type AnimateModalState = {
@@ -1367,6 +1370,12 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
     modelId: "", enabled: false, discoveredOn: [], missingOn: [],
   });
   const [editInputCount, setEditInputCount] = useState(1);
+  const [imageEditEngine, setImageEditEngine] = useState<NativeEditEngine>("qwen");
+  const [nativeEditJobId, setNativeEditJobId] = useState("");
+  const nativeEditAbort = useRef<AbortController | null>(null);
+  const nativeEditActive = useRef(false);
+  const [nativeCompletedJobId, setNativeCompletedJobId] = useState("");
+  useEffect(() => () => nativeEditAbort.current?.abort(), []);
   const [prompt, setPrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("");
   const [promptRelayBeat1, setPromptRelayBeat1] = useState("");
@@ -2948,6 +2957,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }, [latestPreviewKind, latestPreviewUrl]);
 
   const refreshProgress = useCallback(async (): Promise<"idle" | "running" | "complete" | "error" | null> => {
+    if (nativeEditActive.current) return "running";
     try {
       const res = await fetch("/api/progress", {
         cache: "no-store",
@@ -2955,6 +2965,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       });
 
       const data = (await res.json().catch(() => ({}))) as ProgressResponse;
+      if (nativeEditActive.current) return "running";
       const nextStatus = String(data?.status || "idle").toLowerCase();
       const queueCount = Number(data?.queue_remaining ?? data?.queue ?? 0) || 0;
       const running = Boolean(data?.running) || nextStatus === "running";
@@ -3595,6 +3606,19 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }, [promptRelayBeat1, promptRelayBeat2, promptRelayBeat3, promptRelayBeat4]);
 
   const handleCancelGeneration = useCallback(async () => {
+    if (nativeEditJobId) {
+      if (cancelBusy) return;
+      setCancelBusy(true);
+      try {
+        const response = await fetch(`/api/images/native?jobId=${encodeURIComponent(nativeEditJobId)}`, {method: "DELETE", credentials: "include"});
+        const data = await response.json();
+        if (!response.ok || data.status !== "canceled") throw Error(data.error || "Cancellation not confirmed; keep watching this job.");
+        nativeEditAbort.current?.abort(); setNativeEditJobId("");
+        setProgressStatus("error"); setStatusMessage("Image edit canceled.");
+      } catch (error) {setStatusMessage((error as Error).message);}
+      finally {setCancelBusy(false);}
+      return;
+    }
     if (cancelBusy || generateSubmitInFlightRef.current || !activePromptId) return;
     setCancelBusy(true);
     setStatusMessage("Cancelling generation...");
@@ -3623,10 +3647,15 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     } finally {
       setCancelBusy(false);
     }
-  }, [activePromptId, cancelBusy, refreshProgress]);
+  }, [activePromptId, cancelBusy, nativeEditJobId, refreshProgress]);
 
   const handleGenerate = useCallback(async () => {
     if (generateSubmitInFlightRef.current || generateBusy || progressStatus === "running") return;
+    if (nativeEditJobId) {setStatusMessage("The previous image edit is unresolved. Cancel or reconcile that exact job before resubmitting."); return;}
+    if (isEditImageWorkflowSelected && imageEditEngine !== "qwen" && editInputCount > 1) {
+      setStatusMessage("Fibo currently supports one source here. Choose Qwen to retain all references, or explicitly remove the additional references first.");
+      return;
+    }
     if (generateMediaMode === "video" && !videoWorkflowReady) {
       setStatusMessage("This video workflow is not installed in TEST yet. Choose a ready workflow or provide its JSON.");
       return;
@@ -3713,6 +3742,25 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     setLatestPreviewKind("");
 
     try {
+      if (isEditImageWorkflowSelected && imageEditEngine !== "qwen") {
+        nativeEditActive.current = true; setNativeCompletedJobId("");
+        const abort = new AbortController(); nativeEditAbort.current = abort;
+        const output = await runNativeImageEdit({model: imageEditEngine, image: uploadedFileRef.current!,
+          prompt: exactEditPrompt, negativePrompt, seed: String(randomSeed()), signal: abort.signal,
+          width: orientation === "portrait" ? 768 : 1344, height: orientation === "portrait" ? 1344 : 768,
+          onStatus: status => {if (["failed", "canceled"].includes(status)) setNativeEditJobId("");},
+          onSubmitted: job => {
+            setNativeEditJobId(job.jobId);
+            setGenerateSubmitNotice({state: "accepted", message: "Fibo edit queued. Your source and prompt were preserved.", promptId: job.promptId});
+          }});
+        setNativeEditJobId("");
+        setLatestPreviewUrl(output.imageUrl); setLatestPreviewName(`${output.model}-${output.jobId}.png`); setLatestPreviewKind("image");
+        setProgressStatus("complete"); setProgressPercent(100);
+        setNativeCompletedJobId(output.jobId);
+        try {await saveNativeImageToGallery(output.jobId); setNativeCompletedJobId(""); setStatusMessage("Fibo edit complete and saved as a new Gallery image. Original preserved.");}
+        catch (error) {setStatusMessage((error as Error).message);}
+        return;
+      }
       const body = new FormData();
       const submitWorkflowId =
         generateMediaMode === "video"
@@ -3832,6 +3880,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       });
     } finally {
       generateSubmitInFlightRef.current = false;
+      nativeEditActive.current = false;
       setGenerateBusy(false);
     }
   }, [
@@ -3840,6 +3889,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     composeGeneratePrompt,
     durationSeconds,
     editInputCount,
+    imageEditEngine,
+    nativeEditJobId,
     generateBusy,
     generateMediaMode,
     videoNeedsStarterImage,
@@ -4255,6 +4306,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
     setEditModal({
       item,
+      engine: "qwen",
       positivePrompt: String(item.meta?.positivePrompt || "").trim(),
       negativePrompt: String(item.meta?.negativePrompt || "").trim(),
       enhancing: false,
@@ -4311,20 +4363,26 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         throw new Error("Could not build the source image file.");
       }
 
+      if (editModal.engine !== "qwen") {
+        setStatusMessage("Fibo image edit is running. The original Gallery image is preserved.");
+        const output = await runNativeImageEdit({model: editModal.engine, image: sourceFile,
+          prompt: editModal.positivePrompt, negativePrompt: editModal.negativePrompt, seed: String(randomSeed())});
+        setLatestPreviewUrl(output.imageUrl); setLatestPreviewName(`${output.model}-${output.jobId}.png`); setLatestPreviewKind("image");
+        setNativeCompletedJobId(output.jobId); setEditModal(null);
+        try {await saveNativeImageToGallery(output.jobId); setNativeCompletedJobId(""); setStatusMessage("Fibo edit saved to Gallery as a new image. Refresh Gallery to view it.");}
+        catch (error) {setStatusMessage((error as Error).message);}
+        return;
+      }
+
       const body = new FormData();
       body.set("workflowId", GALLERY_EDIT_WORKFLOW_ID);
       body.set("prompt", editModal.positivePrompt.trim());
       body.set("negativePrompt", editModal.negativePrompt.trim());
       body.set("orientation", orientation);
-      body.set("durationSeconds", String(durationSeconds));
       body.set("gpuTarget", gpuTarget);
       body.set("seed", String(randomSeed()));
-      if (isAnimateImageWorkflowSelected) {
-        body.set("width", orientation === "portrait" ? "720" : "1280");
-        body.set("height", orientation === "portrait" ? "1280" : "720");
-        body.delete("durationSeconds");
-        body.set("requestKind", "anime-image");
-      }
+      body.set("positivePrompt", editModal.positivePrompt.trim());
+      body.set("requestKind", "generate-qwen21-image-edit");
       body.set("imageA", sourceFile, sourceFile.name);
 
       if (!body.has("imageA")) {
@@ -4334,20 +4392,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       body.set("width", orientation === "portrait" ? "720" : "1280");
       body.set("height", orientation === "portrait" ? "1280" : "720");
 
-      if (isFirstLastImageVideoWorkflowSelected && lastFrameFileRef.current) {
-        body.set("imageB", lastFrameFileRef.current);
-      }
-
-      if (isFirstLastImageVideoWorkflowSelected) {
-        body.set("workflowId", "presets/Create First Image to Last Image Video");
-        body.set("workflow", "presets/Create First Image to Last Image Video");
-        if (uploadedFileRef.current) {
-          body.set("imageA", uploadedFileRef.current);
-        }
-        if (lastFrameFileRef.current) {
-          body.set("imageB", lastFrameFileRef.current);
-        }
-      }
       await submitToComfy(body);
       setEditModal(null);
     } catch (error) {
@@ -6363,6 +6407,7 @@ async function handleAskAi() {
                     ))}
                   </select>
                   <p className="text-sm text-white/60">{IMAGE_OPERATION_LABELS[imageOperation]}</p>
+                  {imageOperation === "edit" ? <ImageEditEngineSelect value={imageEditEngine} onChange={setImageEditEngine} disabled={generateBusy} referenceCount={editInputCount} /> : null}
                 </div>
               ) : (
                 <div className="space-y-5">
@@ -6403,7 +6448,7 @@ async function handleAskAi() {
                   </div>
                 </div>
               )}
-              <p className="text-sm text-white/72">{selectedWorkflow.runtime}</p>
+              <p className="text-sm text-white/72">{isEditImageWorkflowSelected && imageEditEngine !== "qwen" ? `${imageEditEngine === "fibo2-dev" ? "Fibo Dev · 50 steps · CFG 5" : "Fibo Turbo · 4 steps · CFG 1"} · Euler · selected Auto / Manual GPU` : selectedWorkflow.runtime}</p>
             </Card>
 
             <Card title="Prompt">
@@ -6655,7 +6700,7 @@ async function handleAskAi() {
                 </div>
                 <p className="text-sm text-white/50">
                   {isEditImageWorkflowSelected
-                    ? "Qwen Image Edit uses model-aligned output: 704 x 1280 portrait or 1280 x 704 landscape."
+                    ? imageEditEngine === "qwen" ? "Qwen Image Edit uses model-aligned output: 704 x 1280 portrait or 1280 x 704 landscape." : "Fibo uses 768 × 1344 portrait or 1344 × 768 landscape. Qwen LoRAs are not applied."
                     : "Images and videos are locked to 720p in portrait or landscape."}
                 </p>
               </Card>
@@ -6765,7 +6810,7 @@ async function handleAskAi() {
                         }} />
                       </div>
                     ) : null}
-                    {selectedImageModel.maxInputImages > editInputCount ? (
+                    {imageEditEngine === "qwen" && selectedImageModel.maxInputImages > editInputCount ? (
                       <button
                         type="button"
                         aria-label="Add another reference image"
@@ -6775,7 +6820,7 @@ async function handleAskAi() {
                         +
                       </button>
                     ) : null}
-                    <p className="text-sm text-white/45">This workflow accepts up to {selectedImageModel.maxInputImages} reference image{selectedImageModel.maxInputImages === 1 ? "" : "s"}.</p>
+                    <p className="text-sm text-white/45">{imageEditEngine === "qwen" ? `This workflow accepts up to ${selectedImageModel.maxInputImages} reference images.` : "Fibo editing currently uses one source image."}</p>
                   </div>
                 ) : null}
               </Card> : null}
@@ -6922,6 +6967,7 @@ async function handleAskAi() {
             </div>
 
             <Card title="Generate">
+              {nativeCompletedJobId ? <ActionButton onClick={() => {void saveNativeImageToGallery(nativeCompletedJobId).then(() => {setNativeCompletedJobId(""); setStatusMessage("Image saved to Gallery.");}).catch(error => setStatusMessage(error.message));}}>Retry Save to Gallery</ActionButton> : null}
               <div className="flex flex-wrap items-center gap-3">
                 <ActionButton
                   onClick={handleGenerate}
@@ -6938,10 +6984,10 @@ async function handleAskAi() {
                 >
                   {generateBusy ? "Please wait..." : "Generate"}
                 </ActionButton>
-                {progressStatus === "running" ? (
+                {progressStatus === "running" || nativeEditJobId ? (
                   <ActionButton
                     onClick={() => void handleCancelGeneration()}
-                    disabled={cancelBusy || !activePromptId}
+                    disabled={cancelBusy || (!activePromptId && !nativeEditJobId)}
                     aria-label="Cancel active generation"
                   >
                     {cancelBusy ? "Cancelling..." : "Cancel"}
@@ -8028,6 +8074,7 @@ async function handleAskAi() {
         onCloseEditModal={() => { if (!galleryActionsLocked) setEditModal(null); }}
         onEditPositivePromptChange={(value) => setEditModal((prev) => (prev ? { ...prev, positivePrompt: value } : prev))}
         onEditNegativePromptChange={(value) => setEditModal((prev) => (prev ? { ...prev, negativePrompt: value } : prev))}
+        onEditEngineChange={(engine) => setEditModal(prev => prev ? {...prev, engine} : prev)}
         onEnhanceEdit={() => void handleEnhanceEditModal()}
         onSubmitEdit={() => void submitGalleryEdit()}
         animateModal={animateModal}

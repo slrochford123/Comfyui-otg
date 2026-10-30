@@ -8,6 +8,8 @@ import { requireSessionUser } from "@/lib/sessionUser";
 import { QWEN21_TURBO_LORA } from "@/lib/imageGenerateWorkflows";
 import { buildMossWorkflow, MOSS_FILES, MOSS_REQUIRED_NODES, mossDimensions, mossSeed, mossTarget, mossOutputShape } from "@/lib/images/mossImage";
 import { chooseMossBackend } from "@/lib/images/mossBackend";
+import {NATIVE_CREATE_CONFIGS, isNativeImageModel, buildNativeImageGraph, nativeImageDimensions} from "@/lib/images/nativeImageModels";
+import {chooseNativeImageBackend} from "@/lib/images/nativeImageBackend";
 
 // OTG_BACKGROUND_STUDIO_FIVE_MODEL_CREATE_V1
 
@@ -27,6 +29,8 @@ type BackgroundCreateModelId =
   | "boogu"
   | "mage-flow"
   | "qwen-image-2-1"
+  | "minimax-h3-image"
+  | "fibo2-dev"
   | "moss-image-sft";
 
 type ModelConfig = {
@@ -45,6 +49,7 @@ type ModelConfig = {
 };
 
 const MODEL_CONFIG: Record<BackgroundCreateModelId, ModelConfig> = {
+  ...NATIVE_CREATE_CONFIGS,
   "moss-image-sft": {
     id: "moss-image-sft", label: "MOSS-Image SFT (INT8)",
     workflowFile: "workflows/characters/create/image_moss_image_sft_t2i.json",
@@ -893,7 +898,7 @@ export async function POST(
       MODEL_CONFIG[body.model];
 
     const target = config.id === "moss-image-sft" ? await (await import("@/lib/images/mossBackend")).routeMossTarget(mossTarget(body.gpuTarget)) : null;
-    const dimensions = target ? mossDimensions(body.width, body.height, "background") : { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT };
+    const dimensions = isNativeImageModel(config.id) ? nativeImageDimensions("background") : target ? mossDimensions(body.width, body.height, "background") : { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT };
     const seed = target ? mossSeed(body.seed, randomSeed()) : randomSeed();
 
     const prompt =
@@ -911,7 +916,7 @@ export async function POST(
           body.name,
       );
 
-    const graph = target ? buildMossWorkflow({ prompt, negativePrompt, ...dimensions, seed, target }) : mutateWorkflow({
+    const graph = isNativeImageModel(config.id) ? buildNativeImageGraph({model: config.id, prompt, ...dimensions, seed}) : target ? buildMossWorkflow({ prompt, negativePrompt, ...dimensions, seed, target }) : mutateWorkflow({
       graph: loadWorkflow(config),
       config,
       prompt,
@@ -922,7 +927,7 @@ export async function POST(
     // Backend selection completes before POST /prompt.
     // Never submit the same generation to both GPUs.
     const backend =
-      target ? await chooseMossBackend(target) : await chooseBackend(
+      isNativeImageModel(config.id) ? await chooseNativeImageBackend(config.id) : target ? await chooseMossBackend(target) : await chooseBackend(
         request,
         config,
       );
@@ -944,7 +949,7 @@ export async function POST(
         seed,
         width: dimensions.width,
         height: dimensions.height,
-        ...(target ? mossOutputShape(dimensions.width, dimensions.height) : { orientation: "landscape", aspectRatio: "16:9" }),
+        ...(target || isNativeImageModel(config.id) ? mossOutputShape(dimensions.width, dimensions.height) : { orientation: "landscape", aspectRatio: "16:9" }),
         outputNodeId:
           config.outputNodeId,
         filenamePrefix,

@@ -1,4 +1,6 @@
 "use client";
+import ImageEditEngineSelect from "./ImageEditEngineSelect";
+import {nativeEditEngineLabel, type NativeEditEngine} from "@/lib/client/nativeImages";
 
 // OTG_CHARACTER_TAB_REWORK_CURRENT_STABLE_PHASE1
 
@@ -72,6 +74,8 @@ type CharacterModelId =
   | "boogu"
   | "mage-flow"
   | "qwen-image-2-1"
+  | "minimax-h3-image"
+  | "fibo2-dev"
   | "moss-image-sft";
 
 const CHARACTER_CARD_EXPRESSIONS = [
@@ -100,6 +104,8 @@ const CHARACTER_IMAGE_MODELS: Array<{
   label: string;
   workflowFile: string;
 }> = [
+  { id: "minimax-h3-image", label: "MiniMax H3 Image", workflowFile: "image_minimax_h3_t2i.json" },
+  { id: "fibo2-dev", label: "Fibo 2.0 Dev · research", workflowFile: "image_fibo2_dev_t2i.json" },
   { id: "moss-image-sft", label: "MOSS-Image SFT (INT8)", workflowFile: "image_moss_image_sft_t2i.json" },
   {
     id: "ernie-image",
@@ -427,9 +433,11 @@ function CharacterCreateSetup({
   const [uploadedSource, setUploadedSource] =
     React.useState<CharacterCreateCandidate | null>(null);
   const [completionPrompt, setCompletionPrompt] = React.useState("");
+  const [completionEngine, setCompletionEngine] = React.useState<NativeEditEngine>("qwen");
   const [createCandidates, setCreateCandidates] = React.useState<CharacterCreateCandidate[]>([]);
   const [selectedCreateCandidateId, setSelectedCreateCandidateId] = React.useState("");
   const [modifyCandidateId, setModifyCandidateId] = React.useState("");
+  const [modifyEngine, setModifyEngine] = React.useState<NativeEditEngine>("qwen");
   const [modifyInstruction, setModifyInstruction] = React.useState("");
   const [modifyNegativePrompt, setModifyNegativePrompt] = React.useState("");
   const [modifyAdvancedOpen, setModifyAdvancedOpen] = React.useState(false);
@@ -983,9 +991,10 @@ function CharacterCreateSetup({
     candidateEditInFlightRef.current = true;
     setCandidateEditStatus("running");
     setCreateError("");
-    setCreateMessage("Applying candidate edit with Qwen Image Edit 2509...");
+    setCreateMessage(`Applying candidate edit with ${nativeEditEngineLabel(modifyEngine)}...`);
     try {
       const edited = await executeCharacterCandidateEdit({
+        engine: modifyEngine,
         source: editableCharacterHubCandidate(source),
         requestedChange: modifyInstruction,
         negativePrompt: modifyNegativePrompt,
@@ -1163,10 +1172,11 @@ function CharacterCreateSetup({
 
     setCreateLoading(true);
     setCreateError("");
-    setCreateMessage("Completing the Character with Qwen Edit Image...");
+    setCreateMessage(`Completing the Character with ${nativeEditEngineLabel(completionEngine)}...`);
     try {
       const seed = randomCharacterSeed();
       const completed = await executeCharacterUploadCompletion({
+        engine: completionEngine,
         sourceServerPath: uploadedSource.serverPath,
         kind: mode,
         framing: uploadFraming,
@@ -1179,7 +1189,7 @@ function CharacterCreateSetup({
         resolveOutput: waitForCharacterWorkflowImage,
         persistOutput: copyCharacterHubImageToUpload,
         onSubmitted: (job) => setCreateMessage(
-          `Qwen completion submitted. Prompt ID: ${job.promptId}. Waiting for the completed Character...`,
+          `${nativeEditEngineLabel(completionEngine)} completion submitted. Prompt ID: ${job.promptId}. Waiting for the completed Character...`,
         ),
       });
       const candidate: CharacterCreateCandidate = {
@@ -1188,25 +1198,23 @@ function CharacterCreateSetup({
         serverPath: completed.serverPath,
         promptId: completed.promptId,
         seed: Number(seed),
-        backend: "qwen-image-edit-2-1",
-        modelLabel: isFreeform
-          ? "Qwen Completed Freeform Character"
-          : "Qwen Completed Character",
+        backend: completionEngine === "qwen" ? "qwen-image-edit-2-1" : completionEngine,
+        modelLabel: `${nativeEditEngineLabel(completionEngine)} Completed Character`,
         styleLabel: uploadFraming === "head" ? "Head completion" : "Half Body completion",
         internalPrompt: completed.instruction,
-        workflowId: "presets/image_qwen_image_2_1_image_edit",
+        workflowId: completionEngine === "qwen" ? "presets/image_qwen_image_2_1_image_edit" : `native/${completionEngine}`,
         backgroundFree: false,
       };
       setCreateCandidates([candidate]);
       setSelectedCreateCandidateId(candidate.id);
       setCreateMessage(
-        "Qwen completion finished. Review the complete Character, then continue to background removal and Character Card.",
+        "Completion finished. Review the complete Character, then continue to background removal and Character Card.",
       );
     } catch (error: any) {
       setCreateCandidates([]);
       setSelectedCreateCandidateId("");
       setCreateError(
-        `${error?.message || "Qwen Character completion failed."} The partial upload was preserved for retry and will not be used for Character Card generation.`,
+        `${error?.message || "Character completion failed."} The partial upload was preserved for retry and will not be used for Character Card generation.`,
       );
       setCreateMessage("");
     } finally {
@@ -2278,6 +2286,7 @@ function CharacterCreateSetup({
               </div>
             ) : (
               <div className="mt-5">
+                <ImageEditEngineSelect value={completionEngine} onChange={setCompletionEngine} disabled={createLoading} />
                 <label htmlFor={`character-completion-prompt-${mode}`} className="text-xs font-black uppercase tracking-[0.2em] text-sky-200/75">
                   {isFreeform ? "Complete Character description" : "Full body and clothing description"}
                 </label>
@@ -2302,7 +2311,7 @@ function CharacterCreateSetup({
                   className="mt-4 min-h-12 w-full rounded-xl bg-sky-300 px-4 text-sm font-black text-zinc-950 disabled:opacity-40"
                   data-otg="character-upload-run-completion"
                 >
-                  {createLoading ? "Completing with Qwen..." : "Complete Character with Qwen"}
+                  {createLoading ? "Completing…" : `Complete Character · ${nativeEditEngineLabel(completionEngine)}`}
                 </button>
               </div>
             )}
@@ -2367,6 +2376,8 @@ function CharacterCreateSetup({
 
       {modifyingCandidate ? (
         <CandidateModifyDialog
+          engine={modifyEngine}
+          onEngineChange={setModifyEngine}
           candidate={editableCharacterHubCandidate(modifyingCandidate)}
           imageSrc={modifyingCandidate.imageUrl}
           requestedChange={modifyInstruction}
@@ -2811,9 +2822,9 @@ function CharacterCreateSetup({
                 {characterOutput.height}
               </div>
               <div>
-                Orientation: {modelId === "moss-image-sft" ? mossOutputShape(characterOutput.width, characterOutput.height).orientation : FIXED_CHARACTER_OUTPUT.orientation}
+                Orientation: {mossOutputShape(characterOutput.width, characterOutput.height).orientation}
               </div>
-              <div>Aspect Ratio: {modelId === "moss-image-sft" ? mossOutputShape(characterOutput.width, characterOutput.height).aspectRatio : FIXED_CHARACTER_OUTPUT.aspectRatio}</div>
+              <div>Aspect Ratio: {mossOutputShape(characterOutput.width, characterOutput.height).aspectRatio}</div>
               <div>Seed: {modelId === "moss-image-sft" ? (mossSettings.seed === "" ? "Random every generation" : mossSettings.seed) : FIXED_CHARACTER_OUTPUT.seedBehavior}</div>
             </div>
           </div>
@@ -2898,6 +2909,7 @@ const FIXED_CHARACTER_OUTPUT = {
 } as const;
 
 function characterOutputForModel(modelId: CharacterModelId) {
+  if (modelId === "minimax-h3-image" || modelId === "fibo2-dev") return {width: 768, height: 1344};
   return modelId === "qwen-image-2-1"
     ? { width: 1088, height: 1920 }
     : FIXED_CHARACTER_OUTPUT;

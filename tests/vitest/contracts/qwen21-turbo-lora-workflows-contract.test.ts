@@ -131,6 +131,7 @@ describe("Qwen Image 2.1 Turbo LoRA workflow contract", () => {
     expect(createRoute).toContain("do not replace the requested environment with a studio backdrop");
     expect(visualStore).toContain("QWEN21_TURBO_CONTRACT");
     expect(visualStudio).toContain("Qwen Image Edit 2.1 Turbo");
-    expect(visualStudio).toContain("8 steps · CFG 1 · RTX 5060 Ti");
+    expect(visualStudio).toContain("8 steps · CFG 1 · Auto / Manual GPU");
+    expect(visualStudio).toContain("nativeEditEngineLabel(preparedFibo)");
   });
 });

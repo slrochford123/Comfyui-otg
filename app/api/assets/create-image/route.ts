@@ -5,6 +5,8 @@ import {
 import fs from "node:fs";
 import { buildMossWorkflow, MOSS_FILES, MOSS_REQUIRED_NODES, mossDimensions, mossSeed, mossTarget, mossOutputShape, MossInputError } from "@/lib/images/mossImage";
 import { chooseMossBackend } from "@/lib/images/mossBackend";
+import {NATIVE_CREATE_CONFIGS, isNativeImageModel, buildNativeImageGraph, nativeImageDimensions} from "@/lib/images/nativeImageModels";
+import {chooseNativeImageBackend} from "@/lib/images/nativeImageBackend";
 import path from "node:path";
 import {
   randomInt,
@@ -60,6 +62,7 @@ const MODEL_CONFIG: Record<
   AssetImageModelId,
   ModelConfig
 > = {
+  ...NATIVE_CREATE_CONFIGS,
   "moss-image-sft": {
     id: "moss-image-sft", label: "MOSS-Image SFT (INT8)",
     workflowFile: "workflows/characters/create/image_moss_image_sft_t2i.json",
@@ -1226,7 +1229,7 @@ export async function POST(
     const startedAt = Date.now();
 
     const target = config.id === "moss-image-sft" ? await (await import("@/lib/images/mossBackend")).routeMossTarget(mossTarget(body.gpuTarget)) : null;
-    const dimensions = target ? mossDimensions(body.width, body.height, "asset") : { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT };
+    const dimensions = isNativeImageModel(config.id) ? nativeImageDimensions("asset") : target ? mossDimensions(body.width, body.height, "asset") : { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT };
     const seed = target ? mossSeed(body.seed, randomSeed()) : randomSeed();
 
     const finalPrompt =
@@ -1242,7 +1245,7 @@ export async function POST(
       ? `qwen-${randomUUID()}`
       : "";
     const graph =
-      target ? buildMossWorkflow({ prompt: finalPrompt, negativePrompt: String(body.negativePrompt || ""), ...dimensions, seed, target }) : mutateWorkflow({
+      isNativeImageModel(config.id) ? buildNativeImageGraph({model: config.id, prompt: finalPrompt, ...dimensions, seed}) : target ? buildMossWorkflow({ prompt: finalPrompt, negativePrompt: String(body.negativePrompt || ""), ...dimensions, seed, target }) : mutateWorkflow({
         graph:
           loadWorkflow(config),
         config,
@@ -1260,7 +1263,7 @@ export async function POST(
      * response could otherwise create duplicate work.
      */
     const backend =
-      target ? await chooseMossBackend(target) : await chooseBackend(
+      isNativeImageModel(config.id) ? await chooseNativeImageBackend(config.id) : target ? await chooseMossBackend(target) : await chooseBackend(
         request,
         config,
       );

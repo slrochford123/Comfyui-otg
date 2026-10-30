@@ -1,6 +1,8 @@
 "use client";
 
 import Image from "next/image";
+import ImageEditEngineSelect from "../ImageEditEngineSelect";
+import {submitNativeImageEdit, type NativeEditEngine} from "@/lib/client/nativeImages";
 import { useCallback, useEffect, useState } from "react";
 import type { StoryVisualDirectorAction } from "@/lib/storyCreator/visualActions";
 
@@ -23,6 +25,7 @@ export function StoryDirectorVisualCard({ projectId, action, onChange }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [editEngine, setEditEngine] = useState<NativeEditEngine>("qwen");
   const [version, setVersion] = useState<VisualVersion | null>(null);
 
   async function post(body: Record<string, unknown>) {
@@ -92,6 +95,7 @@ export function StoryDirectorVisualCard({ projectId, action, onChange }: {
         artStyle: "story-directed visual design",
         aspectRatio: "landscape",
         referenceVersionIds: action.referenceVersionIds,
+        editEngine,
         entityId: action.entityId || undefined,
         metadata: { planVersion: action.planVersion, sceneId: action.sceneId, shotId: action.shotId, source: "story-director-conversation" },
       }) as Prepared;
@@ -101,6 +105,12 @@ export function StoryDirectorVisualCard({ projectId, action, onChange }: {
         const sourceResponse = await fetch(`/api/story-creator/visual-assets/media?projectId=${encodeURIComponent(projectId)}&versionId=${encodeURIComponent(action.sourceVersionId)}`, { cache: "no-store", credentials: "include" });
         if (!sourceResponse.ok) throw new Error("Could not load the approved source image for editing.");
         const blob = await sourceResponse.blob();
+        if (editEngine !== "qwen") {
+          const result = await submitNativeImageEdit({model: editEngine, image: new File([blob], "story-source.png", {type: blob.type || "image/png"}),
+            prompt: prepared.version.prompt, seed: String(Math.floor(Math.random() * 2 ** 32))});
+          const submitted = await post({action: "record-submission", versionId: prepared.version.id, promptId: result.promptId, response: result, endpoint: "/api/images/native"});
+          setVersion(submitted.version); setNotice("Image edit started with the selected Fibo model. Earlier versions are preserved."); return;
+        }
         const form = new FormData();
         form.set("workflowId", "presets/image_qwen_image_2_1_image_edit");
         form.set("requestKind", "generate-qwen21-image-edit");
@@ -150,6 +160,7 @@ export function StoryDirectorVisualCard({ projectId, action, onChange }: {
     <p className="text-xs font-black uppercase tracking-[0.12em] text-cyan-100/65">Visual design</p>
     <h3 className="mt-2 text-base font-black text-white">{action.name}</h3>
     <p className="mt-2 text-sm leading-6 text-white/65">{action.prompt}</p>
+    {action.action === "prepare-edit" ? <ImageEditEngineSelect value={editEngine} onChange={setEditEngine} disabled={busy || Boolean(version)} referenceCount={new Set([action.sourceVersionId, ...(action.referenceVersionIds || [])].filter(Boolean)).size} /> : null}
     {imageUrl ? <Image src={imageUrl} alt={action.name} width={768} height={512} unoptimized className="mt-3 max-h-[520px] w-full rounded-[12px] object-contain" /> : null}
     {version && !imageUrl ? <div className="mt-3 rounded-[12px] border border-white/10 p-3 text-sm text-white/55">{version.status === "failed" ? "Image creation failed." : "Creating image..."}</div> : null}
     {error ? <div className="mt-3 rounded-[10px] border border-red-300/20 bg-red-500/10 p-2 text-xs text-red-100">{error}</div> : null}

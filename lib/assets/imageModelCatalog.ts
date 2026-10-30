@@ -5,6 +5,8 @@ export type AssetImageModelId =
   | "boogu"
   | "mage-flow"
   | "qwen-image-2-1"
+  | "minimax-h3-image"
+  | "fibo2-dev"
   | "moss-image-sft";
 
 export type AssetImageModel = {
@@ -14,6 +16,8 @@ export type AssetImageModel = {
 };
 
 export const ASSET_IMAGE_MODELS: readonly AssetImageModel[] = [
+  { id: "minimax-h3-image", label: "MiniMax H3 Image", workflowFile: "workflows/official/image_minimax_h3_t2i.json" },
+  { id: "fibo2-dev", label: "Fibo 2.0 Dev · research", workflowFile: "workflows/official/image_fibo2_dev_t2i.json" },
   { id: "moss-image-sft", label: "MOSS-Image SFT (INT8)", workflowFile: "workflows/characters/create/image_moss_image_sft_t2i.json" },
   {
     id: "ernie-image",

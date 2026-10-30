@@ -40,6 +40,9 @@ const DEFAULT_IMAGE_GPU_URLS = [
   "http://127.0.0.1:8288",
   "http://192.168.1.113:8188",
   "http://100.75.162.64:8188",
+  // Native H3/Fibo still graphs deliberately use the existing CUDA13 H3 lane.
+  "http://100.75.162.64:8189",
+  "http://100.98.212.116:8188",
 ] as const;
 
 const HISTORY_REQUEST_TIMEOUT_MS = 2500;

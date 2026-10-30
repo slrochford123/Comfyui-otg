@@ -1,6 +1,8 @@
 "use client";
 
 import React from "react";
+import ImageEditEngineSelect from "./ImageEditEngineSelect";
+import {nativeEditEngineLabel, type NativeEditEngine} from "@/lib/client/nativeImages";
 import MossImageControls, { defaultMossSettings } from "./MossImageControls";
 import MossGallerySaveButton from "./MossGallerySaveButton";
 
@@ -1124,7 +1126,7 @@ function CandidateSlots({
                             ? "Uploaded Image"
                             : candidate.source ===
                                 "edited"
-                              ? "Qwen Image Edit"
+                              ? candidate.modelLabel || "Image Edit"
                               : candidate.source ===
                                   "saved"
                                 ? "Restored Candidate"
@@ -1364,6 +1366,7 @@ export default function AssetGalleryPanel({
     setEditingCandidateId,
   ] =
     React.useState("");
+  const [editEngine, setEditEngine] = React.useState<NativeEditEngine>("qwen");
 
   const [
     editInstruction,
@@ -2324,7 +2327,7 @@ export default function AssetGalleryPanel({
 
     setError("");
     setMessage(
-      "Describe the change for Qwen Image Edit.",
+      "Describe the change and choose an image-editing model.",
     );
   }
 
@@ -2357,7 +2360,7 @@ export default function AssetGalleryPanel({
       !requestedChange
     ) {
       setError(
-        "Describe the Asset change you want Qwen Image Edit to make.",
+        "Describe the Asset change you want the selected image model to make.",
       );
 
       return;
@@ -2369,7 +2372,7 @@ export default function AssetGalleryPanel({
 
     setError("");
     setMessage(
-      "Preparing the Asset candidate for Qwen Image Edit 2509...",
+      `Preparing the Asset candidate for ${nativeEditEngineLabel(editEngine)}...`,
     );
 
     try {
@@ -2381,6 +2384,7 @@ export default function AssetGalleryPanel({
       const edited =
         await executeAssetCandidateEdit(
           {
+            engine: editEngine,
             source:
               editableAssetCandidate(
                 stable,
@@ -2437,7 +2441,7 @@ export default function AssetGalleryPanel({
             onSubmitted:
               (job) =>
                 setMessage(
-                  `Qwen Image Edit submitted. Prompt ${job.promptId}. Waiting for output...`,
+                  `${nativeEditEngineLabel(editEngine)} submitted. Prompt ${job.promptId}. Waiting for output...`,
                 ),
           },
         );
@@ -2456,7 +2460,7 @@ export default function AssetGalleryPanel({
         source:
           "edited",
         modelLabel:
-          "Qwen Image Edit 2509",
+          nativeEditEngineLabel(editEngine),
         prompt:
           requestedChange,
         promptId:
@@ -2501,8 +2505,8 @@ export default function AssetGalleryPanel({
       setMessage(
         candidates.length >=
         MAX_ASSET_CANDIDATES
-          ? "Qwen edit complete. The edited result replaced slot 5."
-          : "Qwen edit complete. The edited result was added as a new candidate.",
+          ? "Image edit complete. The edited result replaced slot 5."
+          : "Image edit complete. The edited result was added as a new candidate.",
       );
     } catch (
       cause
@@ -2510,7 +2514,7 @@ export default function AssetGalleryPanel({
       setError(
         cause instanceof Error
           ? cause.message
-          : "Qwen Image Edit failed.",
+          : "Image Edit failed.",
       );
 
       setMessage("");
@@ -3330,7 +3334,7 @@ export default function AssetGalleryPanel({
           props and objects, upload an
           existing image, save
           candidates for later, edit
-          them with Qwen Image Edit,
+          them with Qwen or Fibo,
           and turn the selected image
           into one canonical 1080
           Asset reference.
@@ -3763,9 +3767,10 @@ export default function AssetGalleryPanel({
               data-otg="asset-qwen-edit"
             >
               <div className="text-xs font-black uppercase tracking-[0.2em] text-violet-200/70">
-                Qwen Image Edit
+                Image Edit
               </div>
 
+              <ImageEditEngineSelect value={editEngine} onChange={setEditEngine} disabled={Boolean(busyCandidateId)} />
               <h3 className="mt-2 text-xl font-black text-white">
                 Edit{" "}
                 {

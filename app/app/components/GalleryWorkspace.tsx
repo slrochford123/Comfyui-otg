@@ -3,6 +3,8 @@
 import React from "react";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/cn";
+import ImageEditEngineSelect from "./ImageEditEngineSelect";
+import type {NativeEditEngine} from "@/lib/client/nativeImages";
 
 export type GalleryItem = {
   fileName?: string;
@@ -37,6 +39,7 @@ export type ViewerState = {
 };
 
 export type EditModalState = {
+  engine: NativeEditEngine;
   item: GalleryItem;
   positivePrompt: string;
   negativePrompt: string;
@@ -669,6 +672,7 @@ type GalleryWorkspaceProps = {
   onCloseEditModal: () => void;
   onEditPositivePromptChange: (value: string) => void;
   onEditNegativePromptChange: (value: string) => void;
+  onEditEngineChange: (value: NativeEditEngine) => void;
   onEnhanceEdit: () => void;
   onSubmitEdit: () => void;
   animateModal: AnimateModalState | null;
@@ -1000,6 +1004,7 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
               </div>
             </div>
             <div className="space-y-4">
+              <ImageEditEngineSelect value={editModal.engine} onChange={props.onEditEngineChange} disabled={galleryActionsLocked || editModal.enhancing} />
               <textarea
                 value={editModal.positivePrompt}
                 onChange={(e) => onEditPositivePromptChange(e.target.value)}

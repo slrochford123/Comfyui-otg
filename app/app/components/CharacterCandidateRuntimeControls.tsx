@@ -2,6 +2,8 @@
 
 import React from "react";
 import type { EditableCharacterCandidate } from "@/lib/client/characterCandidateEditClient";
+import ImageEditEngineSelect from "./ImageEditEngineSelect";
+import type {NativeEditEngine} from "@/lib/client/nativeImages";
 
 export type CharacterEditUiStatus = "idle" | "running" | "error";
 
@@ -14,6 +16,8 @@ export function canApplyCharacterCandidateEdit(
 }
 
 export function CandidateModifyDialog(props: {
+  engine?: NativeEditEngine;
+  onEngineChange?: (engine: NativeEditEngine) => void;
   candidate: EditableCharacterCandidate;
   imageSrc: string;
   requestedChange: string;
@@ -53,11 +57,12 @@ export function CandidateModifyDialog(props: {
             <img src={props.imageSrc} alt="Source candidate for edit" draggable={false} onContextMenu={(event) => event.preventDefault()} className="mx-auto max-h-[32dvh] w-full rounded-lg object-contain select-none sm:max-h-[360px]" />
           </button>
           <div>
+            {props.onEngineChange ? <ImageEditEngineSelect value={props.engine || "qwen"} onChange={props.onEngineChange} disabled={props.status === "running"} /> : null}
             <label className="block text-sm font-medium text-zinc-200">
               Requested Change
               <textarea value={props.requestedChange} onChange={(event) => props.onRequestedChange(event.target.value)} disabled={props.status === "running"} rows={4} placeholder="Example: Change the jacket to deep blue leather." className="mt-2 w-full rounded-xl border border-zinc-800 bg-black/30 p-3 text-sm text-zinc-100 outline-none focus:border-cyan-300 disabled:opacity-60" />
             </label>
-            <p className="mt-2 text-xs leading-5 text-zinc-400">Identity, face, hairstyle, proportions, pose, composition, clothing, accessories, and unspecified details are preserved automatically.</p>
+            <p className="mt-2 text-xs leading-5 text-zinc-400">The edit instruction asks to preserve identity, face, hairstyle, proportions, pose, composition and unspecified details. Review the result for unintended changes.</p>
             <button type="button" onClick={props.onToggleAdvanced} disabled={props.status === "running"} className="mt-3 text-xs font-semibold text-cyan-200 disabled:opacity-40">{props.advancedOpen ? "Hide Advanced" : "Advanced"}</button>
             {props.advancedOpen ? (
               <label className="mt-3 block text-sm text-zinc-300">

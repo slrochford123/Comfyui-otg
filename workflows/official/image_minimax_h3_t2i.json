@@ -1,0 +1,145 @@
+{
+  "9": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "model": [
+        "44",
+        0
+      ],
+      "scheduler": "simple",
+      "steps": 30,
+      "denoise": 1
+    }
+  },
+  "15": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 424242
+    }
+  },
+  "16": {
+    "class_type": "BasicGuider",
+    "inputs": {
+      "model": [
+        "44",
+        0
+      ],
+      "conditioning": [
+        "474",
+        0
+      ]
+    }
+  },
+  "17": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "res_multistep"
+    }
+  },
+  "39": {
+    "class_type": "LTXVSeparateAVLatent",
+    "inputs": {
+      "av_latent": [
+        "458",
+        0
+      ]
+    }
+  },
+  "44": {
+    "class_type": "ModelAttentionBackend",
+    "inputs": {
+      "model": [
+        "451",
+        0
+      ],
+      "attention": "comfy kitchen attention"
+    }
+  },
+  "46": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    }
+  },
+  "451": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "453": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    }
+  },
+  "454": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    }
+  },
+  "457": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "39",
+        0
+      ],
+      "vae": [
+        "454",
+        0
+      ]
+    }
+  },
+  "458": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "15",
+        0
+      ],
+      "guider": [
+        "16",
+        0
+      ],
+      "sampler": [
+        "17",
+        0
+      ],
+      "sigmas": [
+        "9",
+        0
+      ],
+      "latent_image": [
+        "46",
+        0
+      ]
+    }
+  },
+  "461": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "457",
+        0
+      ],
+      "filename_prefix": "SLR_TEST_Images/image"
+    }
+  },
+  "474": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "453",
+        0
+      ],
+      "text": "Describe the image or requested edit here."
+    }
+  }
+}

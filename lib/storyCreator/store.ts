@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import {privateMediaEnvironmentEnabled} from "@/lib/privateMediaRuntime";
 import {
   QWEN21_IMAGE_EDIT_WORKFLOW_ID,
   QWEN21_STORY_CREATE_WORKFLOW_FILE,
@@ -5213,6 +5214,7 @@ export function prepareStoryVisualGeneration(input: {
   referenceVersionIds?: unknown;
   entityId?: unknown;
   metadata?: unknown;
+  editEngine?: unknown;
 }) {
   const { ownerKey, projectId } = assertOwnedActiveProject(
     input.ownerKey,
@@ -5271,8 +5273,15 @@ export function prepareStoryVisualGeneration(input: {
     }
   }
   const usesImageEdit = Boolean(parentVersionId || referenceVersionIds.length);
-  const provider = usesImageEdit ? "qwen-image-edit-2-1" : "qwen-image-2-1";
-  const workflowId = usesImageEdit
+  const editEngine = String(input.editEngine || "qwen");
+  if (!["qwen", "fibo2-edit-turbo", "fibo2-dev"].includes(editEngine)) throw new Error("Unsupported image edit model.");
+  const fiboEdit = usesImageEdit && editEngine !== "qwen";
+  if (fiboEdit && !privateMediaEnvironmentEnabled()) throw new Error("Fibo image editing requires the configured private-research media environment.");
+  if (fiboEdit && new Set([parentVersionId, ...referenceVersionIds].filter(Boolean)).size > 1) {
+    throw new Error("Fibo is currently verified with one source image. Choose Qwen or explicitly remove additional references.");
+  }
+  const provider = fiboEdit ? editEngine : usesImageEdit ? "qwen-image-edit-2-1" : "qwen-image-2-1";
+  const workflowId = fiboEdit ? `native/${editEngine}` : usesImageEdit
     ? QWEN21_IMAGE_EDIT_WORKFLOW_ID
     : QWEN21_STORY_CREATE_WORKFLOW_FILE;
 
@@ -5290,11 +5299,11 @@ export function prepareStoryVisualGeneration(input: {
     artStyle,
     referenceVersionIds,
     entityId: cleanOptionalStoryBibleId(input.entityId),
-    qwenTurbo: {
+    ...(fiboEdit ? {imageEdit: {engine: editEngine, steps: editEngine === "fibo2-dev" ? 50 : 4, cfg: editEngine === "fibo2-dev" ? 5 : 1, sampler: "euler", workflowId}} : {qwenTurbo: {
       ...QWEN21_TURBO_CONTRACT,
       operation: usesImageEdit ? "edit" : "create",
       workflowId,
-    },
+    }}),
     ...(input.metadata && typeof input.metadata === "object" ? input.metadata : {}),
   });
   db().prepare(`
@@ -5305,7 +5314,7 @@ export function prepareStoryVisualGeneration(input: {
     ) VALUES (?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     versionId, projectId, ownerKey, asset.id, nextVersion, visualKind,
-    parentVersionId, prompt, provider, usesImageEdit ? "qwen-image-edit-2-1-turbo" : "qwen-image-2-1-turbo",
+    parentVersionId, prompt, provider, fiboEdit ? editEngine : usesImageEdit ? "qwen-image-edit-2-1-turbo" : "qwen-image-2-1-turbo",
     workflowId,
     metadataJson, now, now,
   );
@@ -5353,7 +5362,7 @@ export function recordStoryVisualSubmission(input: {
     ownerKey,
     projectId,
     assetId: version.assetId,
-    jobType: version.workflowId.includes("image_edit") ? "story-image-edit" : "story-image",
+    jobType: version.workflowId.includes("image_edit") || version.workflowId.startsWith("native/fibo2-") ? "story-image-edit" : "story-image",
     provider: version.provider,
     status: "submitted",
     promptId,

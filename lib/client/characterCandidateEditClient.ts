@@ -4,6 +4,8 @@ import {
   nextCharacterEditLineage,
   type CharacterCandidateLineage,
 } from "@/lib/characters/characterCandidateFlow";
+import {runNativeImageEdit, type NativeEditEngine} from "./nativeImages";
+import {composeCharacterEditInstruction} from "@/lib/characters/characterCandidateFlow";
 
 export type EditableCharacterCandidate = CharacterCandidateLineage & {
   id: string;
@@ -43,6 +45,7 @@ export async function submitCharacterCandidateEditJob(args: {
 }
 
 export async function executeCharacterCandidateEdit(args: {
+  engine?: NativeEditEngine;
   source: EditableCharacterCandidate;
   requestedChange: string;
   negativePrompt: string;
@@ -55,6 +58,17 @@ export async function executeCharacterCandidateEdit(args: {
   requestInit?: Pick<RequestInit, "credentials" | "headers">;
 }): Promise<EditableCharacterCandidate> {
   if (!args.source.serverPath) throw new Error("This candidate does not have a stable source image for editing.");
+
+  if (args.engine && args.engine !== "qwen") {
+    const instruction = composeCharacterEditInstruction(args.requestedChange);
+    const output = await runNativeImageEdit({model: args.engine, imageAPath: args.source.serverPath, prompt: instruction,
+      negativePrompt: args.negativePrompt, seed: args.seed, fetchImpl: args.fetchImpl, onSubmitted: args.onSubmitted});
+    const id = args.makeCandidateId?.() || `edited-${output.jobId}`;
+    const upload = await args.persistOutput(output.imageUrl, `${id}.png`);
+    return {id, label: `${args.source.label} — ${args.engine} edit`, url: upload.fileUrl || output.imageUrl,
+      serverPath: upload.serverPath, internalPrompt: instruction, promptId: output.promptId,
+      workflowId: `native/${args.engine}`, ...nextCharacterEditLineage(args.source, instruction), backgroundFree: false};
+  }
 
   const job = await submitCharacterCandidateEditJob({
     sourceServerPath: args.source.serverPath,

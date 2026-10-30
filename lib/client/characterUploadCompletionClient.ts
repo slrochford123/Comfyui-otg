@@ -4,6 +4,7 @@ import {
   type CharacterKind,
   type CharacterUploadFraming,
 } from "@/lib/characters/characterWorkflow";
+import {runNativeImageEdit, type NativeEditEngine} from "./nativeImages";
 
 export async function submitCharacterUploadCompletion(args: {
   sourceServerPath: string;
@@ -35,6 +36,7 @@ export async function submitCharacterUploadCompletion(args: {
 }
 
 export async function executeCharacterUploadCompletion(args: {
+  engine?: NativeEditEngine;
   sourceServerPath: string;
   kind: CharacterKind;
   framing: CharacterUploadFraming;
@@ -46,6 +48,16 @@ export async function executeCharacterUploadCompletion(args: {
   fetchImpl?: typeof fetch;
   requestInit?: Pick<RequestInit, "credentials" | "headers">;
 }) {
+  if (args.engine && args.engine !== "qwen") {
+    const submission = characterUploadCompletionSubmissionFields({...args, seed: String(args.seed)});
+    const output = await runNativeImageEdit({model: args.engine, imageAPath: args.sourceServerPath,
+      prompt: submission.plan.instruction, negativePrompt: submission.plan.negativePrompt,
+      seed: String(args.seed), fetchImpl: args.fetchImpl, onSubmitted: args.onSubmitted});
+    const upload = await args.persistOutput(output.imageUrl, `character-completed-${output.promptId}.png`);
+    if (!upload.serverPath) throw Error("Character completion did not receive a stable owner-scoped image path.");
+    return {imageUrl: upload.fileUrl || output.imageUrl, serverPath: upload.serverPath,
+      promptId: output.promptId, instruction: submission.plan.instruction};
+  }
   const job = await submitCharacterUploadCompletion(args);
   args.onSubmitted?.(job);
   const output = await args.resolveOutput(job.promptId, {

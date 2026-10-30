@@ -73,6 +73,7 @@ export async function POST(request: NextRequest) {
         artStyle: body.artStyle,
         aspectRatio: body.aspectRatio,
         referenceVersionIds: body.referenceVersionIds,
+        editEngine: body.editEngine,
         entityId: body.entityId,
         metadata: {
           ...(body.metadata && typeof body.metadata === "object" ? body.metadata : {}),

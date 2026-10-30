@@ -27,6 +27,7 @@ import H3AdvancedControls from "./H3AdvancedControls";
 import H3SingularitySelector from "./H3SingularitySelector";
 import H3SpeedIndicator from "./H3SpeedIndicator";
 import H3VideoEditPanel from "./H3VideoEditPanel";
+import NativeImagePanel from "./NativeImagePanel";
 import H3StudioControls, { type H3StudioController } from "./H3StudioControls";
 import type { H3StudioPlan } from "@/lib/h3StudioPlan";
 import SpeechInputButton from "./SpeechInputButton";
@@ -1010,6 +1011,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   );
   const [mode, setMode] = useState<Mode>("h3-text-to-video");
   const [videoEditOpen, setVideoEditOpen] = useState(false);
+  const [imageCreateOpen, setImageCreateOpen] = useState(false);
   const [studioController, setStudioController] = useState<H3StudioController>("auto");
   const [manualControlsOpen, setManualControlsOpen] = useState(false);
   const [studioBusy, setStudioBusy] = useState(false);
@@ -4005,8 +4007,11 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       className="mx-auto max-w-7xl space-y-4 pb-28 pt-8 md:pt-0"
       data-testid="h3-panel"
     >
+      {imageCreateOpen ? <NativeImagePanel key={storageOwnerKey} h3Only ownerKey={storageOwnerKey} onBack={() => setImageCreateOpen(false)} /> : <>
+      <button type="button" disabled={studioBusy} onClick={() => setImageCreateOpen(true)} className="min-h-11 rounded-lg border border-violet-300/30 px-4 font-bold">H3 · Text to Image</button>
       <H3StudioControls key={`${storageOwnerKey}:${studioControllerEpoch}`} ownerKey={storageOwnerKey} backend={h3Backend} onBackendChange={setH3Backend} controller={studioController} onControllerChange={next => { setStudioController(next); setManualControlsOpen(false); }} manualMenu={studioController === "manual" && !manualControlsOpen} onOpenManualControls={() => setManualControlsOpen(true)} onBackToStudio={() => setManualControlsOpen(false)} onBusyChange={setStudioBusy} />
-      <div hidden={studioController !== "manual" || manualControlsOpen} data-otg="h3-legacy-manual-tools" className="space-y-4">
+      </>}
+      <div hidden={imageCreateOpen || studioController !== "manual" || manualControlsOpen} data-otg="h3-legacy-manual-tools" className="space-y-4">
       {validatedStudioPlan ? <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 text-[var(--color-text)]" aria-label="Applied H3 Studio plan"><p>Applied plan: {validatedStudioPlan.workflowId} · {validatedStudioPlan.durationSeconds}s · {validatedStudioPlan.quality} MP. The editable generation prompt below is the approved plan prompt; the original intent remains in its manifest. Changed settings require a fresh plan.</p><button type="button" className="min-h-11 px-3" onClick={() => setValidatedStudioPlan(null)}>Stop using applied studio plan</button></section> : null}
       {videoEditOpen ? <H3VideoEditPanel key={storageOwnerKey} backend={h3Backend} authenticatedOwnerKey={storageOwnerKey} studioBusy={studioBusy} onBack={() => setVideoEditOpen(false)} /> : <>
       <section className="relative overflow-hidden rounded-[8px] border border-violet-300/20 bg-[linear-gradient(135deg,#100d25_0%,#09101b_55%,#071216_100%)] px-4 py-5 shadow-[0_20px_60px_rgba(76,29,149,.18)]">
