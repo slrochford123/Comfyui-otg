@@ -9,7 +9,8 @@ import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
 import AdminGpuControls from "./components/AdminGpuControls";
 import MediaGpuControl from "./components/MediaGpuControl";
 import ImageEditEngineSelect from "./components/ImageEditEngineSelect";
-import {runNativeImageEdit, saveNativeImageToGallery, type NativeEditEngine} from "@/lib/client/nativeImages";
+import {runNativeImageEdit, saveNativeImageToGallery, type NativeEditEngine, type NativeImageResult} from "@/lib/client/nativeImages";
+import {GeneratePreviewBinding, loadNativeImagePreview} from "@/lib/client/generatePreviewBinding";
 import { uiStatusTone } from "@/lib/uiStatusTone";
 import MediaPreviewPanel from "./components/MediaPreviewPanel";
 import SpeechInputButton from "./components/SpeechInputButton";
@@ -1374,6 +1375,7 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
   const [nativeEditJobId, setNativeEditJobId] = useState("");
   const nativeEditAbort = useRef<AbortController | null>(null);
   const nativeEditActive = useRef(false);
+  const generatePreviewBinding = useRef(new GeneratePreviewBinding());
   const [nativeCompletedJobId, setNativeCompletedJobId] = useState("");
   useEffect(() => () => nativeEditAbort.current?.abort(), []);
   const [prompt, setPrompt] = useState("");
@@ -1537,6 +1539,10 @@ export default function AppPageClient({ initialUser = null }: { initialUser?: In
 
   const appStateStorageKey = useMemo(
     () => profileStorageKey(APP_STATE_KEY, authenticatedOwnerKey || "guest"),
+    [authenticatedOwnerKey],
+  );
+  const nativePreviewStorageKey = useMemo(
+    () => profileStorageKey("otg:generate-native-preview:v1", authenticatedOwnerKey || "guest"),
     [authenticatedOwnerKey],
   );
 
@@ -2895,14 +2901,46 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     }
   }, [tab, viewerState, loadGallery]);
 
+  const beginGeneratePreview = useCallback((mode: "legacy" | "native") => {
+    const token = generatePreviewBinding.current.begin(mode);
+    setGenerateApproximatePreview(null);
+    setLatestPreviewMeta(null);
+    try { window.localStorage.removeItem(nativePreviewStorageKey); } catch {}
+    return token;
+  }, [nativePreviewStorageKey]);
+
+  const publishNativePreview = useCallback((output: NativeImageResult, token: number) => {
+    if (!generatePreviewBinding.current.acceptsNative(token, output)) return false;
+    latestPreviewIdentityRef.current = `native|${output.jobId}`;
+    setGenerateApproximatePreview(null);
+    setLatestPreviewUrl(output.imageUrl);
+    setLatestPreviewName(`${output.model}-${output.jobId}.png`);
+    setLatestPreviewKind("image");
+    setActivePromptId(output.promptId);
+    setProgressStatus("complete");
+    setProgressPercent(100);
+    setProgressQueue(0);
+    try { window.localStorage.setItem(nativePreviewStorageKey, output.jobId); } catch {}
+    return true;
+  }, [nativePreviewStorageKey]);
+
   const refreshLatestContent = useCallback(async (force = false) => {
+    const binding = generatePreviewBinding.current;
+    const token = binding.token;
+    const nativeJobId = binding.nativeJobId;
     try {
+      if (nativeJobId) {
+        if (force) publishNativePreview(await loadNativeImagePreview(nativeJobId), token);
+        return;
+      }
+      if (!binding.acceptsLegacy(token, force)) return;
       const res = await fetch("/api/content/last", {
         cache: "no-store",
         credentials: "include",
       });
 
       const data = (await res.json().catch(() => ({}))) as LatestContentResponse;
+      if (!res.ok || !binding.acceptsLegacy(token, force)) return;
       const file = data?.file;
 
       if (file?.url) {
@@ -2927,10 +2965,34 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setLatestPreviewName("");
       setLatestPreviewKind("");
       setLatestPreviewMeta(null);
-    } catch {
-      // ignore
+    } catch (error) {
+      if (nativeJobId && binding.isCurrent(token)) {
+        setStatusMessage(error instanceof Error ? error.message : "This image could not be refreshed.");
+      }
     }
-  }, []);
+  }, [publishNativePreview]);
+
+  useEffect(() => {
+    // Persist only an owner-scoped job ID. The authenticated API still authorizes
+    // every image read; no file paths, media data or credentials go into storage.
+    const binding = generatePreviewBinding.current;
+    binding.begin("legacy");
+    let savedJobId = "";
+    try { savedJobId = window.localStorage.getItem(nativePreviewStorageKey) || ""; } catch {}
+    setGenerateApproximatePreview(null);
+    setLatestPreviewUrl("");
+    setLatestPreviewName("");
+    setLatestPreviewKind("");
+    latestPreviewIdentityRef.current = "";
+    if (savedJobId) {
+      const nativeToken = binding.begin("native");
+      binding.expectNative(nativeToken, savedJobId);
+      void loadNativeImagePreview(savedJobId).then(output => publishNativePreview(output, nativeToken)).catch(error => {
+        if (binding.isCurrent(nativeToken)) setStatusMessage(error.message);
+      });
+    }
+    return () => { binding.begin("legacy"); };
+  }, [nativePreviewStorageKey, publishNativePreview]);
 
 
   useEffect(() => {
@@ -2957,7 +3019,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }, [latestPreviewKind, latestPreviewUrl]);
 
   const refreshProgress = useCallback(async (): Promise<"idle" | "running" | "complete" | "error" | null> => {
-    if (nativeEditActive.current) return "running";
+    const binding = generatePreviewBinding.current;
+    const token = binding.token;
+    if (nativeEditActive.current || !binding.acceptsProgress(token)) return null;
     try {
       const res = await fetch("/api/progress", {
         cache: "no-store",
@@ -2965,7 +3029,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       });
 
       const data = (await res.json().catch(() => ({}))) as ProgressResponse;
-      if (nativeEditActive.current) return "running";
+      if (nativeEditActive.current || !binding.acceptsProgress(token)) return null;
       const nextStatus = String(data?.status || "idle").toLowerCase();
       const queueCount = Number(data?.queue_remaining ?? data?.queue ?? 0) || 0;
       const running = Boolean(data?.running) || nextStatus === "running";
@@ -3165,6 +3229,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         successMessage?: string;
       }
     ) => {
+      beginGeneratePreview("legacy");
       try {
         const health = await fetch("/api/healthz", {
           cache: "no-store",
@@ -3274,7 +3339,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       }
 
     },
-    [loadGallery, refreshProgress, tab]
+    [beginGeneratePreview, loadGallery, refreshProgress, tab]
   );
 
   const fetchGalleryItemAsFile = useCallback(async (item: GalleryItem, fallbackBaseName: string) => {
@@ -3719,6 +3784,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     }
 
     generateSubmitInFlightRef.current = true;
+    const previewToken = beginGeneratePreview(isEditImageWorkflowSelected && imageEditEngine !== "qwen" ? "native" : "legacy");
     setGenerateBusy(true);
     setStatusMessage("");
     setGenerateSubmitNotice({
@@ -3750,12 +3816,12 @@ ${sceneReferenceCard || ""}`.toLowerCase();
           width: orientation === "portrait" ? 768 : 1344, height: orientation === "portrait" ? 1344 : 768,
           onStatus: status => {if (["failed", "canceled"].includes(status)) setNativeEditJobId("");},
           onSubmitted: job => {
+            generatePreviewBinding.current.expectNative(previewToken, job.jobId);
             setNativeEditJobId(job.jobId);
             setGenerateSubmitNotice({state: "accepted", message: "Fibo edit queued. Your source and prompt were preserved.", promptId: job.promptId});
           }});
         setNativeEditJobId("");
-        setLatestPreviewUrl(output.imageUrl); setLatestPreviewName(`${output.model}-${output.jobId}.png`); setLatestPreviewKind("image");
-        setProgressStatus("complete"); setProgressPercent(100);
+        publishNativePreview(output, previewToken);
         setNativeCompletedJobId(output.jobId);
         try {await saveNativeImageToGallery(output.jobId); setNativeCompletedJobId(""); setStatusMessage("Fibo edit complete and saved as a new Gallery image. Original preserved.");}
         catch (error) {setStatusMessage((error as Error).message);}
@@ -3884,6 +3950,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       setGenerateBusy(false);
     }
   }, [
+    beginGeneratePreview,
+    publishNativePreview,
     activeGenerateStylePreset,
     characterContinuityPrompt,
     composeGeneratePrompt,
@@ -4364,10 +4432,14 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       }
 
       if (editModal.engine !== "qwen") {
+        const previewToken = beginGeneratePreview("native");
+        setGenerateApproximatePreview(null);
+        setLatestPreviewUrl(""); setLatestPreviewName(""); setLatestPreviewKind("");
         setStatusMessage("Fibo image edit is running. The original Gallery image is preserved.");
         const output = await runNativeImageEdit({model: editModal.engine, image: sourceFile,
-          prompt: editModal.positivePrompt, negativePrompt: editModal.negativePrompt, seed: String(randomSeed())});
-        setLatestPreviewUrl(output.imageUrl); setLatestPreviewName(`${output.model}-${output.jobId}.png`); setLatestPreviewKind("image");
+          prompt: editModal.positivePrompt, negativePrompt: editModal.negativePrompt, seed: String(randomSeed()),
+          onSubmitted: job => {generatePreviewBinding.current.expectNative(previewToken, job.jobId);}});
+        publishNativePreview(output, previewToken);
         setNativeCompletedJobId(output.jobId); setEditModal(null);
         try {await saveNativeImageToGallery(output.jobId); setNativeCompletedJobId(""); setStatusMessage("Fibo edit saved to Gallery as a new image. Refresh Gallery to view it.");}
         catch (error) {setStatusMessage((error as Error).message);}
@@ -4668,6 +4740,9 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }
 
   function handleClearLatestPreview() {
+    generatePreviewBinding.current.clear();
+    setGenerateApproximatePreview(null);
+    try { window.localStorage.removeItem(nativePreviewStorageKey); } catch {}
     setLatestPreviewUrl("");
     setLatestPreviewName("");
     setLatestPreviewKind("");
@@ -4684,6 +4759,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     setActiveGenerateStyleId("");
     setDurationSeconds(5);
     setOrientation("landscape");
+    generatePreviewBinding.current.begin("legacy");
     handleClearLatestPreview();
     try {
       window.localStorage.removeItem(appStateStorageKey);
@@ -4978,6 +5054,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         currentNodeProgress: "",
       });
       setActivePromptId("");
+      generatePreviewBinding.current.begin("legacy");
+      generatePreviewBinding.current.clear();
+      setGenerateApproximatePreview(null);
+      try { window.localStorage.removeItem(nativePreviewStorageKey); } catch {}
       setLatestPreviewUrl("");
       setLatestPreviewName("");
       setLatestPreviewKind("");
@@ -4996,6 +5076,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   function handleSettingsClearLocalState() {
     try {
       window.localStorage.removeItem(appStateStorageKey);
+      window.localStorage.removeItem(nativePreviewStorageKey);
       setSettingsLocalMessage("Local UI state cleared. Server files and Gallery were not deleted.");
       setStatusMessage("Local UI state cleared.");
     } catch (error) {

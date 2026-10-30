@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.13",
+  "current": "2.14",
   "builds": [
     {
       "version": "2",
@@ -85,6 +85,12 @@
       "date": "2026-10-30",
       "summary": "Native H3 still-image generation and independent Fibo Dev/Turbo image editing; compact Qwen/Fibo choices across ordinary editing, protected outputs and truthful workflow metadata. Qualified personal-research deployment; existing H3 video mappings retained.",
       "sourceBaseCommit": "c338d0ab282ec177aec4c87ac65c1258e288cc45"
+    },
+    {
+      "version": "2.14",
+      "date": "2026-10-30",
+      "summary": "Job-bound Fibo Generate and Gallery-edit previews and downloads; reject stale global image/progress responses, refresh the exact result, and preserve owner-scoped preview recovery without changing models or GPU routing.",
+      "sourceBaseCommit": "c6c862275f081b5320b4c2e165cfc19072e8236d"
     }
   ]
 }
