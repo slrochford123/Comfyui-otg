@@ -2,6 +2,7 @@ import { isH3SingularityMode, type H3CheckpointMode } from "@/lib/production/h3S
 import { validateH3LoraSelections } from "@/lib/h3LoraCatalogServer";
 import { parseH3TargetBackend } from "@/lib/h3GpuRouting";
 import crypto from "node:crypto";
+import {recoverableH3Submission} from "@/lib/h3SubmissionRecovery";
 import fsp from "node:fs/promises";
 import path from "node:path";
 
@@ -372,6 +373,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  return recoverableH3Submission(req, "realism", postGeneration);
+}
+async function postGeneration(req: NextRequest) {
   try {
     const owner = await getOwnerContext(req);
     const { ownerKey } = owner;

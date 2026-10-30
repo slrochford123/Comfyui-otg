@@ -382,6 +382,8 @@ export async function readCompletedH3StagedUpload(
       ),
     ) as StagedH3UploadMeta;
 
+  if (await fsp.stat(safeJoin(paths.directory, "cancelled")).catch(() => null)) throw new Error("H3 upload was cancelled. Select the reference again.");
+
   if (
     meta.id !== descriptor.id
     || meta.kind !== descriptor.kind

@@ -11,6 +11,7 @@ const calls = () => server.mock.calls.filter(([url]) => url === "/api/h3/studio/
 beforeEach(() => {
   localStorage.clear();
   server = vi.fn(async (url, init) => {
+    if (String(url).startsWith("/api/h3/submissions?")) return json({missing: true}, 404);
     if (url === "/api/h3/studio/auto") {
       const body = JSON.parse(init.body);
       return json({ job, plan: body.plan, settings: { manifest: { steps: 8 }, estimate: { explanation: "Owner experimental" } } }, 202);
@@ -63,10 +64,10 @@ describe("Auto creates from one explicit click, without a review checkpoint", ()
     const original = server.getMockImplementation()!;
     server.mockImplementation((url, init) => url === "/api/h3/studio/auto" ? new Promise<Response>(done => { resolve = done; }) : original(url, init));
     setup(); const button = screen.getByRole("button", { name: "Create Video" }); fireEvent.click(button); fireEvent.click(button);
-    expect(calls()).toHaveLength(1); const first = JSON.parse(calls()[0][1].body).requestId;
+    await waitFor(() => expect(calls()).toHaveLength(1)); const first = JSON.parse(calls()[0][1].body).requestId;
     await act(async () => resolve(json({ error: "Submission status unknown" }, 503)));
-    fireEvent.click(screen.getByRole("button", { name: "Create Video" }));
-    expect(calls()).toHaveLength(2); expect(JSON.parse(calls()[1][1].body).requestId).toBe(first);
+    fireEvent.click(screen.getByRole("button", { name: "Retry Create Video" }));
+    await waitFor(() => expect(calls()).toHaveLength(2)); expect(JSON.parse(calls()[1][1].body).requestId).toBe(first);
     await act(async () => resolve(json({ job })));
   });
   it("does not silently submit on load, switching modes, or paid planner access", async () => {

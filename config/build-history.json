@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.14",
+  "current": "2.15",
   "builds": [
     {
       "version": "2",
@@ -91,6 +91,12 @@
       "date": "2026-10-30",
       "summary": "Job-bound Fibo Generate and Gallery-edit previews and downloads; reject stale global image/progress responses, refresh the exact result, and preserve owner-scoped preview recovery without changing models or GPU routing.",
       "sourceBaseCommit": "c6c862275f081b5320b4c2e165cfc19072e8236d"
+    },
+    {
+      "version": "2.15",
+      "date": "2026-10-30",
+      "summary": "H3 Android foreground recovery, verified reference reuse, durable owner-scoped submission receipts and duplicate-safe Create Video retries; accurate connection/login/upload errors with existing models, routing and permissions preserved.",
+      "sourceBaseCommit": "f5101836b475e0b89422c8f4b6e13f9b0c0f0900"
     }
   ]
 }

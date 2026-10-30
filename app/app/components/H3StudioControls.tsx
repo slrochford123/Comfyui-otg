@@ -1,6 +1,8 @@
 "use client";
 import { isH3SingularityMode } from "@/lib/production/h3Settings";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {H3RecoveryClient, h3RecoveryMessage} from "@/lib/client/h3Recovery";
+import {useH3Resume} from "@/lib/client/useH3Resume";
 import { DEFAULT_H3_STUDIO_PLAN, H3_STUDIO_WORKFLOWS, automaticH3Plan, makeLocalH3Plan, parseH3StudioPlan, reconcileH3StudioPlan, studioDimensions, studioFrames, type H3StudioPlan } from "@/lib/h3StudioPlan";
 import type { H3StudioCatalogItem } from "@/lib/h3StudioRegistry";
 import { fastH3LoraBlockReason } from "@/lib/h3FastLora";
@@ -58,6 +60,8 @@ function SourcePreview({ source }: { source: Source }) {
   return <audio ref={node => { element.current = node; }} className={css.media} controls preload="metadata" />;
 }
 export default function H3StudioControls({ ownerKey, backend: controlledBackend, onBackendChange, controller: controlledController, onControllerChange, manualMenu = false, onOpenManualControls, onBackToStudio, initialSourceVideo, videoEditControls = false, sourceBlockMessage = "", onBusyChange }: Props) {
+  const recovery = useMemo(() => new H3RecoveryClient(ownerKey, videoEditControls ? "studio-edit" : "studio"), [ownerKey, videoEditControls]);
+  const [submissionRetry, setSubmissionRetry] = useState(false);
   const [localController, setLocalController] = useState<H3StudioController>("auto");
   const controller = controlledController ?? localController;
   function setController(next: H3StudioController) { setLocalController(next); onControllerChange?.(next); }
@@ -140,8 +144,49 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
     historyRef.current = entries; setHistory(entries);
     try { localStorage.setItem(historyKey, JSON.stringify(entries)); } catch { /* Job status remains available without device storage. */ }
   }, [historyKey]);
+  async function prepareSources() {
+    const current = revision.current;
+    for (const source of [...sourcesRef.current]) {
+      if (current !== revision.current) throw Error("References changed. Use Create Video with the current inputs.");
+      if (source.asset) {
+        const response = await recovery.fetch(`/api/h3/studio/media?id=${encodeURIComponent(source.asset.id)}&info=1`, {}, true);
+        if (response.ok) {
+          const data = await recovery.json(response);
+          if (data.asset?.id === source.asset.id && data.asset.sha256 === source.asset.sha256 && data.asset.version === source.asset.version) continue;
+          throw Error("This reference changed. Select it again before creating video.");
+        }
+        if (response.status === 401) await recovery.json(response);
+        if (![400, 404].includes(response.status)) await recovery.json(response);
+      }
+      const form = new FormData(); form.set("file", source.file);
+      form.set("role", source.role); form.set("description", source.description);
+      form.set("includeAudio", String(source.includeAudio)); form.set("clipStartSeconds", String(source.clipStartSeconds));
+      if (current !== revision.current) throw Error("References changed. Use Create Video with the current inputs.");
+      const data = await recovery.json(await recovery.fetch("/api/h3/studio/media", {method: "POST", body: form}));
+      if (current !== revision.current) return;
+      if (!data.asset?.id || !data.asset.sha256 || data.asset.version == null || data.asset.kind !== source.kind || data.asset.role !== source.role) throw Error("Could not prepare this reference. Select the file again.");
+      const next = sourcesRef.current.map(item => item.id === source.id && item.revision === source.revision ? {...item, asset: data.asset, error: undefined} : item);
+      sourcesRef.current = next; setSources(next);
+    }
+  }
+  useH3Resume(async () => {
+    if (inFlight.current || jobGuard.current) return;
+    const current = revision.current;
+    try {
+      await recovery.ready();
+      const accepted = await recovery.recover(false);
+      if (current !== revision.current) return;
+      if (accepted?.job) { acceptJob(accepted.job); requestId.current = null; setSubmissionRetry(false); }
+      const id = accepted?.job?.id || jobRef.current?.id;
+      if (id) {
+        const data = await recovery.json(await recovery.fetch(`/api/h3/generation?jobId=${encodeURIComponent(id)}`, {}, true));
+        if (current === revision.current && data.job && jobRef.current?.id === id) { acceptJob(data.job); setMessage(""); }
+      }
+    } catch (error) { if (current === revision.current) { setMessage(h3RecoveryMessage(error)); setSubmissionRetry(true); } }
+  });
   useEffect(() => {
     const signal = new AbortController();
+    inFlight.current = false; jobGuard.current = false; setBusy(false); setJobBusy(false); setSubmissionRetry(false);
     setPlan({ ...DEFAULT_H3_STUDIO_PLAN, workflowId: videoEditControls ? "reference-edit" : "native-t2v" }); setCatalog([]); setPreview(null); setQuote(null); setMessage(""); setPresets([]); setDirectorPlanReady(false); setConsent(false); setExternalMediaConsent(false); revision.current++;
     sourcesRef.current = []; setSources([]); jobRef.current = null; setJob(null); historyRef.current = []; setHistory([]); submittedPlan.current = null; setGenerationConsent(false); setClarification("");
     setExperimental(false); setDirectGeneration(false); setAutoSettings(null);
@@ -286,13 +331,21 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
     let draft: H3StudioPlan;
     try { draft = parseH3StudioPlan(retainedPlan || plan); } catch (error) { setMessage(error instanceof Error ? error.message : "Check your prompt and settings."); return; }
     jobGuard.current = true; setJobBusy(true); setMessage("");
-    const signal = new AbortController(); jobAbort.current = signal;
+    const current = revision.current, signal = new AbortController(); jobAbort.current = signal; abort.current = signal;
     // Retain the key after uncertain failures so a repeated submit cannot duplicate a job.
     requestId.current ||= newClientRequestId();
     try {
-      const data = await responseJson(await fetch("/api/h3/studio/execute", { method: "POST", credentials: "include", signal: signal.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plan: draft, ...(!directGeneration ? { reviewId: preview!.review.id, generationConsent: true } : {}), mediaIds: sourcesRef.current.map(source => source.asset!.id), requestId: requestId.current }) }));
-      if (!signal.signal.aborted) { acceptJob(data.job); submittedPlan.current = { jobId: data.job.id, plan: draft, mediaIdentity: mediaIdentity() }; setPreview(null); setQuote(null); setConsent(false); setGenerationConsent(false); }
-    } catch (error) { if (!signal.signal.aborted) setMessage(error instanceof Error ? error.message : "Submission status unknown. Try the same submit again to reconnect."); }
+      setMessage("Checking connection and preparing video…");
+      await recovery.ready();
+      if (signal.signal.aborted || revision.current !== current) return;
+      let data = await recovery.recover(true);
+      if (!data) {
+        await prepareSources();
+        if (signal.signal.aborted || revision.current !== current) return;
+        data = await recovery.submit("/api/h3/studio/execute", { plan: draft, ...(!directGeneration ? { reviewId: preview!.review.id, generationConsent: true } : {}), mediaIds: sourcesRef.current.map(source => source.asset!.id), requestId: requestId.current });
+      }
+      if (!signal.signal.aborted && revision.current === current) { acceptJob(data.job); requestId.current = null; setSubmissionRetry(false); setMessage(""); submittedPlan.current = { jobId: data.job.id, plan: draft, mediaIdentity: mediaIdentity() }; setPreview(null); setQuote(null); setConsent(false); setGenerationConsent(false); }
+    } catch (error) { if (!signal.signal.aborted && revision.current === current) { setSubmissionRetry(true); setMessage(h3RecoveryMessage(error)); } }
     finally { jobGuard.current = false; setJobBusy(false); }
   }
   async function createAutomatic(retainedPlan?: H3StudioPlan) {
@@ -304,13 +357,22 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
     const current = revision.current, signal = new AbortController(); abort.current = signal; jobAbort.current = signal;
     requestId.current ||= newClientRequestId();
     try {
-      const data = await responseJson(await fetch("/api/h3/studio/auto", { method: "POST", credentials: "include", signal: signal.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plan: draft, mediaIds: sourcesRef.current.map(source => source.asset!.id), requestId: requestId.current }) }));
+      setMessage("Checking connection and preparing video…");
+      await recovery.ready();
+      if (signal.signal.aborted || revision.current !== current) return;
+      let data = await recovery.recover(true);
+      if (!data) {
+        await prepareSources();
+        if (signal.signal.aborted || revision.current !== current) return;
+        data = await recovery.submit("/api/h3/studio/auto", { plan: draft, mediaIds: sourcesRef.current.map(source => source.asset!.id), requestId: requestId.current });
+      }
       if (signal.signal.aborted || revision.current !== current) return;
       const submitted = parseH3StudioPlan(data.plan || draft);
       acceptJob(data.job); setPlan(submitted); setAutoSettings(data.settings || null);
       submittedPlan.current = { jobId: data.job.id, plan: submitted, mediaIdentity: mediaIdentity() };
       requestId.current = null; setQuote(null); setConsent(false); setGenerationConsent(false);
-    } catch (error) { if (!signal.signal.aborted && revision.current === current) setMessage(error instanceof Error ? error.message : "Submission status unknown. Click Create Video again to reconnect to the same request."); }
+      setSubmissionRetry(false); setMessage("");
+    } catch (error) { if (!signal.signal.aborted && revision.current === current) { setSubmissionRetry(true); setMessage(h3RecoveryMessage(error)); } }
     finally { inFlight.current = false; jobGuard.current = false; setBusy(false); setJobBusy(false); }
   }
   function prepareRetry() {
@@ -352,7 +414,7 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
   const ref2va = plan.workflowId === "native-r2v" || plan.workflowId === "reference-edit";
   const omniRef = isH3OmniRefMode(plan.checkpoint);
   const shown = catalog.filter(l => (!category || l.categories.includes(category)) && `${l.name} ${l.version} ${l.category}`.toLowerCase().includes(query.toLowerCase()));
-  const planActions = <div className={css.row}><button type="button" disabled={busy || jobBusy || active || !mediaReady || !!mediaIssue || !plan.originalPrompt.trim() || !!clarification} onClick={() => controller === "auto" ? void createAutomatic() : directGeneration ? void execute() : void request("preview")}>{busy || jobBusy ? "Preparing video…" : controller === "auto" || videoEditControls || directGeneration ? "Create Video" : "Preview Video Plan (no cost)"}</button>{directGeneration && controller === "manual" ? <button type="button" disabled={busy || jobBusy || active || !mediaReady || !!mediaIssue || !plan.originalPrompt.trim()} onClick={() => void request("preview")}>View Plan (optional)</button> : null}<button type="button" disabled={busy || jobBusy || active} onClick={() => change({ ...DEFAULT_H3_STUDIO_PLAN })}>Reset plan (keep media)</button></div>;
+  const planActions = <div className={css.row}><button type="button" disabled={busy || jobBusy || active || !mediaReady || !!mediaIssue || !plan.originalPrompt.trim() || !!clarification} onClick={() => controller === "auto" ? void createAutomatic() : directGeneration ? void execute() : void request("preview")}>{busy || jobBusy ? "Preparing video…" : submissionRetry ? "Retry Create Video" : controller === "auto" || videoEditControls || directGeneration ? "Create Video" : "Preview Video Plan (no cost)"}</button>{directGeneration && controller === "manual" ? <button type="button" disabled={busy || jobBusy || active || !mediaReady || !!mediaIssue || !plan.originalPrompt.trim()} onClick={() => void request("preview")}>View Plan (optional)</button> : null}<button type="button" disabled={busy || jobBusy || active} onClick={() => change({ ...DEFAULT_H3_STUDIO_PLAN })}>Reset plan (keep media)</button></div>;
   return <section className={css.studio} aria-label="H3 Auto and Manual controllers">
     <h2>{videoEditControls ? "H3 Reference Video Edit" : "H3 Video Studio"}</h2>
     <div className={css.controller} aria-label="Studio controller"><button type="button" aria-pressed={controller === "auto"} onClick={() => setController("auto")}>Auto Mode</button><button type="button" aria-pressed={controller === "manual"} onClick={() => setController("manual")}>Manual Mode</button></div>

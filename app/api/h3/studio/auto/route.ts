@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import {recoverableH3Submission} from "@/lib/h3SubmissionRecovery";
 import { routeH3MediaPlan } from "@/lib/h3MediaGpuRouting";
 import { h3StudioDigest } from "@/lib/h3StudioIdentity";
 import { videoTrimSession } from "@/lib/h3VideoTrimSession";
@@ -16,6 +17,9 @@ export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "private, no-store" };
 const preparing = new Set<string>();
 export async function POST(request: NextRequest) {
+  return recoverableH3Submission(request, "studio-auto", postAutomatic);
+}
+async function postAutomatic(request: NextRequest) {
   let lockedOwner = "";
   try {
     const scope = await videoTrimSession(request); assertH3StudioAvailable();

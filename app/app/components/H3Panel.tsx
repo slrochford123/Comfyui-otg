@@ -28,6 +28,8 @@ import H3SingularitySelector from "./H3SingularitySelector";
 import H3SpeedIndicator from "./H3SpeedIndicator";
 import H3VideoEditPanel from "./H3VideoEditPanel";
 import NativeImagePanel from "./NativeImagePanel";
+import {H3RecoveryClient, h3RecoveryMessage} from "@/lib/client/h3Recovery";
+import {useH3Resume} from "@/lib/client/useH3Resume";
 import H3StudioControls, { type H3StudioController } from "./H3StudioControls";
 import type { H3StudioPlan } from "@/lib/h3StudioPlan";
 import SpeechInputButton from "./SpeechInputButton";
@@ -747,15 +749,7 @@ function h3PersistedMediaMetas(
 }
 
 function h3SubmitNetworkMessage(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error || "");
-  if (/failed to fetch|networkerror|load failed|cancelled|canceled/i.test(message)) {
-    return [
-      "H3 upload could not reach the server.",
-      "On Android this usually means the selected reference files are too large for the public .win upload path or the connection dropped during upload.",
-      "Use a shorter/compressed reference video or fewer references, then try again.",
-    ].join(" ");
-  }
-  return message || "H3 generation could not be submitted.";
+  return h3RecoveryMessage(error);
 }
 
 function h3WorkflowNotice(
@@ -997,6 +991,15 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     () => normalizeProfileStorageOwner(authenticatedOwnerKey),
     [authenticatedOwnerKey],
   );
+  const recovery = useMemo(() => new H3RecoveryClient(storageOwnerKey), [storageOwnerKey]);
+  const submissionInFlight = useRef(false);
+  const submissionEpoch = useRef(0);
+  const [submissionBusy, setSubmissionBusy] = useState(false);
+  const [submissionRetry, setSubmissionRetry] = useState(false);
+  useEffect(() => {
+    submissionInFlight.current = false; setSubmissionBusy(false); setSubmissionRetry(false);
+    return () => { submissionEpoch.current++; };
+  }, [recovery]);
   const h3JobStorageKey = useMemo(
     () => profileStorageKey(H3_PERSISTED_JOB_STORAGE_KEY, storageOwnerKey),
     [storageOwnerKey],
@@ -1939,6 +1942,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   useEffect(() => {
     let cancelled = false;
     async function restoreLatestJob() {
+      const epoch = submissionEpoch.current;
       const rememberedId = readRememberedH3JobId(h3LastJobStorageKey);
       const urls = [
         ...h3JobStatusUrls(),
@@ -1951,7 +1955,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         }).catch(() => null);
         if (!response) continue;
         const data = await response.json().catch(() => ({}));
-        if (cancelled) return;
+        if (cancelled || epoch !== submissionEpoch.current) return;
         if (response.ok && data.job) {
           setJob(data.job);
           rememberH3Job(h3LastJobStorageKey, data.job);
@@ -2747,7 +2751,9 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
 
   async function refreshJob(id = job?.id) {
     if (!id) return null;
+    const epoch = submissionEpoch.current;
     const { response, data } = await fetchH3JobStatus(id);
+    if (epoch !== submissionEpoch.current) return null;
     if (data.job) {
       setJob(data.job);
       rememberH3Job(h3LastJobStorageKey, data.job);
@@ -2759,6 +2765,53 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       setMessage((current) => current || "The saved H3 job is no longer available for this session.");
     }
     return null;
+  }
+  useH3Resume(async () => {
+    if (submissionInFlight.current) return;
+    const epoch = submissionEpoch.current;
+    try {
+      await recovery.ready();
+      const accepted = await recovery.recover(false);
+      if (epoch !== submissionEpoch.current) return;
+      if (accepted?.job) {
+        setJob(accepted.job); rememberH3Job(h3LastJobStorageKey, accepted.job);
+        setMessage(""); setSubmissionRetry(false);
+        await refreshJob(accepted.job.id);
+      } else {
+        if (job?.id) await refreshJob(job.id);
+        if (epoch !== submissionEpoch.current) return;
+        setSubmissionRetry(recovery.hasPending);
+        setMessage(recovery.hasPending ? "Connection restored. Use Create Video to resume your previous request." : "");
+      }
+    } catch (error) {
+      if (epoch === submissionEpoch.current) { setMessage(h3SubmitNetworkMessage(error)); setSubmissionRetry(true); }
+    }
+  });
+
+  async function performH3Generation(endpoint: string, prepare: () => Promise<unknown>) {
+    if (submissionInFlight.current) return;
+    submissionInFlight.current = true;
+    const epoch = ++submissionEpoch.current;
+    setSubmissionBusy(true); setMessage("Checking connection and your previous video request…");
+    try {
+      await recovery.ready();
+      if (epoch !== submissionEpoch.current) return;
+      // Recover an uncertain prior click before touching possibly stale Android Files.
+      const accepted = await recovery.recover(true);
+      let data = accepted;
+      if (!data) {
+        const payload = await prepare();
+        if (epoch !== submissionEpoch.current) return;
+        data = await recovery.submit(endpoint, payload);
+      }
+      if (epoch !== submissionEpoch.current) return;
+      setJob(data.job); rememberH3Job(h3LastJobStorageKey, data.job);
+      setNow(Date.now()); setMessage(""); setSubmissionRetry(false);
+    } catch (error) {
+      if (epoch === submissionEpoch.current) { setSubmissionRetry(true); setMessage(h3SubmitNetworkMessage(error)); }
+    } finally {
+      if (epoch === submissionEpoch.current) { submissionInFlight.current = false; setSubmissionBusy(false); }
+    }
   }
   function clearJob() {
     if (job && !isTerminalH3JobStatus(job.status)) {
@@ -3078,8 +3131,11 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     kind: MediaKind,
     label: string,
   ): Promise<H3StagedUploadDescriptor> {
+    const cached = await recovery.cachedUpload(file, kind);
+    if (cached?.complete) return {...cached, complete: true};
     const uploadId =
-      h3UploadId();
+      cached?.id || h3UploadId();
+    recovery.rememberUpload(file, {id: uploadId, kind, name: file.name, type: file.type, size: file.size, complete: false});
 
     const chunkCount =
       Math.max(
@@ -3134,21 +3190,17 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       );
 
       const response =
-        await fetch(
+        await recovery.fetch(
           "/api/h3/generation/upload",
           {
             method: "POST",
             credentials: "include",
             body,
           },
+          true,
         );
 
-      const data =
-        await response
-          .json()
-          .catch(
-            () => ({}),
-          );
+      const data = await recovery.json(response);
 
       if (
         !response.ok
@@ -3171,6 +3223,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         `Could not finish uploading ${label}.`,
       );
     }
+
+    recovery.rememberUpload(file, {...lastUpload, complete: true});
 
     return lastUpload;
   }
@@ -3372,37 +3426,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         ? "Preparing H3 Realism media upload..."
         : "Submitting the H3 Realism prompt...",
     );
-    try {
-      const response = useStagedUpload
-        ? await fetch("/api/h3/special/realism/generation", {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              config,
-              staged: await uploadH3StagedRealismReferences(),
-            }),
-          })
-        : await (async () => {
-            const body = new FormData();
-            body.set("config", JSON.stringify(config));
-            appendH3RealismGenerationFiles(body);
-            return fetch("/api/h3/special/realism/generation", {
-              method: "POST",
-              credentials: "include",
-              body,
-            });
-          })();
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.job)
-        throw new Error(data.error || "H3 Realism generation could not be submitted.");
-      setJob(data.job);
-      rememberH3Job(h3LastJobStorageKey, data.job);
-      setNow(Date.now());
-      setMessage("");
-    } catch (error) {
-      setMessage(h3SubmitNetworkMessage(error));
-    }
+    await performH3Generation("/api/h3/special/realism/generation", async () => ({config, staged: await uploadH3StagedRealismReferences()}));
   }
   async function generateBodySwap() {
     if (!bodySwapSourceVideo)
@@ -3458,37 +3482,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         ? "Preparing Body Swap media upload..."
         : "Submitting the Body Swap prompt...",
     );
-    try {
-      const response = useStagedUpload
-        ? await fetch("/api/h3/special/body-swap/generation", {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              config,
-              staged: await uploadH3StagedBodySwapMedia(),
-            }),
-          })
-        : await (async () => {
-            const body = new FormData();
-            body.set("config", JSON.stringify(config));
-            appendH3BodySwapGenerationFiles(body);
-            return fetch("/api/h3/special/body-swap/generation", {
-              method: "POST",
-              credentials: "include",
-              body,
-            });
-          })();
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.job)
-        throw new Error(data.error || "H3 Body Swap generation could not be submitted.");
-      setJob(data.job);
-      rememberH3Job(h3LastJobStorageKey, data.job);
-      setNow(Date.now());
-      setMessage("");
-    } catch (error) {
-      setMessage(h3SubmitNetworkMessage(error));
-    }
+    await performH3Generation("/api/h3/special/body-swap/generation", async () => ({config, staged: await uploadH3StagedBodySwapMedia()}));
   }
   async function generate() {
     if (!legacyModeActive)
@@ -3545,40 +3539,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         ? "Preparing H3 media upload..."
         : "Submitting the H3 prompt...",
     );
-    try {
-      const response = useStagedUpload
-        ? await fetch("/api/h3/generation", {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              config,
-              staged: await uploadH3StagedReferences(),
-            }),
-          })
-        : await (async () => {
-            const body = new FormData();
-            body.set(
-              "config",
-              JSON.stringify(config),
-            );
-            appendH3GenerationFiles(body);
-            return fetch("/api/h3/generation", {
-              method: "POST",
-              credentials: "include",
-              body,
-            });
-          })();
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.job)
-        throw new Error(data.error || "H3 generation could not be submitted.");
-      setJob(data.job);
-      rememberH3Job(h3LastJobStorageKey, data.job);
-      setNow(Date.now());
-      setMessage("");
-    } catch (error) {
-      setMessage(h3SubmitNetworkMessage(error));
-    }
+    await performH3Generation("/api/h3/generation", async () => ({config, staged: await uploadH3StagedReferences()}));
   }
   async function retryGallerySave() {
     if (!job) return;
@@ -5445,10 +5406,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               </div>
               <button
                 className={`${command} ${primary} mt-4 min-h-14 w-full text-base`}
-                disabled={!canGenerateRealism || active}
+                disabled={submissionBusy || !canGenerateRealism || active}
                 onClick={() => void generateRealism()}
               >
-                {active ? "Generation Running" : "Generate Realism"}
+                {submissionBusy ? "Preparing video…" : submissionRetry ? "Retry Create Video" : active ? "Generation Running" : "Generate Realism"}
               </button>
             </section>
           ) : studioMode === "h3-body-swap" ? (
@@ -5489,10 +5450,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               </div>
               <button
                 className={`${command} ${primary} mt-4 min-h-14 w-full text-base`}
-                disabled={!canGenerateBodySwap || active}
+                disabled={submissionBusy || !canGenerateBodySwap || active}
                 onClick={() => void generateBodySwap()}
               >
-                {active ? "Generation Running" : "Generate Body Swap"}
+                {submissionBusy ? "Preparing video…" : submissionRetry ? "Retry Create Video" : active ? "Generation Running" : "Generate Body Swap"}
               </button>
             </section>
           ) : studioMode === "h3-refmods" ? (
@@ -5588,10 +5549,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           {renderLegacyModelControls()}
           <button
             className={`${command} ${primary} min-h-14 w-full text-base`}
-            disabled={active || !canGenerate}
+            disabled={submissionBusy || active || !canGenerate}
             onClick={() => void generate()}
           >
-            {active
+            {submissionBusy ? "Preparing video…" : submissionRetry ? "Retry Create Video" : active
               ? quality === "sh" ? "Scene Hunter Running" : "Generation Running"
               : builderPromptStale
                 ? "Use Raw Prompt or Review Builder"

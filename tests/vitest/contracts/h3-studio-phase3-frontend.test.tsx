@@ -33,6 +33,8 @@ beforeEach(() => {
   vi.stubGlobal("URL", Object.assign(class extends NativeURL {}, { createObjectURL: vi.fn(() => "blob:local-source"), revokeObjectURL: vi.fn() }));
   server = vi.fn(async (input, init) => {
     const url = String(input);
+    if (url.startsWith("/api/h3/studio/media?id=") && url.includes("info=1")) return json({ok: true, asset: assets.get(new URL(url, "http://localhost").searchParams.get("id")!)});
+    if (url.startsWith("/api/h3/submissions?")) return json({missing: true}, 404);
     if (url === "/api/h3/studio/media" && init?.method === "POST") {
       const form = init.body as FormData, file = form.get("file") as File;
       const asset = { id: `asset-${++assetNumber}`, kind: file.type.split("/")[0], role: form.get("role"), name: file.name, sha256: `hash-${assetNumber}`, version: 1, metadata: { durationSeconds: 30, hasAudio: true }, url: `/api/h3/studio/media?id=asset-${assetNumber}` };
@@ -137,6 +139,23 @@ describe("Phase 3 H3 frontend", () => {
     expect(calls("/api/h3/studio/execute")).toHaveLength(1);
     const request = body("/api/h3/studio/execute"); expect(request.reviewId).toBeUndefined(); expect(request.generationConsent).toBeUndefined();
     expect(screen.queryByLabelText(/I approve one generation/)).not.toBeInTheDocument(); expect(calls("/api/h3/studio")).toHaveLength(0);
+  });
+  it("makes the next Manual Create Video a new request after completion and resume", async () => {
+    currentJob = mockJob("completed");
+    const original = server.getMockImplementation()!;
+    server.mockImplementation((url, init) => String(url) === "/api/h3/studio" && !init?.method
+      ? Promise.resolve(json({ok: true, catalog, experimental: false, directGeneration: true})) : original(url, init));
+    render(<H3StudioControls ownerKey="qa" controller="manual" />);
+    await screen.findByRole("button", {name: "View Plan (optional)"}); intent();
+    fireEvent.click(screen.getByRole("button", {name: "Create Video"}));
+    await screen.findByRole("region", {name: "H3 Studio job"});
+    const first = body("/api/h3/studio/execute");
+    await act(async () => {window.dispatchEvent(new Event("otg:h3:resume")); await new Promise(done => setTimeout(done, 150));});
+    fireEvent.click(screen.getByRole("button", {name: "Create Video", exact: true}));
+    await waitFor(() => expect(calls("/api/h3/studio/execute")).toHaveLength(2));
+    expect(body("/api/h3/studio/execute").requestId).not.toBe(first.requestId);
+    const posted = calls("/api/h3/studio/execute");
+    expect(new Headers(posted[0][1].headers).get("x-h3-request-id")).not.toBe(new Headers(posted[1][1].headers).get("x-h3-request-id"));
   });
   it("shows a director capability limitation without parsing a null plan or offering generation", async () => {
     const original = server.getMockImplementation()!;
@@ -247,10 +266,10 @@ describe("Phase 3 H3 frontend", () => {
     server.mockImplementation((url, init) => String(url) === "/api/h3/studio/execute" ? new Promise<Response>(done => { resolve = done; }) : original(url, init));
     render(<H3StudioControls ownerKey="qa" />); intent(); await review(); fireEvent.click(screen.getByLabelText(/I approve one generation/));
     const button = screen.getByRole("button", { name: "Generate reviewed video" });
-    fireEvent.click(button); fireEvent.click(button); expect(calls("/api/h3/studio/execute")).toHaveLength(1);
+    fireEvent.click(button); fireEvent.click(button); await waitFor(() => expect(calls("/api/h3/studio/execute")).toHaveLength(1));
     const first = body("/api/h3/studio/execute").requestId;
     await act(async () => resolve(json({ ok: false, error: "Submission status unknown" }, 503)));
-    fireEvent.click(screen.getByRole("button", { name: "Generate reviewed video" })); expect(calls("/api/h3/studio/execute")).toHaveLength(2); expect(body("/api/h3/studio/execute").requestId).toBe(first);
+    fireEvent.click(screen.getByRole("button", { name: "Generate reviewed video" })); await waitFor(() => expect(calls("/api/h3/studio/execute")).toHaveLength(2)); expect(body("/api/h3/studio/execute").requestId).toBe(first);
     await act(async () => resolve(json({ ok: true, job: mockJob("completed") })));
   });
   it("polls existing job status until output becomes available", async () => {

@@ -10,6 +10,8 @@ import {
   readStagedH3UploadDescriptor,
   stagedH3UploadPaths,
   sanitizeH3StagedUploadId,
+  readCompletedH3StagedUpload,
+  H3_STAGED_UPLOAD_TTL_MS,
 } from "@/lib/h3StagedUploads";
 import {
   getOwnerContext,
@@ -22,6 +24,23 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export async function GET(request: NextRequest) {
+  try {
+    await requireSessionUser(request);
+    const owner = await getOwnerContext(request);
+    const id = sanitizeH3StagedUploadId(request.nextUrl.searchParams.get("id"));
+    const paths = stagedH3UploadPaths(owner.ownerKey, {id, name: "unused"});
+    const meta = JSON.parse(await fsp.readFile(paths.metaPath, "utf8"));
+    if (!Number.isFinite(Date.parse(meta.completedAt)) || Date.now() - Date.parse(meta.completedAt) > H3_STAGED_UPLOAD_TTL_MS) throw new Error("Reference expired.");
+    const upload = await readCompletedH3StagedUpload(owner.ownerKey, meta, meta.kind);
+    const {path: _path, ...descriptor} = upload;
+    return noStore({ok: true, upload: descriptor});
+  } catch (error) {
+    if (error instanceof SessionInvalidError || /session|unauthorized/i.test((error as Error).message)) return noStore({ok: false, error: "Sign in again to use your references."}, {status: 401});
+    return noStore({ok: false, error: "Reference unavailable; it will be uploaded again."}, {status: 404});
+  }
+}
 
 export async function DELETE(request: NextRequest) {
   try {
@@ -323,6 +342,14 @@ export async function POST(
         owner.ownerKey,
         descriptor,
       );
+
+    // The final chunk may have succeeded even if Android lost its response.
+    // Replaying that same chunk must acknowledge the completed upload.
+    try {
+      const complete = await readCompletedH3StagedUpload(owner.ownerKey, descriptor, descriptor.kind);
+      const {path: _path, ...upload} = complete;
+      return noStore({ok: true, upload});
+    } catch { /* No verified complete copy: continue the existing chunk path. */ }
 
     if (await fsp.stat(safeJoin(paths.directory, "cancelled")).catch(() => null)) throw new Error("H3 upload was cancelled. Select the video again.");
 

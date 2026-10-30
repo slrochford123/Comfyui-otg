@@ -132,11 +132,12 @@ describe("H3 orientation and optional Builder UI", () => {
     expect(generationCall).toBeTruthy();
 
     const generationBody = generationCall?.[1]?.body;
-    expect(generationBody).toBeInstanceOf(FormData);
+    expect(typeof generationBody).toBe("string");
+    expect(generationCall?.[1]?.headers).toMatchObject({"X-H3-Request-Id": expect.any(String)});
 
     const config = JSON.parse(
-      String((generationBody as FormData).get("config")),
-    );
+      String(generationBody),
+    ).config;
     expect(config).toMatchObject({
       prompt: "Two samurai fight in moonlight.",
       orientation: "portrait",

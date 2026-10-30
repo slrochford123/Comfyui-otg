@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import {recoverableH3Submission} from "@/lib/h3SubmissionRecovery";
 import { requestedH3MediaGpu } from "@/lib/mediaGpuRoutingServer";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -405,6 +406,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  return recoverableH3Submission(req, "generation", postGeneration);
+}
+async function postGeneration(req: NextRequest) {
   try {
     await requireSessionUser(req).catch(()=>{throw new SessionInvalidError();});
     const owner = await getOwnerContext(req);

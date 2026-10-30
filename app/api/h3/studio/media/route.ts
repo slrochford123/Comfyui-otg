@@ -45,6 +45,7 @@ export async function GET(request: NextRequest) {
   try {
     const scope = await videoTrimSession(request); assertH3StudioAvailable();
     const { asset, path } = await readStudioMedia(scope.owner, scope.session, request.nextUrl.searchParams.get("id") || "");
+    if (request.nextUrl.searchParams.get("info") === "1") return NextResponse.json({ok: true, asset: publicStudioMedia(asset)}, {headers});
     let start = 0, end = asset.bytes - 1; const range = request.headers.get("range");
     if (range) {
       const match = range.match(/^bytes=(\d*)-(\d*)$/);
