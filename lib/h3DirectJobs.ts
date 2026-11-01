@@ -726,7 +726,7 @@ async function execute(job: H3DirectJob) {
         sceneId: job.id,
         generationJobId: job.id,
       });
-      if (job.input.videoEdit) outputPath = await finalizeH3VideoEdit(outputPath, job.input.videoEdit.durationSeconds);
+      if (job.input.videoEdit) outputPath = await finalizeH3VideoEdit(outputPath, job.input.videoEdit.durationSeconds, job.input.videoEdit.source.path);
       if (job.input.studioPlan) {
         const { finalizeH3StudioAudio } = await import("@/lib/h3StudioAudio");
         outputPath = await finalizeH3StudioAudio(outputPath, job.input.studioPlan, job.input.videos[0]?.path);

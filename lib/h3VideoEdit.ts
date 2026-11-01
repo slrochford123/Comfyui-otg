@@ -3,6 +3,8 @@ import { resolveFfmpegPath, runCmd } from "@/lib/ffmpeg";
 import { probeVideoInfo } from "@/lib/videoFrame";
 import type { H3PromptGraph } from "@/lib/production/h3Workflows";
 import { videoEditDuration } from "@/lib/videoEditDuration";
+import { DEFAULT_H3_STUDIO_PLAN } from "@/lib/h3StudioPlan";
+import { finalizeH3StudioAudio } from "@/lib/h3StudioAudio";
 
 export function h3VideoEditFrameCount(duration: number) {
   duration = videoEditDuration(duration);
@@ -48,13 +50,9 @@ export function applyH3VideoEditGraph(graph: H3PromptGraph, filename: string, du
   graph["24"] = { class_type: "BasicScheduler", inputs: { scheduler: "simple", steps: 25, denoise: 1, model: ["v2v_control", 0] } };
   return graph;
 }
-export async function finalizeH3VideoEdit(output: string, duration: number) {
+export async function finalizeH3VideoEdit(output: string, duration: number, source: string) {
   duration = videoEditDuration(duration);
-  h3VideoEditFrameCount(duration);
-  const target = path.join(path.dirname(output), "edited-source-duration.mp4");
-  const result = await runCmd(resolveFfmpegPath(), ["-nostdin", "-y", "-i", output, "-t", String(duration), "-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", target], { timeoutMs: 60000 });
-  if (result.code !== 0) throw new Error("H3 edit finished but duration finalization failed.");
-  const probe = await probeVideoInfo(target);
-  if (!probe.width || !probe.height || !probe.durationSeconds || Math.abs(probe.durationSeconds - duration) > 0.12) throw new Error("H3 edited output did not preserve the requested source duration.");
-  return target;
+  const probe = await probeVideoInfo(source);
+  return finalizeH3StudioAudio(output, { ...DEFAULT_H3_STUDIO_PLAN, workflowId: "reference-edit", durationSeconds: duration,
+    audio: probe.hasAudio ? "original" : "mute" }, source);
 }

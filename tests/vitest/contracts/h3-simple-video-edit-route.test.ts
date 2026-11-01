@@ -19,7 +19,7 @@ const post = (patch = {}) => POST(new NextRequest("http://localhost:3001/api/h3/
 beforeEach(() => {
   vi.resetAllMocks(); m.session.mockResolvedValue({ owner: "qa", session: "session" }); m.prior.mockResolvedValue([]);
   m.read.mockResolvedValue({ path: "/private/selection.mp4", asset: { duration: 999 } });
-  m.probe.mockResolvedValue({ codec: "h264", width: 608, height: 352, durationSeconds: 4.76 });
+  m.probe.mockResolvedValue({ codec: "h264", width: 608, height: 352, durationSeconds: 4.76, hasAudio: true });
   m.stat.mockResolvedValue({ size: 100 }); m.readFile.mockResolvedValue(Buffer.from("video"));
   m.register.mockResolvedValue({ id: "media" }); m.remove.mockResolvedValue(undefined); m.review.mockResolvedValue({ id: "review" });
   m.compile.mockReturnValue({ graph: { preview: { class_type: "ModelPreviewOverrideKJ" } }, manifest: { executable: true, qualificationFingerprint: "qualified", submissionGraphSha256: "graph", estimatedCredits: 0, estimatedSeconds: 20 } });
@@ -29,8 +29,15 @@ describe("manual Edit Video direct creation", () => {
   it("authorizes the exact trim, re-probes real duration, and calls only the shared engine", async () => {
     expect((await post()).status).toBe(202);
     expect(m.read).toHaveBeenCalledWith("qa", "session", body.sourceId);
-    expect(m.execute).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ generationConsent: true, mediaIds: ["media"], reviewId: "review", plan: expect.objectContaining({ durationSeconds: 4.76, steps: 8, attention: "project-sla" }) }), expect.objectContaining({ sourceId: body.sourceId }));
+    expect(m.execute).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ generationConsent: true, mediaIds: ["media"], reviewId: "review", plan: expect.objectContaining({ durationSeconds: 4.76, steps: 8, attention: "project-sla", audio: "original" }) }), expect.objectContaining({ sourceId: body.sourceId }));
+    expect(m.register).toHaveBeenCalledWith("qa", "session", expect.any(File), expect.objectContaining({ includeAudio: true, clipStartSeconds: 0 }), expect.anything());
     expect(m.remove).toHaveBeenCalledWith("qa", "session", "media");
+  });
+  it("preserves silence when the selected clip has no audio track", async () => {
+    m.probe.mockResolvedValue({ codec: "h264", width: 608, height: 352, durationSeconds: 5, hasAudio: false });
+    expect((await post()).status).toBe(202);
+    expect(m.execute).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ plan: expect.objectContaining({ audio: "mute" }) }), expect.anything());
+    expect(m.register).toHaveBeenCalledWith("qa", "session", expect.any(File), expect.objectContaining({ includeAudio: false }), expect.anything());
   });
   it("accepts small container overshoot but caps the generation at ten seconds", async () => {
     m.probe.mockResolvedValue({ codec: "h264", width: 608, height: 352, durationSeconds: 10.027 });

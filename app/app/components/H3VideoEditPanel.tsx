@@ -146,7 +146,7 @@ export default function H3VideoEditPanel({ onBack, backend = "rtx3090", authenti
   return <section className="mx-auto min-w-0 max-w-4xl space-y-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 pb-28 text-[var(--color-text)]" data-otg="h3-video-edit">
     <button className={button} onClick={onBack} disabled={busy}>Back to H3 Studio</button>
     <h2 className="text-2xl font-bold">Edit Video</h2>
-    <p className="text-sm text-[var(--color-text-muted)]">Choose a 2–10-second portion, describe your edit and create the video. Its duration and orientation follow your clip. Generative editing may reinterpret details.</p>
+    <p className="text-sm text-[var(--color-text-muted)]">Choose a 2–10-second portion, describe your edit and create the video. Its duration and orientation follow your clip. The finished edit keeps the audio from your selected clip; silent clips stay silent. Generative editing may reinterpret details.</p>
     <input ref={picker} aria-label="Source video file" hidden type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.mkv,.webm,.m4v" onChange={event => { select(event.target.files?.[0] || null); event.target.value = ""; }} />
     <div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => picker.current?.click()}>Select Video</button><button className={button} disabled={busy} onClick={() => void openGallery()}>Choose Video from Gallery</button>{file ? <button className={button} disabled={busy} onClick={() => select(null)}>Remove Source Video</button> : null}</div>
     {error ? <p role="alert" className="break-words text-[var(--color-error)]">{error}</p> : null}

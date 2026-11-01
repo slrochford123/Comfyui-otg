@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.16",
+  "current": "2.17",
   "builds": [
     {
       "version": "2",
@@ -103,6 +103,12 @@
       "date": "2026-10-31",
       "summary": "Restore verified Qwen 2.1 image editing on both GPUs; shared Reference-to-Video model choices and simpler RefMod slots; pinch-zoom images, landscape video viewing and reliable ten-second trimming with first-five/first-ten quick actions.",
       "sourceBaseCommit": "ded726567d80240da2841c79dcfd16eea528a6bb"
+    },
+    {
+      "version": "2.17",
+      "date": "2026-11-01",
+      "summary": "Edit Video retains the original audio from the selected source clip through trimming, rendering, preview and Gallery; silent clips stay silent.",
+      "sourceBaseCommit": "dc492a5953f02872fc5888e7198f887c96b95929"
     }
   ]
 }

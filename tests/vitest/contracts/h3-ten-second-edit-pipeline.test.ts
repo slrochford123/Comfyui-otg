@@ -20,8 +20,9 @@ it("accepts a real 29.97fps/AAC ten-second trim through edit preparation and dur
   expect(probe.durationSeconds).toBeGreaterThan(10);
   const plan = simpleVideoEditPlan(parseSimpleVideoEdit({ sourceId: "11111111-1111-4111-8111-111111111111", prompt: "Change the coat", quality: "0.2", requestId: "ten-second-regression" }), probe);
   expect(plan.durationSeconds).toBe(10);
+  expect(plan.audio).toBe("original");
   const prepared = await prepareH3StudioReferenceClip(selection, 0, plan.durationSeconds, 128, 96, true);
-  const final = await finalizeH3StudioAudio(prepared.outputPath, plan);
+  const final = await finalizeH3StudioAudio(prepared.outputPath, plan, prepared.outputPath);
   expect((await probeVideoInfo(final)).durationSeconds).toBeCloseTo(10, 1);
   expect(() => validateVideoSelection(20, 0, 10.01)).toThrow();
 }, 30000);

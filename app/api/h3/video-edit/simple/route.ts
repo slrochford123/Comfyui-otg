@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     const stat = await fs.stat(source.path);
     if (stat.size > 128 * 1024 ** 2) throw Error("The selected clip exceeds 128 MB. Trim a smaller clip.");
     request.signal.throwIfAborted();
-    const asset = await registerStudioMedia(owner, session, new File([await fs.readFile(source.path)], `selection${path.extname(source.path)}`, { type: "video/mp4" }), { role: "reference", description: "Selected source video to edit", includeAudio: false, clipStartSeconds: 0 }, request.signal);
+    const asset = await registerStudioMedia(owner, session, new File([await fs.readFile(source.path)], `selection${path.extname(source.path)}`, { type: "video/mp4" }), { role: "reference", description: "Selected source video to edit", includeAudio: probe.hasAudio === true, clipStartSeconds: 0 }, request.signal);
     mediaId = asset.id;
     const media = await resolveStudioMedia(owner, session, [mediaId], true);
     plan = await (await import("@/lib/h3MediaGpuRouting")).routeH3MediaPlan(plan,media,owner);
