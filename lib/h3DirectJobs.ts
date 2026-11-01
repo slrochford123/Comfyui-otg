@@ -5,7 +5,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { cancelComfyPrompt } from "@/lib/comfySafeCancel";
-import { readComfyQueue } from "@/lib/comfyTransport";
+import { readComfyQueue, isComfyReadError } from "@/lib/comfyTransport";
 import { clearGalleryListCache, safeGalleryName, writeMetaForFile, type GallerySource } from "@/lib/gallery";
 import type { OwnerContext } from "@/lib/ownerKey";
 import { deviceGalleryDir, ensureDir, OTG_DATA_ROOT, safeJoin, safeSegment, userGalleryDir } from "@/lib/paths";
@@ -788,6 +788,11 @@ export function startH3DirectJob(job: H3DirectJob) {
   void execute(job)
     .catch(async (error) => {
       const current = await getH3DirectJob(job.ownerKey, job.id);
+      if (current?.promptId && isComfyReadError(error) && !["completed", "canceled", "failed"].includes(current.status)) {
+        await updateJob(job.ownerKey, job.id, { status: current.cancelRequestedAt ? "canceling" : "submitted",
+          statusMessage: "Reconnecting to the original GPU; generation continues in the background.", error: null, completedAt: null });
+        return;
+      }
       const uncertain = current?.studioSubmissionState === "submitting" && !current.promptId;
       if (!uncertain && !current?.promptId && ["canceling", "canceled"].includes(current?.status || "")) {
         await updateJob(job.ownerKey, job.id, { status: "canceled", statusMessage: "Canceled before backend submission", error: null, completedAt: new Date().toISOString() });

@@ -1,3 +1,4 @@
+import { isComfyReadError } from "@/lib/comfyTransport";
 import {mediaQueueMessage} from "@/lib/workers/mediaGpuQueue";
 import {
   validateH3LoraSelections,
@@ -511,9 +512,13 @@ async function execute(job: H3RefModsJob) {
       deviceId: job.galleryOwner?.deviceId || null,
       workerId: "h3-refmods-t2v",
       preSubmitCleanup: null,
+      onAccepted: async acceptedPromptId => {
+        await updateJob(job.ownerKey, job.id, {backend: selected.backend, backendUrl: selected.baseUrl, clientId, promptId: acceptedPromptId});
+      },
     });
     if (!submitted.accepted) throw new Error(submitted.error);
     promptId = submitted.promptId;
+    if (["failed", "canceled", "canceling"].includes((await getH3RefModsJob(job.ownerKey, job.id))?.status || "")) return;
     await updateJob(job.ownerKey, job.id, {
       status: "submitted",
       statusMessage: "Accepted by ComfyUI",
@@ -597,6 +602,12 @@ export function startH3RefModsJob(job: H3RefModsJob) {
   state().running.add(job.id);
   void execute(job)
     .catch(async (error) => {
+      const current = await getH3RefModsJob(job.ownerKey, job.id);
+      if (current?.promptId && isComfyReadError(error) && !["completed", "canceled", "failed"].includes(current.status)) {
+        await updateJob(job.ownerKey, job.id, { status: current.status === "canceling" ? "canceling" : "submitted",
+          statusMessage: "Reconnecting to the original GPU; generation continues in the background.", error: null, completedAt: null });
+        return;
+      }
       await updateJob(job.ownerKey, job.id, {
         status: "failed",
         statusMessage: "Ref Mods generation failed",

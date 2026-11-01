@@ -13,6 +13,8 @@ export async function register() {
   const { bootstrapMediaGpuQueue } = await import("./lib/workers/mediaGpuQueue");
   bootstrapMediaGpuQueue();
   if (process.env.OTG_AUDIO_ISOLATED_DEV === "1") return;
+  const { bootstrapContentCreationRecovery } = await import("./lib/workers/contentCreationRecovery");
+  bootstrapContentCreationRecovery();
 
   const {
     bootstrapQwenDurableScheduler,

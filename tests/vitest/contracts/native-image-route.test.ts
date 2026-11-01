@@ -30,6 +30,22 @@ beforeEach(() => {
 });
 afterAll(async () => {vi.unstubAllEnvs(); await fs.rm(root, {recursive: true, force: true});});
 describe("Native image API safety and exact graph submission", () => {
+  it("finishes and saves a requested Generate image without a browser status GET", async () => {
+    const sharp = (await import("sharp")).default;
+    const png = await sharp({create:{width:1024,height:1024,channels:3,background:"blue"}}).png().toBuffer();
+    mocks.owner.mockResolvedValue({ownerKey:"qa_owner",username:"qa_owner",deviceId:"qa_phone",scope:"user"});
+    mocks.status.mockResolvedValue({status:"completed",image:{filename:"finished.png",subfolder:"",type:"output"}});
+    const previous = globalThis.fetch; const fetcher = vi.fn(async () => new Response(new Uint8Array(png)));
+    globalThis.fetch = fetcher as typeof fetch;
+    try {
+      const accepted = await (await post({...valid,saveToGallery:true})).json();
+      const {reconcileNativeImageJob,nativeImageJobFile} = await import("@/lib/images/nativeImageJobs");
+      const [first,second] = await Promise.all([reconcileNativeImageJob("qa_owner",accepted.jobId),reconcileNativeImageJob("qa_owner",accepted.jobId)]);
+      expect(first).toMatchObject({status:"completed",gallerySaved:true});expect(second).toEqual(first);expect(fetcher).toHaveBeenCalledTimes(1);
+      const saved = JSON.parse(await fs.readFile(nativeImageJobFile("qa_owner",accepted.jobId),"utf8"));expect(saved.gallerySaved).toBe(true);
+      const {userGalleryDir} = await import("@/lib/paths");expect((await fs.stat(path.join(userGalleryDir("qa_owner"),`fibo2-dev_${accepted.jobId}.png`))).size).toBeGreaterThan(0);
+    } finally {globalThis.fetch = previous;}
+  });
   it("cannot enable itself on an unconfigured production server", async () => {
     vi.stubEnv("OTG_ENV", "prod"); expect((await post(valid)).status).toBe(404); expect(mocks.owner).not.toHaveBeenCalled(); expect(mocks.submit).not.toHaveBeenCalled();
   });

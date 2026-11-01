@@ -1,9 +1,18 @@
 /** Native ComfyUI transport. Never retry submissions after ambiguous acceptance. */
+export class ComfyReadError extends Error {
+  constructor(error: unknown) {
+    super(error instanceof Error ? error.message : "ComfyUI status is temporarily unavailable.", { cause: error });
+    this.name = "ComfyReadError";
+  }
+}
+export const isComfyReadError = (error: unknown) => error instanceof Error && error.name === "ComfyReadError";
+
 export async function readComfyJson<T = Record<string, unknown>>(
   baseUrl: string,
   endpoint: string,
   options: { signal?: AbortSignal; timeoutMs?: number; fetcher?: typeof fetch } = {},
 ): Promise<T> {
+  try {
   const deadline = AbortSignal.timeout(options.timeoutMs ?? 8_000);
   const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
   const response = await (options.fetcher || fetch)(`${baseUrl.replace(/\/+$/, "")}${endpoint}`, {
@@ -15,6 +24,7 @@ export async function readComfyJson<T = Record<string, unknown>>(
     throw new Error("ComfyUI returned an invalid JSON object.");
   }
   return payload as T;
+  } catch (error) { throw new ComfyReadError(error); }
 }
 
 export type ComfyQueue = { queue_running: unknown[]; queue_pending: unknown[] };

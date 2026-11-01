@@ -27,7 +27,7 @@ import {
 } from "@/lib/comfyProgress";
 import { submitComfyPromptWithGpuLease } from "@/lib/workers/comfyPromptLease";
 import { retrieveRemoteComfyMedia } from "@/lib/storyCreator/remoteComfyMedia";
-import { readComfyJson } from "@/lib/comfyTransport";
+import { readComfyJson, ComfyReadError } from "@/lib/comfyTransport";
 
 type ObjectInfo = Record<string, {
   input?: {
@@ -493,6 +493,10 @@ export async function submitH3PromptToBaseUrl(args: {
     () => false,
   );
 
+  const producerKinds: Record<string, "direct" | "refmods-generation" | "realism" | "body-swap" | undefined> = {
+    "h3-direct": "direct", "h3-refmods-t2v": "refmods-generation", "h3-realism": "realism", "h3-body-swap": "body-swap",
+  };
+  const producerKind = producerKinds[args.workerId || ""];
   const response =
     await submitComfyPromptWithGpuLease({
       baseUrl:
@@ -505,6 +509,9 @@ export async function submitH3PromptToBaseUrl(args: {
       purpose: "video",
       releaseIdlePeer: args.releaseIdlePeer ?? true,
       beforeSubmit: args.beforeSubmit,
+      mediaQueueProducer: args.ownerKey && producerKind
+        ? {kind: producerKind, ownerKey: args.ownerKey, id: args.jobId}
+        : undefined,
       preSubmitCleanup:
         args.preSubmitCleanup
         ?? null,
@@ -715,6 +722,7 @@ export async function downloadH3VideoFromBaseUrl(args: {
     `${safeSegment(args.generationJobId)}${artifactSuffix ? `-${safeSegment(artifactSuffix)}` : ""}${extension}`,
   );
   const fetcher = args.fetcher || fetch;
+  try {
   const published = await retrieveRemoteComfyMedia({
     baseUrl: args.baseUrl,
     trustedBaseUrls: [args.baseUrl],
@@ -725,6 +733,13 @@ export async function downloadH3VideoFromBaseUrl(args: {
     fetcher: ((input, init) => fetchWithTimeout(fetcher, String(input), init, 120_000)) as typeof fetch,
   });
   return published.filePath;
+  } catch (error) {
+    const failure = error as Error & {code?: string};
+    if (failure instanceof TypeError || ["AbortError", "TimeoutError"].includes(failure.name)
+      || /ECONN|ETIMEDOUT|EPIPE|UND_ERR/.test(failure.code || "")
+      || /output retrieval failed with HTTP (?:5\d\d|429)|transfer was incomplete/.test(failure.message || "")) throw new ComfyReadError(error);
+    throw error;
+  }
 }
 
 export async function downloadH3Video(args: {

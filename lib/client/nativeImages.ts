@@ -9,11 +9,14 @@ export async function waitForNativeImage(jobId: string, args: {signal?: AbortSig
   const start = Date.now();
   while (Date.now() - start < 60 * 60 * 1000) {
     args.signal?.throwIfAborted();
-    const response = await (args.fetchImpl || fetch)(`/api/images/native?jobId=${encodeURIComponent(jobId)}`, {credentials: "include", cache: "no-store", signal: args.signal});
+    let response: Response;
+    try { response = await (args.fetchImpl || fetch)(`/api/images/native?jobId=${encodeURIComponent(jobId)}`, {credentials: "include", cache: "no-store", signal: args.signal}); }
+    catch (error) { if (args.signal?.aborted) throw error; args.onStatus?.("Reconnecting to your existing image job"); await new Promise(resolve => setTimeout(resolve, 1800)); continue; }
+    if (response.status >= 500) { await new Promise(resolve => setTimeout(resolve, 1800)); continue; }
     const result = await response.json();
     if (!response.ok) throw Error(result.error || `Image status HTTP ${response.status}`);
     args.onStatus?.(result.status);
-    if (["failed", "canceled", "unknown"].includes(result.status)) throw Error(result.error || `Image job ${result.status}. Do not resubmit an unknown job until it has been reconciled.`);
+    if (["failed", "canceled"].includes(result.status)) throw Error(result.error || `Image job ${result.status}. Do not resubmit an unknown job until it has been reconciled.`);
     if (result.status === "completed" && result.imageUrl && result.serverPath) return result;
     await new Promise<void>((resolve, reject) => {
       const finish = () => {args.signal?.removeEventListener("abort", abort); resolve();};
@@ -25,11 +28,12 @@ export async function waitForNativeImage(jobId: string, args: {signal?: AbortSig
   throw Error("This image job is taking longer than expected. Keep its job ID and refresh later; it has not been resubmitted.");
 }
 export async function submitNativeImageEdit(args: {model: Exclude<NativeEditEngine, "qwen">; imageAPath?: string; image?: File; prompt: string; negativePrompt?: string; seed: string;
-  width?: number; height?: number; fetchImpl?: typeof fetch}) {
+  width?: number; height?: number; saveToGallery?: boolean; fetchImpl?: typeof fetch}) {
   if (!args.imageAPath && !args.image) throw Error("A source image is required for editing.");
   const body = new FormData();
   body.set("model", args.model); body.set("prompt", args.prompt); body.set("negativePrompt", args.negativePrompt || "");
   body.set("seed", args.seed); body.set("clientRequestId", newClientRequestId());
+  body.set("saveToGallery", String(args.saveToGallery === true));
   if (args.image) body.set("image", args.image);
   else body.set("imageAPath", args.imageAPath!);
   if (args.width && args.height) {body.set("width", String(args.width)); body.set("height", String(args.height));}

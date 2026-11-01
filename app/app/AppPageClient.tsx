@@ -9,8 +9,9 @@ import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
 import AdminGpuControls from "./components/AdminGpuControls";
 import MediaGpuControl from "./components/MediaGpuControl";
 import ImageEditEngineSelect from "./components/ImageEditEngineSelect";
-import {runNativeImageEdit, saveNativeImageToGallery, type NativeEditEngine, type NativeImageResult} from "@/lib/client/nativeImages";
+import {runNativeImageEdit, waitForNativeImage, saveNativeImageToGallery, type NativeEditEngine, type NativeImageResult} from "@/lib/client/nativeImages";
 import {GeneratePreviewBinding, loadNativeImagePreview} from "@/lib/client/generatePreviewBinding";
+import {useH3Resume} from "@/lib/client/useH3Resume";
 import { uiStatusTone } from "@/lib/uiStatusTone";
 import MediaPreviewPanel from "./components/MediaPreviewPanel";
 import { ExpandableImage } from "./components/ExpandedMediaViewer";
@@ -2985,14 +2986,17 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     setLatestPreviewName("");
     setLatestPreviewKind("");
     latestPreviewIdentityRef.current = "";
+    const watching = new AbortController();
     if (savedJobId) {
       const nativeToken = binding.begin("native");
       binding.expectNative(nativeToken, savedJobId);
-      void loadNativeImagePreview(savedJobId).then(output => publishNativePreview(output, nativeToken)).catch(error => {
-        if (binding.isCurrent(nativeToken)) setStatusMessage(error.message);
+      void waitForNativeImage(savedJobId, { signal: watching.signal, onStatus: status => {
+        if (binding.isCurrent(nativeToken)) setStatusMessage(status === "completed" ? "Image complete." : "Your image is being created in the background.");
+      }}).then(output => publishNativePreview(output, nativeToken)).catch(error => {
+        if (!watching.signal.aborted && binding.isCurrent(nativeToken)) setStatusMessage(error.message);
       });
     }
-    return () => { binding.begin("legacy"); };
+    return () => { watching.abort(); binding.begin("legacy"); };
   }, [nativePreviewStorageKey, publishNativePreview]);
 
 
@@ -3112,6 +3116,11 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       return null;
     }
   }, [refreshLatestContent]);
+
+  useH3Resume(async () => {
+    await refreshLatestContent(true);
+    await refreshProgress();
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -3812,12 +3821,13 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       if (isEditImageWorkflowSelected && imageEditEngine !== "qwen") {
         nativeEditActive.current = true; setNativeCompletedJobId("");
         const abort = new AbortController(); nativeEditAbort.current = abort;
-        const output = await runNativeImageEdit({model: imageEditEngine, image: uploadedFileRef.current!,
+        const output = await runNativeImageEdit({saveToGallery: true, model: imageEditEngine, image: uploadedFileRef.current!,
           prompt: exactEditPrompt, negativePrompt, seed: String(randomSeed()), signal: abort.signal,
           width: orientation === "portrait" ? 768 : 1344, height: orientation === "portrait" ? 1344 : 768,
           onStatus: status => {if (["failed", "canceled"].includes(status)) setNativeEditJobId("");},
           onSubmitted: job => {
             generatePreviewBinding.current.expectNative(previewToken, job.jobId);
+            try { localStorage.setItem(nativePreviewStorageKey, job.jobId); } catch {}
             setNativeEditJobId(job.jobId);
             setGenerateSubmitNotice({state: "accepted", message: "Fibo edit queued. Your source and prompt were preserved.", promptId: job.promptId});
           }});
@@ -4437,9 +4447,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         setGenerateApproximatePreview(null);
         setLatestPreviewUrl(""); setLatestPreviewName(""); setLatestPreviewKind("");
         setStatusMessage("Fibo image edit is running. The original Gallery image is preserved.");
-        const output = await runNativeImageEdit({model: editModal.engine, image: sourceFile,
+        const output = await runNativeImageEdit({saveToGallery: true, model: editModal.engine, image: sourceFile,
           prompt: editModal.positivePrompt, negativePrompt: editModal.negativePrompt, seed: String(randomSeed()),
-          onSubmitted: job => {generatePreviewBinding.current.expectNative(previewToken, job.jobId);}});
+          onSubmitted: job => {generatePreviewBinding.current.expectNative(previewToken, job.jobId);
+            try { localStorage.setItem(nativePreviewStorageKey, job.jobId); } catch {}}});
         publishNativePreview(output, previewToken);
         setNativeCompletedJobId(output.jobId); setEditModal(null);
         try {await saveNativeImageToGallery(output.jobId); setNativeCompletedJobId(""); setStatusMessage("Fibo edit saved to Gallery as a new image. Refresh Gallery to view it.");}

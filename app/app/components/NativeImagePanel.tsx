@@ -4,6 +4,7 @@ import React, {useEffect, useRef, useState} from "react";
 import {NATIVE_IMAGE_MODELS, type NativeImageModel} from "@/lib/images/nativeImageModels";
 import {waitForNativeImage, type NativeImageResult} from "@/lib/client/nativeImages";
 import {newClientRequestId} from "@/lib/client/requestId";
+import {useH3Resume} from "@/lib/client/useH3Resume";
 
 export default function NativeImagePanel({h3Only = false, sourcePath, sourceUrl, onComplete, onBack, ownerKey, defaultOrientation}: {
   h3Only?: boolean; sourcePath?: string; sourceUrl?: string; onComplete?: (result: NativeImageResult) => void; onBack?: () => void; ownerKey?: string; defaultOrientation?: string;
@@ -20,6 +21,7 @@ export default function NativeImagePanel({h3Only = false, sourcePath, sourceUrl,
   }, [file]);
   const [seed, setSeed] = useState("");
   const [jobId, setJobId] = useState("");
+  const [resumeVersion, setResumeVersion] = useState(0);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -35,19 +37,23 @@ export default function NativeImagePanel({h3Only = false, sourcePath, sourceUrl,
   // are not put in browser storage. A reload never duplicates GPU work.
   const storageKey = ownerKey ? `otg:native-image:${ownerKey}:v1` : null;
   useEffect(() => {
+    controller.current?.abort(); setJobId(""); setResult(null); setBusy(false); setError("");
     if (!storageKey) return;
     try {const saved = localStorage.getItem(storageKey); if (saved) setJobId(saved);} catch {}
   }, [storageKey]);
+  useH3Resume(() => {
+    if (jobId) setResumeVersion(value => value + 1);
+    else if (storageKey) try { setJobId(localStorage.getItem(storageKey) || ""); } catch { /* Storage is optional. */ }
+  });
   useEffect(() => {
     if (!jobId) return;
     const abort = new AbortController(); controller.current = abort; setBusy(true);
     if (storageKey) {try {localStorage.setItem(storageKey, jobId);} catch {}}
     void waitForNativeImage(jobId, {signal: abort.signal, onStatus: setStatus}).then(output => {
       setResult(output); complete.current?.(output);
-      if (storageKey) {try {localStorage.removeItem(storageKey);} catch {}}
     }).catch(e => {if (e.name !== "AbortError") setError(e.message);}).finally(() => {if (!abort.signal.aborted) setBusy(false);});
     return () => abort.abort();
-  }, [jobId, storageKey]);
+  }, [jobId, storageKey, resumeVersion]);
   async function submit(event: React.FormEvent) {
     event.preventDefault(); if (busy || submitting.current) return;
     submitting.current = true;

@@ -4844,6 +4844,7 @@ export async function POST(req: NextRequest) {
           progressUpdatedAt: Date.now(),
         });
         const promptMeta = writePromptRequestMeta(ownerKey, prompt_id, {
+          backgroundSync: "pending",
           username: ownerCtx.username ?? null,
           deviceId,
           title: title || null,

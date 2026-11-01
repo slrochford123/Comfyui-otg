@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { OTG_DATA_ROOT } from "@/lib/paths";
+import { OTG_DATA_ROOT, safeSegment } from "@/lib/paths";
 import { MEDIA_GPUS, type MediaGpu } from "@/lib/mediaGpuRouting";
 import { resolveComfyPhysicalGpu, detectShawnExternalOccupancy } from "./clusterGpu";
 import { acquireResourceLock, heartbeatResourceLock, releaseResourceLock, listResourceLocks, type ResourceLock } from "./resourceLocks";
@@ -12,7 +12,8 @@ import {acquireSharedMediaGpu,releaseSharedMediaGpu,sharedMediaGpuAvailable,shar
 
 export type MediaQueueStatus = "queued" | "dispatching" | "running" | "unknown" | "completed" | "failed" | "canceled";
 export type ComfyMediaPayload = { baseUrl: string; body: Record<string, unknown>; workerId: string;
-  preSubmitCleanup?: "free" | null; releaseIdlePeer?: boolean };
+  preSubmitCleanup?: "free" | null; releaseIdlePeer?: boolean;
+  producer?: { kind: "direct" | "refmods-generation" | "realism" | "body-swap"; ownerKey: string; id: string } };
 export type AudioMediaPayload = { owner: string; sessionId: string; jobId: string };
 export type ExternalMediaPayload = { pid:number; operation:string };
 export type MediaQueueJob = { id: string; sequence: number; gpu: MediaGpu; kind: "comfy" | "audio" | "external";
@@ -151,6 +152,23 @@ async function releaseCompletedAdmissions() {
 function releaseLocalReservation(job:MediaQueueJob) {
   if(job.lease)releaseResourceLock(job.lease.lockId,job.lease.ownerId,job.lease.fencingToken);
 }
+/** A failed parent cannot authorize a waiting render, including after a restart. */
+function producerState(job: MediaQueueJob): "active" | "terminal" | "unavailable" {
+  if (job.kind !== "comfy") return "active";
+  const payload = job.payload as ComfyMediaPayload, producer = payload.producer;
+  if (!producer) return "active";
+  if (!/^[a-zA-Z0-9_-]+$/.test(producer.id) || !["direct", "refmods-generation", "realism", "body-swap"].includes(producer.kind)) return "unavailable";
+  const file = producer.kind === "direct"
+    ? path.join(OTG_DATA_ROOT, "h3-direct", safeSegment(producer.ownerKey), "jobs", producer.id + ".json")
+    : path.join(OTG_DATA_ROOT, "h3-special", producer.kind, safeSegment(producer.ownerKey), "jobs", producer.id + ".json");
+  try {
+    if (!fs.lstatSync(file).isFile()) return "unavailable";
+    const parent = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (parent.id !== producer.id || parent.ownerKey !== producer.ownerKey || parent.promptId && parent.promptId !== job.id
+      || parent.clientId !== payload.body.client_id || parent.backend !== job.gpu) return "unavailable";
+    return ["failed", "canceled", "completed", "canceling"].includes(parent.status) ? "terminal" : "active";
+  } catch { return "unavailable"; }
+}
 async function authorizeSharedDispatch(job:MediaQueueJob) {
   if(!sharedMediaAdmissionConfigured()&&process.env.OTG_ENV==="test")return true;
   try {
@@ -192,8 +210,8 @@ async function reconcileComfy(job: MediaQueueJob) {
     const q = await readJson(payload.baseUrl+"/queue");
     if (!Array.isArray(q.queue_running) || !Array.isArray(q.queue_pending)) throw Error("Invalid queue");
     if ([...q.queue_running,...q.queue_pending].some(row=>Array.isArray(row)&&row[1]===job.id)) update(job.id,"running");
-    else update(job.id,"unknown","Awaiting backend proof. This job will not be automatically resubmitted or replaced.");
-  } catch { update(job.id,"unknown","Worker unavailable; retaining this GPU reservation until its original job can be reconciled."); }
+    else update(job.id,"unknown",job.error || "Awaiting backend proof. This job will not be automatically resubmitted or replaced.");
+  } catch { update(job.id,"unknown",job.error || "Worker unavailable; retaining this GPU reservation until its original job can be reconciled."); }
 }
 async function dispatch(job: MediaQueueJob) {
   if(!await authorizeSharedDispatch(job))return;
@@ -218,19 +236,27 @@ async function dispatch(job: MediaQueueJob) {
     return;
   }
   const payload = job.payload as ComfyMediaPayload;
+  let postStarted = false;
   try {
     const { submitComfyPromptWithGpuLease } = await import("./comfyPromptLease");
     const response = await submitComfyPromptWithGpuLease({ ...payload, ownerId:job.id, queueDispatch:true,
-      init:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload.body)},submitTimeoutMs:60_000 });
+      init:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload.body)},submitTimeoutMs:60_000,
+      beforeSubmit: async () => {
+        if (producerState(job) !== "active") throw Error("The original request ended or cannot be verified; no render was submitted.");
+        postStarted = true;
+      } });
     if (!response.ok) {
-      if (response.status < 500) finish(job,"failed",(await response.text()).slice(0,2000));
+      if (!postStarted || response.status < 500) finish(job,"failed",(await response.text()).slice(0,2000));
       else update(job.id,"unknown","Submission response was inconclusive; no automatic retry.");
       return;
     }
     const result = await response.json();
     if (result.prompt_id !== job.id) { update(job.id,"unknown","Worker did not preserve the reserved prompt UUID; no automatic retry."); return; }
     update(job.id,"running");
-  } catch { update(job.id,"unknown","Submission outcome is unknown; reconcile the reserved UUID instead of resubmitting."); }
+  } catch (error) {
+    if (!postStarted) finish(job,"failed",error instanceof Error ? error.message : "The request ended before submission.");
+    else update(job.id,"unknown","Submission outcome is unknown; reconcile the reserved UUID instead of resubmitting.");
+  }
 }
 type QueueGlobals = typeof globalThis & {__otgMediaQueue?: {timer:ReturnType<typeof setInterval>;ticking:boolean;audio:Set<string>;external:Map<string,(release:()=>void)=>void>}};
 const globals = globalThis as QueueGlobals;
@@ -271,6 +297,11 @@ export async function tickMediaGpuQueue() {
         if (running) continue;
       }
       const waiting = queuedMediaJobs().find(job=>job.gpu===gpu&&job.status==="queued");
+      if (waiting) {
+        const producer = producerState(waiting);
+        if (producer === "terminal") { cancelQueuedMediaJob(waiting.id); continue; }
+        if (producer === "unavailable") { update(waiting.id, "queued", "The original request cannot be verified; no render was submitted."); continue; }
+      }
       if(waiting?.kind==="external"&&!state?.external.has(waiting.id)){
         const pid=(waiting.payload as ExternalMediaPayload).pid;
         try{process.kill(pid,0);}catch{finish(waiting,"failed","The original request stopped before GPU execution; no work was submitted.");}

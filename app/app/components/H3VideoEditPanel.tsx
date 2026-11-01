@@ -1,7 +1,8 @@
 "use client";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ExpandableVideo } from "./ExpandedMediaViewer";
 import { newClientRequestId } from "@/lib/client/requestId";
+import { useH3Resume } from "@/lib/client/useH3Resume";
 type Job = { id: string; status: string; statusMessage: string; error?: string; progressPercent?: number; videoUrl?: string; galleryStatus?: string; nativeResolution?: string; durationSeconds?: number; approximatePreview?: { imageUrl: string } };
 type GalleryVideo = { name: string; url: string; kind?: string; video?: boolean };
 type SourceAsset = { id: string; url: string; duration: number; name: string };
@@ -34,6 +35,37 @@ export default function H3VideoEditPanel({ onBack, backend = "rtx3090", authenti
   const sourceRef = useRef("");
   const picker = useRef<HTMLInputElement>(null);
   const requestId = useRef("");
+  const jobRef = useRef<Job | null>(null);
+  const ownerRef = useRef(authenticatedOwnerKey);
+  const storageKey = authenticatedOwnerKey ? `otg:h3:edit-video:${authenticatedOwnerKey}:v1` : "";
+  const rememberJob = useCallback((next: Job) => {
+    jobRef.current = next; setJob(next);
+    if (storageKey) try { localStorage.setItem(storageKey, next.id); } catch { /* Server-owned history remains available. */ }
+  }, [storageKey]);
+  const restoreJob = useCallback(async () => {
+    if (!authenticatedOwnerKey || guard.current) return;
+    const epoch = generation.current;
+    let id = jobRef.current?.id || "";
+    if (!id && storageKey) try { id = localStorage.getItem(storageKey) || ""; } catch { /* Fall back to owner-scoped server history. */ }
+    const options: RequestInit = { credentials: "include", cache: "no-store" };
+    let response = await fetch(`/api/h3/generation?view=edit-video${id ? `&jobId=${encodeURIComponent(id)}` : ""}`, options);
+    if (id && response.status === 404) {
+      if (epoch !== generation.current || ownerRef.current !== authenticatedOwnerKey) return;
+      response = await fetch("/api/h3/generation?view=edit-video", options);
+    }
+    if (!response.ok) return;
+    const result = await response.json();
+    if (epoch === generation.current && ownerRef.current === authenticatedOwnerKey && result.job) {
+      rememberJob(result.job); guard.current = false; setPending(false);
+    }
+  }, [authenticatedOwnerKey, rememberJob, storageKey]);
+  useEffect(() => {
+    ownerRef.current = authenticatedOwnerKey; generation.current += 1;
+    jobRef.current = null; setJob(null);
+    void restoreJob().catch(() => {});
+    return () => { generation.current += 1; };
+  }, [authenticatedOwnerKey, restoreJob]);
+  useH3Resume(restoreJob);
   useEffect(() => { requestId.current = ""; }, [selection?.id, prompt, quality, backend]);
   function removeAsset(id: string) { ownedAssets.current.delete(id); void fetch("/api/h3/video-edit/source", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, remove: true }), keepalive: true }); }
   useEffect(() => () => { operationAbort.current?.abort(); if (sourceRef.current) URL.revokeObjectURL(sourceRef.current); for (const id of ownedAssets.current) { void fetch("/api/h3/video-edit/source", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, remove: true }), keepalive: true }); } }, []);
@@ -41,22 +73,23 @@ export default function H3VideoEditPanel({ onBack, backend = "rtx3090", authenti
   const busy = pending || active;
   const preview = previewUrl(job?.approximatePreview?.imageUrl);
   useEffect(() => {
-    if (!job?.id || (["completed", "canceled", "failed"].includes(job.status) && !(job.status === "completed" && job.galleryStatus === "pending"))) return;
+    if (!job?.id || (["completed", "canceled", "failed"].includes(job.status) && !(job.status === "completed" && ["pending", "saving"].includes(job.galleryStatus || "")))) return;
     const controller = new AbortController();
     const id = job.id;
     const timer = window.setInterval(() => {
       fetch(`/api/h3/generation?jobId=${encodeURIComponent(id)}`, { signal: controller.signal, cache: "no-store" })
-        .then(async response => { const result = await response.json(); if (!response.ok) throw Error(result.error || "Could not read edit status."); setJob(result.job); })
+        .then(async response => { const result = await response.json(); if (!response.ok) throw Error(result.error || "Could not read edit status."); if (!controller.signal.aborted) rememberJob(result.job); })
         .catch(e => { if (!controller.signal.aborted) setError(e.message); });
     }, 1500);
     return () => { controller.abort(); window.clearInterval(timer); };
-  }, [job?.id, job?.status, job?.galleryStatus]);
+  }, [job?.id, job?.status, job?.galleryStatus, rememberJob]);
   function select(next: File | null) {
     generation.current += 1; operationAbort.current?.abort();
     for (const id of [...ownedAssets.current]) removeAsset(id);
     setAsset(null); setSelection(null); setStart(0); setEnd(0);
     if (sourceRef.current) URL.revokeObjectURL(sourceRef.current);
-    sourceRef.current = ""; setSource(""); setFile(null); setDuration(0); setError(""); setJob(null);
+    sourceRef.current = ""; setSource(""); setFile(null); setDuration(0); setError(""); jobRef.current = null; setJob(null);
+    if (storageKey) try { localStorage.removeItem(storageKey); } catch { /* Server history remains intact. */ }
     if (!next) return;
     if (!/\.(mp4|mov|mkv|webm|m4v)$/i.test(next.name) || (next.type && !next.type.startsWith("video/"))) { setError("Choose a video, not an image or audio file."); return; }
     sourceRef.current = URL.createObjectURL(next); setSource(sourceRef.current); setFile(next);
@@ -128,8 +161,8 @@ export default function H3VideoEditPanel({ onBack, backend = "rtx3090", authenti
         response = await fetch("/api/h3/video-edit/simple", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceId: selection.id, prompt: prompt.trim(), quality, backend, requestId: requestId.current }) });
       }
       const result = await response.json(); if (!response.ok) throw Error(result.error || "H3 edit failed.");
-      if (action === "gallery" && !result.job && job) setJob((await json(await fetch(`/api/h3/generation?jobId=${encodeURIComponent(job.id)}`, { cache: "no-store" }))).job);
-      else { setJob(result.job); if (!action || action === "retry") requestId.current = ""; }
+      if (action === "gallery" && !result.job && job) rememberJob((await json(await fetch(`/api/h3/generation?jobId=${encodeURIComponent(job.id)}`, { cache: "no-store" }))).job);
+      else { rememberJob(result.job); if (!action || action === "retry") requestId.current = ""; }
     } catch (e) { setError(e instanceof Error ? e.message : "H3 edit failed."); }
     finally { guard.current = false; setPending(false); }
   }

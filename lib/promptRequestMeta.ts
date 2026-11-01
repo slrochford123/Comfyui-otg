@@ -30,6 +30,7 @@ export type PromptRequestMeta = {
   submitPayload?: any | null;
   createdAt?: number | null;
   updatedAt?: number | null;
+  backgroundSync?: "pending" | "synced" | "error";
 };
 
 const ROOT = path.join(OTG_DATA_ROOT, "prompt_request_meta");

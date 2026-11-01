@@ -205,6 +205,18 @@ afterEach(async () => {
 });
 
 describe("H3 Studio real runner recovery with isolated persistence", () => {
+  it.each(["rtx3090", "rtx5060ti"] as const)("keeps an accepted %s job recoverable after a temporary status outage", async backend => {
+    const { ComfyReadError } = await import("@/lib/comfyTransport");
+    const original = await createJob(); const input = { ...original.input }; delete input.studioPlan; delete input.studioMedia;
+    const job = await persist(original, { input, status: "running", backend, promptId: "accepted-before-phone-sleep", studioSubmissionState: "accepted" });
+    m.history.mockRejectedValueOnce(new ComfyReadError(new Error("Temporary network timeout")));
+    start(job); await idle(job);
+    const pending = await current(job);
+    expect(pending).toMatchObject({ status: "submitted", backend, promptId: job.promptId, completedAt: null });
+    expect(m.submit).not.toHaveBeenCalled();
+    m.history.mockResolvedValue({ state: "failed" }); start(pending); await idle(pending);
+    expect(await current(job)).toMatchObject({ status: "failed" });
+  });
   it("recovers a failed application record whose accepted native job still runs", async () => {
     const original = await createJob(); const input = { ...original.input }; delete input.studioPlan; delete input.studioMedia;
     const job = await persist(original, { input, status: "failed", backend: "rtx5060ti", promptId: "accepted-native", studioSubmissionState: "accepted" });

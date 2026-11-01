@@ -60,6 +60,7 @@ export async function submitComfyPromptWithGpuLease(args: {
   releaseIdlePeer?: boolean;
   /** Server-owned final admission hook, inside the physical submission mutex. */
   beforeSubmit?: () => Promise<void>;
+  mediaQueueProducer?: import("./mediaGpuQueue").ComfyMediaPayload["producer"];
     submitTimeoutMs?: number;
     onPromptAccepted?: (
       promptId: string,
@@ -85,7 +86,7 @@ export async function submitComfyPromptWithGpuLease(args: {
     if (!body?.prompt || typeof body.prompt !== "object" || Array.isArray(body.prompt)) throw new Error("A valid ComfyUI graph is required.");
     await args.beforeSubmit?.();
     return enqueueComfyMedia({baseUrl:args.baseUrl,body,workerId:args.workerId,
-      preSubmitCleanup:args.preSubmitCleanup,releaseIdlePeer:args.releaseIdlePeer},args.onPromptAccepted);
+      preSubmitCleanup:args.preSubmitCleanup,releaseIdlePeer:args.releaseIdlePeer,producer:args.mediaQueueProducer},args.onPromptAccepted);
   }
   // OTG_COMFY_PROMPT_QUEUE_ONLY_V1
   //

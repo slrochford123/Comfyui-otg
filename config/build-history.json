@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.17",
+  "current": "2.18",
   "builds": [
     {
       "version": "2",
@@ -109,6 +109,12 @@
       "date": "2026-11-01",
       "summary": "Edit Video retains the original audio from the selected source clip through trimming, rendering, preview and Gallery; silent clips stay silent.",
       "sourceBaseCommit": "dc492a5953f02872fc5888e7198f887c96b95929"
+    },
+    {
+      "version": "2.18",
+      "date": "2026-11-01",
+      "summary": "Server-owned background completion and recovery for H3 and Generate on both GPUs; restore Android video/image jobs on return without resubmission.",
+      "sourceBaseCommit": "4a250cf60d4abf893ab738be00dd1932810fdf2d"
     }
   ]
 }

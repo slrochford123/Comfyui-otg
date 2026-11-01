@@ -1,3 +1,4 @@
+import { isComfyReadError } from "@/lib/comfyTransport";
 import {mediaQueueMessage} from "@/lib/workers/mediaGpuQueue";
 import { isH3SingularityMode } from "@/lib/production/h3Settings";
 import type { H3CheckpointMode } from "@/lib/production/h3Settings";
@@ -561,8 +562,12 @@ async function submitNewRealismPrompt(job: H3RealismJob) {
       ownerKey: job.ownerKey,
       deviceId: job.galleryOwner?.deviceId || null,
       workerId: "h3-realism",
+      onAccepted: async acceptedPromptId => {
+        await updateJob(job.ownerKey, job.id, {backend, clientId, promptId: acceptedPromptId});
+      },
     });
     if (!submitted.accepted) throw new Error(submitted.error);
+    if (["failed", "canceled", "canceling"].includes((await getH3RealismJob(job.ownerKey, job.id))?.status || "")) return {backend, promptId: submitted.promptId, clientId};
     await updateJob(job.ownerKey, job.id, {
       status: "submitted",
       statusMessage: "Accepted by ComfyUI",
@@ -678,6 +683,12 @@ export function startH3RealismJob(job: H3RealismJob) {
   state().running.add(job.id);
   void execute(job)
     .catch(async (error) => {
+      const current = await getH3RealismJob(job.ownerKey, job.id);
+      if (current?.promptId && isComfyReadError(error) && !["completed", "canceled", "failed"].includes(current.status)) {
+        await updateJob(job.ownerKey, job.id, { status: current.status === "canceling" ? "canceling" : "submitted",
+          statusMessage: "Reconnecting to the original GPU; generation continues in the background.", error: null, completedAt: null });
+        return;
+      }
       await updateJob(job.ownerKey, job.id, {
         status: "failed",
         statusMessage: "Realism generation failed",

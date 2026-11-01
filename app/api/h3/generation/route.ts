@@ -389,7 +389,11 @@ export async function GET(req: NextRequest) {
     const owner = await getOwnerContext(req);
     const { ownerKey } = owner;
     const id = String(req.nextUrl.searchParams.get("jobId") || "").trim();
-    let job = id ? await getH3DirectJob(ownerKey, id) : await getLatestH3DirectJob(ownerKey);
+    const editOnly = req.nextUrl.searchParams.get("view") === "edit-video";
+    const isEdit = (job: Awaited<ReturnType<typeof getH3DirectJob>>) => !!(job?.input.videoEdit || job?.input.studioMedia?.simpleEdit);
+    let job = id ? await getH3DirectJob(ownerKey, id) : editOnly
+      ? (await (await import("@/lib/h3DirectJobs")).listH3DirectJobs(ownerKey)).find(isEdit) || null : await getLatestH3DirectJob(ownerKey);
+    if (editOnly && job && !isEdit(job)) job = null;
     if (!job) {
       return id
         ? noStore({ ok: false, error: "H3 generation job not found." }, { status: 404 })

@@ -5,7 +5,8 @@ import path from "node:path";
 import {mediaGpuCandidates,parseMediaGpuChoice} from "@/lib/mediaGpuRouting";
 import {setResourceLockStorePathForTests} from "@/lib/workers/resourceLocks";
 import {acquireExternalMediaGpu,cancelQueuedMediaJob,closeMediaGpuQueueForTests,enqueueComfyMedia,enqueueMediaJob,getMediaQueueJob,preferMediaGpu,probeMediaGpu,tickMediaGpuQueue,queuedMediaJobs} from "@/lib/workers/mediaGpuQueue";
-const mocks=vi.hoisted(()=>({submit:vi.fn(),voice:vi.fn(()=>false),audioExecute:vi.fn(),audioState:vi.fn(()=>"completed")}));
+const mocks=vi.hoisted(()=>({submit:vi.fn(),voice:vi.fn(()=>false),audioExecute:vi.fn(),audioState:vi.fn(()=>"completed"),root:""}));
+vi.mock("@/lib/paths",async original=>({...await original<typeof import("@/lib/paths")>(),get OTG_DATA_ROOT(){return mocks.root;}}));
 vi.mock("@/lib/workers/voiceGpuFileLease",()=>({voiceGpuFileBusy:mocks.voice}));
 vi.mock("@/lib/workers/comfyPromptLease",()=>({submitComfyPromptWithGpuLease:mocks.submit}));
 vi.mock("@/lib/audioEditing/jobs",()=>({executeQueuedAudioJob:mocks.audioExecute,queuedAudioJobState:mocks.audioState}));
@@ -17,10 +18,11 @@ const payload=(baseUrl=base3090)=>({baseUrl,workerId:"media-qa",body:{prompt:{"1
 const flush=()=>new Promise(resolve=>setTimeout(resolve,10));
 beforeEach(()=>{
   directory=fs.mkdtempSync(path.join(os.tmpdir(),"media-queue-qa-"));
+  mocks.root=directory;
   vi.stubEnv("OTG_ENV","test");vi.stubEnv("OTG_MEDIA_GPU_ROUTING","1");vi.stubEnv("OTG_MEDIA_GPU_QUEUE_DB",path.join(directory,"queue.sqlite"));
   setResourceLockStorePathForTests(path.join(directory,"locks.sqlite"));
   busy=new Set();histories=new Map();mocks.voice.mockReturnValue(false);
-  mocks.submit.mockReset().mockImplementation(async(args)=>Response.json({prompt_id:JSON.parse(String(args.init.body)).prompt_id}));
+  mocks.submit.mockReset().mockImplementation(async(args)=>{await args.beforeSubmit?.();return Response.json({prompt_id:JSON.parse(String(args.init.body)).prompt_id});});
   mocks.audioExecute.mockReset().mockResolvedValue(undefined);mocks.audioState.mockReturnValue("completed");
   vi.stubGlobal("fetch",vi.fn(async(raw:string)=>{
     const url=String(raw);if(url.includes("/history/")){const id=url.split("/history/")[1];return Response.json(histories.has(id)?{[id]:histories.get(id)}:{});}
@@ -95,10 +97,40 @@ describe("shared physical media routing",()=>{
     await tickMediaGpuQueue();expect(mocks.submit).not.toHaveBeenCalled();expect(getMediaQueueJob(prompt_id)?.status).toBe("canceled");
   });
   it("retains unknown submission ownership and never duplicates it",async()=>{
-    mocks.submit.mockRejectedValue(Error("network disconnected after POST"));
+    mocks.submit.mockImplementation(async args=>{await args.beforeSubmit?.();throw Error("network disconnected after POST");});
     const {prompt_id}=await(await enqueueComfyMedia(payload())).json();await enqueueComfyMedia(payload());
     await tickMediaGpuQueue();await flush();await tickMediaGpuQueue();
     expect(getMediaQueueJob(prompt_id)?.status).toBe("unknown");expect(mocks.submit).toHaveBeenCalledTimes(1);
+    expect(getMediaQueueJob(prompt_id)?.error).toMatch(/Submission outcome is unknown/);
+  });
+  it.each(["throw","503"])("releases a definitely unsubmitted preflight failure (%s)",async failure=>{
+    if(failure==="throw")mocks.submit.mockRejectedValueOnce(Error("Preflight could not load"));
+    else mocks.submit.mockResolvedValueOnce(Response.json({error:"Preflight unavailable"},{status:503}));
+    const {prompt_id}=await(await enqueueComfyMedia(payload())).json();await enqueueComfyMedia(payload());
+    await tickMediaGpuQueue();await flush();expect(getMediaQueueJob(prompt_id)?.status).toBe("failed");
+    await tickMediaGpuQueue();await flush();expect(mocks.submit).toHaveBeenCalledTimes(2);
+  });
+  it("retains ownership after a 503 response from the actual POST",async()=>{
+    mocks.submit.mockImplementation(async args=>{await args.beforeSubmit?.();return Response.json({error:"inconclusive"},{status:503});});
+    const {prompt_id}=await(await enqueueComfyMedia(payload())).json();await enqueueComfyMedia(payload());await tickMediaGpuQueue();await flush();await tickMediaGpuQueue();
+    expect(getMediaQueueJob(prompt_id)?.status).toBe("unknown");expect(mocks.submit).toHaveBeenCalledTimes(1);
+  });
+  it.each(["failed","missing","wrong-client","fails-during-admission"])("does not render a parent that is %s",async mode=>{
+    const producer={kind:"direct" as const,ownerKey:"alice",id:"h3-direct-parent"};
+    const file=path.join(directory,"h3-direct/alice/jobs/h3-direct-parent.json");fs.mkdirSync(path.dirname(file),{recursive:true});
+    const parent={id:producer.id,ownerKey:"alice",clientId:"qa",backend:"rtx3090",status:mode==="failed"?"failed":"running"};
+    if(mode!=="missing")fs.writeFileSync(file,JSON.stringify({...parent,clientId:mode==="wrong-client"?"another-client":"qa"}));
+    if(mode==="fails-during-admission")mocks.submit.mockImplementation(async args=>{fs.writeFileSync(file,JSON.stringify({...parent,status:"failed"}));await args.beforeSubmit();throw Error("POST must not occur");});
+    const {prompt_id}=await(await enqueueComfyMedia({...payload(),producer})).json();await tickMediaGpuQueue();await flush();
+    const current=getMediaQueueJob(prompt_id)!;
+    expect(current.status).toBe(mode==="failed"?"canceled":mode==="fails-during-admission"?"failed":"queued");
+    expect(current.lease).toBeNull();expect(mocks.submit).toHaveBeenCalledTimes(mode==="fails-during-admission"?1:0);
+  });
+  it("dispatches an active parent bound to the same owner, client and GPU",async()=>{
+    const producer={kind:"direct" as const,ownerKey:"alice",id:"h3-direct-parent"},file=path.join(directory,"h3-direct/alice/jobs/h3-direct-parent.json");
+    fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,JSON.stringify({id:producer.id,ownerKey:"alice",clientId:"qa",backend:"rtx3090",status:"submitted"}));
+    const {prompt_id}=await(await enqueueComfyMedia({...payload(),producer})).json();await tickMediaGpuQueue();await flush();
+    expect(getMediaQueueJob(prompt_id)?.status).toBe("running");expect(mocks.submit).toHaveBeenCalledTimes(1);
   });
   it("recovers persisted waiting work after the dispatcher restarts",async()=>{
     const {prompt_id}=await(await enqueueComfyMedia(payload())).json();closeMediaGpuQueueForTests();
