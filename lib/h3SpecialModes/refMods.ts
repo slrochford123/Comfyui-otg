@@ -1,3 +1,4 @@
+import { compileH3SmartReferencePrompt, type H3SmartReferenceInput } from "@/lib/h3SmartReferences";
 import { isH3OmniRefMode } from "@/lib/h3OmniRef";
 import { normalizeH3AdvancedSettings } from "@/lib/production/h3Settings";
 import {
@@ -82,6 +83,7 @@ export type H3RefModLibraryEntry = {
 };
 
 export type H3RefModsRequestInput = {
+  smartReferences?: H3SmartReferenceInput;
   targetBackend?: "rtx3090" | "rtx5060ti";
   mode?: unknown;
   quality?: unknown;
@@ -384,7 +386,7 @@ export function validateH3RefModsRequest(input: H3RefModsRequestInput) {
   const prompt = clean(input.prompt);
   if (!prompt) throw new Error("Enter a Ref Mods prompt.");
   const refMods = normalizeH3RefModSlots(input.refMods);
-  if (!refMods.length) throw new Error("Add at least one RefMod.");
+  if (!refMods.length && !input.smartReferences?.images.length && !input.smartReferences?.useFirstFrame) throw new Error("Add at least one RefMod.");
   const seed = input.seed === undefined || input.seed === null || input.seed === ""
     ? undefined
     : Number(input.seed);
@@ -403,7 +405,7 @@ export function validateH3RefModsRequest(input: H3RefModsRequestInput) {
     rifeInterpolation60Fps: input.rifeInterpolation60Fps === true || clean(input.rifeInterpolation60Fps).toLowerCase() === "true",
     seed,
     creative: normalizeH3CreativeDirection(input.creative),
-    compiledPrompt: compileH3RefModsPrompt({ prompt, refMods, creative: input.creative }),
+    compiledPrompt: input.smartReferences ? compileH3SmartReferencePrompt(input.smartReferences.originalPrompt ?? String(input.prompt || ""), input.smartReferences) : compileH3RefModsPrompt({ prompt, refMods, creative: input.creative }),
   };
 }
 

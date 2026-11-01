@@ -3,6 +3,7 @@ import {normalizeProfileStorageOwner} from "./profileStorage";
 
 export const H3_RECOVERY_RESUME_EVENT = "otg:h3:resume";
 const SCOPES: Record<string, string> = {
+  "/api/h3/special/refmods/generation": "refmods",
   "/api/h3/generation": "generation",
   "/api/h3/special/realism/generation": "realism",
   "/api/h3/special/body-swap/generation": "body-swap",

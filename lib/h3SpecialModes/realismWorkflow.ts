@@ -1,3 +1,5 @@
+import { applyH3SmartReferenceGraph } from "@/lib/h3SmartReferencesGraph";
+import type { H3SmartReferenceInput } from "@/lib/h3SmartReferences";
 import { isH3SingularityMode } from "@/lib/production/h3Settings";
 import {
   H3_COMBAT_V2_LORA,
@@ -38,6 +40,8 @@ export type H3RealismWorkflowReference = H3RealismReferenceInput & {
 };
 
 export type H3RealismWorkflowInput = {
+  smartReferences?: H3SmartReferenceInput;
+  smartFirstFrameFilename?: string;
   prompt: string;
   quality: H3Quality;
   orientation: H3Orientation;
@@ -391,6 +395,7 @@ export function buildH3RealismWorkflow(
     preferredNodeId: 9700,
     title: "OTG H3 Realism approximate preview",
   });
+  applyH3SmartReferenceGraph(graph as import("@/lib/production/h3Workflows").H3PromptGraph, input.smartReferences, {conditioningNodeId: CONDITIONING_NODE_ID, firstFrameFilename: input.smartFirstFrameFilename, imageFilenames: (input.references || []).filter(item => item.kind === "image").map(item => item.uploadedFilename)});
   ensureTerminalVideoPreviewNode(graph);
 
   return {

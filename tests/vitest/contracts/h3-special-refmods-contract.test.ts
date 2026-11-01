@@ -52,9 +52,10 @@ describe("H3 Ref Mods special mode contract", () => {
     expect(panel).toContain("/api/h3/special/refmods/library");
     expect(panel).toContain("/api/h3/special/refmods/generation");
     expect(panel).toContain('data-otg="h3-refmods-picker"');
-    expect(panel).toContain('data-otg="h3-refmods-selected-slots"');
+    expect(panel).toContain("<H3SmartReferences");
+    expect(read("app/app/components/H3SmartReferences.tsx")).toContain("Saved RefMod");
     expect(panel).not.toContain('data-otg="h3-refmods-create"');
-    expect(panel).toContain("Create and manage RefMods in Characters");
+    expect(read("app/app/components/H3SmartReferences.tsx")).toContain("Create and manage RefMods in Characters");
     expect(H3_PRODUCTION_ROUTE_KEYS.some((key) => key.includes("refmods"))).toBe(false);
     expect(read("lib/production/h3Workflows.ts")).not.toContain("h3-refmods");
   });

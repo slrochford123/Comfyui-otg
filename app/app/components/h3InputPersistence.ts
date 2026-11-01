@@ -75,6 +75,8 @@ export type PersistedH3InputState = {
   bodySwapPreserveAudio?: boolean;
   bodySwapSeedMode?: "random" | "fixed";
   bodySwapSeed?: string;
+  smartUseFirstFrame?: boolean;
+  smartBackend?: "rtx3090" | "rtx5060ti";
   refModsPrompt?: string;
   refModSlots?: PersistedH3RefModSlot[];
   refModsTurbo?: boolean;

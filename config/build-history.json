@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.18",
+  "current": "2.19",
   "builds": [
     {
       "version": "2",
@@ -115,6 +115,12 @@
       "date": "2026-11-01",
       "summary": "Server-owned background completion and recovery for H3 and Generate on both GPUs; restore Android video/image jobs on return without resubmission.",
       "sourceBaseCommit": "4a250cf60d4abf893ab738be00dd1932810fdf2d"
+    },
+    {
+      "version": "2.19",
+      "date": "2026-11-01",
+      "summary": "TEST-only H3 Smart References & First Frame: shared optional timeline anchor and mixed image/RefMod selection, installed-node capability gating and shared reference-count validation. Owner generation acceptance pending; not approved for GitHub or PROD.",
+      "sourceBaseCommit": "8c975b15faa66171b505675dc44837f510ee9187"
     }
   ]
 }

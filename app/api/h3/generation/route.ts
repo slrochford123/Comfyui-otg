@@ -1,3 +1,4 @@
+import { makeH3SmartReferenceInput } from "@/lib/h3SmartReferencesServer";
 import crypto from "node:crypto";
 import {recoverableH3Submission} from "@/lib/h3SubmissionRecovery";
 import { requestedH3MediaGpu } from "@/lib/mediaGpuRoutingServer";
@@ -117,7 +118,7 @@ async function saveMediaBytes(
     : path.extname(source.name).toLowerCase() || (category === "video" ? ".mp4" : ".wav");
   const directory = safeJoin(OTG_DATA_ROOT, "h3-direct", safeSegment(ownerKey), "uploads", safeSegment(requestId));
   ensureDir(directory);
-  const target = safeJoin(directory, `${category}-${index + 1}${extension}`);
+  const target = safeJoin(directory, `${category}-${index + 1}-${crypto.randomUUID()}${extension}`);
   const bytes = source.bytes;
   if (category === "image") {
     try {
@@ -308,7 +309,13 @@ async function startGenerationJob(
     throw new Error("Auto/Manual plans require the exact media review and consent in H3 Studio. Submit through its reviewed generation action.");
   }
 
+  const targetBackend = await requestedH3MediaGpu(config.targetBackend);
+  if (config.smartReferences && generation.mode !== "h3-reference-to-video") throw Error("Smart References is only available in Reference mode here.");
+  const smartReferences = await makeH3SmartReferenceInput(config.smartReferences, targetBackend || "rtx3090", media.images, media.firstFiles[0] || null, media.videos.length, media.audios.length, {videos: media.videos, audios: media.audios});
+  if (smartReferences) smartReferences.originalPrompt = String(config.prompt || "");
+  if (smartReferences?.useFirstFrame && media.firstFiles.length !== 1) throw Error("Choose exactly one opening image.");
   const input = validateH3DirectInput({
+    smartReferences,
     targetBackend: await requestedH3MediaGpu(config.targetBackend),
     mode: generation.mode,
     quality: generation.quality,

@@ -1,3 +1,5 @@
+import { applyH3SmartReferenceGraph } from "@/lib/h3SmartReferencesGraph";
+import type { H3SmartReferenceInput } from "@/lib/h3SmartReferences";
 import { applyH3ResolvedRenderSettings, loadH3WorkflowTemplate, validateH3WorkflowTemplate } from "@/lib/production/h3Workflows";
 import { normalizeH3AdvancedSettings, type H3AdvancedSettings } from "@/lib/production/h3Settings";
 import { applyH3OmniRef, isH3OmniRefMode } from "@/lib/h3OmniRef";
@@ -22,6 +24,9 @@ import { h3RefModsDimensions } from "@/lib/h3SpecialModes/refMods";
 import type { H3RefModSlot } from "@/lib/h3SpecialModes/refMods";
 
 export type H3RefModsT2VWorkflowInput = {
+  smartReferences?: H3SmartReferenceInput;
+  smartImageFilenames?: string[];
+  smartFirstFrameFilename?: string;
   backend: ProductionV2H3BackendId;
   quality: H3Quality;
   orientation: H3Orientation;
@@ -166,6 +171,7 @@ export function buildH3RefModsT2VWorkflow(
     graph["selflift_negative"].inputs.conditioning = [TEXT_ENCODE_NODE_ID, 0];
   }
 
+  applyH3SmartReferenceGraph(graph, input.smartReferences, {conditioningNodeId: "39", existingRefModEncoderId: "9401", imageFilenames: input.smartImageFilenames, firstFrameFilename: input.smartFirstFrameFilename});
   ensureTerminalVideoPreviewNode(graph);
 
   return {

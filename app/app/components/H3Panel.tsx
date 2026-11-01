@@ -24,7 +24,8 @@ import {
 } from "@/lib/h3StylePresets";
 import { H3StylePresetPicker } from "./H3StylePresetPicker";
 import H3AdvancedControls from "./H3AdvancedControls";
-import H3RefModSlotControls from "./H3RefModSlotControls";
+import H3SmartReferences from "./H3SmartReferences";
+import type { H3SmartReferenceSelection } from "@/lib/h3SmartReferences";
 import H3SingularitySelector from "./H3SingularitySelector";
 import H3SpeedIndicator from "./H3SpeedIndicator";
 import H3VideoEditPanel from "./H3VideoEditPanel";
@@ -74,10 +75,8 @@ import {
   normalizeH3RefModSlots,
   refModSlotWarnings,
   type H3RefModCategory,
-  type H3RefModComponents,
   type H3RefModLibraryEntry,
   type H3RefModSlot,
-  type H3RefModSourceKind,
 } from "@/lib/h3SpecialModes/refMods";
 import type { ProductionV2H3Mode } from "@/lib/production/h3Workflows";
 import {
@@ -109,6 +108,7 @@ type MediaInput = H3StudioReferenceDescriptor & {
   clipStartSeconds?: number;
 };
 type H3GenerationConfig = {
+  smartReferences?: H3SmartReferenceSelection;
   targetBackend?: "rtx3090" | "rtx5060ti";
   studioPlan?: H3StudioPlan;
   mode: Mode;
@@ -1122,6 +1122,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const [refModCreateAudio, setRefModCreateAudio] = useState<File | null>(null);
   const [refModCreateJob, setRefModCreateJob] =
     useState<RefModCreateJobStatus | null>(null);
+  const [smartUseFirstFrame, setSmartUseFirstFrame] = useState(false);
+  const [smartReferenceError, setSmartReferenceError] = useState("");
   const [firstImage, setFirstImage] = useState<MediaInput | null>(null);
   const [lastImage, setLastImage] = useState<MediaInput | null>(null);
   const [references, setReferences] = useState<MediaInput[]>([]);
@@ -1158,6 +1160,13 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   const active = Boolean(job && !isTerminalH3JobStatus(job.status));
   const legacyModeActive = isLegacyH3Mode(studioMode);
   const modeCapabilities = h3ModeCapabilities(studioMode);
+  const smartWorkflow = ["h3-reference-to-video", "h3-realism", "h3-refmods"].includes(studioMode);
+  const smartMedia = studioMode === "h3-realism" ? realismReferences : references;
+  const smartFeatureActive = smartWorkflow && (smartUseFirstFrame || studioMode !== "h3-refmods" && refModSlots.length > 0 || studioMode === "h3-refmods" && references.some(item => item.kind === "image"));
+  function smartReferenceConfig(): H3SmartReferenceSelection | undefined {
+    return smartFeatureActive ? {useFirstFrame: smartUseFirstFrame, refMods: refModSlots} : undefined;
+  }
+
   const specialModeLabel =
     MODE_OPTIONS.find((item) => item.id === studioMode)?.label || "H3";
   const realismLoras = useMemo(
@@ -1337,6 +1346,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     [bodySwapPrompt, bodySwapSelector, bodySwapPreserveAudio],
   );
   const refModsCompiledPrompt = useMemo(() => {
+    if (smartFeatureActive) return refModsPrompt;
     if (!refModsPrompt.trim() || !refModSlots.length) return "";
     try {
       return compileH3RefModsPrompt({
@@ -1346,7 +1356,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     } catch {
       return "";
     }
-  }, [refModsPrompt, refModSlots]);
+  }, [refModsPrompt, refModSlots, smartFeatureActive]);
   const filteredRefModLibrary = useMemo(() => {
     const search = refModPickerSearch.trim().toLowerCase();
     return refModLibrary.filter((entry) => {
@@ -1408,11 +1418,13 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       && generationPrompt.trim()
       && !builderPromptStale
       && (mode !== "h3-image-to-video" || firstImage)
-      && (mode !== "h3-reference-to-video" || references.length)
+      && (mode !== "h3-reference-to-video" || references.length || refModSlots.length || smartUseFirstFrame)
+      && (!smartWorkflow || !smartReferenceError)
       && !videoReferenceInvalid,
   );
   const canGenerateRealism = Boolean(
     studioMode === "h3-realism"
+      && !smartReferenceError
       && realismPrompt.trim()
       && finalRealismPrompt.trim()
       && !realismReferenceLimitMessage
@@ -1439,8 +1451,9 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   );
   const canGenerateRefMods = Boolean(
     studioMode === "h3-refmods"
+      && !smartReferenceError
       && refModsPrompt.trim()
-      && refModSlots.length
+      && (refModSlots.length || references.some(item => item.kind === "image") || smartUseFirstFrame)
       && refModsCompiledPrompt.trim()
       && !refModsValidationMessage,
   );
@@ -1476,6 +1489,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
 
     async function restoreInputs() {
       setInputStateHydrated(false);
+      setSmartUseFirstFrame(false); setSmartReferenceError("");
       promptVideoUploadCacheRef.current.clear();
 
       const stored =
@@ -1643,6 +1657,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       setBodySwapPreserveAudio(stored.bodySwapPreserveAudio !== false);
       setBodySwapSeedMode(stored.bodySwapSeedMode === "fixed" ? "fixed" : "random");
       setBodySwapSeed(stored.bodySwapSeed || "");
+      setSmartUseFirstFrame(stored.smartUseFirstFrame === true);
+      if (mediaGpuPreference === "auto" && (stored.smartBackend === "rtx3090" || stored.smartBackend === "rtx5060ti")) {
+        setH3Backend(stored.smartBackend);
+      }
       setRefModsPrompt(stored.refModsPrompt || "");
       setRefModSlots(
         Array.isArray(stored.refModSlots)
@@ -1752,6 +1770,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         bodySwapPreserveAudio,
         bodySwapSeedMode,
         bodySwapSeed,
+        smartUseFirstFrame,
+        smartBackend: h3Backend,
         refModsPrompt,
         refModSlots,
         refModsTurbo: h3Settings.renderMode === "turbo",
@@ -1805,6 +1825,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     bodySwapPreserveAudio,
     bodySwapSeedMode,
     bodySwapSeed,
+    smartUseFirstFrame,
+    h3Backend,
     refModsPrompt,
     refModSlots,
     refModsTurbo,
@@ -2175,6 +2197,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     setBodySwapSeedMode("random");
     setBodySwapSeed("");
     setRefModsPrompt("");
+    setSmartUseFirstFrame(false); setSmartReferenceError("");
     setRefModSlots([]);
     setRefModsTurbo(true);
     setRefModsSeedMode("random");
@@ -2857,6 +2880,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   }
   function h3GenerationConfig(): H3GenerationConfig {
     return {
+      smartReferences: smartReferenceConfig(),
       targetBackend: h3Backend,
       ...(validatedStudioPlan ? { studioPlan: validatedStudioPlan, seed: validatedStudioPlan.seed } : {}),
       mode,
@@ -2903,6 +2927,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   }
   function h3RealismGenerationConfig() {
     return {
+      smartReferences: smartReferenceConfig(),
       targetBackend: h3Backend,
       mode: "h3-realism",
       quality,
@@ -2991,8 +3016,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
   }
   function h3RefModsGenerationConfig() {
     return {
+      smartReferences: smartReferenceConfig(),
       targetBackend: h3Backend,
       mode: "h3-refmods",
+      imageDescriptions: references.filter(item => item.kind === "image").map(item => item.description),
       quality,
       orientation,
       durationSeconds: duration,
@@ -3106,28 +3133,14 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     }
   }
   async function generateRefMods() {
-    if (!canGenerateRefMods) {
-      return setMessage(refModsValidationMessage || "Add a prompt and at least one RefMod.");
-    }
-    setMessage("Validating Ref Mods request...");
-    try {
-      const response = await fetch("/api/h3/special/refmods/generation", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config: h3RefModsGenerationConfig() }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.job) {
-        throw new Error(data.error || "H3 Ref Mods generation could not be submitted.");
-      }
-      setJob(data.job);
-      rememberH3Job(h3LastJobStorageKey, data.job);
-      setNow(Date.now());
-      setMessage("");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "H3 Ref Mods generation could not be submitted.");
-    }
+    if (smartReferenceError) return setMessage(smartReferenceError);
+    if (!canGenerateRefMods) return setMessage(refModsValidationMessage || "Add a prompt and references.");
+    await performH3Generation("/api/h3/special/refmods/generation", async () => {
+      const staged: H3StagedGenerationPayload = {referenceImages: [], referenceVideos: [], referenceAudios: []};
+      if (smartUseFirstFrame && firstImage) staged.firstImage = await uploadH3StagedFile(firstImage.file, "image", "opening frame");
+      for (const item of references.filter(item => item.kind === "image")) staged.referenceImages.push(await uploadH3StagedFile(item.file, "image", item.name));
+      return {config: h3RefModsGenerationConfig(), staged};
+    });
   }
   async function uploadH3StagedFile(
     file: File,
@@ -3238,7 +3251,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       referenceAudios: [],
     };
 
-    if (firstImage) {
+    if (firstImage && (mode === "h3-image-to-video" || smartUseFirstFrame && mode === "h3-reference-to-video")) {
       staged.firstImage =
         await uploadH3StagedFile(
           firstImage.file,
@@ -3247,7 +3260,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         );
     }
 
-    if (lastImage) {
+    if (lastImage && mode === "h3-image-to-video") {
       staged.lastImage =
         await uploadH3StagedFile(
           lastImage.file,
@@ -3322,6 +3335,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       referenceAudios: [],
     };
 
+    if (smartUseFirstFrame && firstImage) staged.firstImage = await uploadH3StagedFile(firstImage.file, "image", "opening frame");
+
     const imageReferences = realismReferences.filter((item) => item.kind === "image");
     for (let index = 0; index < imageReferences.length; index += 1) {
       staged.referenceImages.push(
@@ -3381,6 +3396,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     return staged;
   }
   async function generateRealism() {
+    if (smartReferenceError) return setMessage(smartReferenceError);
     if (!realismPrompt.trim())
       return setMessage("Enter a Realism prompt before generating.");
     if (realismReferenceLimitMessage)
@@ -3488,6 +3504,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     await performH3Generation("/api/h3/special/body-swap/generation", async () => ({config, staged: await uploadH3StagedBodySwapMedia()}));
   }
   async function generate() {
+    if (smartWorkflow && smartReferenceError) return setMessage(smartReferenceError);
     if (!legacyModeActive)
       return setMessage(
         `${specialModeLabel} is not available yet. Choose Text, Image, or Reference for a supported generation.`,
@@ -3498,7 +3515,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       return setMessage("Enter a prompt before generating.");
     if (mode === "h3-image-to-video" && !firstImage)
       return setMessage("Choose a First Image.");
-    if (mode === "h3-reference-to-video" && !references.length)
+    if (mode === "h3-reference-to-video" && !references.length && !refModSlots.length && !smartUseFirstFrame)
       return setMessage("Add at least one reference.");
     if (mode === "h3-reference-to-video" && videoReferenceInvalid) {
       return setMessage(
@@ -4017,6 +4034,22 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       ) : null}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(300px,.75fr)]">
         <main className="space-y-4">
+          {smartWorkflow ? <H3SmartReferences key={h3Backend}
+            backend={h3Backend} disabled={active || submissionBusy} useFirstFrame={smartUseFirstFrame} firstFrame={firstImage}
+            validateSelection={smartFeatureActive} legacyEnhancementEnabled={h3Settings.refMod.enabled || h3Settings.motionLab.enabled}
+            onUseFirstFrame={setSmartUseFirstFrame} onFirstImage={file => replaceSingle(firstImage, file, setFirstImage)}
+            onFirstGallery={() => setGalleryTarget("first")} onRemoveFirst={() => {release(firstImage); setFirstImage(null);}}
+            images={smartMedia.filter(item => item.kind === "image")} videos={smartMedia.filter(item => item.kind === "video").length} audios={smartMedia.filter(item => item.kind === "audio").length}
+            slots={refModSlots} onAddImage={file => studioMode === "h3-realism" ? addRealismReference("image", file) : addReference("image", file)}
+            onImageGallery={() => setGalleryTarget("reference-image")}
+            onRemoveImage={id => studioMode === "h3-realism" ? removeRealismReference(id) : removeReference(id)}
+            onMoveImage={(id, direction) => {
+              const setter = studioMode === "h3-realism" ? setRealismReferences : setReferences;
+              setter(current => {const indices = current.map((item, i) => item.kind === "image" ? i : -1).filter(i => i >= 0); const index = indices.findIndex(i => current[i].id === id); const target = indices[index + direction]; if (index < 0 || target === undefined) return current; const copy = [...current]; [copy[indices[index]], copy[target]] = [copy[target], copy[indices[index]]]; return copy;});
+            }}
+            onImageDescription={(id, description) => studioMode === "h3-realism" ? updateRealismReference(id, {description}) : updateReference(id, {description})}
+            onAddRefMod={entry => addRefModSlot(entry)} onRemoveRefMod={removeRefModSlot} onMoveRefMod={moveRefModSlot} onUpdateRefMod={updateRefModSlot} onValidation={setSmartReferenceError}
+          /> : null}
           {studioMode === "h3-realism" ? (
             <>
               <section className={surface} data-otg="h3-realism-workspace">
@@ -4122,7 +4155,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {(["image", "video", "audio"] as const).map((kind) => (
+                    {(["video", "audio"] as const).map((kind) => (
                       <label key={kind} className={`${command} cursor-pointer`}>
                         + {kind[0].toUpperCase() + kind.slice(1)}
                         <input
@@ -4140,7 +4173,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   </div>
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  {realismReferences.map((item, index) => (
+                  {realismReferences.map((item, index) => item.kind === "image" ? null : (
                     <article
                       key={item.id}
                       className="min-w-0 overflow-hidden rounded-[6px] border border-white/10 bg-black/30 p-3"
@@ -4174,7 +4207,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                         }
                         placeholder="Identity, continuity, motion, pace, ambience"
                       />
-                      {item.kind !== "image" ? (
+                      {(item.kind === "video" || item.kind === "audio") ? (
                         item.kind === "video" ? (
                           <VideoReferenceWindowControl
                             item={item}
@@ -4469,7 +4502,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                       Choose your saved references
                     </h2>
                     <p className="mt-1 text-xs text-white/45">
-                      Up to {H3_REFMOD_LIMITS.maxRefMods} RefMods. List characters in the same order as your prompt. Use Up / Down to reorder them.
+                      Describe the action below. Character & Scene References builds the reference map automatically from your selected images and RefMods.
                     </p>
                   </div>
                 </div>
@@ -4508,81 +4541,6 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                     placeholder="Compiled prompt will appear after you enter a prompt and add at least one RefMod."
                   />
                 </details>
-              </section>
-              <section className={surface} data-otg="h3-refmods-selected-slots">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-black uppercase text-violet-200/75">
-                      02 / Selected RefMods
-                    </p>
-                    <h2 className="mt-1 text-lg font-black">
-                      Slots 1-8
-                    </h2>
-                    <p className="mt-1 text-xs text-white/45">
-                      Create and manage RefMods in Characters → Ref Mod Gallery. H3 only selects and generates.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className={command}
-                    onClick={() => {
-                      setRefModPickerOpen(true);
-                      setRefModLibraryStatus("idle");
-                    }}
-                  >
-                    Add RefMod
-                  </button>
-                </div>
-                <div className="mt-4 grid gap-3">
-                  {refModSlots.map((slot, index) => (
-                    <article
-                      key={slot.id}
-                      className="rounded-[6px] border border-white/10 bg-black/30 p-3"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <p className="text-xs font-black uppercase text-cyan-200">
-                            Slot {index + 1}
-                          </p>
-                          <p className="text-sm font-bold text-white/80">
-                            {slot.name || "Choose a RefMod"}
-                          </p>
-                        </div>
-                        <div className="flex gap-2">
-                          <button type="button" className={command} onClick={() => moveRefModSlot(slot.id, -1)}>
-                            Up
-                          </button>
-                          <button type="button" className={command} onClick={() => moveRefModSlot(slot.id, 1)}>
-                            Down
-                          </button>
-                          <button type="button" className={command} onClick={() => removeRefModSlot(slot.id)}>
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-                      <H3RefModSlotControls slot={slot} disabled={active} onChange={patch => updateRefModSlot(slot.id, patch)} />
-                      {refModSlotWarnings(slot).map((warning) => (
-                        <div key={warning} className="mt-2 rounded-[6px] border border-amber-300/25 bg-amber-300/10 p-2 text-xs text-amber-50">
-                          {warning}
-                        </div>
-                      ))}
-                    </article>
-                  ))}
-                </div>
-                {!refModSlots.length ? (
-                  <div className="mt-4 rounded-[6px] border border-dashed border-white/15 py-8 text-center text-sm text-white/35">
-                    Use Add RefMod to choose from the shared Characters Ref Mod Gallery.
-                  </div>
-                ) : null}
-                {refModsValidationMessage ? (
-                  <div className="mt-4 rounded-[6px] border border-red-300/30 bg-red-500/10 p-3 text-sm text-red-50">
-                    {refModsValidationMessage}
-                  </div>
-                ) : refModsWarningMessages.length ? (
-                  <div className="mt-4 rounded-[6px] border border-amber-300/25 bg-amber-300/10 p-3 text-sm text-amber-50">
-                    {refModsWarningMessages[0]}
-                  </div>
-                ) : null}
               </section>
               {refModPickerOpen ? (
                 <div className="fixed inset-0 z-50 flex items-end bg-black/70 p-3 sm:items-center sm:justify-center">
@@ -5080,7 +5038,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {(["image", "video", "audio"] as const).map((kind) => (
+                  {(["video", "audio"] as const).map((kind) => (
                     <label key={kind} className={`${command} cursor-pointer`}>
                       + {kind[0].toUpperCase() + kind.slice(1)}
                       <input
@@ -5117,7 +5075,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                 </div>
               </div>
               <div className="mt-4 grid gap-3 md:grid-cols-2">
-                {references.map((item, index) => (
+                {references.map((item, index) => item.kind === "image" ? null : (
                   <article
                     key={item.id}
                     className="min-w-0 overflow-hidden rounded-[6px] border border-white/10 bg-black/30 p-3"
@@ -5355,7 +5313,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                   <div className="mt-4" data-otg="h3-refmods-model-controls">
                     <H3AdvancedControls value={h3Settings} onChange={setH3Settings} disabled={active} allowFastH3 hideEnhancements
                       fastH3BlockedReason={selectedLoras.map(selection => fastH3LoraBlockReason(catalog.find(entry => entry.id === selection.id)?.filename, selection.strength)).find(reason => reason !== null) || undefined} />
-                    <p className="mt-2 text-xs text-white/55">Choose the same model and Turbo / Native render settings used in Reference-to-Video. Your saved RefMods supply the references.</p>
+                    <p className="mt-2 text-xs text-white/55">Choose the same model and Turbo / Native render settings used in Reference-to-Video. Use saved RefMods, temporary images, or both when supported by the selected GPU.</p>
                   </div>
                   {renderSeedControl({
                     label: "Ref Mods",
@@ -5677,6 +5635,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               replaceSingle(firstImage, file, setFirstImage);
             else if (galleryTarget === "last")
               replaceSingle(lastImage, file, setLastImage);
+            else if (galleryTarget === "reference-image" && studioMode === "h3-realism") addRealismReference("image", file);
             else
               addReference(
                 galleryTarget === "reference-video" ? "video" : "image",

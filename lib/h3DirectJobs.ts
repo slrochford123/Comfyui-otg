@@ -1,3 +1,6 @@
+import { compileH3SmartReferencePrompt, type H3SmartReferenceInput } from "@/lib/h3SmartReferences";
+import { makeH3SmartReferenceInput } from "@/lib/h3SmartReferencesServer";
+import { applyH3SmartReferenceGraph } from "@/lib/h3SmartReferencesGraph";
 import {mediaQueueMessage} from "@/lib/workers/mediaGpuQueue";
 import crypto from "node:crypto";
 import { applyH3VideoEditGraph, prepareH3VideoEditSource, finalizeH3VideoEdit, h3VideoEditFrameCount } from "@/lib/h3VideoEdit";
@@ -62,6 +65,7 @@ export type H3DirectReference = {
 };
 
 export type H3DirectJobInput = {
+  smartReferences?: H3SmartReferenceInput;
   targetBackend?: ProductionV2H3BackendId;
   studioPlan?: import("@/lib/h3StudioPlan").H3StudioPlan;
   /** Classification only; never an admission grant. Only the local CLI can authorize. */
@@ -436,6 +440,7 @@ export async function saveH3DirectJobToGallery(
 }
 
 function promptWithReferences(input: H3DirectJobInput) {
+  if (input.smartReferences) return compileH3SmartReferencePrompt(input.smartReferences.originalPrompt ?? input.prompt, input.smartReferences);
   const references = [
     ...input.images.map((item, index) => ({ id: `image-${index}`, kind: "image" as const, name: item.name, description: item.description })),
     ...input.videos.map((item, index) => ({ id: `video-${index}`, kind: "video" as const, name: item.name, description: item.description, includeAudio: item.includeAudio })),
@@ -575,17 +580,19 @@ async function execute(job: H3DirectJob) {
       uploadedFilename: audioFilenames[index],
     }));
 
+    const smartReferences = job.input.smartReferences ? await makeH3SmartReferenceInput(job.input.smartReferences, selectedBackend, job.input.images, job.input.firstImage, job.input.videos.length, job.input.audios.length, {videos: job.input.videos, audios: job.input.audios}) : undefined;
     let built = buildH3Workflow({
+      smartReferenceMap: smartReferences?.referenceMap,
       preserveLegacyReference: !!job.input.videoEdit,
       backend: selectedBackend,
       mode: job.input.mode,
       h3Quality: job.input.quality,
       orientation: job.input.orientation,
       durationSeconds: job.input.durationSeconds,
-      finalPrompt: promptWithReferences(job.input),
+      finalPrompt: smartReferences ? compileH3SmartReferencePrompt(job.input.smartReferences?.originalPrompt ?? job.input.prompt, smartReferences) : promptWithReferences(job.input),
       seed: job.input.seed,
       outputPrefix: `otg_h3_direct/${safeSegment(job.id)}`,
-      startImageFilename: firstImageFilename,
+      startImageFilename: job.input.smartReferences ? "" : firstImageFilename,
       lastImageFilename,
       references,
       voices,
@@ -598,6 +605,11 @@ async function execute(job: H3DirectJob) {
       optionalLoras,
     });
 
+    if (smartReferences) {
+      if (job.input.studioPlan || job.input.mode !== "h3-reference-to-video") throw Error("Smart References is available in the Reference workflow, not reviewed Studio plans.");
+      applyH3SmartReferenceGraph(built.graph, smartReferences, {conditioningNodeId: "39", firstFrameFilename: firstImageFilename, imageFilenames});
+    }
+
     let studioCompilation: ReturnType<typeof import("@/lib/h3StudioCompiler").compileH3StudioPlan> | undefined;
     let studioBuildInput: Parameters<typeof import("@/lib/h3StudioCompiler").compileH3StudioPlan>[1] | undefined;
     if (job.input.studioPlan) {
@@ -607,7 +619,7 @@ async function execute(job: H3DirectJob) {
       assertH3StudioAvailable();
       studioBuildInput = { backend: selectedBackend, mode: job.input.mode,
         h3Quality: job.input.quality, orientation: job.input.orientation, durationSeconds: job.input.durationSeconds,
-        finalPrompt: promptWithReferences(job.input), seed: job.input.seed, outputPrefix: `otg_h3_direct/${safeSegment(job.id)}`,
+        finalPrompt: smartReferences ? compileH3SmartReferencePrompt(job.input.smartReferences?.originalPrompt ?? job.input.prompt, smartReferences) : promptWithReferences(job.input), seed: job.input.seed, outputPrefix: `otg_h3_direct/${safeSegment(job.id)}`,
         startImageFilename: firstImageFilename, lastImageFilename, references, voices,
         videoReferences: job.input.videos.map((item, index) => ({ uploadedFilename: videoFilenames[index], includeAudio: item.includeAudio === true })) };
       const result = compileH3StudioPlan(job.input.studioPlan, studioBuildInput,
@@ -870,6 +882,7 @@ export function validateH3DirectInput(input: H3DirectJobInput) {
     input.studioPlan = parseH3StudioPlan(input.studioPlan);
     if (input.targetBackend && input.targetBackend !== studioBackend(input.studioPlan)) throw new Error("Conflicting H3 GPU targets.");
   }
+  if (input.smartReferences && (input.h3Settings?.refMod.enabled || input.h3Settings?.motionLab.enabled)) throw Error("Turn off the legacy RefMod / Motion Lab enhancements before using Smart References.");
   if (input.videoEdit) h3VideoEditFrameCount(input.videoEdit.durationSeconds);
   input.rifeInterpolation60Fps = normalizeH3RifeInterpolation60Fps(input.rifeInterpolation60Fps);
   if (!input.prompt.trim()) throw new Error("Enter a prompt before generating.");
@@ -877,7 +890,8 @@ export function validateH3DirectInput(input: H3DirectJobInput) {
     throw new Error("Choose Landscape or Portrait orientation.");
   }
   if (input.mode === "h3-image-to-video" && !input.firstImage) throw new Error("Choose a First Image.");
-  if (input.mode === "h3-reference-to-video" && !input.images.length && !input.videos.length && !input.audios.length) throw new Error("Add at least one reference.");
+  if (input.mode === "h3-reference-to-video" && !input.smartReferences?.refMods.length && !input.smartReferences?.useFirstFrame && !input.images.length && !input.videos.length && !input.audios.length) throw new Error("Add at least one reference.");
+  if (input.images.length + input.videos.length + input.audios.length > 12) throw Error("Remove a reference: H3 supports at most 12 reference media files in total.");
   if (input.images.length > H3_MAX_IMAGE_REFERENCES) throw new Error(`H3 supports at most ${H3_MAX_IMAGE_REFERENCES} image references.`);
   if (input.videos.length > H3_MAX_VIDEO_REFERENCES) throw new Error(`H3 supports at most ${H3_MAX_VIDEO_REFERENCES} video references.`);
   if (input.audios.length > H3_MAX_AUDIO_REFERENCES) throw new Error(`H3 supports at most ${H3_MAX_AUDIO_REFERENCES} audio references.`);

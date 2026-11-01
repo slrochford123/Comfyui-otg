@@ -1,3 +1,6 @@
+import { makeH3SmartReferenceInput } from "@/lib/h3SmartReferencesServer";
+import { compileH3SmartReferencePrompt, type H3SmartReferenceInput } from "@/lib/h3SmartReferences";
+import { uploadH3Input } from "@/lib/production/h3Comfy";
 import { isComfyReadError } from "@/lib/comfyTransport";
 import {mediaQueueMessage} from "@/lib/workers/mediaGpuQueue";
 import {
@@ -59,6 +62,7 @@ import {
 } from "@/lib/paths";
 
 export type H3RefModsJobInput = {
+  smartReferences?: H3SmartReferenceInput;
   targetBackend?: ProductionV2H3BackendId;
   mode: "h3-refmods";
   quality: H3Quality;
@@ -259,6 +263,7 @@ function isRunnableStatus(status: H3RefModsJob["status"]) {
 
 export function validateH3RefModsJobInput(input: H3RefModsRequestInput): H3RefModsJobInput {
   const normalized = validateH3RefModsRequest(input);
+  if (input.smartReferences && (normalized.h3Settings.refMod.enabled || normalized.h3Settings.motionLab.enabled)) throw Error("Turn off legacy RefMod / Motion Lab enhancements before using Smart References.");
   const optionalLoras = validateH3LoraSelections(
     input.optionalLoras,
     "h3-refmods",
@@ -269,6 +274,7 @@ export function validateH3RefModsJobInput(input: H3RefModsRequestInput): H3RefMo
   }
   return {
     mode: "h3-refmods",
+    smartReferences: input.smartReferences,
     targetBackend: parseH3TargetBackend(input.targetBackend),
     quality: normalized.quality,
     orientation: normalized.orientation,
@@ -488,12 +494,18 @@ async function execute(job: H3RefModsJob) {
       backendUrl: selected.baseUrl,
     };
 
+    const oldSmart = persisted.input.smartReferences;
+    const smart = oldSmart ? await makeH3SmartReferenceInput(oldSmart, selected.backend, oldSmart.images, oldSmart.firstFrame) : undefined;
+    const upload = async (item: {path: string; name: string}, n: string) => uploadH3Input({backend: selected.backend, sourcePath: item.path, uploadName: `${safeSegment(job.id)}-${n}`, mediaType: "image"});
+    const smartImageFilenames = smart ? await Promise.all(smart.images.map((item, i) => upload(item, `reference-${i}`))) : undefined;
+    const smartFirstFrameFilename = smart?.firstFrame ? await upload(smart.firstFrame, "first-frame") : undefined;
     const built = buildH3RefModsT2VWorkflow({
+      smartReferences: smart, smartImageFilenames, smartFirstFrameFilename,
       backend: selected.backend,
       quality: persisted.input.quality,
       orientation: persisted.input.orientation,
       durationSeconds: persisted.input.durationSeconds,
-      prompt: persisted.input.compiledPrompt,
+      prompt: smart ? compileH3SmartReferencePrompt(oldSmart?.originalPrompt ?? persisted.input.prompt, smart) : persisted.input.compiledPrompt,
       refMods: persisted.input.refMods,
       turbo: persisted.input.turbo,
       h3Settings: persisted.input.h3Settings,

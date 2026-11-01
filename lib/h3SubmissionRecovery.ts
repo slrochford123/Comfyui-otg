@@ -7,7 +7,7 @@ import {requireSessionUser} from "./sessionUser";
 import {OTG_DATA_ROOT, safeSegment} from "./paths";
 import {readH3StudioJson} from "./h3StudioRequests";
 
-export const H3_SUBMISSION_SCOPES = ["generation", "realism", "body-swap", "studio-auto", "studio-execute"] as const;
+export const H3_SUBMISSION_SCOPES = ["generation", "realism", "body-swap", "studio-auto", "studio-execute", "refmods"] as const;
 export type H3SubmissionScope = typeof H3_SUBMISSION_SCOPES[number];
 type Receipt = {fingerprint: string; status: "preparing" | "completed"; httpStatus?: number; result?: Record<string, unknown>};
 function receiptPath(owner: string, scope: string, id: string) {

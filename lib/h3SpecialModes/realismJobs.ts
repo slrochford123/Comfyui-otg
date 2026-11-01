@@ -1,3 +1,5 @@
+import { compileH3SmartReferencePrompt, type H3SmartReferenceInput } from "@/lib/h3SmartReferences";
+import { makeH3SmartReferenceInput } from "@/lib/h3SmartReferencesServer";
 import { isComfyReadError } from "@/lib/comfyTransport";
 import {mediaQueueMessage} from "@/lib/workers/mediaGpuQueue";
 import { isH3SingularityMode } from "@/lib/production/h3Settings";
@@ -49,6 +51,7 @@ export type H3RealismReference = {
 };
 
 export type H3RealismJobInput = {
+  smartReferences?: H3SmartReferenceInput;
   targetBackend?: ProductionV2H3BackendId;
   mode: "h3-realism";
   quality: H3Quality;
@@ -535,7 +538,11 @@ async function submitNewRealismPrompt(job: H3RealismJob) {
       durationSeconds: item.durationSeconds,
       uploadedFilename: uploaded[index],
     }));
+    const oldSmart = job.input.smartReferences;
+    const smart = oldSmart ? await makeH3SmartReferenceInput(oldSmart, backend, oldSmart.images, oldSmart.firstFrame, job.input.references.filter(item => item.kind === "video").length, job.input.references.filter(item => item.kind === "audio").length, {videos: job.input.references.filter(item => item.kind === "video"), audios: job.input.references.filter(item => item.kind === "audio")}) : undefined;
+    const firstFrameFilename = smart?.firstFrame ? await uploadH3Input({backend, sourcePath: smart.firstFrame.path, mediaType: "image", uploadName: `${job.id}-first-frame`}) : undefined;
     const built = buildH3RealismWorkflow({
+      smartReferences: smart, smartFirstFrameFilename: firstFrameFilename,
       prompt: job.input.prompt,
       quality: job.input.quality,
       orientation: job.input.orientation,
@@ -547,7 +554,7 @@ async function submitNewRealismPrompt(job: H3RealismJob) {
       combatLoraEnabled: job.input.combatLoraEnabled,
       loraSettings: job.input.loraSettings,
       optionalLoras: job.input.optionalLoras || [],
-      compiledPromptOverride: job.input.compiledPromptOverride,
+      compiledPromptOverride: oldSmart ? compileH3SmartReferencePrompt(oldSmart.originalPrompt ?? job.input.prompt, smart || oldSmart) : job.input.compiledPromptOverride,
     });
     const probe = await inspectH3RealismBackendCompatibility(backend, built);
     backendProbes.push(probe);

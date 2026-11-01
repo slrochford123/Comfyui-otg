@@ -1,3 +1,6 @@
+import { recoverableH3Submission } from "@/lib/h3SubmissionRecovery";
+import { makeH3SmartReferenceInput, saveH3SmartReferenceImage } from "@/lib/h3SmartReferencesServer";
+import { normalizeH3SmartReferenceSelection } from "@/lib/h3SmartReferences";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
@@ -47,7 +50,8 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) { return recoverableH3Submission(req, "refmods", postRefMods); }
+async function postRefMods(req: NextRequest) {
   try {
     const owner = await getOwnerContext(req);
     const { ownerKey } = owner;
@@ -55,6 +59,7 @@ export async function POST(req: NextRequest) {
       action?: unknown;
       jobId?: unknown;
       config?: unknown;
+      staged?: {firstImage?: unknown; referenceImages?: unknown[]};
     } | null;
     if (body?.action === "cancel") {
       const canceled = await cancelH3RefModsJob(ownerKey, String(body.jobId || ""));
@@ -70,7 +75,18 @@ export async function POST(req: NextRequest) {
     const config = body?.config && typeof body.config === "object"
       ? body.config as Record<string, unknown>
       : {};
-    const job = await createH3RefModsJob(ownerKey, {...config,targetBackend:await (await import("@/lib/mediaGpuRoutingServer")).requestedH3MediaGpu(config.targetBackend)}, owner);
+    const targetBackend = await (await import("@/lib/mediaGpuRoutingServer")).requestedH3MediaGpu(config.targetBackend);
+    const selection = normalizeH3SmartReferenceSelection(config.smartReferences);
+    const staged = body?.staged;
+    if (selection && JSON.stringify(selection.refMods) !== JSON.stringify((await import("@/lib/h3SpecialModes/refMods")).normalizeH3RefModSlots(config.refMods))) throw Error("The RefMod selection changed. Recheck your references.");
+    if (staged?.referenceImages && (!Array.isArray(staged.referenceImages) || staged.referenceImages.length > 9)) throw Error("Use at most nine ordinary reference images.");
+    const images = selection ? await Promise.all((staged?.referenceImages || []).map(item => saveH3SmartReferenceImage(ownerKey, item))) : [];
+    const notes = Array.isArray(config.imageDescriptions) ? config.imageDescriptions : [];
+    images.forEach((image, i) => { image.description = String(notes[i] || ""); });
+    const first = selection?.useFirstFrame ? await saveH3SmartReferenceImage(ownerKey, staged?.firstImage) : null;
+    const smartReferences = await makeH3SmartReferenceInput(selection, targetBackend || "rtx3090", images, first);
+    if (smartReferences) smartReferences.originalPrompt = String(config.prompt || "");
+    const job = await createH3RefModsJob(ownerKey, {...config, smartReferences, targetBackend}, owner);
     startH3RefModsJob(job);
     return noStore({ ok: true, job: h3RefModsPublicStatus(job) }, { status: 202 });
   } catch (error) {

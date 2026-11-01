@@ -1,3 +1,4 @@
+import type { H3SmartReferenceMapEntry } from "@/lib/h3SmartReferences";
 import { isH3SingularityMode } from "@/lib/production/h3Settings";
 import fs from "node:fs";
 import path from "node:path";
@@ -588,6 +589,8 @@ function assertReferencePromptMatchesManifest(
 export type H3WorkflowBuildInput = {
   /** Internal structural/reference editor keeps its separate existing architecture. */
   preserveLegacyReference?: boolean;
+  /** Internally resolved map, never copied from an HTTP request. */
+  smartReferenceMap?: H3SmartReferenceMapEntry[];
   backend: ProductionV2H3BackendId;
   mode: ProductionV2H3Mode;
   h3Quality: H3Quality;
@@ -1432,7 +1435,7 @@ export function buildH3Workflow(input: H3WorkflowBuildInput) {
     } else {
       const references = orderedReferences(
         input.references || [],
-        Boolean(input.videoReferences?.length || input.videoReferenceFilename || input.voices?.length),
+        Boolean(input.smartReferenceMap !== undefined || input.videoReferences?.length || input.videoReferenceFilename || input.voices?.length),
       );
       const voices = orderedVoices(input.voices || []);
       const videoFilename = clean(input.videoReferenceFilename);
@@ -1460,7 +1463,14 @@ export function buildH3Workflow(input: H3WorkflowBuildInput) {
         }
       });
 
-      assertReferencePromptMatchesManifest(prompt, references, videoReferences, voices);
+      if (input.smartReferenceMap !== undefined) {
+        const map = input.smartReferenceMap;
+        const allowed = new Set(map.map(item => item.tag));
+        const subjects = map.filter(item => item.kind !== "audio").length;
+        for (let index = 1; index <= subjects; index++) allowed.add(`<Subject ${index}>`);
+        for (const item of map) if (!prompt.includes(item.tag)) throw Error("The smart reference prompt is missing its resolved map.");
+        for (const match of prompt.matchAll(/<(Picture|Subject|Video|Audio)\s+(\d+)>/g)) if (!allowed.has(match[0])) throw Error("The prompt names a reference outside the resolved smart reference map.");
+      } else assertReferencePromptMatchesManifest(prompt, references, videoReferences, voices);
 
       references.forEach((reference, index) => {
         const nodeId = referenceContract.referenceImageNodeIds[index];

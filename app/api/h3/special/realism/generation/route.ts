@@ -1,3 +1,5 @@
+import { makeH3SmartReferenceInput, saveH3SmartReferenceImage } from "@/lib/h3SmartReferencesServer";
+import type { H3SmartReferenceAsset } from "@/lib/h3SmartReferences";
 import { isH3SingularityMode, type H3CheckpointMode } from "@/lib/production/h3Settings";
 import { validateH3LoraSelections } from "@/lib/h3LoraCatalogServer";
 import { parseH3TargetBackend } from "@/lib/h3GpuRouting";
@@ -48,11 +50,13 @@ type SavedH3RealismMedia = {
   durationSeconds?: number | null;
 };
 type H3RealismMedia = {
+  firstFrame?: H3SmartReferenceAsset | null;
   images: H3RealismReference[];
   videos: H3RealismReference[];
   audios: H3RealismReference[];
 };
 type H3RealismStagedMedia = {
+  firstImage?: unknown;
   referenceImages?: unknown;
   referenceVideos?: unknown;
   referenceAudios?: unknown;
@@ -300,7 +304,11 @@ async function startGenerationJob(
   media: H3RealismMedia,
 ) {
   const generation = readH3RealismGenerationConfig(config);
+  const targetBackend = parseH3TargetBackend(await (await import("@/lib/mediaGpuRoutingServer")).requestedH3MediaGpu(config.targetBackend));
+  const smartReferences = await makeH3SmartReferenceInput(config.smartReferences, targetBackend || "rtx3090", media.images, media.firstFrame || null, media.videos.length, media.audios.length, {videos: media.videos, audios: media.audios});
+  if (smartReferences) smartReferences.originalPrompt = String(config.prompt || "");
   const input = validateH3RealismJobInput({
+    smartReferences,
     targetBackend: parseH3TargetBackend(await (await import("@/lib/mediaGpuRoutingServer")).requestedH3MediaGpu(config.targetBackend)),
     ...generation,
     references: [
@@ -328,6 +336,7 @@ async function stagedMedia(
   const audioDurations = numbers(config.audioDurations);
 
   return {
+    firstFrame: staged.firstImage ? await saveH3SmartReferenceImage(ownerKey, staged.firstImage) : null,
     images: await stagedList(staged.referenceImages, ownerKey, requestId, "image", imageDescriptions, []),
     videos: await stagedList(staged.referenceVideos, ownerKey, requestId, "video", videoDescriptions, videoDurations, videoClipStarts),
     audios: await stagedList(staged.referenceAudios, ownerKey, requestId, "audio", audioDescriptions, audioDurations),
@@ -348,6 +357,7 @@ async function multipartMedia(
   const audioDurations = numbers(config.audioDurations);
 
   return {
+    firstFrame: form.get("firstImage") instanceof File ? {...await saveFile(ownerKey, requestId, form.get("firstImage") as File, "image", 99), description: ""} : null,
     images: await fileList(form, "referenceImages", ownerKey, requestId, "image", imageDescriptions, []),
     videos: await fileList(form, "referenceVideos", ownerKey, requestId, "video", videoDescriptions, videoDurations, videoClipStarts),
     audios: await fileList(form, "referenceAudios", ownerKey, requestId, "audio", audioDescriptions, audioDurations),
