@@ -24,9 +24,11 @@ import {
 } from "@/lib/h3StylePresets";
 import { H3StylePresetPicker } from "./H3StylePresetPicker";
 import H3AdvancedControls from "./H3AdvancedControls";
+import H3RefModSlotControls from "./H3RefModSlotControls";
 import H3SingularitySelector from "./H3SingularitySelector";
 import H3SpeedIndicator from "./H3SpeedIndicator";
 import H3VideoEditPanel from "./H3VideoEditPanel";
+import { ExpandableVideo } from "./ExpandedMediaViewer";
 import NativeImagePanel from "./NativeImagePanel";
 import {H3RecoveryClient, h3RecoveryMessage} from "@/lib/client/h3Recovery";
 import {useH3Resume} from "@/lib/client/useH3Resume";
@@ -1268,7 +1270,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     lockedReferences,
     generationPrompt,
   );
-  const fastH3Selected = studioMode === "h3-reference-to-video" && isH3OmniRefMode(h3Settings.checkpointMode);
+  const fastH3Selected = (studioMode === "h3-reference-to-video" || studioMode === "h3-refmods") && isH3OmniRefMode(h3Settings.checkpointMode);
   const nativeDimensions = fastH3Selected && quality === "hq"
     ? orientation === "portrait" ? { width: 768, height: 1344 } : { width: 1344, height: 768 }
     : getH3NativeDimensions(quality, orientation);
@@ -1507,7 +1509,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       setRifeInterpolation60Fps(stored.rifeInterpolation60Fps === true);
       setH3Settings(
         normalizeH3AdvancedSettings(
-          stored.h3Settings,
+          stored.h3Settings ? { ...stored.h3Settings, ...(restoredMode === "h3-refmods" && stored.refModsTurbo === false ? { renderMode: "native" } : {}) } : { renderMode: stored.refModsTurbo === false ? "native" : "turbo" },
           stored.references.filter((item) => item.kind === "image").length,
         ),
       );
@@ -1752,7 +1754,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
         bodySwapSeed,
         refModsPrompt,
         refModSlots,
-        refModsTurbo,
+        refModsTurbo: h3Settings.renderMode === "turbo",
         refModsSeedMode,
         refModsSeed,
       },
@@ -2103,7 +2105,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
     setRealismPeopleEnabled(preset.peopleRealismEnabled);
   }
   function selectStudioMode(nextMode: H3StudioMode) {
-    if (nextMode !== "h3-reference-to-video" && isH3OmniRefMode(h3Settings.checkpointMode)) setH3Settings(current => ({ ...current, checkpointMode: "standard" }));
+    if (nextMode !== "h3-reference-to-video" && nextMode !== "h3-refmods" && isH3OmniRefMode(h3Settings.checkpointMode)) setH3Settings(current => ({ ...current, checkpointMode: "standard" }));
     setStudioMode(nextMode);
     if (isLegacyH3Mode(nextMode)) {
       setMode(nextMode);
@@ -2996,7 +2998,8 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       durationSeconds: duration,
       prompt: refModsPrompt,
       refMods: refModSlots,
-      turbo: refModsTurbo,
+      turbo: h3Settings.renderMode === "turbo",
+      h3Settings: { ...h3Settings, refMod: { ...h3Settings.refMod, enabled: false }, motionLab: { enabled: false } },
       rifeInterpolation60Fps,
       creative: h3CreativeDirection,
       optionalLoras: selectedLoras,
@@ -4463,10 +4466,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                       01 / Ref Mods Prompt
                     </p>
                     <h2 className="mt-1 text-lg font-black">
-                      Saved H3 references in deterministic slot order
+                      Choose your saved references
                     </h2>
                     <p className="mt-1 text-xs text-white/45">
-                      Up to {H3_REFMOD_LIMITS.maxRefMods} RefMods. Slot order controls subject/reference mapping.
+                      Up to {H3_REFMOD_LIMITS.maxRefMods} RefMods. List characters in the same order as your prompt. Use Up / Down to reorder them.
                     </p>
                   </div>
                 </div>
@@ -4557,122 +4560,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                           </button>
                         </div>
                       </div>
-                      <div className="mt-3 grid gap-3 md:grid-cols-3">
-                        <label className="text-xs text-white/55 md:col-span-2">
-                          Library name
-                          <input
-                            className={`${field} mt-1`}
-                            value={slot.name}
-                            onChange={(event) => updateRefModSlot(slot.id, { name: event.target.value })}
-                            placeholder="characters/isabella"
-                          />
-                        </label>
-                        <label className="text-xs text-white/55">
-                          Type
-                          <select
-                            className={`${field} mt-1`}
-                            value={slot.category}
-                            onChange={(event) =>
-                              updateRefModSlot(slot.id, {
-                                category: event.target.value as H3RefModCategory,
-                                strength: refModDefaultStrength(event.target.value as H3RefModCategory),
-                              })
-                            }
-                          >
-                            {(["character", "motion", "audio", "bundle", "uncategorized"] as H3RefModCategory[]).map((value) => (
-                              <option key={value} value={value}>
-                                {categoryLabel(value)}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="text-xs text-white/55">
-                          Components
-                          <select
-                            className={`${field} mt-1`}
-                            value={slot.components}
-                            onChange={(event) =>
-                              updateRefModSlot(slot.id, {
-                                components: event.target.value as H3RefModComponents,
-                              })
-                            }
-                          >
-                            {(["Auto", "All", "Visual", "Audio"] as H3RefModComponents[]).map((value) => (
-                              <option key={value} value={value}>{value}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="text-xs text-white/55">
-                          Overall strength
-                          <input
-                            className={`${field} mt-1`}
-                            type="number"
-                            min={0}
-                            max={1}
-                            step={0.01}
-                            value={slot.strength}
-                            onChange={(event) => updateRefModSlot(slot.id, { strength: Number(event.target.value) })}
-                          />
-                        </label>
-                        <label className="text-xs text-white/55">
-                          Source kind
-                          <select
-                            className={`${field} mt-1`}
-                            value={slot.sourceKind}
-                            onChange={(event) =>
-                              updateRefModSlot(slot.id, {
-                                sourceKind: event.target.value as H3RefModSourceKind,
-                              })
-                            }
-                          >
-                            {(["unknown", "image", "video", "audio", "bundle"] as H3RefModSourceKind[]).map((value) => (
-                              <option key={value} value={value}>{value}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="text-xs text-white/55">
-                          Visual strength
-                          <input
-                            className={`${field} mt-1`}
-                            type="number"
-                            min={0}
-                            max={1}
-                            step={0.01}
-                            value={slot.visualStrength}
-                            onChange={(event) => updateRefModSlot(slot.id, { visualStrength: Number(event.target.value) })}
-                          />
-                        </label>
-                        <label className="text-xs text-white/55">
-                          Audio strength
-                          <input
-                            className={`${field} mt-1`}
-                            type="number"
-                            min={0}
-                            max={1}
-                            step={0.01}
-                            value={slot.audioStrength}
-                            onChange={(event) => updateRefModSlot(slot.id, { audioStrength: Number(event.target.value) })}
-                          />
-                        </label>
-                        <label className="text-xs text-white/55">
-                          Copies
-                          <input
-                            className={`${field} mt-1`}
-                            type="number"
-                            min={1}
-                            max={10}
-                            step={1}
-                            value={slot.copies}
-                            onChange={(event) => updateRefModSlot(slot.id, { copies: Number(event.target.value) })}
-                          />
-                        </label>
-                      </div>
-                      <input
-                        className={`${field} mt-3`}
-                        value={slot.description}
-                        onChange={(event) => updateRefModSlot(slot.id, { description: event.target.value })}
-                        placeholder="Identity, motion, ambience, or bundle notes"
-                      />
+                      <H3RefModSlotControls slot={slot} disabled={active} onChange={patch => updateRefModSlot(slot.id, patch)} />
                       {refModSlotWarnings(slot).map((warning) => (
                         <div key={warning} className="mt-2 rounded-[6px] border border-amber-300/25 bg-amber-300/10 p-2 text-xs text-amber-50">
                           {warning}
@@ -5464,21 +5352,10 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
               {renderSharedOutputControls(
                 "Ref Mods",
                 <>
-                  <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-                    Render
-                  </p>
-                  <div className="grid grid-cols-2 gap-2" role="group" aria-label="Ref Mods render mode">
-                    {([true, false] as const).map((value) => (
-                      <button
-                        key={String(value)}
-                        type="button"
-                        aria-pressed={refModsTurbo === value}
-                        className={`${command} ${choiceClass(refModsTurbo === value)}`}
-                        onClick={() => setRefModsTurbo(value)}
-                      >
-                        {value ? "Turbo" : "Native"}
-                      </button>
-                    ))}
+                  <div className="mt-4" data-otg="h3-refmods-model-controls">
+                    <H3AdvancedControls value={h3Settings} onChange={setH3Settings} disabled={active} allowFastH3 hideEnhancements
+                      fastH3BlockedReason={selectedLoras.map(selection => fastH3LoraBlockReason(catalog.find(entry => entry.id === selection.id)?.filename, selection.strength)).find(reason => reason !== null) || undefined} />
+                    <p className="mt-2 text-xs text-white/55">Choose the same model and Turbo / Native render settings used in Reference-to-Video. Your saved RefMods supply the references.</p>
                   </div>
                   {renderSeedControl({
                     label: "Ref Mods",
@@ -5501,7 +5378,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
                 {refModsCompiledPrompt ? "ready" : "waiting for prompt"}
                 <br />
                 <span className="text-xs">
-                  Uses the validated RefMod T2V adapter on the RTX 3090 test backend.
+                  Uses your selected model and the GPU that has these saved RefMods.
                 </span>
               </div>
               <button
@@ -5688,14 +5565,7 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
           {job.videoUrl ? (
             <div className="mt-4">
               <h3 className="mb-2 text-sm font-black text-white">Final Video</h3>
-              <video
-                src={job.videoUrl}
-                poster={job.thumbnailUrl || undefined}
-                controls
-                playsInline
-                preload="metadata"
-                className="max-h-[70vh] w-full rounded-[6px] bg-black"
-              />
+              <ExpandableVideo url={job.videoUrl} poster={job.thumbnailUrl || undefined} />
               <div className="mt-3 flex flex-wrap gap-2">
                 <a
                   href={`${job.videoUrl}${job.videoUrl.includes("?") ? "&" : "?"}download=1`}

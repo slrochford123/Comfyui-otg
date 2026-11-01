@@ -1,4 +1,5 @@
 "use client";
+import { ExpandableImage } from "./ExpandedMediaViewer";
 import React, {useEffect, useRef, useState} from "react";
 import {NATIVE_IMAGE_MODELS, type NativeImageModel} from "@/lib/images/nativeImageModels";
 import {waitForNativeImage, type NativeImageResult} from "@/lib/client/nativeImages";
@@ -11,6 +12,12 @@ export default function NativeImagePanel({h3Only = false, sourcePath, sourceUrl,
   const [prompt, setPrompt] = useState("");
   const [orientation, setOrientation] = useState(defaultOrientation || (h3Only ? "square" : "source"));
   const [file, setFile] = useState<File | null>(null);
+  const [filePreview, setFilePreview] = useState("");
+  useEffect(() => {
+    if (!file) { setFilePreview(""); return; }
+    const url = URL.createObjectURL(file); setFilePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
   const [seed, setSeed] = useState("");
   const [jobId, setJobId] = useState("");
   const [busy, setBusy] = useState(false);
@@ -93,6 +100,7 @@ export default function NativeImagePanel({h3Only = false, sourcePath, sourceUrl,
     <form onSubmit={submit} className="space-y-3">
       {!h3Only ? <label className="block text-sm">Model<select value={model} disabled={busy} onChange={e => setModel(e.target.value as NativeImageModel)} className="ml-2 min-h-11 rounded-lg bg-zinc-900 px-3"><option value="fibo2-edit-turbo">Turbo · 4 steps</option><option value="fibo2-dev">Dev · 50 steps</option></select></label> : null}
       {!h3Only ? <label className="block text-sm">Source image{sourcePath || sourceUrl ? " (selected background ready)" : ""}<input type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={e => setFile(e.target.files?.[0] || null)} className="mt-2 block w-full" /></label> : null}
+      {!h3Only && (filePreview || sourceUrl) ? <ExpandableImage url={filePreview || sourceUrl!} name="Source image" className="w-full" imageClassName="max-h-80 w-full object-contain" /> : null}
       <label className="block text-sm">{h3Only ? "Describe your image" : "Describe the change"}<textarea rows={4} maxLength={12000} value={prompt} disabled={busy} onChange={e => setPrompt(e.target.value)} required className="mt-1 w-full rounded-lg border border-white/20 bg-zinc-900 p-3" /></label>
       <label className="block text-sm">Canvas<select value={orientation} disabled={busy} onChange={e => setOrientation(e.target.value)} className="ml-2 min-h-11 rounded-lg bg-zinc-900 px-3">{!h3Only ? <option value="source">Match source aspect · approximately 1 MP</option> : null}<option value="square">Square · 1024 × 1024</option><option value="portrait">Portrait · 768 × 1344</option><option value="landscape">Landscape · 1344 × 768</option></select></label>
       {!h3Only ? <p className="text-xs text-white/60">Fibo scales and center-crops references to the selected canvas. Match source minimizes cropping; exact output dimensions appear with the result.</p> : null}
@@ -102,6 +110,6 @@ export default function NativeImagePanel({h3Only = false, sourcePath, sourceUrl,
     {status && busy ? <p role="status">{status} · job {jobId || "preparing"}</p> : null}
     {busy && jobId ? <button type="button" onClick={() => void cancel()} className="min-h-11 rounded-lg border border-white/20 px-4">Cancel this image job</button> : null}
     {error ? <p role="alert" className="text-red-300">{error}</p> : null}
-    {result ? <div className="space-y-2"><img src={result.imageUrl} alt="Generated image result" className="max-h-[65vh] w-full rounded-lg object-contain" /><div className="flex flex-wrap gap-2"><a href={result.imageUrl} download={`${NATIVE_IMAGE_MODELS[result.model].label}.png`} className="inline-flex min-h-11 items-center rounded-lg border border-white/20 px-4">Download PNG</a><button type="button" onClick={() => void saveGallery()} disabled={saving || gallerySaved} className="min-h-11 rounded-lg border border-white/20 px-4 disabled:opacity-50">{gallerySaved ? "Saved to Gallery" : saving ? "Saving…" : "Save to Gallery"}</button></div><p className="text-xs text-white/60">{result.width} × {result.height} · Seed {result.seed}. Saved as a separate owner-scoped image.</p></div> : null}
+    {result ? <div className="space-y-2"><ExpandableImage url={result.imageUrl} name="Generated image result" className="w-full" imageClassName="max-h-[65vh] w-full rounded-lg object-contain" /><div className="flex flex-wrap gap-2"><a href={result.imageUrl} download={`${NATIVE_IMAGE_MODELS[result.model].label}.png`} className="inline-flex min-h-11 items-center rounded-lg border border-white/20 px-4">Download PNG</a><button type="button" onClick={() => void saveGallery()} disabled={saving || gallerySaved} className="min-h-11 rounded-lg border border-white/20 px-4 disabled:opacity-50">{gallerySaved ? "Saved to Gallery" : saving ? "Saving…" : "Save to Gallery"}</button></div><p className="text-xs text-white/60">{result.width} × {result.height} · Seed {result.seed}. Saved as a separate owner-scoped image.</p></div> : null}
   </section>;
 }

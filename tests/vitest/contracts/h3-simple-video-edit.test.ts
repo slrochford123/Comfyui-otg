@@ -11,8 +11,11 @@ describe("simple manual edit's server-owned controls", () => {
     expect(studioFrames(durationSeconds) / 24).toBeGreaterThanOrEqual(durationSeconds);
     expect(studioTemplateDuration(durationSeconds)).toBe(durationSeconds <= 5 ? 5 : 10);
   });
-  it.each([1.99, 10.01, NaN, Infinity, null])("rejects source duration %s from the server probe", durationSeconds => {
+  it.each([1.99, 10.31, NaN, Infinity, null])("rejects source duration %s from the server probe", durationSeconds => {
     expect(() => simpleVideoEditPlan(parseSimpleVideoEdit(body), { ...probe, durationSeconds })).toThrow(/2 and 10/);
+  });
+  it.each([10.001, 10.027, 10.1, 10.3])("normalizes %s-second container timing to the selected ten seconds", durationSeconds => {
+    expect(simpleVideoEditPlan(parseSimpleVideoEdit(body), { ...probe, durationSeconds }).durationSeconds).toBe(10);
   });
   it("uses display rotation rather than forcing the raw landscape encoding", () => {
     expect(simpleVideoEditPlan(parseSimpleVideoEdit(body), { ...probe, displayWidth: 1080, displayHeight: 1920 }).orientation).toBe("portrait");

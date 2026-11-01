@@ -1,11 +1,15 @@
+import { applyH3ResolvedRenderSettings, loadH3WorkflowTemplate, validateH3WorkflowTemplate } from "@/lib/production/h3Workflows";
+import { normalizeH3AdvancedSettings, type H3AdvancedSettings } from "@/lib/production/h3Settings";
+import { applyH3OmniRef, isH3OmniRefMode } from "@/lib/h3OmniRef";
+import { applyH3SelfLift } from "@/lib/h3SelfLift";
+import { assertFastH3Loras } from "@/lib/h3FastLora";
+import { applyH3LoraTriggers } from "@/lib/h3LoraGuidance";
 import type { ResolvedH3OptionalLora } from "@/lib/h3LoraCatalogServer";
 import { applyH3OptionalLoraChainBeforeConsumer } from "@/lib/h3OptionalLoraChain";
-import fs from "node:fs";
-import path from "node:path";
 
-import { ensureModelApproximatePreviewNode, ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
+import { ensureTerminalVideoPreviewNode } from "@/lib/comfyVideoPreview";
 import {
-  getH3NativeDimensions,
+  getH3ProductionRecipe,
   type H3Orientation,
   type H3ProductionDuration,
   type H3Quality,
@@ -14,6 +18,7 @@ import type {
   H3PromptGraph,
   ProductionV2H3BackendId,
 } from "@/lib/production/h3Workflows";
+import { h3RefModsDimensions } from "@/lib/h3SpecialModes/refMods";
 import type { H3RefModSlot } from "@/lib/h3SpecialModes/refMods";
 
 export type H3RefModsT2VWorkflowInput = {
@@ -24,6 +29,7 @@ export type H3RefModsT2VWorkflowInput = {
   prompt: string;
   refMods: H3RefModSlot[];
   turbo: boolean;
+  h3Settings?: H3AdvancedSettings;
   optionalLoras?: ResolvedH3OptionalLora[];
   seed: number;
   outputPrefix: string;
@@ -38,23 +44,9 @@ export type H3RefModsT2VBuiltWorkflow = {
   graph: H3PromptGraph;
 };
 
-const WORKFLOW_ROOT = "comfy_workflows/internal/production-v2";
 const LOADER_NODE_ID = "9400";
 const TEXT_ENCODE_NODE_ID = "9401";
-
-function clean(value: unknown) {
-  return String(value ?? "").trim();
-}
-
-function templateFileForBackend(backend: ProductionV2H3BackendId) {
-  return `${WORKFLOW_ROOT}/${backend === "rtx3090" ? "minimax_h3_t2v_rtx3090.json" : "minimax_h3_t2v_rtx5060ti.json"}`;
-}
-
-function loadTemplate(backend: ProductionV2H3BackendId): H3PromptGraph {
-  return JSON.parse(
-    fs.readFileSync(path.join(process.cwd(), templateFileForBackend(backend)), "utf8"),
-  ) as H3PromptGraph;
-}
+function clean(value: unknown) { return String(value ?? "").trim(); }
 
 function assertNode(graph: H3PromptGraph, nodeId: string, classType: string) {
   const node = graph[nodeId];
@@ -91,9 +83,25 @@ function loaderInputs(refMods: H3RefModSlot[]) {
 export function buildH3RefModsT2VWorkflow(
   input: H3RefModsT2VWorkflowInput,
 ): H3RefModsT2VBuiltWorkflow {
-  const graph = loadTemplate(input.backend);
-  const dimensions = getH3NativeDimensions(input.quality, input.orientation);
-  const prompt = clean(input.prompt);
+  // Reuse the same qualified Reference-to-Video base and model chain.
+  // Saved RefMods provide its conditioning in place of uploaded references.
+  const graph = loadH3WorkflowTemplate(input.backend, "h3-reference-to-video", input.durationSeconds, input.quality);
+  validateH3WorkflowTemplate(input.backend, "h3-reference-to-video", input.durationSeconds, input.quality, graph);
+  delete graph["40"];
+  for (const key of Object.keys(graph["39"].inputs)) {
+    if (/^ref_(images|videos|audios|video_audios)\./.test(key)) delete graph["39"].inputs[key];
+  }
+  const settings = normalizeH3AdvancedSettings(input.h3Settings || { renderMode: input.turbo ? "turbo" : "native" });
+  const fast = isH3OmniRefMode(settings.checkpointMode);
+  if (fast) assertFastH3Loras(input.optionalLoras || []);
+  const dimensions = h3RefModsDimensions(input.quality, input.orientation, settings);
+  const model = applyH3ResolvedRenderSettings(graph, {
+    backend: input.backend, mode: "h3-reference-to-video", durationSeconds: input.durationSeconds, h3Quality: input.quality, h3Settings: settings,
+  }, 0);
+  graph["30"].inputs.unet_name = model.resolved.checkpoint === "standard"
+    ? "minimax_h3_ref2va_pruned_int8_convrot.safetensors" : model.resolved.checkpoint;
+  graph["38"].inputs.model = [model.baseModelNodeId, 0];
+  const prompt = applyH3LoraTriggers(clean(input.prompt), [...model.resolved.singularityLoras, ...(input.optionalLoras || [])]);
   if (!prompt) throw new Error("H3 Ref Mods generation requires a compiled prompt.");
   if (!Number.isSafeInteger(input.seed) || input.seed < 0) {
     throw new Error("H3 Ref Mods seed must be a non-negative safe integer.");
@@ -103,11 +111,11 @@ export function buildH3RefModsT2VWorkflow(
   }
 
   const scheduler = assertNode(graph, "24", "BasicScheduler");
-  const sampler = assertNode(graph, "18", "KSamplerSelect");
+  assertNode(graph, "18", "KSamplerSelect");
   const noise = assertNode(graph, "31", "RandomNoise");
   const duration = assertNode(graph, "17", "PrimitiveFloat");
   const output = assertNode(graph, "5", "SaveVideo");
-  const conditioning = assertNode(graph, "39", "MiniMaxH3ImageToVideo");
+  const conditioning = assertNode(graph, "39", "MiniMaxH3ReferenceToVideo");
   const guider = assertNode(graph, "32", "BasicGuider");
   const samplerNode = assertNode(graph, "21", "SamplerCustomAdvanced");
   assertNode(graph, "15", "CLIPLoader");
@@ -119,15 +127,6 @@ export function buildH3RefModsT2VWorkflow(
   conditioning.inputs.width = dimensions.width;
   conditioning.inputs.height = dimensions.height;
   output.inputs.filename_prefix = clean(input.outputPrefix);
-
-  if (input.turbo) {
-    scheduler.inputs.steps = 8;
-  } else {
-    scheduler.inputs.steps = 20;
-    sampler.inputs.sampler_name = "res_multistep";
-    delete graph["36"];
-    if (graph["38"]) graph["38"].inputs.model = ["30", 0];
-  }
 
   applyH3OptionalLoraChainBeforeConsumer(
     graph,
@@ -160,21 +159,21 @@ export function buildH3RefModsT2VWorkflow(
     throw new Error("H3 Ref Mods T2V base latent wiring is not the expected MiniMaxH3ImageToVideo output.");
   }
 
-  const approximatePreviewSourceNodeId = graph["43"] ? "43" : "42";
-  ensureModelApproximatePreviewNode(graph, {
-    sourceNodeId: approximatePreviewSourceNodeId,
-    consumerNodeIds: ["24", "32"],
-    preferredNodeId: 9700,
-    title: "OTG H3 RefMods approximate preview",
-  });
+  if (fast) applyH3OmniRef(graph, input.backend);
+  if (settings.checkpointMode === "selflift") {
+    applyH3SelfLift(graph);
+    graph["21"].inputs.positive = [TEXT_ENCODE_NODE_ID, 0];
+    graph["selflift_negative"].inputs.conditioning = [TEXT_ENCODE_NODE_ID, 0];
+  }
+
   ensureTerminalVideoPreviewNode(graph);
 
   return {
     workflowId: "h3-refmods-t2v",
-    workflowFile: templateFileForBackend(input.backend),
+    workflowFile: getH3ProductionRecipe("h3-reference-to-video", input.durationSeconds, input.backend, input.quality).workflowFile,
     nativeWidth: dimensions.width,
     nativeHeight: dimensions.height,
-    steps: Number(scheduler.inputs.steps) || (input.turbo ? 8 : 20),
+    steps: Number(scheduler.inputs.steps) || model.resolved.steps,
     graph,
   };
 }

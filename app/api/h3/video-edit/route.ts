@@ -6,6 +6,7 @@ import { getOwnerContext } from "@/lib/ownerKey";
 import { requireSessionUser } from "@/lib/sessionUser";
 import { OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import { probeVideoInfo } from "@/lib/videoFrame";
+import { videoEditDuration } from "@/lib/videoEditDuration";
 import { h3VideoEditFrameCount, h3VideoEditCanvas } from "@/lib/h3VideoEdit";
 import { createH3DirectJob, h3DirectPublicStatus, listH3DirectJobs, startH3DirectJob } from "@/lib/h3DirectJobs";
 import { DEFAULT_H3_ADVANCED_SETTINGS } from "@/lib/production/h3Settings";
@@ -66,7 +67,7 @@ export async function POST(request: NextRequest) {
       prompt, seed: crypto.randomInt(0, 2147483647),
       h3Settings: { ...DEFAULT_H3_ADVANCED_SETTINGS, renderMode: "native", combatLoraEnabled: false },
       optionalLoras: [], firstImage: null, lastImage: null, images: [], videos: [], audios: [],
-      videoEdit: { requestId, source: { path: source, name: path.basename(name), description: "Source video to edit" }, durationSeconds: probe.durationSeconds!, ...canvas, ...(json ? { temporarySource: true } : {}) },
+      videoEdit: { requestId, source: { path: source, name: path.basename(name), description: "Source video to edit" }, durationSeconds: videoEditDuration(probe.durationSeconds!), ...canvas, ...(json ? { temporarySource: true } : {}) },
     }, owner);
     accepted = true;
     startH3DirectJob(job);

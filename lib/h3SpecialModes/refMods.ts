@@ -1,5 +1,9 @@
+import { isH3OmniRefMode } from "@/lib/h3OmniRef";
+import { normalizeH3AdvancedSettings } from "@/lib/production/h3Settings";
 import {
   H3_ORIENTATION_OPTIONS,
+  getH3GenerationDimensions,
+  getH3NativeDimensions,
   H3_PRODUCTION_DURATION_OPTIONS,
   H3_QUALITY_OPTIONS,
   type H3Orientation,
@@ -86,6 +90,7 @@ export type H3RefModsRequestInput = {
   prompt?: unknown;
   refMods?: unknown;
   turbo?: unknown;
+  h3Settings?: unknown;
   rifeInterpolation60Fps?: unknown;
   seed?: unknown;
   creative?: H3CreativeDirectionInput;
@@ -393,7 +398,8 @@ export function validateH3RefModsRequest(input: H3RefModsRequestInput) {
     durationSeconds,
     prompt,
     refMods,
-    turbo: input.turbo !== false,
+    turbo: input.h3Settings ? normalizeH3AdvancedSettings(input.h3Settings).renderMode === "turbo" : input.turbo !== false,
+    h3Settings: normalizeH3AdvancedSettings(input.h3Settings || { renderMode: input.turbo === false ? "native" : "turbo" }),
     rifeInterpolation60Fps: input.rifeInterpolation60Fps === true || clean(input.rifeInterpolation60Fps).toLowerCase() === "true",
     seed,
     creative: normalizeH3CreativeDirection(input.creative),
@@ -402,3 +408,9 @@ export function validateH3RefModsRequest(input: H3RefModsRequestInput) {
 }
 
 export type H3RefModsCreativeDirection = H3CreativeDirection;
+
+export function h3RefModsDimensions(quality: H3Quality, orientation: H3Orientation, settings?: unknown): { width: number; height: number } {
+  return isH3OmniRefMode(normalizeH3AdvancedSettings(settings).checkpointMode)
+    ? getH3GenerationDimensions("h3-reference-to-video", quality, orientation)
+    : getH3NativeDimensions(quality, orientation);
+}

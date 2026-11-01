@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { applyH3VideoEditGraph, h3VideoEditFrameCount, h3VideoEditCanvas } from "@/lib/h3VideoEdit";
 import type { H3PromptGraph } from "@/lib/production/h3Workflows";
 describe("H3 native structural video edit", () => {
-  it.each([0, 1.99, 10.01, Infinity, NaN])("rejects source duration %s before processing", duration => expect(() => h3VideoEditFrameCount(duration)).toThrow("between 2 and 10"));
+  it.each([0, 1.99, 10.31, Infinity, NaN])("rejects source duration %s before processing", duration => expect(() => h3VideoEditFrameCount(duration)).toThrow("between 2 and 10"));
   it.each([[2, 124], [5, 124], [10, 243]])("pads %s seconds onto the legal native grid", (duration, frames) => { expect(h3VideoEditFrameCount(duration)).toBe(frames); expect(frames % 17).toBe(5); expect(frames / 24).toBeGreaterThanOrEqual(duration); });
   it("uses every source frame as structural control, never R2V or first-frame conditioning", () => {
     const graph: H3PromptGraph = Object.fromEntries(["39", "21", "24"].map(id => [id, { class_type: "fixture", inputs: { first_frame: ["old", 0], last_frame: ["old", 0] } }]));

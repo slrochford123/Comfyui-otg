@@ -32,12 +32,17 @@ describe("manual Edit Video direct creation", () => {
     expect(m.execute).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ generationConsent: true, mediaIds: ["media"], reviewId: "review", plan: expect.objectContaining({ durationSeconds: 4.76, steps: 8, attention: "project-sla" }) }), expect.objectContaining({ sourceId: body.sourceId }));
     expect(m.remove).toHaveBeenCalledWith("qa", "session", "media");
   });
+  it("accepts small container overshoot but caps the generation at ten seconds", async () => {
+    m.probe.mockResolvedValue({ codec: "h264", width: 608, height: 352, durationSeconds: 10.027 });
+    expect((await post()).status).toBe(202);
+    expect(m.execute).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ plan: expect.objectContaining({ durationSeconds: 10 }) }), expect.anything());
+  });
   it("denies missing session before reading any media", async () => { m.session.mockRejectedValue(Error("Unauthorized")); expect((await post()).status).toBe(401); expect(m.read).not.toHaveBeenCalled(); });
   it("denies an unavailable deployment and another session's source", async () => {
     m.test.mockImplementationOnce(() => { throw Error("Not TEST"); }); expect((await post()).status).toBe(400);
     m.read.mockRejectedValue(Error("Owner mismatch")); expect((await post()).status).toBe(400); expect(m.execute).not.toHaveBeenCalled();
   });
-  it.each([1.9, 10.1])("rejects server-measured %ss despite forged record duration", async durationSeconds => {
+  it.each([1.9, 10.31])("rejects server-measured %ss despite forged record duration", async durationSeconds => {
     m.probe.mockResolvedValue({ codec: "h264", width: 608, height: 352, durationSeconds }); expect((await post()).status).toBe(400); expect(m.register).not.toHaveBeenCalled();
   });
   it("returns exact request replay without launching work", async () => {

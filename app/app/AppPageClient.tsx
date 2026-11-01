@@ -13,6 +13,7 @@ import {runNativeImageEdit, saveNativeImageToGallery, type NativeEditEngine, typ
 import {GeneratePreviewBinding, loadNativeImagePreview} from "@/lib/client/generatePreviewBinding";
 import { uiStatusTone } from "@/lib/uiStatusTone";
 import MediaPreviewPanel from "./components/MediaPreviewPanel";
+import { ExpandableImage } from "./components/ExpandedMediaViewer";
 import SpeechInputButton from "./components/SpeechInputButton";
 import BuildVersionFooter from "./components/BuildVersionFooter";
 import type { GalleryActionKind } from "./components/GalleryWorkspace";
@@ -6835,7 +6836,7 @@ async function handleAskAi() {
                       uploadedInputIsVideo ? (
                         <video src={uploadedImagePreviewUrl} controls muted playsInline className="h-full w-full object-contain" />
                       ) : (
-                        <img src={uploadedImagePreviewUrl} alt={uploadedFileName || "Generate input preview"} className="h-full w-full object-contain" />
+                        <ExpandableImage url={uploadedImagePreviewUrl} name={uploadedFileName || "Source image"} className="h-full w-full" />
                       )
                     ) : (
                       <div className="flex h-full items-center justify-center px-6 text-center text-sm text-white/40">
@@ -7028,7 +7029,7 @@ async function handleAskAi() {
                   <div className="mt-4 overflow-hidden rounded-[24px] border border-white/10 bg-black/45">
                     <div className="aspect-[4/5] max-h-[320px] bg-black/60">
                       {lastFramePreviewUrl ? (
-                        <img src={lastFramePreviewUrl} alt={lastFrameFileName || "Last frame preview"} className="h-full w-full object-contain" />
+                        <ExpandableImage url={lastFramePreviewUrl} name={lastFrameFileName || "Last frame preview"} className="h-full w-full" />
                       ) : (
                         <div className="flex h-full items-center justify-center px-6 text-center text-sm text-white/40">
                           Last frame image preview appears here.

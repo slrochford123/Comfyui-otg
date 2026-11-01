@@ -19,7 +19,7 @@ function terminalPreviewNodes(graph: ComfyVideoPreviewGraph) {
 function approximatePreviewNodes(graph: ComfyVideoPreviewGraph) {
   return Object.values(graph).filter((node) =>
     node.class_type === "ModelPreviewOverrideKJ"
-    && String(node._meta?.title || "").includes("approximate preview"),
+    && String(node._meta?.title || "").toLowerCase().includes("approximate preview"),
   );
 }
 

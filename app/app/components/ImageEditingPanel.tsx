@@ -1,5 +1,6 @@
 "use client";
 import React, {useRef, useState} from "react";
+import { ExpandableImage } from "./ExpandedMediaViewer";
 import ImageEditEngineSelect from "./ImageEditEngineSelect";
 import {nativeEditEngineLabel, type NativeEditEngine} from "@/lib/client/nativeImages";
 import {runImageEdit, type ImageEditResult} from "@/lib/client/imageEditing";
@@ -25,6 +26,7 @@ export default function ImageEditingPanel({sourceUrl, onComplete}: {sourceUrl: s
     finally {submitting.current = false; setBusy(false);}
   }
   return <section className="space-y-3" aria-label="Edit selected image">
+    <ExpandableImage url={sourceUrl} name="Source image" className="w-full" imageClassName="max-h-80 w-full object-contain" />
     <ImageEditEngineSelect value={engine} onChange={setEngine} disabled={busy} />
     <label className="block text-sm">Describe the change<textarea value={prompt} onChange={event => setPrompt(event.target.value)} disabled={busy} rows={4} className="mt-1 w-full rounded-lg border border-white/20 bg-zinc-950 p-3" /></label>
     <button type="button" disabled={busy || !prompt.trim()} onClick={() => void apply()} className="min-h-11 rounded-lg bg-violet-500 px-4 font-bold disabled:opacity-50">{busy ? "Editing…" : "Apply edit"}</button>

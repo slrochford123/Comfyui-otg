@@ -36,7 +36,7 @@ function h3LoraCompatibilityMode(
     return "h3-reference-to-video";
   }
   if (mode === "h3-refmods") {
-    return "h3-text-to-video";
+    return "h3-reference-to-video";
   }
   return mode;
 }

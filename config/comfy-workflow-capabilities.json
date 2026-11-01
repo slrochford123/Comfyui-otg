@@ -4809,6 +4809,7 @@
         "CLIPLoader",
         "KSampler",
         "LoadImage",
+        "LoraLoaderModelOnly",
         "QwenImage21Cache",
         "SaveImageAdvanced",
         "TextEncodeQwenImage21",
@@ -4821,7 +4822,9 @@
         "qwen3vl_8b_int8_convrot.safetensors",
         "qwen_image_2.1_vae_bf16.safetensors"
       ],
-      "requiredLoras": [],
+      "requiredLoras": [
+        "qwen_image_2.1_turbo_lora_avg_rank_178_bf16.safetensors"
+      ],
       "requiredInputAssets": [
         "image"
       ],
@@ -4833,19 +4836,37 @@
       "estimatedOrMeasuredVramGb": null,
       "backendSupport": {
         "rtx3090": {
-          "state": "installed-not-tested",
-          "reason": "Node classes and model files are present; Qwen Image 2.1 has not yet been benchmarked through OTG.",
+          "state": "verified",
+          "reason": "Qwen Image Edit 2.1 Turbo completed an eight-step source-image edit on this GPU on 2026-10-31.",
           "missingNodes": [],
           "missingModels": [],
-          "testedConfiguration": null,
+          "testedConfiguration": {
+            "steps": 8,
+            "cfg": 1,
+            "sampler": "euler",
+            "scheduler": "simple",
+            "seed": 424242,
+            "promptId": "137d000d-0ce7-4a97-92c3-7de368d0d0f0",
+            "measuredSeconds": 30.07,
+            "outputNode": "461"
+          },
           "estimatedOrMeasuredVramGb": null
         },
         "rtx5060ti": {
-          "state": "installed-not-tested",
-          "reason": "Node classes and model files are present; Qwen Image 2.1 has not yet been benchmarked through OTG.",
+          "state": "verified",
+          "reason": "Qwen Image Edit 2.1 Turbo completed an eight-step source-image edit on this GPU on 2026-10-31.",
           "missingNodes": [],
           "missingModels": [],
-          "testedConfiguration": null,
+          "testedConfiguration": {
+            "steps": 8,
+            "cfg": 1,
+            "sampler": "euler",
+            "scheduler": "simple",
+            "seed": 424242,
+            "promptId": "0be32786-7107-4743-acef-e98318c57352",
+            "measuredSeconds": 230.38,
+            "outputNode": "461"
+          },
           "estimatedOrMeasuredVramGb": null
         }
       }

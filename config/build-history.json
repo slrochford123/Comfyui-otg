@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.15",
+  "current": "2.16",
   "builds": [
     {
       "version": "2",
@@ -97,6 +97,12 @@
       "date": "2026-10-30",
       "summary": "H3 Android foreground recovery, verified reference reuse, durable owner-scoped submission receipts and duplicate-safe Create Video retries; accurate connection/login/upload errors with existing models, routing and permissions preserved.",
       "sourceBaseCommit": "f5101836b475e0b89422c8f4b6e13f9b0c0f0900"
+    },
+    {
+      "version": "2.16",
+      "date": "2026-10-31",
+      "summary": "Restore verified Qwen 2.1 image editing on both GPUs; shared Reference-to-Video model choices and simpler RefMod slots; pinch-zoom images, landscape video viewing and reliable ten-second trimming with first-five/first-ten quick actions.",
+      "sourceBaseCommit": "ded726567d80240da2841c79dcfd16eea528a6bb"
     }
   ]
 }

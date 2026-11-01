@@ -1,0 +1,27 @@
+import { afterAll, beforeAll, expect, it } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { runCmd, resolveFfmpegPath } from "@/lib/ffmpeg";
+import { probeVideoInfo } from "@/lib/videoFrame";
+import { encodeVideoSelection, validateVideoSelection } from "@/lib/h3VideoTrim";
+import { parseSimpleVideoEdit, simpleVideoEditPlan } from "@/lib/h3SimpleVideoEdit";
+import { prepareH3StudioReferenceClip, finalizeH3StudioAudio } from "@/lib/h3StudioAudio";
+let root: string;
+beforeAll(async () => { root = await fs.mkdtemp(path.join(os.tmpdir(), "otg-ten-second-edit-")); });
+afterAll(async () => { if (root) await fs.rm(root, { recursive: true, force: true }); });
+it("accepts a real 29.97fps/AAC ten-second trim through edit preparation and duration finalization", async () => {
+  const source = path.join(root, "source.mp4"), selection = path.join(root, "selection.mp4");
+  const encoded = await runCmd(resolveFfmpegPath(), ["-nostdin", "-y", "-f", "lavfi", "-i", "testsrc2=size=128x96:rate=30000/1001:duration=12", "-f", "lavfi", "-i", "sine=frequency=440:duration=12", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", source], { timeoutMs: 15000 });
+  expect(encoded.code).toBe(0);
+  const window = validateVideoSelection((await probeVideoInfo(source)).durationSeconds!, 0, 10);
+  await encodeVideoSelection(source, selection, window.start, window.duration, new AbortController().signal);
+  const probe = await probeVideoInfo(selection);
+  expect(probe.durationSeconds).toBeGreaterThan(10);
+  const plan = simpleVideoEditPlan(parseSimpleVideoEdit({ sourceId: "11111111-1111-4111-8111-111111111111", prompt: "Change the coat", quality: "0.2", requestId: "ten-second-regression" }), probe);
+  expect(plan.durationSeconds).toBe(10);
+  const prepared = await prepareH3StudioReferenceClip(selection, 0, plan.durationSeconds, 128, 96, true);
+  const final = await finalizeH3StudioAudio(prepared.outputPath, plan);
+  expect((await probeVideoInfo(final)).durationSeconds).toBeCloseTo(10, 1);
+  expect(() => validateVideoSelection(20, 0, 10.01)).toThrow();
+}, 30000);

@@ -2,9 +2,10 @@ import path from "node:path";
 import { resolveFfmpegPath, runCmd } from "@/lib/ffmpeg";
 import { probeVideoInfo } from "@/lib/videoFrame";
 import type { H3PromptGraph } from "@/lib/production/h3Workflows";
+import { videoEditDuration } from "@/lib/videoEditDuration";
 
 export function h3VideoEditFrameCount(duration: number) {
-  if (!Number.isFinite(duration) || duration < 2 || duration > 10) throw new Error("Edit Video requires one video between 2 and 10 seconds. Trim longer videos before selecting them.");
+  duration = videoEditDuration(duration);
   return Math.max(124, Math.ceil((Math.ceil(duration * 24) - 5) / 17) * 17 + 5);
 }
 export function h3VideoEditCanvas(width: number, height: number) {
@@ -48,6 +49,7 @@ export function applyH3VideoEditGraph(graph: H3PromptGraph, filename: string, du
   return graph;
 }
 export async function finalizeH3VideoEdit(output: string, duration: number) {
+  duration = videoEditDuration(duration);
   h3VideoEditFrameCount(duration);
   const target = path.join(path.dirname(output), "edited-source-duration.mp4");
   const result = await runCmd(resolveFfmpegPath(), ["-nostdin", "-y", "-i", output, "-t", String(duration), "-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", target], { timeoutMs: 60000 });

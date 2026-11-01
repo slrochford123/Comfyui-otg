@@ -28,6 +28,7 @@ type Props = {
   allowFastH3?: boolean;
   fastH3BlockedReason?: string;
   afterModelControls?: React.ReactNode;
+  hideEnhancements?: boolean;
 };
 
 const TOOLTIPS = {
@@ -46,6 +47,7 @@ export default function H3AdvancedControls({
   allowFastH3 = false,
   fastH3BlockedReason,
   afterModelControls,
+  hideEnhancements = false,
 }: Props) {
   const settings = normalizeH3AdvancedSettings(value, referenceOptions.length);
   const fast = isH3OmniRefMode(settings.checkpointMode);
@@ -134,7 +136,7 @@ export default function H3AdvancedControls({
       </div>
       {allowFastH3 && fastH3BlockedReason ? <p role="status" className="text-xs text-amber-200">{fastH3BlockedReason}</p> : null}
       {afterModelControls}
-      <div>
+      {!hideEnhancements ? <div>
         <div className="mb-2 text-xs font-black uppercase text-white/50">Enhance</div>
         <div className="grid grid-cols-2 gap-2" role="group" aria-label="H3 enhancements">
           <button
@@ -158,8 +160,8 @@ export default function H3AdvancedControls({
             Motion
           </button>
         </div>
-      </div>
-      {fast ? <p className="text-xs text-white/60">Compatible catalog LoRAs can be stacked explicitly below. Output quality is untested. RefMod and Motion enhancements remain unavailable for {selfLift ? "SelfLift" : "FastH3"}.</p> : null}
+      </div> : null}
+      {fast && !hideEnhancements ? <p className="text-xs text-white/60">Compatible catalog LoRAs can be stacked explicitly below. Output quality is untested. RefMod and Motion enhancements remain unavailable for {selfLift ? "SelfLift" : "FastH3"}.</p> : null}
       {settings.refMod.enabled ? (
         <div className="grid gap-4 sm:grid-cols-2" data-otg="h3-refmod-options">
           <div>

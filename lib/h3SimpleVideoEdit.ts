@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { DEFAULT_H3_STUDIO_PLAN, parseH3StudioPlan, type H3StudioPlan } from "@/lib/h3StudioPlan";
 import type { VideoProbeInfo } from "@/lib/videoFrame";
+import { videoEditDuration } from "@/lib/videoEditDuration";
 
 /** Only source identity, creative prompt and size cross the browser boundary. */
 export function parseSimpleVideoEdit(value: unknown) {
@@ -17,9 +18,8 @@ export function parseSimpleVideoEdit(value: unknown) {
   return { ...input, requestFingerprint: crypto.createHash("sha256").update(JSON.stringify([input.sourceId, input.prompt, input.quality, input.backend])).digest("hex") };
 }
 export function simpleVideoEditPlan(input: ReturnType<typeof parseSimpleVideoEdit>, probe: VideoProbeInfo) {
-  const duration = probe.durationSeconds, width = probe.displayWidth ?? probe.width, height = probe.displayHeight ?? probe.height;
+  const duration = videoEditDuration(probe.durationSeconds ?? NaN), width = probe.displayWidth ?? probe.width, height = probe.displayHeight ?? probe.height;
   if (!probe.codec || !width || !height) throw Error("Choose a readable video file.");
-  if (duration == null || !Number.isFinite(duration) || duration < 2 || duration > 10) throw Error("Trim the video to between 2 and 10 seconds.");
   return parseH3StudioPlan({ ...DEFAULT_H3_STUDIO_PLAN, backend: input.backend, workflowId: "reference-edit", checkpoint: "standard", profile: "ref2va-8step",
     quality: input.quality, durationSeconds: duration, orientation: height > width ? "portrait" : "landscape",
     attention: "project-sla", steps: 8, sampler: "euler", scheduler: "simple", seed: crypto.randomInt(0, 2147483647),

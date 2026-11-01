@@ -808,7 +808,7 @@ function applyH3UniversalSlaAttention(
   };
 }
 
-function applyH3ResolvedRenderSettings(
+export function applyH3ResolvedRenderSettings(
   graph: H3PromptGraph,
   input: Pick<
     H3WorkflowBuildInput,

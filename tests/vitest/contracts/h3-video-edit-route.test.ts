@@ -21,7 +21,7 @@ beforeEach(() => {
 });
 describe("H3 Edit Video authenticated upload boundary", () => {
   it("rejects unauthenticated execution before saving any source", async () => { m.session.mockRejectedValueOnce(new Error("Unauthorized")); expect((await post()).status).toBe(401); expect(m.write).not.toHaveBeenCalled(); expect(m.create).not.toHaveBeenCalled(); });
-  it.each([1.99, 10.1])("rejects probed duration %s without a generation job", async duration => { expect((await post({ duration })).status).toBe(400); expect(m.create).not.toHaveBeenCalled(); });
+  it.each([1.99, 10.31])("rejects probed duration %s without a generation job", async duration => { expect((await post({ duration })).status).toBe(400); expect(m.create).not.toHaveBeenCalled(); });
   it.each([["qa.png", "image/png"], ["qa.wav", "audio/wav"]])("rejects %s rather than treating it as a video", async (filename, type) => { expect((await post({ filename, type })).status).toBe(400); expect(m.write).not.toHaveBeenCalled(); });
   it("rejects empty prompt without mutating source/job storage", async () => { expect((await post({ prompt: "" })).status).toBe(400); expect(m.write).not.toHaveBeenCalled(); });
   it("creates an owner-scoped true V2V input with native H3 settings, no reference disguising", async () => {

@@ -18,6 +18,7 @@ import {
 import { readComfyPromptProgress } from "@/lib/comfyProgress";
 import {
   compileH3RefModsPrompt,
+  h3RefModsDimensions,
   validateH3RefModsRequest,
   type H3RefModsCreativeDirection,
   type H3RefModsRequestInput,
@@ -25,7 +26,6 @@ import {
 import { buildH3RefModsT2VWorkflow } from "@/lib/h3SpecialModes/refModsWorkflow";
 import type { OwnerContext } from "@/lib/ownerKey";
 import {
-  getH3NativeDimensions,
   getH3ProductionTimeEstimate,
   normalizeH3Orientation,
   type H3Orientation,
@@ -66,6 +66,7 @@ export type H3RefModsJobInput = {
   prompt: string;
   refMods: ReturnType<typeof validateH3RefModsRequest>["refMods"];
   turbo: boolean;
+  h3Settings?: ReturnType<typeof validateH3RefModsRequest>["h3Settings"];
   rifeInterpolation60Fps: boolean;
   seed: number;
   creative: H3RefModsCreativeDirection;
@@ -114,7 +115,7 @@ function state() {
   return globalState[GLOBAL_KEY];
 }
 
-async function selectH3RefModsBackend(target?: ProductionV2H3BackendId) {
+async function selectH3RefModsBackend(target?: ProductionV2H3BackendId, input?: H3RefModsJobInput) {
   const {mediaQueueEnabled,probeMediaGpu}=await import("@/lib/workers/mediaGpuQueue");
   if (H3_REFMODS_BASE_URL && !target && !mediaQueueEnabled()) {
     const forcedBaseUrl = H3_REFMODS_BASE_URL.replace(/\/+$/, "");
@@ -123,7 +124,10 @@ async function selectH3RefModsBackend(target?: ProductionV2H3BackendId) {
     return { backend, baseUrl: forcedBaseUrl };
   }
   const probes = await Promise.all(
-    h3CandidateBackends(target, H3_BACKEND_PRIORITY).map((backend) => inspectH3BackendCompatibility(backend)),
+    h3CandidateBackends(target, H3_BACKEND_PRIORITY).map((backend) => inspectH3BackendCompatibility(backend, {
+      mode: "h3-reference-to-video", h3Settings: input?.h3Settings,
+      userLoraFilenames: input?.optionalLoras?.map(lora => lora.filename), requireRife60Fps: input?.rifeInterpolation60Fps,
+    })),
   );
   const byId = new Map(probes.map((probe) => [probe.backend, probe]));
   if(mediaQueueEnabled())await Promise.all(probes.map(async probe=>{if(probe.compatible)probe.idle=(await probeMediaGpu(probe.backend)).ready;}));
@@ -175,8 +179,8 @@ async function missingRefModsForBackend(baseUrl: string, refMods: H3RefModsJobIn
   return required.filter((name) => !choices.has(name));
 }
 
-async function selectH3RefModsBackendForSlots(refMods: H3RefModsJobInput["refMods"], target?: ProductionV2H3BackendId) {
-  const selected = await selectH3RefModsBackend(target);
+async function selectH3RefModsBackendForSlots(refMods: H3RefModsJobInput["refMods"], target?: ProductionV2H3BackendId, input?: H3RefModsJobInput) {
+  const selected = await selectH3RefModsBackend(target, input);
   const selectedMissing = await missingRefModsForBackend(selected.baseUrl, refMods);
   if (!selectedMissing.length) return selected;
 
@@ -184,7 +188,7 @@ async function selectH3RefModsBackendForSlots(refMods: H3RefModsJobInput["refMod
     if (backend === selected.backend) continue;
     const baseUrl = H3_BACKEND_PROFILES[backend].baseUrl;
     const missing = await missingRefModsForBackend(baseUrl, refMods).catch(() => selectedMissing);
-    if (!missing.length) return { backend, baseUrl };
+    if (!missing.length && (await inspectH3BackendCompatibility(backend, { mode: "h3-reference-to-video", h3Settings: input?.h3Settings, userLoraFilenames: input?.optionalLoras?.map(lora => lora.filename), requireRife60Fps: input?.rifeInterpolation60Fps })).compatible) return { backend, baseUrl };
   }
 
   throw new Error(
@@ -271,6 +275,7 @@ export function validateH3RefModsJobInput(input: H3RefModsRequestInput): H3RefMo
     prompt: normalized.prompt,
     refMods: normalized.refMods,
     turbo: normalized.turbo,
+    h3Settings: normalized.h3Settings,
     rifeInterpolation60Fps: normalized.rifeInterpolation60Fps,
     seed,
     creative: normalized.creative,
@@ -391,7 +396,7 @@ export async function saveH3RefModsJobToGallery(
     }
 
     const stat = fs.statSync(targetPath);
-    const dimensions = getH3NativeDimensions(job.input.quality, normalizeH3Orientation(job.input.orientation));
+    const dimensions = h3RefModsDimensions(job.input.quality, normalizeH3Orientation(job.input.orientation), job.input.h3Settings);
     writeMetaForFile(targetPath, {
       originalName: savedName,
       renamedName: savedName,
@@ -415,6 +420,7 @@ export async function saveH3RefModsJobToGallery(
         finalFps: h3FinalFpsForRife(job.input.rifeInterpolation60Fps),
         rifeInterpolation60Fps: job.input.rifeInterpolation60Fps === true,
         turbo: job.input.turbo,
+        h3Settings: job.input.h3Settings,
         backend: job.backend,
         backendUrl: job.backendUrl,
         workflowFile: job.workflowFile,
@@ -467,7 +473,7 @@ async function execute(job: H3RefModsJob) {
       error: null,
     });
   } else {
-    const selected = await selectH3RefModsBackendForSlots(persisted.input.refMods, persisted.input.targetBackend);
+    const selected = await selectH3RefModsBackendForSlots(persisted.input.refMods, persisted.input.targetBackend, persisted.input);
     await updateJob(job.ownerKey, job.id, {
       status: "preparing",
       statusMessage: `Preparing RefMods T2V workflow for ${H3_BACKEND_PROFILES[selected.backend].label}`,
@@ -489,6 +495,7 @@ async function execute(job: H3RefModsJob) {
       prompt: persisted.input.compiledPrompt,
       refMods: persisted.input.refMods,
       turbo: persisted.input.turbo,
+      h3Settings: persisted.input.h3Settings,
       optionalLoras: persisted.input.optionalLoras || [],
       seed: persisted.input.seed,
       outputPrefix: `otg_h3_refmods/${safeSegment(job.id)}`,
@@ -615,6 +622,7 @@ export function retryH3RefModsJob(source: H3RefModsJob) {
     prompt: source.input.prompt,
     refMods: source.input.refMods,
     turbo: source.input.turbo,
+    h3Settings: source.input.h3Settings,
     rifeInterpolation60Fps: source.input.rifeInterpolation60Fps,
     creative: source.input.creative,
     optionalLoras: source.input.optionalLoras,
@@ -624,7 +632,7 @@ export function retryH3RefModsJob(source: H3RefModsJob) {
 
 export function h3RefModsPublicStatus(job: H3RefModsJob) {
   const orientation = normalizeH3Orientation(job.input.orientation);
-  const nativeDimensions = getH3NativeDimensions(job.input.quality, orientation);
+  const nativeDimensions = h3RefModsDimensions(job.input.quality, orientation, job.input.h3Settings);
   const estimate = getH3ProductionTimeEstimate("h3-text-to-video", job.input.durationSeconds, job.input.quality, job.backend);
   const progress = readComfyPromptProgress(job.promptId);
   return {
