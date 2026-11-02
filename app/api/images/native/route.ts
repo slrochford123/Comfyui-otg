@@ -13,6 +13,7 @@ import {writePromptRequestMeta} from "@/lib/promptRequestMeta";
 import {cancelComfyPrompt} from "@/lib/comfySafeCancel";
 import {getGallerySourcesForRequest} from "@/lib/gallery";
 import {privateMediaEnvironmentEnabled} from "@/lib/privateMediaRuntime";
+import {limitedFormData, limitedJson} from "@/lib/limitedRequestBody";
 
 import { nativeImageJobFile as fileFor, writeNativeImageJob as writeJob, nativeImagePublicJob as publicJob, reconcileNativeImageJob, saveNativeImageJobToGallery, type NativeImageJob as Job } from "@/lib/images/nativeImageJobs";
 
@@ -32,8 +33,10 @@ export async function POST(req: NextRequest) {
     assertNativeImagesEnabled();
     const owner = await getOwnerContext(req);
     const multipart = req.headers.get("content-type")?.includes("multipart/form-data");
-    const form = multipart ? await req.formData() : null;
-    const body = form ? Object.fromEntries(form) : await req.json();
+    // Enforce actual streamed bytes before parsing, not only the file's size
+    // after an unbounded multipart body has already been loaded into RAM.
+    const form = multipart ? await limitedFormData(req, 21 * 1024 * 1024) : null;
+    const body = form ? Object.fromEntries(form) : await limitedJson(req, 256 * 1024);
     if (!isNativeImageModel(body.model)) throw Object.assign(Error("Choose a supported local image model."), {status: 400});
     const model: NativeImageModel = body.model;
     if (["imageB", "imageC", "imageBPath", "imageCPath", "referenceImages"].some(key => body[key])) {

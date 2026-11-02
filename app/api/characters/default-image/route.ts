@@ -4,6 +4,15 @@ import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
 import { NextRequest, NextResponse } from "next/server";
+import sharp from "sharp";
+import { withOwner, RequestError } from "@/lib/routeSecurity";
+import { limitedJson, limitedBytes } from "@/lib/limitedRequestBody";
+import { assertOwnerMediaFile } from "@/lib/ownerMediaAccess";
+import { OTG_DATA_ROOT, safeSegment } from "@/lib/paths";
+import { serveOwnedComfyMedia } from "@/lib/comfyMediaAccess";
+import { GET as ownedFile } from "@/app/api/file/route";
+import { GET as galleryFile } from "@/app/api/gallery/file/route";
+import type { OwnerContext } from "@/lib/ownerKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,84 +41,38 @@ function splitCommand(value: string) {
   return parts.map((part) => part.replace(/^["']|["']$/g, ""));
 }
 
-function possibleFetchUrls(request: NextRequest, imageRef: string) {
-  const urls: string[] = [];
-  const origin = request.nextUrl.origin;
-  const comfyUrl = (
-    process.env.COMFYUI_URL ||
-    process.env.COMFY_URL ||
-    process.env.NEXT_PUBLIC_COMFYUI_URL ||
-    process.env.NEXT_PUBLIC_COMFY_URL ||
-    ""
-  ).replace(/\/+$/, "");
-
-  if (/^https?:\/\//i.test(imageRef)) {
-    urls.push(imageRef);
-    return urls;
-  }
-
-  if (imageRef.startsWith("/")) {
-    urls.push(`${origin}${imageRef}`);
-    if (comfyUrl && imageRef.startsWith("/view")) urls.push(`${comfyUrl}${imageRef}`);
-    return urls;
-  }
-
-  if (imageRef.includes("?filename=") || imageRef.includes("&filename=")) {
-    urls.push(`${origin}/${imageRef.replace(/^\/+/, "")}`);
-    if (comfyUrl) urls.push(`${comfyUrl}/${imageRef.replace(/^\/+/, "")}`);
-    return urls;
-  }
-
-  const filename = imageRef.split(/[\\/]/).pop() || imageRef;
-  if (filename) {
-    urls.push(`${origin}/api/comfy/view?filename=${encodeURIComponent(filename)}&type=output`);
-    urls.push(`${origin}/api/comfy/view?filename=${encodeURIComponent(filename)}&type=input`);
-    if (comfyUrl) {
-      urls.push(`${comfyUrl}/view?filename=${encodeURIComponent(filename)}&type=output`);
-      urls.push(`${comfyUrl}/view?filename=${encodeURIComponent(filename)}&type=input`);
+async function readImageBytes(request: NextRequest, imageRef: string, owner: OwnerContext) {
+  const limit = 16 * 1024 * 1024;
+  let bytes: Buffer;
+  if (/^data:image\/(png|jpeg|webp|gif);base64,/i.test(imageRef)) {
+    if (imageRef.length > limit * 1.4) throw new RequestError("Image exceeds the 16 MB limit.", 413);
+    bytes = Buffer.from(imageRef.slice(imageRef.indexOf(",") + 1), "base64");
+  } else {
+    let response: Response;
+    const url = new URL(imageRef, request.url);
+    if (url.origin !== request.nextUrl.origin) throw new RequestError("Upload the image or choose an image from your gallery first.", 400);
+    const localRequest = new NextRequest(url, { headers: request.headers, signal: request.signal });
+    if (url.pathname === "/api/file") response = await ownedFile(localRequest);
+    else if (url.pathname === "/api/gallery/file") response = await galleryFile(localRequest);
+    else if (["/api/comfy/view", "/api/comfy-image"].includes(url.pathname)) response = await serveOwnedComfyMedia(localRequest, owner);
+    else if (path.isAbsolute(imageRef)) {
+      try { assertOwnerMediaFile(imageRef, owner.ownerKey); } catch { throw new RequestError("Image not found for this account.", 404); }
+      if ((await fs.stat(imageRef)).size > limit) throw new RequestError("Image exceeds the 16 MB limit.", 413);
+      bytes = await fs.readFile(imageRef);
+      await sharp(bytes, { limitInputPixels: 40_000_000 }).metadata();
+      return bytes;
+    } else {
+      const mediaUrl = new URL("/api/comfy/view", request.url);
+      mediaUrl.searchParams.set("filename", imageRef);
+      response = await serveOwnedComfyMedia(new NextRequest(mediaUrl, { headers: request.headers, signal: request.signal }), owner);
     }
+    if (!response.ok || !response.body) throw new RequestError("Image not available for this account.", response.status === 401 ? 401 : 404);
+    const bounded = new Request(request.url, { method: "POST", body: response.body, headers: response.headers, signal: request.signal, duplex: "half" } as RequestInit);
+    bytes = Buffer.from(await limitedBytes(bounded, limit));
   }
-
-  return urls;
-}
-
-async function readImageBytes(request: NextRequest, imageRef: string) {
-  if (!imageRef) throw new Error("imageRef is required.");
-
-  if (imageRef.startsWith("data:image/")) {
-    const comma = imageRef.indexOf(",");
-    if (comma < 0) throw new Error("Invalid data image.");
-    return Buffer.from(imageRef.slice(comma + 1), "base64");
-  }
-
-  const localPath = imageRef.replace(/^file:\/\//i, "");
-  if (/^[A-Za-z]:[\\/]/.test(localPath) || localPath.startsWith("\\\\") || localPath.startsWith("/mnt/")) {
-    return fs.readFile(localPath);
-  }
-
-  const urls = possibleFetchUrls(request, imageRef);
-  const errors: string[] = [];
-
-  for (const url of urls) {
-    try {
-      const response = await fetch(url, { cache: "no-store" });
-      if (!response.ok) {
-        errors.push(`${url} -> HTTP ${response.status}`);
-        continue;
-      }
-      const contentType = response.headers.get("content-type") || "";
-      if (!contentType.toLowerCase().includes("image")) {
-        errors.push(`${url} -> non-image ${contentType || "unknown"}`);
-        continue;
-      }
-      const arrayBuffer = await response.arrayBuffer();
-      return Buffer.from(arrayBuffer);
-    } catch (error) {
-      errors.push(`${url} -> ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  throw new Error(`Could not fetch character image. Tried: ${errors.join("; ")}`);
+  try { await sharp(bytes, { limitInputPixels: 40_000_000 }).metadata(); }
+  catch { throw new RequestError("Choose a valid image within the 40 megapixel limit.", 400); }
+  return bytes;
 }
 
 function runRembg(inputPath: string, outputPath: string) {
@@ -123,27 +86,32 @@ function runRembg(inputPath: string, outputPath: string) {
     let stdout = "";
     let stderr = "";
 
-    const child = spawn(exe, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(exe, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CUDA_VISIBLE_DEVICES: "" } });
+    const timeout = setTimeout(() => child.kill("SIGTERM"), 60_000);
+    const forceTimeout = setTimeout(() => child.kill("SIGKILL"), 65_000);
+    const clearTimers = () => { clearTimeout(timeout); clearTimeout(forceTimeout); };
     child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
+      stdout = (stdout + String(chunk)).slice(-8000);
     });
     child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
+      stderr = (stderr + String(chunk)).slice(-8000);
     });
     child.on("error", (error) => {
+      clearTimers();
       resolve({ ok: false, stdout, stderr: stderr + String(error?.message || error) });
     });
     child.on("close", (code) => {
+      clearTimers();
       resolve({ ok: code === 0, stdout, stderr });
     });
   });
 }
 
-export async function POST(request: NextRequest) {
+export const POST = withOwner(async (request, owner) => {
   let tempDir = "";
 
   try {
-    const body = (await request.json().catch(() => ({}))) as unknown;
+    const body = await limitedJson(request, 24 * 1024 * 1024);
     const data = isRecord(body) ? body : {};
     const characterName = asString(data.characterName || data.name) || "character";
     const imageRef = asString(
@@ -180,7 +148,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const imageBytes = await readImageBytes(request, imageRef);
+    const imageBytes = await readImageBytes(request, imageRef, owner);
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "otg-character-default-"));
     const inputPath = path.join(tempDir, "input.png");
     const outputTempPath = path.join(tempDir, "output.png");
@@ -198,16 +166,15 @@ export async function POST(request: NextRequest) {
         characterCardWorkflowImagePath: workflowCardRef,
         defaultCharacterImageStatus: "fallback_original_card",
         warning: "Background removal command failed or is not installed. Install rembg or set OTG_REMBG_COMMAND. Saved source image as fallback default image.",
-        stderr: rembg.stderr.slice(0, 2000),
       });
     }
 
-    const publicDir = path.join(process.cwd(), "public", "character-defaults");
+    const publicDir = path.join(OTG_DATA_ROOT, "uploads", "characters", safeSegment(owner.ownerKey), "defaults");
     await fs.mkdir(publicDir, { recursive: true });
     const outputName = `${safeSlug(characterName)}-${Date.now()}-${randomUUID().slice(0, 8)}.png`;
     const outputPath = path.join(publicDir, outputName);
     await fs.copyFile(outputTempPath, outputPath);
-    const publicPath = `/character-defaults/${outputName}`;
+    const publicPath = `/api/file?path=${encodeURIComponent(outputPath)}`;
 
     return json(200, {
       ok: true,
@@ -220,19 +187,11 @@ export async function POST(request: NextRequest) {
       defaultCharacterImageStatus: "background_removed",
     });
   } catch (error) {
-    return json(200, {
-      ok: true,
-      backgroundRemoved: false,
-      fallback: true,
-      defaultCharacterImagePath: "",
-      defaultCharacterPreviewImagePath: "",
-      backgroundRemovedDefaultImagePath: "",
-      defaultCharacterImageStatus: "fallback_original_card",
-      warning: error instanceof Error ? error.message : String(error),
-    });
+    if (error instanceof RequestError) throw error;
+    throw new RequestError("Character image preparation failed. The original image was not changed.", 500);
   } finally {
     if (tempDir) {
       await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
-}
+});

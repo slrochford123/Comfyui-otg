@@ -60,50 +60,7 @@ function otgSanitizeAnimatePromptObjectV29(value: unknown): unknown {
   return output;
 }
 
-function otgSanitizeComfyPromptBodyV29(body: unknown): unknown {
-  if (typeof body !== "string" || !body.includes("Scene context:")) return body;
-  try {
-    const parsed = JSON.parse(body);
-    return JSON.stringify(otgSanitizeAnimatePromptObjectV29(parsed));
-  } catch {
-    return body.replace(/^\s*Scene context:[\s\S]*?(?:\n\s*\n|$)/i, "");
-  }
-}
-
-function otgInstallComfyPromptFetchPatchV29() {
-  const globalRef = globalThis as typeof globalThis & {
-    __otgComfyPromptFetchOriginalV29?: typeof fetch;
-    __otgComfyPromptFetchPatchedV29?: boolean;
-  };
-
-  if (globalRef.__otgComfyPromptFetchPatchedV29) return;
-
-  globalRef.__otgComfyPromptFetchOriginalV29 = globalThis.fetch.bind(globalThis) as typeof fetch;
-
-  globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-    try {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : String((input as Request).url || "");
-      const method = String(init?.method || "GET").toUpperCase();
-      const shouldSanitize =
-        method === "POST" &&
-        (url.includes("/prompt") || url.toLowerCase().includes("comfy")) &&
-        typeof init?.body === "string" &&
-        init.body.includes("Scene context:");
-
-      if (shouldSanitize) {
-        init = { ...(init || {}), body: otgSanitizeComfyPromptBodyV29(init?.body) as BodyInit };
-      }
-    } catch {
-      // Do not block Comfy requests if sanitizer fails.
-    }
-
-    return globalRef.__otgComfyPromptFetchOriginalV29!(input, init);
-  }) as typeof fetch;
-
-  globalRef.__otgComfyPromptFetchPatchedV29 = true;
-}
-
-otgInstallComfyPromptFetchPatchV29();
+// Prompt normalization is explicit at this route's submission boundary only.
 
 export const runtime = "nodejs";
 
@@ -458,7 +415,7 @@ async function queueComfyWorkflow(
       },
       body: JSON.stringify({
         client_id: clientId,
-        prompt: workflow,
+        prompt: otgSanitizeAnimatePromptObjectV29(workflow),
       }),
     },
   });
@@ -1195,6 +1152,9 @@ async function otgProductionAnimateFileFromFetch(
   }
 
   if (!/^https?:\/\//i.test(url)) return null;
+  if (new URL(url).origin !== new URL(req.url).origin) {
+    throw new Error("Upload the source image or choose it from your own gallery first.");
+  }
 
   const headers: Record<string, string> = {};
   const cookie = req.headers.get("cookie");
@@ -1203,6 +1163,8 @@ async function otgProductionAnimateFileFromFetch(
   const response = await fetch(url, {
     cache: "no-store",
     headers,
+    redirect: "error",
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {

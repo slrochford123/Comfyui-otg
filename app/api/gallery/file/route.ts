@@ -56,6 +56,15 @@ async function fileExists(filePath: string) {
   }
 }
 
+async function isOwnedRealFile(roots: string[], filePath: string) {
+  if (!(await fileExists(filePath))) return false;
+  const real = await fs.realpath(filePath);
+  for (const root of roots) {
+    if (isInsideRoot(root, filePath) && isInsideRoot(await fs.realpath(root), real)) return true;
+  }
+  return false;
+}
+
 function isInsideRoot(root: string, candidate: string) {
   const resolvedRoot = path.resolve(root);
   const resolvedCandidate = path.resolve(candidate);
@@ -79,7 +88,7 @@ async function resolveGalleryFile(req: NextRequest) {
       MEDIA_EXTENSIONS.has(ext) &&
       path.isAbsolute(normalized) &&
       sources.some((source) => isInsideRoot(source.dir, normalized)) &&
-      (await fileExists(normalized))
+      (await isOwnedRealFile(sources.map(source => source.dir), normalized))
     ) {
       return normalized;
     }
@@ -93,7 +102,7 @@ async function resolveGalleryFile(req: NextRequest) {
   if (!MEDIA_EXTENSIONS.has(wantedExt)) return "";
 
   const item = resolveGalleryItemByName({ sources, name: wantedName, scopeHint });
-  if (item?.path && (await fileExists(item.path))) {
+  if (item?.path && (await isOwnedRealFile(sources.map(source => source.dir), item.path))) {
     return item.path;
   }
 

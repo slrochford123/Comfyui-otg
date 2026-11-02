@@ -49,10 +49,10 @@ describe("Story Creator V2 Write contract", () => {
   });
 
   it("connects the Write tab to the selected Story project", () => {
-    expect(panel).toContain("/api/story-creator/write");
-    expect(panel).toContain("projectId: project.id");
-    expect(panel).toContain("mode: storyWritingMode");
-    expect(panel).toContain("instruction: storyWritingInstruction");
+    expect(panel).toContain("conversation.start(source.id, { purpose: \"writing\", writingMode: storyWritingMode })");
+    expect(panel).toContain("&view=writing");
+    expect(panel).toContain("storyWritingInstruction.trim()");
+    expect(panel).toContain("versions={storyWritingVersions}");
     expect(panel).not.toContain("selectedWriteProjectId");
   });
 

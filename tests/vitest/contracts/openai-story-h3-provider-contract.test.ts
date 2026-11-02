@@ -19,7 +19,9 @@ describe("OpenAI Storyteller and H3 Director provider contract", () => {
     expect(provider).toContain("OPENAI_DAILY_USER_COST_LIMIT_USD");
     expect(provider).toContain("OPENAI_DAILY_GLOBAL_COST_LIMIT_USD");
     expect(provider).toContain("OPENAI_RATE_LIMIT_PER_MINUTE");
-    expect(provider).toContain("usage.json");
+    expect(provider).toContain("reserveOpenAIUsage");
+    expect(read("lib/openai/usageLedger.ts")).toContain("usage.sqlite");
+    expect(read("lib/openai/usageLedger.ts")).toContain("usage.json");
     expect(provider).toContain("responses.create");
     expect(provider).toContain("audio.transcriptions.create");
   });
@@ -37,7 +39,8 @@ describe("OpenAI Storyteller and H3 Director provider contract", () => {
     expect(chat).toContain("qwenFetchForChatRequest");
     expect(chat).toContain("You are Story Helper inside the SLR Studios OTG app.");
     expect(chat).toContain("buildStoryDirectorProjectContext");
-    expect(chat).toContain("PERSISTENT PROJECT CONTEXT");
+    expect(chat).toContain("storyConversationInstructions");
+    expect(read("lib/storyCreator/conversationPolicy.ts")).toContain("PERSISTENT PROJECT CONTEXT");
     expect(chat).toContain('status === 401');
     expect(chat).toContain('"STORY_UNAUTHORIZED"');
     expect(chat).toContain('"STORY_OPENAI_LIMIT"');

@@ -77,7 +77,7 @@ describe("Story Creator V2 microphone and speaker contract", () => {
     expect(ideas).toContain('item.role === "user" ? "You" : "Story Director"');
     expect(ideas).toContain("speakingMessageId === item.id");
     expect(ideas).toContain("? \"Stop\"");
-    expect(ideas).toContain(": \"Play\"");
+    expect(ideas).toContain(": \"Listen\"");
   });
 
   it("stores only the Auto Speak UI preference and only speaks new assistant messages", () => {
@@ -92,9 +92,10 @@ describe("Story Creator V2 microphone and speaker contract", () => {
   });
 
   it("normalizes speech text without changing displayed assistant text", () => {
-    expect(ideas).toContain("replace(/^#{1,6}");
-    expect(ideas).toContain("replace(/`([^`]+)`/g");
-    expect(ideas).toContain("replace(/^\\s*[-*+]\\s+/gm");
+    const normalize = read("lib/storyCreator/speechText.ts");
+    expect(normalize).toContain("replace(/^#{1,6}");
+    expect(normalize).toContain("replace(/`([^`]+)`/g");
+    expect(normalize).toContain("replace(/^\\s*[-*+]\\s+/gm");
     expect(ideas).toContain("<div className=\"whitespace-pre-wrap\">");
     expect(ideas).toContain("{item.content}");
   });

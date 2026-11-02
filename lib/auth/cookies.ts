@@ -2,14 +2,14 @@ export function cookieName() {
   return process.env.AUTH_COOKIE_NAME || "otg_session";
 }
 
-const DEFAULT_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 400;
+const DEFAULT_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 function configuredSessionMaxAgeSeconds() {
   const raw = Number(process.env.AUTH_SESSION_MAX_AGE_SECONDS || "");
   if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_SESSION_MAX_AGE_SECONDS;
 
   // Browsers commonly cap persistent cookies at roughly 400 days.
-  return Math.min(Math.floor(raw), DEFAULT_SESSION_MAX_AGE_SECONDS);
+  return Math.min(Math.floor(raw), 60 * 60 * 24 * 400);
 }
 
 export const SESSION_MAX_AGE_SECONDS = configuredSessionMaxAgeSeconds();

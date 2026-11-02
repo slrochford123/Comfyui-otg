@@ -106,6 +106,32 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: "007_immutable_admin_roles_and_request_limits",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS user_roles (
+          user_id TEXT NOT NULL, role TEXT NOT NULL, granted_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, role), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS request_limits (
+          bucket TEXT PRIMARY KEY, window_start INTEGER NOT NULL, attempts INTEGER NOT NULL
+        );
+      `);
+      // One-time migration of EXISTING owner accounts only. Future registration
+      // cannot acquire a role by claiming an email address or username.
+      const identifiers = new Set(["slrochford123@protonmail.com", "slrochford123", "slrochford",
+        ...(process.env.ADMIN_IDENTIFIERS || "").split(","), ...(process.env.ADMIN_EMAILS || "").split(",")]
+        .map(value => value.trim().toLowerCase()).filter(Boolean));
+      const explicitIds = new Set((process.env.ADMIN_USER_IDS || "").split(",").map(value => value.trim()).filter(Boolean));
+      const grant = db.prepare("INSERT OR IGNORE INTO user_roles (user_id, role, granted_at) VALUES (?, 'admin', ?)");
+      for (const user of db.prepare("SELECT id, email, username FROM users").all()) {
+        if (explicitIds.has(user.id) || identifiers.has(String(user.email || "").toLowerCase()) || identifiers.has(String(user.username || "").toLowerCase())) {
+          grant.run(user.id, new Date().toISOString());
+        }
+      }
+    },
+  },
 ];
 
 export function ensureMigrations() {

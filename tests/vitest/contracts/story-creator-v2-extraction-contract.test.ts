@@ -75,8 +75,12 @@ describe("Story Creator V2 extraction contract", () => {
     expect(panel).toContain("window.confirm");
   });
 
-  it("defers background extraction instead of making a hidden paid request", () => {
-    expect(panel).toContain("Story Memory extraction is deferred");
+  it("uses one reply call for ordinary memory and preserves explicit authorization for deeper paid review", () => {
+    const executor = read("lib/storyCreator/conversationExecutor.ts");
+    expect(executor).toContain("STORY_CONVERSATION_SCHEMA");
+    expect(executor).toContain("parseStoryConversation");
+    expect(executor.match(/await createOpenAITextStream\(/g)).toHaveLength(1);
+    expect(executor).not.toContain("/api/story-creator/extract");
     expect(panel).not.toContain("extractionResults.push");
     expect(route).toContain("AI_PAYMENT_AUTHORIZATION_REQUIRED");
     expect(route).toContain("maxOutputTokens > 1000");
@@ -85,7 +89,8 @@ describe("Story Creator V2 extraction contract", () => {
   it("presents one simple bulk Story Details review", () => {
     expect(ideas).toContain("Review Story Details");
     expect(ideas).toContain("Try Again");
-    expect(ideas).toContain("Save new nonconflicting details");
+    expect(ideas).toContain("Clear story details can be saved with each completed reply.");
+    expect(ideas).toContain("Advanced memory review · API usage");
     expect(ideas).toContain("Extracting...");
   });
 });

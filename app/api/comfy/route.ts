@@ -99,50 +99,7 @@ function otgSanitizeAnimatePromptObjectV29(value: unknown): unknown {
   return output;
 }
 
-function otgSanitizeComfyPromptBodyV29(body: unknown): unknown {
-  if (typeof body !== "string" || !body.includes("Scene context:")) return body;
-  try {
-    const parsed = JSON.parse(body);
-    return JSON.stringify(otgSanitizeAnimatePromptObjectV29(parsed));
-  } catch {
-    return body.replace(/^\s*Scene context:[\s\S]*?(?:\n\s*\n|$)/i, "");
-  }
-}
-
-function otgInstallComfyPromptFetchPatchV29() {
-  const globalRef = globalThis as typeof globalThis & {
-    __otgComfyPromptFetchOriginalV29?: typeof fetch;
-    __otgComfyPromptFetchPatchedV29?: boolean;
-  };
-
-  if (globalRef.__otgComfyPromptFetchPatchedV29) return;
-
-  globalRef.__otgComfyPromptFetchOriginalV29 = globalThis.fetch.bind(globalThis) as typeof fetch;
-
-  globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-    try {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : String((input as Request).url || "");
-      const method = String(init?.method || "GET").toUpperCase();
-      const shouldSanitize =
-        method === "POST" &&
-        (url.includes("/prompt") || url.toLowerCase().includes("comfy")) &&
-        typeof init?.body === "string" &&
-        init.body.includes("Scene context:");
-
-      if (shouldSanitize) {
-        init = { ...(init || {}), body: otgSanitizeComfyPromptBodyV29(init?.body) as BodyInit };
-      }
-    } catch {
-      // Do not block Comfy requests if sanitizer fails.
-    }
-
-    return globalRef.__otgComfyPromptFetchOriginalV29!(input, init);
-  }) as typeof fetch;
-
-  globalRef.__otgComfyPromptFetchPatchedV29 = true;
-}
-
-otgInstallComfyPromptFetchPatchV29();
+// Prompt normalization is explicit at this route's submission boundary only.
 
 import { applyWanRifeFrameTiming } from "@/lib/wanRifeFrameTiming";
 
@@ -4670,7 +4627,7 @@ export async function POST(req: NextRequest) {
       init: {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: graph, client_id: comfyClientId }),
+        body: JSON.stringify({ prompt: productionAnimateWorkflowFileForBody(body) ? otgSanitizeAnimatePromptObjectV29(graph) : graph, client_id: comfyClientId }),
       },
     });
   } catch (error: any) {
@@ -4763,7 +4720,7 @@ export async function POST(req: NextRequest) {
         init: {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ prompt: graph, client_id: comfyClientId }),
+          body: JSON.stringify({ prompt: productionAnimateWorkflowFileForBody(body) ? otgSanitizeAnimatePromptObjectV29(graph) : graph, client_id: comfyClientId }),
         },
       });
     } catch (error: any) {

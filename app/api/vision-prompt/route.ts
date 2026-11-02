@@ -1,3 +1,7 @@
+import { withOwner, RequestError } from "@/lib/routeSecurity";
+import { limitedJson } from "@/lib/limitedRequestBody";
+import { assertOwnerMediaFile } from "@/lib/ownerMediaAccess";
+import { createOpenAIText } from "@/lib/openai/provider";
 ﻿// app/api/vision-prompt/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createRequire } from "module";
@@ -495,7 +499,7 @@ async function ollamaGenerate(
   prompt: string,
   b64: string,
   timeoutMs: number,
-  options: { autoDescribe?: boolean } = {},
+  options: { autoDescribe?: boolean; ownerKey?: string } = {},
 ) {
   const numCtx = options.autoDescribe
     ? readPositiveIntEnv("OTG_AUTO_DESCRIBE_NUM_CTX", DEFAULT_AUTO_DESCRIBE_NUM_CTX, 2048, 8192)
@@ -518,7 +522,7 @@ async function ollamaGenerate(
 
   let r: Response;
   try {
-    r = await qwenDurableFetch("/api/generate", payload, { requiredContextTokens: numCtx, timeoutMs });
+    r = await qwenDurableFetch("/api/generate", payload, { requiredContextTokens: numCtx, timeoutMs, ownerKey: options.ownerKey, requestKind: "vision-description" });
   } catch (error: any) {
     if (error?.name === "AbortError") {
       return {
@@ -552,82 +556,27 @@ async function ollamaGenerate(
   return { ok: true as const, output };
 }
 
-async function openaiVisionGenerate(
-  model: string,
-  prompt: string,
-  image: VisionImagePayload,
-  timeoutMs: number,
-) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return { ok: false as const, status: 401, body: "OPENAI_API_KEY is not configured." };
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+async function openaiVisionGenerate(model: string, prompt: string, image: VisionImagePayload, timeoutMs: number, ownerKey: string) {
   const startedAt = Date.now();
-
   try {
-    const r = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0.1,
-        max_tokens: 220,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:${image.mime};base64,${image.b64}`,
-                  detail: "low",
-                },
-              },
-            ],
-          },
-        ],
-      }),
-      signal: controller.signal,
+    const response = await createOpenAIText({
+      ownerKey, useCase: "vision-description", model, timeoutMs, maxOutputTokens: 220, maxRetries: 0, store: false,
+      instructions: "Describe the provided image according to the user's requested schema. Return only a JSON object.",
+      input: [{ role: "user", content: [
+        { type: "input_text", text: prompt },
+        { type: "input_image", image_url: `data:${image.mime};base64,${image.b64}`, detail: "low" },
+      ] }],
     });
-
-    const text = await r.text();
-    let json: any = null;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      // handled below
-    }
-
-    if (!r.ok) {
-      return { ok: false as const, status: r.status, body: json?.error?.message || text };
-    }
-
-    const output = (json?.choices?.[0]?.message?.content ?? "").toString();
-    if (!output.trim()) return { ok: false as const, status: 502, body: "OpenAI returned an empty response." };
-    return { ok: true as const, output, elapsedMs: Date.now() - startedAt };
-  } catch (error: any) {
-    if (error?.name === "AbortError") {
-      return {
-        ok: false as const,
-        status: 504,
-        body: "Complete Description timed out.",
-      };
-    }
-    return { ok: false as const, status: 502, body: error?.message || String(error) };
-  } finally {
-    clearTimeout(timer);
+    if (!response.text.trim()) return { ok: false as const, status: 502, body: "OpenAI returned an empty response." };
+    return { ok: true as const, output: response.text, elapsedMs: Date.now() - startedAt };
+  } catch (error) {
+    return { ok: false as const, status: error instanceof RequestError ? error.status : 502, body: error instanceof Error ? error.message : "Image description failed." };
   }
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withOwner(async (req, owner) => {
   try {
-    const body = await req.json().catch(() => null);
+    const body = await limitedJson(req, 256 * 1024);
     if (!body || typeof body !== "object") {
       return NextResponse.json({ error: "Request must be JSON" }, { status: 415 });
     }
@@ -734,6 +683,8 @@ export async function POST(req: NextRequest) {
     }
 
     const resolved = normalizedImagePath.resolved;
+    try { assertOwnerMediaFile(resolved, owner.ownerKey); } catch { throw new RequestError("Image not found for this account.", 404); }
+    if (fs.statSync(resolved).size > 32 * 1024 * 1024) throw new RequestError("Choose an image below 32 MB.", 413);
 
     if (!fs.existsSync(resolved)) {
       if (isPromptEnhancement) {
@@ -1058,6 +1009,7 @@ export async function POST(req: NextRequest) {
             requiredContextTokens:
               4096,
             timeoutMs,
+            ownerKey: owner.ownerKey,
             allowedNodes: [
               "slr",
             ],
@@ -1251,11 +1203,13 @@ export async function POST(req: NextRequest) {
             completeDescriptionOpenAiModel,
             finalPrompt,
             visionImage,
-            completeDescriptionTimeoutMs
+            completeDescriptionTimeoutMs,
+            owner.ownerKey,
           );
         } else {
           result = await ollamaGenerate(finalPrompt, b64, completeDescriptionTimeoutMs, {
             autoDescribe: true,
+            ownerKey: owner.ownerKey,
           });
         }
 
@@ -1308,7 +1262,7 @@ export async function POST(req: NextRequest) {
       }
     } else {
       const startedAt = Date.now();
-      const gen = await ollamaGenerate(finalPrompt, b64, autoDescribeTimeoutMs);
+      const gen = await ollamaGenerate(finalPrompt, b64, autoDescribeTimeoutMs, { ownerKey: owner.ownerKey });
       if (!gen.ok) {
         return NextResponse.json(
           { error: `OllamaVision request failed (${gen.status}): ${gen.body}` },
@@ -1324,7 +1278,7 @@ export async function POST(req: NextRequest) {
         ? `Rewrite the following into ONLY valid JSON (one line), keys: location,time,lighting,objects,mood. No markdown.\nTEXT:\n${gen.output}`
         : `Rewrite the following into ONLY valid JSON (one line), keys: gender,age_range,ethnicity,skin_tone,hair_style,hair_color,eye_color,outfit_top,outfit_bottom,footwear,accessories,build,notable_features. No markdown.\nTEXT:\n${gen.output}`;
 
-      const gen2 = await ollamaGenerate(repairPrompt, b64, autoDescribeTimeoutMs);
+      const gen2 = await ollamaGenerate(repairPrompt, b64, autoDescribeTimeoutMs, { ownerKey: owner.ownerKey });
 
       if (gen2.ok) parsed = tryParseJsonLoose(gen2.output);
       }
@@ -1381,9 +1335,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(details ? { descriptor, details } : { descriptor });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || String(e) }, { status: 500 });
+    if (e instanceof RequestError) throw e;
+    return NextResponse.json({ error: "Image description failed. Please retry or enter the description manually." }, { status: 500 });
   }
-}
+});
 
 
 

@@ -26,6 +26,26 @@ OUTPUTS = []
 YIELD_REASON = ""
 DONE = threading.Event()
 PARENT_PID = os.getppid()
+OWNED_PROCESS_LOCK = threading.Lock()
+OWNED_PROCESS_STARTS = {}
+
+
+def process_start(pid):
+    """Linux start-time token prevents mistaking a reused PID for our child."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
+
+
+def is_owned_allocation(pid, owned):
+    if pid == os.getpid():
+        return True
+    if pid not in owned or owned[pid] is None:
+        return False
+    current = process_start(pid)
+    # NVIDIA can report a just-exited process while its context is being freed.
+    return current is None or current == owned[pid]
 
 
 def atomic(file, data):
@@ -35,8 +55,11 @@ def atomic(file, data):
 
 
 def status(state="running", stage="Processing", progress=0, **extra):
-    atomic(ROOT / "status.json", {"id": JOB["id"], "status": state, "stage": stage,
-           "progress": progress, "elapsedSeconds": time.monotonic() - START, **extra})
+    value = {"id": JOB["id"], "status": state, "stage": stage,
+           "progress": progress, "elapsedSeconds": time.monotonic() - START, **extra}
+    if state in ("completed", "failed", "canceled"):
+        atomic(ROOT / "worker-terminal.json", value)
+    atomic(ROOT / "status.json", value)
 
 
 def cancelled():
@@ -80,15 +103,18 @@ def protect_existing_workloads():
     host=CONFIG.get("queueHost","100.75.162.64")
     ports=CONFIG.get("queuePorts",[8188,8189])
     def external_allocations():
-        raw=subprocess.check_output(["nvidia-smi","--query-compute-apps=pid,used_memory","--format=csv,noheader,nounits"],timeout=3).decode()
-        own={os.getpid()}
-        if CHILD is not None:own.add(CHILD.pid)
+        # Hold registration across the sample: CHILD may switch to ffprobe just
+        # after CUDA exits. Looking only at the latest child falsely cancels a
+        # successful generation when NVIDIA still reports the previous child.
+        with OWNED_PROCESS_LOCK:
+            own = dict(OWNED_PROCESS_STARTS)
+            raw=subprocess.check_output(["nvidia-smi","--query-compute-apps=pid,used_memory","--format=csv,noheader,nounits"],timeout=3).decode()
         values={}
         for line in raw.splitlines():
             fields=line.split(",")
             if len(fields)==2 and fields[0].strip().isdigit() and fields[1].strip().isdigit():
                 pid,mb=(int(x.strip()) for x in fields)
-                if pid not in own:values[pid]=mb
+                if not is_owned_allocation(pid, own):values[pid]=mb
         return values
     try:baseline=external_allocations()
     except Exception:baseline=None
@@ -107,6 +133,8 @@ def protect_existing_workloads():
                 raise RuntimeError("Another GPU workload started allocating memory. This audio operation yielded safely; retry after it completes.")
         except Exception as error:
             YIELD_REASON=str(error)
+            atomic(ROOT / "workload-yield.json", {"reason": YIELD_REASON,
+                "elapsedSeconds": time.monotonic()-START})
             os.kill(os.getpid(),signal.SIGTERM)
             return
 
@@ -115,8 +143,10 @@ def run(args, timeout=1800, capture=False, env=None):
     global CHILD
     cancelled()
     with (ROOT / "process.log").open("ab") as log:
-        CHILD = subprocess.Popen([str(a) for a in args], stdout=subprocess.PIPE if capture else log,
-                                 stderr=log, env=env)
+        with OWNED_PROCESS_LOCK:
+            CHILD = subprocess.Popen([str(a) for a in args], stdout=subprocess.PIPE if capture else log,
+                                     stderr=log, env=env)
+            OWNED_PROCESS_STARTS[CHILD.pid] = process_start(CHILD.pid)
         deadline = time.monotonic() + timeout
         while True:
             try:

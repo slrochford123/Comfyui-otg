@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { cookies as nextCookies } from "next/headers";
 
 import { cookieName } from "@/lib/auth/cookies";
-import { isAdminEmail } from "@/lib/auth/admin";
+import { isAdminUserId } from "@/lib/auth/admin";
 import { verifySession } from "@/lib/auth/jwt";
 import { safeDeviceId, getDeviceIdFromRequest, getOtgDeviceId } from "@/lib/otgDevice";
 import { SessionInvalidError } from "@/lib/ownerKey";
@@ -20,18 +20,6 @@ export type SessionUser = OwnerContextLite & {
   tier: string | null;
   admin: boolean;
 };
-
-// Optional extra admins via env (comma-separated emails and/or usernames)
-function isAdminIdentifier(username?: string | null): boolean {
-  const hard = new Set(["slrochford123@protonmail.com", "slrochford123"]);
-  const extra = (process.env.ADMIN_IDENTIFIERS || "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  const allow = new Set<string>([...hard, ...extra]);
-  const u = String(username || "").trim().toLowerCase();
-  return !!u && allow.has(u);
-}
 
 function safeUsername(raw: string): string | null {
   const u = (raw || "").toString().trim();
@@ -102,7 +90,7 @@ export async function requireSessionUser(req: Request | NextRequest): Promise<Se
   const email = (payload as any).email ?? (payload as any).sub ?? null;
   const username = safeUsername((payload as any).username || "") || ctx.username || null;
   const tier = (payload as any).tier ?? null;
-  const admin = isAdminEmail(email) || isAdminIdentifier(username);
+  const admin = isAdminUserId(payload.sub);
 
   return { ...ctx, username, email, tier, admin };
 }
@@ -123,7 +111,7 @@ export async function getSessionUser(req: Request | NextRequest): Promise<Sessio
   const email = (payload as any).email ?? (payload as any).sub ?? null;
   const username = safeUsername((payload as any).username || "") || ctx.username || null;
   const tier = (payload as any).tier ?? null;
-  const admin = isAdminEmail(email) || isAdminIdentifier(username);
+  const admin = isAdminUserId(payload.sub);
 
   const ownerKey = resolveOwnerAlias(username || ctx.deviceId);
   return { ...ctx, username, ownerKey, scope: username ? "user" : "device", email, tier, admin };

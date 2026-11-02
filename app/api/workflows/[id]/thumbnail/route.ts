@@ -1,35 +1,20 @@
-import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
+import { NextRequest, NextResponse } from "next/server";
+import fs from "node:fs";
+import path from "node:path";
 import { getWorkflowsRoot, loadWorkflowById } from "@/lib/workflows";
+import { workflowFileInside } from "@/lib/workflowFileAccess";
+import { withOwner, RequestError } from "@/lib/routeSecurity";
 
 export const runtime = "nodejs";
-
-function contentTypeFor(p: string) {
-  const ext = p.toLowerCase();
-  if (ext.endsWith(".png")) return "image/png";
-  if (ext.endsWith(".jpg") || ext.endsWith(".jpeg")) return "image/jpeg";
-  if (ext.endsWith(".webp")) return "image/webp";
-  return "application/octet-stream";
-}
-
-export async function GET(
-  _req: Request,
-  context: { params: Promise<{ id: string }> }
-) {
-  const { id } = await context.params;
-  const wf = loadWorkflowById(id);
-  if (!wf.ok) return NextResponse.json({ error: wf.error }, { status: wf.status });
-
-  const thumbRel = (wf.meta as any).thumbnail;
-  if (!thumbRel || typeof thumbRel !== "string") {
-    return NextResponse.json({ error: "thumbnail not set" }, { status: 404 });
-  }
-
-  const root = getWorkflowsRoot();
-  const filePath = path.join(root, thumbRel);
-  if (!fs.existsSync(filePath)) return NextResponse.json({ error: "thumbnail missing" }, { status: 404 });
-
-  const buf = fs.readFileSync(filePath);
-  return new NextResponse(buf, { status: 200, headers: { "Content-Type": contentTypeFor(filePath), "Cache-Control": "no-store" } });
+export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+  return withOwner(async () => {
+    const { id } = await context.params;
+    const workflow = loadWorkflowById(id);
+    if (!workflow.ok) throw new RequestError("Workflow not found.", 404);
+    const relative = workflow.meta.thumbnail;
+    const file = typeof relative === "string" ? workflowFileInside(getWorkflowsRoot(), relative, [".png", ".jpg", ".jpeg", ".webp"]) : null;
+    if (!file) throw new RequestError("Thumbnail not found.", 404);
+    const contentType = path.extname(file).toLowerCase() === ".png" ? "image/png" : path.extname(file).toLowerCase() === ".webp" ? "image/webp" : "image/jpeg";
+    return new NextResponse(fs.readFileSync(file), { headers: { "Content-Type": contentType } });
+  })(req);
 }

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { readOpenAIReservationSummary } from "@/lib/openai/usageLedger";
 
 import { estimateOpenAIUsageCost, readOpenAIUsageRecords, type OpenAIUsageRecord, type OpenAIUseCase } from "@/lib/openai/provider";
 
@@ -72,6 +73,8 @@ const FEATURE_LABELS: Record<OpenAIUseCase, string> = {
   "h3-director": "H3 AI Scene Director",
   "story-helper": "Story Helper",
   "story-write": "Story Creator",
+  "prompt-enhance": "Prompt Enhancement",
+  "vision-description": "Image Description",
   transcribe: "OpenAI Voice Transcription",
 };
 
@@ -171,7 +174,8 @@ function normalizeCreditEvent(value: unknown): OpenAICreditEvent | null {
   const amountUsd = Number(source.amountUsd);
   const effectiveAt = Number(source.effectiveAt || source.ts || Date.now());
   if (!Number.isFinite(amountUsd) || !Number.isFinite(effectiveAt)) return null;
-  const verified = Number(source.verifiedBalanceUsd);
+  const verified = source.verifiedBalanceUsd == null || source.verifiedBalanceUsd === ""
+    ? NaN : Number(source.verifiedBalanceUsd);
   return {
     id: String(source.id || `credit-${Date.now()}-${Math.random().toString(16).slice(2)}`),
     ts: Number(source.ts || Date.now()) || Date.now(),
@@ -358,6 +362,7 @@ export function buildOpenAIBillingSnapshot(filters: OpenAIBillingFilters = {}) {
   return {
     ok: true,
     environment: currentEnvironment(),
+    reservations: readOpenAIReservationSummary(),
     filters,
     overview: {
       totalPrepaidCreditsUsd: totalCreditsUsd,
@@ -365,7 +370,8 @@ export function buildOpenAIBillingSnapshot(filters: OpenAIBillingFilters = {}) {
       localEstimatedSpendingUsd: localSpendUsd,
       officialReportedSpendingUsd: authoritativeSpendAvailable ? officialSpendUsd : null,
       officialLocalDiscrepancyUsd: discrepancyUsd,
-      estimatedPrepaidBalanceUsd: balanceUsd,
+      estimatedPrepaidBalanceUsd: state.credits.length ? balanceUsd : null,
+      creditBalanceVerified: false,
       consumedPercent,
       todaySpendingUsd: sumCost(allRecords.filter((record) => record.ts >= todayStart)),
       monthSpendingUsd: sumCost(allRecords.filter((record) => record.ts >= thisMonthStart)),

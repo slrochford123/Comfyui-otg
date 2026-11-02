@@ -9,7 +9,7 @@ export function assertOwnerMediaFile(file: string, ownerKey: string) {
   const owner = safeSegment(ownerKey);
   const dirs = getOwnerDirs(ownerKey);
   const roots = [dirs.inbox, dirs.gallery, dirs.preview,
-    ...['characters', 'assets', 'backgrounds', 'voice_dub_jobs', 'voice_tts_jobs', 'voice_gallery', 'worker-artifacts'].map(kind => path.join(OTG_DATA_ROOT, kind, owner)),
+    ...['characters', 'assets', 'assets-saved-for-later', 'backgrounds', 'voice_dub_jobs', 'voice_tts_jobs', 'voice_gallery', 'worker-artifacts', 'productions', 'productions-v2', 'production_storyboard_sync', 'background_removal', 'edit_video_jobs', 'h3-direct'].map(kind => path.join(OTG_DATA_ROOT, kind, owner)),
     path.join(OTG_DATA_ROOT, 'uploads', 'characters', owner), path.join(OTG_DATA_ROOT, 'uploads', 'voices', owner)];
   for (const kind of ['samples', 'outputs']) {
     const parent = path.join(OTG_DATA_ROOT, 'uploads', 'voices', kind);

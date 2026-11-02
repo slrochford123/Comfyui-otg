@@ -1,16 +1,8 @@
 import { cookies } from "next/headers";
 import { cookieName } from "@/lib/auth/cookies";
-import { verifySession } from "@/lib/auth/jwt";
+import { requireAdmin } from "@/app/api/admin/_requireAdmin";
 import fs from "node:fs";
 import path from "node:path";
-
-// Primary admin for this install (matches /api/admin/_requireAdmin)
-const HARD_CODED_ADMINS = ["slrochford123@protonmail.com", "slrochford123"];
-
-const ADMIN_IDENTIFIERS = (process.env.ADMIN_IDENTIFIERS || "")
-  .split(",")
-  .map((s) => s.trim().toLowerCase())
-  .filter(Boolean);
 
 export type ComfyTarget = { id: string; label: string; baseUrl: string };
 export type ComfyJobKind = "image" | "video" | "default";
@@ -87,19 +79,7 @@ export function getComfyTargets(): ComfyTarget[] {
 
 // Exported so admin-only routes can gate access consistently.
 export async function isAdminSession(): Promise<boolean> {
-  const store = await cookies();
-  const token = store.get(cookieName())?.value;
-  if (!token) return false;
-
-  try {
-    const payload: any = await verifySession(token);
-    const email = String(payload?.email || "").toLowerCase();
-    const username = String(payload?.username || "").toLowerCase();
-    const allowList = new Set([...HARD_CODED_ADMINS, ...ADMIN_IDENTIFIERS]);
-    return allowList.has(email) || (!!username && allowList.has(username));
-  } catch {
-    return false;
-  }
+  return (await requireAdmin()).ok;
 }
 
 export const COMFY_TARGET_COOKIE = "otg_comfy_target";

@@ -8,6 +8,7 @@ import { resolveComfyPhysicalGpu, detectShawnExternalOccupancy } from "./cluster
 import { acquireResourceLock, heartbeatResourceLock, releaseResourceLock, listResourceLocks, type ResourceLock } from "./resourceLocks";
 import { voiceGpuFileBusy } from "./voiceGpuFileLease";
 import { privateMediaFeatureEnabled } from "@/lib/privateMediaRuntime";
+import { requireStorageHeadroom } from "@/lib/storageAdmission";
 import {acquireSharedMediaGpu,releaseSharedMediaGpu,sharedMediaGpuAvailable,sharedMediaAdmissionConfigured} from "./mediaGpuAdmission";
 
 export type MediaQueueStatus = "queued" | "dispatching" | "running" | "unknown" | "completed" | "failed" | "canceled";
@@ -69,6 +70,7 @@ function update(id: string, status: MediaQueueStatus, error: string | null = nul
   else database().prepare("UPDATE media_jobs SET status=?,error=?,updatedAt=?,lease=? WHERE id=?").run(status,error,Date.now(),lease?JSON.stringify(lease):null,id);
 }
 export function enqueueMediaJob(input: { id?: string; gpu: MediaGpu; kind: MediaQueueJob["kind"]; payload: MediaQueueJob["payload"] }) {
+  requireStorageHeadroom(OTG_DATA_ROOT, 512 * 1024 ** 2);
   const id = input.id || randomUUID();
   if (!MEDIA_GPUS.includes(input.gpu)) throw Error("Choose a supported physical GPU.");
   database().prepare("INSERT INTO media_jobs (id,gpu,kind,status,payload,createdAt,updatedAt) VALUES (?,?,?,'queued',?,?,?)")

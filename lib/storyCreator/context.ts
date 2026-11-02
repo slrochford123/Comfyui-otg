@@ -7,6 +7,7 @@ import {
   listStoryOpenQuestions,
   listStoryVisualAssets,
 } from "./store";
+import type { StoryRecall } from "./retrieval";
 
 const DEFAULT_CONTEXT_CHAR_LIMIT = 12_000;
 const COMMON_WORDS = new Set([
@@ -77,29 +78,26 @@ function boundedSections(
   sections: Array<{ title: string; lines: string[] }>,
   maxChars: number,
 ) {
-  const output: string[] = [];
-  let used = 0;
-
-  for (const section of sections) {
-    if (!section.lines.length) continue;
-
-    const heading = `${section.title}:`;
-    if (used + heading.length + 2 > maxChars) break;
-    output.push(heading);
-    used += heading.length + 1;
-
+  const active = sections.filter((section) => section.lines.length);
+  const weight = (title: string) => title.startsWith("APPROVED CANON") ? 4
+    : title.startsWith("HISTORICAL") ? 3 : 1;
+  const totalWeight = active.reduce((sum, section) => sum + weight(section.title), 0);
+  const overhead = active.reduce((sum, section) => sum + section.title.length + 4, 0);
+  const available = Math.max(0, maxChars - overhead);
+  return active.map((section) => {
+    const budget = Math.floor(available * weight(section.title) / totalWeight);
+    const lines: string[] = [];
+    let used = 0;
     for (const line of section.lines) {
       const next = `- ${line}`;
-      if (used + next.length + 1 > maxChars) break;
-      output.push(next);
-      used += next.length + 1;
+      if (used + next.length + 1 > budget) {
+        if (!lines.length && budget > 40) lines.push(next.slice(0, budget - 2) + "…");
+        break;
+      }
+      lines.push(next); used += next.length + 1;
     }
-
-    output.push("");
-    used += 1;
-  }
-
-  return output.join("\n").trim();
+    return lines.length ? `${section.title}:\n${lines.join("\n")}` : "";
+  }).filter(Boolean).join("\n\n").slice(0, maxChars);
 }
 
 export function buildStoryDirectorProjectContext(input: {
@@ -107,6 +105,7 @@ export function buildStoryDirectorProjectContext(input: {
   projectId: string;
   query: string;
   maxChars?: number;
+  recall?: StoryRecall;
 }) {
   const projects = listStoryCreatorProjects(input.ownerKey);
   const project = projects.find((item) => item.id === input.projectId);
@@ -150,6 +149,10 @@ export function buildStoryDirectorProjectContext(input: {
     factText,
     (fact) => fact.updatedAt,
   );
+  if (input.recall?.factIds.length) {
+    const rank = new Map(input.recall.factIds.map((id, index) => [id, index]));
+    canon.sort((a, b) => (rank.get(a.id) ?? 10000) - (rank.get(b.id) ?? 10000));
+  }
   const proposals = ranked(
     pendingFacts,
     input.query,
@@ -187,7 +190,11 @@ export function buildStoryDirectorProjectContext(input: {
       },
       {
         title: "APPROVED CANON - authoritative; preserve exactly",
-        lines: canon.map(factText),
+        lines: canon.map((fact) => `${factText(fact)} [fact:${fact.id}${fact.sourceMessageId ? ` source:${fact.sourceMessageId}` : ""}]`),
+      },
+      {
+        title: "HISTORICAL USER NOTES - not canon; may be hypothetical or outdated; current canon and corrections win",
+        lines: (input.recall?.notes || []).map((note) => `[source:${note.sourceMessageId}] ${note.content}`),
       },
       {
         title: "PROPOSED DETAILS - not canon unless the user approves",

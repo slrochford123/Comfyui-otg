@@ -12,6 +12,10 @@ import { mediaQueueEnabled, enqueueMediaJob, getMediaQueueJob, cancelQueuedMedia
 import { mediaGpuCandidates, type MediaGpu } from "@/lib/mediaGpuRouting";
 import { audioTransportReady, audioWorkerScript, audioControllerPython } from "./transport";
 import { privateMediaFeatureEnabled } from "@/lib/privateMediaRuntime";
+import { RequestError } from "@/lib/requestError";
+import { requireStorageHeadroom } from "@/lib/storageAdmission";
+import { assertSharedMediaGpuOwned, sharedMediaAdmissionConfigured } from "@/lib/workers/mediaGpuAdmission";
+import { audioMinimumVramMiB, prepareAudioGpuMemory } from "./gpuMemory";
 
 export type AudioOperation = "import" | "separate" | "mix" | "enhance" | "speech" | "extract" | "music" | "effects";
 type Manifest = { id: string; sessionId: string; operation: AudioOperation; gpu: AudioGpu; source?: string;
@@ -25,14 +29,16 @@ export const engineConfigPath = () => {
 };
 export function engineConfig() { return JSON.parse(fs.readFileSync(engineConfigPath(), "utf8")); }
 export function assertAudioTestEnabled() {
-  if (!privateMediaFeatureEnabled("OTG_AUDIO_EDITING_ENABLED")) throw Error("Unified Audio Editing is not enabled on this deployment.");
+  if (!privateMediaFeatureEnabled("OTG_AUDIO_EDITING_ENABLED")) throw new RequestError("Unified Audio Editing is not enabled on this deployment. Your saved sessions are retained.", 503);
 }
 export function capabilities() {
+  const enabled = privateMediaFeatureEnabled("OTG_AUDIO_EDITING_ENABLED");
   try {
     const cfg = engineConfig();
-    return { enabled: true, engines: cfg.verified || {}, researchOnly: cfg.researchOnly || [],
-      notes: cfg.notes || [], pythonReady: fs.existsSync(cfg.python) };
-  } catch { return { enabled: true, engines: {}, researchOnly: [], pythonReady: false,
+    const pythonReady = typeof cfg.python === "string" && fs.existsSync(cfg.python);
+    return { enabled, engines: enabled && pythonReady ? cfg.verified || {} : {}, researchOnly: cfg.researchOnly || [],
+      notes: [...(!enabled ? ["Unified Audio Editing is not enabled on this deployment. Your saved sessions are retained."] : []), ...(cfg.notes || [])], pythonReady };
+  } catch { return { enabled, engines: {}, researchOnly: [], pythonReady: false,
     notes: ["The isolated audio engine configuration is not installed."] }; }
 }
 function jobDir(owner: string, session: string, job: string) { return path.join(sessionRoot(owner, session), "jobs", assertId(job)); }
@@ -65,7 +71,7 @@ export function reconcileJob(owner: string, sessionId: string, id: string) {
   }
   const queue = getMediaQueueJob(id);
   const awaitingDispatch = queue && ["queued","dispatching","unknown"].includes(queue.status) && !manifest.pid;
-  if (queue?.status === "failed" && state.status !== "completed") {
+  if (queue?.status === "failed" && ["queued","running"].includes(state.status)) {
     state = {...state,status:"failed",stage:queue.error || "The queued audio operation failed."}; atomicJson(statusFile,state);
   }
   if (["running","queued"].includes(state.status) && !awaitingDispatch && !isWorkerAlive(manifest,file) && Date.now()-Date.parse(manifest.createdAt)>10000) {
@@ -132,6 +138,9 @@ export async function startJob(owner: string, sessionId: string, operation: Audi
 async function startReservedJob(owner: string, sessionId: string, operation: AudioOperation, source: string | undefined,
   params: Record<string, unknown>, gpu: AudioGpu | "auto") {
   const session = readSession(owner,sessionId);
+  const sourceBytes = source ? fs.statSync(source).size : 0;
+  const seconds = session.assets.find(asset => asset.id === session.sourceId)?.duration || Number(params.seconds) || 0;
+  requireStorageHeadroom(sessionRoot(owner, sessionId), sourceBytes * 2 + Math.max(0, seconds) * 48000 * 2 * 4 * 8);
   const existing = sessionJobs(owner,sessionId).find(j=>j.status==="queued"||j.status==="running");
   if (existing) throw Error("This session already has an active operation. Wait or cancel it first.");
   const cfg = engineConfig();
@@ -222,6 +231,18 @@ export async function executeQueuedAudioJob(payload: AudioMediaPayload, gpu: Med
   if (fs.existsSync(path.join(root,"cancel"))) throw Error("Canceled before audio execution.");
   if (manifest.pid) throw Error("This audio job already owns a worker; refusing duplicate execution.");
   const cfg=engineConfig();
+  if(sharedMediaAdmissionConfigured()) {
+    const held=getMediaQueueJob(id);
+    if(!held?.admissionOwner || held.admissionToken===null)throw Error("Audio GPU reservation is missing.");
+    const owner=held.admissionOwner, token=held.admissionToken;
+    await prepareAudioGpuMemory(gpu,audioMinimumVramMiB(manifest.operation,manifest.params,cfg.auk?.offload!==false),async()=>{
+      const current=getMediaQueueJob(id);
+      if(fs.existsSync(path.join(root,"cancel")) || current?.status!=="dispatching" || current.kind!=="audio" || current.gpu!==gpu ||
+        current.admissionPhase!=="executing" || current.admissionOwner!==owner || current.admissionToken!==token)
+        throw Error("Audio operation ended or its reservation changed; no model was started.");
+      await assertSharedMediaGpuOwned(gpu,owner);
+    });
+  }
   const script=audioWorkerScript(cfg,gpu);
   const log=fs.openSync(path.join(root,"worker.log"),"a",0o600);
   const cache=path.join(path.dirname(engineConfigPath()),"engine-cache"),temp=path.join(root,"temp");
@@ -236,8 +257,8 @@ export async function executeQueuedAudioJob(payload: AudioMediaPayload, gpu: Med
       manifest.pid=child.pid;atomicJson(file,manifest);
       child.once("error",()=>reject(Error("The isolated audio worker could not start.")));
       child.once("exit",()=>{
-        const status=queuedAudioJobState(payload);
-        if(status==="completed")resolve();else reject(Error(status==="canceled"?"Audio operation canceled.":"Audio processing failed; inspect this operation's saved worker log."));
+        const state=reconcileJob(owner,sessionId,id);
+        if(state.status==="completed")resolve();else reject(Error(state.stage||"Audio processing failed; inspect this operation's saved worker log."));
       });
     });
   } finally {fs.closeSync(log);}

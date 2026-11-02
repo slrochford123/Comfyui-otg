@@ -141,7 +141,7 @@ describe("Generate Qwen Image Edit 2.1 exact prompt contract", () => {
     );
 
     const comfySubmission = routeSource.indexOf(
-      "body: JSON.stringify({ prompt: graph, client_id: comfyClientId })",
+      "body: JSON.stringify({ prompt: productionAnimateWorkflowFileForBody(body) ? otgSanitizeAnimatePromptObjectV29(graph) : graph, client_id: comfyClientId })",
       finalExactBind,
     );
 
@@ -152,5 +152,6 @@ describe("Generate Qwen Image Edit 2.1 exact prompt contract", () => {
     expect(comfySubmission).toBeGreaterThan(
       finalExactBind,
     );
+    expect(routeSource).not.toContain("globalThis.fetch =");
   });
 });

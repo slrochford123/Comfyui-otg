@@ -1,22 +1,11 @@
 import { cookies } from "next/headers";
 
 import AppPageClient, { type InitialAppUser } from "./AppPageClient";
-import { isAdminEmail } from "@/lib/auth/admin";
+import { isAdminUserId } from "@/lib/auth/admin";
 import { cookieName } from "@/lib/auth/cookies";
 import { verifySession } from "@/lib/auth/jwt";
 
 export const dynamic = "force-dynamic";
-
-function isAdminIdentifier(username?: string | null) {
-  const hard = new Set(["slrochford123@protonmail.com", "slrochford123"]);
-  const extra = (process.env.ADMIN_IDENTIFIERS || "")
-    .split(",")
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
-  const allow = new Set([...hard, ...extra]);
-  const normalized = String(username || "").trim().toLowerCase();
-  return Boolean(normalized && allow.has(normalized));
-}
 
 async function readInitialUser(): Promise<InitialAppUser> {
   try {
@@ -33,7 +22,7 @@ async function readInitialUser(): Promise<InitialAppUser> {
       username,
       email: email || null,
       tier,
-      admin: isAdminEmail(email) || isAdminIdentifier(username),
+      admin: isAdminUserId(payload.sub),
     };
   } catch {
     return null;

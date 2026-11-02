@@ -1,3 +1,6 @@
+import { withOwner, RequestError } from "@/lib/routeSecurity";
+import { limitedJson, limitedFormData } from "@/lib/limitedRequestBody";
+import { enforceRequestLimit } from "@/lib/auth/requestLimits";
 import { NextRequest } from "next/server";
 import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
 import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
@@ -20,7 +23,7 @@ function enhanceBasic(prompt: string): string {
   return base.replace(/\s+/g, " ").trim();
 }
 
-async function enhanceWithOllama(prompt: string, timeoutMs = 7000): Promise<string> {
+async function enhanceWithOllama(prompt: string, timeoutMs: number, ownerKey: string): Promise<string> {
   const system =
     "Rewrite the user's prompt into a stronger, more specific prompt while STRICTLY preserving the same subject, setting, and key details. " +
     "Do NOT add new characters, new objects, or new locations. Do NOT change identity. " +
@@ -32,7 +35,7 @@ async function enhanceWithOllama(prompt: string, timeoutMs = 7000): Promise<stri
         prompt: `${system}\n\nUSER:\n${prompt.trim()}\n\nENHANCED:`,
         stream: false,
         options: { temperature: 0.2, top_p: 0.9 },
-      }, { timeoutMs });
+      }, { timeoutMs, ownerKey });
 
     const j: any = await r.json().catch(() => null);
     if (!r.ok || !j) throw new Error(j?.error || `Ollama HTTP ${r.status}`);
@@ -42,9 +45,10 @@ async function enhanceWithOllama(prompt: string, timeoutMs = 7000): Promise<stri
   return out;
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withOwner(async (req, owner) => {
+  enforceRequestLimit("ai-utility", owner.ownerKey, 30, 60_000);
   try {
-    const body = await req.json().catch(() => ({}));
+    const body = await limitedJson(req, 1024 * 1024);
     const prompt = typeof body?.prompt === "string" ? body.prompt : "";
     const mode = typeof body?.mode === "string" ? body.mode : "replace";
 
@@ -59,14 +63,14 @@ export async function POST(req: NextRequest) {
 
     if (providerSetting === "ollama") {
       // Must use Ollama, error clearly if it fails
-      const enhanced = await enhanceWithOllama(ptxt, 7000);
+      const enhanced = await enhanceWithOllama(ptxt, 7000, owner.ownerKey);
       return Response.json({ ok: true, mode, provider: "ollama", enhanced, result: enhanced });
     }
 
     // Optional Ollama, safe fallback
     if (tryOllama) {
       try {
-        const enhanced = await enhanceWithOllama(ptxt, 5000);
+        const enhanced = await enhanceWithOllama(ptxt, 5000, owner.ownerKey);
         return Response.json({ ok: true, mode, provider: "ollama", enhanced, result: enhanced });
       } catch (e: any) {
         const enhanced = enhanceBasic(ptxt);
@@ -85,6 +89,7 @@ export async function POST(req: NextRequest) {
     const enhanced = enhanceBasic(ptxt);
     return Response.json({ ok: true, mode, provider: "basic", enhanced, result: enhanced });
   } catch (e: any) {
+    if (e instanceof RequestError) throw e;
     return Response.json({ ok: false, error: e?.message || "Enhance failed" }, { status: 500 });
   }
-}
+});

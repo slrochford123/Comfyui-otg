@@ -2,6 +2,7 @@ import {beforeAll,afterAll,beforeEach,describe,it,expect,vi} from "vitest";
 import {NextRequest} from "next/server";
 const state=vi.hoisted(()=>({target:{username:"qa-target"} as {username:string}|null,reset:vi.fn(()=>({status:"idle"}))}));
 vi.mock("next/headers",()=>({cookies:async()=>({get:()=>({value:"qa-session"})})}));
+vi.mock("@/app/api/admin/_requireAdmin",()=>({requireAdmin:async()=>({ok:true,id:"qa-admin-id",username:"qa-admin",email:"qa-admin@example.com"})}));
 vi.mock("@/lib/auth/jwt",()=>({verifySession:async()=>({email:"qa-admin@example.com",username:"qa-admin"})}));
 vi.mock("@/lib/auth/db",()=>({ensureMigrations:()=>{},db:{prepare:()=>({get:()=>state.target})}}));
 vi.mock("@/lib/contentState",()=>({resetState:state.reset}));

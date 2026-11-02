@@ -13,6 +13,8 @@ import {
 } from "@/lib/openai/provider";
 import { requireSessionUser } from "@/lib/sessionUser";
 import { buildStoryDirectorProjectContext } from "@/lib/storyCreator/context";
+import { storyConversationInstructions, storyConversationOutputTokens } from "@/lib/storyCreator/conversationPolicy";
+import { retrieveStoryMemory } from "@/lib/storyCreator/retrieval";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -973,40 +975,21 @@ export async function POST(req: NextRequest) {
           .reverse()
           .find((message) => message.role === "user")
           ?.content || "";
+        const recall = storyCreatorRequest && projectId
+          ? await retrieveStoryMemory({ ownerKey: user.ownerKey, projectId, query: latestUserMessage }) : undefined;
         const projectContext = storyCreatorRequest && projectId
           ? buildStoryDirectorProjectContext({
               ownerKey: user.ownerKey,
               projectId,
               query: latestUserMessage,
+              recall,
             })
           : null;
         const instructions = storyCreatorRequest
-          ? [
-              buildSystemMessage("story-helper").content,
-              "STORY CREATOR LISTENING MODE:",
-              "The user owns the story. Listen first.",
-              "When the latest user message is narration, a story fact, an event, or a correction, acknowledge briefly.",
-              "Begin the reply with 'Locked in.'",
-              "Summarize only the important details newly established by the user.",
-              "Usually respond in one or two short sentences.",
-              "Do not invent details, suggest plot twists, offer opinions, or ask unsolicited questions.",
-              "Do not add optional ideas while the user is narrating.",
-              "When the user explicitly asks for opinions, brainstorming, suggestions, writing, or creative help, answer that request thoughtfully.",
-              "Clearly distinguish any new suggestions from established facts.",
-              "Do not treat a question spoken by a character inside narrated dialogue as a request for your advice.",
-              "If the intent is uncertain, prefer listening and acknowledgment.",
-              "The user's narration is saved as a project message before this request. Acknowledgment does not mean formal Story Bible canon approval.",
-              "These listening rules override earlier general invitations to brainstorm.",
-              projectContext?.context
-                ? [
-                    "PERSISTENT PROJECT CONTEXT:",
-                    projectContext.context,
-                    "Use APPROVED CANON as authoritative.",
-                    "Never present PROPOSED DETAILS or UNKNOWN DETAILS as canon.",
-                  ].join("\n")
-                : "No persistent project context was supplied.",
-            ].join(" ")
+          ? storyConversationInstructions(projectContext?.context)
           : buildSystemMessage("story-helper").content;
+        const outputTokens = storyCreatorRequest
+          ? storyConversationOutputTokens(latestUserMessage) : AI_ASSISTANCE_NUM_PREDICT;
         const input = buildOpenAIStoryInput(
           messages,
           images,
@@ -1021,7 +1004,7 @@ export async function POST(req: NextRequest) {
             model: openAIModel,
             instructions,
             input,
-            maxOutputTokens: AI_ASSISTANCE_NUM_PREDICT,
+            maxOutputTokens: outputTokens,
             timeoutMs,
             signal: req.signal,
           });
@@ -1040,7 +1023,7 @@ export async function POST(req: NextRequest) {
           model: openAIModel,
           instructions,
           input,
-          maxOutputTokens: AI_ASSISTANCE_NUM_PREDICT,
+          maxOutputTokens: outputTokens,
           timeoutMs,
         });
         const message = cleanOutput(openAIResponse.text);

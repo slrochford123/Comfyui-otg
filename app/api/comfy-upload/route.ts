@@ -1,57 +1,32 @@
 import { NextResponse } from "next/server";
+import { randomUUID, createHash } from "node:crypto";
+import path from "node:path";
 import { configuredImageComfyBaseUrl } from "@/app/api/_lib/comfyTarget";
-
-export const runtime = "nodejs"; // IMPORTANT: must be node runtime (not edge)
+import { limitedFormData } from "@/lib/limitedRequestBody";
+import { withOwner, RequestError } from "@/lib/routeSecurity";
+import { recordOwnedWorkerMedia } from "@/lib/comfyMediaAccess";
+import sharp from "sharp";
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function comfyBase() {
-  return configuredImageComfyBaseUrl();
-}
-
-export async function POST(req: Request) {
-  try {
-    // Read multipart from browser
-    const form = await req.formData();
-
-    const file = form.get("image");
-    if (!(file instanceof File)) {
-      return NextResponse.json({ error: "Missing file field 'image'." }, { status: 400 });
-    }
-
-    // Optional overrides
-    const type = String(form.get("type") ?? "input"); // "input" is what LoadImage uses
-    const overwrite = String(form.get("overwrite") ?? "true");
-
-    // Rebuild multipart to send to ComfyUI
-    const out = new FormData();
-    out.set("image", file, file.name);
-    out.set("type", type);
-    out.set("overwrite", overwrite);
-
-    const url = `${comfyBase()}/upload/image`;
-    const res = await fetch(url, { method: "POST", body: out });
-
-    const text = await res.text();
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: `ComfyUI upload failed: HTTP ${res.status}`, details: text },
-        { status: 502 }
-      );
-    }
-
-    // Usually JSON: { name, subfolder, type } (but we accept any)
-    let json: any = null;
-    try {
-      json = text ? JSON.parse(text) : null;
-    } catch {
-      json = { raw: text };
-    }
-
-    return NextResponse.json(json ?? {});
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: "Upload route crashed", details: String(e?.message ?? e) },
-      { status: 500 }
-    );
-  }
-}
+export const POST = withOwner(async (request, owner) => {
+  const form = await limitedFormData(request, 32 * 1024 * 1024);
+  const file = form.get("image");
+  if (!(file instanceof File) || !file.size) throw new RequestError("Choose an image.", 400);
+  const ext = path.extname(file.name).toLowerCase();
+  if (![".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(ext)) throw new RequestError("Unsupported image type.", 400);
+  try { await sharp(Buffer.from(await file.arrayBuffer()), { limitInputPixels: 40_000_000 }).metadata(); }
+  catch { throw new RequestError("Choose a valid image within the 40 megapixel limit.", 400); }
+  const name = "otg-" + createHash("sha256").update(owner.ownerKey).digest("hex").slice(0,16) + "-" + randomUUID() + ext;
+  const outgoing = new FormData();
+  outgoing.set("image", file, name);
+  outgoing.set("type", "input");
+  outgoing.set("overwrite", "false");
+  const response = await fetch(configuredImageComfyBaseUrl() + "/upload/image", {
+    method: "POST", body: outgoing, signal: AbortSignal.any([request.signal, AbortSignal.timeout(30000)]),
+  });
+  if (!response.ok) throw new RequestError("The image worker could not accept the upload. Please retry.", 502);
+  const result = await response.json();
+  if (typeof result.name !== "string") throw new RequestError("The worker did not confirm the uploaded image.", 502);
+  await recordOwnedWorkerMedia(owner.ownerKey, configuredImageComfyBaseUrl(), { filename: result.name, subfolder: result.subfolder || "", type: "input" });
+  return NextResponse.json(result);
+});

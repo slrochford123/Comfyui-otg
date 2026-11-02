@@ -1,3 +1,6 @@
+import { withOwner, RequestError } from "@/lib/routeSecurity";
+import { limitedJson, limitedFormData } from "@/lib/limitedRequestBody";
+import { enforceRequestLimit } from "@/lib/auth/requestLimits";
 import { NextRequest, NextResponse } from "next/server";
 import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
 import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
@@ -208,7 +211,7 @@ async function parseIncoming(req: NextRequest): Promise<{
   const ct = req.headers.get("content-type") || "";
 
   if (ct.includes("multipart/form-data")) {
-    const fd = await req.formData();
+    const fd = await limitedFormData(req, 20 * 1024 * 1024);
     const prompt = String(fd.get("prompt") || "").trim();
     const workflowId = String(fd.get("workflowId") || "").trim();
     const styleLabel = String(fd.get("styleLabel") || "").trim();
@@ -228,7 +231,7 @@ async function parseIncoming(req: NextRequest): Promise<{
     };
   }
 
-  const body = await req.json().catch(() => ({}));
+  const body = await limitedJson(req, 1024 * 1024);
   const prompt = typeof body?.prompt === "string" ? body.prompt.trim() : "";
   const workflowId = typeof body?.workflowId === "string" ? body.workflowId.trim() : "";
   const styleLabel = typeof body?.styleLabel === "string" ? body.styleLabel.trim() : "";
@@ -437,8 +440,8 @@ function readMessageContent(data: Record<string, unknown> | null) {
   return "";
 }
 
-async function postJsonWithTimeout(payload: Record<string, unknown>, timeoutMs: number) {
-  const res = await qwenDurableFetch("/api/chat", payload, { timeoutMs });
+async function postJsonWithTimeout(payload: Record<string, unknown>, timeoutMs: number, ownerKey: string) {
+  const res = await qwenDurableFetch("/api/chat", payload, { timeoutMs, ownerKey });
 
     const raw = await res.text();
     let data: Record<string, unknown> | null = null;
@@ -451,7 +454,8 @@ async function postJsonWithTimeout(payload: Record<string, unknown>, timeoutMs: 
   return { ok: res.ok, status: res.status, raw, data };
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withOwner(async (req, owner) => {
+  enforceRequestLimit("ai-utility", owner.ownerKey, 30, 60_000);
   try {
     const { prompt, workflowId, styleLabel, stylePrompt, mode, imageBase64 } = await parseIncoming(req);
     if (!prompt) {
@@ -503,7 +507,7 @@ export async function POST(req: NextRequest) {
     let formattedPrompt = "";
 
     try {
-      const response = await postJsonWithTimeout(payload, timeoutMs);
+      const response = await postJsonWithTimeout(payload, timeoutMs, owner.ownerKey);
       if (!response.ok) {
         const message = String(response.data?.error || response.raw || "Create Prompt Format failed");
         throw new Error(message);
@@ -549,4 +553,4 @@ export async function POST(req: NextRequest) {
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message || "Create Prompt Format failed" }, { status: 500 });
   }
-}
+});

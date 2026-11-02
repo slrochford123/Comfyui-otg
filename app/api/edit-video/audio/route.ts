@@ -3,8 +3,10 @@ import { mediaGpuRoutingEnabled, requestedMediaGpu } from "@/lib/mediaGpuRouting
 import fsp from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { receiveMediaUpload } from "@/lib/streamingUpload";
+import { limitedJson } from "@/lib/limitedRequestBody";
+import { requireStorageHeadroom } from "@/lib/storageAdmission";
+import { RequestError, assertSameOrigin } from "@/lib/routeSecurity";
 import { NextRequest, NextResponse } from "next/server";
 import { requireSessionUser, SessionInvalidError } from "@/lib/sessionUser";
 import { OTG_DATA_ROOT, safeSegment } from "@/lib/paths";
@@ -16,8 +18,8 @@ import { newVoiceId, voicesSamplesDir, upsertVoice, getVoiceById, resolveVoicesF
 import { loadCharacter, listCharacters, createCharacter, updateCharacterVoiceSelection } from "@/lib/characters/store";
 import { audioLibrary } from "@/lib/audioEditing/library";
 import { createVoiceCharacterAvatar } from "@/lib/audioEditing/characterVoice";
-import { createSession, readSession, publicSession, updateSession, sessionRoot, appendAssets,
-  assetFile, listSessions, containedFile } from "@/lib/audioEditing/store";
+import { createSession, readSession, publicSession, updateSession, sessionRoot,
+  assetFile, listSessions, containedFile, ownerRoot, reserveSessionStart, saveSession } from "@/lib/audioEditing/store";
 import { assertAudioTestEnabled, capabilities, sessionJobs, startJob, cancelJob } from "@/lib/audioEditing/jobs";
 import { aukInstruction, numberWithin, type AudioGpu, type AudioAsset, STEMS } from "@/lib/audioEditing/contracts";
 
@@ -42,24 +44,29 @@ async function sha256(file: string) {
   return hash.digest("hex");
 }
 async function importFile(owner: string, id: string, input: string, name: string, origin: string, hints:Pick<AudioAsset,"suggestedLane"|"license">={}) {
+  const release = reserveSessionStart(owner, id);
   const root = path.join(sessionRoot(owner,id),"inputs");
-  fs.mkdirSync(root,{recursive:true,mode:0o700});
   const file = path.join(root,`${crypto.randomUUID()}${path.extname(name).toLowerCase() || ".wav"}`);
-  await fsp.copyFile(input,file,fs.constants.COPYFILE_EXCL);
-  const asset: AudioAsset = {id:crypto.randomUUID(),file,name:name.slice(0,160),origin,...await metadata(file),sha256:await sha256(file),...hints};
-  if (asset.kind==="video" && readSession(owner,id).sourceId) throw Error("Create a new session to change the source video; existing edits were retained.");
-  const session = appendAssets(owner,id,[asset]);
-  if (asset.kind === "video") {
-    if (session.sourceId) throw Error("Create a new session to change the source video; existing edits were retained.");
-    session.sourceId = asset.id;
-    const {saveSession} = await import("@/lib/audioEditing/store");
+  let committed = false;
+  try {
+    requireStorageHeadroom(root, fs.statSync(input).size * 2);
+    const session = readSession(owner,id);
+    const info = await metadata(input);
+    if (info.kind === "video" && session.sourceId) throw Error("Create a new session to change the source video; existing edits were retained.");
+    fs.mkdirSync(root,{recursive:true,mode:0o700});
+    await fsp.copyFile(input,file,fs.constants.COPYFILE_EXCL);
+    const asset: AudioAsset = {id:crypto.randomUUID(),file,name:name.slice(0,160),origin,...info,sha256:await sha256(file),...hints};
+    session.assets.push(asset);
+    if (asset.kind === "video") session.sourceId = asset.id;
     saveSession(owner,session);
-  }
-  return asset;
+    committed = true;
+    return asset;
+  } finally { if (!committed) await fsp.unlink(file).catch(() => {}); release(); }
 }
 export async function GET(request: NextRequest) {
   try {
     const user = await requireSessionUser(request);
+    if (!request.nextUrl.searchParams.size) return json({ok:true,sessions:listSessions(user.ownerKey),capabilities:capabilities()});
     assertAudioTestEnabled();
     if (request.nextUrl.searchParams.get("library")==="1") return json({ok:true,items:audioLibrary(user.ownerKey).map(item=>({...item,file:""}))});
     const id = request.nextUrl.searchParams.get("session");
@@ -79,30 +86,25 @@ export const HEAD = GET;
 export async function POST(request: NextRequest) {
   try {
     const user = await requireSessionUser(request);
+    assertSameOrigin(request);
     assertAudioTestEnabled();
     const owner = user.ownerKey;
     if (request.headers.get("content-type")?.includes("multipart/form-data")) {
-      const form = await request.formData();
-      const id = String(form.get("session")||"");
-      const session = readSession(owner,id);
-      const file = form.get("file");
-      if (!(file instanceof File)||file.size<=0||file.size>750*1024*1024) throw Error("Choose a media file up to 750 MB.");
-      if (!/\.(mp4|webm|mov|mkv|wav|mp3|flac|ogg|m4a|aac)$/i.test(file.name)) throw Error("Choose a supported audio or video file.");
-      if (session.sourceId && /\.(mp4|mov|mkv)$/i.test(file.name)) throw Error("Start a new session to replace the source video.");
-      const uploadRoot = path.join(sessionRoot(owner,id),"uploads");
-      fs.mkdirSync(uploadRoot,{recursive:true,mode:0o700});
-      const upload = path.join(uploadRoot,`${crypto.randomUUID()}${path.extname(file.name).toLowerCase()}`);
-      await pipeline(Readable.fromWeb(file.stream() as never),fs.createWriteStream(upload,{flags:"wx",mode:0o600}));
-      const asset = await importFile(owner,id,upload,file.name,"upload");
-      const job = asset.kind === "video" ? await startJob(owner,id,"import",asset.file,{},"cpu") : null;
-      return json({ok:true,session:publicSession(readSession(owner,id)),assetId:asset.id,job});
+      const upload = await receiveMediaUpload(request, path.join(ownerRoot(owner), "upload-staging"));
+      try {
+        const id = upload.fields.session;
+        readSession(owner,id);
+        const asset = await importFile(owner,id,upload.file,upload.filename,"upload");
+        const job = asset.kind === "video" ? await startJob(owner,id,"import",asset.file,{},"cpu") : null;
+        return json({ok:true,session:publicSession(readSession(owner,id)),assetId:asset.id,job});
+      } finally { await upload.cleanup(); }
     }
-    const body = await request.json();
+    const body = await limitedJson(request);
     if (body.action === "new") return json({ok:true,session:publicSession(createSession(owner))});
     const id = String(body.sessionId || "");
     const session = readSession(owner,id);
-    const params = body.params && typeof body.params==="object" ? body.params : {};
-    if (body.action === "update") return json({ok:true,session:publicSession(updateSession(owner,id,body.edit,Number(body.revision)))});
+    const params: Record<string, unknown> = body.params && typeof body.params==="object" && !Array.isArray(body.params) ? body.params as Record<string, unknown> : {};
+    if (body.action === "update") return json({ok:true,session:publicSession(updateSession(owner,id,body.edit as Record<string, unknown>,Number(body.revision)))});
     if (body.action === "cancel") return json({ok:true,job:cancelJob(owner,id,String(body.jobId))});
     if (body.action === "prepare-dialogue") {
       if(!session.sourceId)throw Error("Select a video before opening dialogue replacement.");
@@ -115,7 +117,7 @@ export async function POST(request: NextRequest) {
     }
     if (body.action === "import-gallery") {
       const {sources} = await getGallerySourcesForRequest(request);
-      const item = resolveGalleryItemByName({sources,name:String(body.name||""),scopeHint:body.scope||null});
+      const item = resolveGalleryItemByName({sources,name:String(body.name||""),scopeHint:typeof body.scope === "string" ? body.scope : null});
       if (!item) throw Error("That gallery item is not available to this account.");
       const asset = await importFile(owner,id,item.path,item.name,"gallery");
       const job = asset.kind==="video"?await startJob(owner,id,"import",asset.file,{},"cpu"):null;
@@ -175,7 +177,7 @@ export async function POST(request: NextRequest) {
     }
     if (body.action !== "process") throw Error("Unknown audio operation.");
     const gpu: AudioGpu | "auto" = body.gpu === "cpu" ? "cpu" : mediaGpuRoutingEnabled()
-      ? await requestedMediaGpu(body.gpu) : ["rtx3090","rtx5060ti","cpu"].includes(body.gpu)?body.gpu:"cpu";
+      ? await requestedMediaGpu(body.gpu) : ["rtx3090","rtx5060ti","cpu"].includes(String(body.gpu))?body.gpu as AudioGpu:"cpu";
     let source = body.assetId ? assetFile(owner,session,String(body.assetId)) : undefined;
     const operation = String(body.operation);
     if (["import","separate","mix"].includes(operation)) {
@@ -249,6 +251,7 @@ export async function POST(request: NextRequest) {
   } catch(error) { return failure(error); }
 }
 function failure(error: unknown) {
+  if (error instanceof RequestError) return json({ok:false,error:error.message},error.status);
   if (error instanceof SessionInvalidError) return json({ok:false,error:"Sign in to use Audio Editing."},401);
   const message = error instanceof Error ? error.message : "Audio operation failed.";
   return json({ok:false,error:message},/not found|not available to this account/.test(message)?404:/another tab|busy|active or queued|starting an operation|active operation/.test(message)?409:400);

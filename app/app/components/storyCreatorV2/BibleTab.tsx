@@ -5,7 +5,7 @@ import { ConflictReviewPanel, type StoryConflictAction } from "./ConflictReviewP
 
 type StoryBibleEntity = { id: string; entityType: string; name: string; sourceRole: "user" | "assistant" | "system" };
 type StoryBibleFactStatus = "canon" | "suggestion" | "unknown";
-type StoryBibleFact = { id: string; subjectEntityId: string | null; predicate: string; valueText: string; objectEntityId: string | null; canonStatus: StoryBibleFactStatus; sourceRole: "user" | "assistant" | "system" };
+type StoryBibleFact = { id: string; subjectEntityId: string | null; predicate: string; valueText: string; objectEntityId: string | null; canonStatus: StoryBibleFactStatus; sourceRole: "user" | "assistant" | "system"; sourceMessageId?: string | null };
 type StoryConflict = { id: string; factId: string; conflictsWithFactId: string; summary: string; status: "open" | "resolved" | "dismissed"; sourceRole: "user" | "assistant" | "system" };
 
 type Props = {
@@ -23,6 +23,7 @@ type Props = {
   onCheckConflicts: () => void;
   onUpdateFact: (factId: string, valueText: string) => void;
   onDeleteFact: (factId: string) => void;
+  onShowSource?: (messageId: string) => void;
   onResolveConflict: (conflictId: string, action: StoryConflictAction, valueText?: string) => void;
 };
 
@@ -98,6 +99,9 @@ export function BibleTab(props: Props) {
                         <button type="button" onClick={() => { if (window.confirm("Delete this story detail?")) props.onDeleteFact(fact.id); }} className="rounded-[10px] border border-red-300/20 px-3 py-2 text-xs font-black text-red-100/75">Delete</button>
                       </>}
                       <span className="ml-auto self-center text-[10px] uppercase tracking-[0.1em] text-white/28">Source: {fact.sourceRole}</span>
+                      {fact.sourceMessageId && props.onShowSource ? <button type="button"
+                        onClick={() => props.onShowSource?.(fact.sourceMessageId!)}
+                        className="min-h-10 rounded-lg border border-white/10 px-3 text-xs text-cyan-100/75">View source</button> : null}
                     </div>
                   </article>;
                 })}

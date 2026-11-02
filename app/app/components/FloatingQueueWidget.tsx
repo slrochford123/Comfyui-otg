@@ -96,17 +96,8 @@ export function FloatingQueueWidget() {
 
     const sorted = [...typedItems].sort((a, b) => rank(a.status) - rank(b.status));
 
-    let runningSeen = false;
-    return sorted.map((it) => {
-      if (it.status === 'running') {
-        if (!runningSeen) {
-          runningSeen = true;
-          return it;
-        }
-        return { ...it, status: 'queued' as const };
-      }
-      return it;
-    });
+    // Different physical GPUs can run simultaneously; preserve real states.
+    return sorted;
   }, [typedItems]);
 
   const activeCount = useMemo(

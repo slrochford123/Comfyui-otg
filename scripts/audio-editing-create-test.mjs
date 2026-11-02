@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
 const base=process.env.AUDIO_QA_BASE||"http://100.75.162.64:3308";
 const gpu=process.env.AUDIO_QA_GPU||"rtx3090";
-assert(/^http:\/\/100\.75\.162\.64:(3308|3001)$/.test(base));
+assert(/^http:\/\/(100\.75\.162\.64|127\.0\.0\.1):(3308|3001)$/.test(base));
 assert(["rtx3090","rtx5060ti"].includes(gpu));
 const runtime="/home/shawn-rochford/AI/runtime/test/unified-audio";
 const proof=path.join(runtime,"evidence",`create-api-${gpu}-${Date.now()}`);
@@ -37,6 +37,7 @@ async function upload(session,file,name){
 }
 async function generate(session,operation,params,assetId){
   const data=await post({action:"process",sessionId:session.id,operation,params,assetId,gpu});
+  if(operation==='speech')assert.equal(data.job.gpu,gpu,'Speech must execute on the explicitly selected GPU');
   return wait(session.id,data.job.id);
 }
 async function download(session,asset,name){
@@ -53,7 +54,7 @@ function inspect(file,duration,frames){
 try{
   await request("/api/auth/signup",{username,email:username+"@test.invalid",password});
   const login=await fetch(base+"/api/auth/login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({identifier:username,password})});
-  assert(login.ok);cookie=login.headers.getSetCookie().map(c=>c.split(";")[0]).join("; ");assert(cookie);
+  assert(login.ok);cookie=login.headers.getSetCookie().map(c=>c.split(";")[0]).join("; ")+`; otg_media_gpu_v1=${gpu}`;assert(cookie);
   let session=(await post({action:"new"})).session;report.sessions.push(session.id);
   session=await upload(session,path.join(runtime,"evidence/native/conversation-30s.mp4"),"qa-30s.mp4");
   session=await generate(session,"speech",{text:"Welcome home. It is wonderful to see you.",description:"A warm, clear adult female voice, calm and natural.",variant:"flash",seconds:5,seed:2424});

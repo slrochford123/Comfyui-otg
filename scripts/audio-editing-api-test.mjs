@@ -11,7 +11,7 @@ const gpu=process.env.AUDIO_QA_GPU||"rtx3090";
 const engine=process.env.AUDIO_QA_SEPARATOR||"tiger";
 assert(["rtx3090","rtx5060ti"].includes(gpu));
 assert(["tiger","bandit"].includes(engine));
-if(!/^http:\/\/100\.75\.162\.64:(3308|3001)$/.test(base))throw Error("Only the explicit local TEST application is permitted.");
+if(!/^http:\/\/(100\.75\.162\.64|127\.0\.0\.1):(3308|3001)$/.test(base))throw Error("Only the explicit local TEST application is permitted.");
 const root="/home/shawn-rochford/AI/runtime/test/unified-audio/evidence";
 const proof=path.join(root,`api-${Date.now()}`);fs.mkdirSync(proof,{recursive:true,mode:0o700});
 const report={startedAt:new Date().toISOString(),base,gpu,checks:[],sessions:[]};
@@ -28,7 +28,7 @@ async function account(){
 }
 const user=await account();
 async function post(body){
-  const res=await fetch(`${base}/api/edit-video/audio`,{method:"POST",headers:{cookie:user.cookie,"content-type":"application/json"},body:JSON.stringify(body)});
+  const res=await fetch(`${base}/api/edit-video/audio`,{method:"POST",headers:{cookie:user.cookie+'; otg_media_gpu_v1='+gpu,"content-type":"application/json"},body:JSON.stringify(body)});
   const data=await res.json();assert(res.ok&&data.ok,data.error||`HTTP ${res.status}`);return data;
 }
 async function get(id){
@@ -52,6 +52,7 @@ try{
   session=(await wait(session.id,result.job.id)).session;
   report.checks.push({name:"authenticated multipart video upload and source extraction",passed:true});
   const separated=await post({action:"process",sessionId:session.id,operation:"separate",params:{engine},gpu});
+  assert.equal(separated.job.gpu,gpu,'The test must actually use its requested GPU, not Automatic routing');
   session=(await wait(session.id,separated.job.id)).session;
   assert(Object.keys(session.stems).length===3,"Missing real AI stems");
   report.checks.push({name:`actual TEST API to ${gpu} ${engine} inference and persisted stems`,passed:true});

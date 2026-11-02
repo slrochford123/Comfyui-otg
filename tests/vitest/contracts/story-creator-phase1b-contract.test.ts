@@ -101,22 +101,18 @@ describe("Story Creator Phase 1B", () => {
     );
   });
 
-  it("reuses the existing strict-canon Story Helper profile", () => {
+  it("uses durable Story replies with the existing owner-scoped strict-canon provider", () => {
     const source = read(
       "app/app/components/StoryCreatorPanel.tsx",
     );
 
-    expect(source).toContain(
-      "/api/ollama-ai/chat",
-    );
-
-    expect(source).toContain(
-      '"x-otg-ai-assistance-profile"',
-    );
-
-    expect(source).toContain(
-      '"story-helper"',
-    );
+    expect(source).toContain("useStoryConversation");
+    const client = read("app/app/components/storyCreatorV2/useStoryConversation.ts");
+    expect(client).toContain("/api/story-creator/turns");
+    const executor = read("lib/storyCreator/conversationExecutor.ts");
+    expect(executor).toContain('turn.purpose === "writing" ? "story-write" : "story-helper"');
+    expect(executor).toContain("buildStoryDirectorProjectContext");
+    expect(executor).toContain("completeStoryConversationTurn");
   });
 
   it("keeps the completed Story Memory and Assets integrations", () => {

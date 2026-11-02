@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.19",
+  "current": "2.20",
   "builds": [
     {
       "version": "2",
@@ -121,6 +121,12 @@
       "date": "2026-11-01",
       "summary": "TEST-only H3 Smart References & First Frame: shared optional timeline anchor and mixed image/RefMod selection, installed-node capability gating and shared reference-count validation. Owner generation acceptance pending; not approved for GitHub or PROD.",
       "sourceBaseCommit": "8c975b15faa66171b505675dc44837f510ee9187"
+    },
+    {
+      "version": "2.20",
+      "date": "2026-11-01",
+      "summary": "Story Creator conversation recovery, canon-aware memory and local Paradee/Kokoro/experimental Bark talkback; OpenAI connection and durable usage accounting; authenticated media and administrator safeguards; bounded uploads, H3 navigation and safely admitted audio-memory recovery. TEST release qualification; production promotion is separately guarded.",
+      "sourceBaseCommit": "462db7ed8796580a3f99760facc8baa826fbc1cd"
     }
   ]
 }

@@ -15,6 +15,7 @@ type SpeechInputButtonProps = {
   appendMode?: "append" | "replace";
   currentText?: string;
   onStatus?: (message: string) => void;
+  onRecordingStart?: () => void;
 };
 
 type RecordingDraft = {
@@ -72,11 +73,13 @@ export default function SpeechInputButton({
   vocabularyKeywords,
   language = "en",
   onStatus,
+  onRecordingStart,
 }: SpeechInputButtonProps) {
   const [state, setState] = React.useState<"idle" | "listening" | "review" | "processing" | "error">("idle");
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
   const [recording, setRecording] = React.useState<RecordingDraft | null>(null);
   const [needsHttps,setNeedsHttps]=React.useState(false);
+  const [originalTranscript, setOriginalTranscript] = React.useState("");
   React.useEffect(()=>{setNeedsHttps(window.isSecureContext===false);},[]);
   const recorderRef = React.useRef<MediaRecorder | null>(null);
   const streamRef = React.useRef<MediaStream | null>(null);
@@ -85,6 +88,7 @@ export default function SpeechInputButton({
   const startedAtRef = React.useRef(0);
   const elapsedTimerRef = React.useRef<number | null>(null);
   const objectUrlRef = React.useRef("");
+  const transcriptionAbortRef = React.useRef<AbortController | null>(null);
 
   const stopTracks = React.useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -109,6 +113,7 @@ export default function SpeechInputButton({
 
   React.useEffect(
     () => () => {
+      transcriptionAbortRef.current?.abort();
       clearElapsedTimer();
       clearRecording();
       stopTracks();
@@ -117,6 +122,8 @@ export default function SpeechInputButton({
   );
 
   async function transcribe(draft: RecordingDraft) {
+    const controller = new AbortController();
+    transcriptionAbortRef.current = controller;
     const body = new FormData();
     const mimeType = draft.mimeType || draft.blob.type || "audio/webm";
     const fileName = `otg-${Date.now()}.${audioExtension(mimeType)}`;
@@ -136,13 +143,16 @@ export default function SpeechInputButton({
       method: "POST",
       body,
       credentials: "include",
+      signal: controller.signal,
     });
     const json = await response.json().catch(() => ({}));
     if (!response.ok || !json?.ok) {
       throw new Error(String(json?.detail || json?.error || "Transcription failed."));
     }
     const text = String(json?.text || "").trim();
+    if (controller.signal.aborted) throw new Error("Transcription cancelled. The recording and edited draft are unchanged.");
     if (!text) throw new Error("No transcript returned.");
+    setOriginalTranscript(json.translatedInto === "en" ? String(json.originalText || "") : "");
     return text;
   }
 
@@ -286,6 +296,7 @@ export default function SpeechInputButton({
 
     try {
       resetForNewRecording();
+      onRecordingStart?.();
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = preferredAudioMimeType();
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
@@ -339,6 +350,8 @@ export default function SpeechInputButton({
           Cancel
         </button>
       ) : null}
+      {state === "processing" ? <button type="button" className={className}
+        onClick={() => transcriptionAbortRef.current?.abort()}>Cancel transcription</button> : null}
       {state === "listening" ? (
         <span className="rounded-full border border-red-300/25 bg-red-400/10 px-2 py-1 text-xs font-black text-red-50">
           Recording {formatElapsed(elapsedSeconds)}
@@ -366,6 +379,10 @@ export default function SpeechInputButton({
           </button>
         </span>
       ) : null}
+      {originalTranscript ? <details className="basis-full rounded-lg border border-white/10 p-2 text-xs text-white/65">
+        <summary className="min-h-10 cursor-pointer py-2">Original-language transcript</summary>
+        <span className="block whitespace-pre-wrap py-2">{originalTranscript}</span>
+      </details> : null}
     </span>
   );
 }

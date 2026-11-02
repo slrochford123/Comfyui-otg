@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import { version as softwareVersion } from "@/package.json";
+import packageInfo from "@/package.json";
 import { BUILD_VERSION, BUILD_HISTORY, type BuildIdentity } from "@/lib/buildHistory";
 
 /** Only public release identity is returned. Never serialize the full provenance record. */
 export function readBuildIdentity(root = process.cwd()): BuildIdentity {
+  const softwareVersion = packageInfo.version;
   const identity: BuildIdentity = { buildVersion: BUILD_VERSION, softwareVersion, commit: null, releaseName: null, builtAt: null, history: BUILD_HISTORY };
   let fd: number | undefined;
   try {

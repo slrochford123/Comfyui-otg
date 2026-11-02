@@ -16,21 +16,21 @@ afterAll(()=>{vi.unstubAllEnvs();fs.rmSync(root,{recursive:true,force:true});});
 describe("Production audio requires a session and owner-readable input before processing",()=>{
   for(const route of ["analyze-clip","dub-preview"]){
     it(`${route}: rejects unauthenticated input before parsing it`,async()=>{
-      const module=route==="analyze-clip"?await import("@/app/api/production/audio/analyze-clip/route"):await import("@/app/api/production/audio/dub-preview/route");
-      const r=await module.POST(new NextRequest(`http://localhost/api/production/audio/${route}`,{method:"POST"}));
+      const handler=route==="analyze-clip"?await import("@/app/api/production/audio/analyze-clip/route"):await import("@/app/api/production/audio/dub-preview/route");
+      const r=await handler.POST(new NextRequest(`http://localhost/api/production/audio/${route}`,{method:"POST"}));
       expect(r.status).toBe(401);expect(await r.json()).toEqual({ok:false,error:"Unauthorized"});
     });
     it(`${route}: rejects a fictional other owner's file without invoking a model`,async()=>{
       state.authenticated=true;
-      const module=route==="analyze-clip"?await import("@/app/api/production/audio/analyze-clip/route"):await import("@/app/api/production/audio/dub-preview/route");
-      const r=await module.POST(new NextRequest(`http://localhost/api/production/audio/${route}`,{method:"POST",body:JSON.stringify({sourcePath:path.join(root,"foreign-qa.mp4"),voiceMappings:[{voiceId:"qa",voicePath:"qa-reference.wav"}]}),headers:{"content-type":"application/json"}}));
+      const handler=route==="analyze-clip"?await import("@/app/api/production/audio/analyze-clip/route"):await import("@/app/api/production/audio/dub-preview/route");
+      const r=await handler.POST(new NextRequest(`http://localhost/api/production/audio/${route}`,{method:"POST",body:JSON.stringify({sourcePath:path.join(root,"foreign-qa.mp4"),voiceMappings:[{voiceId:"qa",voicePath:"qa-reference.wav"}]}),headers:{"content-type":"application/json"}}));
       expect(r.status).toBe(404);expect(await r.text()).not.toContain(root);
     });
     it(`${route}: never fetches an arbitrary source URL`,async()=>{
       state.authenticated=true;const fetcher=vi.spyOn(globalThis,"fetch");
       try{
-        const module=route==="analyze-clip"?await import("@/app/api/production/audio/analyze-clip/route"):await import("@/app/api/production/audio/dub-preview/route");
-        const r=await module.POST(new NextRequest(`http://localhost/api/production/audio/${route}`,{method:"POST",body:JSON.stringify({sourceUrl:"https://example.invalid/private.mp4",voiceMappings:[{voiceId:"qa",voicePath:"qa-reference.wav"}]}),headers:{"content-type":"application/json"}}));
+        const handler=route==="analyze-clip"?await import("@/app/api/production/audio/analyze-clip/route"):await import("@/app/api/production/audio/dub-preview/route");
+        const r=await handler.POST(new NextRequest(`http://localhost/api/production/audio/${route}`,{method:"POST",body:JSON.stringify({sourceUrl:"https://example.invalid/private.mp4",voiceMappings:[{voiceId:"qa",voicePath:"qa-reference.wav"}]}),headers:{"content-type":"application/json"}}));
         expect(r.status).toBe(404);expect(fetcher).not.toHaveBeenCalled();
       }finally{fetcher.mockRestore();}
     });

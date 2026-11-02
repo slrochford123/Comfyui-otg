@@ -1,6 +1,7 @@
 "use client";
 
 import StoryCreatorPanel from "./components/StoryCreatorPanel";
+import OpenAIConnectionPanel from "./components/OpenAIConnectionPanel";
 
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -2528,6 +2529,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       if (
         tabParam === "gethelp" ||
         tabParam === "generate" ||
+        tabParam === "h3" ||
         tabParam === "machine" ||
         tabParam === "storyboard" ||
         tabParam === "characters" ||
@@ -8014,6 +8016,8 @@ async function handleAskAi() {
                   <div className="rounded-[18px] border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/72">{passwordMessage}</div>
                 ) : null}
               </Card>
+
+              <OpenAIConnectionPanel />
 
               <Card title="Comfy connection">
                 {videoBackendStatus ? (

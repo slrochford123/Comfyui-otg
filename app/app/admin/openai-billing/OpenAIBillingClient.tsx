@@ -2,17 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { adminStyles as styles } from "../AdminShell";
+import OpenAIConnectionPanel from "../../components/OpenAIConnectionPanel";
 
 type BillingSnapshot = {
   ok: true;
   environment: string;
+  reservations?: Array<{status: "pending" | "unknown"; requests: number; reservedUsd: number}>;
   overview: {
     totalPrepaidCreditsUsd: number;
     totalApiSpendingUsd: number;
     localEstimatedSpendingUsd: number;
     officialReportedSpendingUsd: number | null;
     officialLocalDiscrepancyUsd: number | null;
-    estimatedPrepaidBalanceUsd: number;
+    estimatedPrepaidBalanceUsd: number | null;
     consumedPercent: number;
     todaySpendingUsd: number;
     monthSpendingUsd: number;
@@ -308,7 +310,8 @@ export default function OpenAIBillingClient() {
   }
 
   const overview = snapshot?.overview;
-  const warningThreshold = overview?.lowBalanceWarningsUsd.find((value) => overview.estimatedPrepaidBalanceUsd <= value);
+  const warningThreshold = overview?.estimatedPrepaidBalanceUsd != null
+    ? overview.lowBalanceWarningsUsd.find((value) => overview.estimatedPrepaidBalanceUsd! <= value) : undefined;
 
   return (
     <main className={styles.shell}>
@@ -331,12 +334,13 @@ export default function OpenAIBillingClient() {
             >
               Open official OpenAI portal
             </a>
-            <button className="otg-authShowBtn" style={{ padding: "10px 14px" }} onClick={() => post("sync", { days: 30 })} disabled={Boolean(busy) || !snapshot?.official.configured || !snapshot?.official.enabled}>
+            <button className="otg-authShowBtn" style={{ padding: "10px 14px" }} onClick={() => post("sync", { days: 30 })} disabled={Boolean(busy) || !snapshot?.official.configured}>
               {busy === "sync" ? "Syncing..." : "Sync Official Costs"}
             </button>
           </div>
         </div>
 
+        <OpenAIConnectionPanel />
         {error ? <p role="alert" style={{ color: "var(--color-error)" }}>{error}</p> : null}
         {loading && !snapshot ? <p className="otg-help">Loading OpenAI billing...</p> : null}
 
@@ -369,6 +373,7 @@ export default function OpenAIBillingClient() {
                   Recorded credits and estimated balance are manually tracked in SLR Studios. Official Costs, when synchronized, are OpenAI-reported spending; they are not an OpenAI-verified prepaid balance.
                 </p>
                 {overview.warning ? <p style={{ color: "#fde68a", marginTop: 8 }}>{overview.warning}</p> : null}
+                {snapshot.reservations?.map(item => <p key={item.status} className="otg-help">{item.requests} {item.status === "pending" ? "in-flight" : "unconfirmed"} request(s): {usd(item.reservedUsd)} reserved against the rolling daily limit. This is a precautionary estimate, not a confirmed charge.</p>)}
                 {warningThreshold != null ? <p style={{ color: "#fde68a", marginTop: 8 }}>Estimated balance is below the {usd(warningThreshold)} warning threshold.</p> : null}
               </div>
             </section>

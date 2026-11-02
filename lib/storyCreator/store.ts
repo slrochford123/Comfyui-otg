@@ -798,6 +798,47 @@ function db() {
         ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS story_conversation_turns (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES story_projects(id) ON DELETE CASCADE,
+      owner_key TEXT NOT NULL,
+      source_message_id TEXT NOT NULL REFERENCES story_messages(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed','cancelled','interrupted')),
+      purpose TEXT NOT NULL DEFAULT 'conversation',
+      writing_mode TEXT NOT NULL DEFAULT '',
+      partial_text TEXT NOT NULL DEFAULT '',
+      assistant_message_id TEXT REFERENCES story_messages(id) ON DELETE SET NULL,
+      error TEXT NOT NULL DEFAULT '',
+      cancel_requested INTEGER NOT NULL DEFAULT 0,
+      memory_summary TEXT NOT NULL DEFAULT '',
+      memory_fact_ids_json TEXT NOT NULL DEFAULT '[]',
+      lease_token TEXT NOT NULL DEFAULT '',
+      lease_until INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(project_id, owner_key, source_message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_story_conversation_active
+      ON story_conversation_turns(project_id, owner_key, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS story_speech_jobs (
+      id TEXT PRIMARY KEY,
+      owner_key TEXT NOT NULL,
+      project_id TEXT NOT NULL REFERENCES story_projects(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES story_messages(id) ON DELETE CASCADE,
+      cache_key TEXT NOT NULL,
+      engine TEXT NOT NULL,
+      voice TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed','cancelled')),
+      error TEXT NOT NULL DEFAULT '',
+      cancel_requested INTEGER NOT NULL DEFAULT 0,
+      duration_seconds REAL NOT NULL DEFAULT 0,
+      lease_until INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(owner_key, project_id, cache_key)
+    );
+
     CREATE TABLE IF NOT EXISTS story_embeddings (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -1115,6 +1156,11 @@ function migrateStoryCreatorSchema(database: Database.Database) {
     .all() as Array<{ name?: unknown }>;
   if (!factColumns.some((column) => String(column.name) === "deleted_at")) {
     database.exec("ALTER TABLE story_facts ADD COLUMN deleted_at INTEGER");
+  }
+  const turnColumns = new Set((database.prepare("PRAGMA table_info(story_conversation_turns)").all() as Array<{ name: string }>).map((column) => column.name));
+  for (const [name, declaration] of Object.entries({ memory_summary: "TEXT NOT NULL DEFAULT ''",
+    memory_fact_ids_json: "TEXT NOT NULL DEFAULT '[]'", purpose: "TEXT NOT NULL DEFAULT 'conversation'", writing_mode: "TEXT NOT NULL DEFAULT ''" })) {
+    if (!turnColumns.has(name)) database.exec(`ALTER TABLE story_conversation_turns ADD COLUMN ${name} ${declaration}`);
   }
 }
 
@@ -2165,6 +2211,397 @@ export function addStoryCreatorMessage(input: {
   write();
 
   return message;
+}
+
+export type StoryConversationTurn = {
+  id: string;
+  projectId: string;
+  ownerKey: string;
+  sourceMessageId: string;
+  purpose: "conversation" | "writing";
+  writingMode: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+  partialText: string;
+  assistantMessageId: string | null;
+  error: string;
+  cancelRequested: boolean;
+  memorySummary: string;
+  memoryCanUndo: boolean;
+  createdAt: number;
+  updatedAt: number;
+};
+
+function rowToConversationTurn(row: any): StoryConversationTurn {
+  return {
+    id: row.id, projectId: row.project_id, ownerKey: row.owner_key,
+    sourceMessageId: row.source_message_id, status: row.status,
+    purpose: row.purpose || "conversation", writingMode: row.writing_mode || "",
+    partialText: row.partial_text, assistantMessageId: row.assistant_message_id,
+    error: row.error, cancelRequested: Boolean(row.cancel_requested),
+    memorySummary: row.memory_summary || "",
+    memoryCanUndo: String(row.memory_fact_ids_json || "[]") !== "[]",
+    createdAt: row.created_at, updatedAt: row.updated_at,
+  };
+}
+
+export function getStoryConversationTurn(input: {
+  ownerKey: string; projectId: string; turnId?: string; sourceMessageId?: string;
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  const row = db().prepare(`SELECT * FROM story_conversation_turns
+    WHERE owner_key=? AND project_id=?
+      AND (?='' OR id=?) AND (?='' OR source_message_id=?)
+    ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(
+      ownerKey, projectId, input.turnId || "", input.turnId || "",
+      input.sourceMessageId || "", input.sourceMessageId || "",
+    ) as any;
+  if (!row) return null;
+  // A lost process must not silently replay a potentially billable request.
+  if (["queued", "running"].includes(row.status) && row.lease_until < Date.now()) {
+    db().prepare(`UPDATE story_conversation_turns SET status='interrupted',
+      error=?, updated_at=? WHERE id=? AND owner_key=? AND project_id=?
+      AND status IN ('queued','running') AND lease_until<?`).run(
+        "This reply was interrupted. Your message is saved. No automatic resubmission was made.",
+        Date.now(), row.id, ownerKey, projectId, Date.now(),
+      );
+    return getStoryConversationTurn({ ...input, turnId: row.id });
+  }
+  return rowToConversationTurn(row);
+}
+
+export function createStoryConversationTurn(input: {
+  ownerKey: string; projectId: string; sourceMessageId: string;
+  purpose?: "conversation" | "writing"; writingMode?: string;
+}) {
+  const source = getStoryCreatorMessage({ ...input, messageId: input.sourceMessageId });
+  if (source.role !== "user") throw storyBibleError("STORY_TURN_SOURCE_INVALID", "A reply requires a saved user message.");
+  return db().transaction(() => {
+    const existing = getStoryConversationTurn(input);
+    if (existing) return { turn: existing, created: false };
+    db().prepare(`UPDATE story_conversation_turns SET status='interrupted',error=?,updated_at=?
+      WHERE owner_key=? AND project_id=? AND status IN ('queued','running') AND lease_until<?`)
+      .run("This reply was interrupted. Your message is saved; no automatic resubmission was made.", Date.now(), source.ownerKey, source.projectId, Date.now());
+    const active = db().prepare(`SELECT id FROM story_conversation_turns
+      WHERE owner_key=? AND project_id=? AND status IN ('queued','running') LIMIT 1`)
+      .get(source.ownerKey, source.projectId);
+    if (active) throw storyBibleError("STORY_TURN_BUSY", "A reply is already in progress in this story.");
+    const now = Date.now();
+    const id = randomUUID();
+    db().prepare(`INSERT INTO story_conversation_turns
+      (id,project_id,owner_key,source_message_id,status,purpose,writing_mode,lease_until,created_at,updated_at)
+      VALUES (?,?,?,?,'queued',?,?,?,?,?)`).run(id, source.projectId, source.ownerKey,
+        source.id, input.purpose || "conversation", input.writingMode || "", now + 180_000, now, now);
+    return { turn: getStoryConversationTurn({ ...input, turnId: id })!, created: true };
+  })();
+}
+
+export function claimStoryConversationTurn(input: {
+  ownerKey: string; projectId: string; turnId: string; leaseToken: string;
+}) {
+  getStoryConversationTurn(input); // Verify ownership before mutation.
+  return Boolean(db().prepare(`UPDATE story_conversation_turns SET status='running',
+    lease_token=?,lease_until=?,updated_at=? WHERE id=? AND owner_key=? AND project_id=?
+    AND status='queued' AND cancel_requested=0`).run(input.leaseToken, Date.now() + 180_000,
+      Date.now(), input.turnId, input.ownerKey, input.projectId).changes);
+}
+
+export function updateStoryConversationTurn(input: {
+  ownerKey: string; projectId: string; turnId: string; leaseToken: string;
+  partialText?: string; terminal?: "failed" | "cancelled"; error?: string;
+}) {
+  getStoryConversationTurn(input);
+  db().prepare(`UPDATE story_conversation_turns SET partial_text=COALESCE(?,partial_text),
+    status=COALESCE(?,status),error=?,lease_until=?,updated_at=?
+    WHERE id=? AND owner_key=? AND project_id=? AND lease_token=? AND status='running'`)
+    .run(input.partialText?.slice(0, 100_000) ?? null, input.terminal ?? null, input.error || "",
+      Date.now() + 180_000, Date.now(), input.turnId, input.ownerKey, input.projectId, input.leaseToken);
+  return getStoryConversationTurn(input);
+}
+
+export function completeStoryConversationTurn(input: {
+  ownerKey: string; projectId: string; turnId: string; leaseToken: string; content: string;
+  memory?: Pick<Parameters<typeof applyStoryExtraction>[0], "entities" | "facts">;
+}) {
+  return db().transaction(() => {
+    const row = db().prepare(`SELECT * FROM story_conversation_turns
+      WHERE id=? AND owner_key=? AND project_id=? AND lease_token=? AND status='running'
+      AND cancel_requested=0`).get(input.turnId, input.ownerKey, input.projectId, input.leaseToken) as any;
+    if (!row) return null;
+    const message = addStoryCreatorMessage({ ...input, role: "assistant" });
+    let savedFactIds: string[] = [];
+    let memorySummary = "Conversation saved. No new unambiguous story facts were detected.";
+    if (input.memory?.facts?.length) {
+      try {
+        const result = db().transaction(() => {
+          const previousIds = new Set(listStoryBibleFacts(input).map((fact) => fact.id));
+          const extracted = applyStoryExtraction({ ...input.memory, ownerKey: input.ownerKey,
+            projectId: input.projectId, sourceMessageId: row.source_message_id, autoCanonizeNonconflicting: true });
+          recordStoryMemoryReview({ ownerKey: input.ownerKey, projectId: input.projectId,
+            throughMessageId: row.source_message_id, messageIds: [row.source_message_id],
+            factsSaved: extracted.factsAutoSaved, conflictsFound: extracted.conflictsCreated });
+          savedFactIds = listStoryBibleFacts(input).filter((fact) => fact.canonStatus === "canon"
+            && fact.sourceMessageId === row.source_message_id && !previousIds.has(fact.id)).map((fact) => fact.id);
+          return extracted;
+        })();
+        memorySummary = `Memory updated: ${result.factsAutoSaved} new details saved; ${result.conflictsCreated} conflicts need your decision.`;
+      } catch { memorySummary = "Reply saved. Automatic memory update could not finish; review Story Details when convenient."; }
+    }
+    db().prepare(`UPDATE story_conversation_turns SET status='completed',partial_text=?,
+      assistant_message_id=?,memory_summary=?,memory_fact_ids_json=?,updated_at=? WHERE id=? AND owner_key=? AND project_id=?`)
+      .run(message.content, message.id, memorySummary, JSON.stringify(savedFactIds), Date.now(), input.turnId, input.ownerKey, input.projectId);
+    return message;
+  })();
+}
+
+export function cancelStoryConversationTurn(input: {
+  ownerKey: string; projectId: string; turnId: string;
+}) {
+  getStoryConversationTurn(input);
+  db().prepare(`UPDATE story_conversation_turns SET cancel_requested=1,
+    status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,updated_at=?
+    WHERE id=? AND owner_key=? AND project_id=? AND status IN ('queued','running')`)
+    .run(Date.now(), input.turnId, input.ownerKey, input.projectId);
+  return getStoryConversationTurn(input);
+}
+
+export function undoStoryConversationMemory(input: { ownerKey: string; projectId: string; turnId: string }) {
+  const turn = getStoryConversationTurn(input);
+  if (!turn || turn.status !== "completed") throw new Error("Only a completed reply's automatic memory can be undone.");
+  return db().transaction(() => {
+    const row = db().prepare("SELECT memory_fact_ids_json FROM story_conversation_turns WHERE id=? AND owner_key=? AND project_id=?")
+      .get(input.turnId, input.ownerKey, input.projectId) as any;
+    const ids = new Set<string>(JSON.parse(row.memory_fact_ids_json));
+    const current = listStoryBibleFacts(input).filter((fact) => ids.has(fact.id) && fact.canonStatus === "canon");
+    for (const fact of current) deleteStoryCanonFact({ ...input, factId: fact.id });
+    db().prepare("UPDATE story_conversation_turns SET memory_fact_ids_json='[]',memory_summary=?,updated_at=? WHERE id=? AND owner_key=? AND project_id=?")
+      .run(`Undid ${current.length} automatically saved details. Later edits and your conversation were retained.`, Date.now(), input.turnId, input.ownerKey, input.projectId);
+    return getStoryConversationTurn(input);
+  })();
+}
+
+export function listStoryWritingTurns(input: { ownerKey: string; projectId: string }) {
+  const scope = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  const rows = db().prepare(`SELECT * FROM story_conversation_turns WHERE owner_key=? AND project_id=?
+    AND purpose='writing' AND status='completed' AND assistant_message_id IS NOT NULL
+    ORDER BY created_at DESC,rowid DESC LIMIT 20`).all(scope.ownerKey, scope.projectId) as any[];
+  return rows.map((row) => ({ turn: rowToConversationTurn(row), message: getStoryCreatorMessage({ ...scope, messageId: row.assistant_message_id }) }));
+}
+
+export type StorySpeechJob = {
+  id: string; ownerKey: string; projectId: string; messageId: string; cacheKey: string;
+  engine: import("./speechVoices").StoryLocalSpeechEngine; voice: import("./speechVoices").StorySpeechVoice;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  error: string; cancelRequested: boolean; durationSeconds: number; createdAt: number; updatedAt: number;
+};
+function rowToStorySpeech(row: any): StorySpeechJob {
+  return { id: row.id, ownerKey: row.owner_key, projectId: row.project_id, messageId: row.message_id,
+    cacheKey: row.cache_key, engine: row.engine, voice: row.voice, status: row.status,
+    error: row.error, cancelRequested: Boolean(row.cancel_requested), durationSeconds: row.duration_seconds,
+    createdAt: row.created_at, updatedAt: row.updated_at };
+}
+export function getStorySpeechJob(input: { ownerKey: string; projectId: string; jobId: string }) {
+  const scope = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  const row = db().prepare("SELECT * FROM story_speech_jobs WHERE id=? AND owner_key=? AND project_id=?")
+    .get(input.jobId, scope.ownerKey, scope.projectId) as any;
+  if (!row) return null;
+  if (["queued", "running"].includes(row.status) && row.lease_until < Date.now()) {
+    db().prepare("UPDATE story_speech_jobs SET status='failed',error=?,updated_at=? WHERE id=? AND owner_key=? AND project_id=? AND lease_until<?")
+      .run("Local speech worker was interrupted. Retry playback; the written reply is unchanged.", Date.now(), row.id, scope.ownerKey, scope.projectId, Date.now());
+    return getStorySpeechJob(input);
+  }
+  return rowToStorySpeech(row);
+}
+export function createStorySpeechJob(input: {
+  ownerKey: string; projectId: string; messageId: string; cacheKey: string;
+  engine: import("./speechVoices").StoryLocalSpeechEngine; voice: import("./speechVoices").StorySpeechVoice; retry?: boolean;
+}) {
+  const message = getStoryCreatorMessage(input);
+  if (message.role !== "assistant") throw new Error("Read-aloud requires a saved assistant response.");
+  return db().transaction(() => {
+    const requireQueueCapacity = () => {
+      const count = db().prepare("SELECT COUNT(*) AS n FROM story_speech_jobs WHERE owner_key=? AND status IN ('queued','running') AND lease_until>?")
+        .get(input.ownerKey, Date.now()) as { n: number };
+      if (count.n >= 2) throw new Error("Two speech jobs are already queued. Finish or cancel one first.");
+    };
+    const previous = db().prepare("SELECT id FROM story_speech_jobs WHERE owner_key=? AND project_id=? AND cache_key=?")
+      .get(input.ownerKey, input.projectId, input.cacheKey) as any;
+    if (previous) {
+      let job = getStorySpeechJob({ ...input, jobId: previous.id })!;
+      const retryable = input.retry && ["failed", "cancelled"].includes(job.status);
+      if (retryable) {
+        requireQueueCapacity();
+        db().prepare("UPDATE story_speech_jobs SET status='queued',error='',cancel_requested=0,lease_until=?,updated_at=? WHERE id=? AND owner_key=? AND project_id=?")
+          .run(Date.now() + 900_000, Date.now(), job.id, input.ownerKey, input.projectId);
+        job = getStorySpeechJob({ ...input, jobId: previous.id })!;
+      }
+      return { job, created: Boolean(retryable) };
+    }
+    requireQueueCapacity();
+    const id = randomUUID(), now = Date.now();
+    db().prepare(`INSERT INTO story_speech_jobs
+      (id,owner_key,project_id,message_id,cache_key,engine,voice,status,lease_until,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,'queued',?,?,?)`).run(id, input.ownerKey, input.projectId, input.messageId,
+        input.cacheKey, input.engine, input.voice, now + 900_000, now, now);
+    return { job: getStorySpeechJob({ ...input, jobId: id })!, created: true };
+  })();
+}
+export function claimStorySpeechJob(input: { ownerKey: string; projectId: string; jobId: string }) {
+  getStorySpeechJob(input);
+  return Boolean(db().prepare("UPDATE story_speech_jobs SET status='running',lease_until=?,updated_at=? WHERE id=? AND owner_key=? AND project_id=? AND status='queued' AND cancel_requested=0")
+    .run(Date.now() + 900_000, Date.now(), input.jobId, input.ownerKey, input.projectId).changes);
+}
+export function finishStorySpeechJob(input: {
+  ownerKey: string; projectId: string; jobId: string;
+  status: "completed" | "failed" | "cancelled"; durationSeconds?: number; error?: string;
+}) {
+  getStorySpeechJob(input);
+  db().prepare("UPDATE story_speech_jobs SET status=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE ? END,duration_seconds=?,error=?,updated_at=? WHERE id=? AND owner_key=? AND project_id=? AND status='running'")
+    .run(input.status, input.durationSeconds || 0, input.error || "", Date.now(), input.jobId, input.ownerKey, input.projectId);
+  return getStorySpeechJob(input);
+}
+export function cancelStorySpeechJob(input: { ownerKey: string; projectId: string; jobId: string }) {
+  getStorySpeechJob(input);
+  db().prepare("UPDATE story_speech_jobs SET cancel_requested=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,updated_at=? WHERE id=? AND owner_key=? AND project_id=? AND status IN ('queued','running')")
+    .run(Date.now(), input.jobId, input.ownerKey, input.projectId);
+  return getStorySpeechJob(input);
+}
+
+export function invalidateStorySpeechCache(input: { ownerKey: string; projectId: string; jobId: string }) {
+  getStorySpeechJob(input);
+  db().prepare("UPDATE story_speech_jobs SET status='failed',error=?,updated_at=? WHERE id=? AND owner_key=? AND project_id=? AND status='completed'")
+    .run("Cached speech is missing. Retry voice to generate it again locally.", Date.now(), input.jobId, input.ownerKey, input.projectId);
+  return getStorySpeechJob(input);
+}
+
+export type StoryRetrievalChunk = {
+  id: string; content: string; chunkType: "recall-canon" | "recall-history";
+  sourceMessageId: string | null; updatedAt: number;
+};
+
+/** Archive exclusions are deliberately conservative: never revive deleted/rejected source details. */
+export function listStoryRecallSources(input: { ownerKey: string; projectId: string }) {
+  const scope = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  const messages = db().prepare(`SELECT m.* FROM story_messages m
+    WHERE m.owner_key=? AND m.project_id=? AND m.role='user'
+    AND NOT EXISTS (
+      SELECT 1 FROM story_facts f WHERE f.owner_key=m.owner_key AND f.project_id=m.project_id
+      AND f.source_message_id=m.id AND (
+        f.deleted_at IS NOT NULL OR EXISTS (
+          SELECT 1 FROM story_facts newer WHERE newer.supersedes_fact_id=f.id
+            AND newer.owner_key=f.owner_key AND newer.project_id=f.project_id
+        ) OR EXISTS (
+          SELECT 1 FROM story_fact_reviews r WHERE r.proposal_fact_id=f.id
+            AND r.owner_key=f.owner_key AND r.project_id=f.project_id
+        )
+      )
+    ) ORDER BY m.created_at DESC,m.rowid DESC LIMIT 2000`).all(scope.ownerKey, scope.projectId);
+  return { facts: listStoryBibleFacts(scope).filter((fact) => fact.canonStatus === "canon"),
+    entities: listStoryBibleEntities(scope), messages: messages.map(rowToMessage) };
+}
+
+function ensureStoryRecallFts() {
+  try {
+    db().exec(`CREATE VIRTUAL TABLE IF NOT EXISTS story_recall_fts USING fts5(
+      content,chunk_id UNINDEXED,project_id UNINDEXED,owner_key UNINDEXED);
+      CREATE TRIGGER IF NOT EXISTS story_recall_delete AFTER DELETE ON story_memory_chunks BEGIN
+        DELETE FROM story_recall_fts WHERE rowid=old.rowid;
+      END;`);
+    return true;
+  } catch { return false; } // Missing FTS must not make the existing story store unavailable.
+}
+
+export function syncStoryRecallChunks(input: {
+  ownerKey: string; projectId: string; chunks: StoryRetrievalChunk[];
+}) {
+  const scope = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  const hasFts = ensureStoryRecallFts();
+  db().transaction(() => {
+    const existing = db().prepare(`SELECT id,content,chunk_type,source_message_id,updated_at FROM story_memory_chunks
+      WHERE owner_key=? AND project_id=? AND chunk_type IN ('recall-canon','recall-history')`)
+      .all(scope.ownerKey, scope.projectId) as any[];
+    const previous = new Map(existing.map((chunk) => [chunk.id, chunk]));
+    const keep = new Set(input.chunks.map((chunk) => chunk.id));
+    for (const old of existing) if (!keep.has(old.id)) {
+      db().prepare("DELETE FROM story_memory_chunks WHERE id=? AND owner_key=? AND project_id=?")
+        .run(old.id, scope.ownerKey, scope.projectId);
+    }
+    for (const chunk of input.chunks) {
+      const old = previous.get(chunk.id);
+      const changed = !old || old.content !== chunk.content || old.source_message_id !== chunk.sourceMessageId;
+      if (changed && old) db().prepare("DELETE FROM story_embeddings WHERE memory_chunk_id=? AND owner_key=? AND project_id=?")
+        .run(chunk.id, scope.ownerKey, scope.projectId);
+      if (changed) db().prepare(`INSERT INTO story_memory_chunks
+        (id,project_id,owner_key,chunk_type,content,source_role,source_message_id,created_at,updated_at)
+        VALUES (?,?,?,?,?,'user',?,?,?) ON CONFLICT(id) DO UPDATE SET
+        content=excluded.content,source_message_id=excluded.source_message_id,updated_at=excluded.updated_at
+        WHERE story_memory_chunks.owner_key=excluded.owner_key AND story_memory_chunks.project_id=excluded.project_id`)
+        .run(chunk.id, scope.projectId, scope.ownerKey, chunk.chunkType, chunk.content,
+          chunk.sourceMessageId, Date.now(), Date.now());
+      if (hasFts) {
+        const memoryRow = db().prepare("SELECT rowid AS docid FROM story_memory_chunks WHERE id=? AND owner_key=? AND project_id=?")
+          .get(chunk.id, scope.ownerKey, scope.projectId) as { docid: number };
+        const indexed = db().prepare("SELECT rowid FROM story_recall_fts WHERE rowid=? AND chunk_id=? AND owner_key=? AND project_id=?")
+          .get(memoryRow.docid, chunk.id, scope.ownerKey, scope.projectId);
+        if (changed || !indexed) {
+          db().prepare("DELETE FROM story_recall_fts WHERE rowid=?").run(memoryRow.docid);
+          db().prepare("INSERT INTO story_recall_fts(rowid,content,chunk_id,project_id,owner_key) VALUES (?,?,?,?,?)")
+            .run(memoryRow.docid, chunk.content, chunk.id, scope.projectId, scope.ownerKey);
+        }
+      }
+    }
+  })();
+  return { hasFts, chunks: listStoryRecallChunks(scope) };
+}
+
+export function listStoryRecallChunks(input: { ownerKey: string; projectId: string }): StoryRetrievalChunk[] {
+  const scope = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  return (db().prepare(`SELECT * FROM story_memory_chunks WHERE owner_key=? AND project_id=?
+    AND chunk_type IN ('recall-canon','recall-history') ORDER BY updated_at DESC,rowid DESC`)
+    .all(scope.ownerKey, scope.projectId) as any[]).map((row) => ({ id: row.id, content: row.content,
+      chunkType: row.chunk_type, sourceMessageId: row.source_message_id, updatedAt: row.updated_at }));
+}
+
+export function searchStoryRecallFts(input: { ownerKey: string; projectId: string; query: string }) {
+  const scope = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  if (!ensureStoryRecallFts()) return [] as string[];
+  const terms = Array.from(new Set(input.query.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []))
+    .filter((word) => !["the", "and", "what", "who", "how", "was", "this", "that", "story"].includes(word)).slice(0, 24);
+  if (!terms.length) return [] as string[];
+  const match = terms.map((term) => `"${term.replace(/"/g, '""')}"`).join(" OR ");
+  return (db().prepare(`SELECT chunk_id FROM story_recall_fts
+    WHERE story_recall_fts MATCH ? AND owner_key=? AND project_id=?
+    ORDER BY bm25(story_recall_fts) LIMIT 80`).all(match, scope.ownerKey, scope.projectId) as any[])
+    .map((row) => String(row.chunk_id));
+}
+
+export function storyRecallEmbeddings(input: { ownerKey: string; projectId: string; model: string }) {
+  const scope = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  return (db().prepare(`SELECT e.memory_chunk_id,e.embedding_json FROM story_embeddings e
+    JOIN story_memory_chunks c ON c.id=e.memory_chunk_id AND c.owner_key=e.owner_key AND c.project_id=e.project_id
+    WHERE e.owner_key=? AND e.project_id=? AND e.model=? AND e.updated_at>=c.updated_at`)
+    .all(scope.ownerKey, scope.projectId, input.model) as any[]).map((row) => ({
+      id: String(row.memory_chunk_id), vector: JSON.parse(row.embedding_json) as number[],
+    }));
+}
+
+export function saveStoryRecallEmbedding(input: {
+  ownerKey: string; projectId: string; chunkId: string; model: string; vector: number[];
+  expectedContent?: string;
+}) {
+  const scope = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  if (input.vector.length !== 384 || input.vector.some((n) => !Number.isFinite(n))) throw new Error("Invalid story embedding.");
+  const chunk = db().prepare("SELECT id,content FROM story_memory_chunks WHERE id=? AND owner_key=? AND project_id=?")
+    .get(input.chunkId, scope.ownerKey, scope.projectId) as { id: string; content: string } | undefined;
+  if (!chunk) throw new Error("Story memory chunk is unavailable.");
+  if (input.expectedContent !== undefined && chunk.content !== input.expectedContent) throw new Error("Story memory changed during indexing.");
+  const previous = db().prepare("SELECT id FROM story_embeddings WHERE memory_chunk_id=? AND owner_key=? AND project_id=? AND model=? LIMIT 1")
+    .get(input.chunkId, scope.ownerKey, scope.projectId, input.model) as any;
+  if (previous) db().prepare("UPDATE story_embeddings SET embedding_json=?,updated_at=? WHERE id=? AND owner_key=? AND project_id=?")
+    .run(JSON.stringify(input.vector), Date.now(), previous.id, scope.ownerKey, scope.projectId);
+  else db().prepare(`INSERT INTO story_embeddings
+    (id,project_id,owner_key,memory_chunk_id,provider,model,embedding_json,created_at,updated_at)
+    VALUES (?,?,?,?,'local-cpu',?,?,?,?)`).run(randomUUID(), scope.projectId, scope.ownerKey,
+      input.chunkId, input.model, JSON.stringify(input.vector), Date.now(), Date.now());
 }
 
 function assertStoryBibleSourceMessage(input: {

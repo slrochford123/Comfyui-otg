@@ -1,3 +1,6 @@
+import { withOwner, RequestError } from "@/lib/routeSecurity";
+import { limitedJson, limitedFormData } from "@/lib/limitedRequestBody";
+import { enforceRequestLimit } from "@/lib/auth/requestLimits";
 import { NextRequest, NextResponse } from "next/server";
 import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
 import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
@@ -74,9 +77,10 @@ function buildPlanPrompt(args: {
   );
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withOwner(async (req, owner) => {
+  enforceRequestLimit("ai-utility", owner.ownerKey, 30, 60_000);
   try {
-    const body = await req.json().catch(() => null);
+    const body = await limitedJson(req, 1024 * 1024);
     if (!body || typeof body !== "object") return NextResponse.json({ error: "Request must be JSON" }, { status: 415 });
 
     const transcript = String((body as any).transcript || "").trim();
@@ -105,7 +109,7 @@ export async function POST(req: NextRequest) {
       },
     };
 
-    const r = await qwenDurableFetch("/api/generate", payload, { timeoutMs });
+    const r = await qwenDurableFetch("/api/generate", payload, { timeoutMs, ownerKey: owner.ownerKey, signal: req.signal });
 
     const raw = await r.text();
     let data: any = null;
@@ -125,6 +129,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ plan }, { headers: { "Cache-Control": "no-store" } });
   } catch (e: any) {
+    if (e instanceof RequestError) throw e;
     return NextResponse.json({ error: e?.message || String(e) }, { status: Number(e?.status) || 500 });
   }
-}
+});

@@ -1,3 +1,7 @@
+import { limitedJson } from "@/lib/limitedRequestBody";
+import { RequestError } from "@/lib/requestError";
+import { enforceRequestLimit } from "@/lib/auth/requestLimits";
+import { isReservedAdminIdentifier } from "@/lib/auth/admin";
 import { NextResponse } from "next/server";
 import { db, ensureMigrations } from "@/lib/auth/db";
 import bcrypt from "bcryptjs";
@@ -7,13 +11,16 @@ export async function POST(req: Request) {
   try {
     ensureMigrations();
 
-    const { email, username, password } = await req.json();
-    if (!email || !username || !password) {
+    const { email, username, password } = await limitedJson(req, 16 * 1024);
+    enforceRequestLimit("signup-total", "all", 60, 60 * 60 * 1000);
+    if (typeof email !== "string" || typeof username !== "string" || typeof password !== "string" || !email || !username || !password || email.length > 254 || Buffer.byteLength(password) > 72) {
       return NextResponse.json({ ok: false, error: "Missing fields." }, { status: 400 });
     }
 
     const e = String(email).trim().toLowerCase();
     const u = String(username).trim().toLowerCase();
+    if (isReservedAdminIdentifier(e) || isReservedAdminIdentifier(u)) throw new RequestError("This account identifier is reserved. Contact the administrator.", 409);
+    enforceRequestLimit("signup", e, 5, 15 * 60 * 1000);
 
     if (!/^\S+@\S+\.\S+$/.test(e)) {
       return NextResponse.json({ ok: false, error: "Invalid email." }, { status: 400 });
@@ -50,6 +57,6 @@ export async function POST(req: Request) {
         { status: 409 }
       );
     }
-    return NextResponse.json({ ok: false, error: "Signup failed." }, { status: 500 });
+    return NextResponse.json({ ok: false, error: e instanceof RequestError ? e.message : "Signup failed." }, { status: e instanceof RequestError ? e.status : 500 });
   }
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { readStoryDirectorStream } from "./storyDirectorStream";
+import { useStoryConversation } from "./storyCreatorV2/useStoryConversation";
+import { useStoryDraft } from "./storyCreatorV2/useStoryDraft";
 import {
   useCallback,
   useEffect,
@@ -239,9 +240,18 @@ export default function StoryCreatorPanel({
     useState<StoryMessage[]>([]);
   const [messagesLoading, setMessagesLoading] =
     useState(false);
-  const [chatBusy, setChatBusy] = useState(false);
+  const [chatSubmitting, setChatBusy] = useState(false);
   const [chatError, setChatError] = useState("");
-  const [draft, setDraft] = useState("");
+  const conversation = useStoryConversation({
+    projectId: selectedProjectId,
+    ownerKey,
+    onMessage: (message) => setStoryMessages((current) => {
+      if (current.some((item) => item.id === message.id)) return current;
+      return [...current, message].sort((left, right) => left.createdAt - right.createdAt);
+    }),
+  });
+  const chatBusy = chatSubmitting || conversation.pending;
+  const [draft, setDraft] = useStoryDraft(ownerKey, selectedProjectId, "ideas");
   const [storyExtractionBusy, setStoryExtractionBusy] =
     useState(false);
   const [storyExtractionError, setStoryExtractionError] =
@@ -293,9 +303,12 @@ export default function StoryCreatorPanel({
   const [
     storyWritingInstruction,
     setStoryWritingInstruction,
-  ] = useState("");
+  ] = useStoryDraft(ownerKey, selectedProjectId, "writing-direction");
   const [storyWritingDraft, setStoryWritingDraft] =
     useState("");
+  const [storyWritingVersions, setStoryWritingVersions] = useState<Array<{ id: string; label: string; content: string }>>([]);
+  const writingLoadedProjectRef = useRef("");
+  const writingDisplayedTurnRef = useRef("");
   const [storyWritingBusy, setStoryWritingBusy] =
     useState(false);
   const [storyWritingError, setStoryWritingError] =
@@ -448,6 +461,10 @@ export default function StoryCreatorPanel({
           return current;
         }
 
+        try {
+          const remembered = window.localStorage.getItem(`otg:story:last-project:v1:${ownerKey}`);
+          if (remembered && nextProjects.some((project: StoryProject) => project.id === remembered)) return remembered;
+        } catch { /* storage is optional */ }
         return "";
       });
 
@@ -1071,6 +1088,50 @@ export default function StoryCreatorPanel({
     loadStoryProductionPlan,
     loadStoryUsage,
   ]);
+
+  const memoryRefreshRef = useRef("");
+  useEffect(() => {
+    const turn = conversation.turn;
+    if (!turn || turn.status !== "completed" || turn.projectId !== selectedProjectId) return;
+    const revision = `${turn.id}:${turn.memorySummary}`;
+    if (memoryRefreshRef.current === revision) return;
+    memoryRefreshRef.current = revision;
+    void loadStoryBible(selectedProjectId);
+    void loadStoryConflicts(selectedProjectId);
+    void loadStoryUsage(selectedProjectId);
+  }, [conversation.turn, selectedProjectId, loadStoryBible, loadStoryConflicts, loadStoryUsage]);
+
+  useEffect(() => {
+    if (!ownerKey || !selectedProjectId) return;
+    try { window.localStorage.setItem(`otg:story:last-project:v1:${ownerKey}`, selectedProjectId); }
+    catch { /* optional UI preference */ }
+  }, [ownerKey, selectedProjectId]);
+
+  useEffect(() => {
+    if (!selectedProjectId) { setStoryWritingVersions([]); writingLoadedProjectRef.current = ""; return; }
+    const controller = new AbortController();
+    const projectId = selectedProjectId;
+    void fetch(`/api/story-creator/turns?projectId=${encodeURIComponent(projectId)}&view=writing`,
+      { credentials: "include", cache: "no-store", signal: controller.signal }).then(async response => {
+        if (!response.ok) return;
+        const data = await response.json();
+        if (controller.signal.aborted) return;
+        const versions = (Array.isArray(data.versions) ? data.versions : []).map((version: any) => ({
+          id: String(version.turn.id), label: `${version.turn.writingMode} · ${formatDate(version.turn.createdAt)}`,
+          content: String(version.message.content),
+        }));
+        setStoryWritingVersions(versions);
+        const changedProject = writingLoadedProjectRef.current !== projectId;
+        const completedWriting = conversation.turn?.purpose === "writing" && conversation.turn.status === "completed"
+          && conversation.turn.id !== writingDisplayedTurnRef.current;
+        if (changedProject || completedWriting) {
+          setStoryWritingDraft(versions[0]?.content || "");
+          writingLoadedProjectRef.current = projectId;
+          writingDisplayedTurnRef.current = versions[0]?.id || "";
+        }
+      }).catch(() => {});
+    return () => controller.abort();
+  }, [selectedProjectId, conversation.turn?.assistantMessageId]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({
@@ -1712,47 +1773,19 @@ export default function StoryCreatorPanel({
   async function generateStoryWriting() {
     const project = selectedProject;
 
-    if (!project || storyWritingBusy) {
+    if (!project || storyWritingBusy || chatBusy || storySendLockRef.current) {
       return;
     }
 
     setStoryWritingBusy(true);
+    storySendLockRef.current = true;
     setStoryWritingError("");
 
     try {
-      const response = await fetch(
-        "/api/story-creator/write",
-        {
-          method: "POST",
-          cache: "no-store",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            projectId: project.id,
-            mode: storyWritingMode,
-            instruction: storyWritingInstruction,
-          }),
-        },
-      );
-
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(
-          errorMessage(
-            data,
-            "Could not generate Story writing.",
-          ),
-        );
-      }
-
-      setStoryWritingDraft(
-        typeof data?.draft === "string"
-          ? data.draft
-          : "",
-      );
+      const source = await persistMessage(project.id, "user",
+        `Write a ${storyWritingMode} for this story.\n${storyWritingInstruction.trim() || "Develop a draft using established story details. Any new creative details remain proposals, not canon."}`);
+      setStoryMessages((current) => [...current, source]);
+      await conversation.start(source.id, { purpose: "writing", writingMode: storyWritingMode });
     } catch (error) {
       setStoryWritingError(
         error instanceof Error
@@ -1761,6 +1794,7 @@ export default function StoryCreatorPanel({
       );
     } finally {
       setStoryWritingBusy(false);
+      storySendLockRef.current = false;
     }
   }
 
@@ -2088,7 +2122,6 @@ export default function StoryCreatorPanel({
       return;
     }
     storySendLockRef.current = true;
-    let transientAssistantId = "";
     setChatBusy(true);
     setChatError("");
     setStoryDirectorVisualActionError("");
@@ -2163,105 +2196,9 @@ export default function StoryCreatorPanel({
         return;
       }
 
-      const aiResponse = await fetch(
-        "/api/ollama-ai/chat",
-        {
-          method: "POST",
-          cache: "no-store",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            "Accept": "application/x-ndjson, application/json",
-            "x-otg-ai-assistance": "1",
-            "x-otg-ai-assistance-profile":
-              "story-helper",
-            "x-otg-story-creator": "1",
-            "x-otg-stream": "1",
-          },
-          body: JSON.stringify({
-            projectId: project.id,
-            messages: history.map(
-              ({ role, content }) => ({
-                role,
-                content,
-              }),
-            ),
-          }),
-        },
-      );
-
-      if (!aiResponse.ok) {
-        const aiData = await aiResponse.json().catch(() => ({}));
-        throw new Error(
-          errorMessage(
-            aiData,
-            "Story Director could not respond.",
-          ),
-        );
-      }
-
-      let responseText = "";
-      if ((aiResponse.headers.get("content-type") || "").includes("application/x-ndjson")) {
-        transientAssistantId = `story-stream-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        const transientMessage: StoryMessage = {
-          id: transientAssistantId,
-          projectId: project.id,
-          ownerKey,
-          role: "assistant",
-          content: "",
-          createdAt: Date.now(),
-        };
-        setStoryMessages([...history, transientMessage]);
-        responseText = await readStoryDirectorStream(aiResponse, (text) => {
-          setStoryMessages((current) => current.map((message) =>
-            message.id === transientAssistantId
-              ? { ...message, content: text }
-              : message));
-        });
-      } else {
-        const aiData = await aiResponse.json().catch(() => ({}));
-        responseText = assistantText(aiData);
-      }
-
-      if (!responseText) {
-        throw new Error(
-          "Story Director returned an empty response.",
-        );
-      }
-
-      const savedAssistantMessage =
-        await persistMessage(
-          project.id,
-          "assistant",
-          responseText,
-        );
-
-      setStoryMessages([
-        ...history,
-        savedAssistantMessage,
-      ]);
-
-      setProjects((current) =>
-        current.map((item) =>
-          item.id === project.id
-            ? {
-                ...item,
-                updatedAt:
-                  savedAssistantMessage.createdAt,
-              }
-            : item,
-        ),
-      );
-
-      setStoryExtractionNotice(
-        "Story Director turn saved. Story Memory extraction is deferred until you explicitly authorize Review Story Details.",
-      );
+      await conversation.start(savedUserMessage.id);
+      setStoryExtractionNotice("Your message is saved. The reply will remain available when you return.");
     } catch (error) {
-      if (transientAssistantId) {
-        setStoryMessages((current) =>
-          current.filter((message) => message.id !== transientAssistantId),
-        );
-      }
       if (isStoryVisualActionInstruction(content)) {
         setStoryDirectorVisualActionError(
           error instanceof Error
@@ -2334,12 +2271,16 @@ export default function StoryCreatorPanel({
             storyMessages={storyMessages}
             messagesLoading={messagesLoading}
             chatBusy={chatBusy}
-            chatError={chatError}
+            chatError={chatError || conversation.error}
+            activeReply={conversation.pending ? conversation.turn : null}
+            onCancelReply={() => void conversation.cancel()}
             draft={draft}
             chatEndRef={chatEndRef}
             extractionBusy={storyExtractionBusy}
             extractionError={storyExtractionError}
-            extractionNotice={storyExtractionNotice}
+            extractionNotice={conversation.turn?.memorySummary || storyExtractionNotice}
+            canUndoMemory={conversation.turn?.memoryCanUndo}
+            onUndoMemory={() => void conversation.undoMemory()}
             extractionSourceMessageId={
               extractionSourceMessageId
             }
@@ -2390,6 +2331,11 @@ export default function StoryCreatorPanel({
             onBack={() => setStoryMemoryOpen(false)}
             onUpdateFact={(factId, valueText) => void changeStoryCanonFact("update-fact", factId, valueText)}
             onDeleteFact={(factId) => void changeStoryCanonFact("delete-fact", factId)}
+            onShowSource={(messageId) => {
+              setStoryMemoryOpen(false);
+              setStoryCreatorStage("ideas");
+              window.setTimeout(() => document.getElementById(`story-message-${messageId}`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 100);
+            }}
             onResolveConflict={(
               conflictId,
               action,
@@ -2462,7 +2408,9 @@ export default function StoryCreatorPanel({
                 mode={storyWritingMode}
                 instruction={storyWritingInstruction}
                 draft={storyWritingDraft}
-                busy={storyWritingBusy}
+                busy={storyWritingBusy || chatBusy}
+                versions={storyWritingVersions}
+                onSelectVersion={(content) => setStoryWritingDraft(content)}
                 error={storyWritingError}
                 onModeChange={setStoryWritingMode}
                 onInstructionChange={

@@ -1,3 +1,7 @@
+import { limitedJson } from "@/lib/limitedRequestBody";
+import { RequestError } from "@/lib/requestError";
+import { enforceRequestLimit } from "@/lib/auth/requestLimits";
+import { isReservedAdminIdentifier } from "@/lib/auth/admin";
 import { NextResponse } from "next/server";
 import { db, ensureMigrations } from "@/lib/auth/db";
 import bcrypt from "bcryptjs";
@@ -26,16 +30,17 @@ export async function POST(req: Request) {
   try {
     ensureMigrations();
 
-    const body = await req.json().catch(() => ({}));
+    const body = await limitedJson(req, 16 * 1024);
     const identifier = body?.identifier ?? body?.email;
     const password = body?.password;
 
-    if (!identifier || !password) {
+    if (typeof identifier !== "string" || typeof password !== "string" || !identifier || !password || identifier.length > 254 || Buffer.byteLength(password) > 72) {
       return NextResponse.json({ ok: false, error: "Email/username and password required." }, { status: 400 });
     }
 
     const idNorm = normalizeIdentifier(identifier);
     const looksEmail = idNorm.includes("@");
+    enforceRequestLimit("login", idNorm, 12, 15 * 60 * 1000);
 
     let user = (looksEmail
       ? db.prepare("SELECT id, email, username, password_hash FROM users WHERE LOWER(email) = ?").get(idNorm)
@@ -47,7 +52,7 @@ export async function POST(req: Request) {
       // Keep this enabled only for TEST data directories.
       const allowAny = String(process.env.OTG_ALLOW_ANY_USER || "").toLowerCase() === "true";
 
-      if (allowAny) {
+      if (allowAny && process.env.OTG_ENV === "test" && !isReservedAdminIdentifier(idNorm)) {
         const email = looksEmail ? idNorm : `${makeSafeUsername(idNorm)}@test.local`;
         const username = looksEmail ? makeSafeUsername(idNorm.split("@")[0]) : makeSafeUsername(idNorm);
 
@@ -117,6 +122,6 @@ export async function POST(req: Request) {
     res.cookies.set(cookieName(), token, authCookieOptions(req));
     return res;
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? "Login failed." }, { status: 500 });
+    return NextResponse.json({ ok: false, error: e instanceof RequestError ? e.message : "Login failed." }, { status: e instanceof RequestError ? e.status : 500, headers: e instanceof RequestError && e.status === 429 ? { "Retry-After": "900" } : {} });
   }
 }

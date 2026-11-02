@@ -8,7 +8,7 @@ type Asset = AudioAsset & { url?: string };
 type Session = Omit<AudioSession,"assets"> & { assets: Asset[] };
 type Edit = Pick<AudioSession,"title"|"tracks"|"clips"|"ducking">;
 type Job = {id:string;status:string;stage:string;progress:number;elapsedSeconds?:number;assets?:Asset[]};
-type Capabilities = {engines:Record<string,Partial<Record<AudioGpu,boolean>>>;notes:string[];pythonReady:boolean};
+type Capabilities = {enabled?:boolean;engines:Record<string,Partial<Record<AudioGpu,boolean>>>;notes:string[];pythonReady:boolean};
 type Character = {id:string;name:string;referenceAudioPath?:string};
 type Voice = {voiceId?:string;id:string;name:string};
 const ENDPOINT = "/api/edit-video/audio";
@@ -134,6 +134,7 @@ export default function UnifiedAudioEditingPanel({onOpenDialogue,initialSection=
         if(!res.ok||!data.ok)throw Error(data.error||"Audio Editing unavailable.");
         if(canceled)return;
         setCap(data.capabilities);setSessions(data.sessions||[]);
+        if(data.capabilities?.enabled===false||!data.capabilities?.pythonReady)return;
         const saved=localStorage.getItem("slr:audio-session:v1");
         if(saved&&(data.sessions||[]).some((s:{id:string})=>s.id===saved))await load(saved);
         else if(data.sessions?.length)await load(data.sessions[0].id);
@@ -203,10 +204,11 @@ export default function UnifiedAudioEditingPanel({onOpenDialogue,initialSection=
   return <section className="rounded-3xl border border-white/15 bg-black/40 p-3 text-white sm:p-5" data-testid="unified-audio-editing">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div><h2 className="text-lg font-bold">Audio Editing</h2><Help>Separate, create and mix audio. Your original video stays unchanged.</Help></div>
-      <button className={button} disabled={busy||!!activeJob} onClick={()=>void execute(async()=>{const d=await api({action:"new"});accept(d.session);setJobs([]);setHistory([]);setComparison("original");})}>New session</button>
+      <button className={button} disabled={busy||!!activeJob||cap.enabled===false||!cap.pythonReady} onClick={()=>void execute(async()=>{const d=await api({action:"new"});accept(d.session);setJobs([]);setHistory([]);setComparison("original");})}>New session</button>
     </div>
     {error&&<div role="alert" className="my-3 rounded-xl border border-red-400/40 bg-red-500/10 p-3 text-sm">{error}<button className="ml-3 underline" onClick={()=>setError("")}>Dismiss</button></div>}
     {notice&&<p role="status" className="my-2 text-sm text-emerald-200">{notice}</p>}
+    {(cap.enabled===false||!cap.pythonReady)&&cap.notes.length>0&&<div role="status" className="my-3 rounded-xl border border-amber-400/40 p-3 text-sm">{cap.notes.join(" ")} No processing has been started.</div>}
     {session&&edit&&<>
       <div className="my-3 grid gap-2 sm:grid-cols-2">
         <label className="text-xs">Session name<input className={input} value={edit.title} onChange={e=>change({title:e.target.value})}/></label>

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const command = vi.hoisted(() => ({ exec: vi.fn(), input: vi.fn(), stdout: '{"host":"slr","verified":["fixture"]}', error: null as Error | null }));
 vi.mock("node:child_process", () => ({ execFile: (...args: unknown[]) => {
   command.exec(...args.slice(0, 3));
-  queueMicrotask(() => (args[3] as Function)(command.error, command.stdout));
+  queueMicrotask(() => (args[3] as (error: Error | null, stdout: string) => void)(command.error, command.stdout));
   return { stdin: { on: vi.fn(), end: command.input } };
 } }));
 import { H3_REMOTE_FILE_PROBE, verifyH3RemoteAssetFiles } from "@/lib/h3StudioRemoteInventory";

@@ -53,3 +53,7 @@ export async function sharedMediaGpuAvailable(gpu:MediaGpu,owner="00000000-0000-
   const result=await request({action:"status",gpu,owner});
   return !result||result.busy===false||result.owned===true;
 }
+export async function assertSharedMediaGpuOwned(gpu:MediaGpu,owner:string) {
+  const result=await request({action:"status",gpu,owner});
+  if(!result || result.busy!==true || result.owned!==true)throw Error("The shared audio GPU reservation is no longer confirmed; no cache or model was changed.");
+}

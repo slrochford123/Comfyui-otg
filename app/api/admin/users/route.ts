@@ -1,46 +1,12 @@
+import { requireAdmin } from "@/app/api/admin/_requireAdmin";
+import { isAdminUserId } from "@/lib/auth/admin";
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 
 import { db, ensureMigrations } from "@/lib/auth/db";
-import { cookieName } from "@/lib/auth/cookies";
-import { verifySession } from "@/lib/auth/jwt";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-// Hard-coded admin for your install (requested)
-const HARD_CODED_ADMINS = ["slrochford123@protonmail.com", "slrochford123"];
-
-// Optional extra admins via env (comma-separated emails and/or usernames)
-const ADMIN_IDENTIFIERS = (process.env.ADMIN_IDENTIFIERS || "")
-  .split(",")
-  .map((s) => s.trim().toLowerCase())
-  .filter(Boolean);
-
-async function requireAdmin() {
-  const store = await cookies();
-  const token = store.get(cookieName())?.value;
-  if (!token) return { ok: false as const, status: 401, error: "Not signed in" };
-
-  let payload: any;
-  try {
-    ensureMigrations();
-    payload = await verifySession(token);
-  } catch {
-    return { ok: false as const, status: 401, error: "Invalid session" };
-  }
-
-  const email = String(payload?.email || "").toLowerCase();
-  const username = String(payload?.username || "").toLowerCase();
-
-  const allowList = new Set([...HARD_CODED_ADMINS, ...ADMIN_IDENTIFIERS]);
-  const allowed = allowList.has(email) || (username && allowList.has(username));
-
-  if (!allowed) return { ok: false as const, status: 403, error: "Not authorized" };
-
-  return { ok: true as const, status: 200, email, username };
-}
 
 export async function GET(_req: NextRequest) {
   const admin = await requireAdmin();
@@ -59,9 +25,9 @@ export async function GET(_req: NextRequest) {
       username: r.username ?? null,
       createdAt: r.created_at,
       lastSignInAt: r.current_session_issued_at || null,
-      role: [...HARD_CODED_ADMINS, ...ADMIN_IDENTIFIERS].includes(String(r.email || "").toLowerCase()) || [...HARD_CODED_ADMINS, ...ADMIN_IDENTIFIERS].includes(String(r.username || "").toLowerCase()) ? "Admin" : "Standard",
+      role: isAdminUserId(r.id) ? "Admin" : "Standard",
       status: "Registered",
-      protected: [...HARD_CODED_ADMINS,...ADMIN_IDENTIFIERS].includes(String(r.email||"").toLowerCase()) || [...HARD_CODED_ADMINS,...ADMIN_IDENTIFIERS].includes(String(r.username||"").toLowerCase()),
+      protected: isAdminUserId(r.id),
     }));
 
     return NextResponse.json({ ok: true, count: users.length, users }, { headers: { "Cache-Control": "no-store" } });
@@ -93,10 +59,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "User not found." }, { status: 404 });
     }
 
-    const targetEmail = String(target.email || "").toLowerCase();
-    const targetUsername = String(target.username || "").toLowerCase();
-    const protectedAdmins=[...HARD_CODED_ADMINS,...ADMIN_IDENTIFIERS,admin.email,admin.username].filter(Boolean);
-    if (protectedAdmins.includes(targetEmail) || (targetUsername && protectedAdmins.includes(targetUsername))) {
+    if (isAdminUserId(target.id) || target.id === admin.id) {
       return NextResponse.json(
         { ok: false, error: "Refusing to delete the primary admin account." },
         { status: 400 }

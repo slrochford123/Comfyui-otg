@@ -155,8 +155,8 @@ describe("Story Creator V2 shell contract", () => {
     expect(panel).toContain("/api/story-creator/messages");
     expect(panel).toContain("persistMessage");
     expect(panel).toContain("loadStoryMessages");
-    expect(panel).toContain("/api/ollama-ai/chat");
-    expect(panel).toContain('"story-helper"');
+    expect(panel).toContain("useStoryConversation");
+    expect(read("lib/storyCreator/conversationExecutor.ts")).toContain('turn.purpose === "writing" ? "story-write" : "story-helper"');
     expect(ideas).toContain("Story Director Conversation");
     expect(ideas).toContain("Review Story Details");
     expect(ideas).toContain("Open Questions");
@@ -196,7 +196,7 @@ describe("Story Creator V2 shell contract", () => {
     expect(write).toContain("Story Outline");
     expect(write).toContain("Approved Canon Only");
     expect(write).toContain(
-      "Story Creator writing uses approved canon by default",
+      "Draft from established story details and your direction.",
     );
     expect(write).toContain("Generate from canon");
     expect(produce).toContain("Storyboard");

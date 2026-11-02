@@ -36,7 +36,7 @@ function parseRange(rangeHeader: string | null, size: number): ByteRange | null 
   if (!value.toLowerCase().startsWith("bytes=")) return "invalid";
 
   const spec = value.slice(6).trim();
-  if (!spec || spec.includes(",")) return "invalid";
+  if (!/^(?:\d+-\d*|-\d+)$/.test(spec) || size <= 0) return "invalid";
 
   const [rawStart, rawEnd] = spec.split("-", 2);
   if (rawStart === undefined || rawEnd === undefined) return "invalid";
@@ -62,55 +62,20 @@ function streamFile(filePath: string, start?: number, end?: number) {
     ? fs.createReadStream(filePath, { start, end })
     : fs.createReadStream(filePath);
 
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      let closed = false;
-
-      const closeSafely = () => {
-        if (closed) return;
-        closed = true;
-        try {
-          controller.close();
-        } catch {
-          // Client already closed the media request.
-        }
-      };
-
-      stream.on("data", (chunk) => {
-        if (closed) return;
-        try {
-          controller.enqueue(chunk instanceof Uint8Array ? chunk : Buffer.from(chunk));
-        } catch {
-          closed = true;
-          stream.destroy();
-        }
-      });
-
-      stream.on("end", closeSafely);
-      stream.on("error", (error) => {
-        if (closed) return;
-        closed = true;
-        try {
-          controller.error(error);
-        } catch {
-          // Client already closed the media request.
-        }
-      });
-    },
-    cancel() {
-      stream.destroy();
-    },
-  }) as any;
+  // Propagate cancellation and bound queued bytes for slow clients.
+  return Readable.toWeb(stream, {
+    strategy: { highWaterMark: 64 * 1024, size: (chunk: Uint8Array) => chunk.byteLength },
+  }) as ReadableStream<Uint8Array>;
 }
 
 function isFresh(req: NextRequest, etag: string, stat: fs.Stats) {
   const inm = req.headers.get("if-none-match");
-  if (inm && inm.trim() === etag) return true;
+  if (inm) return inm.split(",").some(value => value.trim() === etag || value.trim() === "*");
 
   const ims = req.headers.get("if-modified-since");
   if (!ims) return false;
   const since = Date.parse(ims);
-  return Number.isFinite(since) && Math.trunc(stat.mtimeMs) <= since;
+  return Number.isFinite(since) && Math.floor(stat.mtimeMs / 1000) * 1000 <= since;
 }
 
 export function mediaFileResponse(
@@ -148,7 +113,14 @@ export function mediaFileResponse(
   }
 
   const method = options.method || "GET";
-  const range = req.headers.get("range");
+  let range = req.headers.get("range");
+  const ifRange = req.headers.get("if-range");
+  if (range && ifRange) {
+    // A weak ETag cannot prove byte identity for If-Range; use a valid date or
+    // send the complete current representation rather than mismatched bytes.
+    const date = Date.parse(ifRange);
+    if (!Number.isFinite(date) || Math.floor(stat.mtimeMs / 1000) * 1000 > date) range = null;
+  }
 
   if (!range && !options.download && isFresh(req, etag, stat)) {
     return new NextResponse(null, { status: 304, headers });

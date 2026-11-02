@@ -31,8 +31,8 @@ describe('legacy media boundaries require the authenticated owner', () => {
     ['characters/3d-model', () => import('@/app/api/characters/3d-model/route')],
   ];
   it.each(routes)('blocks unauthenticated %s before processing', async (route, load) => {
-    const module = await load();
-    expect((await module.POST(post('/api/'+route))).status).toBe(401);
+    const handler = await load();
+    expect((await handler.POST(post('/api/'+route))).status).toBe(401);
   });
   it('blocks unauthenticated legacy 3D downloads', async () => {
     const { GET } = await import('@/app/api/characters/3d-model/route');

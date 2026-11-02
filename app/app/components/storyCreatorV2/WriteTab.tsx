@@ -16,6 +16,8 @@ type Props = {
   onModeChange: (mode: StoryWritingMode) => void;
   onInstructionChange: (value: string) => void;
   onGenerate: () => void;
+  versions?: Array<{ id: string; label: string; content: string }>;
+  onSelectVersion?: (content: string) => void;
 };
 
 const writingModes: {
@@ -38,6 +40,8 @@ export function WriteTab({
   onModeChange,
   onInstructionChange,
   onGenerate,
+  versions = [],
+  onSelectVersion,
 }: Props) {
   return (
     <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(260px,0.9fr)]">
@@ -51,9 +55,9 @@ export function WriteTab({
         </h2>
 
         <p className="mt-2 text-sm leading-6 text-white/60">
-          Story Creator writing uses approved canon by default. The
-          writer route does not include suggestions or unknowns unless
-          a later phase explicitly adds that option.
+          Draft from established story details and your direction.
+          New creative details remain proposals, not accepted canon.
+          Replies and draft versions are saved on the server, so you can return later.
         </p>
 
         <div className="mt-5 grid gap-2 sm:grid-cols-2">
@@ -119,6 +123,14 @@ export function WriteTab({
             </div>
           </div>
         ) : null}
+      {versions.length ? <details className="rounded-xl border border-white/10 p-3 text-sm text-white/70">
+        <summary className="min-h-10 cursor-pointer font-bold">Saved draft versions ({versions.length})</summary>
+        {versions.map((version) => <details key={version.id} className="mt-2 rounded-lg bg-black/20 p-3">
+          <summary className="min-h-10 cursor-pointer text-xs">{version.label}</summary>
+          <div className="max-h-80 overflow-auto whitespace-pre-wrap py-3 text-sm">{version.content}</div>
+          <button type="button" onClick={() => onSelectVersion?.(version.content)} className="min-h-10 rounded-lg border border-white/15 px-3 text-xs">Show this version</button>
+        </details>)}
+      </details> : null}
       </section>
 
       <aside className="rounded-[24px] border border-cyan-300/15 bg-cyan-300/[0.04] p-5">
@@ -131,9 +143,9 @@ export function WriteTab({
         </h3>
 
         <p className="mt-2 text-sm leading-6 text-white/60">
-          Future writing modes will draw from approved canon unless
-          the user explicitly chooses another controlled source.
-          Suggestions and unknowns remain review material, not canon.
+          Established facts are authoritative. Your writing direction can
+          introduce new draft ideas without a separate approval form.
+          A generated draft does not silently rewrite Story Memory.
         </p>
       </aside>
     </div>

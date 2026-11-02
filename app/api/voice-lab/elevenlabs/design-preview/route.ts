@@ -1,15 +1,19 @@
+import { withOwner, RequestError } from "@/lib/routeSecurity";
+import { limitedJson, limitedFormData } from "@/lib/limitedRequestBody";
+import { enforceRequestLimit } from "@/lib/auth/requestLimits";
 /* OTG_ELEVENLABS_PREVIEW_BACKEND_P1 */
 import { NextRequest, NextResponse } from "next/server";
 import { createElevenLabsDesignPreview } from "@/lib/elevenlabsVoiceDesign";
 
 export const runtime = "nodejs";
 
-export async function POST(req: NextRequest) {
+export const POST = withOwner(async (req, owner) => {
+  enforceRequestLimit("ai-utility", owner.ownerKey, 30, 60_000);
   try {
     let body: unknown;
 
     try {
-      body = await req.json();
+      body = await limitedJson(req, 1024 * 1024);
     } catch {
       return NextResponse.json({ ok: false, error: "Missing JSON body." }, { status: 400 });
     }
@@ -56,7 +60,8 @@ export async function POST(req: NextRequest) {
       ...result,
     });
   } catch (error) {
+    if (error instanceof RequestError) throw error;
     const message = error instanceof Error ? error.message : "Unknown ElevenLabs design-preview error.";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
-}
+});

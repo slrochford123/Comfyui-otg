@@ -2,6 +2,8 @@ import {beforeAll,afterAll,describe,it,expect,vi} from "vitest";
 import {NextRequest} from "next/server";
 const state=vi.hoisted(()=>({target:{id:"qa-admin-id",email:"qa-admin@example.com",username:"qa-admin"},run:vi.fn(()=>({changes:1}))}));
 vi.mock("next/headers",()=>({cookies:async()=>({get:()=>({value:"qa-session"})})}));
+vi.mock("@/app/api/admin/_requireAdmin",()=>({requireAdmin:async()=>({ok:true,id:"qa-admin-id",username:"qa-admin",email:"qa-admin@example.com"})}));
+vi.mock("@/lib/auth/admin",()=>({isAdminUserId:(id:string)=>id==="qa-admin-id"}));
 vi.mock("@/lib/auth/jwt",()=>({verifySession:async()=>({email:"qa-admin@example.com",username:"qa-admin"})}));
 vi.mock("@/lib/auth/db",()=>({ensureMigrations:()=>{},db:{prepare:()=>({get:()=>state.target,all:()=>[state.target],run:state.run})}}));
 beforeAll(()=>vi.stubEnv("ADMIN_IDENTIFIERS","qa-admin@example.com"));

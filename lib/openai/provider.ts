@@ -1,6 +1,4 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { readLedgerUsage, reserveOpenAIUsage, settleOpenAIUsage, finishUnsettledOpenAIUsage } from "@/lib/openai/usageLedger";
 
 import OpenAI, { toFile } from "openai";
 
@@ -8,6 +6,8 @@ export type OpenAIUseCase =
   | "h3-director"
   | "story-helper"
   | "story-write"
+  | "prompt-enhance"
+  | "vision-description"
   | "transcribe";
 
 export type OpenAIUsageRecord = {
@@ -31,69 +31,19 @@ export type OpenAITextStreamEvent =
       usage: ReturnType<typeof usageFromResponse>;
     };
 
-type UsageSummary = {
-  records: OpenAIUsageRecord[];
-};
-
-type RateWindow = {
-  startedAt: number;
-  count: number;
-};
-
 const DEFAULT_MODEL_PRICING: Record<string, {
   inputUsdPer1M: number;
   outputUsdPer1M: number;
   audioUsdPerMinute?: number;
 }> = {
+  "gpt-4.1-mini": { inputUsdPer1M: 0.40, outputUsdPer1M: 1.60 },
   "gpt-6-luna": { inputUsdPer1M: 0.10, outputUsdPer1M: 0.50 },
   "gpt-6.1-sol": { inputUsdPer1M: 2.00, outputUsdPer1M: 10.00 },
   "gpt-transcribe": { inputUsdPer1M: 0, outputUsdPer1M: 0, audioUsdPerMinute: 0.0045 },
 };
 
 let client: OpenAI | null = null;
-const rateWindows = new Map<string, RateWindow>();
-
-function dataRoot() {
-  return (
-    String(process.env.OTG_DATA_DIR || "").trim() ||
-    String(process.env.OTG_DATA_ROOT || "").trim() ||
-    path.join(os.homedir(), "AI", "runtime", "test", "data")
-  );
-}
-
-function usagePath() {
-  const dir = path.join(dataRoot(), "openai");
-  fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, "usage.json");
-}
-
-function readUsage(): UsageSummary {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(usagePath(), "utf8"));
-    return {
-      records: Array.isArray(parsed?.records) ? parsed.records : [],
-    };
-  } catch {
-    return { records: [] };
-  }
-}
-
-export function readOpenAIUsageRecords(): OpenAIUsageRecord[] {
-  return readUsage().records;
-}
-
-function writeUsage(summary: UsageSummary) {
-  fs.writeFileSync(
-    usagePath(),
-    JSON.stringify(
-      {
-        records: summary.records.slice(-5000),
-      },
-      null,
-      2,
-    ),
-  );
-}
+export function readOpenAIUsageRecords(): OpenAIUsageRecord[] { return readLedgerUsage(); }
 
 function numberFromEnv(name: string, fallback: number) {
   const raw = process.env[name];
@@ -131,53 +81,34 @@ function getClient() {
   if (!client) {
     client = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
+      maxRetries: 0, // Ambiguous billable requests are not silently replayed.
     });
   }
   return client;
 }
 
-export function assertOpenAIAuthorized(ownerKey: string, useCase: OpenAIUseCase) {
-  if (!openAIEnabled()) {
-    throw new Error("OpenAI is not configured or is disabled.");
-  }
+export function assertOpenAIAuthorized(ownerKey: string, useCase: OpenAIUseCase, reservedUsd = 0.25) {
+  if (!openAIEnabled()) throw new Error("OpenAI is not configured or is disabled.");
+  return reserveOpenAIUsage({
+    ownerKey, useCase, reservedUsd,
+    windowMs: numberFromEnv("OPENAI_RATE_WINDOW_MS", 60000),
+    maxRequests: numberFromEnv("OPENAI_RATE_LIMIT_PER_MINUTE", 12),
+    userLimit: numberFromEnv("OPENAI_DAILY_USER_COST_LIMIT_USD", 2),
+    globalLimit: numberFromEnv("OPENAI_DAILY_GLOBAL_COST_LIMIT_USD", 20),
+  });
+}
 
-  const now = Date.now();
-  const key = `${ownerKey}:${useCase}`;
-  const windowMs = numberFromEnv("OPENAI_RATE_WINDOW_MS", 60_000);
-  const maxRequests = numberFromEnv("OPENAI_RATE_LIMIT_PER_MINUTE", 12);
-  const current = rateWindows.get(key);
-  if (!current || now - current.startedAt > windowMs) {
-    rateWindows.set(key, { startedAt: now, count: 1 });
-  } else {
-    current.count += 1;
-    if (current.count > maxRequests) {
-      const error = new Error("OpenAI rate limit reached. Please wait and retry.");
-      (error as any).status = 429;
-      throw error;
-    }
-  }
+function reserveTextRequest(args: { ownerKey: string; useCase: OpenAIUseCase; model: string; instructions: string; input: unknown; maxOutputTokens?: number }) {
+  // Deliberately conservative byte-based upper estimate, not a token count claim.
+  const inputBytes = Buffer.byteLength(args.instructions) + Buffer.byteLength(JSON.stringify(args.input) || "");
+  if (inputBytes > 8 * 1024 * 1024) throw new Error("OpenAI input exceeds the application request limit.");
+  const estimate = tokenCost(args.model, inputBytes + 4096, args.maxOutputTokens || 900);
+  return assertOpenAIAuthorized(args.ownerKey, args.useCase, Math.max(numberFromEnv("OPENAI_REQUEST_RESERVE_USD", 0.25), estimate));
+}
 
-  const summary = readUsage();
-  const since = now - 24 * 60 * 60 * 1000;
-  const userTotal = summary.records
-    .filter((record) => record.ownerKey === ownerKey && record.ts >= since)
-    .reduce((sum, record) => sum + record.approximateCostUsd, 0);
-  const globalTotal = summary.records
-    .filter((record) => record.ts >= since)
-    .reduce((sum, record) => sum + record.approximateCostUsd, 0);
-
-  const userLimit = numberFromEnv("OPENAI_DAILY_USER_COST_LIMIT_USD", 2);
-  const globalLimit = numberFromEnv("OPENAI_DAILY_GLOBAL_COST_LIMIT_USD", 20);
-  if (userLimit > 0 && userTotal >= userLimit) {
-    const error = new Error("Daily OpenAI cost limit reached for this user.");
-    (error as any).status = 429;
-    throw error;
-  }
-  if (globalLimit > 0 && globalTotal >= globalLimit) {
-    const error = new Error("Daily OpenAI global cost limit reached.");
-    (error as any).status = 429;
-    throw error;
-  }
+function definitelyRejected(error: unknown) {
+  const status = (error as { status?: number })?.status;
+  return [400, 401, 403, 404, 422].includes(Number(status));
 }
 
 function pricingForModel(model: string) {
@@ -189,7 +120,7 @@ function pricingForModel(model: string) {
         ? DEFAULT_MODEL_PRICING["gpt-6.1-sol"]
         : normalized.includes("transcribe")
           ? DEFAULT_MODEL_PRICING["gpt-transcribe"]
-          : { inputUsdPer1M: 0, outputUsdPer1M: 0, audioUsdPerMinute: 0 });
+          : { inputUsdPer1M: numberFromEnv("OPENAI_UNKNOWN_INPUT_USD_PER_1M", 20), outputUsdPer1M: numberFromEnv("OPENAI_UNKNOWN_OUTPUT_USD_PER_1M", 100), audioUsdPerMinute: 0 });
 }
 
 function tokenCost(model: string, inputTokens: number, outputTokens: number) {
@@ -228,10 +159,8 @@ export function estimateOpenAIUsageCost(record: Pick<OpenAIUsageRecord, "model" 
   return estimated;
 }
 
-function recordUsage(record: OpenAIUsageRecord) {
-  const summary = readUsage();
-  summary.records.push(record);
-  writeUsage(summary);
+function recordUsage(record: OpenAIUsageRecord, reservationId: string, providerId?: string) {
+  settleOpenAIUsage(reservationId, record, providerId);
 }
 
 function usageFromResponse(response: any) {
@@ -256,7 +185,7 @@ export async function createOpenAIText(args: {
   store?: boolean;
   maxRetries?: number;
 }) {
-  assertOpenAIAuthorized(args.ownerKey, args.useCase);
+  const reservationId = reserveTextRequest(args);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), args.timeoutMs || 90_000);
 
@@ -270,7 +199,7 @@ export async function createOpenAIText(args: {
         ...(args.responseSchema ? { text: { format: { type: "json_schema", name: args.responseSchema.name, strict: true, schema: args.responseSchema.schema } } } : {}),
         ...(args.store !== undefined ? { store: args.store } : {}),
       } as any,
-      { signal: controller.signal, ...(args.maxRetries !== undefined ? { maxRetries: args.maxRetries } : {}) } as any,
+      { signal: controller.signal, maxRetries: Math.max(0, Math.min(1, args.maxRetries ?? 0)), headers: { "X-Client-Request-Id": reservationId } } as any,
     );
 
     const text = String(response.output_text || "").trim();
@@ -288,9 +217,13 @@ export async function createOpenAIText(args: {
         usage.inputTokens,
         usage.outputTokens,
       ),
-    });
+    }, reservationId, response.id || response._request_id);
     return { text, usage };
+  } catch (error) {
+    finishUnsettledOpenAIUsage(reservationId, definitelyRejected(error));
+    throw error;
   } finally {
+    finishUnsettledOpenAIUsage(reservationId);
     clearTimeout(timer);
   }
 }
@@ -305,13 +238,15 @@ export async function createOpenAITextStream(args: {
   maxOutputTokens?: number;
   timeoutMs?: number;
   signal?: AbortSignal;
+  maxRetries?: number;
+  responseSchema?: { name: string; schema: Record<string, unknown> };
 }): Promise<AsyncGenerator<OpenAITextStreamEvent>> {
   if (args.signal?.aborted) {
     const error = new Error("OpenAI streaming cancelled before starting.");
     error.name = "AbortError";
     throw error;
   }
-  assertOpenAIAuthorized(args.ownerKey, args.useCase);
+  const reservationId = reserveTextRequest(args);
   const controller = new AbortController();
   const abortFromCaller = () => controller.abort();
   args.signal?.addEventListener("abort", abortFromCaller, { once: true });
@@ -330,8 +265,9 @@ export async function createOpenAITextStream(args: {
         input: args.input,
         max_output_tokens: args.maxOutputTokens || 900,
         stream: true,
+        ...(args.responseSchema ? { text: { format: { type: "json_schema", name: args.responseSchema.name, strict: true, schema: args.responseSchema.schema } } } : {}),
       } as any,
-      { signal: controller.signal } as any,
+      { signal: controller.signal, maxRetries: Math.max(0, Math.min(1, args.maxRetries ?? 0)), headers: { "X-Client-Request-Id": reservationId } } as any,
     );
 
     async function* events(): AsyncGenerator<OpenAITextStreamEvent> {
@@ -377,7 +313,7 @@ export async function createOpenAITextStream(args: {
                   failedUsage.inputTokens,
                   failedUsage.outputTokens,
                 ),
-              });
+              }, reservationId, event.response?.id);
             }
             throw new Error(
               String(
@@ -412,9 +348,10 @@ export async function createOpenAITextStream(args: {
             usage.inputTokens,
             usage.outputTokens,
           ),
-        });
+        }, reservationId, completedResponse.id || completedResponse._request_id);
         yield { type: "done", text: finalText, usage };
       } finally {
+        finishUnsettledOpenAIUsage(reservationId);
         cleanup();
         if (!controller.signal.aborted) controller.abort();
       }
@@ -422,6 +359,7 @@ export async function createOpenAITextStream(args: {
 
     return events();
   } catch (error) {
+    finishUnsettledOpenAIUsage(reservationId, definitelyRejected(error));
     cleanup();
     throw error;
   }
@@ -439,7 +377,7 @@ export async function transcribeOpenAIAudio(args: {
   timeoutMs?: number;
 }) {
   const model = openAIModels().transcribe;
-  assertOpenAIAuthorized(args.ownerKey, "transcribe");
+  const reservationId = assertOpenAIAuthorized(args.ownerKey, "transcribe", Math.max(0.25, audioCost(model, Math.max(0, Number(args.audioSeconds || 0)))));
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), args.timeoutMs || 120_000);
 
@@ -454,7 +392,7 @@ export async function transcribeOpenAIAudio(args: {
         prompt: args.prompt || undefined,
         languages: args.language ? [args.language] : undefined,
       } as any,
-      { signal: controller.signal } as any,
+      { signal: controller.signal, maxRetries: 0, headers: { "X-Client-Request-Id": reservationId } } as any,
     );
     const text = String(response.text || "").trim();
     const usage = usageFromResponse(response);
@@ -470,9 +408,13 @@ export async function transcribeOpenAIAudio(args: {
       approximateCostUsd:
         tokenCost(model, usage.inputTokens, usage.outputTokens) +
         audioCost(model, audioSeconds),
-    });
+    }, reservationId, response.id || response._request_id);
     return { text, usage };
+  } catch (error) {
+    finishUnsettledOpenAIUsage(reservationId, definitelyRejected(error));
+    throw error;
   } finally {
+    finishUnsettledOpenAIUsage(reservationId);
     clearTimeout(timer);
   }
 }

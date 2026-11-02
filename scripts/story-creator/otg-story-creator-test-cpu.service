@@ -1,0 +1,31 @@
+[Unit]
+Description=SLR Story Creator TEST CPU-only speech and recall
+
+[Service]
+Type=simple
+WorkingDirectory=/home/shawn-rochford/AI/runtime/test/story-creator-cpu-20261030
+ExecStart=/home/shawn-rochford/AI/runtime/test/story-creator-cpu-20261030/venv/bin/python /home/shawn-rochford/AI/runtime/test/story-creator-cpu-20261030/worker/cpu_worker.py --root /home/shawn-rochford/AI/runtime/test/story-creator-cpu-20261030
+Environment=CUDA_VISIBLE_DEVICES=
+Environment=HF_HUB_OFFLINE=1
+Environment=TRANSFORMERS_OFFLINE=1
+Environment=OMP_NUM_THREADS=2
+Environment=MKL_NUM_THREADS=2
+Environment=OPENBLAS_NUM_THREADS=2
+Environment=TOKENIZERS_PARALLELISM=false
+Nice=10
+CPUQuota=200%
+MemoryHigh=4G
+MemoryMax=6G
+TasksMax=64
+UMask=0077
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX
+ProtectSystem=strict
+ReadWritePaths=/home/shawn-rochford/AI/runtime/test/story-creator-cpu-20261030
+PrivateTmp=true
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

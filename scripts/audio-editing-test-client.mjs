@@ -4,11 +4,12 @@ import assert from "node:assert/strict";
 
 export async function audioTestClient(){
   const base=process.env.AUDIO_QA_BASE||"http://100.75.162.64:3308";
-  assert(/^http:\/\/100\.75\.162\.64:(3308|3001)$/.test(base));
+  assert(/^http:\/\/(100\.75\.162\.64|127\.0\.0\.1):(3308|3001)$/.test(base));
+  const requestedGpu=process.env.AUDIO_QA_GPU||'rtx3090';assert(['rtx3090','rtx5060ti'].includes(requestedGpu));
   const username=`audioqa_${crypto.randomBytes(5).toString("hex")}`,password=crypto.randomBytes(24).toString("base64url");
   const signup=await fetch(base+"/api/auth/signup",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({username,email:username+"@test.invalid",password})});assert(signup.ok);
   const login=await fetch(base+"/api/auth/login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({identifier:username,password})});assert(login.ok);
-  const cookie=login.headers.getSetCookie().map(c=>c.split(";")[0]).join("; ");assert(cookie);
+  const cookie=login.headers.getSetCookie().map(c=>c.split(";")[0]).join("; ")+`; otg_media_gpu_v1=${requestedGpu}`;assert(cookie);
   async function request(route,body){
     const res=await fetch(base+route,{method:body?"POST":"GET",headers:{cookie,...(body?{"content-type":"application/json"}:{})},...(body?{body:JSON.stringify(body)}:{})});
     const data=await res.json();assert(res.ok&&data.ok!==false,data.error||`HTTP ${res.status}`);return data;
@@ -31,6 +32,7 @@ export async function audioTestClient(){
   }
   async function generate(session,operation,params={},assetId,gpu="rtx3090"){
     const data=await post({action:"process",sessionId:session.id,operation,params,assetId,gpu});
+    if(['music','effects','speech'].includes(operation)||operation==='enhance'&&params.engine==='mossformer')assert.equal(data.job.gpu,gpu);
     return wait(session.id,data.job.id);
   }
   async function download(asset,file){

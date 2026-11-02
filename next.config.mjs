@@ -7,6 +7,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const nextConfig = {
   reactStrictMode: true,
 
+  async headers() {
+    return [{ source: "/:path*", headers: [
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "X-Frame-Options", value: "SAMEORIGIN" },
+      { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      // Deliberately avoid HSTS on the HTTP/Tailscale TEST origin. Scripts,
+      // media/blob previews and Android microphone behavior remain compatible.
+      { key: "Content-Security-Policy", value: "base-uri 'self'; object-src 'none'; frame-ancestors 'self'" },
+    ] }];
+  },
+
   // Allow test-dev access over Tailscale without Next dev asset origin warnings.
   allowedDevOrigins: ["100.76.179.83", "*.ts.net"],
 

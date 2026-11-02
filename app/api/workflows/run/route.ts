@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { WORKFLOWS } from "@/lib/workflows/manifest";
+import { withOwner } from "@/lib/routeSecurity";
+import { limitedJson } from "@/lib/limitedRequestBody";
 
 type WorkflowId = keyof typeof WORKFLOWS;
 
 function isWorkflowId(v: unknown): v is WorkflowId {
-  return typeof v === "string" && v in WORKFLOWS;
+  return typeof v === "string" && Object.hasOwn(WORKFLOWS, v);
 }
 
 type RunRequestBody = {
@@ -14,8 +16,8 @@ type RunRequestBody = {
   inputs?: unknown;
 };
 
-export async function POST(req: Request) {
-  const body = (await req.json()) as RunRequestBody;
+export const POST = withOwner(async (req) => {
+  const body = (await limitedJson(req, 64 * 1024)) as RunRequestBody;
 
   if (!isWorkflowId(body.workflowId)) {
     return NextResponse.json({ error: "Invalid workflowId" }, { status: 400 });
@@ -40,4 +42,4 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json({ status: "patched", workflowId });
-}
+});
