@@ -71,7 +71,8 @@ not served to testers or public users. There is no public-rollout command.
 release-internal is a separately authorized operation. It replaces only the
 active internal-test release with the pinned, validated candidate and allows
 Google's normal review processing. It never targets production or other tracks,
-changes tester membership, or deletes the old bundle from Google's library.
+changes tester membership, or requests deletion of old artifacts. The edit's
+current-bundle list is not used as proof of historical archive availability.
 The owner approved only internal testing on November 2, 2026. Obtain explicit
 owner authorization before future release runs; this is not a recurring job.
 

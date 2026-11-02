@@ -199,8 +199,8 @@ async function releaseInternal(api, receipt, persist, {automaticReview = false} 
   requireThat(automaticReview === true, "An internal tester release requires explicit approval of normal Google review processing.");
   const r = {...receipt};
   await verifyStaged(api, r);
-  // Replace the active INTERNAL version only. Older bundles remain in Google's
-  // artifact library; production, other tracks and tester membership are untouched.
+  // Replace the active INTERNAL version only, without any artifact-deletion
+  // request. Production, other tracks and tester membership are untouched.
   const ownDraft = r.expectedInternal.releases.at(-1);
   requireThat(ownDraft.status === "draft" && stable(ownDraft.versionCodes) === stable([String(r.versionCode)]), "Not this receipt's pinned internal candidate.");
   const target = {track:"internal", releases:[{...ownDraft,status:"completed"}]};
