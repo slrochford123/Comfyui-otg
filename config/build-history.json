@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.23",
+  "current": "2.24",
   "builds": [
     {
       "version": "2",
@@ -145,6 +145,12 @@
       "date": "2026-11-02",
       "summary": "Repair ordinary H3 Edit Video at 0.6 and 1 MP with a PyTorch dense fallback inside SLA; truthful queue progress, safe CUDA errors and process-identity-based worker restart recovery. Preserve H3 NSFW and TEST-only experiments.",
       "sourceBaseCommit": "2bbba39dc00b276d3c8a73028a507d10338e099a"
+    },
+    {
+      "version": "2.24",
+      "date": "2026-11-02",
+      "summary": "H3 NSFW live previews, progress/ETA, prompt and style tools, compatible LoRAs, persistent mobile drafts, clear/reset and snapshot controls; safe large-image preparation, uncapped saved media/history and app-wide Android Phone storage/Photos selection. Testing remains TEST-only.",
+      "sourceBaseCommit": "6d9dd312e1868894d79a1a2a3b86c1bd4099ee2c"
     }
   ]
 }

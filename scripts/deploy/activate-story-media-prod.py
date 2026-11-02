@@ -92,7 +92,7 @@ def main():
     if digest(ROOT/'activation-plan.json')!=PLAN_SHA:raise RuntimeError('Activation plan changed')
     plan=json.loads((ROOT/'activation-plan.json').read_text())
     version=plan['buildVersion']
-    if version not in ('2.21','2.22','2.23') or not re.fullmatch('[a-f0-9]{40}',plan['commit']):raise RuntimeError('Invalid release identity')
+    if version not in ('2.21','2.22','2.23','2.24') or not re.fullmatch('[a-f0-9]{40}',plan['commit']):raise RuntimeError('Invalid release identity')
     candidate=Path(plan['candidate']);old=Path(plan['expectedOld'])
     if ROOT!=Path('/mnt/otg_bulk/build-'+version+'-promotion-'+plan['commit'][:12]) or candidate!=Path('/opt/otg/releases/prod-build-'+version+'-'+plan['commit'][:12]):raise RuntimeError('Invalid release boundary')
     previous=load('previous_prod_guard',PREVIOUS_GUARD,plan['previousGuardSha256'])
@@ -120,7 +120,7 @@ def main():
         if plan.get('nsfwConfig'):
             flags.update(OTG_H3_NSFW_ENABLED='1',OTG_H3_NSFW_ROOT=plan['nsfwRoot'])
             root=Path(plan['nsfwRoot']);root_stat=root.lstat()
-            if root.is_symlink() or root_stat.st_uid!=0 or root_stat.st_mode&0o077 or digest(root/'runtime.json')!=plan['nsfwConfigSha256']:raise RuntimeError('Production H3 storage is not prepared')
+            if root.is_symlink() or root_stat.st_uid!=0 or root_stat.st_mode&0o077 or digest(root/'runtime.json')!=plan.get('expectedNsfwStorageSha256',plan['nsfwConfigSha256']):raise RuntimeError('Production H3 storage is not prepared')
         def idle():
             m.idle_gates();previous.extra_idle(m.DATA,plan);story_idle(m.DATA)
             if plan.get('nsfwRoot'):nsfw_idle(plan['nsfwRoot'])
@@ -134,7 +134,11 @@ def main():
         report={'activated':False,'buildVersion':version,'commit':plan['commit'],'buildId':plan['buildId'],'oldRelease':str(old),'oldPointer':os.readlink(m.CURRENT),'oldPid':int(old_pid),'transaction':str(transaction)}
         def save():(transaction/'activation-report.json').write_text(json.dumps(report,indent=2))
         def phase(value):report['stage']=value;save();print(value,flush=True)
-        samples=m.media_samples();env_sha=digest(m.APP_ENV);override=None;stopped=switched=False
+        samples=m.media_samples();env_sha=digest(m.APP_ENV);override=None;stopped=switched=nsfw_runtime_changed=False
+        def install_nsfw_runtime(content):
+            target=Path(plan['nsfwRoot'])/'runtime.json';temp=target.with_name('runtime-promotion-'+uuid.uuid4().hex+'.json')
+            with temp.open('xb') as output:output.write(content)
+            temp.chmod(0o400);temp.replace(target)
         try:
             for parent,dirs,files in os.walk(candidate):
                 for file in [Path(parent),*(Path(parent)/name for name in files)]:
@@ -148,6 +152,10 @@ def main():
             baseline=m.snapshot_databases(transaction/'final-databases');report['databasesBackedUp']=list(m.DATABASES)
             if plan.get('nsfwRoot') and (Path(plan['nsfwRoot'])/'experiments.sqlite').exists():
                 with sqlite3.connect(str(Path(plan['nsfwRoot'])/'experiments.sqlite')) as source,sqlite3.connect(str(transaction/'h3-nsfw.sqlite')) as dest:source.backup(dest)
+            if plan.get('expectedNsfwStorageSha256'):
+                current=Path(plan['nsfwRoot'])/'runtime.json'
+                if digest(current)!=plan['expectedNsfwStorageSha256']:raise RuntimeError('Private H3 runtime changed during final backup')
+                shutil.copyfile(current,transaction/'h3-runtime.before.json')
             admins=previous.admin_ids(m.DATA,old_env)
             # Rehearse existing additive migrations on copies before applying them.
             rehearsal=transaction/'migration-rehearsal';shutil.copytree(transaction/'final-databases',rehearsal)
@@ -165,6 +173,9 @@ def main():
                 m.run(migrate,cwd=candidate,env=migration_env(data),log=transaction/'migrations.private.log')
                 for name in m.DATABASES:m.assert_preserved(baseline[name],m.inspect_database(data/name,baseline[name]))
                 previous.verify_admins(data,admins)
+            if plan.get('expectedNsfwStorageSha256'):
+                install_nsfw_runtime(Path(plan['nsfwConfig']).read_bytes());nsfw_runtime_changed=True
+                if digest(Path(plan['nsfwRoot'])/'runtime.json')!=plan['nsfwConfigSha256']:raise RuntimeError('Private H3 runtime activation mismatch')
             m.CANDIDATE=candidate;m.link_release_file('data',m.DATA);m.link_release_file('.env.local',m.APP_ENV)
             flag_file=transaction/'story-media.env';flag_file.write_text(''.join(k+'='+v+'\n' for k,v in flags.items()));flag_file.chmod(0o600)
             override=m.OVERRIDES/runtime.final_override_name(m.property_value('DropInPaths').split())
@@ -198,6 +209,7 @@ def main():
                 except Exception:
                     report['rollbackPausedForActiveWork']=True;save();raise RuntimeError('Rollback paused to protect new active work; inspect the private activation report') from None
                 m.run(['/usr/bin/systemctl','stop',m.UNIT]);m.atomic_switch(report['oldPointer'])
+            if nsfw_runtime_changed:install_nsfw_runtime((transaction/'h3-runtime.before.json').read_bytes())
             if override and override.exists():override.unlink()
             m.run(['/usr/bin/systemctl','daemon-reload'])
             if stopped:

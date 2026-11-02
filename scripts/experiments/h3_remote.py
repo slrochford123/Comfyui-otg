@@ -64,6 +64,17 @@ def authorized(root,request):
     except Exception:return False
 
 
+def receive_preview(root,preview):
+    """Bad optional media never compromises the verified final output."""
+    if not preview.get('bytes'):return False
+    try:
+        data=base64.b64decode(preview['data'],validate=True)
+        if not 0<len(data)<=CHUNK or len(data)!=preview['bytes'] or hashlib.sha256(data).hexdigest()!=preview['sha256']:return False
+        temporary=root/'preview.transferring';temporary.write_bytes(data);temporary.replace(root/'preview.mp4')
+        return True
+    except (ValueError,KeyError,TypeError,OSError):return False
+
+
 def execute(root,cfg):
     request=json.loads((root/'request.json').read_text());identifier(request['id'])
     if root.name!=request['id'] or root.parent.name!='jobs' or root.is_symlink():raise ValueError('Invalid private job boundary')
@@ -96,11 +107,14 @@ def execute(root,cfg):
             payload={key:request[key] for key in ['id','model','settings','sources']}
             write(root/'remote-execution.json',{'id':root.name,'submissionAttempted':True,'created':time.time()})
             client.call({'action':'start','id':root.name,'request':payload})
-            deadline=time.monotonic()+26*3600
+            deadline=time.monotonic()+26*3600;preview_version=None
             while True:
                 if canceled or not authorized(root,request):
                     client.call({'action':'cancel','id':root.name});canceled=True
                 remote=client.call({'action':'status','id':root.name})['status']
+                if remote.get('previewVersion') and remote['previewVersion']!=preview_version:
+                    preview=client.call({'action':'preview','id':root.name})
+                    receive_preview(root,preview);preview_version=remote['previewVersion']
                 terminal=remote.get('state') in ['completed','failed','canceled'] and remote.get('cleanedUp') is True
                 update(**{k:v for k,v in remote.items() if k not in ['id','state','cleanedUp','heartbeat']},state='running' if terminal and remote['state']=='completed' else remote['state'],cleanedUp=False)
                 if terminal:break

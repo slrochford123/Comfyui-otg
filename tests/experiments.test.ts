@@ -66,7 +66,7 @@ describe("experimental boundary", () => {
   });
   it.each([1,16,2.5,NaN])("rejects invalid duration %s", seconds => expect(() => validateSettings({ ...DEFAULT_LAB_SETTINGS, seconds })).toThrow());
   it("enforces per-plan upload reservations", () => {
-    const record = createSession("admin-a", "prism-pika");
+    const record = createSession("admin-a", "pika-flex");
     for (let i=0; i<MAX_ASSETS; i++) reserveAsset("admin-a", record.id, "a.png", "image/png", "source");
     expect(() => reserveAsset("admin-a", record.id, "a.png", "image/png", "source")).toThrow("12 assets");
   });
@@ -100,7 +100,7 @@ describe("private media", () => {
   it("refuses a substituted symlink at media delivery", async () => {
     const { asset } = await pngUpload(); const file = path.join(labRoot(), asset.id + ".media");
     fs.unlinkSync(file); fs.symlinkSync("/etc/hostname", file);
-    expect((await mediaGet(request("/api/experiments/assets?id="+asset.id))).status).toBe(500);
+    const response=await mediaGet(request("/api/experiments/assets?id="+asset.id));expect(response.status).toBe(409);expect(await response.text()).not.toMatch(/hostname|root:/);
   });
   it("parses suffix and bounded ranges without accepting multi-range attacks", () => {
     expect(parseRange("bytes=-5", 10)).toEqual({ start: 5, end: 9 }); expect(parseRange("bytes=3-200", 10)).toEqual({ start: 3, end: 9 });

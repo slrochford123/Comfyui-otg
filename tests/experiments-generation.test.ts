@@ -8,7 +8,7 @@ import {createSession,updateSession,labRoot,reserveAsset,finishAsset,getSession}
 import {labCapabilities,submitLabJob,listLabJobs,cancelLabJob} from "@/lib/experiments/generation";
 import {EXPERIMENTS} from "@/lib/experiments/catalog";
 const spies=vi.hoisted(()=>({spawn:vi.fn()}));
-vi.mock("node:child_process",()=>({spawn:(...args:unknown[])=>spies.spawn(...args)}));
+vi.mock("node:child_process",async importOriginal=>({...await importOriginal<typeof import("node:child_process")>(),spawn:(...args:unknown[])=>spies.spawn(...args)}));
 let root:string;
 beforeEach(()=>{
   root=fs.mkdtempSync(path.join(os.tmpdir(),"slr-h3-execution-test-"));
@@ -27,7 +27,7 @@ function session(mode:"text"|"image"|"reference"|"edit"|"edit-image"="text"){
 }
 function request(s:ReturnType<typeof session>,sources:string[]=[]){return {id:s.id,revision:s.revision,requestId:crypto.randomUUID(),sources};}
 function source(s:ReturnType<typeof session>,mime="image/png"){
-  const a=reserveAsset("owner-a",s.id,"source.png",mime,"source"),bytes=Buffer.from("owned fixture bytes, not inference evidence");
+  const a=reserveAsset("owner-a",s.id,"source.png",mime,"source"),bytes=mime.startsWith("image/")?Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVQImWMwXnUGK2IYWhIAXe9qQQl9/IoAAAAASUVORK5CYII=","base64"):Buffer.from("owned fixture bytes, not inference evidence");
   fs.writeFileSync(a.file,bytes,{mode:0o600});finishAsset("owner-a",a.id,bytes.length,digest(bytes));return a;
 }
 describe("private H3 execution boundary",()=>{
@@ -102,7 +102,7 @@ describe("private H3 execution boundary",()=>{
   it("requires correct references and never reads another session's media",async()=>{
     configured();const s=session("image"),other=session("reference"),a=source(s),b=source(other);
     await expect(submitLabJob("owner-a",request(s))).rejects.toThrow("Image: one first frame");await expect(submitLabJob("owner-a",request(s,[b.id]))).rejects.toThrow("this session");
-    const job=await submitLabJob("owner-a",request(s,[a.id]));const copy=fs.readFileSync(path.join(labRoot(),"jobs",job.id,"sources/0.media"));expect(copy.equals(fs.readFileSync(a.file))).toBe(true);
+    const original=fs.readFileSync(a.file);const job=await submitLabJob("owner-a",request(s,[a.id]));const copy=fs.readFileSync(path.join(labRoot(),"jobs",job.id,"sources/0.media"));expect(copy.equals(fs.readFileSync(a.file+".reference.png"))).toBe(true);expect(fs.readFileSync(a.file)).toEqual(original);
   });
   it("rejects stale session writes and archives",async()=>{configured();const s=session();updateSession("owner-a",s.id,{...s,archived:true});await expect(submitLabJob("owner-a",request(s))).rejects.toThrow("Save/reload");});
   it("cancels only the owned private job through its marker",async()=>{
@@ -115,6 +115,22 @@ describe("private H3 execution boundary",()=>{
     const receipt={...job,state:"completed",cleanedUp:false,outputBytes:bytes.length,outputSha256:digest(bytes)};
     fs.writeFileSync(path.join(dir,"status.json"),JSON.stringify(receipt));expect(listLabJobs("owner-a",s.id)[0].output).toBeUndefined();
     fs.writeFileSync(path.join(dir,"status.json"),JSON.stringify({...receipt,cleanedUp:true}));const done=listLabJobs("owner-a",s.id)[0];expect(done.output).toBeTruthy();listLabJobs("owner-a",s.id);expect(getSession("owner-a",s.id).assets).toHaveLength(1);expect(getSession("owner-a",s.id).assets[0].role).toBe("generated");
+  });
+  it("continues after 60 completed results in the same H3 draft, with idempotency and all originals retained",async()=>{
+    configured();const s=session();
+    for(let i=0;i<60;i++){
+      const job=await submitLabJob("owner-a",request(s)),dir=path.join(labRoot(),"jobs",job.id),bytes=Buffer.from("owned output transport fixture "+i);
+      fs.writeFileSync(path.join(dir,"result.mp4"),bytes);
+      fs.writeFileSync(path.join(dir,"status.json"),JSON.stringify({...job,state:"completed",cleanedUp:true,outputBytes:bytes.length,outputSha256:digest(bytes)}));
+      expect(listLabJobs("owner-a",s.id)[0].output).toBeTruthy();
+    }
+    expect(getSession("owner-a",s.id).assets).toHaveLength(60);
+    const r=request(s),next=await submitLabJob("owner-a",r),again=await submitLabJob("owner-a",r);expect(next.id).toBe(again.id);expect(spies.spawn).toHaveBeenCalledTimes(61);
+    expect(listLabJobs("owner-a",s.id).filter(j=>j.state==="completed")).toHaveLength(60);
+  },15000);
+  it("does not turn uncapped retention into unbounded simultaneous GPU work",async()=>{
+    configured();const s=session();for(let i=0;i<4;i++)await submitLabJob("owner-a",request(s));
+    await expect(submitLabJob("owner-a",request(s))).rejects.toThrow("four pending");expect(spies.spawn).toHaveBeenCalledTimes(4);
   });
   it("does not turn a stale runner into a successful or resubmitted job",async()=>{
     configured();const s=session(),job=await submitLabJob("owner-a",request(s));fs.writeFileSync(path.join(labRoot(),"jobs",job.id,"status.json"),JSON.stringify({...job,created:1,heartbeat:1}));

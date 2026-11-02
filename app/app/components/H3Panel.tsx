@@ -995,11 +995,13 @@ function GalleryPicker({
 export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=false }: H3PanelProps) {
   const {access:nsfwAccess}=useH3NsfwAccess(nsfwAvailable);
   const [nsfwOpen,setNsfwOpen]=useState(false);
-  useEffect(()=>{if(!nsfwAccess?.enabled)setNsfwOpen(false);},[nsfwAccess?.enabled]);
   const storageOwnerKey = useMemo(
     () => normalizeProfileStorageOwner(authenticatedOwnerKey),
     [authenticatedOwnerKey],
   );
+  const nsfwViewKey=profileStorageKey("otg:h3:nsfw:view:v1",storageOwnerKey);
+  function showNsfw(open:boolean){setNsfwOpen(open);try{localStorage.setItem(nsfwViewKey,open?"1":"0");}catch{/* existing account draft remains server-backed */}}
+  useEffect(()=>{if(!nsfwAccess)return;try{setNsfwOpen(nsfwAccess.enabled&&localStorage.getItem(nsfwViewKey)==="1");}catch{setNsfwOpen(false);}},[nsfwAccess,nsfwViewKey]);
   const recovery = useMemo(() => new H3RecoveryClient(storageOwnerKey), [storageOwnerKey]);
   const submissionInFlight = useRef(false);
   const submissionEpoch = useRef(0);
@@ -3996,11 +3998,11 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       data-testid="h3-panel"
     >
       <div className="flex flex-wrap gap-2">
-      <button type="button" disabled={studioBusy} aria-pressed={!nsfwOpen&&!imageCreateOpen} onClick={()=>{setNsfwOpen(false);setImageCreateOpen(false);}} className="min-h-11 rounded-lg border border-violet-300/30 px-4 font-bold">H3 Video</button>
-      <button type="button" disabled={studioBusy} aria-pressed={imageCreateOpen&&!nsfwOpen} onClick={() => {setNsfwOpen(false);setImageCreateOpen(true);}} className="min-h-11 rounded-lg border border-violet-300/30 px-4 font-bold">H3 · Text to Image</button>
-      {nsfwAccess?.enabled&&<button type="button" disabled={studioBusy} aria-pressed={nsfwOpen} onClick={()=>{setImageCreateOpen(false);setNsfwOpen(true);}} className="min-h-11 rounded-lg border border-violet-300/30 px-4 font-bold">H3 NSFW</button>}
+      <button type="button" disabled={studioBusy} aria-pressed={!nsfwOpen&&!imageCreateOpen} onClick={()=>{showNsfw(false);setImageCreateOpen(false);}} className="min-h-11 rounded-lg border border-violet-300/30 px-4 font-bold">H3 Video</button>
+      <button type="button" disabled={studioBusy} aria-pressed={imageCreateOpen&&!nsfwOpen} onClick={() => {showNsfw(false);setImageCreateOpen(true);}} className="min-h-11 rounded-lg border border-violet-300/30 px-4 font-bold">H3 · Text to Image</button>
+      {nsfwAccess?.enabled&&<button type="button" disabled={studioBusy} aria-pressed={nsfwOpen} onClick={()=>{setImageCreateOpen(false);showNsfw(true);}} className="min-h-11 rounded-lg border border-violet-300/30 px-4 font-bold">H3 NSFW</button>}
       </div>
-      {nsfwOpen&&nsfwAccess?.enabled?<H3NsfwPanel key={storageOwnerKey}/>:imageCreateOpen ? <NativeImagePanel key={storageOwnerKey} h3Only ownerKey={storageOwnerKey} onBack={() => setImageCreateOpen(false)} /> : <>
+      {nsfwOpen&&nsfwAccess?.enabled?<H3NsfwPanel key={storageOwnerKey} ownerKey={storageOwnerKey}/>:imageCreateOpen ? <NativeImagePanel key={storageOwnerKey} h3Only ownerKey={storageOwnerKey} onBack={() => setImageCreateOpen(false)} /> : <>
       <H3StudioControls key={`${storageOwnerKey}:${studioControllerEpoch}`} ownerKey={storageOwnerKey} backend={h3Backend} onBackendChange={setH3Backend} controller={studioController} onControllerChange={next => { setStudioController(next); setManualControlsOpen(false); }} manualMenu={studioController === "manual" && !manualControlsOpen} onOpenManualControls={() => setManualControlsOpen(true)} onBackToStudio={() => setManualControlsOpen(false)} onBusyChange={setStudioBusy} />
       </>}
       <div hidden={nsfwOpen || imageCreateOpen || studioController !== "manual" || manualControlsOpen} data-otg="h3-legacy-manual-tools" className="space-y-4">

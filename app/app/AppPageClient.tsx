@@ -1,4 +1,5 @@
 "use client";
+import ImageSourcePickerBridge from "./components/ImageSourcePickerBridge";
 
 import StoryCreatorPanel from "./components/StoryCreatorPanel";
 import OpenAIConnectionPanel from "./components/OpenAIConnectionPanel";
@@ -8204,6 +8205,7 @@ async function handleAskAi() {
       />
 
             <ProductionCharacterReferencePickerBridge />
+            <ImageSourcePickerBridge />
 <SpinDialNav tab={tab} onTab={setTab} isAdmin={isAdmin} showProduction={true} showExperimental={experimentalEnabled} uiMode={appUiMode} />
     </main>
   );

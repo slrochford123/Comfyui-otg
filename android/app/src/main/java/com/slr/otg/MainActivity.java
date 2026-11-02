@@ -18,6 +18,7 @@ import com.getcapacitor.Bridge;
 
 public class MainActivity extends BridgeActivity {
     private static final String TAG = "SlrOtgDownload";
+    private LocalImageWebChromeClient imagePicker;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -25,7 +26,22 @@ public class MainActivity extends BridgeActivity {
             getWindow().setBackgroundDrawable(new ColorDrawable(Color.rgb(22, 12, 50)));
         }
         super.onCreate(savedInstanceState);
+        installImagePicker();
         installDownloadListener();
+    }
+
+    private void installImagePicker() {
+        Bridge capacitorBridge = getBridge();
+        if (capacitorBridge != null && capacitorBridge.getWebView() != null) {
+            imagePicker = new LocalImageWebChromeClient(capacitorBridge);
+            capacitorBridge.getWebView().setWebChromeClient(imagePicker);
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        if (imagePicker != null) imagePicker.dispose();
+        super.onDestroy();
     }
 
     private void installDownloadListener() {

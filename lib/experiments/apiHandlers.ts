@@ -3,7 +3,7 @@ import { EXPERIMENTS, H3_LICENSE_URL, H3_LICENSE_NOTICE, canvas, labExperiment }
 import { createSession, getSession, listSessions, updateSession } from "@/lib/experiments/store";
 import { boundedJson } from "@/lib/experiments/http";
 import { RequestError } from "@/lib/requestError";
-import { cancelLabJob, exportLabJob, labCapabilities, listLabJobs, submitLabJob } from "@/lib/experiments/generation";
+import { cancelLabJob, exportLabJob, labCapabilities, labLoras, listLabJobs, submitLabJob } from "@/lib/experiments/generation";
 
 export function assertNsfwSession(owner:string,id:string) {const session=getSession(owner,id);if(labExperiment(session.experiment)?.kind!=="h3-admin")throw new RequestError("Session not found.",404);return session;}
 function assertNsfwJob(owner:string,id:string) {const receipt=exportLabJob(owner,id);if(labExperiment(receipt.status.model)?.kind!=="h3-admin")throw new RequestError("Job not found.",404);return receipt;}
@@ -26,7 +26,7 @@ export async function experimentGet(request:NextRequest, owner:string, restricte
   }
   const catalog=EXPERIMENTS.filter(e=>!restricted||e.kind==="h3-admin");
   const capabilities = labCapabilities().filter(c=>catalog.some(e=>e.id===c.model));
-  return NextResponse.json({ ok: true, environment: process.env.OTG_ENV, executionEnabled: capabilities.some(c => c.modes.length), capabilities, catalog, sessions: listSessions(owner).filter(s=>catalog.some(e=>e.id===s.experiment)) });
+  return NextResponse.json({ ok: true, environment: process.env.OTG_ENV, executionEnabled: capabilities.some(c => c.modes.length), capabilities, loras:labLoras(), catalog, sessions: listSessions(owner).filter(s=>catalog.some(e=>e.id===s.experiment)) });
 }
 export async function experimentPost(request:NextRequest, owner:string, restricted=false) {
   const data = await boundedJson(request);
@@ -34,7 +34,7 @@ export async function experimentPost(request:NextRequest, owner:string, restrict
     if(data.action==="create"&&labExperiment(String(data.experiment))?.kind!=="h3-admin")throw new RequestError("Model not available.",403);
     if(["update","generate"].includes(String(data.action)))assertNsfwSession(owner,String(data.id));
     if(data.action==="cancel")assertNsfwJob(owner,String(data.jobId));
-    if(data.settings&&typeof data.settings==="object"&&("loras" in data.settings||"steps" in data.settings||"checkpoint" in data.settings))throw new RequestError("Custom LoRAs, steps and checkpoints are not qualified for this workspace.",400);
+    if(data.settings&&typeof data.settings==="object"&&("steps" in data.settings||"checkpoint" in data.settings))throw new RequestError("Custom steps and checkpoints are not qualified for this workspace.",400);
   }
   if (data.action === "create" && typeof data.experiment === "string") return NextResponse.json({ ok: true, session: createSession(owner, data.experiment) }, { status: 201 });
   if (data.action === "update" && typeof data.id === "string") return NextResponse.json({ ok: true, session: updateSession(owner, data.id, data) });

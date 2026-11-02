@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -63,11 +64,16 @@ class Gateway:
         if not isinstance(raw,dict) or set(raw)!={'id','model','settings','sources'} or raw['id']!=root.name:raise ValueError('Invalid H3 request')
         model=self.config['models'].get(raw['model'])
         if not model:raise ValueError('Unavailable checkpoint')
-        s=raw['settings'];allowed={'mode','resolution','orientation','gpu','recipe','seconds','seed','prompt','seedLocked','selectedSources'}
+        s=raw['settings'];allowed={'mode','resolution','orientation','gpu','recipe','seconds','seed','prompt','seedLocked','selectedSources','stylePresetId','visualStyle','cameraFeel','shotFlow','loras'}
         if not isinstance(s,dict) or set(s)-allowed:raise ValueError('Unsupported H3 settings')
         enums={'mode':model.get('qualifiedModes',[]),'resolution':['0.2','0.6','1'],'orientation':['landscape','portrait'],'gpu':['auto','rtx3090'],'recipe':['author']}
         for key,values in enums.items():
             if s.get(key) not in values:raise ValueError('Unqualified H3 setting')
+        selections=s.get('loras',[])
+        if not isinstance(selections,list) or len(selections)>6:raise ValueError('Invalid LoRAs')
+        for item in selections:
+            lora=self.config.get('loras',{}).get(item.get('id'))
+            if not lora or raw['model'] not in lora['models'] or type(item.get('strength')) not in (int,float) or not lora['minStrength']<=item['strength']<=lora['maxStrength']:raise ValueError('Unqualified LoRA')
         if type(s.get('seconds')) is not int or not 2<=s['seconds']<=15 or type(s.get('seed')) is not int or not 0<=s['seed']<=9007199254740991:raise ValueError('Invalid duration or seed')
         if not isinstance(s.get('prompt'),str) or not 0<len(s['prompt'].strip())<=8000 or '\x00' in s['prompt']:raise ValueError('Invalid prompt')
         sources=raw['sources']
@@ -81,13 +87,13 @@ class Gateway:
         return dict(raw,remoteLeaseSeconds=60)
 
     def handle(self,p):
-        shapes={'probe':set(),'create':{'id'},'upload':{'id','name','offset','data'},'start':{'id','request'},'status':{'id'},'cancel':{'id'},'artifacts':{'id'},'download':{'id','name','offset'}}
+        shapes={'probe':set(),'create':{'id'},'upload':{'id','name','offset','data'},'start':{'id','request'},'status':{'id'},'preview':{'id'},'cancel':{'id'},'artifacts':{'id'},'download':{'id','name','offset'}}
         if not isinstance(p,dict) or p.get('action') not in shapes or set(p)!={'action'}|shapes[p['action']]:raise ValueError('Unsupported H3 protocol action')
         action=p['action']
         if action=='probe':return {'protocol':PROTOCOL,'restricted':True,'gpu':'rtx3090','runtimeSha256':digest(self.bundle/'runtime.json')}
         if action=='create':
             root=self.jobs/identifier(p['id']);root.mkdir(mode=0o700,exist_ok=True);root=self.root(p['id'])
-            if len(list(self.jobs.iterdir()))>500 or shutil.disk_usage(root).free<12*1024**3:raise ValueError('Private worker storage reserve reached')
+            if shutil.disk_usage(root).free<12*1024**3:raise ValueError('Private worker storage reserve reached')
             (root/'sources').mkdir(mode=0o700,exist_ok=True)
             return {'id':root.name}
         root=self.root(p['id'])
@@ -124,6 +130,20 @@ class Gateway:
         if action=='status':
             (root/'transport-heartbeat').touch(mode=0o600)
             return {'status':status}
+        if action=='preview':
+            file=root/'preview.mp4'
+            if not file.exists():return {'bytes':0}
+            try:
+                fd=os.open(file,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+                with os.fdopen(fd,'rb') as stream:
+                    st=os.fstat(stream.fileno())
+                    if not stat.S_ISREG(st.st_mode) or st.st_nlink!=1 or not 0<st.st_size<=CHUNK:return {'bytes':0}
+                    data=stream.read(CHUNK+1)
+            except OSError:
+                # Preview is optional; disappearance or unsafe media never
+                # exposes data or turns a successful render into a failure.
+                return {'bytes':0}
+            return {'data':base64.b64encode(data).decode(),'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}
         if status.get('state')!='completed' or not status.get('cleanedUp'):raise ValueError('No completed output')
         if action=='artifacts':
             files={}

@@ -2,12 +2,36 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import Database from "better-sqlite3";
-import { DEFAULT_LAB_SETTINGS, labExperiment, type LabSettings } from "./catalog";
+import { DEFAULT_LAB_SETTINGS, EXPERIMENTS, labExperiment, type LabSettings } from "./catalog";
 import { RequestError } from "@/lib/requestError";
+import { MAX_LAB_IMAGE_BYTES, MAX_LAB_REFERENCE_BYTES } from "./imageTypes";
 import { productionNsfwScope } from "./availability";
+import { LAB_STYLE_IDS, H3_VISUAL_STYLE_OPTIONS, H3_CAMERA_FEEL_OPTIONS, H3_SHOT_FLOW_OPTIONS } from "./creative";
+import { MAX_H3_RENDER_REFERENCES } from "./referenceLimits";
 
 export const MAX_ASSET_BYTES = 128 * 1024 * 1024;
 export const MAX_ASSETS = 12;
+// Saved H3 NSFW media/history has no count or fixed GB quota. These limits
+// remain only for the separate quarantined Testing workspace.
+export const TESTING_EXPERIMENT_IDS = EXPERIMENTS.filter(e => e.kind === "testing").map(e => e.id);
+export const TESTING_SQL_IDS = TESTING_EXPERIMENT_IDS.map(() => "?").join(",");
+export const uncappedH3History = (experiment: string) => labExperiment(experiment)?.kind === "h3-admin";
+
+export function assertLabAssetCapacity(db: Database.Database, root: string, owner: string, session: {id:string;experiment:string}, reservationBytes: number, mime: string, safetyReserveBytes = 8 * 1024 ** 3) {
+  if (!uncappedH3History(session.experiment)) {
+    if ((db.prepare("SELECT count(*) AS n FROM assets WHERE session=? AND (ready=1 OR bytes>0)").get(session.id) as {n:number}).n >= MAX_ASSETS) throw new RequestError("At most 12 assets per experiment.",409);
+    const usage = `SELECT coalesce(sum(a.bytes + CASE WHEN a.mime LIKE 'image/%' AND a.role<>'generated' THEN ? ELSE 0 END),0) AS n FROM assets a JOIN sessions s ON s.id=a.session WHERE s.experiment IN (${TESTING_SQL_IDS})`;
+    const ownerBytes = (db.prepare(usage+" AND a.owner=?").get(MAX_LAB_REFERENCE_BYTES,...TESTING_EXPERIMENT_IDS,owner) as {n:number}).n;
+    const totalBytes = (db.prepare(usage).get(MAX_LAB_REFERENCE_BYTES,...TESTING_EXPERIMENT_IDS) as {n:number}).n;
+    const required = reservationBytes + (mime.startsWith("image/") ? MAX_LAB_REFERENCE_BYTES : 0);
+    if (ownerBytes+required > 2*1024**3 || totalBytes+required > 16*1024**3) throw new RequestError("Research storage limit reached.",507);
+  }
+  // Count in-flight reservations as well as actual free space. Unlimited
+  // retention must never allow concurrent uploads to consume the OS reserve.
+  const reserved = (db.prepare("SELECT coalesce(sum(bytes + CASE WHEN mime LIKE 'image/%' AND role<>'generated' THEN ? ELSE 0 END),0) AS n FROM assets WHERE ready=0 AND bytes>0").get(MAX_LAB_REFERENCE_BYTES) as {n:number}).n;
+  const disk=fs.statfsSync(root), required=reservationBytes+(mime.startsWith("image/")?MAX_LAB_REFERENCE_BYTES:0);
+  if (disk.bavail*disk.bsize < safetyReserveBytes+reserved+required) throw new RequestError("Not enough free disk space. Free storage and retry; your saved files have not been removed.",507);
+}
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 export function validId(value: unknown): asserts value is string {
   if (typeof value !== "string" || !uuid.test(value)) throw new RequestError("Invalid experiment identifier.", 400);
@@ -80,19 +104,25 @@ export function validateSettings(value: unknown): LabSettings {
   for (const [key, values] of Object.entries(options)) if (!values.includes(s[key] as string)) throw new RequestError(`Invalid ${key}.`, 400);
   if (s.variant !== undefined && !["pika6","base8"].includes(s.variant as string)) throw new RequestError("Invalid experiment variant.",400);
   if (s.seedLocked !== undefined && typeof s.seedLocked !== "boolean") throw new RequestError("Invalid seed lock.",400);
+  if (s.stylePresetId !== undefined && (typeof s.stylePresetId!=="string"||!LAB_STYLE_IDS.has(s.stylePresetId))) throw new RequestError("Invalid H3 style.",400);
+  for (const [key, values] of Object.entries({visualStyle:H3_VISUAL_STYLE_OPTIONS,cameraFeel:H3_CAMERA_FEEL_OPTIONS,shotFlow:H3_SHOT_FLOW_OPTIONS}))
+    if (s[key] !== undefined && (typeof s[key]!=="string"||!(values as readonly string[]).includes(s[key] as string))) throw new RequestError("Invalid look control.",400);
+  if (s.loras !== undefined && (!Array.isArray(s.loras) || s.loras.length>6 || new Set(s.loras.map(l=>l?.id)).size!==s.loras.length || s.loras.some(l=>!l||typeof l.id!=="string"||!/^[\w-]{1,140}$/.test(l.id)||!Number.isFinite(l.strength)||l.strength < -8||l.strength>8))) throw new RequestError("Invalid H3 LoRA selection.",400);
   if (s.selectedSources !== undefined) {
-    if (!Array.isArray(s.selectedSources) || s.selectedSources.length > MAX_ASSETS || new Set(s.selectedSources).size !== s.selectedSources.length) throw new RequestError("Invalid reference selection.",400);
+    if (!Array.isArray(s.selectedSources) || s.selectedSources.length > MAX_H3_RENDER_REFERENCES || new Set(s.selectedSources).size !== s.selectedSources.length) throw new RequestError("Select up to 12 references for one render. Saved uploads are not limited.",400);
     s.selectedSources.forEach(validId);
   }
   if (!Number.isInteger(s.seconds) || Number(s.seconds) < 2 || Number(s.seconds) > 15 || !Number.isSafeInteger(s.seed) || Number(s.seed) < 0) throw new RequestError("Duration must be 2–15 whole seconds and seed a nonnegative safe integer.", 400);
-  return { mode: s.mode, resolution: s.resolution, orientation: s.orientation, gpu: s.gpu, recipe: s.recipe, seconds: s.seconds, seed: s.seed, prompt: text(s.prompt, 8000, "prompt"), ...(s.seedLocked === undefined ? {} : {seedLocked:s.seedLocked}), ...(s.variant === undefined ? {} : {variant:s.variant}), ...(s.selectedSources === undefined ? {} : {selectedSources:[...s.selectedSources as string[]]}) } as LabSettings;
+  const creative=Object.fromEntries(["stylePresetId","visualStyle","cameraFeel","shotFlow","loras"].filter(key=>s[key]!==undefined).map(key=>[key,s[key]]));
+  if(Array.isArray(s.loras))creative.loras=s.loras.map(l=>({id:l.id,strength:l.strength}));
+  return { mode: s.mode, resolution: s.resolution, orientation: s.orientation, gpu: s.gpu, recipe: s.recipe, seconds: s.seconds, seed: s.seed, prompt: text(s.prompt, 8000, "prompt"), ...creative, ...(s.seedLocked === undefined ? {} : {seedLocked:s.seedLocked}), ...(s.variant === undefined ? {} : {variant:s.variant}), ...(s.selectedSources === undefined ? {} : {selectedSources:[...s.selectedSources as string[]]}) } as LabSettings;
 }
 export function createSession(owner: string, experiment: string) {
   const entry = labExperiment(experiment);
   if (!entry) throw new RequestError("Unknown experiment.", 400);
   if (productionNsfwScope() && entry.kind !== "h3-admin") throw new RequestError("Model not available.", 403);
   return withLab(db => db.transaction(() => {
-    if ((db.prepare("SELECT count(*) AS n FROM sessions WHERE owner=?").get(owner) as { n: number }).n >= 200) throw new RequestError("The 200-record research limit has been reached; export and review storage with the administrator.", 409);
+    if (!uncappedH3History(experiment) && (db.prepare(`SELECT count(*) AS n FROM sessions WHERE owner=? AND experiment IN (${TESTING_SQL_IDS})`).get(owner,...TESTING_EXPERIMENT_IDS) as { n: number }).n >= 200) throw new RequestError("The 200-record research limit has been reached; export and review storage with the administrator.", 409);
     const id = crypto.randomUUID(), now = new Date().toISOString();
     const settings = {...DEFAULT_LAB_SETTINGS, ...(experiment === "body-swap" ? {mode:"edit"} : experiment === "cinematic-upscale" || experiment === "director-studio" ? {mode:"text"} : {} )};
     db.prepare("INSERT INTO sessions (id,owner,experiment,title,settings,created,updated) VALUES (?,?,?,?,?,?,?)").run(id, owner, experiment, entry.title, JSON.stringify(settings), now, now);
@@ -117,21 +147,18 @@ export function updateSession(owner: string, id: string, input: Record<string, u
     return present(db, owned(db, owner, id));
   })());
 }
-export function reserveAsset(owner: string, session: string, name: string, mime: string, role: string) {
+export function reserveAsset(owner: string, session: string, name: string, mime: string, role: string, reservationBytes=MAX_ASSET_BYTES) {
+  if(![MAX_ASSET_BYTES,MAX_LAB_IMAGE_BYTES].includes(reservationBytes))throw new RequestError("Invalid upload reservation.",400);
   return withLab((db, root) => db.transaction(() => {
     const record = owned(db, owner, session);
     if (record.archived) throw new RequestError("Restore this experiment before uploading.", 409);
-    if ((db.prepare("SELECT count(*) AS n FROM assets WHERE session=? AND (ready=1 OR bytes>0)").get(session) as { n: number }).n >= MAX_ASSETS) throw new RequestError("At most 12 assets per experiment.", 409);
-    const ownerBytes = (db.prepare("SELECT coalesce(sum(bytes),0) AS n FROM assets WHERE owner=?").get(owner) as { n: number }).n;
-    const totalBytes = (db.prepare("SELECT coalesce(sum(bytes),0) AS n FROM assets").get() as { n: number }).n;
-    const disk = fs.statfsSync(root);
-    if (ownerBytes + MAX_ASSET_BYTES > 2 * 1024 ** 3 || totalBytes + MAX_ASSET_BYTES > 16 * 1024 ** 3 || disk.bavail * disk.bsize < 8 * 1024 ** 3 + MAX_ASSET_BYTES) throw new RequestError("Research storage limit reached or less than 8 GB safety reserve available.", 507);
+    assertLabAssetCapacity(db,root,owner,record,reservationBytes,mime);
     const id = crypto.randomUUID();
-    db.prepare("INSERT INTO assets (id,session,owner,name,mime,role,bytes,created) VALUES (?,?,?,?,?,?,?,?)").run(id, session, owner, name.slice(0,120).replace(/[\x00-\x1f\x7f/\\]/g, "_"), mime, role, MAX_ASSET_BYTES, new Date().toISOString());
+    db.prepare("INSERT INTO assets (id,session,owner,name,mime,role,bytes,created) VALUES (?,?,?,?,?,?,?,?)").run(id, session, owner, name.slice(0,120).replace(/[\x00-\x1f\x7f/\\]/g, "_"), mime, role, reservationBytes, new Date().toISOString());
     return { id, file: path.join(root, id + ".media") };
   })());
 }
-export function finishAsset(owner: string, id: string, bytes: number, sha: string) { withLab(db => db.prepare("UPDATE assets SET ready=1,bytes=?,sha256=? WHERE id=? AND owner=? AND ready=0").run(bytes, sha, id, owner)); }
+export function finishAsset(owner: string, id: string, bytes: number, sha: string, mime?:string) { withLab(db => db.prepare("UPDATE assets SET ready=1,bytes=?,sha256=?,mime=coalesce(?,mime) WHERE id=? AND owner=? AND ready=0").run(bytes, sha, mime??null, id, owner)); }
 export function abandonAsset(owner: string, id: string) { withLab(db => db.prepare("DELETE FROM assets WHERE id=? AND owner=? AND ready=0").run(id, owner)); }
 export function getAsset(owner: string, id: string) {
   validId(id);

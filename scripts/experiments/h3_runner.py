@@ -115,9 +115,18 @@ class Job:
             raise ValueError('Pinned checkpoint changed; checksum qualification required')
         return file
     def build_graph(self, model, settings, sources, encoder):
-        return compile_graph(model, settings, sources, encoder)
+        loras=[dict(filename=f'lab-{i}.safetensors',strength=s['strength'],id=s['id']) for i,s in enumerate(settings.get('loras',[]))]
+        return compile_graph(model, settings, sources, encoder, loras)
     def prepare_extra_models(self, worker):
-        pass
+        model=self.request['model']; selections=self.request['settings'].get('loras',[])
+        if len(selections)>6 or len({s['id'] for s in selections})!=len(selections):raise ValueError('Invalid private LoRA selection')
+        for i,selection in enumerate(selections):
+            info=self.cfg.get('loras',{}).get(selection['id'])
+            if not info or model not in info['models'] or not info['minStrength']<=selection['strength']<=info['maxStrength']:raise ValueError('Unqualified private LoRA/strength')
+            source=Path(info['path']); stat=source.stat()
+            if not source.resolve().is_relative_to((Path(self.cfg['sharedModels'])/'loras').resolve()) or stat.st_size!=info['bytes'] or stat.st_mtime_ns!=info['mtimeNs'] or sha(source)!=info['sha256']:raise ValueError('Private LoRA pin changed')
+            directory=worker/'models/loras';directory.mkdir(exist_ok=True)
+            (directory/f'lab-{i}.safetensors').symlink_to(source)
     def custom_nodes(self):
         return ['LabMemory']
     def checkpoint_hash(self, model):
@@ -145,7 +154,7 @@ class Job:
                 self.update(stage='Waiting for idle 3090, shared reservation and sufficient RAM/VRAM'); time.sleep(5)
             self.run_worker(file, model, settings)
     def run_worker(self, checkpoint, model, settings):
-        started = time.time(); self.update(state='running', stage='Preparing private H3 worker', started=started, gpu='rtx3090')
+        started = time.time(); self.update(state='running', stage='Preparing private H3 worker', started=started, gpu='rtx3090', progressPercent=2)
         worker = self.root/'worker'
         for name in ('input','output','temp','user','custom_nodes','models/diffusion_models','models/text_encoders','models/vae','cache'):
             (worker/name).mkdir(parents=True, mode=0o700)
@@ -186,11 +195,19 @@ class Job:
         if not result.get('prompt_id') or result.get('node_errors'): raise RuntimeError('H3 graph rejected')
         prompt=result['prompt_id']; self.update(stage='H3 encoding / sampling / AV decoding', promptId=prompt, submitted=submitted)
         deadline=time.monotonic()+7200; peak=0; checked=0
+        preview_version=0
         while True:
             self.check_cancel()
             if self.child.poll() is not None: raise RuntimeError('Private worker exited before completing the graph')
             if time.monotonic()>deadline: raise RuntimeError('Private generation exceeded two-hour safety limit')
             history=http(base,'/history/'+prompt).get(prompt)
+            preview_file=self.root/'preview-state.json'
+            if preview_file.is_file() and not preview_file.is_symlink():
+                preview=read(preview_file)
+                if preview.get('updated',0)>preview_version:
+                    preview_version=preview['updated']
+                    stage='Decoding video/audio and saving result' if preview['step']>=preview['total'] else f"Sampling · step {preview['step']} of {preview['total']}"
+                    self.update(stage=stage,progress=preview,previewVersion=preview.get('previewVersion',self.status.get('previewVersion')),progressPercent=min(90,5+round(85*preview['step']/max(1,preview['total']))))
             if history:
                 write(self.root/'history.json',history)
                 if history.get('status',{}).get('status_str') != 'success':
@@ -217,14 +234,14 @@ class Job:
             final=probe(output);v=next(s for s in final['streams'] if s['codec_type']=='video')
             if (int(v['width']),int(v['height']))!=(actual['width'],actual['height']):raise RuntimeError('Image dimensions do not match request')
             write(self.root/'media-probe.json',final)
-            self.update(state='completed',stage='Image complete',completed=time.time(),rawSeconds=round(raw_completed-submitted,3),
+            self.update(state='completed',stage='Image complete',progressPercent=100,completed=time.time(),rawSeconds=round(raw_completed-submitted,3),
                         totalSeconds=round(time.time()-started,3),outputBytes=output.stat().st_size,outputSha256=sha(output),peakGpuMiB=peak)
             return
         outputs=list((worker/'output').rglob('*.mp4'))
         if len(outputs)!=1: raise RuntimeError('Expected one real H3 video output')
         raw=probe(outputs[0]); video=next(s for s in raw['streams'] if s['codec_type']=='video')
         if int(video.get('nb_frames',0)) < actual['frames']: raise RuntimeError('Native output is shorter than requested; padding is prohibited')
-        self.update(stage='Trimming excess native frames and validating delivered video', rawSeconds=round(raw_completed-submitted,3))
+        self.update(stage='Finishing and validating video', progressPercent=95, rawSeconds=round(raw_completed-submitted,3))
         output=self.root/'result.mp4'
         run(['/usr/bin/ffmpeg','-nostdin','-v','error','-i',str(outputs[0]),'-map','0:v:0','-map','0:a:0?',
              '-frames:v',str(actual['frames']),'-t',str(settings['seconds']),'-c:v','libx264','-preset','fast','-crf','18','-threads','2',
@@ -234,7 +251,7 @@ class Job:
             raise RuntimeError('Delivered video dimensions/frame count do not match the request')
         if not any(s['codec_type']=='audio' for s in final['streams']): raise RuntimeError('H3 audio output missing')
         write(self.root/'media-probe.json',final)
-        self.update(state='completed',stage='Video complete',completed=time.time(),totalSeconds=round(time.time()-started,3),
+        self.update(state='completed',stage='Video complete',progressPercent=100,completed=time.time(),totalSeconds=round(time.time()-started,3),
                     outputBytes=output.stat().st_size,outputSha256=sha(output),peakGpuMiB=peak)
     def cleanup(self):
         if self.child and self.child.poll() is None:

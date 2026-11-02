@@ -5,7 +5,7 @@ Still editing uses the native H3 image latent path, not a frame extracted from v
 """
 RECIPES = {
     "prism-pika": dict(steps=8, sampler="euler", scheduler="simple", attention="dense",
-                       note="Experimental hybrid recipe; built-in Pika merge, no extra LoRA."),
+                       note="Experimental hybrid recipe; built-in Pika merge. Optional style adapters are separate."),
     "eros-beta7": dict(steps=8, sampler="euler", scheduler="simple", attention="vsa",
                        note="Beta 7 author Euler recipe; VSA 90%, not SLA."),
     "dasiwa-v4": dict(steps=20, sampler="euler", scheduler="simple", attention="dense",
@@ -50,7 +50,7 @@ def validate(settings, sources):
         raise ValueError("Edit video requires one source video and optional image references")
 
 
-def compile_graph(model, settings, sources, encoder):
+def compile_graph(model, settings, sources, encoder, loras=None):
     validate(settings, sources)
     recipe = RECIPES[model]
     width, height = {"0.2": (608, 352), "0.6": (1056, 608), "1": (1376, 768)}[settings["resolution"]]
@@ -67,6 +67,8 @@ def compile_graph(model, settings, sources, encoder):
     avae = add(4, "VAELoader", vae_name="minimax_h3_audio_vae_fp32.safetensors")
     clip = add(15, "CLIPLoader", clip_name=encoder, type="minimax", device="default")
     unet = add(30, "UNETLoader", unet_name=model + ".safetensors", weight_dtype="default")
+    for index, lora in enumerate(loras or []):
+        unet = add(60+index, "LoraLoaderModelOnly", model=unet, lora_name=lora['filename'], strength_model=lora['strength'])
     shifted = add(38, "MiniMaxH3SigmaShift", model=unet, shift_video=12.0, shift_audio=3.0)
     patched = shifted
     if recipe["attention"] == "vsa":
@@ -96,6 +98,7 @@ def compile_graph(model, settings, sources, encoder):
         positive = add(40, "MiniMaxH3AddGuide", positive=positive, latent=["39", 1], frame_idx=0, vae=vae, image=first)
     positive = add(90, "LabReleaseEncoder", positive=positive, clip=clip)
     guider = add(32, "BasicGuider", model=patched, conditioning=positive)
+    guider = add(95, "LabPreviewGuider", guider=guider)
     sampler = add(18, "KSamplerSelect", sampler_name=recipe["sampler"])
     sigmas = add(24, "BasicScheduler", model=patched, scheduler=recipe["scheduler"], steps=recipe["steps"], denoise=1.)
     noise = add(31, "RandomNoise", noise_seed=settings["seed"])
@@ -114,6 +117,6 @@ def compile_graph(model, settings, sources, encoder):
             "format.codec": "h264", "format.codec.encoding": "re-encode", "format.codec.encoding.crf": 18})
     return graph, dict(**recipe, width=width, height=height, fps=None if still else 24, frames=frames, nativeFrames=native,
                        format="png" if still else "mp4",
-                       cfg=1, shiftVideo=12, shiftAudio=3, referenceCount=len(sources),
+                       cfg=1, shiftVideo=12, shiftAudio=3, referenceCount=len(sources), loras=loras or [],
                        attentionNote="Short sequences stay dense below the sparse token threshold.",
                        modeNote="Reference-guided regeneration, not frame-exact editing." if settings["mode"] == "edit" else "")

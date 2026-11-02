@@ -20,7 +20,7 @@ def remote(code):return subprocess.check_output(['ssh','-o','BatchMode=yes','otg
 
 def main():
     os.umask(0o077);evidence=Path(sys.argv[1]).resolve()
-    if os.getuid()!=1000 or not re.fullmatch(r'/home/shawn-rochford/AI/research/h3-nsfw-access-\d{8}-\w+',str(evidence)) or not (evidence/'source-before.tar.gz').is_file():raise ValueError('Explicit backed-up owner evidence required')
+    if os.getuid()!=1000 or not re.fullmatch(r'/home/shawn-rochford/AI/research/(?:h3-nsfw-access|build-2\.24-promotion)-\d{8}-\w+',str(evidence)) or not (evidence/'source-before.tar.gz').is_file():raise ValueError('Explicit backed-up owner evidence required')
     if (evidence/'h3-channel.json').exists():raise ValueError('Channel already prepared')
     bundle=Path('/home/shawn-rochford/AI/runtime/research')/('h3-nsfw-'+uuid.uuid4().hex[:12]);bundle.mkdir(mode=0o700)
     source=Path(__file__).resolve().parents[1]/'experiments'

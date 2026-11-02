@@ -33,6 +33,8 @@ export type LabSettings = {
   /** Ordered active references. Omitted in legacy research sessions. Removing
    * an input detaches it without deleting the source or completed results. */
   selectedSources?: string[];
+  stylePresetId?: string; visualStyle?: string; cameraFeel?: string; shotFlow?: string;
+  loras?: { id: string; strength: number }[];
 };
 export const DEFAULT_LAB_SETTINGS: LabSettings = { mode: "reference", resolution: "0.2", orientation: "landscape", seconds: 5, gpu: "auto", recipe: "author", seed: 424242, prompt: "" };
 export function canvas(settings: LabSettings) {

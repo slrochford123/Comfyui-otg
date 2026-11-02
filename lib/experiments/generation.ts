@@ -4,21 +4,39 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { RequestError } from "@/lib/requestError";
 import { EXPERIMENTS } from "./catalog";
-import { getAsset, getSession, labRoot, MAX_ASSET_BYTES, validId, withLab } from "./store";
+import { assertLabAssetCapacity, getAsset, getSession, labRoot, MAX_ASSET_BYTES, TESTING_EXPERIMENT_IDS, TESTING_SQL_IDS, uncappedH3History, validId, withLab } from "./store";
 import { requireNsfwAccess } from "./nsfwAccess";
 import { productionNsfwScope } from "./availability";
+import { labFinalPrompt } from "./creative";
+import type { LabSettings } from "./catalog";
+import {prepareLabImage} from "./images";
+import {MAX_H3_RENDER_REFERENCES} from "./referenceLimits";
 
 type Recipe = {steps:number;sampler:string;scheduler:string;attention:string;note:string};
 type ModelRuntime = { path: string; sha256: string; bytes: number; mtimeNs: number; qualifiedModes?: string[]; variants?: Record<string,string[]>; minSeconds?:number; reason?:string; recipe?: Recipe; variantRecipes?:Record<string,Recipe> };
-type RuntimeConfig = { environment: string; gpu: string; models: Record<string, ModelRuntime>; runner: string; runnerSha256: string; files: {path:string;sha256:string}[] };
+type PrivateLora = {filename:string;path:string;sha256:string;bytes:number;mtimeNs:number;models:string[];displayName:string;minStrength:number;maxStrength:number;defaultStrength:number;triggerWords:string[]};
+type RuntimeConfig = { environment: string; gpu: string; models: Record<string, ModelRuntime>; runner: string; runnerSha256: string; files: {path:string;sha256:string}[]; loras?:Record<string,PrivateLora> };
+export type LabLora = {id:string;displayName:string;minStrength:number;maxStrength:number;defaultStrength:number;triggerWords:string[];models:string[]};
 export type LabCapability = { model: string; gpu: string; modes: string[]; reason: string; variants?:Record<string,string[]>; minSeconds?:number; recipe?:Recipe; variantRecipes?:Record<string,Recipe> };
 export type LabJob = {
   id: string; session: string; model: string; state: string; stage: string; created: number;
   started?: number; completed?: number; totalSeconds?: number; elapsedSeconds?: number;
   output?: string; cleanedUp?: boolean; actual?: Record<string, unknown>; peakGpuMiB?: number;
+  progress?: {step:number;total:number;sampleStarted:number;updated:number;samplingRemainingSeconds?:number};
+  previewVersion?: number; estimatedRemainingSeconds?:number; estimateSource?:"similar-runs"; progressPercent?:number;
   director?: {title:string;continuity:string;shots:{title:string;seconds:number;prompt:string;sound:string}[]};
 };
 type Row = { id: string; owner: string; session: string; model: string; asset: string; status: string; created: number };
+export function labLoras():LabLora[] {
+  try {return Object.entries(runtime()?.config.loras||{}).map(([id,l])=>({id,displayName:l.displayName,minStrength:l.minStrength,maxStrength:l.maxStrength,defaultStrength:l.defaultStrength,triggerWords:l.triggerWords,models:l.models}));}catch{return [];}
+}
+function selectedLoras(settings:LabSettings,model:string,cfg:RuntimeConfig) {
+  return (settings.loras||[]).map(selection=>{
+    const lora=cfg.loras?.[selection.id];
+    if(!lora||!lora.models.includes(model)||!Number.isFinite(selection.strength)||selection.strength<lora.minStrength||selection.strength>lora.maxStrength)throw new RequestError("That LoRA/strength is not qualified for the selected private H3 model.",409);
+    return lora;
+  });
+}
 function runtime(kind: "testing" | "h3-admin" = "h3-admin"): { file: string; config: RuntimeConfig } | null {
   if (productionNsfwScope() && kind === "testing") return null;
   const file = path.join(labRoot(), kind === "testing" ? "testing-runtime.json" : "runtime.json");
@@ -70,8 +88,14 @@ export function listLabJobs(owner: string, session: string): LabJob[] {
   getSession(owner, session);
   return jobs((db, root) => {
     const rows = db.prepare("SELECT * FROM generation_jobs WHERE owner=? AND session=? ORDER BY created DESC").all(owner, session) as Row[];
+    // Bound ETA sampling, never retained history or access to older results.
+    const prior=(db.prepare("SELECT * FROM generation_jobs WHERE owner=? ORDER BY created DESC LIMIT 100").all(owner) as Row[]).map(row=>readStatus(root,row)).filter(s=>s.state==="completed"&&s.cleanedUp&&s.totalSeconds&&s.actual);
     return rows.map(row => {
       const status = readStatus(root, row);
+      if(status.state==="running"&&status.started&&status.actual){
+        const samples=prior.filter(p=>p.id!==status.id&&p.model===status.model&&["width","height","nativeFrames","steps"].every(k=>p.actual?.[k]===status.actual?.[k])).map(p=>p.totalSeconds!).sort((a,b)=>a-b);
+        if(samples.length){const remaining=Math.round(samples[Math.floor(samples.length/2)]-(Date.now()/1000-status.started));if(remaining>0){status.estimatedRemainingSeconds=remaining;status.estimateSource="similar-runs";}}
+      }
       if (status.state === "completed" && status.cleanedUp) {
         const asset = db.prepare("SELECT ready,mime FROM assets WHERE id=? AND owner=?").get(row.asset, owner) as { ready: number; mime:string };
         if (!asset.ready) {
@@ -116,10 +140,13 @@ export async function submitLabJob(owner: string, data: Record<string, unknown>,
   const cfg = runtime(kind), capability = labCapabilities().find(c => c.model === session.experiment);
   if (restricted && (cfg?.config as RuntimeConfig & {permissionGuardVersion?:number})?.permissionGuardVersion !== 1) throw new RequestError("Permission-aware H3 worker is not installed. No job was submitted.",503);
   if (!cfg || !capability?.modes.includes(session.settings.mode)) throw new RequestError("This exact model and mode have not passed isolated qualification. No job was submitted.", 409);
+  const loras=selectedLoras(session.settings,session.experiment,cfg.config);
+  const finalPrompt=kind==="h3-admin"?labFinalPrompt(session.settings,loras.flatMap(l=>l.triggerWords)):session.settings.prompt;
+  if(finalPrompt.length>8000)throw new RequestError("Shorten the scene to leave room for the selected style (8,000 characters total).",400);
   if (session.settings.gpu === "rtx5060ti") throw new RequestError("5060 Ti is not qualified for these private checkpoints yet; choose 3090.", 409);
   if (session.settings.recipe !== "author" || !session.settings.prompt.trim()) throw new RequestError("Choose the checkpoint recipe and enter a scene prompt.", 400);
   if (kind === "testing" && (!capability.variants?.[session.settings.variant || "pika6"]?.includes(session.settings.mode) || session.settings.seconds < (capability.minSeconds || 5))) throw new RequestError("This variant/mode or duration is not qualified. No substitute job was submitted.",409);
-  if (!Array.isArray(data.sources) || data.sources.length > 12 || new Set(data.sources).size !== data.sources.length) throw new RequestError("Select valid source references.", 400);
+  if (!Array.isArray(data.sources) || data.sources.length > MAX_H3_RENDER_REFERENCES || new Set(data.sources).size !== data.sources.length) throw new RequestError("Select valid source references for one render. Saved uploads are not limited.", 400);
   if (session.settings.selectedSources !== undefined && JSON.stringify(data.sources) !== JSON.stringify(session.settings.mode === "text" ? [] : session.settings.selectedSources)) throw new RequestError("References changed. Save the draft before generating.",409);
   const sources = data.sources.map(id => {
     validId(id); const item = getAsset(owner, id);
@@ -136,20 +163,19 @@ export async function submitLabJob(owner: string, data: Record<string, unknown>,
       (mode === "reference" && !sources.length) || (mode === "edit" && (videos.length !== 1 || audios.length)) || images.length > 9 || videos.length > 3 || audios.length > 3) {
     throw new RequestError("Text: no references. Image: one first frame. Edit image: one source image. Reference: up to 9 images/3 videos/3 audio. Edit video: one video, optional images.", 400);
   }
+  const preparedImages=new Map<string,Awaited<ReturnType<typeof prepareLabImage>>>();
+  for(const source of images)preparedImages.set(source.asset.id,await prepareLabImage(source.file,source.asset.sha256));
   const id = data.requestId;
   const result = jobs((db, root) => db.transaction(() => {
-    const pending = (db.prepare("SELECT * FROM generation_jobs WHERE owner=?").all(owner) as Row[]).map(row=>{
+    const pending = (db.prepare("SELECT * FROM generation_jobs WHERE owner=? AND (json_extract(status,'$.state') NOT IN ('completed','failed','canceled') OR coalesce(json_extract(status,'$.cleanedUp'),0)<>1)").all(owner) as Row[]).map(row=>{
       const status=readStatus(root,row);
       if (["failed","canceled"].includes(status.state)&&status.cleanedUp) db.prepare("UPDATE assets SET bytes=0 WHERE id=? AND ready=0").run(row.asset);
+      db.prepare("UPDATE generation_jobs SET status=? WHERE id=?").run(JSON.stringify(status),row.id);
       return status;
     });
-    if (pending.length >= 48) throw new RequestError("The 48-run private research retention limit was reached. Review/export evidence before adding more jobs.",409);
+    if (!uncappedH3History(session.experiment) && (db.prepare(`SELECT count(*) AS n FROM generation_jobs WHERE owner=? AND model IN (${TESTING_SQL_IDS})`).get(owner,...TESTING_EXPERIMENT_IDS) as {n:number}).n >= 48) throw new RequestError("The 48-run private research retention limit was reached. Review/export evidence before adding more jobs.",409);
     if (pending.filter(row => !["completed", "failed", "canceled"].includes(row.state)||!row.cleanedUp).length >= 4) throw new RequestError("At most four pending private jobs per administrator.", 409);
-    if ((db.prepare("SELECT count(*) AS n FROM assets WHERE session=? AND (ready=1 OR bytes>0)").get(session.id) as {n:number}).n>=12) throw new RequestError("At most 12 source/result assets per session. Create another private session.",409);
-    const used = db.prepare("SELECT coalesce(sum(bytes),0) AS n FROM assets WHERE owner=?").get(owner) as { n: number };
-    const total = db.prepare("SELECT coalesce(sum(bytes),0) AS n FROM assets").get() as { n: number };
-    const disk = fs.statfsSync(root);
-    if (used.n + MAX_ASSET_BYTES > 2 * 1024 ** 3 || total.n + MAX_ASSET_BYTES > 16 * 1024 ** 3 || disk.bavail * disk.bsize < 12 * 1024 ** 3) throw new RequestError("Private media quota or disk safety reserve reached.", 507);
+    assertLabAssetCapacity(db,root,owner,session,MAX_ASSET_BYTES,"video/mp4",12*1024**3);
     const asset = crypto.randomUUID(), created = Date.now() / 1000;
     const status: LabJob = { id, session: session.id, model: session.experiment, state: "queued", stage: "Preparing isolated job", created };
     const image=mode==="edit-image", director=session.experiment==="director-studio";
@@ -162,16 +188,17 @@ export async function submitLabJob(owner: string, data: Record<string, unknown>,
   try {
     fs.mkdirSync(path.join(dir, "sources"), { recursive: true, mode: 0o700 });
     const references = sources.map((source, index) => {
-      const name = `${index}.media`, fd = fs.openSync(source.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      const prepared=preparedImages.get(source.asset.id),reference=prepared?.file||source.file,sha256=prepared?.sha256||source.asset.sha256;
+      const name = `${index}.media`, fd = fs.openSync(reference, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
       try {
         const bytes = fs.readFileSync(fd);
-        if (crypto.createHash("sha256").update(bytes).digest("hex") !== source.asset.sha256) throw new Error("Reference changed since upload");
+        if (crypto.createHash("sha256").update(bytes).digest("hex") !== sha256) throw new Error("Reference changed since upload");
         fs.writeFileSync(path.join(dir,"sources",name),bytes,{flag:"wx",mode:0o600});
       } finally { fs.closeSync(fd); }
-      return { name, sha256: source.asset.sha256, kind: source.asset.mime.split("/")[0], assetId: source.asset.id };
+      return { name, sha256, kind: source.asset.mime.split("/")[0], assetId: source.asset.id };
     });
     const previousDirector = session.experiment === "director-studio" ? listLabJobs(owner,session.id).find(j=>j.state==="completed"&&j.cleanedUp&&j.director) : undefined;
-    fs.writeFileSync(path.join(dir,"request.json"),JSON.stringify({ id, model:session.experiment,settings:session.settings,sources:references, ...(permission && !permission.admin ? {authorization:{userId:owner,version:permission.version}} : {}), ...(previousDirector ? {directorContext:previousDirector.director,parentJob:previousDirector.id}: {}) }),{flag:"wx",mode:0o600});
+    fs.writeFileSync(path.join(dir,"request.json"),JSON.stringify({ id, model:session.experiment,settings:{...session.settings,prompt:finalPrompt},sources:references, ...(permission && !permission.admin ? {authorization:{userId:owner,version:permission.version}} : {}), ...(previousDirector ? {directorContext:previousDirector.director,parentJob:previousDirector.id}: {}) }),{flag:"wx",mode:0o600});
     fs.writeFileSync(path.join(dir,"status.json"),JSON.stringify(result.status),{flag:"wx",mode:0o600});
     const log = fs.openSync(path.join(dir,"runner.log"),"wx",0o600);
     const child = spawn("/usr/bin/python3", [cfg.config.runner,"--job",dir,"--config",cfg.file], {

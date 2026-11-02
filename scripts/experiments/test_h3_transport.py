@@ -8,8 +8,8 @@ import time
 import unittest
 import uuid
 from unittest.mock import patch
-from h3_gateway import Gateway, digest
-from h3_remote import authorized
+from h3_gateway import Gateway, digest, CHUNK
+from h3_remote import authorized, receive_preview
 from h3_runner import Job, Cancelled
 
 
@@ -25,6 +25,14 @@ class H3Transport(unittest.TestCase):
     def test_protocol_never_accepts_paths_shell_config_or_pids(self):
         for packet in [{'action':'shell','command':'anything'},{'action':'cancel','id':self.id,'pid':123},{'action':'create','id':'../../other'},{'action':'upload','id':self.id,'name':'../../private','offset':0,'data':'AA=='}]:
             with self.assertRaises((ValueError,KeyError)):self.gateway.handle(packet)
+
+    def test_saved_job_count_has_no_cap_but_disk_reserve_is_enforced(self):
+        for _ in range(501):(self.root/'jobs'/str(uuid.uuid4())).mkdir()
+        with patch('h3_gateway.shutil.disk_usage',return_value=type('Disk',(),{'free':100*1024**3})()):
+            identifier=str(uuid.uuid4())
+            self.assertEqual(self.gateway.handle({'action':'create','id':identifier})['id'],identifier)
+        with patch('h3_gateway.shutil.disk_usage',return_value=type('Disk',(),{'free':11*1024**3})()):
+            with self.assertRaisesRegex(ValueError,'storage reserve'):self.gateway.handle({'action':'create','id':str(uuid.uuid4())})
 
     def test_upload_offsets_hashes_and_sealing(self):
         packet={'action':'upload','id':self.id,'name':'0.media','offset':0,'data':base64.b64encode(b'fixture').decode()}
@@ -43,6 +51,25 @@ class H3Transport(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Unknown artifact'):self.gateway.handle({'action':'download','id':self.id,'name':'request.json','offset':0})
         (self.job/'result.mp4').symlink_to(self.root/'runtime.json')
         with self.assertRaisesRegex(ValueError,'Invalid artifact'):self.gateway.handle({'action':'download','id':self.id,'name':'result.mp4','offset':0})
+
+    def test_preview_is_fixed_bounded_and_checksum_verified(self):
+        (self.job/'preview.mp4').write_bytes(b'bounded-preview')
+        preview=self.gateway.handle({'action':'preview','id':self.id})
+        with tempfile.TemporaryDirectory(prefix='h3-preview-receiver-') as directory:
+            target=Path(directory)
+            self.assertTrue(receive_preview(target,preview))
+            self.assertEqual((target/'preview.mp4').read_bytes(),b'bounded-preview')
+            self.assertFalse(receive_preview(target,dict(preview,sha256='0'*64)))
+            self.assertFalse(receive_preview(target,dict(preview,data='invalid-base64')))
+            self.assertFalse(receive_preview(target,{'bytes':0}))
+            self.assertEqual((target/'preview.mp4').read_bytes(),b'bounded-preview')
+        with self.assertRaises(ValueError):self.gateway.handle({'action':'preview','id':self.id,'name':'request.json'})
+
+    def test_optional_unsafe_or_oversize_preview_does_not_fail_render(self):
+        file=self.job/'preview.mp4';file.symlink_to(self.root/'runtime.json')
+        self.assertEqual(self.gateway.handle({'action':'preview','id':self.id}),{'bytes':0})
+        file.unlink();file.write_bytes(b'x'*(CHUNK+1))
+        self.assertEqual(self.gateway.handle({'action':'preview','id':self.id}),{'bytes':0})
 
     def test_controller_checks_current_grant_version(self):
         user=str(uuid.uuid4());request={'authorization':{'userId':user,'version':1}}

@@ -15,7 +15,7 @@ import time
 def main():
     os.umask(0o077)
     stage=Path(sys.argv[1]).resolve(strict=True);action=sys.argv[2]
-    if os.geteuid()!=0 or socket.gethostname()!='slr' or stage.parent!=Path('/mnt/otg_bulk') or not stage.name.startswith(('build-2.21-promotion-','build-2.22-promotion-','build-2.23-promotion-')):raise RuntimeError('Incorrect smoke boundary')
+    if os.geteuid()!=0 or socket.gethostname()!='slr' or stage.parent!=Path('/mnt/otg_bulk') or not stage.name.startswith(('build-2.21-promotion-','build-2.22-promotion-','build-2.23-promotion-','build-2.24-promotion-')):raise RuntimeError('Incorrect smoke boundary')
     plan=json.loads((stage/'activation-plan.json').read_text());candidate=Path(plan['candidate']);file=stage/'smoke-process.json'
     if action=='start':
         if file.exists():
