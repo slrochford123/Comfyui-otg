@@ -1,4 +1,4 @@
-"""Pinned Build 2.21 promotion using the existing production backup and rollback guards."""
+"""Pinned qualified promotion using the existing production backup and rollback guards."""
 import argparse
 import datetime
 import fcntl
@@ -72,6 +72,19 @@ def nsfw_probe(plan):
     if not probe.get('restricted') or probe.get('runtimeSha256')!=target['runtimeSha256']:raise RuntimeError('Private H3 connection is not qualified')
 
 
+def worker_probe(plan,candidate):
+    if not plan.get('workerProbeConfig'):return
+    file=Path(plan['workerProbeConfig'])
+    if file.is_symlink() or file.stat().st_uid!=0 or file.stat().st_mode&0o077 or digest(file)!=plan['workerProbeConfigSha256']:raise RuntimeError('Untrusted worker identity configuration')
+    for row in plan['workerProbePins']:
+        if digest(row['path'])!=row['sha256']:raise RuntimeError('Worker probe prerequisite changed')
+    # Use only the dedicated restricted channel; generic SSH is not a prerequisite.
+    code="""(async()=>{const {inspectComfyWorkerInstance}=require('./lib/workers/comfyWorkerInstance.ts');for(const base of ['http://100.75.162.64:8188','http://100.75.162.64:8189','http://100.98.212.116:8188']){const p=await inspectComfyWorkerInstance(base);if(!p||p.previousStopped)throw Error('Unverified worker');}console.log('worker-probes-passed')})().catch(()=>process.exit(1));"""
+    env={**os.environ,'OTG_COMFY_INSTANCE_PROBE_CONFIG':str(file)}
+    checked=subprocess.run(['/opt/otg/runtime/node-v22.23.4/bin/node','-r','./scripts/register-ts-worker.cjs','-e',code],cwd=candidate,env=env,capture_output=True,timeout=35)
+    if checked.returncode or checked.stdout.strip()!=b'worker-probes-passed':raise RuntimeError('Production worker identity probes failed')
+
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--check-only',action='store_true');args=parser.parse_args()
     if os.geteuid()!=0 or socket.gethostname()!='slr':raise RuntimeError('Run through authorized sudo on SLR')
@@ -79,7 +92,7 @@ def main():
     if digest(ROOT/'activation-plan.json')!=PLAN_SHA:raise RuntimeError('Activation plan changed')
     plan=json.loads((ROOT/'activation-plan.json').read_text())
     version=plan['buildVersion']
-    if version not in ('2.21','2.22') or not re.fullmatch('[a-f0-9]{40}',plan['commit']):raise RuntimeError('Invalid release identity')
+    if version not in ('2.21','2.22','2.23') or not re.fullmatch('[a-f0-9]{40}',plan['commit']):raise RuntimeError('Invalid release identity')
     candidate=Path(plan['candidate']);old=Path(plan['expectedOld'])
     if ROOT!=Path('/mnt/otg_bulk/build-'+version+'-promotion-'+plan['commit'][:12]) or candidate!=Path('/opt/otg/releases/prod-build-'+version+'-'+plan['commit'][:12]):raise RuntimeError('Invalid release boundary')
     previous=load('previous_prod_guard',PREVIOUS_GUARD,plan['previousGuardSha256'])
@@ -95,7 +108,7 @@ def main():
     runtime_sha=next(row['sha256'] for row in manifest['artifactFiles'] if row['file']=='scripts/deploy/systemd_runtime.py')
     runtime=load('prod_systemd_runtime',candidate/'scripts/deploy/systemd_runtime.py',runtime_sha)
     if digest(plan['speechConfig'])!=plan['speechConfigSha256']:raise RuntimeError('Speech connection configuration changed')
-    previous.validate_runtime(plan);previous.validate_native_images();previous.cpu_health(plan);speech_probe(plan['speechConfig']);nsfw_probe(plan)
+    previous.validate_runtime(plan);previous.validate_native_images();previous.cpu_health(plan);speech_probe(plan['speechConfig']);nsfw_probe(plan);worker_probe(plan,candidate)
     with m.ACTIVATION_LOCK.open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         if m.CURRENT.resolve()!=old:raise RuntimeError('Production changed; stale promotion refused')
@@ -103,6 +116,7 @@ def main():
         if (m.PROC/old_pid/'cwd').resolve()!=old or old_env.get('OTG_ENV')!='prod':raise RuntimeError('Production process mismatch')
         controller_pins=previous.verify_root_controller(plan,old_env)
         flags={'OTG_STORY_MEDIA_ENABLED':'1','OTG_STORY_QWEN_REMOTE_CONFIG':plan['speechConfig'],'OTG_AUDIO_WORKER_SCRIPT':str(candidate/'scripts/audio-editing-worker.py')}
+        if plan.get('workerProbeConfig'):flags['OTG_COMFY_INSTANCE_PROBE_CONFIG']=plan['workerProbeConfig']
         if plan.get('nsfwConfig'):
             flags.update(OTG_H3_NSFW_ENABLED='1',OTG_H3_NSFW_ROOT=plan['nsfwRoot'])
             root=Path(plan['nsfwRoot']);root_stat=root.lstat()
@@ -137,7 +151,10 @@ def main():
             admins=previous.admin_ids(m.DATA,old_env)
             # Rehearse existing additive migrations on copies before applying them.
             rehearsal=transaction/'migration-rehearsal';shutil.copytree(transaction/'final-databases',rehearsal)
-            migrate=[str(m.NODE),'-r','./scripts/register-ts-worker.cjs','-e',m.MIGRATE+previous.QUEUE_MIGRATE+"\nrequire('./lib/openai/usageLedger.ts').readLedgerUsage();"]
+            queue_migrate=previous.QUEUE_MIGRATE
+            if plan.get('workerProbeConfig'):
+                queue_migrate=queue_migrate.replace("['admissionPhase','TEXT']", "['admissionPhase','TEXT'],['workerInstance','TEXT'],['workerConfirmed','INTEGER'],['submissionSettled','INTEGER']")
+            migrate=[str(m.NODE),'-r','./scripts/register-ts-worker.cjs','-e',m.MIGRATE+queue_migrate+"\nrequire('./lib/openai/usageLedger.ts').readLedgerUsage();"]
             def migration_env(data):
                 env=m.migration_environment(old_env,data);env.update(OPENAI_KILL_SWITCH='true',OPENAI_API_KEY='',NODE_OPTIONS='--require='+str(candidate/'scripts/audit/offline-guard.cjs'))
                 for name in ('ADMIN_IDENTIFIERS','ADMIN_EMAILS','ADMIN_USER_IDS'):
@@ -169,7 +186,7 @@ def main():
                     time.sleep(1)
             m.public_application_gates();report['servedBuild']=previous.verify_served_build(plan,candidate);m.verify_media(samples)
             if digest(m.APP_ENV)!=env_sha or any(digest(file)!=sha for file,sha in controller_pins.items()):raise RuntimeError('Protected settings changed')
-            previous.cpu_health(plan);speech_probe(plan['speechConfig']);nsfw_probe(plan)
+            previous.cpu_health(plan);speech_probe(plan['speechConfig']);nsfw_probe(plan);worker_probe(plan,candidate)
             report.update(activated=True,pid=int(pid),health=200,existingRowsPreserved=True,administratorsPreserved=len(admins),mediaSamplesRetained=len(samples));save()
             prior.publish_result(ROOT,report,'activation-result.json');print(json.dumps({'ok':True,'version':version,'pid':int(pid),'backup':str(transaction)}))
         except BaseException as error:

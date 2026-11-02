@@ -1,7 +1,8 @@
 import { compileH3SmartReferencePrompt, type H3SmartReferenceInput } from "@/lib/h3SmartReferences";
 import { makeH3SmartReferenceInput } from "@/lib/h3SmartReferencesServer";
 import { applyH3SmartReferenceGraph } from "@/lib/h3SmartReferencesGraph";
-import {mediaQueueMessage} from "@/lib/workers/mediaGpuQueue";
+import {mediaQueueMessage, getMediaQueueJob} from "@/lib/workers/mediaGpuQueue";
+import { h3ExecutionFailure } from "@/lib/h3ExecutionFailure";
 import crypto from "node:crypto";
 import { applyH3VideoEditGraph, prepareH3VideoEditSource, finalizeH3VideoEdit, h3VideoEditFrameCount } from "@/lib/h3VideoEdit";
 import fs from "node:fs";
@@ -727,8 +728,9 @@ async function execute(job: H3DirectJob) {
     const current = await getH3DirectJob(job.ownerKey, job.id);
     if (current?.status === "canceled") return;
     if (current?.status === "canceling") { await cancelH3DirectJob(job.ownerKey,job.id); await new Promise(r=>setTimeout(r,500)); continue; }
+    const queue = getMediaQueueJob(promptId);
     const history = await getH3PromptHistory(backend, promptId);
-    if (history.state === "failed") throw new Error("MiniMax H3 failed in ComfyUI. Review the ComfyUI history for the full node traceback.");
+    if (history.state === "failed") throw h3ExecutionFailure(history.entry, queue?.error);
     if (history.state === "completed" && history.video) {
       let outputPath = await downloadH3Video({
         backend,
@@ -788,7 +790,8 @@ async function execute(job: H3DirectJob) {
     const estimate = getH3ProductionTimeEstimate(job.input.mode, job.input.durationSeconds, job.input.quality, backend);
     const elapsed = current?.startedAt ? (Date.now() - Date.parse(current.startedAt)) / 1000 : 0;
     const progressPercent = Math.max(2, Math.min(95, Math.round((elapsed / Math.max(1, estimate.seconds || estimate.maxSeconds)) * 100)));
-    await updateJob(job.ownerKey, job.id, { status: "running", statusMessage: "Generating in ComfyUI", progressPercent });
+    const waiting = queue?.status === "queued" || queue?.status === "dispatching" || queue?.status === "unknown";
+    await updateJob(job.ownerKey, job.id, { status: waiting ? "submitted" : "running", statusMessage: mediaQueueMessage(promptId, "Generating in ComfyUI"), progressPercent: waiting ? current?.progressPercent ?? 2 : progressPercent });
     await new Promise((resolve) => setTimeout(resolve, 4_000));
   }
 }
@@ -802,7 +805,7 @@ export function startH3DirectJob(job: H3DirectJob) {
       const current = await getH3DirectJob(job.ownerKey, job.id);
       if (current?.promptId && isComfyReadError(error) && !["completed", "canceled", "failed"].includes(current.status)) {
         await updateJob(job.ownerKey, job.id, { status: current.cancelRequestedAt ? "canceling" : "submitted",
-          statusMessage: "Reconnecting to the original GPU; generation continues in the background.", error: null, completedAt: null });
+          statusMessage: "Reconnecting to check the original GPU request; no duplicate will be submitted.", error: null, completedAt: null });
         return;
       }
       const uncertain = current?.studioSubmissionState === "submitting" && !current.promptId;
@@ -814,7 +817,7 @@ export function startH3DirectJob(job: H3DirectJob) {
         status: "failed",
         statusMessage: uncertain ? "Submission state unknown; backend reconciliation required before retry" : "Generation failed",
         ...(uncertain ? { studioSubmissionState: "unknown" as const } : {}),
-        error: uncertain ? "Backend acceptance is unresolved. Refresh to reconcile the original job; do not generate a duplicate." : job.input.studioPlan ? "H3 Studio could not complete. Recheck readiness and references before a deliberately reviewed retry." : error instanceof Error ? error.message : String(error),
+        error: uncertain ? "Backend acceptance is unresolved. Refresh to reconcile the original job; do not generate a duplicate." : error instanceof Error && error.name === "H3ExecutionError" ? error.message : job.input.studioPlan ? "H3 Studio could not complete. Recheck readiness and references before a deliberately reviewed retry." : error instanceof Error ? error.message : String(error),
         completedAt: new Date().toISOString(),
       }).catch(() => undefined);
     })

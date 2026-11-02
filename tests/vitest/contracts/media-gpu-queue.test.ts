@@ -5,7 +5,8 @@ import path from "node:path";
 import {mediaGpuCandidates,parseMediaGpuChoice} from "@/lib/mediaGpuRouting";
 import {setResourceLockStorePathForTests} from "@/lib/workers/resourceLocks";
 import {acquireExternalMediaGpu,cancelQueuedMediaJob,closeMediaGpuQueueForTests,enqueueComfyMedia,enqueueMediaJob,getMediaQueueJob,preferMediaGpu,probeMediaGpu,tickMediaGpuQueue,queuedMediaJobs} from "@/lib/workers/mediaGpuQueue";
-const mocks=vi.hoisted(()=>({submit:vi.fn(),voice:vi.fn(()=>false),audioExecute:vi.fn(),audioState:vi.fn(()=>"completed"),root:""}));
+const mocks=vi.hoisted(()=>({submit:vi.fn(),voice:vi.fn(()=>false),audioExecute:vi.fn(),audioState:vi.fn(()=>"completed"),instance:vi.fn(),root:""}));
+vi.mock("@/lib/workers/comfyWorkerInstance",async original=>({...await original<typeof import("@/lib/workers/comfyWorkerInstance")>(),inspectComfyWorkerInstance:mocks.instance}));
 vi.mock("@/lib/paths",async original=>({...await original<typeof import("@/lib/paths")>(),get OTG_DATA_ROOT(){return mocks.root;}}));
 vi.mock("@/lib/workers/voiceGpuFileLease",()=>({voiceGpuFileBusy:mocks.voice}));
 vi.mock("@/lib/workers/comfyPromptLease",()=>({submitComfyPromptWithGpuLease:mocks.submit}));
@@ -22,6 +23,7 @@ beforeEach(()=>{
   vi.stubEnv("OTG_ENV","test");vi.stubEnv("OTG_MEDIA_GPU_ROUTING","1");vi.stubEnv("OTG_MEDIA_GPU_QUEUE_DB",path.join(directory,"queue.sqlite"));
   setResourceLockStorePathForTests(path.join(directory,"locks.sqlite"));
   busy=new Set();histories=new Map();mocks.voice.mockReturnValue(false);
+  mocks.instance.mockReset().mockResolvedValue(null);
   mocks.submit.mockReset().mockImplementation(async(args)=>{await args.beforeSubmit?.();return Response.json({prompt_id:JSON.parse(String(args.init.body)).prompt_id});});
   mocks.audioExecute.mockReset().mockResolvedValue(undefined);mocks.audioState.mockReturnValue("completed");
   vi.stubGlobal("fetch",vi.fn(async(raw:string)=>{
@@ -31,6 +33,31 @@ beforeEach(()=>{
 });
 afterEach(()=>{closeMediaGpuQueueForTests();setResourceLockStorePathForTests(null);vi.unstubAllGlobals();vi.unstubAllEnvs();fs.rmSync(directory,{recursive:true,force:true});});
 describe("shared physical media routing",()=>{
+  const worker={host:"shawn",unit:"otg-comfyui-h3.service",pid:123,startTicks:"100",bootId:"a".repeat(36)};
+  it("releases a confirmed dead worker reservation and permits the next job without retrying the old one",async()=>{
+    mocks.instance.mockResolvedValue({instance:worker,previousStopped:false});
+    const first=await(await enqueueComfyMedia(payload())).json();await enqueueComfyMedia(payload());
+    await tickMediaGpuQueue();await flush();expect(getMediaQueueJob(first.prompt_id)?.workerConfirmed).toBe(1);
+    mocks.instance.mockResolvedValue({instance:{...worker,pid:124,startTicks:"200"},previousStopped:true});
+    await tickMediaGpuQueue();await flush();
+    expect(getMediaQueueJob(first.prompt_id)).toMatchObject({status:"failed",lease:null,error:expect.stringMatching(/original ComfyUI worker stopped/)});
+    expect(mocks.submit).toHaveBeenCalledTimes(2);
+  });
+  it.each(["same-process","old-process-still-alive","no-proof","unreadable-probe","busy-sibling"])("retains missing-history ownership with %s",async mode=>{
+    mocks.instance.mockResolvedValue({instance:worker,previousStopped:false});
+    const first=await(await enqueueComfyMedia(payload())).json();await enqueueComfyMedia(payload());await tickMediaGpuQueue();await flush();
+    if(mode==="unreadable-probe")mocks.instance.mockRejectedValue(Error("unreachable"));
+    else mocks.instance.mockResolvedValue(mode==="no-proof"?null:{instance:mode==="same-process"?worker:{...worker,pid:124},previousStopped:mode==="busy-sibling"});
+    if(mode==="busy-sibling")busy.add("http://100.75.162.64:8188");
+    await tickMediaGpuQueue();await flush();expect(getMediaQueueJob(first.prompt_id)?.status).toBe("unknown");expect(mocks.submit).toHaveBeenCalledTimes(1);
+  });
+  it("does not mistake a restart during uncertain submission for proof of failed execution",async()=>{
+    mocks.instance.mockResolvedValue({instance:worker,previousStopped:false});
+    mocks.submit.mockImplementation(async args=>{await args.beforeSubmit();throw Error("lost POST");});
+    const first=await(await enqueueComfyMedia(payload())).json();await enqueueComfyMedia(payload());await tickMediaGpuQueue();await flush();
+    mocks.instance.mockResolvedValue({instance:{...worker,pid:124},previousStopped:true});await tickMediaGpuQueue();
+    expect(getMediaQueueJob(first.prompt_id)?.status).toBe("unknown");expect(mocks.submit).toHaveBeenCalledTimes(1);
+  });
   it("serializes independent TEST and PROD queue databases through the installed shared authority",async()=>{
     const authority=path.join(directory,"authority");fs.mkdirSync(authority);
     fs.copyFileSync("scripts/media-gpu-admission.py",path.join(authority,"media-gpu-admission.py"));

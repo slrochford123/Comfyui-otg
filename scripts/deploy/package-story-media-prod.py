@@ -20,13 +20,13 @@ def sha(file):
 def main():
     os.umask(0o077)
     root=Path(sys.argv[1]).resolve(strict=True)
-    if root.parent!=Path('/home/shawn-rochford/AI/research') or not root.name.startswith(('experimental-tabs-','h3-nsfw-access-')):raise RuntimeError('Private release evidence required')
+    if root.parent!=Path('/home/shawn-rochford/AI/research') or not root.name.startswith(('experimental-tabs-','h3-nsfw-access-','h3-edit-recovery-')):raise RuntimeError('Private release evidence required')
     git=lambda *args:subprocess.check_output(['git',*args],cwd=SOURCE,text=True).strip()
     if git('status','--porcelain'):raise RuntimeError('Commit the reviewed release source before packaging')
     commit=git('rev-parse','HEAD');p=json.loads((root/'activation-plan.json').read_text());test=Path(p['candidate'])
     if Path('/home/shawn-rochford/AI/deploy/otg-test/current').resolve()!=test:raise RuntimeError('Qualified TEST release is not active')
     version=json.loads((test/'config/build-history.json').read_text())['current']
-    if version not in ('2.21','2.22'):raise RuntimeError('Wrong TEST version')
+    if version not in ('2.21','2.22','2.23'):raise RuntimeError('Wrong TEST version')
     for row in p['files']:
         file=test/row['file']
         if row.get('link') is not None:
@@ -50,20 +50,30 @@ def main():
     (release/'DEPLOYMENT_MANIFEST.json').write_text(json.dumps({**identity,'artifactFiles':files},indent=2))
     old_root=Path('/home/shawn-rochford/AI/research/release-qualification-20261101-DYHhxBWc/promotion')
     old=json.loads((old_root/'activation-plan.json').read_text())
-    if version=='2.22':
+    if version=='2.23':
+        old=json.loads(Path('/home/shawn-rochford/AI/research/h3-nsfw-access-20261102-u6QMYEwF/production-plan.json').read_text())
+        channel={'productionConfig':old['speechConfig']}
+    elif version=='2.22':
         old=json.loads(Path('/home/shawn-rochford/AI/research/experimental-tabs-20261102-ojSrlL1V/production-plan.json').read_text())
         channel={'productionConfig':old['speechConfig']}
     else:channel=json.loads((root/'story-channel.json').read_text())
     guard='/mnt/otg_bulk/build-2.20-promotion-297172e2c7a7/activate-build-2.20.py'
     guard_sha=subprocess.check_output(['ssh','-o','BatchMode=yes','otg-slr','sha256sum '+guard],text=True).split()[0]
     speech_sha=subprocess.check_output(['ssh','-o','BatchMode=yes','otg-slr','sudo -n sha256sum '+shlex.quote(channel['productionConfig'])],text=True).split()[0]
-    expected_old='/mnt/otg_bulk/slr-offload/opt-otg/releases/prod-build-2.20-297172e2c7a7' if version=='2.21' else '/mnt/otg_bulk/slr-offload/opt-otg/releases/prod-build-2.21-ad4b86c62d36'
+    expected_old={'2.21':'prod-build-2.20-297172e2c7a7','2.22':'prod-build-2.21-ad4b86c62d36','2.23':'prod-build-2.22-e81e31e42955'}[version]
+    expected_old='/mnt/otg_bulk/slr-offload/opt-otg/releases/'+expected_old
     plan={**identity,'candidate':'/opt/otg/releases/'+name,'expectedOld':expected_old,
         'manifestSha256':sha(release/'DEPLOYMENT_MANIFEST.json'),'previousGuardSha256':guard_sha,'runtime':old['runtime'],'rootEngineConfig':old['rootEngineConfig'],
         'cpuRoot':old['cpuRoot'],'cpuWorkerSha256':old['cpuWorkerSha256'],'speechConfig':channel['productionConfig'],'speechConfigSha256':speech_sha,'testRelease':str(test)}
     if version=='2.22':
         nsfw=json.loads((root/'h3-controller.json').read_text())
         plan.update(nsfwConfig=nsfw['config'],nsfwConfigSha256=nsfw['configSha256'],nsfwRoot=nsfw['storage'])
+    elif version=='2.23':
+        plan.update({key:old[key] for key in ('nsfwConfig','nsfwConfigSha256','nsfwRoot')})
+        probe=json.loads((root/'comfy-probe-channel.json').read_text())
+        plan.update(workerProbeConfig=probe['config'],workerProbeConfigSha256=probe['configSha256'],workerProbePins=probe['pins'])
+        plan['workerProbeLocalHelper']=probe['localHelper']
+        plan['workerProbeLocalHelperSha256']=probe['localHelperSha256']
     plan_file=root/'production-plan.json';plan_file.write_text(json.dumps(plan,indent=2))
     template=(SOURCE/'scripts/deploy/activate-story-media-prod.py').read_text()
     if template.count('__ACTIVATION_PLAN_SHA256__')!=1:raise RuntimeError('Activator template changed')

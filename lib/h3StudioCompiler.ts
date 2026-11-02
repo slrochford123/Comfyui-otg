@@ -89,6 +89,16 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   graph["34"].inputs.fps = 24;
   // The installed project SLA node is not a SolAttnPatch alias. Dense is explicit.
   graph["41"].inputs.enabled = plan.attention === "project-sla";
+  if (plan.workflowId === "reference-edit" && plan.attention === "project-sla") {
+    // Keep the installed sparse engine, but never invoke Sage's failing
+    // Triton Q/K quantizer on short/refiner/masked dense fall-throughs.
+    graph["41"].inputs.dense_backend = "pytorch";
+  }
+  if (plan.workflowId === "reference-edit" && plan.attention === "dense") {
+    // Explicit per-model backend: merely disabling SLA still inherits a
+    // worker's global CK/Sage setting. No live worker flags need changing.
+    graph["41"] = { class_type: "ModelAttentionBackend", inputs: { model: graph["41"].inputs.model, attention: "pytorch attention" } };
+  }
   if (isH3OmniRefMode(plan.checkpoint)) {
     // The base builder already applied this exact profile; reapply after Studio
     // mutations so neither a saved plan nor AI can restore the old sampler/model.

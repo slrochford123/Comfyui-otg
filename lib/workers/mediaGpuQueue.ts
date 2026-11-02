@@ -10,6 +10,7 @@ import { voiceGpuFileBusy } from "./voiceGpuFileLease";
 import { privateMediaFeatureEnabled } from "@/lib/privateMediaRuntime";
 import { requireStorageHeadroom } from "@/lib/storageAdmission";
 import {acquireSharedMediaGpu,releaseSharedMediaGpu,sharedMediaGpuAvailable,sharedMediaAdmissionConfigured} from "./mediaGpuAdmission";
+import { inspectComfyWorkerInstance, sameComfyWorker, type ComfyWorkerInstance } from "./comfyWorkerInstance";
 
 export type MediaQueueStatus = "queued" | "dispatching" | "running" | "unknown" | "completed" | "failed" | "canceled";
 export type ComfyMediaPayload = { baseUrl: string; body: Record<string, unknown>; workerId: string;
@@ -19,8 +20,9 @@ export type AudioMediaPayload = { owner: string; sessionId: string; jobId: strin
 export type ExternalMediaPayload = { pid:number; operation:string };
 export type MediaQueueJob = { id: string; sequence: number; gpu: MediaGpu; kind: "comfy" | "audio" | "external";
   status: MediaQueueStatus; payload: ComfyMediaPayload | AudioMediaPayload | ExternalMediaPayload; createdAt: number; updatedAt: number;
-  error: string | null; lease: ResourceLock | null; admissionOwner:string|null;admissionToken:number|null;admissionPhase:string|null };
-type Row = Omit<MediaQueueJob,"payload"|"lease"> & {payload: string; lease: string | null};
+  error: string | null; lease: ResourceLock | null; admissionOwner:string|null;admissionToken:number|null;admissionPhase:string|null;
+  workerInstance: ComfyWorkerInstance | null; workerConfirmed: number | null; submissionSettled: number | null };
+type Row = Omit<MediaQueueJob,"payload"|"lease"|"workerInstance"> & {payload: string; lease: string | null; workerInstance: string | null};
 export type MediaGpuReadiness = { ready: boolean; reason: string };
 export const mediaQueueEnabled = () => privateMediaFeatureEnabled("OTG_MEDIA_GPU_ROUTING");
 const active = ["dispatching", "running", "unknown"];
@@ -45,11 +47,11 @@ function database() {
     createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, error TEXT, lease TEXT);
     CREATE INDEX IF NOT EXISTS media_jobs_state ON media_jobs(gpu,status,sequence);`);
   const columns=new Set((connection.prepare("PRAGMA table_info(media_jobs)").all() as {name:string}[]).map(row=>row.name));
-  for(const [name,type] of [["admissionOwner","TEXT"],["admissionToken","INTEGER"],["admissionPhase","TEXT"]])
+  for(const [name,type] of [["admissionOwner","TEXT"],["admissionToken","INTEGER"],["admissionPhase","TEXT"],["workerInstance","TEXT"],["workerConfirmed","INTEGER"],["submissionSettled","INTEGER"]])
     if(!columns.has(name))connection.exec(`ALTER TABLE media_jobs ADD COLUMN ${name} ${type}`);
   return connection;
 }
-const decode = (row: Row): MediaQueueJob => ({...row,payload:JSON.parse(row.payload),lease:row.lease?JSON.parse(row.lease):null});
+const decode = (row: Row): MediaQueueJob => ({...row,payload:JSON.parse(row.payload),lease:row.lease?JSON.parse(row.lease):null,workerInstance:row.workerInstance?JSON.parse(row.workerInstance):null});
 export function getMediaQueueJob(id: string): MediaQueueJob | null {
   if (!mediaQueueEnabled()) return null;
   const row = database().prepare("SELECT * FROM media_jobs WHERE id = ?").get(id) as Row | undefined;
@@ -211,8 +213,29 @@ async function reconcileComfy(job: MediaQueueJob) {
     }
     const q = await readJson(payload.baseUrl+"/queue");
     if (!Array.isArray(q.queue_running) || !Array.isArray(q.queue_pending)) throw Error("Invalid queue");
-    if ([...q.queue_running,...q.queue_pending].some(row=>Array.isArray(row)&&row[1]===job.id)) update(job.id,"running");
-    else update(job.id,"unknown",job.error || "Awaiting backend proof. This job will not be automatically resubmitted or replaced.");
+    if ([...q.queue_running,...q.queue_pending].some(row=>Array.isArray(row)&&row[1]===job.id)) {
+      update(job.id,"running");
+      // A queue observation bound to this same process also establishes which
+      // worker accepted an initially uncertain POST. Never guess from uptime.
+      if (job.workerInstance && !job.workerConfirmed) {
+        const observed = await inspectComfyWorkerInstance(payload.baseUrl);
+        if (observed && sameComfyWorker(job.workerInstance, observed.instance))
+          database().prepare("UPDATE media_jobs SET workerConfirmed=1 WHERE id=? AND workerInstance=?").run(job.id,JSON.stringify(job.workerInstance));
+      }
+    } else if (job.workerInstance && job.workerConfirmed && job.submissionSettled) {
+      const observed = await inspectComfyWorkerInstance(payload.baseUrl, job.workerInstance);
+      if (observed?.previousStopped && !sameComfyWorker(job.workerInstance, observed.instance)) {
+        // Recheck after the trusted process probe; an empty history by itself
+        // is NOT proof that execution ended. Other physical lanes must be idle.
+        for (const base of queuesFor(job.gpu)) {
+          const fresh = await readJson(base + "/queue");
+          if (!Array.isArray(fresh.queue_running) || !Array.isArray(fresh.queue_pending)
+            || fresh.queue_running.length || fresh.queue_pending.length) throw Error("Physical worker not idle");
+        }
+        if ((await readJson(`${payload.baseUrl}/history/${job.id}`))[job.id]) return;
+        finish(job,"failed","The original ComfyUI worker stopped during rendering and no completion history survived. Check available outputs before an explicit retry; nothing was resubmitted automatically.");
+      } else update(job.id,"unknown","The original GPU request is unconfirmed; its reservation is protected until execution can be verified.");
+    } else update(job.id,"unknown",job.error || "Awaiting backend proof. This job will not be automatically resubmitted or replaced.");
   } catch { update(job.id,"unknown",job.error || "Worker unavailable; retaining this GPU reservation until its original job can be reconciled."); }
 }
 async function dispatch(job: MediaQueueJob) {
@@ -245,6 +268,11 @@ async function dispatch(job: MediaQueueJob) {
       init:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload.body)},submitTimeoutMs:60_000,
       beforeSubmit: async () => {
         if (producerState(job) !== "active") throw Error("The original request ended or cannot be verified; no render was submitted.");
+        const observed = await inspectComfyWorkerInstance(payload.baseUrl);
+        if (observed) {
+          job.workerInstance = observed.instance;
+          database().prepare("UPDATE media_jobs SET workerInstance=?,workerConfirmed=NULL WHERE id=?").run(JSON.stringify(observed.instance),job.id);
+        }
         postStarted = true;
       } });
     if (!response.ok) {
@@ -254,10 +282,17 @@ async function dispatch(job: MediaQueueJob) {
     }
     const result = await response.json();
     if (result.prompt_id !== job.id) { update(job.id,"unknown","Worker did not preserve the reserved prompt UUID; no automatic retry."); return; }
+    if (job.workerInstance) {
+      const observed = await inspectComfyWorkerInstance(payload.baseUrl).catch(() => null);
+      if (observed && sameComfyWorker(job.workerInstance,observed.instance))
+        database().prepare("UPDATE media_jobs SET workerConfirmed=1 WHERE id=?").run(job.id);
+    }
     update(job.id,"running");
   } catch (error) {
     if (!postStarted) finish(job,"failed",error instanceof Error ? error.message : "The request ended before submission.");
     else update(job.id,"unknown","Submission outcome is unknown; reconcile the reserved UUID instead of resubmitting.");
+  } finally {
+    database().prepare("UPDATE media_jobs SET submissionSettled=? WHERE id=?").run(Date.now(),job.id);
   }
 }
 type QueueGlobals = typeof globalThis & {__otgMediaQueue?: {timer:ReturnType<typeof setInterval>;ticking:boolean;audio:Set<string>;external:Map<string,(release:()=>void)=>void>}};

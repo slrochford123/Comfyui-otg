@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.22",
+  "current": "2.23",
   "builds": [
     {
       "version": "2",
@@ -139,6 +139,12 @@
       "date": "2026-11-02",
       "summary": "Promote approved-account H3 NSFW with private production storage and restricted 3090 generation; preserve default-off user access, admin approval/revocation and immutable outputs. Testing remains TEST-only.",
       "sourceBaseCommit": "53a42cb2ae666ed5015a97d60e7a361755a72991"
+    },
+    {
+      "version": "2.23",
+      "date": "2026-11-02",
+      "summary": "Repair ordinary H3 Edit Video at 0.6 and 1 MP with a PyTorch dense fallback inside SLA; truthful queue progress, safe CUDA errors and process-identity-based worker restart recovery. Preserve H3 NSFW and TEST-only experiments.",
+      "sourceBaseCommit": "2bbba39dc00b276d3c8a73028a507d10338e099a"
     }
   ]
 }

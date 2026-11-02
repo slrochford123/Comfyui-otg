@@ -55,6 +55,23 @@ describe("H3 canonical catalog / compiler", () => {
       expect(Object.values(result.graph).some(n => n.class_type === "SolAttnPatch")).toBe(false);
     }
   });
+  it.each(["rtx3090", "rtx5060ti"] as const)("pins dense video edits to PyTorch on %s without changing other H3 modes", backend => {
+    const p = { ...plan, backend, workflowId: "reference-edit" as const, attention: "dense" as const, durationSeconds: 7.0476, quality: "1" as const, orientation: "portrait" as const };
+    const result = compileH3StudioPlan(p, h3StudioPreviewInput(p), { ...inventory, backend }, null);
+    expect(result.graph["41"]).toEqual({ class_type: "ModelAttentionBackend", inputs: { model: ["38", 0], attention: "pytorch attention" } });
+    expect(Object.values(result.graph).some(n => n.class_type === "H3SLAAttention")).toBe(false);
+    expect(result.graph["164"].inputs.model).toEqual(["41", 0]);
+    expect(result.manifest).toMatchObject({ width: 768, height: 1344, frames: 175, attention: "dense" });
+    expect(result.graph["studio_fit"].inputs).toMatchObject({ device: "cpu", width: 768, height: 1344 });
+  });
+  it.each(["0.2", "0.6", "1"] as const)("keeps accelerated %s MP edits on SLA with a safe dense fallback", quality => {
+    const p = { ...automaticH3Plan(plan, "reference-edit"), quality, durationSeconds: 7.0476 };
+    const result = compileH3StudioPlan(p, h3StudioPreviewInput(p), inventory, null);
+    expect(result.graph["41"]).toMatchObject({class_type:"H3SLAAttention",inputs:{enabled:true,engine:"comfy_kitchen",dense_backend:"pytorch"}});
+    const ordinary = automaticH3Plan(plan, "native-r2v");
+    const other = compileH3StudioPlan(ordinary,h3StudioPreviewInput(ordinary),inventory,null);
+    expect(other.graph["41"].inputs.dense_backend).not.toBe("pytorch");
+  });
   it("source/mute policies do not accidentally mux H3-generated audio", () => {
     for (const audio of ["original", "mute", "generated"] as const) {
       const p: H3StudioPlan = { ...plan, workflowId: "reference-edit", audio }; const result = compileH3StudioPlan(p, h3StudioPreviewInput(p), inventory, null);

@@ -2,7 +2,7 @@
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
 const {spawnSync} = require('node:child_process');
 const source = path.resolve(__dirname, '../..'), evidence = path.resolve(process.argv[2] || '');
-if (!/^\/home\/shawn-rochford\/AI\/research\/(?:experimental-tabs|h3-nsfw-access)-\d{8}-\w+$/.test(evidence) || !fs.existsSync(path.join(evidence,'source-before.tar.gz'))) throw Error('Explicit backed-up experiment evidence directory required');
+if (!/^\/home\/shawn-rochford\/AI\/research\/(?:experimental-tabs|h3-nsfw-access|h3-edit-recovery)-\d{8}-\w+$/.test(evidence) || !fs.existsSync(path.join(evidence,'source-before.tar.gz'))) throw Error('Explicit backed-up experiment evidence directory required');
 const root = fs.mkdtempSync(path.join(evidence,'build-')), build = path.join(root,'source'), data = path.join(root,'data');
 fs.mkdirSync(build); fs.mkdirSync(data,{mode:0o700});
 const copied = spawnSync('rsync',['-a','--exclude=.git','--exclude=node_modules','--exclude=.next','--exclude=.cache','--exclude=data','--exclude=.env*','--exclude=*.tsbuildinfo',source+'/',build+'/'],{stdio:'inherit'});

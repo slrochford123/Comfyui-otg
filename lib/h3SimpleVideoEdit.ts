@@ -22,6 +22,7 @@ export function simpleVideoEditPlan(input: ReturnType<typeof parseSimpleVideoEdi
   if (!probe.codec || !width || !height) throw Error("Choose a readable video file.");
   return parseH3StudioPlan({ ...DEFAULT_H3_STUDIO_PLAN, backend: input.backend, workflowId: "reference-edit", checkpoint: "standard", profile: "ref2va-8step",
     quality: input.quality, durationSeconds: duration, orientation: height > width ? "portrait" : "landscape",
+    // The compiler pins SLA's dense fallbacks to PyTorch for video edits.
     attention: "project-sla", steps: 8, sampler: "euler", scheduler: "simple", seed: crypto.randomInt(0, 2147483647),
     prompt: input.prompt, originalPrompt: input.prompt, audio: probe.hasAudio ? "original" : "mute", loras: [], combatEnabled: false });
 }

@@ -4,7 +4,7 @@ import { DEFAULT_H3_STUDIO_PLAN, parseH3StudioPlan, reconcileH3StudioPlan, studi
 const body = { sourceId: "e028b5a5-b70e-4cf7-b91f-bc45f3f380f4", prompt: "Change the coat to blue", quality: "0.6", requestId: "qa-edit-request" };
 const probe = { width: 1920, height: 1080, codec: "h264", fps: 30, durationSeconds: 4.76, hasAudio: true };
 describe("simple manual edit's server-owned controls", () => {
-  it.each([2, 4.76, 5, 10])("retains actual %s-second selected duration with fixed SLA/Turbo", durationSeconds => {
+  it.each([2, 4.76, 5, 10])("retains actual %s-second selected duration with fixed safe attention/Turbo", durationSeconds => {
     const plan = simpleVideoEditPlan(parseSimpleVideoEdit(body), { ...probe, durationSeconds });
     expect(plan).toMatchObject({ workflowId: "reference-edit", durationSeconds, profile: "ref2va-8step", steps: 8, sampler: "euler", attention: "project-sla", orientation: "landscape", audio: "original", loras: [], combatEnabled: false });
     expect((studioFrames(durationSeconds) - 5) % 17).toBe(0);
