@@ -53,15 +53,35 @@ def story_idle(data):
             if db.execute("SELECT 1 FROM media WHERE status IN ('queued','submitting','running','unknown') LIMIT 1").fetchone():raise RuntimeError('Story media is unfinished; no work was interrupted')
 
 
+def nsfw_idle(root):
+    for file in Path(root).glob('jobs/*/status.json'):
+        status=json.loads(file.read_text())
+        if status.get('state') not in ('completed','failed','canceled') or not status.get('cleanedUp'):raise RuntimeError('Private H3 work is unfinished; nothing was interrupted')
+
+
+def nsfw_probe(plan):
+    if not plan.get('nsfwConfig'):return
+    file=Path(plan['nsfwConfig'])
+    if file.is_symlink() or file.stat().st_uid!=0 or file.stat().st_mode&0o077 or digest(file)!=plan['nsfwConfigSha256']:raise RuntimeError('Private H3 configuration changed')
+    cfg=json.loads(file.read_text());target=cfg['transport']
+    if cfg.get('environment')!='prod' or cfg.get('workspace')!='h3-nsfw' or target['protocol']!='slr-h3-nsfw-v1':raise RuntimeError('Incorrect private H3 boundary')
+    for row in cfg['files']:
+        if digest(row['path'])!=row['sha256']:raise RuntimeError('Private H3 controller changed')
+    args=['/usr/bin/ssh','-F','/dev/null','-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+target['knownHostsFile'],'-i',target['identityFile'],target['host'],target['protocol']]
+    result=subprocess.run(args,input=b'{"action":"probe"}\n',capture_output=True,timeout=15,check=True);probe=json.loads(result.stdout)
+    if not probe.get('restricted') or probe.get('runtimeSha256')!=target['runtimeSha256']:raise RuntimeError('Private H3 connection is not qualified')
+
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--check-only',action='store_true');args=parser.parse_args()
     if os.geteuid()!=0 or socket.gethostname()!='slr':raise RuntimeError('Run through authorized sudo on SLR')
     os.umask(0o077)
     if digest(ROOT/'activation-plan.json')!=PLAN_SHA:raise RuntimeError('Activation plan changed')
     plan=json.loads((ROOT/'activation-plan.json').read_text())
-    if plan['buildVersion']!='2.21' or not re.fullmatch('[a-f0-9]{40}',plan['commit']):raise RuntimeError('Invalid release identity')
+    version=plan['buildVersion']
+    if version not in ('2.21','2.22') or not re.fullmatch('[a-f0-9]{40}',plan['commit']):raise RuntimeError('Invalid release identity')
     candidate=Path(plan['candidate']);old=Path(plan['expectedOld'])
-    if ROOT!=Path('/mnt/otg_bulk/build-2.21-promotion-'+plan['commit'][:12]) or candidate!=Path('/opt/otg/releases/prod-build-2.21-'+plan['commit'][:12]):raise RuntimeError('Invalid release boundary')
+    if ROOT!=Path('/mnt/otg_bulk/build-'+version+'-promotion-'+plan['commit'][:12]) or candidate!=Path('/opt/otg/releases/prod-build-'+version+'-'+plan['commit'][:12]):raise RuntimeError('Invalid release boundary')
     previous=load('previous_prod_guard',PREVIOUS_GUARD,plan['previousGuardSha256'])
     modules=[load('base_guard_'+str(i),file,sha) for i,(file,sha) in enumerate(previous.GUARDS.items())];m,prior=modules
     manifest=json.loads((candidate/'DEPLOYMENT_MANIFEST.json').read_text())
@@ -75,7 +95,7 @@ def main():
     runtime_sha=next(row['sha256'] for row in manifest['artifactFiles'] if row['file']=='scripts/deploy/systemd_runtime.py')
     runtime=load('prod_systemd_runtime',candidate/'scripts/deploy/systemd_runtime.py',runtime_sha)
     if digest(plan['speechConfig'])!=plan['speechConfigSha256']:raise RuntimeError('Speech connection configuration changed')
-    previous.validate_runtime(plan);previous.validate_native_images();previous.cpu_health(plan);speech_probe(plan['speechConfig'])
+    previous.validate_runtime(plan);previous.validate_native_images();previous.cpu_health(plan);speech_probe(plan['speechConfig']);nsfw_probe(plan)
     with m.ACTIVATION_LOCK.open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         if m.CURRENT.resolve()!=old:raise RuntimeError('Production changed; stale promotion refused')
@@ -83,15 +103,21 @@ def main():
         if (m.PROC/old_pid/'cwd').resolve()!=old or old_env.get('OTG_ENV')!='prod':raise RuntimeError('Production process mismatch')
         controller_pins=previous.verify_root_controller(plan,old_env)
         flags={'OTG_STORY_MEDIA_ENABLED':'1','OTG_STORY_QWEN_REMOTE_CONFIG':plan['speechConfig'],'OTG_AUDIO_WORKER_SCRIPT':str(candidate/'scripts/audio-editing-worker.py')}
-        def idle():m.idle_gates();previous.extra_idle(m.DATA,plan);story_idle(m.DATA)
+        if plan.get('nsfwConfig'):
+            flags.update(OTG_H3_NSFW_ENABLED='1',OTG_H3_NSFW_ROOT=plan['nsfwRoot'])
+            root=Path(plan['nsfwRoot']);root_stat=root.lstat()
+            if root.is_symlink() or root_stat.st_uid!=0 or root_stat.st_mode&0o077 or digest(root/'runtime.json')!=plan['nsfwConfigSha256']:raise RuntimeError('Production H3 storage is not prepared')
+        def idle():
+            m.idle_gates();previous.extra_idle(m.DATA,plan);story_idle(m.DATA)
+            if plan.get('nsfwRoot'):nsfw_idle(plan['nsfwRoot'])
         m.public_application_gates();m.application_gates();m.maintenance_gates();idle();m.active_child_gates(old_pid)
         # The exact qualified TEST bundle is required, including the served static build.
         for route in ('/experimental-workspace.json','/_next/static/'+plan['buildId']+'/_buildManifest.js'):
             with urllib.request.urlopen('http://100.75.162.64:3001'+route,timeout=15) as response:
-                if route.endswith('.json') and json.load(response)['buildId']!=plan['buildId']:raise RuntimeError('Activate the qualified Build 2.21 on TEST first')
-        if args.check_only:print(json.dumps({'ok':True,'checkOnly':True,'version':'2.21','productionChanged':False}));return
-        transaction=m.BACKUPS/('prod-build-2.21-activation-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:8]);transaction.mkdir(mode=0o700,parents=True)
-        report={'activated':False,'buildVersion':'2.21','commit':plan['commit'],'buildId':plan['buildId'],'oldRelease':str(old),'oldPointer':os.readlink(m.CURRENT),'oldPid':int(old_pid),'transaction':str(transaction)}
+                if route.endswith('.json') and json.load(response)['buildId']!=plan['buildId']:raise RuntimeError('Activate the exact qualified build on TEST first')
+        if args.check_only:print(json.dumps({'ok':True,'checkOnly':True,'version':version,'productionChanged':False}));return
+        transaction=m.BACKUPS/('prod-build-'+version+'-activation-'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:8]);transaction.mkdir(mode=0o700,parents=True)
+        report={'activated':False,'buildVersion':version,'commit':plan['commit'],'buildId':plan['buildId'],'oldRelease':str(old),'oldPointer':os.readlink(m.CURRENT),'oldPid':int(old_pid),'transaction':str(transaction)}
         def save():(transaction/'activation-report.json').write_text(json.dumps(report,indent=2))
         def phase(value):report['stage']=value;save();print(value,flush=True)
         samples=m.media_samples();env_sha=digest(m.APP_ENV);override=None;stopped=switched=False
@@ -106,6 +132,8 @@ def main():
             for name in ('media-gpu-queue/queue.sqlite','openai/usage.sqlite','story-creator/story-media.sqlite'):
                 if (m.DATA/name).exists() and name not in m.DATABASES:m.DATABASES=(*m.DATABASES,name)
             baseline=m.snapshot_databases(transaction/'final-databases');report['databasesBackedUp']=list(m.DATABASES)
+            if plan.get('nsfwRoot') and (Path(plan['nsfwRoot'])/'experiments.sqlite').exists():
+                with sqlite3.connect(str(Path(plan['nsfwRoot'])/'experiments.sqlite')) as source,sqlite3.connect(str(transaction/'h3-nsfw.sqlite')) as dest:source.backup(dest)
             admins=previous.admin_ids(m.DATA,old_env)
             # Rehearse existing additive migrations on copies before applying them.
             rehearsal=transaction/'migration-rehearsal';shutil.copytree(transaction/'final-databases',rehearsal)
@@ -126,7 +154,7 @@ def main():
             with override.open('x') as handle:handle.write('[Service]\nWorkingDirectory='+str(m.CURRENT)+'\nExecStart=\nExecStart='+str(m.NODE)+' '+str(m.CURRENT/'server.js')+'\nEnvironmentFile='+str(flag_file)+'\n')
             override.chmod(0o644);report['override']=str(override)
             m.run(['/usr/bin/systemctl','daemon-reload']);m.assert_exec(m.property_value('ExecStart'))
-            phase('Activate Build 2.21 and verify the public application')
+            phase('Activate Build '+version+' and verify the public application')
             m.atomic_switch(candidate);switched=True;m.run(['/usr/bin/systemctl','start',m.UNIT])
             deadline=time.monotonic()+90
             while True:
@@ -141,9 +169,9 @@ def main():
                     time.sleep(1)
             m.public_application_gates();report['servedBuild']=previous.verify_served_build(plan,candidate);m.verify_media(samples)
             if digest(m.APP_ENV)!=env_sha or any(digest(file)!=sha for file,sha in controller_pins.items()):raise RuntimeError('Protected settings changed')
-            previous.cpu_health(plan);speech_probe(plan['speechConfig'])
+            previous.cpu_health(plan);speech_probe(plan['speechConfig']);nsfw_probe(plan)
             report.update(activated=True,pid=int(pid),health=200,existingRowsPreserved=True,administratorsPreserved=len(admins),mediaSamplesRetained=len(samples));save()
-            prior.publish_result(ROOT,report,'activation-result.json');print(json.dumps({'ok':True,'version':'2.21','pid':int(pid),'backup':str(transaction)}))
+            prior.publish_result(ROOT,report,'activation-result.json');print(json.dumps({'ok':True,'version':version,'pid':int(pid),'backup':str(transaction)}))
         except BaseException as error:
             report.update(error=str(error),rolledBack=False);save()
             if switched:
@@ -169,4 +197,4 @@ def main():
 
 if __name__=='__main__':
     try:main()
-    except Exception as error:print('Build 2.21 activation refused: '+str(error));sys.exit(1)
+    except Exception as error:print('Production activation refused: '+str(error));sys.exit(1)

@@ -6,6 +6,7 @@ import { RequestError } from "@/lib/requestError";
 import { EXPERIMENTS } from "./catalog";
 import { getAsset, getSession, labRoot, MAX_ASSET_BYTES, validId, withLab } from "./store";
 import { requireNsfwAccess } from "./nsfwAccess";
+import { productionNsfwScope } from "./availability";
 
 type Recipe = {steps:number;sampler:string;scheduler:string;attention:string;note:string};
 type ModelRuntime = { path: string; sha256: string; bytes: number; mtimeNs: number; qualifiedModes?: string[]; variants?: Record<string,string[]>; minSeconds?:number; reason?:string; recipe?: Recipe; variantRecipes?:Record<string,Recipe> };
@@ -19,12 +20,13 @@ export type LabJob = {
 };
 type Row = { id: string; owner: string; session: string; model: string; asset: string; status: string; created: number };
 function runtime(kind: "testing" | "h3-admin" = "h3-admin"): { file: string; config: RuntimeConfig } | null {
+  if (productionNsfwScope() && kind === "testing") return null;
   const file = path.join(labRoot(), kind === "testing" ? "testing-runtime.json" : "runtime.json");
   if (!fs.existsSync(file)) return null;
   const stat = fs.lstatSync(file);
   if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077) || stat.uid !== process.getuid?.()) throw new RequestError("Private runtime configuration is unsafe.", 503);
   const config = JSON.parse(fs.readFileSync(file, "utf8")) as RuntimeConfig;
-  if (config.environment !== "test" || config.gpu !== "rtx3090" || !path.isAbsolute(config.runner || "")) throw new RequestError("Private H3 runtime is not configured.", 503);
+  if (config.environment !== (productionNsfwScope() ? "prod" : "test") || config.gpu !== "rtx3090" || !path.isAbsolute(config.runner || "")) throw new RequestError("Private H3 runtime is not configured.", 503);
   const hash = crypto.createHash("sha256").update(fs.readFileSync(config.runner)).digest("hex");
   if (hash !== config.runnerSha256) throw new RequestError("Private runner changed; requalification is required.", 503);
   if (!Array.isArray(config.files) || config.files.length < 3 || config.files.some(file => !path.isAbsolute(file.path) || crypto.createHash("sha256").update(fs.readFileSync(file.path)).digest("hex") !== file.sha256)) throw new RequestError("Private graph implementation changed; requalification is required.", 503);
@@ -37,7 +39,7 @@ export function labCapabilities(): LabCapability[] {
     catch { unavailable.add(kind);return null; }
   }
   const runtimes = {"h3-admin":isolatedRuntime("h3-admin"),testing:isolatedRuntime("testing")};
-  return EXPERIMENTS.map(entry => {
+  return EXPERIMENTS.filter(entry=>!productionNsfwScope()||entry.kind==="h3-admin").map(entry => {
     const configured = runtimes[entry.kind];
     const installed = configured?.config.models[entry.id];
     const modes = installed && (entry.kind === "testing" || installed.sha256.toLowerCase() === entry.sha256?.toLowerCase()) ? installed.qualifiedModes || [] : [];
@@ -173,7 +175,7 @@ export async function submitLabJob(owner: string, data: Record<string, unknown>,
     fs.writeFileSync(path.join(dir,"status.json"),JSON.stringify(result.status),{flag:"wx",mode:0o600});
     const log = fs.openSync(path.join(dir,"runner.log"),"wx",0o600);
     const child = spawn("/usr/bin/python3", [cfg.config.runner,"--job",dir,"--config",cfg.file], {
-      detached:true,stdio:["ignore",log,log],env:{NODE_ENV:"production",PATH:"/usr/local/bin:/usr/bin:/bin",HOME:process.env.HOME,LANG:"C.UTF-8",OTG_ENV:"test"},
+      detached:true,stdio:["ignore",log,log],env:{NODE_ENV:"production",PATH:"/usr/local/bin:/usr/bin:/bin",HOME:process.env.HOME,LANG:"C.UTF-8",OTG_ENV:cfg.config.environment},
     });
     fs.closeSync(log);
     await new Promise<void>((resolve,reject) => { child.once("spawn",resolve);child.once("error",reject); });
@@ -204,8 +206,8 @@ export function exportLabJob(owner: string, id: unknown) {
     const row=db.prepare("SELECT * FROM generation_jobs WHERE id=? AND owner=?").get(id,owner) as Row|undefined;
     if (!row) throw new RequestError("Generation not found.",404);
     const dir=path.join(root,"jobs",id), request=JSON.parse(fs.readFileSync(path.join(dir,"request.json"),"utf8"));
-    return {schemaVersion:1,testOnly:true,status:readStatus(root,row),request,
+    return {schemaVersion:1,testOnly:process.env.OTG_ENV==="test",status:readStatus(root,row),request,
       graph:fs.existsSync(path.join(dir,"graph.json"))?JSON.parse(fs.readFileSync(path.join(dir,"graph.json"),"utf8")):null,
-      warning:"Private graph uses LabMemory nodes, pinned checkpoints and normalized source filenames. It is evidence, not production integration approval."};
+      warning:"Private graph uses LabMemory nodes, pinned checkpoints and normalized source filenames. This receipt is not a reusable execution or promotion authorization."};
   });
 }

@@ -19,14 +19,14 @@ export async function experimentGet(request:NextRequest, owner:string, restricte
     const draft = canvas(session.settings), scale = ["cinematic-upscale","sol-denomix"].includes(experiment.id) ? 2 : 1;
     const target = experiment.id === "director-studio" ? {format:"json",mediaGeneration:false}
       : {width:draft.width*scale,height:draft.height*scale,...(scale===2?{draft,scale}:{}),fps:session.settings.mode === "edit-image" ? null : 24,deliveredFrames:session.settings.mode === "edit-image" ? 1 : session.settings.seconds * 24,format:session.settings.mode === "edit-image" ? "png" : "mp4"};
-    return NextResponse.json({ schemaVersion: 1, runnable: false, environment: "test", exportedAt: new Date().toISOString(), experiment, session,
+    return NextResponse.json({ schemaVersion: 1, runnable: false, environment: process.env.OTG_ENV, exportedAt: new Date().toISOString(), experiment, session,
       target,
       warnings: ["Planning manifest only: not a ComfyUI graph, generation receipt or promotion authorization.", "Native temporal framing and each mode require exact-graph verification. No frame padding or speed changes.", "Uploaded comparison media is owner-supplied, not evidence of an in-app generation."], licenseSource: H3_LICENSE_URL, authorization: H3_LICENSE_NOTICE,
     }, { headers: { "Content-Disposition": `attachment; filename="experiment-${id}.json"` } });
   }
   const catalog=EXPERIMENTS.filter(e=>!restricted||e.kind==="h3-admin");
   const capabilities = labCapabilities().filter(c=>catalog.some(e=>e.id===c.model));
-  return NextResponse.json({ ok: true, environment: "test", executionEnabled: capabilities.some(c => c.modes.length), capabilities, catalog, sessions: listSessions(owner).filter(s=>catalog.some(e=>e.id===s.experiment)) });
+  return NextResponse.json({ ok: true, environment: process.env.OTG_ENV, executionEnabled: capabilities.some(c => c.modes.length), capabilities, catalog, sessions: listSessions(owner).filter(s=>catalog.some(e=>e.id===s.experiment)) });
 }
 export async function experimentPost(request:NextRequest, owner:string, restricted=false) {
   const data = await boundedJson(request);

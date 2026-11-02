@@ -15,7 +15,7 @@ import time
 def main():
     os.umask(0o077)
     stage=Path(sys.argv[1]).resolve(strict=True);action=sys.argv[2]
-    if os.geteuid()!=0 or socket.gethostname()!='slr' or stage.parent!=Path('/mnt/otg_bulk') or not stage.name.startswith('build-2.21-promotion-'):raise RuntimeError('Incorrect smoke boundary')
+    if os.geteuid()!=0 or socket.gethostname()!='slr' or stage.parent!=Path('/mnt/otg_bulk') or not stage.name.startswith(('build-2.21-promotion-','build-2.22-promotion-')):raise RuntimeError('Incorrect smoke boundary')
     plan=json.loads((stage/'activation-plan.json').read_text());candidate=Path(plan['candidate']);file=stage/'smoke-process.json'
     if action=='start':
         if file.exists():
@@ -32,11 +32,20 @@ def main():
         env.update(NODE_ENV='production',OTG_ENV='prod',PORT='3308',HOSTNAME='127.0.0.1',AUTH_SECRET=secrets.token_hex(48),AUTH_COOKIE_NAME='story_promotion_smoke',OTG_STORY_MEDIA_ENABLED='1',OTG_PRIVATE_RESEARCH_MEDIA='1',
             OTG_STORY_QWEN_REMOTE_CONFIG=plan['speechConfig'],OTG_DATA_DIR=str(data),OTG_DATA_ROOT=str(data),OTG_PERSISTENT_DATA_ROOT=str(data),OTG_DEVICE_OUTPUT_ROOT=str(data/'devices'),OTG_WORKER_CONTROL_STORE_DIR=str(data/'worker-control'),OTG_MEDIA_GPU_QUEUE_DB=str(data/'media-gpu-queue/queue.sqlite'),
             OTG_RUNTIME_ROOT=str(stage/'smoke-runtime'),OTG_CONFIG_ROOT=str(stage/'smoke-config'),OTG_AUDIO_EDITING_ENABLED='0',OPENAI_API_KEY='local-director-fixture',OPENAI_BASE_URL='http://100.75.162.64:3391/v1',OPENAI_KILL_SWITCH='0',NEXT_TELEMETRY_DISABLED='1')
+        if plan.get('nsfwConfig'):
+            lab=data.parent/(data.name+'-nsfw');lab.mkdir(mode=0o700)
+            import shutil
+            shutil.copyfile(plan['nsfwConfig'],lab/'runtime.json')
+            env.update(OTG_H3_NSFW_ENABLED='1',OTG_H3_NSFW_ROOT=str(lab))
         with (stage/('smoke-server-'+data.name+'.log')).open('xb') as log:
             process=subprocess.Popen(['/opt/otg/runtime/node-v22.23.4/bin/node',str(candidate/'server.js')],cwd=candidate,env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
-        file.write_text(json.dumps({'pid':process.pid,'candidate':str(candidate),'data':str(data)}));print(json.dumps({'ok':True,'pid':process.pid,'port':3308,'managedProductionChanged':False}))
+        file.write_text(json.dumps({'pid':process.pid,'candidate':str(candidate),'data':str(data),'nsfw':env.get('OTG_H3_NSFW_ROOT')}));print(json.dumps({'ok':True,'pid':process.pid,'port':3308,'managedProductionChanged':False}))
     elif action=='stop':
         state=json.loads(file.read_text());pid=state['pid'];data=Path(state['data']);queue=data/'media-gpu-queue/queue.sqlite'
+        if state.get('nsfw'):
+            for status in Path(state['nsfw']).glob('jobs/*/status.json'):
+                value=json.loads(status.read_text())
+                if value.get('state') not in ('completed','failed','canceled') or not value.get('cleanedUp'):raise RuntimeError('Owned private H3 work is unfinished; smoke process retained')
         for attempt in range(30):
             busy=False
             if queue.exists():

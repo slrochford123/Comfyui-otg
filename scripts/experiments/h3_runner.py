@@ -53,6 +53,10 @@ class Job:
     def signal(self, *_): self.cancelled = True
     def check_cancel(self):
         if self.cancelled or (self.root/'cancel').exists(): raise Cancelled('Canceled by administrator')
+        if getattr(self, 'request', {}).get('remoteLeaseSeconds') == 60:
+            lease = self.root/'transport-heartbeat'
+            if not lease.is_file() or lease.is_symlink() or time.time()-lease.stat().st_mtime > 60:
+                raise Cancelled('Production controller disconnected; private job stopped safely')
         authorization = getattr(self, 'request', {}).get('authorization')
         if authorization is not None:
             import sqlite3
@@ -247,9 +251,10 @@ class Job:
 def main():
     os.umask(0o077)
     p=argparse.ArgumentParser();p.add_argument('--job',required=True);p.add_argument('--config',required=True);args=p.parse_args()
-    if os.environ.get('OTG_ENV')!='test': raise ValueError('TEST-only experimental runner')
     root=Path(args.job).absolute();cfg=read(args.config)
-    if cfg.get('environment')!='test' or cfg.get('gpu')!='rtx3090': raise ValueError('Invalid isolated runtime boundary')
+    environment=os.environ.get('OTG_ENV')
+    if environment not in ('test','prod') or cfg.get('environment')!=environment or cfg.get('gpu')!='rtx3090': raise ValueError('Invalid isolated runtime boundary')
+    if environment=='prod' and (os.getuid()==0 or cfg.get('workspace')!='h3-nsfw' or read(root/'request.json').get('remoteLeaseSeconds')!=60): raise ValueError('Production H3 requires the unprivileged restricted transport')
     job=Job(root,cfg)
     try:job.execute()
     except Cancelled as error:job.update(state='canceled',stage=str(error),completed=time.time())

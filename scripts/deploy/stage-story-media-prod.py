@@ -8,10 +8,11 @@ import sys
 
 def main():
     root=Path(sys.argv[1]).resolve(strict=True);package=json.loads((root/'production-package.json').read_text())
-    if root.parent!=Path('/home/shawn-rochford/AI/research') or not package['stage'].startswith('/mnt/otg_bulk/build-2.21-promotion-'):raise RuntimeError('Invalid staging boundary')
+    version=package['buildVersion']
+    if root.parent!=Path('/home/shawn-rochford/AI/research') or version not in ('2.21','2.22') or not package['stage'].startswith('/mnt/otg_bulk/build-'+version+'-promotion-'):raise RuntimeError('Invalid staging boundary')
     ssh=['ssh','-o','BatchMode=yes','otg-slr'];stage=package['stage']
     subprocess.run([*ssh,'mkdir -p '+shlex.quote(stage)],check=True)
-    subprocess.run(['scp','-q','-o','BatchMode=yes',package['archive'],str(root/'activate-build-2.21.py'),'otg-slr:'+stage+'/'],check=True)
+    subprocess.run(['scp','-q','-o','BatchMode=yes',package['archive'],str(root/('activate-build-'+version+'.py')),'otg-slr:'+stage+'/'],check=True)
     subprocess.run(['scp','-q','-o','BatchMode=yes',str(root/'production-plan.json'),'otg-slr:'+stage+'/activation-plan.json'],check=True)
     code=r'''
 import hashlib,json,os,pathlib,sys,tarfile
@@ -27,7 +28,7 @@ with tarfile.open(archive,'r:gz') as t:
   assert not name.is_absolute() and '..' not in name.parts and name.parts[0]==candidate.name and (item.isdir() or item.isfile()) and not item.mode&0o6000
  t.extractall(candidate.parent)
 assert hashlib.sha256((stage/'activation-plan.json').read_bytes()).hexdigest()==p['planSha256']
-assert hashlib.sha256((stage/'activate-build-2.21.py').read_bytes()).hexdigest()==p['activatorSha256']
+assert hashlib.sha256((stage/('activate-build-'+p['buildVersion']+'.py')).read_bytes()).hexdigest()==p['activatorSha256']
 print(json.dumps({'ok':True,'candidate':str(candidate),'stagedOnly':True}))
 '''
     result=subprocess.check_output([*ssh,'/usr/bin/python3 -c '+shlex.quote(code)],input=json.dumps(package).encode(),timeout=240)

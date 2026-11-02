@@ -1,6 +1,7 @@
 import { requireAdmin } from "@/app/api/admin/_requireAdmin";
 import { isAdminUserId } from "@/lib/auth/admin";
 import { getNsfwAccess } from "@/lib/experiments/nsfwAccess";
+import { nsfwEnabled } from "@/lib/experiments/availability";
 import { NextRequest, NextResponse } from "next/server";
 
 import { db, ensureMigrations } from "@/lib/auth/db";
@@ -29,7 +30,7 @@ export async function GET(_req: NextRequest) {
       role: isAdminUserId(r.id) ? "Admin" : "Standard",
       status: "Registered",
       protected: isAdminUserId(r.id),
-      ...(process.env.OTG_ENV === "test" ? { nsfwAccess: getNsfwAccess(r.id) } : {}),
+      ...(nsfwEnabled() ? { nsfwAccess: getNsfwAccess(r.id) } : {}),
     }));
 
     return NextResponse.json({ ok: true, count: users.length, users }, { headers: { "Cache-Control": "no-store" } });

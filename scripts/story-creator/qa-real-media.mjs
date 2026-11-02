@@ -9,7 +9,7 @@ import {once} from 'node:events';
 import Database from 'better-sqlite3';
 import {chromium} from '@playwright/test';
 const build=path.resolve(process.argv[2]||'');
-assert.match(build,/^\/home\/shawn-rochford\/AI\/research\/experimental-tabs-\d{8}-\w+\/build-\w+\/source$/);
+assert.match(build,/^\/home\/shawn-rochford\/AI\/research\/(?:experimental-tabs|h3-nsfw-access)-\d{8}-\w+\/build-\w+\/source$/);
 const meta=JSON.parse(fs.readFileSync(path.join(build,'../result.json')));assert.equal(meta.exitCode,0);
 const out=fs.mkdtempSync(path.join(path.dirname(build),'real-story-media-')),data=path.join(out,'data');fs.mkdirSync(data,{mode:0o700});
 const base='http://127.0.0.1:3308',report={ok:false,suite:'story-media-real',buildId:meta.buildId,realInference:true,paidCalls:0,checks:[],jobs:[],pageErrors:[]};

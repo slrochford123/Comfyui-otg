@@ -1330,7 +1330,7 @@ async function fetchWorkflowsForApp() {
     .filter((item: WorkflowItem) => item.id && item.label);
 }
 
-export default function AppPageClient({ initialUser = null, experimentalEnabled = false }: { initialUser?: InitialAppUser; experimentalEnabled?: boolean }) {
+export default function AppPageClient({ initialUser = null, experimentalEnabled = false, nsfwAvailable = false }: { initialUser?: InitialAppUser; experimentalEnabled?: boolean; nsfwAvailable?: boolean }) {
   const queryClient = useQueryClient();
 
   const [tab, setTab] = useState<SpinTabId>("generate");
@@ -7717,7 +7717,7 @@ async function handleAskAi() {
           <StoryCreatorPanel ownerKey={authenticatedOwnerKey} />
         ) : null}
         {tab === "storyboard" ? <ProductionV2Panel key={authenticatedOwnerKey || "production-account-unavailable"} /> : null}
-        {tab === "h3" ? <H3Panel key={authenticatedOwnerKey || "h3-account-unavailable"} authenticatedOwnerKey={authenticatedOwnerKey} nsfwAvailable={experimentalEnabled} /> : null}
+        {tab === "h3" ? <H3Panel key={authenticatedOwnerKey || "h3-account-unavailable"} authenticatedOwnerKey={authenticatedOwnerKey} nsfwAvailable={nsfwAvailable} /> : null}
         {tab === "characters" ? (
           <CharactersPanel
             key={authenticatedOwnerKey || "character-account-unavailable"}
@@ -8119,7 +8119,7 @@ async function handleAskAi() {
                   <div className="rounded-[18px] border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100/85">{deleteAccountMessage}</div>
                 ) : null}
               </Card>
-              {experimentalEnabled&&<H3NsfwAccessRequest key={authenticatedOwnerKey}/>}
+              {nsfwAvailable&&<H3NsfwAccessRequest key={authenticatedOwnerKey}/>}
               <BuildVersionFooter />
             </div>
           </div>

@@ -238,3 +238,27 @@ An activation success would expose the planning workspace only. It must not be d
 6. Add the experiment execution/cancellation/results path to the private workspace with durable idempotent jobs and owned-process cleanup. This execution adapter is not implemented in the current release.
 7. Independently implement and test the seven research candidates. Their cards currently store ideas and comparisons; they are not seven working feature integrations.
 8. Request a separate owner decision before moving any successful experiment into the normal TEST application, GitHub or PROD.
+## Build 2.22 production boundary
+
+H3 NSFW has a separate, opt-in production gate (`OTG_H3_NSFW_ENABLED=1`)
+and private `OTG_H3_NSFW_ROOT`. The Testing workspace and its API remain
+strictly TEST-only, including for administrators. Production does not copy TEST
+accounts, grants, projects, references or outputs; administrators have access and
+other users begin disabled, request approval in Settings, and are enabled/revoked
+in Admin Users.
+
+Production H3 jobs use the four pinned, previously qualified checkpoints on the
+3090 through a dedicated forced-command SSH protocol. No general shell, paths,
+PIDs, models or custom graphs are accepted. The worker runs as the unprivileged
+3090 owner, uses the existing shared physical-GPU authority, checks ordinary
+queues and RAM/VRAM, and stops if its controller lease expires. The production
+controller rechecks the original user grant version during transfer and every
+poll; revocation cannot be undone by reapproving the user while an old job waits.
+Source/output transfers are checksummed; downloads remain owner-scoped. Unknown
+remote cleanup retains a needs-attention record and never resubmits or force
+releases a GPU grant. Existing TEST and Comfy services are not modified.
+
+5060 Ti private-checkpoint inference remains unavailable until separately
+qualified. Native/Turbo recipes and attention continue to follow each exact
+checkpoint's verified recipe; enabling production does not add unsupported LoRAs
+or imply that every 15-second/high-resolution configuration has been benchmarked.

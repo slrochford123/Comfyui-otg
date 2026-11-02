@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.21",
+  "current": "2.22",
   "builds": [
     {
       "version": "2",
@@ -133,6 +133,12 @@
       "date": "2026-11-02",
       "summary": "Named Story Creator characters, Krea images, Fibo edits, FastH3 previews and reusable Qwen voices; verified restricted speech transport, mobile recovery and billing fixes. Experimental workspaces retain their separate TEST gates.",
       "sourceBaseCommit": "13987a9e5880585f4fbe5b39678119076522ab31"
+    },
+    {
+      "version": "2.22",
+      "date": "2026-11-02",
+      "summary": "Promote approved-account H3 NSFW with private production storage and restricted 3090 generation; preserve default-off user access, admin approval/revocation and immutable outputs. Testing remains TEST-only.",
+      "sourceBaseCommit": "53a42cb2ae666ed5015a97d60e7a361755a72991"
     }
   ]
 }

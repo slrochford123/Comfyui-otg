@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import Database from "better-sqlite3";
 import { DEFAULT_LAB_SETTINGS, labExperiment, type LabSettings } from "./catalog";
 import { RequestError } from "@/lib/requestError";
+import { productionNsfwScope } from "./availability";
 
 export const MAX_ASSET_BYTES = 128 * 1024 * 1024;
 export const MAX_ASSETS = 12;
@@ -15,9 +16,11 @@ export function requireTestLab() {
   if (process.env.OTG_ENV !== "test") throw new RequestError("Not found.", 404);
 }
 export function labRoot() {
-  requireTestLab();
-  const root = process.env.OTG_EXPERIMENTS_ROOT || "/home/shawn-rochford/AI/runtime/test/experiments";
+  const prod = productionNsfwScope();
+  if (!prod) requireTestLab();
+  const root = prod ? process.env.OTG_H3_NSFW_ROOT || "" : process.env.OTG_EXPERIMENTS_ROOT || "/home/shawn-rochford/AI/runtime/test/experiments";
   if (!path.isAbsolute(root) || root === "/" || root !== path.normalize(root)) throw new RequestError("Invalid experiment storage configuration.", 503);
+  if (prod && (root === process.env.OTG_EXPERIMENTS_ROOT || root.startsWith("/home/shawn-rochford/AI/runtime/test/"))) throw new RequestError("Production H3 NSFW requires separate private storage.", 503);
   const data = path.resolve(process.env.OTG_DATA_DIR || path.join(process.cwd(), "data"));
   if (root === data || root.startsWith(data + path.sep)) throw new RequestError("Experiments must be outside application/gallery data.", 503);
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -87,6 +90,7 @@ export function validateSettings(value: unknown): LabSettings {
 export function createSession(owner: string, experiment: string) {
   const entry = labExperiment(experiment);
   if (!entry) throw new RequestError("Unknown experiment.", 400);
+  if (productionNsfwScope() && entry.kind !== "h3-admin") throw new RequestError("Model not available.", 403);
   return withLab(db => db.transaction(() => {
     if ((db.prepare("SELECT count(*) AS n FROM sessions WHERE owner=?").get(owner) as { n: number }).n >= 200) throw new RequestError("The 200-record research limit has been reached; export and review storage with the administrator.", 409);
     const id = crypto.randomUUID(), now = new Date().toISOString();
