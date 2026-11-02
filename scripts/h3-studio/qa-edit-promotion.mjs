@@ -21,8 +21,8 @@ async function identity(ctx,prefix,elevate=false){
  const p=await ctx.newPage();p.setDefaultTimeout(30000);p.on('pageerror',e=>report.pageErrors.push(e.message));await p.goto(base+'/login');await p.getByPlaceholder('you@domain.com or username').fill(username);await p.locator('input[autocomplete="current-password"]').fill(password);await p.getByRole('button',{name:'Sign in',exact:true}).click();await p.waitForURL('**/app');return {page:p,id,username};
 }
 try{
- assert.equal((await api(user,'/api/app/build')).buildVersion,'2.23');
  const u=await identity(user,'edit_promote_'),a=await identity(admin,'edit_admin_',true);page=u.page;
+ assert.equal((await api(user,'/api/app/build')).buildVersion,'2.23');
  for(const ctx of [user,admin])for(const route of ['/api/experiments','/api/experiments/assets'])assert.equal((await call(ctx,route)).status(),404);
  assert.equal((await call(user,'/api/h3/nsfw')).status(),403);
  await page.goto(base+'/app?tab=h3');assert.equal(await page.getByRole('button',{name:'H3 NSFW',exact:true}).count(),0);
