@@ -31,6 +31,9 @@ import H3SpeedIndicator from "./H3SpeedIndicator";
 import H3VideoEditPanel from "./H3VideoEditPanel";
 import { ExpandableVideo } from "./ExpandedMediaViewer";
 import NativeImagePanel from "./NativeImagePanel";
+import dynamic from "next/dynamic";
+import {useH3NsfwAccess} from "@/lib/client/useH3NsfwAccess";
+const H3NsfwPanel=dynamic(()=>import("./H3NsfwStudio"));
 import {H3RecoveryClient, h3RecoveryMessage} from "@/lib/client/h3Recovery";
 import {useH3Resume} from "@/lib/client/useH3Resume";
 import H3StudioControls, { type H3StudioController } from "./H3StudioControls";
@@ -307,6 +310,7 @@ const H3_REFERENCE_VIDEO_MAX_SOURCE_SECONDS = 20 * 60;
 
 type H3PanelProps = {
   authenticatedOwnerKey?: string;
+  nsfwAvailable?: boolean;
 };
 
 type H3PersistedJob = {
@@ -988,7 +992,10 @@ function GalleryPicker({
   );
 }
 
-export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
+export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=false }: H3PanelProps) {
+  const {access:nsfwAccess}=useH3NsfwAccess(nsfwAvailable);
+  const [nsfwOpen,setNsfwOpen]=useState(false);
+  useEffect(()=>{if(!nsfwAccess?.enabled)setNsfwOpen(false);},[nsfwAccess?.enabled]);
   const storageOwnerKey = useMemo(
     () => normalizeProfileStorageOwner(authenticatedOwnerKey),
     [authenticatedOwnerKey],
@@ -3988,11 +3995,15 @@ export default function H3Panel({ authenticatedOwnerKey = "" }: H3PanelProps) {
       className="mx-auto max-w-7xl space-y-4 pb-28 pt-8 md:pt-0"
       data-testid="h3-panel"
     >
-      {imageCreateOpen ? <NativeImagePanel key={storageOwnerKey} h3Only ownerKey={storageOwnerKey} onBack={() => setImageCreateOpen(false)} /> : <>
-      <button type="button" disabled={studioBusy} onClick={() => setImageCreateOpen(true)} className="min-h-11 rounded-lg border border-violet-300/30 px-4 font-bold">H3 · Text to Image</button>
+      <div className="flex flex-wrap gap-2">
+      <button type="button" disabled={studioBusy} aria-pressed={!nsfwOpen&&!imageCreateOpen} onClick={()=>{setNsfwOpen(false);setImageCreateOpen(false);}} className="min-h-11 rounded-lg border border-violet-300/30 px-4 font-bold">H3 Video</button>
+      <button type="button" disabled={studioBusy} aria-pressed={imageCreateOpen&&!nsfwOpen} onClick={() => {setNsfwOpen(false);setImageCreateOpen(true);}} className="min-h-11 rounded-lg border border-violet-300/30 px-4 font-bold">H3 · Text to Image</button>
+      {nsfwAccess?.enabled&&<button type="button" disabled={studioBusy} aria-pressed={nsfwOpen} onClick={()=>{setImageCreateOpen(false);setNsfwOpen(true);}} className="min-h-11 rounded-lg border border-violet-300/30 px-4 font-bold">H3 NSFW</button>}
+      </div>
+      {nsfwOpen&&nsfwAccess?.enabled?<H3NsfwPanel key={storageOwnerKey}/>:imageCreateOpen ? <NativeImagePanel key={storageOwnerKey} h3Only ownerKey={storageOwnerKey} onBack={() => setImageCreateOpen(false)} /> : <>
       <H3StudioControls key={`${storageOwnerKey}:${studioControllerEpoch}`} ownerKey={storageOwnerKey} backend={h3Backend} onBackendChange={setH3Backend} controller={studioController} onControllerChange={next => { setStudioController(next); setManualControlsOpen(false); }} manualMenu={studioController === "manual" && !manualControlsOpen} onOpenManualControls={() => setManualControlsOpen(true)} onBackToStudio={() => setManualControlsOpen(false)} onBusyChange={setStudioBusy} />
       </>}
-      <div hidden={imageCreateOpen || studioController !== "manual" || manualControlsOpen} data-otg="h3-legacy-manual-tools" className="space-y-4">
+      <div hidden={nsfwOpen || imageCreateOpen || studioController !== "manual" || manualControlsOpen} data-otg="h3-legacy-manual-tools" className="space-y-4">
       {validatedStudioPlan ? <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 text-[var(--color-text)]" aria-label="Applied H3 Studio plan"><p>Applied plan: {validatedStudioPlan.workflowId} · {validatedStudioPlan.durationSeconds}s · {validatedStudioPlan.quality} MP. The editable generation prompt below is the approved plan prompt; the original intent remains in its manifest. Changed settings require a fresh plan.</p><button type="button" className="min-h-11 px-3" onClick={() => setValidatedStudioPlan(null)}>Stop using applied studio plan</button></section> : null}
       {videoEditOpen ? <H3VideoEditPanel key={storageOwnerKey} backend={h3Backend} authenticatedOwnerKey={storageOwnerKey} studioBusy={studioBusy} onBack={() => setVideoEditOpen(false)} /> : <>
       <section className="relative overflow-hidden rounded-[8px] border border-violet-300/20 bg-[linear-gradient(135deg,#100d25_0%,#09101b_55%,#071216_100%)] px-4 py-5 shadow-[0_20px_60px_rgba(76,29,149,.18)]">

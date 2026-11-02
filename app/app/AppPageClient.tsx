@@ -62,6 +62,7 @@ const SupportPanel = dynamic(() => import("./components/SupportPanel"), { loadin
 const EditVideoPanel = dynamic(() => import("./components/EditVideoPanel"), { loading: PanelLoading });
 const GalleryWorkspace = dynamic(() => import("./components/GalleryWorkspace"), { loading: PanelLoading });
 const H3Panel = dynamic(() => import("./components/H3Panel"), { loading: PanelLoading });
+const H3NsfwAccessRequest = dynamic(() => import("./components/H3NsfwAccessRequest"), { loading: PanelLoading });
 const ExperimentLabPanel = dynamic(() => import("./components/ExperimentLabPanel"), { loading: PanelLoading });
 const AdminQuickPanel = dynamic(() => import("./components/AdminQuickPanel"), { loading: PanelLoading });
 const ProductionCharacterReferencePickerBridge = dynamic(() => import("./components/ProductionCharacterReferencePickerBridge"), { ssr: false, loading: () => null });
@@ -7716,7 +7717,7 @@ async function handleAskAi() {
           <StoryCreatorPanel ownerKey={authenticatedOwnerKey} />
         ) : null}
         {tab === "storyboard" ? <ProductionV2Panel key={authenticatedOwnerKey || "production-account-unavailable"} /> : null}
-        {tab === "h3" ? <H3Panel key={authenticatedOwnerKey || "h3-account-unavailable"} authenticatedOwnerKey={authenticatedOwnerKey} /> : null}
+        {tab === "h3" ? <H3Panel key={authenticatedOwnerKey || "h3-account-unavailable"} authenticatedOwnerKey={authenticatedOwnerKey} nsfwAvailable={experimentalEnabled} /> : null}
         {tab === "characters" ? (
           <CharactersPanel
             key={authenticatedOwnerKey || "character-account-unavailable"}
@@ -8118,6 +8119,7 @@ async function handleAskAi() {
                   <div className="rounded-[18px] border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100/85">{deleteAccountMessage}</div>
                 ) : null}
               </Card>
+              {experimentalEnabled&&<H3NsfwAccessRequest key={authenticatedOwnerKey}/>}
               <BuildVersionFooter />
             </div>
           </div>

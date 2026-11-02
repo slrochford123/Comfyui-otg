@@ -231,6 +231,7 @@ export default function StoryCreatorPanel({
     useState<StoryVisualDirectorAction | null>(null);
   const [storyDirectorVisualActionError, setStoryDirectorVisualActionError] =
     useState("");
+  const [storyMediaEnabled,setStoryMediaEnabled]=useState(false);
 
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -2130,6 +2131,10 @@ export default function StoryCreatorPanel({
     }
 
     try {
+      const capability=await fetch("/api/story-creator/media?capabilities=1",{cache:"no-store"}).then(async response=>response.ok?response.json():{enabled:false});
+      const useStoryMedia=capability.enabled===true;
+      setStoryMediaEnabled(useStoryMedia);
+      if(useStoryMedia)setStoryDirectorVisualAction(null);
       const savedUserMessage =
         await persistMessage(
           project.id,
@@ -2145,7 +2150,7 @@ export default function StoryCreatorPanel({
       setStoryMessages(history);
       setDraft("");
 
-      if (isStoryVisualActionInstruction(content)) {
+      if (!useStoryMedia && isStoryVisualActionInstruction(content)) {
         const actionResponse = await fetch(
           "/api/story-creator/visual-actions",
           {
@@ -2307,6 +2312,7 @@ export default function StoryCreatorPanel({
             }}
             visualAction={storyDirectorVisualAction}
             visualActionError={storyDirectorVisualActionError}
+            onMediaAvailability={setStoryMediaEnabled}
             />
           )}
           memory={(

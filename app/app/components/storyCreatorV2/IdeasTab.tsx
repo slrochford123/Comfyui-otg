@@ -10,6 +10,7 @@ import {
 import SpeechInputButton from "../SpeechInputButton";
 import type { StoryVisualDirectorAction } from "@/lib/storyCreator/visualActions";
 import { StoryDirectorVisualCard } from "./StoryDirectorVisualCard";
+import { StoryMediaCards } from "./StoryMediaCards";
 import { useStorySpeech } from "./useStorySpeech";
 import { STORY_VOICES, type StorySpeechEngine, type StorySpeechVoice } from "@/lib/storyCreator/speechVoices";
 import { normalizeStorySpeechText } from "@/lib/storyCreator/speechText";
@@ -54,6 +55,7 @@ type Props = {
   onExtract: (sourceMessageId: string) => void;
   visualAction: StoryVisualDirectorAction | null;
   visualActionError: string;
+  onMediaAvailability?: (enabled:boolean)=>void;
 };
 
 const STORY_DIRECTOR_AUTO_SPEAK_KEY =
@@ -100,6 +102,7 @@ export function IdeasTab({
   onExtract,
   visualAction,
   visualActionError,
+  onMediaAvailability,
 }: Props) {
   const [recorderStatus, setRecorderStatus] = useState("");
   const speech = useStorySpeech(projectId);
@@ -383,6 +386,7 @@ export function IdeasTab({
             </div>
           ) : null}
 
+          <StoryMediaCards key={projectId} projectId={projectId} onAvailability={onMediaAvailability}/>
           <div ref={chatEndRef} />
         </div>
 

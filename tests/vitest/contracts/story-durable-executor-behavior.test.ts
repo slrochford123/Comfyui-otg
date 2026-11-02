@@ -24,6 +24,18 @@ async function setup() {
 }
 
 describe("durable reply execution without paid inference", () => {
+  it("turns an explicit unnamed-character tool call into a durable name card without inference",async()=>{
+    vi.stubEnv("OTG_ENV","test");
+    const {store,identity,executor}=await setup();store.cancelStoryConversationTurn(identity);
+    const source=store.addStoryCreatorMessage({...identity,role:"user",content:"Generate an image of a bunny."});
+    const {turn}=store.createStoryConversationTurn({...identity,sourceMessageId:source.id});
+    upstream.stream.mockResolvedValue((async function*(){yield {type:"done",text:"",toolCalls:[{name:"create_story_media",arguments:JSON.stringify({operation:"image",subject:"character",name:"",prompt:"A bunny with one pink ear.",sourceId:"",text:"",evidence:source.content})}]};})());
+    await executor.executeStoryConversationTurn({...identity,turnId:turn.id},"fixture");
+    const media=await import("../../../lib/storyCreator/mediaStore");
+    expect(media.listStoryMedia(identity.ownerKey,identity.projectId)[0].status).toBe("needs_name");
+    expect(store.listStoryCreatorMessages(identity).at(-1)?.content).toContain("character's name");
+    expect(upstream.stream.mock.calls[0][0].tools[0].name).toBe("create_story_media");
+  });
   it("saves a reply and validated memory in one upstream call, independent of a browser stream", async () => {
     const { store, identity, executor } = await setup();
     const raw = JSON.stringify({ reply: "That gives us a compelling starting point.", facts: [

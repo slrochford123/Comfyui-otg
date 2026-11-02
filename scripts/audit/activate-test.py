@@ -75,6 +75,7 @@ def idle():
                 raise RuntimeError('Unfinished TEST application job: '+str(file.relative_to(DATA)))
     for relative,queries in {
         'media-gpu-queue/queue.sqlite': [('media_jobs',"SELECT 1 FROM media_jobs WHERE status NOT IN ('completed','failed','canceled') OR admissionToken IS NOT NULL LIMIT 1")],
+        'story-creator/story-media.sqlite': [('media',"SELECT 1 FROM media WHERE status IN ('queued','submitting','running','unknown') LIMIT 1")],
         'story-creator/story-creator.sqlite': [(name,"SELECT 1 FROM "+name+" WHERE status IN ('queued','running') LIMIT 1") for name in ('story_conversation_turns','story_speech_jobs')],
     }.items():
         if (DATA/relative).exists():

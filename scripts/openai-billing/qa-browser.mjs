@@ -8,13 +8,13 @@ import {once} from 'node:events';
 import Database from 'better-sqlite3';
 import {chromium} from '@playwright/test';
 const build=path.resolve(process.argv[2]||'');
-if(!/^\/home\/shawn-rochford\/AI\/research\/openai-billing-fix-\d{8}-\w+\/build-\w+\/source$/.test(build))throw Error('Explicit isolated build required');
+if(!/^\/home\/shawn-rochford\/AI\/research\/(?:openai-billing-fix|experimental-tabs|h3-nsfw-access)-\d{8}-\w+\/build-\w+\/source$/.test(build))throw Error('Explicit isolated build required');
 const built=JSON.parse(fs.readFileSync(path.join(build,'../result.json'),'utf8'));assert.equal(built.exitCode,0);
 const out=fs.mkdtempSync(path.join(path.dirname(build),'browser-')),data=path.join(out,'data');fs.mkdirSync(data,{mode:0o700});
 const base='http://127.0.0.1:3397',log=fs.openSync(path.join(out,'server.log'),'wx',0o600);
-const env={PATH:process.env.PATH,HOME:process.env.HOME,LANG:'C.UTF-8',NODE_ENV:'production',OTG_ENV:'test',AUTH_SECRET:crypto.randomBytes(48).toString('hex'),OTG_DATA_DIR:data,OTG_DATA_ROOT:data,OPENAI_KILL_SWITCH:'1',NEXT_TELEMETRY_DISABLED:'1',NODE_OPTIONS:'--require='+path.join(build,'scripts/audit/offline-guard.cjs')};
+const env={PATH:process.env.PATH,HOME:process.env.HOME,LANG:'C.UTF-8',NODE_ENV:'production',OTG_ENV:'test',AUTH_SECRET:crypto.randomBytes(48).toString('hex'),OTG_DATA_DIR:data,OTG_DATA_ROOT:data,OTG_EXPERIMENTS_ROOT:path.join(out,'lab'),OTG_AUDIO_EDITING_ENABLED:'0',OPENAI_ENABLED:'0',OPENAI_KILL_SWITCH:'1',NEXT_TELEMETRY_DISABLED:'1',NODE_OPTIONS:'--require='+path.join(build,'scripts/audit/offline-guard.cjs')};
 const server=spawn(process.execPath,['node_modules/next/dist/bin/next','start','-H','127.0.0.1','-p','3397'],{cwd:build,env,stdio:['ignore',log,log]});
-const report={ok:false,buildId:built.buildId,checks:[],pageErrors:[],paidCalls:0,realBillingCalls:0,prodChanged:false};
+const report={ok:false,suite:'openai-billing',buildId:built.buildId,checks:[],pageErrors:[],paidCalls:0,realBillingCalls:0,prodChanged:false};
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));let browser,page,context;
 const record=name=>{report.checks.push(name);console.log(name);};
 async function call(body){return context.request.fetch(base+'/api/admin/openai-billing',{method:body?'POST':'GET',headers:{Origin:base},...(body?{data:body}:{})});}

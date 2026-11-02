@@ -12,6 +12,14 @@ beforeEach(() => {
 });
 afterEach(() => { vi.resetModules(); vi.unstubAllEnvs(); fs.rmSync(root, { recursive: true, force: true }); });
 describe("existing OpenAI adapter with Story Creator structured streaming", () => {
+  it("exposes one complete function call without replaying or requiring output text",async()=>{
+    const {createOpenAITextStream}=await import("../../../lib/openai/provider");
+    const call={type:"function_call",name:"create_story_media",arguments:'{"operation":"image"}',call_id:"call-fixture"};
+    sdk.create.mockResolvedValue((async function*(){yield {type:"response.completed",response:{output:[call],usage:{input_tokens:12,output_tokens:5}}};})());
+    const stream=await createOpenAITextStream({ownerKey:"fixture-owner",useCase:"story-helper",model:"fixture-model",instructions:"fixture",input:[],tools:[{type:"function",name:"create_story_media"}]});
+    const events=[];for await(const event of stream)events.push(event);
+    expect(sdk.create.mock.calls[0][0].parallel_tool_calls).toBe(false);expect(events.at(-1)).toMatchObject({type:"done",toolCalls:[{name:call.name,arguments:call.arguments,call_id:call.call_id}]});
+  });
   it("passes a strict response schema and disables SDK retries only for the requesting caller", async () => {
     const { createOpenAITextStream } = await import("../../../lib/openai/provider");
     sdk.create.mockResolvedValue((async function* () {

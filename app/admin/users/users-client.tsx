@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { adminStyles as styles } from "@/app/app/admin/AdminShell";
+import H3NsfwUserControl from "@/app/app/components/H3NsfwUserControl";
+import type { NsfwAccess } from "@/lib/experiments/nsfwAccess";
 
 
-type UserRow = { id: string; email: string; username: string | null; createdAt: string; protected?: boolean; role?: string; status?: string; lastSignInAt?: string | null };
+type UserRow = { id: string; email: string; username: string | null; createdAt: string; protected?: boolean; role?: string; status?: string; lastSignInAt?: string | null; nsfwAccess?:NsfwAccess };
 type ApiResponse =
   | { ok: true; count: number; users: UserRow[] }
   | { ok: false; error: string; detail?: string };
@@ -176,6 +178,7 @@ export default function AdminUsersClient() {
         <div className="otg-adminValue">{u.username || "—"}</div>
         <p className={styles.muted}>{u.role || (u.protected ? "Admin" : "Standard")} · {u.status || "Registered"}</p>
         {u.lastSignInAt ? <p className={styles.muted}>Last sign-in: {new Date(u.lastSignInAt).toLocaleString()}</p> : null}
+        {u.nsfwAccess&&<H3NsfwUserControl userId={u.id} username={u.username||u.email} access={u.nsfwAccess} onChange={()=>void load()}/>}
       </div>
 
       <div className="otg-adminCell otg-adminCreated">

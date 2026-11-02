@@ -42,7 +42,7 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, showProductio
       { id: "gethelp", label: "AI Assistance" },
       { id: "generate", label: "Generate" },
       { id: "h3", label: "H3" },
-      ...(isAdmin && showExperimental ? [{ id: "testing", label: "Testing" }, { id: "h3-admin", label: "H3 Admin" }] as Item[] : []),
+      ...(isAdmin && showExperimental ? [{ id: "testing", label: "Testing" }] as Item[] : []),
       { id: "machine", label: "Story Creator" },
       ...(showProduction ? [{ id: "storyboard", label: "Production" } as Item] : []),
       { id: "characters", label: "Characters" },

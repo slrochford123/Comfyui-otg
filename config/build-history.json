@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.20",
+  "current": "2.21",
   "builds": [
     {
       "version": "2",
@@ -127,6 +127,12 @@
       "date": "2026-11-01",
       "summary": "Story Creator conversation recovery, canon-aware memory and local Paradee/Kokoro/experimental Bark talkback; OpenAI connection and durable usage accounting; authenticated media and administrator safeguards; bounded uploads, H3 navigation and safely admitted audio-memory recovery. TEST release qualification; production promotion is separately guarded.",
       "sourceBaseCommit": "462db7ed8796580a3f99760facc8baa826fbc1cd"
+    },
+    {
+      "version": "2.21",
+      "date": "2026-11-02",
+      "summary": "Named Story Creator characters, Krea images, Fibo edits, FastH3 previews and reusable Qwen voices; verified restricted speech transport, mobile recovery and billing fixes. Experimental workspaces retain their separate TEST gates.",
+      "sourceBaseCommit": "13987a9e5880585f4fbe5b39678119076522ab31"
     }
   ]
 }

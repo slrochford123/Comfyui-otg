@@ -28,6 +28,7 @@ export type OpenAITextStreamEvent =
   | {
       type: "done";
       text: string;
+      toolCalls?: Array<{ name: string; arguments: string; call_id: string }>;
       usage: ReturnType<typeof usageFromResponse>;
     };
 
@@ -240,6 +241,7 @@ export async function createOpenAITextStream(args: {
   signal?: AbortSignal;
   maxRetries?: number;
   responseSchema?: { name: string; schema: Record<string, unknown> };
+  tools?: Array<Record<string, unknown>>;
 }): Promise<AsyncGenerator<OpenAITextStreamEvent>> {
   if (args.signal?.aborted) {
     const error = new Error("OpenAI streaming cancelled before starting.");
@@ -265,6 +267,7 @@ export async function createOpenAITextStream(args: {
         input: args.input,
         max_output_tokens: args.maxOutputTokens || 900,
         stream: true,
+        ...(args.tools?.length ? { tools: args.tools, parallel_tool_calls: false } : {}),
         ...(args.responseSchema ? { text: { format: { type: "json_schema", name: args.responseSchema.name, strict: true, schema: args.responseSchema.schema } } } : {}),
       } as any,
       { signal: controller.signal, maxRetries: Math.max(0, Math.min(1, args.maxRetries ?? 0)), headers: { "X-Client-Request-Id": reservationId } } as any,
@@ -349,7 +352,9 @@ export async function createOpenAITextStream(args: {
             usage.outputTokens,
           ),
         }, reservationId, completedResponse.id || completedResponse._request_id);
-        yield { type: "done", text: finalText, usage };
+        const toolCalls = (completedResponse.output || []).filter((item: any) => item.type === "function_call")
+          .map((item: any) => ({name:String(item.name),arguments:String(item.arguments),call_id:String(item.call_id)}));
+        yield { type: "done", text: finalText, usage, ...(args.tools?.length ? {toolCalls} : {}) };
       } finally {
         finishUnsettledOpenAIUsage(reservationId);
         cleanup();

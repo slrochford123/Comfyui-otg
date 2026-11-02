@@ -12,7 +12,7 @@ import { abortStoryConversationExecution, executeStoryConversationTurn } from "@
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 150;
+export const maxDuration = 900;
 const headers = { "Cache-Control": "no-store" };
 function failure(error: unknown) {
   const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
@@ -60,7 +60,8 @@ export async function POST(request: NextRequest) {
     if (purpose === "writing" && !writingMode) return NextResponse.json({ ok: false, error: "Choose a writing mode." }, { status: 400, headers });
     const result = createStoryConversationTurn({ ownerKey, projectId, purpose, writingMode,
       sourceMessageId: String(body.sourceMessageId || "") });
-    if (result.created) after(() => executeStoryConversationTurn({ ownerKey, projectId, turnId: result.turn.id }));
+    const mediaCookie=request.headers.get("cookie")||"";
+    if (result.created) after(() => executeStoryConversationTurn({ ownerKey, projectId, turnId: result.turn.id },mediaCookie));
     return NextResponse.json({ ok: true, ...result }, { status: result.created ? 202 : 200, headers });
   } catch (error) { return failure(error); }
 }
