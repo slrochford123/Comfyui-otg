@@ -79,6 +79,15 @@ completed internal releases and every non-internal track are preserved.
 Commit explicitly uses ERROR_IF_IN_REVIEW so a review already in progress is
 not canceled. The tool never falls back to a different commit policy.
 
+For com.slr.otg, the first real upload and validation of build 37 succeeded,
+but saving the draft returned HTTP 400: Google says changes are sent for
+review automatically and changesNotSentForReview must not be set. The draft
+has NOT been committed. Do not remove the review hold or retry that receipt
+without resolving the owner's review authorization. Keep ERROR_IF_IN_REVIEW
+even if a later approved correction omits the inapplicable hold parameter.
+Bounded, redacted Google error details are retained in private failure receipts;
+OAuth tokens, raw response headers and service-account keys are never logged.
+
 There are no automatic write retries. If an upload or commit times out, retain
 the private receipt and reconcile its owned edit in Play before retrying.
 Uncommitted edits expire; do not assume timeout means an upload never arrived.

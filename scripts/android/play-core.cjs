@@ -7,6 +7,22 @@ const SCOPE = "https://www.googleapis.com/auth/androidpublisher";
 const API = "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/" + PACKAGE + "/edits";
 const UPLOAD = "https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/" + PACKAGE + "/edits";
 class PublisherError extends Error {}
+function googleFailure(status, text = "") {
+  const hints = {400:"Google refused this edit or an existing review is in progress; resolve it without changing production.",401:"The service-account key was not accepted.",403:"Enable the Android Publisher API and grant this account app-only read and testing-release access.",404:"The application/edit was not found or the edit expired.",409:"The edit/version conflicts with current Play state.",429:"Google rate-limited the request. No automatic retry was attempted."};
+  const error = new PublisherError("Google Play HTTP " + status + ": " + (hints[status] || "Request failed; sensitive response details have been suppressed."));
+  error.googleError = {httpStatus: status};
+  try {
+    const value = JSON.parse(text.length <= 65536 ? text : "{}").error || {};
+    const label = x => typeof x === "string" && /^[A-Za-z0-9_.:-]{1,100}$/.test(x);
+    if (label(value.status)) error.googleError.status = value.status;
+    error.googleError.reasons = [...(Array.isArray(value.details) ? value.details : []), ...(Array.isArray(value.errors) ? value.errors : [])].map(d => d.reason).filter(label);
+    if (typeof value.message === "string") {
+      const message = value.message.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 2000);
+      error.googleError.message = /-----BEGIN .*PRIVATE KEY|Bearer\s+\S+|ya29\.|["']?(?:private_key|access_token|refresh_token|client_secret)["']?\s*[:=]/i.test(message) ? "Sensitive-looking error details omitted." : message;
+    }
+  } catch { /* Never expose raw responses, headers, tokens or parse errors. */ }
+  return error;
+}
 function requireThat(condition, message) { if (!condition) throw new PublisherError(message); }
 function privateDir(dir) {
   fs.mkdirSync(dir, {recursive: true, mode: 0o700});
@@ -148,7 +164,9 @@ async function stage(api, candidate, persist) {
     r.expectedInternal = track; r.phase = "validated-open-edit"; persist(r);
     return r;
   } catch (error) {
-    r.phaseAtFailure = r.phase; r.phase = "needs-attention"; persist(r);
+    r.phaseAtFailure = r.phase; r.phase = "needs-attention";
+    if (error.googleError) r.googleError = error.googleError;
+    persist(r);
     // Keep the owned edit after an uncertain upload. Automatic retries could
     // consume another version code or obscure a successfully received bundle.
     throw error;
@@ -168,8 +186,8 @@ async function saveDraft(api, receipt, persist) {
   await api.call("POST", "/" + r.editId + ":validate");
   r.phase = "commit-started"; persist(r);
   try { await api.call("POST", "/" + r.editId + ":commit", undefined, {commit: true}); }
-  catch (error) { r.phase = "commit-needs-reconciliation"; persist(r); throw error; }
+  catch (error) { r.phase = "commit-needs-reconciliation"; if (error.googleError) r.googleError = error.googleError; persist(r); throw error; }
   r.phase = "draft-saved"; r.committed = true; r.savedAt = new Date().toISOString(); persist(r);
   return r;
 }
-module.exports = {PACKAGE, SCOPE, PublisherError, requireThat, privateDir, readOwned, readJson, writePrivate, validateCredential, importCredential, inspectCandidate, requestSpec, nextInternal, outsideInternal, stable, probe, stage, saveDraft};
+module.exports = {PACKAGE, SCOPE, PublisherError, googleFailure, requireThat, privateDir, readOwned, readJson, writePrivate, validateCredential, importCredential, inspectCandidate, requestSpec, nextInternal, outsideInternal, stable, probe, stage, saveDraft};

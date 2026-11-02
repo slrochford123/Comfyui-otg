@@ -56,8 +56,9 @@ async function makeApi() {
     try { response = await fetch(spec.url, {method, headers: outgoing, body: body === undefined ? undefined : options.upload ? body : JSON.stringify(body), redirect: "error", signal: AbortSignal.timeout(options.upload ? 180000 : 30000)}); }
     catch { throw new c.PublisherError("Google request did not return a confirmed result. Inspect the private receipt before retrying; automatic retries are disabled."); }
     if (!response.ok) {
-      const hints = {400:"Google refused this edit or an existing review is in progress; resolve it without changing production.",401:"The service-account key was not accepted.",403:"Enable the Android Publisher API and grant this account app-only read and testing-release access.",404:"The application/edit was not found or the edit expired.",409:"The edit/version conflicts with current Play state.",429:"Google rate-limited the request. No automatic retry was attempted."};
-      throw new c.PublisherError("Google Play HTTP " + response.status + ": " + (hints[response.status] || "Request failed; sensitive response details have been suppressed."));
+      let details = "";
+      try { details = await response.text(); } catch { /* The HTTP failure is still known. */ }
+      throw c.googleFailure(response.status, details);
     }
     if (response.status === 204) return {};
     const text = await response.text();
@@ -96,4 +97,4 @@ async function main(argv) {
   console.log(JSON.stringify({draftSaved:r.committed,track:"internal",servingToTesters:false,productionChanged:false,receipt:receiptPath}));
 }
 if (require.main === module) main(process.argv.slice(2)).catch(error => { console.error(error instanceof c.PublisherError ? error.message : "Local publisher setup or file operation failed; no credentials were printed. Inspect the private receipt if a network operation had started."); process.exitCode=1; });
-module.exports = {args, main};
+module.exports = {args, main, makeApi};

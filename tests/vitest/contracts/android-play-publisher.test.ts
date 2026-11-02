@@ -92,6 +92,24 @@ it("refuses expired receipts, changed artifacts and tampered serving statuses",a
 it("does not retry commits that Google rejects or cannot confirm",async()=>{
  const api=new FakeApi(),receipt=await c.stage(api,candidate(),()=>{});api.review=true;let last:any;await expect(c.saveDraft(api,receipt,(v:any)=>{last=structuredClone(v);})).rejects.toThrow(/review/);expect(last.phase).toBe("commit-needs-reconciliation");await expect(c.saveDraft(api,last,()=>{})).rejects.toThrow(/uncommitted/);expect(api.calls.filter(x=>x.suffix.includes(":commit"))).toHaveLength(1);
 });
+it("retains bounded Google error reasons without exposing auth secrets",()=>{
+ const error=c.googleFailure(400,JSON.stringify({error:{status:"INVALID_ARGUMENT",message:"This review parameter is not allowed.",details:[{reason:"INVALID_REVIEW_PARAMETER"}],errors:[{reason:"badRequest"}]}}));
+ expect(error.googleError).toMatchObject({httpStatus:400,status:"INVALID_ARGUMENT",message:"This review parameter is not allowed.",reasons:["INVALID_REVIEW_PARAMETER","badRequest"]});
+ for(const message of ['Bearer secret-token','access_token="secret"','-----BEGIN PRIVATE KEY----- secret','ya29.secret']){
+  const r=c.googleFailure(401,JSON.stringify({error:{message}}));expect(r.googleError.message).toBe("Sensitive-looking error details omitted.");expect(r.message).not.toContain("secret");
+ }
+ expect(c.googleFailure(400,"not JSON").googleError).toEqual({httpStatus:400});
+});
+it("journals a refused commit's safe error details without enabling a retry",async()=>{
+ const api=new FakeApi(),receipt=await c.stage(api,candidate(),()=>{});let last:any;
+ const original=api.call.bind(api);api.call=async(method,suffix,body,options)=>{
+  if(suffix.endsWith(":commit"))throw c.googleFailure(400,JSON.stringify({error:{message:"Changes are already in review.",status:"FAILED_PRECONDITION",details:[{reason:"CHANGES_ALREADY_IN_REVIEW"}]}}));
+  return original(method,suffix,body,options);
+ };
+ await expect(c.saveDraft(api,receipt,(v:any)=>{last=structuredClone(v);})).rejects.toThrow(/HTTP 400/);
+ expect(last.googleError).toMatchObject({httpStatus:400,reasons:["CHANGES_ALREADY_IN_REVIEW"]});expect(last.phase).toBe("commit-needs-reconciliation");
+ await expect(c.saveDraft(api,last,()=>{})).rejects.toThrow(/uncommitted/);
+});
 it("rejects production and arbitrary command-line overrides",()=>{
  for(const argv of [["publish","--track","production"],["stage","--track","production"],["status","--execute"],["stage","--manifest","/tmp/a","--manifest","/tmp/b"]])expect(()=>args([...argv])).toThrow();expect(args(["stage","--manifest","/tmp/candidate.json","--execute"]).opts["--execute"]).toBe(true);
 });
