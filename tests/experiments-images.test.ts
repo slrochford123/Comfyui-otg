@@ -10,7 +10,7 @@ beforeEach(()=>{root=fs.mkdtempSync(path.join(os.tmpdir(),"h3-large-image-unit-"
 afterEach(()=>{vi.unstubAllEnvs();fs.rmSync(root,{recursive:true,force:true});});
 const digest=(b:Buffer)=>crypto.createHash("sha256").update(b).digest("hex");
 it("uses a bounded system unit rather than a nonexistent user bus for root PROD",()=>{
- const args=imagePrepareServiceOptions(0,"/private/owned-stage","/run/lock/image.lock");expect(args).not.toContain("--user");for(const property of ["ProtectSystem=strict","ReadWritePaths=/private/owned-stage /run/lock/image.lock","PrivateDevices=yes","PrivateNetwork=yes","CapabilityBoundingSet="])expect(args).toContain(property);
+ const args=imagePrepareServiceOptions(0,"/private/owned-stage","/run/lock/image.lock");expect(args).not.toContain("--user");for(const property of ["ProtectSystem=strict","ReadWritePaths=/private/owned-stage /run/lock/image.lock","PrivateDevices=yes","PrivateNetwork=yes","CapabilityBoundingSet=CAP_DAC_READ_SEARCH"])expect(args).toContain(property);expect(args).not.toContain("CapabilityBoundingSet=CAP_DAC_OVERRIDE");
  expect(imagePrepareServiceOptions(1000,"/private/stage","/run/user/1000/image.lock")).toEqual(["--user"]);
 });
 async function upload(bytes:Buffer,name="large.jpg",mime="image/jpeg"){

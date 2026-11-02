@@ -9,7 +9,9 @@ const execute=promisify(execFile);
 export const labImagePaths=(file:string)=>({image:file+".reference.png",manifest:file+".reference.json"});
 export type PreparedLabImage={file:string;sha256:string;bytes:number;mime:string;width:number;height:number;originalWidth:number;originalHeight:number};
 export function imagePrepareServiceOptions(uid:number,work:string,lock:string):string[] {
-  return uid===0 ? ["-p","ProtectSystem=strict","-p",`ReadWritePaths=${work} ${lock}`,"-p","PrivateDevices=yes","-p","PrivateNetwork=yes","-p","PrivateTmp=yes","-p","ProtectHome=read-only","-p","ProtectKernelTunables=yes","-p","ProtectKernelModules=yes","-p","ProtectControlGroups=yes","-p","RestrictSUIDSGID=yes","-p","CapabilityBoundingSet=","-p","UMask=0077"] : ["--user"];
+  // Release directories can be mode 0700 and owned by the deployment account.
+  // Permit read-only traversal, not write-permission bypass, in the root worker.
+  return uid===0 ? ["-p","ProtectSystem=strict","-p",`ReadWritePaths=${work} ${lock}`,"-p","PrivateDevices=yes","-p","PrivateNetwork=yes","-p","PrivateTmp=yes","-p","ProtectHome=read-only","-p","ProtectKernelTunables=yes","-p","ProtectKernelModules=yes","-p","ProtectControlGroups=yes","-p","RestrictSUIDSGID=yes","-p","CapabilityBoundingSet=CAP_DAC_READ_SEARCH","-p","UMask=0077"] : ["--user"];
 }
 async function digest(file:string) {
   const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
@@ -40,7 +42,7 @@ export async function prepareLabImage(file:string,sourceSha256:string,signal?:Ab
     let input=file;
     if(uid===0){
       // PROD has no root user bus. Decode in a system unit with no GPU/network,
-      // no capabilities and write access only to an owned disposable workspace.
+      // read-only traversal capability and writes only to an owned workspace.
       const fd=fs.openSync(lock,fs.constants.O_CREAT|fs.constants.O_RDWR|fs.constants.O_NOFOLLOW,0o600);
       try{const s=fs.fstatSync(fd);if(!s.isFile()||s.nlink!==1||s.uid!==0)throw Error("Unsafe image lock");}finally{fs.closeSync(fd);}
       staging=fs.mkdtempSync(path.join(path.dirname(file),".image-prepare-"));input=path.join(staging,"source.media");
