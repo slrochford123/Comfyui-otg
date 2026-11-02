@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { openAIEnabled, openAIModels } from "./provider";
+import { openAIAdminConfigured } from "./adminCredential";
 
 type Probe = { checkedAt: string; authentication: "verified" | "failed"; modelAccess: Record<string, boolean>; message: string };
 let cached: { identity: string; expiresAt: number; probe: Probe } | undefined;
@@ -17,7 +18,7 @@ export function openAIConnectionSnapshot() {
     configured: Boolean(process.env.OPENAI_API_KEY?.trim()), enabled: openAIEnabled(), models,
     organizationConfigured: Boolean(process.env.OPENAI_ORG_ID?.trim()),
     projectConfigured: Boolean(process.env.OPENAI_PROJECT_ID?.trim()),
-    officialBillingConfigured: Boolean(process.env.OPENAI_ADMIN_API_KEY?.trim()),
+    officialBillingConfigured: openAIAdminConfigured(),
     probe: cached?.identity === identity() ? cached.probe : null,
     creditBalanceUsd: null,
     creditsNotice: "Credit balance and subscription linking must be checked in the official OpenAI billing portal. Successful authentication does not verify credits or billable generation.",

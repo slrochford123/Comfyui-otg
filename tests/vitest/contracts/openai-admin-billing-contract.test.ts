@@ -42,9 +42,11 @@ describe("OpenAI admin billing dashboard contract", () => {
     expect(admin).toContain("/app/admin/openai-billing");
     expect(quickPanel).toContain("/app/admin/openai-billing");
     expect(quickPanel).toContain("OpenAI Billing");
-    expect(installer).toContain("read -r -s admin_key");
-    expect(installer).toContain("/home/shawn-rochford/AI/runtime/test/config/app-env/.env.local");
-    expect(installer).toContain("OPENAI_ADMIN_API_KEY=");
+    expect(installer).toContain("install-openai-admin-key-test.py");
+    const secureInstaller = read("scripts/install-openai-admin-key-test.py");
+    expect(secureInstaller).toContain("getpass.getpass");
+    expect(secureInstaller).toContain("/home/shawn-rochford/AI/runtime/test/data");
+    expect(secureInstaller).not.toContain("systemctl restart");
   });
 
   it("distinguishes official spend from local feature estimates", () => {

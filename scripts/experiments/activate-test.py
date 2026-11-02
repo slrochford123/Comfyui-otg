@@ -94,7 +94,9 @@ def main():
             switch(target);switched=True;command(['/usr/bin/systemctl','start','otg-test.service'])
             verify_live(target)
             if not args.rollback:
-                with urllib.request.urlopen('http://127.0.0.1:3001/experimental-workspace.json',timeout=6) as response:
+                marker=plan.get('marker','experimental-workspace.json')
+                if marker not in ('experimental-workspace.json','openai-billing-fix.json'): raise ValueError('Unknown release marker')
+                with urllib.request.urlopen('http://127.0.0.1:3001/'+marker,timeout=6) as response:
                     if json.load(response).get('buildId')!=plan['buildId']: raise ValueError('Wrong served build identity')
             pid,after=audit.service_environment()
             for key in ('STORY_CREATOR_CPU_ROOT','OTG_ENV','OTG_DATA_DIR','OTG_DATA_ROOT'):

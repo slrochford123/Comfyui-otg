@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readOpenAIReservationSummary } from "@/lib/openai/usageLedger";
+import { openAIAdminConfigured, readOpenAIAdminKey } from "./adminCredential";
 
 import { estimateOpenAIUsageCost, readOpenAIUsageRecords, type OpenAIUsageRecord, type OpenAIUseCase } from "@/lib/openai/provider";
 
@@ -23,6 +24,10 @@ export type OpenAIBillingSettings = {
   lastOfficialSyncAt: number | null;
   lastOfficialSyncStatus: string;
   lastOfficialSyncError?: string;
+  lastOfficialAttemptAt?: number | null;
+  officialWindowStart?: number | null;
+  officialWindowEnd?: number | null;
+  usageWarning?: string | null;
 };
 
 export type OpenAIOfficialCostBucket = {
@@ -126,7 +131,8 @@ export function readOpenAIBillingState(): OpenAIBillingState {
   try {
     const parsed = JSON.parse(fs.readFileSync(billingPath(), "utf8"));
     return normalizeBillingState(parsed);
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Saved billing data cannot be read. Restore or repair it before updating; it has not been reset.");
     return {
       version: 1,
       settings: { ...DEFAULT_SETTINGS },
@@ -278,7 +284,7 @@ function latestStartingCredit(credits: OpenAICreditEvent[]) {
 
 function creditTotalAfterBaseline(credits: OpenAICreditEvent[], baseline: OpenAICreditEvent | null) {
   if (!baseline) return credits.reduce((sum, event) => sum + event.amountUsd, 0);
-  return baseline.amountUsd + credits
+  return (baseline.verifiedBalanceUsd ?? baseline.amountUsd) + credits
     .filter((event) => event.id !== baseline.id && event.effectiveAt >= baseline.effectiveAt)
     .reduce((sum, event) => sum + event.amountUsd, 0);
 }
@@ -295,14 +301,26 @@ export function buildOpenAIBillingSnapshot(filters: OpenAIBillingFilters = {}) {
   const spendRecords = allRecords.filter((record) => record.ts >= spendStart);
   const totalCreditsUsd = creditTotalAfterBaseline(state.credits, baseline);
   const localSpendUsd = sumCost(spendRecords);
-  const officialSpendUsd = state.officialCosts
-    .filter((bucket) => bucket.startTime * 1000 >= spendStart)
-    .reduce((sum, bucket) => sum + bucket.amountUsd, 0);
-  const authoritativeSpendAvailable = state.officialCosts.length > 0 && state.settings.lastOfficialSyncStatus === "ok";
-  const effectiveSpendUsd = authoritativeSpendAvailable ? officialSpendUsd : localSpendUsd;
-  const discrepancyUsd = authoritativeSpendAvailable ? officialSpendUsd - localSpendUsd : null;
-  const balanceUsd = totalCreditsUsd - effectiveSpendUsd;
-  const consumedPercent = totalCreditsUsd > 0 ? Math.min(100, Math.max(0, (effectiveSpendUsd / totalCreditsUsd) * 100)) : 0;
+  // Costs are a bounded organization-wide snapshot, not all-time app spending or a wallet balance.
+  // A successful empty result is a real zero; a failed refresh retains the last good snapshot.
+  const windowStart = Number(state.settings.officialWindowStart || 0);
+  const windowEnd = Number(state.settings.officialWindowEnd || 0);
+  const authoritativeSpendAvailable = Boolean(windowStart && windowEnd && state.settings.lastOfficialSyncAt);
+  const officialSpendUsd = state.officialCosts.reduce((sum, bucket) => sum + bucket.amountUsd, 0);
+  const localWindowSpend = sumCost(allRecords.filter(row => row.ts >= windowStart && row.ts < windowEnd));
+  const discrepancyUsd = authoritativeSpendAvailable ? officialSpendUsd - localWindowSpend : null;
+  const effectiveSpendUsd = localSpendUsd;
+  // Daily organization buckets cannot reconcile an arbitrary mid-day portal snapshot exactly.
+  // Deduct only known local requests, explicitly labelled as an installation-only estimate.
+  const balanceUsd = totalCreditsUsd - localSpendUsd;
+  const consumedPercent = totalCreditsUsd > 0 ? Math.min(100, Math.max(0, (localSpendUsd / totalCreditsUsd) * 100)) : null;
+  const utcToday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const rateStart = utcToday - 7 * 86400000;
+  const officialRateAvailable = authoritativeSpendAvailable && windowStart <= rateStart && windowEnd >= utcToday;
+  const rateRows = allRecords.filter(row => row.ts >= rateStart && row.ts < utcToday);
+  const dailyRateUsd = officialRateAvailable
+    ? state.officialCosts.filter(b => b.startTime * 1000 >= rateStart && b.endTime * 1000 <= utcToday).reduce((sum, b) => sum + b.amountUsd, 0) / 7
+    : rateRows.length ? sumCost(rateRows) / 7 : null;
   const localRecordsForPeriod = records;
 
   const features = new Map<string, {
@@ -365,30 +383,38 @@ export function buildOpenAIBillingSnapshot(filters: OpenAIBillingFilters = {}) {
     reservations: readOpenAIReservationSummary(),
     filters,
     overview: {
-      totalPrepaidCreditsUsd: totalCreditsUsd,
-      totalApiSpendingUsd: effectiveSpendUsd,
-      localEstimatedSpendingUsd: localSpendUsd,
+      totalPrepaidCreditsUsd: state.credits.length ? totalCreditsUsd : null,
+      totalApiSpendingUsd: allRecords.length || state.credits.length ? effectiveSpendUsd : null,
+      localEstimatedSpendingUsd: authoritativeSpendAvailable ? localWindowSpend : allRecords.length ? localSpendUsd : null,
       officialReportedSpendingUsd: authoritativeSpendAvailable ? officialSpendUsd : null,
       officialLocalDiscrepancyUsd: discrepancyUsd,
       estimatedPrepaidBalanceUsd: state.credits.length ? balanceUsd : null,
       creditBalanceVerified: false,
       consumedPercent,
-      todaySpendingUsd: sumCost(allRecords.filter((record) => record.ts >= todayStart)),
-      monthSpendingUsd: sumCost(allRecords.filter((record) => record.ts >= thisMonthStart)),
+      todaySpendingUsd: allRecords.length ? sumCost(allRecords.filter((record) => record.ts >= todayStart)) : null,
+      monthSpendingUsd: allRecords.length ? sumCost(allRecords.filter((record) => record.ts >= thisMonthStart)) : null,
+      balanceBaselineAt: baseline?.effectiveAt || null,
+      spendingRate: { dailyUsd: dailyRateUsd, projected30DayUsd: dailyRateUsd == null ? null : dailyRateUsd * 30,
+        source: officialRateAvailable ? "official_organization" : "local_installation_estimate", start: rateStart, end: utcToday },
       totalRecordedUsage: allRecords.length,
       lastSynchronizationTimestamp: state.settings.lastOfficialSyncAt,
       dataSource: authoritativeSpendAvailable ? "official_costs_with_local_feature_estimates" : "local_estimates_only",
       accuracyStatus: authoritativeSpendAvailable
-        ? "Official Costs endpoint synchronized and used as authoritative reported spending. Feature attribution remains a local estimate."
-        : "Local estimates only. Configure OPENAI_ADMIN_API_KEY and run sync for official organization costs.",
+        ? "Official spending covers the displayed organization-wide sync window. Local spending covers this installation only. A difference can include other apps and reporting delays."
+        : "No official costs synchronized. Local usage is only this installation, not the entire OpenAI account. Configure the separate Admin API key to connect billing.",
       lowBalanceWarningsUsd: state.settings.lowBalanceWarningsUsd,
-      warning: state.settings.lastOfficialSyncStatus === "ok" ? null : state.settings.lastOfficialSyncError || "Official billing sync is unavailable.",
+      warning: state.settings.lastOfficialSyncStatus === "ok" ? null : state.settings.lastOfficialSyncError || "Billing is not connected. Your normal AI connection can still work.",
     },
     official: {
-      configured: Boolean(String(process.env.OPENAI_ADMIN_API_KEY || "").trim()),
+      configured: openAIAdminConfigured(),
       enabled: state.settings.officialSyncEnabled,
       status: state.settings.lastOfficialSyncStatus,
       lastSyncAt: state.settings.lastOfficialSyncAt,
+      lastAttemptAt: state.settings.lastOfficialAttemptAt || null,
+      windowStart: windowStart || null,
+      windowEnd: windowEnd || null,
+      usageWarning: state.settings.usageWarning || null,
+      stale: authoritativeSpendAvailable && (Date.now() - windowEnd > 3600000 || state.settings.lastOfficialSyncStatus !== "ok"),
       error: state.settings.lastOfficialSyncError || null,
       costBucketCount: state.officialCosts.length,
       usageBucketCount: state.officialUsage.length,
@@ -460,37 +486,46 @@ export function updateOpenAIBillingSettings(input: Partial<OpenAIBillingSettings
 }
 
 async function fetchOpenAIAdminJson(pathname: string, params: URLSearchParams) {
-  const apiKey = String(process.env.OPENAI_ADMIN_API_KEY || "").trim();
+  const apiKey = readOpenAIAdminKey();
   if (!apiKey) throw new Error("OPENAI_ADMIN_API_KEY is not configured.");
   const url = new URL(`https://api.openai.com${pathname}`);
-  params.forEach((value, key) => url.searchParams.set(key, value));
-  const response = await fetch(url, {
+  params.forEach((value, key) => url.searchParams.append(key, value));
+  let response: Response;
+  try { response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${apiKey}`,
     },
     cache: "no-store",
-  });
-  const body = record(await response.json().catch(() => ({})));
+    signal: AbortSignal.timeout(15000),
+    redirect: "error",
+  }); } catch { throw new Error("OpenAI billing could not be reached within 15 seconds. Retry later; saved costs are unchanged."); }
+  const body = record(await response.json().catch(() => null));
   if (!response.ok) {
-    const error = record(body.error);
-    const message = typeof error.message === "string" ? error.message : `OpenAI admin API returned ${response.status}`;
-    throw new Error(message);
+    // Provider text may contain sensitive credential/account details. Never persist or echo it.
+    throw new Error(response.status === 401 || response.status === 403
+      ? "Billing access was rejected. Use an organization Admin API key with access to Costs and Usage, not the ordinary generation key."
+      : response.status === 429 ? "OpenAI rate-limited billing sync. Wait before trying again."
+      : `OpenAI billing returned HTTP ${response.status}. Saved costs are unchanged.`);
   }
+  if (!Array.isArray(body.data) || typeof body.has_more !== "boolean") throw new Error("OpenAI returned an invalid billing page; saved costs are unchanged.");
   return body;
 }
 
 async function fetchAllOpenAIPages(pathname: string, params: URLSearchParams) {
   const out: unknown[] = [];
   let page: string | null = null;
+  const seen = new Set<string>();
   for (let i = 0; i < 20; i += 1) {
     const next = new URLSearchParams(params);
     if (page) next.set("page", page);
     const body = await fetchOpenAIAdminJson(pathname, next);
     if (Array.isArray(body.data)) out.push(...body.data);
+    if (!body.has_more) return out;
     page = typeof body.next_page === "string" && body.next_page ? body.next_page : null;
-    if (!page) break;
+    if (!page || seen.has(page)) throw new Error("OpenAI billing pagination was incomplete; saved costs are unchanged.");
+    seen.add(page);
   }
-  return out;
+  throw new Error("OpenAI billing page limit exceeded; saved costs are unchanged.");
 }
 
 function collectCosts(data: unknown[]): OpenAIOfficialCostBucket[] {
@@ -499,11 +534,12 @@ function collectCosts(data: unknown[]): OpenAIOfficialCostBucket[] {
     const bucket = record(bucketValue);
     const startTime = Number(bucket.start_time || bucket.startTime || 0);
     const endTime = Number(bucket.end_time || bucket.endTime || 0);
+    if (!startTime || endTime <= startTime || !Array.isArray(bucket.results)) throw new Error("OpenAI costs contained an invalid bucket; saved costs are unchanged.");
     const results = array(bucket.results);
     for (const resultValue of results) {
       const result = record(resultValue);
-      const amount = Number(record(result.amount).value ?? result.amount_value ?? result.cost ?? 0);
-      if (!Number.isFinite(amount)) continue;
+      const amount = Number(record(result.amount).value);
+      if (record(result.amount).currency !== "usd" || record(result.amount).value == null || !Number.isFinite(amount)) throw new Error("OpenAI costs contained an unsupported currency or invalid amount; saved costs are unchanged.");
       buckets.push({
         startTime,
         endTime,
@@ -544,10 +580,21 @@ function collectUsage(endpoint: OpenAIOfficialUsageBucket["endpoint"], data: unk
   return buckets;
 }
 
+let pendingSync: Promise<{ ok: boolean; error?: string; costBucketCount?: number; usageBucketCount?: number }> | null = null;
 export async function syncOpenAIOfficialBilling(days = 30) {
+  if (!Number.isInteger(days) || days < 1 || days > 180) return { ok: false, error: "Sync days must be an integer from 1 to 180." };
+  if (!openAIAdminConfigured()) return { ok: false, error: "OPENAI_ADMIN_API_KEY is not configured. Connect a private Admin API key first." };
+  if (pendingSync) return pendingSync;
   const state = readOpenAIBillingState();
+  if (state.settings.lastOfficialAttemptAt && Date.now() - state.settings.lastOfficialAttemptAt < 60000) return { ok: false, error: "Wait one minute between official sync attempts." };
+  pendingSync = syncBillingWindow(days);
+  try { return await pendingSync; } finally { pendingSync = null; }
+}
+
+async function syncBillingWindow(days: number) {
+  const attemptAt = Date.now();
   const endTime = Math.floor(Date.now() / 1000);
-  const startTime = endTime - Math.max(1, Math.min(180, days)) * 24 * 60 * 60;
+  const startTime = Math.floor(endTime / 86400) * 86400 - days * 86400;
   const costParams = new URLSearchParams({
     start_time: String(startTime),
     end_time: String(endTime),
@@ -567,24 +614,33 @@ export async function syncOpenAIOfficialBilling(days = 30) {
   usageParams.append("group_by[]", "model");
   try {
     const costs = await fetchAllOpenAIPages("/v1/organization/costs", costParams);
-    const completionsUsage = await fetchAllOpenAIPages("/v1/organization/usage/completions", usageParams);
-    const transcriptionsUsage = await fetchAllOpenAIPages("/v1/organization/usage/audio_transcriptions", usageParams);
-    state.officialCosts = collectCosts(costs);
-    state.officialUsage = [
-      ...collectUsage("completions", completionsUsage),
-      ...collectUsage("audio_transcriptions", transcriptionsUsage),
-    ];
+    const parsedCosts = collectCosts(costs);
+    let usage: OpenAIOfficialUsageBucket[] = [];
+    let usageWarning: string | null = null;
+    try {
+      const completionsUsage = await fetchAllOpenAIPages("/v1/organization/usage/completions", usageParams);
+      const transcriptionsUsage = await fetchAllOpenAIPages("/v1/organization/usage/audio_transcriptions", usageParams);
+      usage = [...collectUsage("completions", completionsUsage), ...collectUsage("audio_transcriptions", transcriptionsUsage)];
+    } catch { usageWarning = "Costs synchronized, but token/audio usage could not be refreshed. Retry later or check the Admin key permissions. No usage totals are claimed for this window."; }
+    // Re-read after network waits so concurrent credit/settings edits are not overwritten.
+    const state = readOpenAIBillingState();
+    state.officialCosts = parsedCosts;
+    state.officialUsage = usage;
     state.settings.officialSyncEnabled = true;
     state.settings.lastOfficialSyncAt = Date.now();
+    state.settings.lastOfficialAttemptAt = attemptAt;
+    state.settings.officialWindowStart = startTime * 1000;
+    state.settings.officialWindowEnd = endTime * 1000;
+    state.settings.usageWarning = usageWarning;
     state.settings.lastOfficialSyncStatus = "ok";
     delete state.settings.lastOfficialSyncError;
     writeOpenAIBillingState(state);
     return { ok: true, costBucketCount: state.officialCosts.length, usageBucketCount: state.officialUsage.length };
   } catch (error) {
-    state.settings.officialSyncEnabled = false;
-    state.settings.lastOfficialSyncAt = Date.now();
+    const state = readOpenAIBillingState();
+    state.settings.lastOfficialAttemptAt = attemptAt;
     state.settings.lastOfficialSyncStatus = "error";
-    state.settings.lastOfficialSyncError = error instanceof Error ? error.message.slice(0, 300) : "Official billing sync failed.";
+    state.settings.lastOfficialSyncError = error instanceof Error && /^(OpenAI|Billing access)/.test(error.message) ? error.message.slice(0, 300) : "Official billing sync failed. Saved costs and the last successful timestamp are unchanged.";
     writeOpenAIBillingState(state);
     return { ok: false, error: state.settings.lastOfficialSyncError };
   }

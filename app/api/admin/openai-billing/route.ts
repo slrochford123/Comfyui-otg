@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/app/api/admin/_requireAdmin";
+import { openAIAdminConfigured } from "@/lib/openai/adminCredential";
 import {
   addOpenAICreditEvent,
   buildOpenAIBillingSnapshot,
@@ -39,7 +40,7 @@ function filtersFromRequest(request: NextRequest): OpenAIBillingFilters {
     apiKeyId: params.get("apiKeyId") || undefined,
     model: params.get("model") || undefined,
     start: parseDate(params.get("start")),
-    end: parseDate(params.get("end")),
+    end: parseDate(params.get("end")) == null ? undefined : parseDate(params.get("end"))! + 86400000 - 1,
   };
 }
 
@@ -54,13 +55,20 @@ export async function POST(request: NextRequest) {
   const admin = await requireAdmin();
   if (!admin.ok) return noStore({ ok: false, error: admin.error }, admin.status);
 
+  const origin = request.headers.get("origin");
+  let originHost: string | null = null;
+  try { originHost = origin ? new URL(origin).host : null; } catch { return noStore({ ok: false, error: "Invalid origin." }, 403); }
+  if (request.headers.get("sec-fetch-site") === "cross-site" || (originHost && originHost !== request.headers.get("host"))) return noStore({ ok: false, error: "Same-origin request required." }, 403);
+  if (!request.headers.get("content-type")?.includes("application/json")) return noStore({ ok: false, error: "JSON required." }, 415);
   const body = await request.json().catch(() => null);
   const action = String(body?.action || "");
 
   try {
     if (action === "credit") {
       const amountUsd = Number(body?.amountUsd);
-      if (!Number.isFinite(amountUsd)) return noStore({ ok: false, error: "Amount is required." }, 400);
+      if (body?.amountUsd == null || String(body.amountUsd).trim() === "" || !Number.isFinite(amountUsd)) return noStore({ ok: false, error: "Amount is required." }, 400);
+      if (body?.effectiveAt && !Number.isFinite(Date.parse(String(body.effectiveAt)))) return noStore({ ok: false, error: "Valid date and time required." }, 400);
+      if (["starting_balance", "manual_reconciliation"].includes(body?.type) && amountUsd < 0) return noStore({ ok: false, error: "A portal balance cannot be negative." }, 400);
       const event = addOpenAICreditEvent({
         type: String(body?.type || "purchase"),
         amountUsd,
@@ -68,7 +76,7 @@ export async function POST(request: NextRequest) {
         note: String(body?.note || ""),
         verifiedBalanceUsd: body?.verifiedBalanceUsd === "" || body?.verifiedBalanceUsd == null ? null : Number(body.verifiedBalanceUsd),
       });
-      return noStore({ ok: true, event, snapshot: buildOpenAIBillingSnapshot() });
+      return noStore({ ok: true, event, snapshot: buildOpenAIBillingSnapshot(filtersFromRequest(request)) });
     }
 
     if (action === "settings") {
@@ -78,11 +86,11 @@ export async function POST(request: NextRequest) {
       const settings = updateOpenAIBillingSettings({
         lowBalanceWarningsUsd: warnings,
       });
-      return noStore({ ok: true, settings, snapshot: buildOpenAIBillingSnapshot() });
+      return noStore({ ok: true, settings, snapshot: buildOpenAIBillingSnapshot(filtersFromRequest(request)) });
     }
 
     if (action === "sync") {
-      if (!String(process.env.OPENAI_ADMIN_API_KEY || "").trim()) {
+      if (!openAIAdminConfigured()) {
         return noStore({
           ok: false,
           error: "OPENAI_ADMIN_API_KEY is not configured for official OpenAI billing sync.",
@@ -90,7 +98,7 @@ export async function POST(request: NextRequest) {
         }, 200);
       }
       const result = await syncOpenAIOfficialBilling(Number(body?.days || 30));
-      return noStore({ ...result, snapshot: buildOpenAIBillingSnapshot() }, result.ok ? 200 : 502);
+      return noStore({ ...result, snapshot: buildOpenAIBillingSnapshot(filtersFromRequest(request)) }, result.ok ? 200 : 502);
     }
 
     return noStore({ ok: false, error: "Unknown OpenAI billing action." }, 400);
