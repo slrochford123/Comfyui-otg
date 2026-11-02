@@ -22,7 +22,9 @@ def main():
             previous=json.loads(file.read_text())
             if not previous.get('stopped'):raise RuntimeError('Smoke process already recorded')
             file.rename(stage/('smoke-process-previous-'+str(previous['pid'])+'.json'))
-        with socket.socket() as s:s.bind(('127.0.0.1',3308))
+        with socket.socket() as s:
+            s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+            s.bind(('127.0.0.1',3308))
         data=Path(tempfile.mkdtemp(prefix='smoke-data-',dir=stage))
         pid=subprocess.check_output(['systemctl','show','otg-prod.service','-p','MainPID','--value'],text=True).strip()
         live=dict(item.split('=',1) for item in Path('/proc/'+pid+'/environ').read_text().split('\0') if '=' in item)
