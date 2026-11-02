@@ -3,7 +3,10 @@
 const config: CapacitorConfig = {
   appId: 'com.slr.otg',
   appName: 'SLR OTG',
-  webDir: 'public',
+  webDir: 'android-web',
+  android: {
+    adjustMarginsForEdgeToEdge: 'auto'
+  },
   server: {
     url: 'https://comf-otg.comfyui-otg.win',
     cleartext: false

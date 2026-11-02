@@ -1,7 +1,8 @@
 {
   "appId": "com.slr.otg.test",
   "appName": "SLR Studios TEST",
-  "webDir": "public",
+  "webDir": "android-web",
+  "android": { "adjustMarginsForEdgeToEdge": "auto" },
   "server": { "url": "https://shawn-1.tail2c7e2e.ts.net:8443", "cleartext": false },
   "plugins": { "LocalNotifications": { "smallIcon": "ic_stat_slr", "iconColor": "#7c3aed" } }
 }
