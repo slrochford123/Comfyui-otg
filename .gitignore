@@ -30,6 +30,9 @@ data/
 *.p12
 *.crt
 *.cert
+**/*service-account*.json
+**/*service-account-key*.json
+**/play-publisher-credentials*.json
 
 # Logs, dumps, and caches
 *.log

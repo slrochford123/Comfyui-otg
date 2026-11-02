@@ -1,0 +1,8 @@
+{
+  "name": "slr-play-publisher-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Isolated authentication dependency for the SLR internal-testing publisher",
+  "engines": { "node": ">=22 <23" },
+  "dependencies": { "google-auth-library": "11.3.2" }
+}
