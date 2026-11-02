@@ -113,3 +113,37 @@ it("journals a refused commit's safe error details without enabling a retry",asy
 it("rejects production and arbitrary command-line overrides",()=>{
  for(const argv of [["publish","--track","production"],["stage","--track","production"],["status","--execute"],["stage","--manifest","/tmp/a","--manifest","/tmp/b"]])expect(()=>args([...argv])).toThrow();expect(args(["stage","--manifest","/tmp/candidate.json","--execute"]).opts["--execute"]).toBe(true);
 });
+it("keeps the existing-review guard when normal Google review is explicitly enabled",()=>{
+ const spec=c.requestSpec("POST","/owned-edit:commit",{commit:true,automaticReview:true});
+ expect(spec.url).toContain("changesInReviewBehavior=ERROR_IF_IN_REVIEW");
+ expect(spec.url).not.toContain("changesNotSentForReview");
+ expect(()=>c.requestSpec("GET","/owned-edit/tracks",{automaticReview:true})).toThrow();
+ expect(()=>args(["save-draft","--automatic-review"])).toThrow();
+});
+it("releases only the pinned internal candidate and leaves other tracks and old bundles untouched",async()=>{
+ const api=new FakeApi(),receipt=await c.stage(api,candidate(),()=>{}),before=structuredClone(api.tracks[0]),bundles=structuredClone(api.bundles);
+ const r=await c.releaseInternal(api,receipt,()=>{},{automaticReview:true});
+ expect(r.phase).toBe("internal-release-committed");expect(r.committed).toBe(true);
+ expect(api.tracks[0]).toEqual(before);expect(api.bundles).toEqual(bundles);
+ expect(api.tracks[1]).toMatchObject({track:"internal",releases:[{status:"completed",versionCodes:["37"]}]});
+ expect(api.tracks[1].releases).toHaveLength(1);
+ expect(api.calls.find(x=>x.suffix.endsWith(":commit")).options).toEqual({commit:true,automaticReview:true});
+});
+it("requires review approval and rejects changed/expired receipts before any internal rollout",async()=>{
+ const api=new FakeApi(),receipt=await c.stage(api,candidate(),()=>{});api.calls=[];
+ await expect(c.releaseInternal(api,receipt,()=>{})).rejects.toThrow(/explicit approval/);expect(api.calls).toHaveLength(0);
+ await expect(c.releaseInternal(api,{...receipt,expiryTimeSeconds:"1"},()=>{},{automaticReview:true})).rejects.toThrow(/expired/);expect(api.calls).toHaveLength(0);
+ fs.appendFileSync(receipt.aab,"changed");await expect(c.releaseInternal(api,receipt,()=>{},{automaticReview:true})).rejects.toThrow(/candidate changed/);expect(api.calls).toHaveLength(0);
+});
+it("does not commit an internal release if a non-internal track changes",async()=>{
+ const api=new FakeApi(),receipt=await c.stage(api,candidate(),()=>{});api.mutateProduction=true;
+ await expect(c.releaseInternal(api,receipt,()=>{},{automaticReview:true})).rejects.toThrow(/non-internal/);
+ expect(api.calls.some(x=>x.suffix.endsWith(":commit"))).toBe(false);
+});
+it("requires reconciliation instead of retrying an uncertain internal commit",async()=>{
+ const api=new FakeApi(),receipt=await c.stage(api,candidate(),()=>{});api.review=true;let last:any;
+ await expect(c.releaseInternal(api,receipt,(r:any)=>{last=structuredClone(r);},{automaticReview:true})).rejects.toThrow(/review/);
+ expect(last.phase).toBe("internal-commit-needs-reconciliation");
+ await expect(c.releaseInternal(api,last,()=>{},{automaticReview:true})).rejects.toThrow(/uncommitted/);
+ expect(api.calls.filter(x=>x.suffix.endsWith(":commit"))).toHaveLength(1);
+});

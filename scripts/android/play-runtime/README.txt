@@ -1,11 +1,12 @@
-SLR Studios: Google Play internal-draft publisher
+SLR Studios: Google Play internal-testing publisher
 ================================================
 
 Purpose
 -------
 This command-line tool runs on the Ubuntu 3090 host. It uploads only the
-com.slr.otg package to an owned internal-track draft. It cannot publish to
-production, serve a test release, edit tester lists, change billing, rotate
+com.slr.otg package to an owned internal-track draft. With explicit approval it
+can also submit that exact candidate to the existing internal testers. It cannot
+publish to production, edit tester lists, change billing, rotate
 signing keys, or grant account permissions. It does not require sudo or Chrome.
 
 Google account authorization is separate from the Android upload keystore.
@@ -59,12 +60,20 @@ node scripts/android/play-publisher.cjs plan --manifest /absolute/candidate.json
 node scripts/android/play-publisher.cjs probe
 node scripts/android/play-publisher.cjs stage --manifest /absolute/candidate.json --execute
 node scripts/android/play-publisher.cjs save-draft --receipt /absolute/receipt.json --execute
+node scripts/android/play-publisher.cjs release-internal --receipt /absolute/receipt.json --automatic-review --execute
 
 plan performs local checks only. probe creates, reads and deletes only its own
 temporary metadata edit; it does not upload or commit. stage uploads a hash-
 pinned AAB, validates an internal draft, and leaves an expiring open edit.
 save-draft is a separate operation. It saves only that draft; the candidate is
 not served to testers or public users. There is no public-rollout command.
+
+release-internal is a separately authorized operation. It replaces only the
+active internal-test release with the pinned, validated candidate and allows
+Google's normal review processing. It never targets production or other tracks,
+changes tester membership, or deletes the old bundle from Google's library.
+The owner approved only internal testing on November 2, 2026. Obtain explicit
+owner authorization before future release runs; this is not a recurring job.
 
 The first successful probe checks currently visible version codes. Google's
 successful upload receipt, not a local estimate, proves version acceptance.
@@ -82,9 +91,11 @@ not canceled. The tool never falls back to a different commit policy.
 For com.slr.otg, the first real upload and validation of build 37 succeeded,
 but saving the draft returned HTTP 400: Google says changes are sent for
 review automatically and changesNotSentForReview must not be set. The draft
-has NOT been committed. Do not remove the review hold or retry that receipt
-without resolving the owner's review authorization. Keep ERROR_IF_IN_REVIEW
-even if a later approved correction omits the inapplicable hold parameter.
+was NOT committed. The owner subsequently approved an INTERNAL tester update
+for corrected purple-icon build 38. release-internal omits only the inapplicable
+changesNotSentForReview hold, while retaining ERROR_IF_IN_REVIEW. save-draft
+still retains the hold; neither command automatically retries or falls back to
+a review-cancellation policy. Do not retry the old build-37 receipt.
 Bounded, redacted Google error details are retained in private failure receipts;
 OAuth tokens, raw response headers and service-account keys are never logged.
 

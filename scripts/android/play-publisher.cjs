@@ -9,7 +9,7 @@ const c = require("./play-core.cjs");
 const ROOT = path.join(os.homedir(), ".config/otg-android/play-publisher");
 const RUNTIME = path.join(os.homedir(), ".local/share/slr-play-publisher");
 const KEY = path.join(ROOT, "service-account.json");
-const HELP = `SLR Google Play publisher — com.slr.otg, internal draft only
+const HELP = `SLR Google Play publisher — com.slr.otg, internal testing only
 
 status                       Local configuration only; no Google calls
 import-key --from PATH       Securely import a Google service-account JSON key
@@ -19,6 +19,8 @@ stage --manifest PATH --execute
                              Upload and validate an uncommitted internal draft
 save-draft --receipt PATH --execute
                              Save that internal draft, never serve it to users
+release-internal --receipt PATH --automatic-review --execute
+                             Submit only this candidate to existing internal testers
 
 There is no production publishing, tester management or account-admin command.
 Do not paste credentials into chat, source files, GitHub or command arguments.
@@ -26,11 +28,11 @@ Do not paste credentials into chat, source files, GitHub or command arguments.
 function args(argv) {
   const command = argv.shift() || "status", opts = {};
   for (let i = 0; i < argv.length; i++) {
-    const key = argv[i]; c.requireThat(["--from", "--manifest", "--receipt", "--execute"].includes(key) && !Object.hasOwn(opts,key), "Unknown or duplicate command option.");
-    if (key === "--execute") opts[key] = true;
+    const key = argv[i]; c.requireThat(["--from", "--manifest", "--receipt", "--execute", "--automatic-review"].includes(key) && !Object.hasOwn(opts,key), "Unknown or duplicate command option.");
+    if (key === "--execute" || key === "--automatic-review") opts[key] = true;
     else { c.requireThat(argv[i+1] && !argv[i+1].startsWith("--"), "Missing option value."); opts[key] = path.resolve(argv[++i]); }
   }
-  const allowed = {status: [], help: [], "import-key": ["--from"], plan: ["--manifest"], probe: [], stage: ["--manifest", "--execute"], "save-draft": ["--receipt", "--execute"]};
+  const allowed = {status: [], help: [], "import-key": ["--from"], plan: ["--manifest"], probe: [], stage: ["--manifest", "--execute"], "save-draft": ["--receipt", "--execute"], "release-internal": ["--receipt", "--execute", "--automatic-review"]};
   c.requireThat(Object.hasOwn(allowed, command) && Object.keys(opts).every(k => allowed[command].includes(k)), "Unsupported operation. This command cannot publish to production.");
   return {command, opts};
 }
@@ -71,7 +73,7 @@ async function main(argv) {
   const {command,opts} = args(argv);
   if (command === "help") { console.log(HELP); return; }
   if (command === "status") {
-    console.log(JSON.stringify({packageName:c.PACKAGE,track:"internal",releaseStatus:"draft",credentialInstalled:fs.existsSync(KEY),credentialPath:KEY,runtimeInstalled:fs.existsSync(path.join(RUNTIME,"node_modules/google-auth-library/package.json")),googleConnectionVerified:false,productionPublishingSupported:false},null,2)); return;
+    console.log(JSON.stringify({packageName:c.PACKAGE,track:"internal",credentialInstalled:fs.existsSync(KEY),credentialPath:KEY,runtimeInstalled:fs.existsSync(path.join(RUNTIME,"node_modules/google-auth-library/package.json")),googleConnectionChecked:false,internalRolloutSupported:true,productionPublishingSupported:false},null,2)); return;
   }
   c.privateDir(ROOT);
   if (command === "import-key") {
@@ -86,14 +88,20 @@ async function main(argv) {
     candidate = c.inspectCandidate(opts["--manifest"]);
     if (command === "plan") { console.log(JSON.stringify({valid:true,packageName:c.PACKAGE,track:"internal",releaseStatus:"draft",versionCode:candidate.manifest.versionCode,sha256:candidate.manifest.sha256,bytes:candidate.bytes.length,googleCalls:0,googleVersionAvailabilityVerified:false},null,2)); return; }
   }
-  c.requireThat(!["stage","save-draft"].includes(command) || opts["--execute"], "Network write requires --execute; no Google request was made.");
+  c.requireThat(!["stage","save-draft","release-internal"].includes(command) || opts["--execute"], "Network write requires --execute; no Google request was made.");
+  c.requireThat(command !== "release-internal" || opts["--automatic-review"], "Internal release requires --automatic-review approval; no Google request was made.");
   const api = await makeApi();
   if (command === "probe") { const j=journal(),r=await c.probe(api,j.persist); console.log(JSON.stringify({accessVerified:true,ownEditDeleted:r.ownEditDeleted,maximumObservedVersion:r.maximumObservedVersion,receipt:j.file,productionChanged:false})); if(!r.ownEditDeleted)process.exitCode=1; return; }
   if (command === "stage") { const j=journal(),r=await c.stage(api,candidate,j.persist); console.log(JSON.stringify({staged:true,savedToConsole:false,servingToTesters:false,phase:r.phase,receipt:j.file,productionChanged:false})); return; }
   c.requireThat(opts["--receipt"], "Specify this publisher's private receipt.");
   const receiptPath = opts["--receipt"];
   c.requireThat(path.dirname(receiptPath) === path.join(ROOT,"receipts"), "Receipt must be inside the private publisher receipt directory.");
-  const r=await c.saveDraft(api,c.readJson(receiptPath,{secret:true,max:16*1024**2}),value=>c.writePrivate(receiptPath,value));
+  const receipt=c.readJson(receiptPath,{secret:true,max:16*1024**2}),persist=value=>c.writePrivate(receiptPath,value);
+  if (command === "release-internal") {
+    const r=await c.releaseInternal(api,receipt,persist,{automaticReview:true});
+    console.log(JSON.stringify({internalReleaseSubmitted:r.committed,versionCode:r.versionCode,track:"internal",googleProcessingMayRemain:true,productionChanged:false,receipt:receiptPath})); return;
+  }
+  const r=await c.saveDraft(api,receipt,persist);
   console.log(JSON.stringify({draftSaved:r.committed,track:"internal",servingToTesters:false,productionChanged:false,receipt:receiptPath}));
 }
 if (require.main === module) main(process.argv.slice(2)).catch(error => { console.error(error instanceof c.PublisherError ? error.message : "Local publisher setup or file operation failed; no credentials were printed. Inspect the private receipt if a network operation had started."); process.exitCode=1; });

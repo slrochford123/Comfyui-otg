@@ -87,7 +87,8 @@ function inspectCandidate(manifestFile) {
   requireThat(typeof manifest.releaseNotes === "string" && manifest.releaseNotes.length > 0 && manifest.releaseNotes.length <= 500, "Release notes must contain 1–500 characters.");
   return {manifest, bytes};
 }
-function requestSpec(method, suffix, {upload = false, commit = false} = {}) {
+function requestSpec(method, suffix, {upload = false, commit = false, automaticReview = false} = {}) {
+  requireThat(typeof automaticReview === "boolean", "Invalid review mode.");
   requireThat(/^(?:\/[A-Za-z0-9_-]+(?:\/(?:bundles|apks|tracks(?:\/internal)?))?(?::(?:validate|commit))?)?$/.test(suffix), "Publisher endpoint is not allowed.");
   const insert = method === "POST" && suffix === "";
   const read = method === "GET" && /^\/[A-Za-z0-9_-]+(?:\/(?:bundles|apks|tracks(?:\/internal)?))?$/.test(suffix);
@@ -98,9 +99,10 @@ function requestSpec(method, suffix, {upload = false, commit = false} = {}) {
   const bundle = upload && method === "POST" && /^\/[A-Za-z0-9_-]+\/bundles$/.test(suffix);
   requireThat(insert || read || cleanup || track || validate || save || bundle, "This publisher cannot alter production, testers, listings, billing, or account permissions.");
   requireThat(!upload || bundle, "Invalid upload endpoint.");
+  requireThat(!automaticReview || save, "Automatic review is only allowed for an explicit internal commit.");
   let url = (upload ? UPLOAD : API) + suffix;
   if (upload) url += "?uploadType=media";
-  if (save) url += "?changesInReviewBehavior=ERROR_IF_IN_REVIEW&changesNotSentForReview=true";
+  if (save) url += "?changesInReviewBehavior=ERROR_IF_IN_REVIEW" + (automaticReview ? "" : "&changesNotSentForReview=true");
   return {method, url};
 }
 function stable(value) {
@@ -172,8 +174,7 @@ async function stage(api, candidate, persist) {
     throw error;
   }
 }
-async function saveDraft(api, receipt, persist) {
-  const r = {...receipt};
+async function verifyStaged(api, r) {
   requireThat(r.schemaVersion === 1 && r.packageName === PACKAGE && r.track === "internal" && r.releaseStatus === "draft" && r.phase === "validated-open-edit" && !r.committed && /^[A-Za-z0-9_-]+$/.test(r.editId), "Only a validated, uncommitted internal draft receipt may be saved.");
   requireThat(r.baseline && Array.isArray(r.baseline.tracks) && Number.isSafeInteger(r.versionCode) && typeof r.releaseNotes === "string", "Receipt is missing its original candidate or track snapshot.");
   requireThat(stable(nextInternal(r.baseline.tracks, r)) === stable(r.expectedInternal), "Receipt no longer describes the original internal draft; refusing release-status changes.");
@@ -183,6 +184,10 @@ async function saveDraft(api, receipt, persist) {
   const current = await snapshot(api, r.editId);
   requireThat(stable(outsideInternal(current.tracks)) === stable(outsideInternal(r.baseline.tracks)) && stable(current.tracks.find(t => t.track === "internal")) === stable(r.expectedInternal), "Track state changed since staging; refusing to save.");
   requireThat((current.bundles || []).some(b => Number(b.versionCode) === r.versionCode && b.sha256 === r.sha256), "The staged Google bundle no longer matches this receipt.");
+}
+async function saveDraft(api, receipt, persist) {
+  const r = {...receipt};
+  await verifyStaged(api, r);
   await api.call("POST", "/" + r.editId + ":validate");
   r.phase = "commit-started"; persist(r);
   try { await api.call("POST", "/" + r.editId + ":commit", undefined, {commit: true}); }
@@ -190,4 +195,34 @@ async function saveDraft(api, receipt, persist) {
   r.phase = "draft-saved"; r.committed = true; r.savedAt = new Date().toISOString(); persist(r);
   return r;
 }
-module.exports = {PACKAGE, SCOPE, PublisherError, googleFailure, requireThat, privateDir, readOwned, readJson, writePrivate, validateCredential, importCredential, inspectCandidate, requestSpec, nextInternal, outsideInternal, stable, probe, stage, saveDraft};
+async function releaseInternal(api, receipt, persist, {automaticReview = false} = {}) {
+  requireThat(automaticReview === true, "An internal tester release requires explicit approval of normal Google review processing.");
+  const r = {...receipt};
+  await verifyStaged(api, r);
+  // Replace the active INTERNAL version only. Older bundles remain in Google's
+  // artifact library; production, other tracks and tester membership are untouched.
+  const ownDraft = r.expectedInternal.releases.at(-1);
+  requireThat(ownDraft.status === "draft" && stable(ownDraft.versionCodes) === stable([String(r.versionCode)]), "Not this receipt's pinned internal candidate.");
+  const target = {track:"internal", releases:[{...ownDraft,status:"completed"}]};
+  r.internalReleaseTarget = target;
+  r.automaticReviewAuthorized = true;
+  r.phase = "internal-track-update-started"; persist(r);
+  try {
+    await api.call("PUT", "/" + r.editId + "/tracks/internal", target);
+    const after = await snapshot(api, r.editId);
+    requireThat(stable(outsideInternal(after.tracks)) === stable(outsideInternal(r.baseline.tracks)), "A non-internal track changed; refusing internal release.");
+    requireThat(stable(after.tracks.find(t => t.track === "internal")) === stable(target), "Internal release state did not match the pinned candidate.");
+    requireThat(after.bundles.some(b => Number(b.versionCode) === r.versionCode && b.sha256 === r.sha256), "Pinned bundle changed before release.");
+    await api.call("POST", "/" + r.editId + ":validate");
+    r.phase = "internal-commit-started"; persist(r);
+    await api.call("POST", "/" + r.editId + ":commit", undefined, {commit:true,automaticReview:true});
+  } catch (error) {
+    r.phaseAtFailure = r.phase;
+    r.phase = r.phase === "internal-commit-started" ? "internal-commit-needs-reconciliation" : "internal-release-needs-attention";
+    if (error.googleError) r.googleError = error.googleError;
+    persist(r); throw error;
+  }
+  r.phase = "internal-release-committed"; r.committed = true; r.savedAt = new Date().toISOString(); persist(r);
+  return r;
+}
+module.exports = {PACKAGE, SCOPE, PublisherError, googleFailure, requireThat, privateDir, readOwned, readJson, writePrivate, validateCredential, importCredential, inspectCandidate, requestSpec, nextInternal, outsideInternal, stable, probe, stage, saveDraft, releaseInternal};
