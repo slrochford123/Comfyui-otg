@@ -44,7 +44,8 @@ try{
   await page.goto(base+'/app?tab=h3');await page.getByRole('button',{name:'H3 · Text to Image',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'H3 NSFW',exact:true}).count(),0);
   await page.goto(base+'/app?tab=settings');const access=page.getByRole('region',{name:'H3 NSFW access',exact:true});await access.getByRole('checkbox').check();await access.getByRole('button',{name:'Request NSFW approval',exact:true}).click();await access.getByText('Pending administrator approval',{exact:true}).waitFor();
   assert.equal((await call(user,'/api/admin/h3-nsfw-access',{userId:u.id,enabled:true,version:0})).status(),403);
-  await a.page.goto(base+'/app/admin/users');const toggle=a.page.getByRole('switch',{name:'H3 NSFW access for '+u.username,exact:true});await toggle.waitFor();await a.page.getByText('Approval requested',{exact:false}).waitFor();await toggle.check();
+  await a.page.goto(base+'/app/admin/users');const toggle=a.page.getByRole('switch',{name:'H3 NSFW access for '+u.username,exact:true});await toggle.waitFor();await a.page.getByText('Approval requested',{exact:false}).first().waitFor();
+  const granted=a.page.waitForResponse(r=>r.url().endsWith('/api/admin/h3-nsfw-access')&&r.request().method()==='POST');await toggle.click();assert.equal((await granted).status(),200);
   for(let i=0;i<50;i++){if((await api(user,'/api/h3/nsfw/access')).access.enabled)break;await sleep(200);}
   assert.equal((await api(user,'/api/h3/nsfw/access')).access.enabled,true);
   assert.equal(await a.page.getByRole('switch',{name:'H3 NSFW access for '+a.username,exact:true}).isDisabled(),true);
