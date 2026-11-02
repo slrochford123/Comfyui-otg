@@ -6,6 +6,8 @@ export type SpinTabId =
   | "gethelp"
   | "generate"
   | "h3"
+  | "testing"
+  | "h3-admin"
   | "machine"
   | "storyboard"
   | "characters"
@@ -20,6 +22,7 @@ type Props = {
   onTab: (t: SpinTabId) => void;
   isAdmin?: boolean;
   showProduction?: boolean;
+  showExperimental?: boolean;
   uiMode?: "clean" | "classic";
 };
 
@@ -33,12 +36,13 @@ function classNames(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-export default function SpinDialNav({ tab, onTab, isAdmin = false, showProduction = false, uiMode = "classic" }: Props) {
+export default function SpinDialNav({ tab, onTab, isAdmin = false, showProduction = false, showExperimental = false, uiMode = "classic" }: Props) {
   const items: Item[] = useMemo(
     () => [
       { id: "gethelp", label: "AI Assistance" },
       { id: "generate", label: "Generate" },
       { id: "h3", label: "H3" },
+      ...(isAdmin && showExperimental ? [{ id: "testing", label: "Testing" }, { id: "h3-admin", label: "H3 Admin" }] as Item[] : []),
       { id: "machine", label: "Story Creator" },
       ...(showProduction ? [{ id: "storyboard", label: "Production" } as Item] : []),
       { id: "characters", label: "Characters" },
@@ -46,7 +50,7 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, showProductio
       { id: "editvideo", label: "Edit Video" },
       { id: "settings", label: "Settings" },
     ],
-    [isAdmin, showProduction]
+    [isAdmin, showProduction, showExperimental]
   );
 
   return (

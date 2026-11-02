@@ -62,6 +62,7 @@ const SupportPanel = dynamic(() => import("./components/SupportPanel"), { loadin
 const EditVideoPanel = dynamic(() => import("./components/EditVideoPanel"), { loading: PanelLoading });
 const GalleryWorkspace = dynamic(() => import("./components/GalleryWorkspace"), { loading: PanelLoading });
 const H3Panel = dynamic(() => import("./components/H3Panel"), { loading: PanelLoading });
+const ExperimentLabPanel = dynamic(() => import("./components/ExperimentLabPanel"), { loading: PanelLoading });
 const AdminQuickPanel = dynamic(() => import("./components/AdminQuickPanel"), { loading: PanelLoading });
 const ProductionCharacterReferencePickerBridge = dynamic(() => import("./components/ProductionCharacterReferencePickerBridge"), { ssr: false, loading: () => null });
 
@@ -368,6 +369,8 @@ const APP_TAB_LABELS: Record<SpinTabId, string> = {
   gethelp: "AI Assistance",
   generate: "Generate",
   h3: "H3",
+  testing: "Testing",
+  "h3-admin": "H3 Admin",
   machine: "Story Creator",
   storyboard: "Production",
   characters: "Characters",
@@ -1326,7 +1329,7 @@ async function fetchWorkflowsForApp() {
     .filter((item: WorkflowItem) => item.id && item.label);
 }
 
-export default function AppPageClient({ initialUser = null }: { initialUser?: InitialAppUser }) {
+export default function AppPageClient({ initialUser = null, experimentalEnabled = false }: { initialUser?: InitialAppUser; experimentalEnabled?: boolean }) {
   const queryClient = useQueryClient();
 
   const [tab, setTab] = useState<SpinTabId>("generate");
@@ -2530,6 +2533,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         tabParam === "gethelp" ||
         tabParam === "generate" ||
         tabParam === "h3" ||
+        tabParam === "testing" ||
+        tabParam === "h3-admin" ||
         tabParam === "machine" ||
         tabParam === "storyboard" ||
         tabParam === "characters" ||
@@ -2810,10 +2815,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   }, [stopMicCapture]);
 
   useEffect(() => {
-    if (!isAdmin && tab === "voices") {
+    if ((!isAdmin && tab === "voices") || ((tab === "testing" || tab === "h3-admin") && (!isAdmin || !experimentalEnabled))) {
       setTab("generate");
     }
-  }, [isAdmin, tab]);
+  }, [isAdmin, tab, experimentalEnabled]);
 
   useEffect(() => {
     const data = whoamiQuery.data;
@@ -7706,6 +7711,7 @@ async function handleAskAi() {
           </div>
         ) : null}
 
+        {isAdmin && experimentalEnabled && (tab === "testing" || tab === "h3-admin") ? <ExperimentLabPanel key={`${tab}:${authenticatedOwnerKey}`} kind={tab} /> : null}
         {tab === "machine" ? (
           <StoryCreatorPanel ownerKey={authenticatedOwnerKey} />
         ) : null}
@@ -8196,7 +8202,7 @@ async function handleAskAi() {
       />
 
             <ProductionCharacterReferencePickerBridge />
-<SpinDialNav tab={tab} onTab={setTab} isAdmin={isAdmin} showProduction={true} uiMode={appUiMode} />
+<SpinDialNav tab={tab} onTab={setTab} isAdmin={isAdmin} showProduction={true} showExperimental={experimentalEnabled} uiMode={appUiMode} />
     </main>
   );
 }

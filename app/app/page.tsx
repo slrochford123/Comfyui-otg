@@ -31,5 +31,5 @@ async function readInitialUser(): Promise<InitialAppUser> {
 
 export default async function AppPage() {
   const initialUser = await readInitialUser();
-  return <AppPageClient initialUser={initialUser} />;
+  return <AppPageClient initialUser={initialUser} experimentalEnabled={process.env.OTG_ENV === "test"} />;
 }
