@@ -30,4 +30,13 @@ export type CharacterRefCardPublic = {
   original: {id: string; url: string} | null;
   views: Array<{id: string; label: string; angle?: CharacterRefAngle; state: string; url?: string; error?: string; seed?: number; gpu?: string}>;
   libraryName?: string; backend?: string; tokenCount?: number; previewUrl?: string;
+  voiceEnabled?: boolean;
+  voice?: {id: string; name: string; durationSeconds: number; url: string} | null;
 };
+
+/** Immutable recording attached to one version of a character RefMod. */
+export type CharacterRefVoice = {
+  id: string; name: string; sourceId?: string; originalPath: string;
+  path: string; sha256: string; durationSeconds: number;
+};
+export type CharacterRefMember = {kind: "image" | "video" | "audio"; tokens: number; shape: number[]};

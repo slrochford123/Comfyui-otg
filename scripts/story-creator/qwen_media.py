@@ -1,4 +1,4 @@
-"""TEST-only, offline, one-request Qwen3 voice design/authorized-reference synthesis."""
+"""Offline, one-request Qwen3 voice design/authorized-reference synthesis."""
 import json
 import sys
 import os
@@ -23,6 +23,12 @@ def main():
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA unavailable; CPU fallback is not qualified")
+    if "seed" in request:
+        seed=request["seed"]
+        if isinstance(seed,bool) or not isinstance(seed,int) or not 0 <= seed <= 2147483647:
+            raise ValueError("Invalid Qwen seed")
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
     model = Qwen3TTSModel.from_pretrained(request["model"], device_map="cuda:0",
         dtype=torch.bfloat16, attn_implementation="sdpa", local_files_only=True)
     if request.get("reference"):

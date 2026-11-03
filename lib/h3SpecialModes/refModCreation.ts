@@ -54,6 +54,8 @@ export type H3RefModSidecar = {
   jobId: string;
   ownerKey: string;
   characterId?: string | null;
+  voice?: import("./characterRefCardContract").CharacterRefVoice;
+  members?: import("./characterRefCardContract").CharacterRefMember[];
   description?: string;
   savedPath?: string | null;
   cardPreviewPath?: string | null;

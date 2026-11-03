@@ -500,6 +500,8 @@ def enhance():
 
 def speech():
     params = JOB["params"]
+    if params.get("voiceDesignEngine"):
+        return ref_voice_design()
     cfg = CONFIG["auk"]
     gpu_ready(12000 if cfg.get("offload", True) else 18000)
     available=int(next(line.split()[1] for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemAvailable:")))*1024
@@ -561,6 +563,27 @@ def speech():
     asset(output, "Generated dialogue", f"AuK-{variant}", license="AuK MIT; Qwen2.5-Omni-3B Research License — private TEST evaluation only",suggestedLane="speech")
     return {"engine": f"AuK-{variant}", "seed": params.get("seed", 42),"segments":len(chunks),
         "maximumSegmentSeconds":max_seconds,"referenceSeconds":2.5 if JOB.get("gpu")=="rtx5060ti" else 5}
+
+
+def ref_voice_design():
+    params = JOB["params"]
+    cfg = CONFIG.get("refVoiceRuntime", {})
+    engine = params.get("voiceDesignEngine")
+    if JOB.get("gpu") != "rtx3090" or engine != "qwen3" or cfg.get("engine") != engine:
+        raise ValueError("No verified local voice-design runtime for this request.")
+    gpu_ready(12000)
+    output = ROOT / "voice-design.wav"
+    payload = {"model_id": cfg["model"], "output_wav": str(output), "text": params["text"],
+               "language": "English", "seed": params["seed"], "request_seed": params["seed"],
+               "qwen_instruction": params["description"]}
+    file = ROOT / "voice-design-params.json"
+    atomic(file, payload)
+    status(stage="Creating character voice with " + engine, progress=15)
+    run([cfg["python"], cfg["bridge"], "--params-json", file,
+         "--stdout-log", ROOT / "voice-stdout.log", "--stderr-log", ROOT / "voice-stderr.log"],
+        timeout=900, env={**os.environ, "HF_HUB_OFFLINE":"1", "TRANSFORMERS_OFFLINE":"1"})
+    asset(output, "Character voice audition", "Qwen3-TTS VoiceDesign", suggestedLane="speech")
+    return {"engine":engine,"seed":params["seed"]}
 
 
 def import_audio():

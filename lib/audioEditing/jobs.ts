@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import {refVoiceRuntime} from "@/lib/h3SpecialModes/voiceDesignRuntime";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { atomicJson, sessionRoot, readSession, saveSession, containedFile, assertId, reserveSessionStart } from "./store";
@@ -145,6 +146,11 @@ async function startReservedJob(owner: string, sessionId: string, operation: Aud
   if (existing) throw Error("This session already has an active operation. Wait or cancel it first.");
   const cfg = engineConfig();
   const ai = ["separate","speech","music","effects"].includes(operation) || operation === "enhance" && params.engine === "mossformer";
+  if (params.voiceDesignEngine) {
+    const runtime = refVoiceRuntime(String(params.voiceDesignEngine));
+    if (operation !== "speech" || !runtime || gpu !== "rtx3090" || source || (!runtime.remoteConfig&&((cfg.localGpu&&cfg.localGpu!=="rtx3090")||cfg.transports?.rtx3090)))
+      throw Error("Qwen3 voice design requires its configured RTX 3090 runtime; no substitute was used.");
+  }
   if(ai&&gpu==="cpu"&&process.getuid?.()===0)throw Error("Select Automatic or a qualified GPU for AI audio processing on this deployment.");
   const capability = operation === "speech" && params.variant === "base" ? "speech-base"
     : operation === "enhance" && params.engine === "mossformer" ? "enhance-mossformer"
@@ -230,7 +236,14 @@ export async function executeQueuedAudioJob(payload: AudioMediaPayload, gpu: Med
   if (manifest.id!==id || manifest.sessionId!==sessionId || manifest.gpu!==gpu) throw Error("Queued audio identity changed.");
   if (fs.existsSync(path.join(root,"cancel"))) throw Error("Canceled before audio execution.");
   if (manifest.pid) throw Error("This audio job already owns a worker; refusing duplicate execution.");
-  const cfg=engineConfig();
+  let cfg=engineConfig();
+  let configFile=engineConfigPath();
+  if(manifest.params.voiceDesignEngine){
+    const runtime=refVoiceRuntime(String(manifest.params.voiceDesignEngine));
+    if(!runtime||gpu!=="rtx3090"||manifest.operation!=="speech"||manifest.source||(!runtime.remoteConfig&&((cfg.localGpu&&cfg.localGpu!=="rtx3090")||cfg.transports?.rtx3090)))throw Error("Voice design runtime is not available on this GPU.");
+    cfg=runtime.remoteConfig?{...cfg,...JSON.parse(fs.readFileSync(runtime.remoteConfig,"utf8")),refVoiceEngine:"qwen3"}:{...cfg,refVoiceRuntime:runtime};
+    configFile=path.join(root,"voice-engine.json");atomicJson(configFile,cfg);
+  }
   if(sharedMediaAdmissionConfigured()) {
     const held=getMediaQueueJob(id);
     if(!held?.admissionOwner || held.admissionToken===null)throw Error("Audio GPU reservation is missing.");
@@ -248,7 +261,7 @@ export async function executeQueuedAudioJob(payload: AudioMediaPayload, gpu: Med
   const cache=path.join(path.dirname(engineConfigPath()),"engine-cache"),temp=path.join(root,"temp");
   fs.mkdirSync(temp,{recursive:true,mode:0o700});
   const env:NodeJS.ProcessEnv={NODE_ENV:process.env.NODE_ENV||"production",PATH:process.env.PATH,HOME:process.env.HOME,LANG:process.env.LANG||"C.UTF-8",
-    ...(process.env.SSH_AUTH_SOCK?{SSH_AUTH_SOCK:process.env.SSH_AUTH_SOCK}:{}),OTG_AUDIO_ENGINE_CONFIG:engineConfigPath(),
+    ...(process.env.SSH_AUTH_SOCK?{SSH_AUTH_SOCK:process.env.SSH_AUTH_SOCK}:{}),OTG_AUDIO_ENGINE_CONFIG:configFile,
     OMP_NUM_THREADS:"4",MKL_NUM_THREADS:"4",TMPDIR:temp,PYTHONNOUSERSITE:"1",PYTHONDONTWRITEBYTECODE:"1",HF_HUB_OFFLINE:"1",TRANSFORMERS_OFFLINE:"1",
     HF_HOME:path.join(cache,"huggingface"),TORCH_HOME:path.join(cache,"torch"),TRITON_CACHE_DIR:path.join(cache,"triton"),XDG_CACHE_HOME:path.join(cache,"xdg")};
   try {

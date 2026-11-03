@@ -57,6 +57,9 @@ export type H3RefModSlot = {
 };
 
 export type H3RefModLibraryEntry = {
+  canDelete?: boolean;
+  voiceName?: string;
+  editableCardId?: string;
   displayName?: string;
   backend?: "rtx3090" | "rtx5060ti";
   id: string;

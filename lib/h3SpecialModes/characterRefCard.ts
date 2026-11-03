@@ -13,16 +13,18 @@ import {enqueueMediaJob, getMediaQueueJob, mediaQueueEnabled, preferMediaGpu} fr
 import {uploadH3InputToBaseUrl} from "@/lib/production/h3Comfy";
 import {prepareLabImage} from "@/lib/experiments/images";
 import {MAX_LAB_IMAGE_BYTES} from "@/lib/experiments/imageTypes";
-import {buildH3RefModVisualPackWorkflow} from "./refModCreationWorkflow";
+import {buildH3RefModVisualPackWorkflow, buildH3RefModCharacterVoiceWorkflow} from "./refModCreationWorkflow";
+import {assertCharacterRefVoiceEnabled, characterRefVoiceEnabled, snapshotCharacterRefVoice, assertCharacterRefVoiceIntact, verifyCharacterVoiceBundle} from "./characterRefVoice";
+import type {CharacterRefVoice} from "./characterRefCardContract";
 import {writeH3RefModSidecar} from "./refModCreation";
-import {createCharacter, listCharacters, loadCharacter} from "@/lib/characters/store";
+import {createCharacter, listCharacters, loadCharacter, updateCharacterVoiceSelection} from "@/lib/characters/store";
 import {resolveComfyPhysicalGpu} from "@/lib/workers/clusterGpu";
 import {characterRefOwnerHash} from "./characterRefCardAccess";
 import {CHARACTER_REF_VIEWS, CHARACTER_REF_PREFIX, characterRefViewPrompt, type CharacterRefAngle, type CharacterRefCardPublic} from "./characterRefCardContract";
 import {characterRefCardsEnabled} from "./characterRefCardAvailability";
 
 type Asset = {id: string; label: string; file?: string; original?: string; angle?: CharacterRefAngle; nativeId?: string; seed?: number; baseUrl?: string; gpu?: MediaGpu; state: string; error?: string};
-export type CharacterRefCard = Omit<CharacterRefCardPublic, "views" | "original"> & {ownerKey: string; original: Asset | null; views: Asset[]; encode?: {id: string; baseUrl?: string; gpu?: MediaGpu; libraryName?: string; count: number}; previewPath?: string};
+export type CharacterRefCard = Omit<CharacterRefCardPublic, "views" | "original" | "voice"> & {ownerKey: string; original: Asset | null; views: Asset[]; voice?: CharacterRefVoice | null; encode?: {id: string; baseUrl?: string; gpu?: MediaGpu; libraryName?: string; count: number}; previewPath?: string};
 const root = () => path.join(OTG_DATA_ROOT, "h3-character-refcards");
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 function id(value: string) {if (!uuid.test(value)) throw new RequestError("Invalid card identifier.", 400); return value;}
@@ -64,7 +66,18 @@ export async function createCharacterRefCard(owner: string, cardId: string) {
 }
 export function characterRefCardPublic(card: CharacterRefCard): CharacterRefCardPublic {
   const url=(asset:Asset)=>`/api/h3/special/refmods/character-card?id=${card.id}&asset=${asset.id}`;
-  return {id:card.id,revision:card.revision,name:card.name,description:card.description,characterId:card.characterId,mode:card.mode,gpu:card.gpu,state:card.state,createdAt:card.createdAt,updatedAt:card.updatedAt,message:card.message,error:card.error,libraryName:card.libraryName,backend:card.backend,tokenCount:card.tokenCount,original:card.original?{id:card.original.id,url:url(card.original)}:null,views:card.views.map(a=>({id:a.id,label:a.label,angle:a.angle,state:a.state,error:a.error,seed:a.seed,gpu:a.gpu,...(a.file?{url:url(a)}:{})})),...(card.previewPath?{previewUrl:`/api/h3/special/refmods/character-card?id=${card.id}&preview=1`}:{})};
+  return {id:card.id,revision:card.revision,name:card.name,description:card.description,characterId:card.characterId,mode:card.mode,gpu:card.gpu,state:card.state,createdAt:card.createdAt,updatedAt:card.updatedAt,message:card.message,error:card.error,libraryName:card.libraryName,backend:card.backend,tokenCount:card.tokenCount,voiceEnabled:characterRefVoiceEnabled(),voice:card.voice?{id:card.voice.id,name:card.voice.name,durationSeconds:card.voice.durationSeconds,url:`/api/h3/special/refmods/character-card?id=${card.id}&voice=${card.voice.id}`}:null,original:card.original?{id:card.original.id,url:url(card.original)}:null,views:card.views.map(a=>({id:a.id,label:a.label,angle:a.angle,state:a.state,error:a.error,seed:a.seed,gpu:a.gpu,...(a.file?{url:url(a)}:{})})),...(card.previewPath?{previewUrl:`/api/h3/special/refmods/character-card?id=${card.id}&preview=1`}:{})};
+}
+export async function attachCharacterRefVoice(owner: string, cardId: string, revision: unknown, source: {path: string; name: string; sourceId?: string} | null) {
+  assertCharacterRefCardsEnabled(); assertCharacterRefVoiceEnabled();
+  return withCharacterRefCard(owner, cardId, async () => {
+    const card = await readCharacterRefCard(owner, cardId); checkCharacterRefRevision(card, revision); mutable(card);
+    if(card.encode&&["unknown","queued","running","dispatching"].includes(getMediaQueueJob(card.encode.id)?.status||""))throw new RequestError("Check the original encoding job before changing its voice; it has not been duplicated.",409);
+    const voice = source ? await snapshotCharacterRefVoice(owner, cardId, source) : null;
+    invalidateEncoding(card); card.voice = voice; card.error = "";
+    card.message = voice ? "Voice saved. Approve the images to save one character + voice RefMod." : "Voice removed from this draft. Previously saved RefMods are unchanged.";
+    return save(card);
+  });
 }
 export async function prepareCharacterRefFiboAnchor(source:string){
   const anchor=source+".fibo-portrait.png";
@@ -114,6 +127,7 @@ export async function editCharacterRefCard(owner:string,cardId:string,data:Recor
       const name=String(data.name||"").trim(),description=String(data.description||"").trim(),characterId=String(data.characterId||"");
       if(name.length>96||description.length>2000||!["single","upload"].includes(String(data.mode))||!["auto","rtx3090","rtx5060ti"].includes(String(data.gpu)))throw new RequestError("Invalid character card settings.",400);
       if(characterId&&!loadCharacter(owner,characterId))throw new RequestError("Character not found for this account.",404);
+      if(card.state==="completed"&&(card.name!==name||card.description!==description||card.characterId!==characterId))invalidateEncoding(card);
       card.name=name;card.description=description;card.characterId=characterId;card.mode=data.mode as CharacterRefCard["mode"];card.gpu=data.gpu as MediaGpuChoice;
     }else if(data.action==="remove"){
       if(card.original?.id===data.asset){if(card.views.length)throw new RequestError("Keep the original for regenerating these views, or start a new card.",409);card.original=null;}
@@ -148,6 +162,7 @@ export async function editCharacterRefCard(owner:string,cardId:string,data:Recor
     }else if(data.action==="encode"){
       if(!card.name||card.views.length<4||card.views.length>8||card.views.some(v=>v.state!=="ready"||!v.file))throw new RequestError("Name the character and approve 4–8 completed images.",400);
       if(!card.characterId&&listCharacters(owner).some(c=>c.name.trim().toLocaleLowerCase()===card.name.toLocaleLowerCase()))throw new RequestError("That character name already exists. Choose the saved character or use a different name.",409);
+      if(card.voice){assertCharacterRefVoiceEnabled();await assertCharacterRefVoiceIntact(card.voice);}
       card.encode={id:randomUUID(),count:card.views.length};card.state="encoding";card.error="";card.message="Queued to encode all approved references.";
     }else throw new RequestError("Unknown character card action.",400);
     return save(card);
@@ -172,20 +187,23 @@ async function ensureViewJob(card:CharacterRefCard,view:Asset) {
   else if(["failed","canceled","unknown"].includes(result.status)){view.state=result.status;view.error=result.error||"The original GPU result needs checking.";card.state="attention";card.error=view.error;}
   else view.state=queue.status==="queued"?"queued":"running";
 }
-async function encodeBackend(choice:MediaGpuChoice) {
+async function encodeBackend(choice:MediaGpuChoice, withVoice=false) {
   const urls=nativeImageBackendUrls();const probes=await Promise.all(mediaGpuCandidates(choice,["rtx3090","rtx5060ti"]).map(async gpu=>{
     try{
       const [r,s]=await Promise.all(["/object_info","/system_stats"].map(endpoint=>fetch(urls[gpu]+endpoint,{signal:AbortSignal.timeout(12000)})));
       const info=await r.json(),stats=await s.json(),physical=resolveComfyPhysicalGpu(urls[gpu]);
       const expected=physical==="shawn-3090"?"rtx 3090":physical==="slr-5060"?"rtx 5060 ti":"unrecognized";
-      return r.ok&&s.ok&&stats.devices?.some((d:{name?:string})=>String(d.name).toLowerCase().includes(expected))&&["MiniMaxH3RefModFolderLoader","MiniMaxH3RefModExtract","MiniMaxH3RefModSave","VAELoader"].every(n=>info[n])&&info.VAELoader.input.required.vae_name[0].includes("minimax_h3_video_vae_fp16.safetensors")?gpu:null;
+      const voiceReady=!withVoice||(["MiniMaxH3RefModMasterExtract","MiniMaxH3RefModBundleSave","MiniMaxH3RefModInspect","PreviewAny","LoadAudio"].every(n=>info[n])&&info.VAELoader?.input.required.vae_name[0].includes("minimax_h3_audio_vae_fp32.safetensors"));
+      return voiceReady&&r.ok&&s.ok&&stats.devices?.some((d:{name?:string})=>String(d.name).toLowerCase().includes(expected))&&["MiniMaxH3RefModFolderLoader","MiniMaxH3RefModExtract","MiniMaxH3RefModSave","VAELoader"].every(n=>info[n])&&info.VAELoader.input.required.vae_name[0].includes("minimax_h3_video_vae_fp16.safetensors")?gpu:null;
     }catch{return null;}
   }));const gpu=await preferMediaGpu(probes.filter((p):p is MediaGpu=>!!p));if(!gpu)throw Error("No compatible H3 RefMod encoder is available on the selected GPU.");return {gpu,baseUrl:urls[gpu]};
 }
 async function finishCard(card:CharacterRefCard, entry:Record<string,unknown>) {
   const response=await fetch(card.encode!.baseUrl+"/refmods/library",{signal:AbortSignal.timeout(12000)});const library=await response.json();
   const item=Array.isArray(library)?library.find(e=>e.name===card.encode!.libraryName):null;
-  if(!response.ok||!item||!Number.isFinite(item.tokens)||!Array.isArray(item.shape)||item.shape[0]!==card.encode!.count)throw Error("The saved RefMod did not retain all approved reference images. Your source images are kept.");
+  if(!response.ok||!item||!Number.isFinite(item.tokens))throw Error("The saved RefMod could not be verified. Your source images are kept.");
+  const members=card.voice?verifyCharacterVoiceBundle(entry,card.encode!.count,item.tokens):undefined;
+  if(card.voice?item.kind!=="bundle":!Array.isArray(item.shape)||item.shape[0]!==card.encode!.count)throw Error("The saved RefMod did not retain all approved reference images. Your source images are kept.");
   // Card thumbnail is for the library only. The encoder receives separate PNGs.
   const tiles=await Promise.all(card.views.map(v=>sharp(v.file!).resize(384,512,{fit:"contain",background:"#181824"}).png().toBuffer()));
   const rows=Math.ceil(tiles.length/2),preview=path.join(OTG_DATA_ROOT,"uploads","characters",safeSegment(card.ownerKey),"refcard-"+card.id,"card-"+card.encode!.id+".png");
@@ -194,7 +212,8 @@ async function finishCard(card:CharacterRefCard, entry:Record<string,unknown>) {
     const existing=loadCharacter(card.ownerKey,card.id);
     card.characterId=(existing||createCharacter(card.ownerKey,{id:card.id,name:card.name,imagePath:card.views.find(v=>v.angle==="front")?.file||card.views[0].file!,originalSourceImagePath:card.original?.original,characterCardPath:preview,description:card.description,source:"h3-refmod-card",metadata:{refModLibraryName:item.name,refModBackend:card.encode!.gpu,refModViews:card.views.map(v=>({path:v.file,label:v.label})),refModCardId:card.id}})).id;
   }
-  const now=new Date().toISOString();writeH3RefModSidecar({version:1,libraryName:item.name,name:card.name,category:"character",subfolder:item.name.split("/").slice(0,-1).join("/"),sourceType:"otg-created",createdAt:now,updatedAt:now,jobId:card.id,ownerKey:card.ownerKey,characterId:card.characterId,description:card.description,savedPath:item.path||null,cardPreviewPath:preview,sourceAssets:card.views.map(v=>({name:v.label,kind:"image",path:v.file!}))});
+  if(card.voice)updateCharacterVoiceSelection(card.ownerKey,card.characterId,{referenceAudioPath:card.voice.path,metadata:{refModVoiceId:card.voice.id,refModVoiceSha256:card.voice.sha256}});
+  const now=new Date().toISOString();writeH3RefModSidecar({version:1,libraryName:item.name,name:card.name,category:"character",subfolder:item.name.split("/").slice(0,-1).join("/"),sourceType:"otg-created",createdAt:now,updatedAt:now,jobId:card.id,ownerKey:card.ownerKey,characterId:card.characterId,description:card.description,savedPath:item.path||null,cardPreviewPath:preview,...(card.voice?{voice:card.voice,members}:{}),sourceAssets:[...card.views.map(v=>({name:v.label,kind:"image" as const,path:v.file!})),...(card.voice?[{name:card.voice.name,kind:"audio" as const,path:card.voice.path,durationSeconds:card.voice.durationSeconds}]:[])]});
   card.previewPath=preview;card.libraryName=item.name;card.backend=card.encode!.gpu;card.tokenCount=item.tokens;card.state="completed";card.message="Character RefMod saved. Ready to use in H3.";card.error="";
   void entry;
 }
@@ -211,10 +230,17 @@ export async function advanceCharacterRefCard(owner:string,cardId:string) {
       }else{
         const encoding=card.encode!;let queue=getMediaQueueJob(encoding.id);
         if(!queue){
-          if(!encoding.baseUrl){const backend=await encodeBackend(card.gpu);encoding.baseUrl=backend.baseUrl;encoding.gpu=backend.gpu;encoding.libraryName=CHARACTER_REF_PREFIX+characterRefOwnerHash(owner)+"/"+card.id+"/"+encoding.id;await save(card);}
+          if(!encoding.baseUrl){const backend=await encodeBackend(card.gpu,!!card.voice);encoding.baseUrl=backend.baseUrl;encoding.gpu=backend.gpu;encoding.libraryName=CHARACTER_REF_PREFIX+characterRefOwnerHash(owner)+"/"+card.id+"/"+encoding.id;await save(card);}
           const folder="otg_refcards/"+card.id+"/"+encoding.id;
           for(let i=0;i<card.views.length;i++)await uploadH3InputToBaseUrl({baseUrl:encoding.baseUrl!,sourcePath:card.views[i].file!,mediaType:"image",uploadName:String(i+1).padStart(2,"0"),subfolder:folder});
-          const parts=encoding.libraryName!.split("/");const built=buildH3RefModVisualPackWorkflow({folder,name:parts.pop()!,subfolder:parts.join("/"),kind:"character",sourceCount:card.views.length,description:card.name+". "+card.description});
+          const parts=encoding.libraryName!.split("/"),input={folder,name:parts.pop()!,subfolder:parts.join("/"),kind:"character" as const,sourceCount:card.views.length,description:card.name+". "+card.description};
+          let built=buildH3RefModVisualPackWorkflow(input);
+          if(card.voice){
+            assertCharacterRefVoiceEnabled();await assertCharacterRefVoiceIntact(card.voice);
+            // Audio stays outside the folder loader's visual input directory.
+            const voiceFolder=folder+"-voice",audio=await uploadH3InputToBaseUrl({baseUrl:encoding.baseUrl!,sourcePath:card.voice.path,mediaType:"audio",uploadName:"voice",subfolder:voiceFolder});
+            built=buildH3RefModCharacterVoiceWorkflow({...input,audioFilename:voiceFolder+"/"+audio});
+          }
           queue=enqueueMediaJob({id:encoding.id,gpu:encoding.gpu!,kind:"comfy",payload:{baseUrl:encoding.baseUrl!,body:{prompt:built.graph,prompt_id:encoding.id,client_id:encoding.id},workerId:"h3-refmods-card-encode",preSubmitCleanup:null}});
         }
         if(["failed","canceled","unknown"].includes(queue.status))throw Error(queue.error||`RefMod encoding ${queue.status}; no duplicate job was submitted.`);

@@ -19,7 +19,7 @@ export type H3RefModAudioPackWorkflowInput = {
 };
 
 export type H3RefModCreationBuiltWorkflow = {
-  workflowId: "h3-refmod-visual-pack" | "h3-refmod-audio-pack";
+  workflowId: "h3-refmod-visual-pack" | "h3-refmod-audio-pack" | "h3-refmod-character-voice";
   workflowFile: string;
   graph: H3PromptGraph;
   outputNodeId: string;
@@ -145,6 +145,19 @@ function audioConcept(category: H3RefModAudioCategory) {
   if (category === "music") return "music_style";
   if (category === "sound_fx") return "sound_fx";
   return "ambience";
+}
+
+export function buildH3RefModCharacterVoiceWorkflow(input: H3RefModVisualPackWorkflowInput & {audioFilename: string}): H3RefModCreationBuiltWorkflow {
+  if (input.kind !== "character" || !input.audioFilename.trim()) throw Error("Character images and an owned voice recording are required.");
+  const built = buildH3RefModVisualPackWorkflow(input), graph = built.graph;
+  graph["3"].class_type = "MiniMaxH3RefModMasterExtract";
+  Object.assign(graph["3"].inputs, {audio: ["5", 0], audio_vae: ["6", 0], audio_max_seconds: 30, audio_max_tokens: 5120, audio_budget_policy: "error", audio_concept_type: "voice", max_total_tokens: 0, save_layout: "bundle"});
+  graph["4"] = {class_type: "MiniMaxH3RefModBundleSave", inputs: {mods: ["3", 0], name: input.name, subfolder: input.subfolder}};
+  graph["5"] = {class_type: "LoadAudio", inputs: {audio: input.audioFilename}};
+  graph["6"] = {class_type: "VAELoader", inputs: {vae_name: AUDIO_VAE}};
+  graph["7"] = {class_type: "MiniMaxH3RefModInspect", inputs: {mods: ["4", 0], index: 0, preview: "off", strength: 1}};
+  graph["8"] = {class_type: "PreviewAny", inputs: {source: ["7", 0]}};
+  return {...built, workflowId: "h3-refmod-character-voice", workflowFile: "comfy_workflows/internal/h3-refmods/generated/character-voice.api.json"};
 }
 
 export function buildH3RefModAudioPackWorkflow(

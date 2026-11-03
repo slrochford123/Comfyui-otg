@@ -3637,6 +3637,10 @@ function RefModGalleryPanel({
   refCardsEnabled?: boolean;
 }) {
   const [entries, setEntries] = React.useState<H3RefModLibraryEntry[]>([]);
+  const [trashEnabled,setTrashEnabled]=React.useState(false);
+  const [deleted,setDeleted]=React.useState<Array<{name:string;displayName:string}>|null>(null);
+  const [deleteEntry,setDeleteEntry]=React.useState<H3RefModLibraryEntry|null>(null);
+  const [deleteBusy,setDeleteBusy]=React.useState(false);
   const [status, setStatus] = React.useState<RefModLibraryStatus>("loading");
   const [error, setError] = React.useState("");
   const [message, setMessage] = React.useState("");
@@ -3650,6 +3654,7 @@ function RefModGalleryPanel({
   const [characterFiles, setCharacterFiles] = React.useState<File[]>([]);
   const [characters, setCharacters] = React.useState<SavedCharacterOption[]>([]);
   const [selectedCharacterId, setSelectedCharacterId] = React.useState("");
+  const [selectedRefCardId, setSelectedRefCardId] = React.useState("");
   const [motionFile, setMotionFile] = React.useState<File | null>(null);
   const [motionType, setMotionType] = React.useState<RefModMotionChoice>("subject");
   const [isolateSubject, setIsolateSubject] = React.useState(true);
@@ -3673,6 +3678,7 @@ function RefModGalleryPanel({
       const json = await response.json().catch(() => null);
       if (!response.ok || !json?.ok) throw new Error(json?.error || "Could not load RefMod library.");
       setEntries(Array.isArray(json.entries) ? json.entries : []);
+      setTrashEnabled(json.trashEnabled===true);
       setStatus("ready");
     } catch (err) {
       setEntries([]);
@@ -3680,6 +3686,19 @@ function RefModGalleryPanel({
       setError(err instanceof Error ? err.message : "Could not load RefMod library.");
     }
   }, []);
+
+  async function refreshDeleted(){
+    try{const response=await fetch("/api/h3/special/refmods/library/trash",{credentials:"include",cache:"no-store"}),data=await response.json();if(!response.ok)throw Error(data.error);setDeleted(data.entries||[]);}catch(err){setMessage((err as Error).message||"Could not open recently deleted RefMods.");}
+  }
+  async function changeDeleted(name:string,restore=false){
+    setDeleteBusy(true);setMessage("");
+    try{
+      const response=await fetch("/api/h3/special/refmods/library/trash",{method:restore?"POST":"DELETE",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})}),data=await response.json();
+      if(!response.ok)throw Error(data.error||"Could not update the library.");
+      setDeleteEntry(null);setMessage(restore?"RefMod restored.":"Removed from your library. Images and voices are retained. Restore it in Recently deleted.");
+      await Promise.all([loadLibrary(),refreshDeleted()]);
+    }catch(err){setMessage((err as Error).message);}finally{setDeleteBusy(false);}
+  }
 
   const loadCharacters = React.useCallback(async () => {
     try {
@@ -3780,6 +3799,7 @@ function RefModGalleryPanel({
   }
 
   function resetCreator(next: RefModCreateStep = "choose") {
+    setSelectedRefCardId("");
     setCreateStep(next);
     setName("");
     setDescription("");
@@ -3953,6 +3973,8 @@ function RefModGalleryPanel({
       {status === "loading" ? <div className="rounded-2xl border border-white/10 bg-black/25 p-5 text-sm text-white/50">Loading RefMods...</div> : null}
       {status === "error" ? <div className="rounded-2xl border border-red-300/20 bg-red-400/10 p-5 text-sm text-red-100" role="alert">Could not load RefMod library. Retry.{error ? <div className="mt-2 text-xs text-red-100/70">{error}</div> : null}</div> : null}
       {message ? <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4 text-sm text-emerald-100">{message}</div> : null}
+      {trashEnabled?<div className="space-y-2"><button type="button" className="min-h-11 rounded-xl border border-white/20 px-3" onClick={()=>deleted===null?void refreshDeleted():setDeleted(null)}>Recently deleted</button>{deleted?.map(item=><div key={item.name} className="flex items-center justify-between gap-2 rounded-xl border border-white/10 p-3"><span className="min-w-0 break-words">{item.displayName}</span><button type="button" disabled={deleteBusy} className="min-h-11 rounded-xl border border-white/20 px-3" onClick={()=>void changeDeleted(item.name,true)}>Restore</button></div>)}{deleted?.length===0?<p className="text-sm text-white/60">No deleted RefMods.</p>:null}</div>:null}
+      {deleteEntry?<div role="alertdialog" aria-label="Delete RefMod" className="space-y-3 rounded-xl border border-red-300/30 p-4"><p>Remove {deleteEntry.displayName||deleteEntry.name} from your library? Original images, voices and shared files stay safe. You can restore it later.</p><button type="button" className="min-h-11 rounded-xl bg-red-400/20 px-3" disabled={deleteBusy} onClick={()=>void changeDeleted(deleteEntry.name)}>Confirm delete</button><button type="button" className="ml-2 min-h-11 rounded-xl border border-white/20 px-3" disabled={deleteBusy} onClick={()=>setDeleteEntry(null)}>Keep RefMod</button></div>:null}
       {status === "ready" && entries.length === 0 ? <div className="rounded-2xl border border-dashed border-white/10 p-6 text-sm text-white/45">No RefMods created yet.</div> : null}
       {status === "ready" && entries.length > 0 && filteredEntries.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-white/10 p-6 text-sm text-white/45">No RefMods match this filter.</div>
@@ -3972,6 +3994,7 @@ function RefModGalleryPanel({
                     <div className="min-w-0">
                       <h3 className="break-words text-lg font-black text-white">{entry.displayName || entry.name}</h3>
                       <p className="mt-1 text-xs font-bold uppercase tracking-[0.14em] text-violet-100/65">{refModCategoryLabel(entry.category)}</p>
+                      {entry.voiceName?<p className="mt-1 text-xs text-violet-200">Voice included · {entry.voiceName}</p>:null}
                     </div>
                     <span className="shrink-0 rounded-full border border-white/10 px-2 py-1 text-[11px] font-bold text-white/45">{entry.kind}</span>
                   </div>
@@ -3980,8 +4003,8 @@ function RefModGalleryPanel({
                   <div className="flex flex-wrap gap-2">
                     <button type="button" onClick={() => useRefModInH3(entry)} className="min-h-10 rounded-xl bg-cyan-300 px-3 text-sm font-black text-zinc-950">Use in H3</button>
                     <button type="button" className="min-h-10 rounded-xl border border-white/10 px-3 text-sm font-bold text-white/65">View</button>
-                    <button type="button" className="min-h-10 rounded-xl border border-white/10 px-3 text-sm font-bold text-white/45" disabled>Rebuild</button>
-                    <button type="button" className="min-h-10 rounded-xl border border-white/10 px-3 text-sm font-bold text-white/35" disabled>Delete</button>
+                    {entry.editableCardId?<button type="button" className="min-h-11 rounded-xl border border-violet-300/30 px-3 text-sm font-bold text-violet-100" onClick={()=>{resetCreator("character");setSelectedRefCardId(entry.editableCardId!);setSelectedCharacterId(entry.characterId||"");setCreatorOpen(true);}}>Edit card / voice</button>:<button type="button" className="min-h-10 rounded-xl border border-white/10 px-3 text-sm font-bold text-white/45" disabled>Rebuild</button>}
+                    <button type="button" className="min-h-11 rounded-xl border border-white/10 px-3 text-sm font-bold text-white/65 disabled:opacity-35" disabled={!entry.canDelete||deleteBusy} onClick={()=>setDeleteEntry(entry)}>Delete</button>
                   </div>
                 </div>
               </article>
@@ -4016,7 +4039,7 @@ function RefModGalleryPanel({
 
                 {createStep === "character" ? (
                   <div className="space-y-4" data-otg="refmod-character-creator">
-                    {refCardsEnabled ? <CharacterRefCardCreator characters={characters} initialCharacterId={selectedCharacterId} onSaved={loadLibrary} /> : <>
+                    {refCardsEnabled ? <CharacterRefCardCreator key={selectedRefCardId||"latest"} characters={characters} initialCharacterId={selectedCharacterId} initialCardId={selectedRefCardId} onSaved={loadLibrary} /> : <>
                     <div className="grid gap-2 sm:grid-cols-3">{(["upload", "existing", "new"] as const).map((value) => <button key={value} type="button" onClick={() => setCharacterPath(value)} className={cn("min-h-12 rounded-xl border px-3 text-sm font-black", characterPath === value ? "border-violet-200 bg-violet-300 text-zinc-950" : "border-white/10 bg-black/25 text-white/65")}>{value === "upload" ? "Upload Images" : value === "existing" ? "Choose from Character Gallery" : "Create New Character"}</button>)}</div>
                     {characterPath === "upload" ? (
                       <>

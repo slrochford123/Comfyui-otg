@@ -39,8 +39,15 @@ def ssh_command(config):
             "--", config["host"], "slr-audio-v1"]
 
 
-def wire_manifest(job):
+def wire_manifest(job, config=None):
     params = dict(job["params"])
+    if params.get("voiceDesignEngine"):
+        if params["voiceDesignEngine"] != "qwen3" or (config or {}).get("refVoiceEngine") != "qwen3" or job["operation"] != "speech" or job["gpu"] != "rtx3090" or job.get("source"):
+            raise ValueError("Qwen-only voice design transport is required; no fallback is allowed")
+        # The dedicated Qwen gateway uses the existing speech wire contract.
+        params.pop("voiceDesignEngine")
+        params["instruction"] = params["description"]
+        params["variant"] = "flash"
     if job["operation"] == "speech":
         # The authenticated route already resolved/imported the reference into
         # this session. The worker needs the uploaded audio, not library IDs.
@@ -86,7 +93,7 @@ def main():
     try:
         status("Preparing restricted audio transfer", 1)
         rpc({"action": "create", "id": job["id"]})
-        manifest = wire_manifest(job)
+        manifest = wire_manifest(job, config)
         if job.get("source"):
             file = Path(job["source"]).resolve(strict=True)
             if not file.is_relative_to(root.parent.parent.resolve()):

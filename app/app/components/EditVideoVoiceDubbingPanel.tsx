@@ -4,7 +4,7 @@ import React from "react";
 
 type WorkflowMode = "convert" | "rewrite";
 
-type VoiceModel = {
+export type VoiceModel = {
   id: string;
   name: string;
   engine: "reference" | "character" | "seed-vc" | "xtts";
@@ -105,9 +105,11 @@ function PillButton({
 export default function EditVideoVoiceDubbingPanel({
   onSaved,
   initialSource,
+  characterVoiceTargets,
 }: {
   onSaved?: () => void;
   initialSource?: {path:string;name:string;url:string};
+  characterVoiceTargets?: VoiceModel[];
 }) {
   void onSaved;
   const [mode, setMode] = React.useState<WorkflowMode>("convert");
@@ -138,7 +140,7 @@ export default function EditVideoVoiceDubbingPanel({
       const response = await fetch("/api/voice/models", { cache: "no-store", credentials: "include" });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data?.ok === false) throw new Error(data?.error || "Voice library could not be loaded.");
-      const items = Array.isArray(data?.items) ? (data.items as VoiceModel[]) : [];
+      const items = [...(characterVoiceTargets||[]), ...(Array.isArray(data?.items) ? (data.items as VoiceModel[]) : [])];
       setModels(items);
       if (preferredId) {
         setMappings((current) => {
@@ -152,11 +154,12 @@ export default function EditVideoVoiceDubbingPanel({
       return items;
     } catch (loadError: any) {
       setModelsError(loadError?.message || "Voice library could not be loaded.");
-      return [] as VoiceModel[];
+      setModels(characterVoiceTargets||[]);
+      return characterVoiceTargets||[] as VoiceModel[];
     } finally {
       setModelsBusy(false);
     }
-  }, [analysis]);
+  }, [analysis,characterVoiceTargets]);
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -208,7 +211,7 @@ export default function EditVideoVoiceDubbingPanel({
       if (!response.ok || data?.ok === false) throw new Error(data?.error || "Speech analysis failed.");
       const lanes = Array.isArray(data.voices) ? data.voices : [];
       setAnalysis(data);
-      setMappings(Object.fromEntries(lanes.map((lane) => [lane.id, { targetVoiceId: "", replacementText: "" }])));
+      setMappings(Object.fromEntries(lanes.map((lane) => [lane.id, { targetVoiceId: lanes.length===1&&characterVoiceTargets?.length===1?characterVoiceTargets[0].id:"", replacementText: "" }])));
       setStatus(lanes.length ? `Found ${lanes.length} voice lane${lanes.length === 1 ? "" : "s"}. Assign a target voice to continue.` : "No clear speech lanes were detected.");
     } catch (analysisError: any) {
       setAnalysis(null);
@@ -307,7 +310,7 @@ export default function EditVideoVoiceDubbingPanel({
         modelPath: target.modelPath || "",
         indexPath: target.indexPath || "",
         samplePath: target.samplePath || (target.engine === "reference" ? target.path : ""),
-        engine: target.engine === "character" ? "applio" : "auto",
+        engine: target.engine === "character" ? "applio" : target.engine === "seed-vc" ? "seed-vc" : "auto",
         dubMode: mode === "rewrite" ? "rewrite_line" : "preserve_performance",
         emotion: "preserve",
         replacementText: laneMapping?.replacementText || "",

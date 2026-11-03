@@ -1,6 +1,9 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- Owned authenticated previews must not enter the shared image optimizer cache. */
 import React from "react";
+import CharacterRefVoiceControls from "./CharacterRefVoiceControls";
+import dynamic from "next/dynamic";
+const CharacterRefVoiceDesigner=dynamic(()=>import("./CharacterRefVoiceDesigner"));
 import {newClientRequestId} from "@/lib/client/requestId";
 import {H3_MEDIA_ACCEPT} from "@/lib/h3MediaTypes";
 import {type CharacterRefCardPublic as Card} from "@/lib/h3SpecialModes/characterRefCardContract";
@@ -18,7 +21,7 @@ async function request(url:string,init?:RequestInit):Promise<Card|null>{
   return body.card;
 }
 
-export default function CharacterRefCardCreator({characters,initialCharacterId="",onSaved}:{characters:Character[];initialCharacterId?:string;onSaved:()=>void}){
+export default function CharacterRefCardCreator({characters,initialCharacterId="",initialCardId="",onSaved}:{characters:Character[];initialCharacterId?:string;initialCardId?:string;onSaved:()=>void}){
   const [card,setCard]=React.useState<Card|null>(null);
   const [fields,setFields]=React.useState<Fields>({name:"",description:"",characterId:"",mode:"single",gpu:"auto"});
   const [working,setWorking]=React.useState(false),[error,setError]=React.useState(""),[loading,setLoading]=React.useState(true);
@@ -71,7 +74,7 @@ export default function CharacterRefCardCreator({characters,initialCharacterId="
     mounted.current=true;let disposed=false;
     (async()=>{
       try{
-        const found=await request(endpoint+(initialCharacterId?"?characterId="+encodeURIComponent(initialCharacterId):""));if(disposed)return;
+        const found=await request(endpoint+(initialCardId?"?id="+encodeURIComponent(initialCardId):initialCharacterId?"?characterId="+encodeURIComponent(initialCharacterId):""));if(disposed)return;
         if(found){
           accept(found);replaceFields(fieldsOf(found));
           try{const local=JSON.parse(localStorage.getItem("otg:refcard:"+found.id)||"null");if(local?.fields&&local.at>Date.parse(found.updatedAt)&&!["generating","encoding"].includes(found.state)){fieldsRef.current=local.fields;dirty.current=true;setFields(local.fields);}}catch{}
@@ -101,15 +104,15 @@ export default function CharacterRefCardCreator({characters,initialCharacterId="
   },[pollingId,accept,replaceFields]);
   React.useEffect(()=>{if(card?.state==="completed"&&notified.current!==card.libraryName){notified.current=card.libraryName||"";onSaved();}},[card?.state,card?.libraryName,onSaved]);
   async function action(action:string,extra:Record<string,unknown>={}){await run(async()=>{await post({action,...extra,id:cardRef.current!.id,revision:cardRef.current!.revision});});}
-  async function upload(files:FileList|null,role:"original"|"view",replace?:string){
+  async function upload(files:FileList|null,role:"original"|"view"|"voice",replace?:string){
     if(!files?.length)return;const selected=Array.from(files);
     await run(async()=>{
       if(role==="view"&&!replace&&cardRef.current!.views.length+selected.length>8)throw Error("Use at most eight reference images per card. No files were discarded.");
       for(const file of selected){
-        if(!file.size||file.size>512*1024*1024)throw Error("Choose a non-empty image up to 512 MiB.");
+        if(!file.size||file.size>(role==="voice"?64:512)*1024*1024)throw Error(role==="voice"?"Choose a voice recording up to 64 MiB.":"Choose a non-empty image up to 512 MiB.");
         const uploadId=newClientRequestId(),assetId=newClientRequestId(),chunkSize=4*1024*1024,count=Math.ceil(file.size/chunkSize);let upload;
         for(let index=0;index<count;index++){
-          const form=new FormData();for(const [key,value]of Object.entries({uploadId,kind:"image",name:file.name,type:file.type,size:String(file.size),chunkIndex:String(index),chunkCount:String(count)}))form.set(key,value);
+          const form=new FormData();for(const [key,value]of Object.entries({uploadId,kind:role==="voice"?"audio":"image",name:file.name,type:file.type,size:String(file.size),chunkIndex:String(index),chunkCount:String(count)}))form.set(key,value);
           form.set("chunk",file.slice(index*chunkSize,Math.min(file.size,(index+1)*chunkSize)),file.name);
           setUploadMessage(`Uploading ${file.name} · ${Math.round((index+1)/count*100)}%`);
           let result;
@@ -118,7 +121,7 @@ export default function CharacterRefCardCreator({characters,initialCharacterId="
           }
           upload=result.upload;
         }
-        await post({action:"upload-staged",id:cardRef.current!.id,assetId,role,upload,...(replace?{replace}:{})});
+        await post({action:role==="voice"?"attach-voice":"upload-staged",id:cardRef.current!.id,revision:cardRef.current!.revision,assetId,role,upload,...(replace?{replace}:{})});
       }
       setUploadMessage("");
     });
@@ -155,7 +158,11 @@ export default function CharacterRefCardCreator({characters,initialCharacterId="
       <div className="flex flex-wrap gap-1">{view.angle?<button disabled={locked} className={button} onClick={()=>void action("regenerate",{asset:view.id})}>Regenerate</button>:null}<button disabled={locked} className={button} onClick={()=>void action("remove",{asset:view.id})}>Remove</button><button aria-label={"Move "+view.label+" up"} disabled={locked||index===0} className={button} onClick={()=>move(index,-1)}>↑</button><button aria-label={"Move "+view.label+" down"} disabled={locked||index===card.views.length-1} className={button} onClick={()=>move(index,1)}>↓</button></div>
       <label className="block text-xs">Replace image<input aria-label={"Replace "+view.label} type="file" accept={H3_MEDIA_ACCEPT.image} className="block w-full text-xs" disabled={locked} onChange={e=>{void upload(e.target.files,"view",view.id);e.target.value="";}}/></label>
     </article>)}</div>
-    {card.state==="completed"?<p className="rounded-xl bg-emerald-500/15 p-3 text-sm">Saved to Characters and Ref Mod Gallery · {card.backend==="rtx5060ti"?"RTX 5060 Ti":"RTX 3090"}. Close this editor and choose “Use in H3”.</p>:<button className={button+" w-full bg-violet-500"} disabled={locked||done<4||done!==card.views.length||!fields.name.trim()} onClick={()=>void action("encode")}>Approve {done} images & create RefMod</button>}
+    {card.voiceEnabled&&(done>=4||card.voice)?<details className="rounded-xl border border-violet-300/30 p-3" data-otg="refvoice-step"><summary className="min-h-11 cursor-pointer py-2 font-bold">{card.voice?"Change Voice · "+card.voice.name:"Add Voice · optional"}</summary>
+      <CharacterRefVoiceDesigner key={card.id} cardId={card.id} revision={card.revision} disabled={locked} onApprove={job=>void run(async()=>{const next=await request(endpoint+"/voice",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"approve",card:cardRef.current!.id,revision:cardRef.current!.revision,job})});if(next)accept(next);})}/>
+      <div className="mt-4"><CharacterRefVoiceControls voice={card.voice} disabled={locked} onChoose={sourceId=>void action("attach-voice",{sourceId})} onUpload={files=>void upload(files,"voice")} onRemove={()=>void action("remove-voice")}/></div>
+    </details>:null}
+    {card.state==="completed"?<p className="rounded-xl bg-emerald-500/15 p-3 text-sm">{card.voice?"Character + voice saved":"Saved"} to Characters and Ref Mod Gallery · {card.backend==="rtx5060ti"?"RTX 5060 Ti":"RTX 3090"}. Close this editor and choose “Use in H3”.</p>:<button className={button+" w-full bg-violet-500"} disabled={locked||done<4||done!==card.views.length||!fields.name.trim()} onClick={()=>void action("encode")}>Approve {done} images{card.voice?" + voice":""} & create RefMod</button>}
     <p className="text-xs text-white/50">You can close this editor. Saved images and GPU jobs continue on TEST.</p>
   </section>;
 }

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.30",
+  "current": "2.31",
   "builds": [
     {
       "version": "2",
@@ -187,6 +187,12 @@
       "date": "2026-11-03",
       "summary": "Google Photos in-app browser panel with automatic return, cancellation preservation and clearer connection errors; Android wrapper 2.0.5 support. Testing experiments remain excluded.",
       "sourceBaseCommit": "5e1e6aaf38bed6a1f5dbe46492b37b84bf722042"
+    },
+    {
+      "version": "2.31",
+      "date": "2026-11-03",
+      "summary": "Character RefMods with approved Qwen3-TTS voices, saved identity/audio conditioning and recoverable library deletion. Add Voice uses Qwen3 only; Testing experiments remain excluded.",
+      "sourceBaseCommit": "8a48afb1960d8ba9761b7be857128e1c977a9d84"
     }
   ]
 }

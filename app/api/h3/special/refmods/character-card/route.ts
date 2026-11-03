@@ -8,6 +8,8 @@ import {readCompletedH3StagedUpload} from "@/lib/h3StagedUploads";
 import {readH3RefModSidecar} from "@/lib/h3SpecialModes/refModCreation";
 import {CHARACTER_REF_PREFIX} from "@/lib/h3SpecialModes/characterRefCardContract";
 import {characterRefOwnerHash} from "@/lib/h3SpecialModes/characterRefCardAccess";
+import {assertCharacterRefVoiceEnabled, characterRefVoiceChoices, resolveCharacterRefVoice} from "@/lib/h3SpecialModes/characterRefVoice";
+import {attachCharacterRefVoice} from "@/lib/h3SpecialModes/characterRefCard";
 import {GET as ownedFile} from "@/app/api/file/route";
 import {assertCharacterRefCardsEnabled, bootstrapCharacterRefCards, createCharacterRefCard, latestCharacterRefCard, readCharacterRefCard, characterRefCardPublic, uploadCharacterRefAsset, editCharacterRefCard} from "@/lib/h3SpecialModes/characterRefCard";
 
@@ -16,8 +18,16 @@ export const dynamic="force-dynamic";
 const reply=(card:Parameters<typeof characterRefCardPublic>[0]|null)=>NextResponse.json({ok:true,card:card?characterRefCardPublic(card):null});
 export const GET=withOwner(async(req,owner)=>{
   assertCharacterRefCardsEnabled(); bootstrapCharacterRefCards();
+  if(req.nextUrl.searchParams.has("voices")){assertCharacterRefVoiceEnabled();return NextResponse.json({ok:true,voices:characterRefVoiceChoices(owner.ownerKey)},{headers:{"Cache-Control":"private, no-store"}});}
   const cardId=req.nextUrl.searchParams.get("id");
   const card=cardId?await readCharacterRefCard(owner.ownerKey,cardId):await latestCharacterRefCard(owner.ownerKey,req.nextUrl.searchParams.get("characterId")||undefined);
+  if(req.nextUrl.searchParams.has("voice")){
+    assertCharacterRefVoiceEnabled();
+    if(!card?.voice||req.nextUrl.searchParams.get("voice")!==card.voice.id)throw new RequestError("Voice not found for this card.",404);
+    const stat=await fs.lstat(card.voice.path);
+    if(!stat.isFile()||stat.isSymbolicLink()||stat.size>64*1024*1024)throw new RequestError("Voice not found.",404);
+    return new Response(new Uint8Array(await fs.readFile(card.voice.path)),{headers:{"Content-Type":"audio/wav","Cache-Control":"private, no-store"}});
+  }
   const asset=req.nextUrl.searchParams.get("asset"),preview=req.nextUrl.searchParams.has("preview");
   if(asset||preview){
     const version=req.nextUrl.searchParams.get("preview");
@@ -35,6 +45,11 @@ export const POST=withOwner(async(req,owner)=>{
   const body=await limitedJson(req,16*1024),id=String(body.id||"");
   let card;
   if(body.action==="create")card=await createCharacterRefCard(owner.ownerKey,id);
+  else if(body.action==="attach-voice"){
+    assertCharacterRefVoiceEnabled();
+    const source=body.upload?await readCompletedH3StagedUpload(owner.ownerKey,body.upload,"audio"):resolveCharacterRefVoice(owner.ownerKey,String(body.sourceId||""));
+    card=await attachCharacterRefVoice(owner.ownerKey,id,body.revision,source);
+  }else if(body.action==="remove-voice")card=await attachCharacterRefVoice(owner.ownerKey,id,body.revision,null);
   else if(body.action==="upload-staged"){
     if(body.role!=="original"&&body.role!=="view")throw new RequestError("Choose an image role.",400);
     const source=await readCompletedH3StagedUpload(owner.ownerKey,body.upload,"image");

@@ -1,6 +1,8 @@
 import { recoverableH3Submission } from "@/lib/h3SubmissionRecovery";
 import { makeH3SmartReferenceInput, saveH3SmartReferenceImage } from "@/lib/h3SmartReferencesServer";
 import { normalizeH3SmartReferenceSelection } from "@/lib/h3SmartReferences";
+import {readH3RefModSidecar} from "@/lib/h3SpecialModes/refModCreation";
+import {normalizeH3RefModSlots} from "@/lib/h3SpecialModes/refMods";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
@@ -75,8 +77,11 @@ async function postRefMods(req: NextRequest) {
     const config = body?.config && typeof body.config === "object"
       ? body.config as Record<string, unknown>
       : {};
-    const targetBackend = await (await import("@/lib/h3SmartReferencesServer")).characterRefSelectionBackend(config.smartReferences,await (await import("@/lib/mediaGpuRoutingServer")).requestedH3MediaGpu(config.targetBackend),ownerKey);
-    const selection = normalizeH3SmartReferenceSelection(config.smartReferences);
+    // Bundled characters always receive verified native audio tags, even when
+    // the optional Smart References panel is closed. Never duplicate the bundle.
+    const hasVoice=normalizeH3RefModSlots(config.refMods).some(slot=>{const saved=readH3RefModSidecar(slot.name);return saved?.ownerKey===ownerKey&&!!saved.voice;});
+    const selection = normalizeH3SmartReferenceSelection(config.smartReferences || (hasVoice?{useFirstFrame:false,refMods:config.refMods}:undefined));
+    const targetBackend = await (await import("@/lib/h3SmartReferencesServer")).characterRefSelectionBackend(selection,await (await import("@/lib/mediaGpuRoutingServer")).requestedH3MediaGpu(config.targetBackend),ownerKey);
     const staged = body?.staged;
     if (selection && JSON.stringify(selection.refMods) !== JSON.stringify((await import("@/lib/h3SpecialModes/refMods")).normalizeH3RefModSlots(config.refMods))) throw Error("The RefMod selection changed. Recheck your references.");
     if (staged?.referenceImages && (!Array.isArray(staged.referenceImages) || staged.referenceImages.length > 9)) throw Error("Use at most nine ordinary reference images.");

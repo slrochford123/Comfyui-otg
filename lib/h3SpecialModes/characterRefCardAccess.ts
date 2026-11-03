@@ -1,8 +1,10 @@
 import {createHash} from "node:crypto";
 import {CHARACTER_REF_PREFIX} from "./characterRefCardContract";
+import {refModIsDeleted} from "./refModTrash";
 export const characterRefOwnerHash=(owner:string)=>createHash("sha256").update(owner).digest("hex").slice(0,24);
 export function canUseCharacterRefMod(owner:string,name:string){
   const canonical=name.replaceAll("\\","/");
+  if(refModIsDeleted(owner,canonical))return false;
   return !canonical.startsWith(CHARACTER_REF_PREFIX)||!!owner&&canonical.startsWith(CHARACTER_REF_PREFIX+characterRefOwnerHash(owner)+"/");
 }
 export function assertOwnedCharacterRefMods(owner:string,slots:Array<{name:string}>){

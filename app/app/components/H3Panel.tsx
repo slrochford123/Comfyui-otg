@@ -36,6 +36,7 @@ import NativeImagePanel from "./NativeImagePanel";
 import dynamic from "next/dynamic";
 import {useH3NsfwAccess} from "@/lib/client/useH3NsfwAccess";
 const H3NsfwPanel=dynamic(()=>import("./H3NsfwStudio"));
+const H3CharacterVoiceCorrection=dynamic(()=>import("./H3CharacterVoiceCorrection"));
 import {H3RecoveryClient, h3RecoveryMessage} from "@/lib/client/h3Recovery";
 import {useH3Resume} from "@/lib/client/useH3Resume";
 import H3StudioControls, { type H3StudioController } from "./H3StudioControls";
@@ -5588,6 +5589,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
             <div className="mt-4">
               <h3 className="mb-2 text-sm font-black text-white">Final Video</h3>
               <ExpandableVideo url={job.videoUrl} poster={job.thumbnailUrl || undefined} />
+              <H3CharacterVoiceCorrection jobId={job.id}/>
               <div className="mt-3 flex flex-wrap gap-2">
                 <a
                   href={`${job.videoUrl}${job.videoUrl.includes("?") ? "&" : "?"}download=1`}

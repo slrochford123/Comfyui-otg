@@ -54,6 +54,8 @@ def main():
             payload={'parent_pid':os.getpid(),'model':config['base' if job.get('source') else 'design'],
                 'output':str(output),'text':params['text'],'instruction':params['instruction'],
                 'reference':job.get('source') or '', 'reference_text':params.get('description','')}
+            if 'seed' in params:
+                payload['seed']=params['seed']
             check()
             status('running','Creating Qwen speech')
             child=subprocess.Popen([config['qwenPython'],str(Path(__file__).with_name('qwen_media.py'))],stdin=subprocess.PIPE,

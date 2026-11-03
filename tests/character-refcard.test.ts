@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {randomUUID} from "node:crypto";
 import sharp from "sharp";
+import {execFileSync} from "node:child_process";
 const fixture=vi.hoisted(()=>({jobs:new Map<string,any>(),submissions:[] as any[],count:4}));
 vi.mock("@/lib/workers/mediaGpuQueue",()=>({mediaQueueEnabled:()=>true,preferMediaGpu:async(g:string[])=>g[0]||null,getMediaQueueJob:(id:string)=>fixture.jobs.get(id)||null,enqueueMediaJob:(input:any)=>{if(fixture.jobs.has(input.id))throw Error("Duplicate queue ID");const job={...input,status:"queued"};fixture.jobs.set(job.id,job);fixture.submissions.push(job);return job;}}));
 vi.mock("@/lib/images/nativeImageBackend",()=>({nativeImageBackendUrls:()=>({rtx3090:"http://100.75.162.64:8189",rtx5060ti:"http://100.98.212.116:8188"}),chooseNativeImageBackend:async(_m:string,g:string)=>({baseUrl:g==="rtx5060ti"?"http://100.98.212.116:8188":"http://100.75.162.64:8189",label:g==="rtx5060ti"?g:"rtx3090"})}));
@@ -22,9 +23,9 @@ beforeEach(async()=>{
   vi.resetModules();root=await fs.mkdtemp(path.join(os.tmpdir(),"character-refcard-unit-"));vi.stubEnv("OTG_DATA_DIR",root);vi.stubEnv("OTG_ENV","test");fixture.jobs.clear();fixture.submissions.length=0;fixture.count=4;
   vi.stubGlobal("fetch",vi.fn(async(url:string)=>{
     if(url.endsWith("/system_stats"))return Response.json({devices:[{name:url.includes("100.98")?"RTX 5060 Ti":"RTX 3090"}]});
-    if(url.endsWith("/object_info"))return Response.json({MiniMaxH3RefModFolderLoader:{},MiniMaxH3RefModExtract:{},MiniMaxH3RefModSave:{},VAELoader:{input:{required:{vae_name:[["minimax_h3_video_vae_fp16.safetensors"]]}}}});
-    if(url.includes("/history/")){const id=url.split("/").pop()!;return Response.json({[id]:{status:{completed:true}}});}
-    if(url.endsWith("/refmods/library")){const q=fixture.submissions.find(j=>j.payload.workerId==="h3-refmods-card-encode");const graph=q.payload.body.prompt;return Response.json([{name:graph[4].inputs.subfolder+"/"+graph[3].inputs.name,tokens:4096,shape:[fixture.count,64,64]}]);}
+    if(url.endsWith("/object_info"))return Response.json({MiniMaxH3RefModMasterExtract:{},MiniMaxH3RefModBundleSave:{},MiniMaxH3RefModInspect:{},PreviewAny:{},LoadAudio:{},MiniMaxH3RefModFolderLoader:{},MiniMaxH3RefModExtract:{},MiniMaxH3RefModSave:{},VAELoader:{input:{required:{vae_name:[["minimax_h3_video_vae_fp16.safetensors","minimax_h3_audio_vae_fp32.safetensors"]]}}}});
+    if(url.includes("/history/")){const id=url.split("/").pop()!;return Response.json({[id]:{status:{completed:true},outputs:{8:{text:[JSON.stringify({total_tokens:4096,refs:[{kind:"video",shape:[1,24,fixture.count,32,32],tokens:4000},{kind:"audio",shape:[1,32,2,48],tokens:96}]})]}}}});}
+    if(url.endsWith("/refmods/library")){const q=fixture.submissions.find(j=>j.payload.workerId==="h3-refmods-card-encode");const graph=q.payload.body.prompt;return Response.json([{name:graph[4].inputs.subfolder+"/"+graph[3].inputs.name,tokens:4096,kind:graph[4].class_type==="MiniMaxH3RefModBundleSave"?"bundle":"video",shape:[fixture.count,64,64]}]);}
     throw Error("Unexpected network call "+url);
   }));
   mod=await import("@/lib/h3SpecialModes/characterRefCard");
@@ -36,6 +37,16 @@ async function card(mode="single",gpu="auto"){
 }
 async function add(c:any,role:"original"|"view"="original",replace?:string){return mod.uploadCharacterRefAsset("alice",c.id,randomUUID(),await sharp({create:{width:32,height:48,channels:3,background:"pink"}}).png().toBuffer(),"bunny.png",role,replace);}
 async function act(c:any,action:string,extra:Record<string,unknown>={}){return mod.editCharacterRefCard("alice",c.id,{action,revision:c.revision,...extra});}
+it("saves a verified character-and-voice bundle with the immutable original voice linked to its character",async()=>{
+  let c=await card("upload");for(let i=0;i<4;i++)c=await add(c,"view");
+  const recording=path.join(root,"sample.wav");execFileSync("ffmpeg",["-v","error","-f","lavfi","-i","sine=frequency=440:duration=3","-c:a","pcm_s16le",recording]);
+  c=await mod.attachCharacterRefVoice("alice",c.id,c.revision,{path:recording,name:"Bunny voice"});c=await act(c,"encode");c=await mod.advanceCharacterRefCard("alice",c.id);
+  expect(fixture.submissions).toHaveLength(1);expect(fixture.submissions[0].payload.body.prompt[4].class_type).toBe("MiniMaxH3RefModBundleSave");
+  fixture.submissions[0].status="completed";c=await mod.advanceCharacterRefCard("alice",c.id);expect(c.state).toBe("completed");
+  const {readH3RefModSidecar}=await import("@/lib/h3SpecialModes/refModCreation"),{loadCharacter}=await import("@/lib/characters/store");
+  const saved=readH3RefModSidecar(c.libraryName!)!;expect(saved.members?.map(m=>m.kind)).toEqual(["video","audio"]);expect(saved.voice?.sha256).toBe(c.voice?.sha256);expect(saved.sourceAssets).toHaveLength(5);expect(loadCharacter("alice",c.characterId)?.referenceAudioPath).toBe(c.voice?.path);
+  c=await mod.attachCharacterRefVoice("alice",c.id,c.revision,null);expect(c.state).toBe("review");expect(readH3RefModSidecar(saved.libraryName)?.voice?.sha256).toBe(saved.voice?.sha256);
+});
 it("has four separate anchored prompts, preserving asymmetry rather than making a collage",async()=>{
   const {CHARACTER_REF_VIEWS,characterRefViewPrompt}=await import("@/lib/h3SpecialModes/characterRefCardContract");expect(CHARACTER_REF_VIEWS).toHaveLength(4);expect(new Set(CHARACTER_REF_VIEWS.map(v=>characterRefViewPrompt(v.id,"pink ear"))).size).toBe(4);
   for(const v of CHARACTER_REF_VIEWS){const prompt=characterRefViewPrompt(v.id,"pink ear");expect(prompt).toContain("not a grid");expect(prompt).toContain("do not mirror");expect(prompt).toContain("pink ear");}

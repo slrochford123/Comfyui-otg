@@ -56,6 +56,19 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(wire["params"], {"text": "Hello"})
         self.assertEqual(job["params"]["voiceId"], "private-voice")
 
+    def test_qwen_design_requires_dedicated_transport_and_preserves_seed(self):
+        job={"operation":"speech","gpu":"rtx3090","params":{"voiceDesignEngine":"qwen3","text":"Hello","description":"Warm","seed":23,"seconds":8}}
+        with self.assertRaises(ValueError):
+            client.wire_manifest(job)
+        wire=client.wire_manifest(job,{"refVoiceEngine":"qwen3"})
+        self.assertEqual(wire["params"],{"text":"Hello","description":"Warm","instruction":"Warm","seed":23,"seconds":8,"variant":"flash"})
+        self.assertEqual(self.api.manifest(self.job,wire)["params"]["seed"],23)
+        for engine in ("auk","cosy","h3"):
+            with self.assertRaises(ValueError):
+                client.wire_manifest({**job,"params":{**job["params"],"voiceDesignEngine":engine}},{"refVoiceEngine":"qwen3"})
+        with self.assertRaises(ValueError):
+            client.wire_manifest({**job,"source":"/another/voice.wav"},{"refVoiceEngine":"qwen3"})
+
     def test_traversal_and_non_uuid_are_rejected(self):
         for identifier in ("../outside", str(uuid.uuid4()).upper(), "x" * 36):
             with self.assertRaises(ValueError):

@@ -8,8 +8,8 @@ export type H3SmartReferenceInput = H3SmartReferenceSelection & {
   images: H3SmartReferenceAsset[];
   referenceMap: H3SmartReferenceMapEntry[];
 };
-export type H3SmartReferenceMapEntry = { tag: string; name: string; source: "image" | "media" | "refmod"; kind: "image" | "video" | "audio"; description: string };
-export type H3SmartRefModInfo = { name: string; kind: string; tokens?: number | null };
+export type H3SmartReferenceMapEntry = { tag: string; name: string; source: "image" | "media" | "refmod"; kind: "image" | "video" | "audio"; description: string; characterKey?: string; characterName?: string; voiceId?: string };
+export type H3SmartRefModInfo = { name: string; kind: string; tokens?: number | null; members?: Array<{kind: "image" | "video" | "audio"; tokens: number}>; characterKey?: string; characterName?: string; voiceId?: string };
 export type H3SmartReferenceCapabilities = {
   backend: "rtx3090" | "rtx5060ti";
   available: boolean;
@@ -53,13 +53,17 @@ export function checkH3SmartReferences(cap: H3SmartReferenceCapabilities, select
     const info = cap.refMods.find(item => item.name === slot.name);
     if (!info) throw Error(`RefMod "${slot.name}" is not available on this GPU. Remove or replace it.`);
     if (slot.strength === 0) continue;
-    if (!["image", "video", "audio"].includes(info.kind)) throw Error(`RefMod "${slot.name}" contains an unverified bundle layout. Use it in the existing RefMods workflow with Smart References off until its member counts are known.`);
-    const kind = info.kind as "image" | "video" | "audio";
-    if (kind === "audio" ? slot.components === "Visual" || slot.audioStrength === 0 : slot.components === "Audio" || slot.visualStrength === 0) continue;
-    const label = {image: "Picture", video: "Video", audio: "Audio"}[kind];
-    for (let n = 0; n < slot.copies; n++) map.push({tag: `<${label} ${++count[kind]}>`, name: slot.name, description: slot.description, source: "refmod", kind});
-    if (typeof info.tokens === "number" && Number.isFinite(info.tokens)) tokens += info.tokens * slot.copies;
-    else tokensKnown = false;
+    const members = info.kind === "bundle" ? info.members : [info];
+    if (!members?.length || members.some(m => !["image", "video", "audio"].includes(m.kind))) throw Error(`RefMod "${slot.name}" contains an unverified bundle layout. Its member counts must be verified before Smart References can use it.`);
+    // Matches the installed loader: each member's copies precede the next member.
+    for (const member of members) {
+      const kind = member.kind as "image" | "video" | "audio";
+      if (kind === "audio" ? slot.components === "Visual" || slot.audioStrength === 0 : slot.components === "Audio" || slot.visualStrength === 0) continue;
+      const label = {image: "Picture", video: "Video", audio: "Audio"}[kind];
+      for (let n = 0; n < slot.copies; n++) map.push({tag: `<${label} ${++count[kind]}>`, name: info.characterName || slot.name, description: slot.description, source: "refmod", kind, characterKey: info.characterKey, characterName: info.characterName, ...(kind === "audio" ? {voiceId: info.voiceId} : {})});
+      if (typeof member.tokens === "number" && Number.isFinite(member.tokens)) tokens += member.tokens * slot.copies;
+      else tokensKnown = false;
+    }
   }
   for (const [kind, maximum] of [["image", cap.maxImages], ["video", cap.maxVideos], ["audio", cap.maxAudios]] as const) {
     if (count[kind] > maximum) throw Error(`Remove a ${kind} reference or reduce RefMod copies: ${count[kind]} ${kind} references exceed the verified ${maximum}-reference envelope. RefMod members and copies count too.`);
@@ -69,12 +73,25 @@ export function checkH3SmartReferences(cap: H3SmartReferenceCapabilities, select
   return { referenceMap: map, counts: count, refModTokens: tokensKnown ? tokens : null };
 }
 const SMART_MARKER = "[H3 Smart References]";
+export function h3CharacterVoicePromptLines(map: H3SmartReferenceMapEntry[]) {
+  const groups = new Map<string, H3SmartReferenceMapEntry[]>();
+  map.filter(item => item.kind !== "audio").forEach(item => {
+    const key = item.characterKey || item.tag;
+    groups.set(key, [...(groups.get(key) || []), item]);
+  });
+  return [...groups.entries()].flatMap(([key, visual], index) => {
+    const voices = map.filter(item => item.kind === "audio" && item.voiceId && item.characterKey === key);
+    if (new Set(voices.map(v => v.voiceId)).size > 1) throw Error(`Choose one saved voice version for ${visual[0].name}; different character voices cannot be assigned to the same subject.`);
+    return [`<Subject ${index + 1}>${visual[0].characterName ? " = " + JSON.stringify(visual[0].characterName) : ""} uses ${visual.map(v => v.tag).join(", ")} for the identity or scene element requested in the original prompt. These references describe the same subject, not additional people.`,
+      ...(voices.length ? [`Only <Subject ${index + 1}> uses ${voices.map(v => v.tag).join(", ")} as the saved character voice. Preserve its vocal identity while speaking only that character's requested dialogue. Do not copy the reference recording's words or assign this voice to other subjects.`] : [])];
+  });
+}
 export function compileH3SmartReferencePrompt(prompt: string, input: Pick<H3SmartReferenceInput, "referenceMap" | "useFirstFrame">) {
   if (prompt.includes(SMART_MARKER)) return prompt;
   return "[Original user prompt]\n" + prompt + "\n\n" + SMART_MARKER + "\n" + [
     input.useFirstFrame ? "Begin from the supplied frame-zero image. Preserve its opening composition; it is a timeline keyframe, not an additional identity reference." : "",
     ...input.referenceMap.map(item => `${item.tag} = ${JSON.stringify(item.name)} (${item.source === "refmod" ? "saved RefMod" : item.kind === "image" ? "ordinary reference image" : `reference ${item.kind}`})${item.description ? ": " + item.description : ""}.`),
-    ...input.referenceMap.filter(item => item.kind !== "audio").map((item, i) => `<Subject ${i + 1}> uses ${item.tag} for the identity or scene element requested in the original prompt. Keep the role given above; a reference is not a request to add another person.`),
+    ...h3CharacterVoicePromptLines(input.referenceMap),
     "Use the mapped references for the subjects and scene requested above. Preserve their identity and appearance; do not add unrequested subjects. Follow the original action and dialogue without repeating speech.",
   ].filter(Boolean).join("\n");
 }
