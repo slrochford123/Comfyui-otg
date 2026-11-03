@@ -29,10 +29,13 @@ export async function checkSnapshotFlow({page,panel,user,call,state,out,sid,reco
     const session=(await state()).find(s=>s.id===sid),added=session.assets.filter(a=>!before.includes(a.id));assert.equal(added.length,1);
     const asset=added[0];assert.equal(asset.mime,'image/jpeg');assert(asset.name.includes(expectedTime),asset.name);
     const response=await call(user,'/api/h3/nsfw/assets?id='+asset.id);assert.equal(response.status(),200);const bytes=await response.body();
-    const meta=await sharp(bytes).metadata();assert.equal(meta.format,'jpeg');assert.equal(meta.width,1536);assert.equal(meta.height,864);
+    // Preview/inference uses the normalized PNG; download preserves the JPEG.
+    const meta=await sharp(bytes).metadata();assert.equal(meta.format,'png');assert.equal(meta.width,1536);assert.equal(meta.height,864);
     const stats=await sharp(bytes).stats();assert(stats.channels[color==='red'?0:2].mean>200);assert(stats.channels[color==='red'?2:0].mean<30);
-    assert.equal(hash(bytes),asset.sha256);fs.writeFileSync(path.join(out,asset.name),bytes);
-    return {asset,session};
+    const original=await call(user,'/api/h3/nsfw/assets?id='+asset.id+'&download=1');assert.equal(original.status(),200);
+    const originalBytes=await original.body();assert.equal((await sharp(originalBytes).metadata()).format,'jpeg');assert.equal(hash(originalBytes),asset.sha256);
+    fs.writeFileSync(path.join(out,asset.name),originalBytes);
+    return {asset,session,referenceSha256:hash(bytes)};
   }
   await open();await dialog.getByLabel('Snapshot video position',{exact:true}).fill('1.25');
   await page.waitForFunction(()=>{const v=document.querySelector('[data-otg="video-snapshot-picker"] video');return v&&!v.seeking&&Math.abs(v.currentTime-1.25)<0.001;});
@@ -64,5 +67,5 @@ export async function checkSnapshotFlow({page,panel,user,call,state,out,sid,reco
   await panel.getByRole('button',{name:'Reference',exact:true}).click();await panel.getByText('Saved',{exact:true}).waitFor();
   await page.screenshot({path:path.join(out,'snapshot-added-mobile.png'),fullPage:true});
   record('Snapshot: real scrubbed/first/last JPEG pixels, 1536px aspect-preserving bound, download, upload failure/retry, duplicate/close guards, remove/undo/reload, single-image replacement; no GPU jobs');
-  return {assetId:last.asset.id,sha256:last.asset.sha256,sourceUnchanged:true,firstFrameRed:true,lastAndScrubbedBlue:true,download:true,reload:true};
+  return {assetId:last.asset.id,sha256:last.referenceSha256,sourceUnchanged:true,firstFrameRed:true,lastAndScrubbedBlue:true,download:true,reload:true};
 }
