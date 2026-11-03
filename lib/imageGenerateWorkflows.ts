@@ -1,3 +1,4 @@
+import {QWEN_IMAGE_REFERENCE_LIMIT} from "./imageReferenceLimits";
 export type GenerateMediaMode = "image" | "video";
 export type ImageOperation = "create" | "edit" | "animate";
 export type ImageOrientation = "portrait" | "landscape";
@@ -6,7 +7,7 @@ export type ImageModelDefinition = {
   id: string;
   label: string;
   operation: ImageOperation;
-  maxInputImages: 0 | 1 | 3;
+  maxInputImages: number;
   defaultLora: string | null;
   optionalLoras: ImageLoraDefinition[];
 };
@@ -100,7 +101,7 @@ export const IMAGE_MODELS: ImageModelDefinition[] = [
     id: QWEN21_IMAGE_EDIT_WORKFLOW_ID,
     label: QWEN21_TURBO_CONTRACT.editLabel,
     operation: "edit",
-    maxInputImages: 3,
+    maxInputImages: QWEN_IMAGE_REFERENCE_LIMIT,
     defaultLora: null,
     optionalLoras: [],
   },
@@ -375,8 +376,9 @@ export function applyLockedImageSize(graph: Record<string, any>, orientation: Im
   return { ...size, applied };
 }
 
-export function applyEditImageReferences(graph: Record<string, any>, inputImages: string[], maxImages: 1 | 3) {
-  const images = inputImages.map(String).map((value) => value.trim()).filter(Boolean).slice(0, maxImages);
+export function applyEditImageReferences(graph: Record<string, any>, inputImages: string[], maxImages: number) {
+  const images = inputImages.map(String).map((value) => value.trim()).filter(Boolean);
+  if (images.length > maxImages) throw new Error(`This workflow accepts at most ${maxImages} images. Nothing was discarded.`);
   const loadNodes = Object.entries<any>(graph || {}).filter(([, node]) => node?.class_type === "LoadImage");
   if (images[0] && loadNodes[0]) loadNodes[0][1].inputs.image = images[0];
 
@@ -387,7 +389,11 @@ export function applyEditImageReferences(graph: Record<string, any>, inputImages
     String(node?.class_type || "") === "TextEncodeQwenImage21"
   );
   const encoders = plusEncoders.length ? plusEncoders : qwen21Encoders;
+  if (plusEncoders.length && images.length > 3) throw new Error("This legacy Qwen workflow accepts at most 3 images.");
   if (!encoders.length || maxImages === 1) return { applied: images.length ? 1 : 0, maxImages: 1 };
+  // Bound the reference working set as it grows; never shrink the original
+  // image/latent canvas. All references remain distinct and retain slot order.
+  for(const id of Object.keys(graph))if(id.startsWith("otg_edit_reference_"))delete graph[id];
 
   for (let index = 1; index < images.length; index += 1) {
     const nodeId = `otg_edit_reference_${index + 1}`;
@@ -396,19 +402,24 @@ export function applyEditImageReferences(graph: Record<string, any>, inputImages
       inputs: { image: images[index] },
       _meta: { title: `OTG Edit Reference ${index + 1}` },
     };
+    let referenceNodeId=nodeId;
+    if(qwen21Encoders.length && images.length>3){
+      referenceNodeId=nodeId+"_fit";
+      graph[referenceNodeId]={class_type:"ImageScaleToTotalPixels",inputs:{image:[nodeId,0],upscale_method:"area",megapixels:Math.min(1,4/(images.length-1)),resolution_steps:32}};
+    }
     for (const encoder of encoders) {
       const classType = String(encoder?.class_type || "");
       const inputName =
         classType === "TextEncodeQwenImage21"
           ? `images.image_${index + 1}`
           : `image${index + 1}`;
-      encoder.inputs[inputName] = [nodeId, 0];
+      encoder.inputs[inputName] = [referenceNodeId, 0];
     }
   }
 
   for (const encoder of encoders) {
     const classType = String(encoder?.class_type || "");
-    for (let index = images.length; index < 3; index += 1) {
+    for (let index = images.length; index < (classType === "TextEncodeQwenImage21" ? 16 : 3); index += 1) {
       const inputName =
         classType === "TextEncodeQwenImage21"
           ? `images.image_${index + 1}`
@@ -416,7 +427,7 @@ export function applyEditImageReferences(graph: Record<string, any>, inputImages
       delete encoder.inputs[inputName];
     }
   }
-  return { applied: images.length, maxImages: 3 };
+  return { applied: images.length, maxImages };
 }
 
 export function applyOptionalLoraSwitches(graph: Record<string, any>, selectedLoraNames: string[]) {

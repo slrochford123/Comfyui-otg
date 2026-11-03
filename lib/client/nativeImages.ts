@@ -27,15 +27,18 @@ export async function waitForNativeImage(jobId: string, args: {signal?: AbortSig
   }
   throw Error("This image job is taking longer than expected. Keep its job ID and refresh later; it has not been resubmitted.");
 }
-export async function submitNativeImageEdit(args: {model: Exclude<NativeEditEngine, "qwen">; imageAPath?: string; image?: File; prompt: string; negativePrompt?: string; seed: string;
+export async function submitNativeImageEdit(args: {model: Exclude<NativeEditEngine, "qwen">; imageAPath?: string; image?: File; referenceImages?: File[]; referencePaths?: string[]; prompt: string; negativePrompt?: string; seed: string;
   width?: number; height?: number; saveToGallery?: boolean; fetchImpl?: typeof fetch}) {
   if (!args.imageAPath && !args.image) throw Error("A source image is required for editing.");
+  if (1 + (args.referenceImages?.length || 0) + (args.referencePaths?.length || 0) > 4) throw Error("Fibo accepts at most 4 images total.");
   const body = new FormData();
   body.set("model", args.model); body.set("prompt", args.prompt); body.set("negativePrompt", args.negativePrompt || "");
   body.set("seed", args.seed); body.set("clientRequestId", newClientRequestId());
   body.set("saveToGallery", String(args.saveToGallery === true));
   if (args.image) body.set("image", args.image);
   else body.set("imageAPath", args.imageAPath!);
+  for (const image of args.referenceImages || []) body.append("referenceImages", image);
+  if (args.referencePaths?.length) body.set("referencePaths", JSON.stringify(args.referencePaths));
   if (args.width && args.height) {body.set("width", String(args.width)); body.set("height", String(args.height));}
   const response = await (args.fetchImpl || fetch)("/api/images/native", {method: "POST", credentials: "include", body});
   const result = await response.json();

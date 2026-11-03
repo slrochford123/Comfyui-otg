@@ -215,21 +215,30 @@ async function deletePersistedH3MediaByPrefix(
   await transactionDone(transaction);
 }
 
-export async function writePersistedH3MediaFiles(
+const mediaWrites=new Map<string,Promise<void>>();
+export function writePersistedH3MediaFiles(storageKey:string,records:PersistedH3MediaRecord[]) {
+  const work=(mediaWrites.get(storageKey)||Promise.resolve()).catch(()=>{}).then(()=>replacePersistedH3MediaFiles(storageKey,records));
+  mediaWrites.set(storageKey,work);
+  const done=()=>{if(mediaWrites.get(storageKey)===work)mediaWrites.delete(storageKey);};
+  void work.then(done,done);return work;
+}
+async function replacePersistedH3MediaFiles(
   storageKey: string,
   records: PersistedH3MediaRecord[],
 ) {
   const db = await openDb();
   if (!db) return;
   try {
-    await deletePersistedH3MediaByPrefix(db, storageKey);
-    if (!records.length) return;
-
     const transaction = db.transaction(STORE_NAME, "readwrite");
     const store = transaction.objectStore(STORE_NAME);
+    const retained=new Set(records.map(record=>record.key)),prefix=mediaPrefix(storageKey);
     records.forEach((record) => {
       store.put(record);
     });
+    // Replace this draft atomically. A reload must never observe a cleared
+    // draft between separate delete and write transactions.
+    const cursorRequest=store.openCursor();
+    cursorRequest.onsuccess=()=>{const cursor=cursorRequest.result;if(!cursor)return;if(String(cursor.key).startsWith(prefix)&&!retained.has(String(cursor.key)))cursor.delete();cursor.continue();};
     await transactionDone(transaction);
   } finally {
     db.close();

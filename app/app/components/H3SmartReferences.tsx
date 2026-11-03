@@ -15,12 +15,14 @@ export default function H3SmartReferences(props: {
   onUseFirstFrame: (value: boolean) => void; onFirstImage: (file: File) => void; onFirstGallery: () => void; onRemoveFirst: () => void;
   images: Image[]; videos: number; audios: number; slots: H3RefModSlot[];
   onAddImage: (file: File) => void; onImageGallery: () => void; onRemoveImage: (id: string) => void; onMoveImage: (id: string, direction: -1 | 1) => void;
+  onAddImages?: (files: File[]) => void;
   onImageDescription: (id: string, value: string) => void;
   onAddRefMod: (entry: H3RefModLibraryEntry) => void; onRemoveRefMod: (id: string) => void; onMoveRefMod: (id: string, direction: -1 | 1) => void;
   onUpdateRefMod: (id: string, patch: Partial<H3RefModSlot>) => void; onValidation: (message: string) => void;
 }) {
   const {backend, onValidation} = props;
   const [picker, setPicker] = useState(false);
+  const [selectionError, setSelectionError] = useState("");
   const [search, setSearch] = useState(""); const [refresh, setRefresh] = useState(0);
   const requestKey = `${backend}/${refresh}`;
   const [loaded, setLoaded] = useState<{key: string; cap: H3SmartReferenceCapabilities | null; library: H3RefModLibraryEntry[]; error: string} | null>(null);
@@ -76,10 +78,17 @@ export default function H3SmartReferences(props: {
       <summary className="min-h-11 cursor-pointer py-2 text-sm font-bold">Character &amp; Scene References <span className="font-normal text-white/60">· {props.images.length} images • {props.slots.length} RefMods selected</span></summary>
       <p className="mb-3 text-xs text-white/60">Mix temporary images with saved references. Each can be removed independently. Create and manage RefMods in Characters → Ref Mod Gallery.</p>
       <div className="mb-3 flex flex-wrap gap-2">
-        <label className={`${button} ${imageDisabled ? "opacity-40" : "cursor-pointer"}`}>+ Add Image<input aria-label="Add reference image" hidden type="file" accept={H3_MEDIA_ACCEPT.image} disabled={imageDisabled} onChange={event => {const file = event.target.files?.[0]; if (file) props.onAddImage(file); event.currentTarget.value = "";}} /></label>
+        <label className={`${button} ${imageDisabled ? "opacity-40" : "cursor-pointer"}`}>+ Add Images<input aria-label="Add reference image" hidden type="file" multiple data-max-files={Math.max(0, Math.min((cap?.maxImages ?? 9) - props.images.length, (cap?.maxTotalReferenceMedia ?? 12) - props.images.length - props.videos - props.audios))} accept={H3_MEDIA_ACCEPT.image} disabled={imageDisabled} onChange={event => {
+          const files = Array.from(event.target.files || []); event.currentTarget.value = "";
+          const remaining = Math.min((cap?.maxImages ?? 9) - props.images.length, (cap?.maxTotalReferenceMedia ?? 12) - props.images.length - props.videos - props.audios);
+          if (files.length > remaining) {setSelectionError(`Choose at most ${remaining} more images. Nothing was discarded.`); return;}
+          setSelectionError(""); if (props.onAddImages) props.onAddImages(files); else files.forEach(props.onAddImage);
+        }} /></label>
         <button type="button" className={button} disabled={imageDisabled} onClick={props.onImageGallery}>Gallery Image</button>
         <button type="button" className={button} disabled={modDisabled} onClick={() => setPicker(!picker)}>+ Add RefMod</button>
       </div>
+      <p className="mb-2 text-xs text-white/60">{props.images.length}/{cap?.maxImages ?? 9} images · numbered order is used for generation</p>
+      {selectionError && <p role="alert" className="text-sm text-amber-100">{selectionError}</p>}
       <div className="space-y-2">
         {props.images.map((image, i) => <article key={image.id} className="flex min-w-0 flex-wrap items-center gap-3 rounded-lg border border-white/10 p-2">
           <ExpandableImage url={image.url} name={image.name} className="h-16 w-16 shrink-0" />

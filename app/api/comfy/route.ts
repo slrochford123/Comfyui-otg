@@ -2508,7 +2508,11 @@ async function parseOtgBody(req: NextRequest, comfyBaseUrl: string) {
   let videoA: string | null = null;
   let audioA: string | null = null;
 
-  for (const key of ["imageA", "imageB", "imageC", "imageD", "imageE"]) {
+  for (const key of new Set(fd.keys())) {
+    if (/^image[A-Z](Path)?$/.test(key) && (key[5] > "P" || fd.getAll(key).length > 1)) throw new Error("At most 16 ordered image inputs are supported. Nothing was discarded.");
+  }
+
+  for (const key of Array.from({length: 16}, (_, i) => `image${String.fromCharCode(65 + i)}`)) {
     const v = fd.get(key);
     const serverPath = String(fd.get(`${key}Path`) || "").trim();
     if ((!v || typeof v === "string") && !serverPath) continue;
@@ -2530,7 +2534,7 @@ async function parseOtgBody(req: NextRequest, comfyBaseUrl: string) {
     }
   }
 
-  if (inputImages.length > 1) {
+  if (inputImages.length > 1 && preset !== QWEN21_IMAGE_EDIT_WORKFLOW_ID) {
     const seenImages = new Set<string>();
     const uniqueInputImages = inputImages.filter((name) => {
       const dedupeKey = String(name || "").trim().toLowerCase();
@@ -4440,7 +4444,8 @@ export async function POST(req: NextRequest) {
     const otgOrientation = String((body as any).orientation || "portrait") === "landscape" ? "landscape" : "portrait";
     applyLockedImageSize(graph, otgOrientation);
     if (otgImageModel.operation === "edit") {
-      applyEditImageReferences(graph, inputImages, otgImageModel.maxInputImages === 3 ? 3 : 1);
+      if(inputImages.length>otgImageModel.maxInputImages)return Response.json({ok:false,error:`This workflow accepts at most ${otgImageModel.maxInputImages} images. Nothing was discarded.`},{status:400});
+      applyEditImageReferences(graph, inputImages, otgImageModel.maxInputImages);
     }
   }
 

@@ -17,6 +17,7 @@ import H3SpeedIndicator from "./H3SpeedIndicator";
 import H3SavedUploads from "./H3SavedUploads";
 import {useH3SavedUploads,type SavedH3Upload} from "@/lib/client/h3SavedUploads";
 import { MEDIA_GPU_ROUTING_UI_ENABLED } from "./MediaGpuControl";
+import {mediaStorageKey,readPersistedH3MediaFiles,writePersistedH3MediaFiles,type PersistedH3MediaMeta} from "./h3InputPersistence";
 export type H3StudioController = "auto" | "manual";
 type Asset = { id: string; kind: "image" | "video" | "audio"; role: "first" | "last" | "reference"; name: string; sha256: string; version: number | string; metadata: { durationSeconds?: number; width?: number; height?: number; hasAudio?: boolean }; url: string };
 type Source = { id: string; file: File; kind: Asset["kind"]; role: Asset["role"]; description: string; includeAudio: boolean; clipStartSeconds: number; revision: number; asset?: Asset; registrationAsset?: Asset; error?: string };
@@ -111,6 +112,9 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
   function mediaIdentity() { return JSON.stringify(sourcesRef.current.map(source => [source.asset?.id, source.asset?.sha256, source.asset?.version, source.role, source.description, source.includeAudio, source.clipStartSeconds])); }
   const storageKey = `otg:h3:studio-presets:v1:${encodeURIComponent(ownerKey)}`;
   const historyKey = `otg:h3:studio-history:v1:${encodeURIComponent(ownerKey)}`;
+  const draftKey=`otg:h3:studio-inputs:v1:${encodeURIComponent(ownerKey)}`;
+  const [draftReady,setDraftReady]=useState(""),[draftSaving,setDraftSaving]=useState(false);
+  const draftMediaWrite=useRef<{key:string;files:Array<{id:string;file:File}>;work:Promise<void>}|null>(null);
   const invalidate = useCallback((clearClarification = true) => {
     revision.current++; abort.current?.abort(); requestId.current = null;
     setPreview(null); setAutoSettings(null); setQuote(null); setConsent(false); setGenerationConsent(false); setDirectorPlanReady(false); setMessage("");
@@ -134,6 +138,8 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
   }
   function addSources(files: FileList | File[] | null, kind: Source["kind"], role: Source["role"]) {
     if (!files?.length || isActive(jobRef.current) || jobGuard.current) return;
+    const remaining = role === "reference" ? Math.min((kind === "image" ? 9 : 3) - sourcesRef.current.filter(source => source.role === "reference" && source.kind === kind).length, 12 - sourcesRef.current.filter(source => source.role === "reference").length) : 1;
+    if (files.length > remaining) {setMessage(`Choose at most ${Math.max(0, remaining)} more ${kind} files. Nothing was discarded.`); return;}
     for (const file of Array.from(files)) { const error = sourceError(file, kind); if (error) { setMessage(error); return; } }
     const added: Source[] = Array.from(files).map(file => ({ id: newClientRequestId(), file, kind, role, description: "", includeAudio: false, clipStartSeconds: 0, revision: 0 }));
     const kept = role === "reference" ? sourcesRef.current : sourcesRef.current.filter(source => {
@@ -222,6 +228,41 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
     } catch { /* Ignore obsolete history. */ }
     return () => { signal.abort(); abort.current?.abort(); jobAbort.current?.abort(); };
   }, [storageKey, historyKey, acceptJob, videoEditControls]);
+  useEffect(()=>{
+    let stopped=false;setDraftReady("");
+    if(videoEditControls){setDraftReady(draftKey);return;}
+    void (async()=>{
+      try{
+        const raw=JSON.parse(localStorage.getItem(draftKey)||"null");
+        if(raw?.version===1&&Array.isArray(raw.sources)&&raw.sources.length<=14){
+          const files=await readPersistedH3MediaFiles(raw.sources);
+          if(stopped)return;
+          const restored:Source[]=raw.sources.flatMap((item:PersistedH3MediaMeta&{role:Source["role"]})=>{
+            const file=files.get(item.storageKey);return file&&["image","video","audio"].includes(item.kind)&&["first","last","reference"].includes(item.role)?[{id:item.id,file,kind:item.kind,role:item.role,description:item.description||"",includeAudio:!!item.includeAudio,clipStartSeconds:item.clipStartSeconds||0,revision:0}]:[];
+          });
+          sourcesRef.current=restored;setSources(restored);
+          if(raw.plan)setPlan(reconcileDraft(DEFAULT_H3_STUDIO_PLAN,raw.plan));
+          if(restored.length!==raw.sources.length)setMessage("Some files could not be restored from device storage. Saved uploads remain available.");
+        }
+      }catch{if(!stopped)setMessage("The previous H3 draft could not be restored. Saved uploads remain available.");}
+      finally{if(!stopped)setDraftReady(draftKey);}
+    })();return()=>{stopped=true;};
+  },[draftKey,videoEditControls]);
+  useEffect(()=>{
+    if(draftReady!==draftKey||videoEditControls)return;
+    let stopped=false;setDraftSaving(true);
+    const metas=sources.map(source=>({id:source.id,kind:source.kind,role:source.role,name:source.file.name,type:source.file.type,size:source.file.size,lastModified:source.file.lastModified,description:source.description,includeAudio:source.includeAudio,clipStartSeconds:source.clipStartSeconds,storageKey:mediaStorageKey(draftKey,source.id)}));
+    try{localStorage.setItem(draftKey,JSON.stringify({version:1,plan,sources:metas}));}catch{setMessage("H3 settings could not save to this device. Check device storage.");}
+    const prior=draftMediaWrite.current;
+    if(!prior||prior.key!==draftKey||prior.files.length!==sources.length||sources.some((source,index)=>prior.files[index].id!==source.id||prior.files[index].file!==source.file)){
+      draftMediaWrite.current={key:draftKey,files:sources.map(source=>({id:source.id,file:source.file})),work:writePersistedH3MediaFiles(draftKey,sources.map((source,index)=>({key:metas[index].storageKey,file:source.file})))};
+    }
+    // Text/settings changes reuse the pending file save instead of rewriting
+    // large image/video blobs on every keystroke.
+    void draftMediaWrite.current!.work
+      .catch(()=>{if(!stopped)setMessage("H3 inputs could not save to this device. Keep the app open or check device storage.");}).finally(()=>{if(!stopped)setDraftSaving(false);});
+    return()=>{stopped=true;};
+  },[draftReady,draftKey,plan,sources,videoEditControls]);
   useEffect(() => {
     if (controlledBackend && controlledBackend !== backend) { invalidate(); setPlan(current => ({ ...current, backend: controlledBackend })); }
   }, [controlledBackend, backend, invalidate]);
@@ -463,7 +504,8 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
     {videoEditControls ? <>{planActions}{mediaIssue ? <p role="status">{mediaIssue}</p> : <p className={css.notice}>{directGeneration ? "Create Video starts your edit using the selected inputs." : "Create Video reviews the edit locally first; approve the generation estimate to submit it."}</p>}</> : null}
     <fieldset className={css.fields} aria-label="Source media">
       <legend>Optional source media</legend>
-      <div className={css.grid}>{(videoEditControls ? ["image", "audio"] as const : ["image", "video", "audio"] as const).map(kind => <label key={kind}>Add {kind} references<input type="file" accept={MEDIA_ACCEPT[kind]} multiple onChange={event => { addSources(event.target.files, kind, "reference"); event.target.value = ""; }} /></label>)}</div>
+      {!videoEditControls&&sources.length>0&&<p role="status" data-otg="h3-input-save">{draftSaving?"Saving inputs…":"Inputs saved"}</p>}
+      <div className={css.grid}>{(videoEditControls ? ["image", "audio"] as const : ["image", "video", "audio"] as const).map(kind => <label key={kind}>Add {kind} references<input type="file" accept={MEDIA_ACCEPT[kind]} multiple data-max-files={Math.max(0,Math.min((kind==="image"?9:3)-sources.filter(s=>s.kind===kind&&s.role==="reference").length,12-sources.filter(s=>s.role==="reference").length))} onChange={event => { addSources(event.target.files, kind, "reference"); event.target.value = ""; }} /></label>)}</div>
       {!videoEditControls&&<>
         {savedUploads.error&&<p role="status">{savedUploads.error}<button type="button" onClick={()=>void savedUploads.retry()}>Retry saved uploads</button></p>}
         <H3SavedUploads items={savedUploads.uploads.filter(item=>!sources.some(source=>source.id===item.id))} disabled={busy||jobBusy||isActive(job)} canAdd={item=>canAddSaved(savedUploads.uploads.find(upload=>upload.id===item.id)!)} onAdd={addSaved} onRemove={id=>void savedUploads.remove(id)} note="Saved on this device. Removing a saved copy does not change Gallery or past renders.">
@@ -472,7 +514,8 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
       </>}
       <div className={css.row}>{!videoEditControls && (controller === "auto" || plan.workflowId === "native-i2v") ? <><button type="button" onClick={() => setSnapshotRole("first")}>First-frame input from video</button><button type="button" onClick={() => setSnapshotRole("last")}>Last-frame input from video</button></> : <button type="button" onClick={() => setSnapshotRole("reference")}>Reference image from video</button>}</div>
       {sources.map((source, index) => <article className={css.status} key={source.id} aria-label={`Source ${index + 1}`}>
-        <p>{source.file.name} · {source.kind}</p><SourcePreview source={source} />
+        <p>{index+1}. {source.file.name} · {source.kind}</p><SourcePreview source={source} />
+        {source.role==="reference"&&<div className={css.row}>{([-1,1] as const).map(direction=><button key={direction} type="button" disabled={busy||jobBusy||isActive(job)||index+direction<0||index+direction>=sources.length||sources[index+direction]?.role!=="reference"} aria-label={`Move ${source.file.name} ${direction<0?'earlier':'later'}`} onClick={()=>{const next=[...sourcesRef.current];[next[index],next[index+direction]]=[next[index+direction],next[index]];updateSources(next);}}>{direction<0?'Earlier':'Later'}</button>)}</div>}
         <div className={css.grid}>
           <label>Role for {source.file.name}<select value={source.role} disabled={source.kind !== "image" || videoEditControls} onChange={event => updateSource(source.id, { role: event.target.value as Source["role"] })}><option value="reference">Reference</option><option value="first" disabled={sources.some(item => item.id !== source.id && item.role === "first")}>First frame</option><option value="last" disabled={sources.some(item => item.id !== source.id && item.role === "last")}>Last frame</option></select></label>
           <label>Description for {source.file.name}<input maxLength={1000} value={source.description} onChange={event => updateSource(source.id, { description: event.target.value })} /></label>

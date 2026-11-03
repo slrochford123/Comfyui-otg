@@ -11,6 +11,8 @@ import SpinDialNav, { type SpinTabId } from "./components/SpinDialNav";
 import AdminGpuControls from "./components/AdminGpuControls";
 import MediaGpuControl from "./components/MediaGpuControl";
 import ImageEditEngineSelect from "./components/ImageEditEngineSelect";
+import OrderedImageInputs from "./components/OrderedImageInputs";
+import GooglePhotosConnectionPanel from "./components/GooglePhotosConnectionPanel";
 import {runNativeImageEdit, waitForNativeImage, saveNativeImageToGallery, type NativeEditEngine, type NativeImageResult} from "@/lib/client/nativeImages";
 import {GeneratePreviewBinding, loadNativeImagePreview} from "@/lib/client/generatePreviewBinding";
 import {useH3Resume} from "@/lib/client/useH3Resume";
@@ -1381,6 +1383,7 @@ export default function AppPageClient({ initialUser = null, experimentalEnabled 
     modelId: "", enabled: false, discoveredOn: [], missingOn: [],
   });
   const [editInputCount, setEditInputCount] = useState(1);
+  const [editReferenceFiles, setEditReferenceFiles] = useState<File[]>([]);
   const [imageEditEngine, setImageEditEngine] = useState<NativeEditEngine>("qwen");
   const [nativeEditJobId, setNativeEditJobId] = useState("");
   const nativeEditAbort = useRef<AbortController | null>(null);
@@ -1838,6 +1841,7 @@ useEffect(() => {
 
   useEffect(() => {
     setEditInputCount(1);
+    setEditReferenceFiles([]);
     secondImageFileRef.current = null;
     thirdImageFileRef.current = null;
     setSecondImageFileName("");
@@ -2106,6 +2110,8 @@ const activeGenerateStylePreset = useMemo(
   }, []);
 
   const clearGenerateMediaInputs = useCallback(() => {
+    setEditReferenceFiles([]);
+    setEditInputCount(1);
     uploadedFileRef.current = null;
     secondImageFileRef.current = null;
     thirdImageFileRef.current = null;
@@ -2183,6 +2189,10 @@ const activeGenerateStylePreset = useMemo(
           lastFrameFileRef.current = file;
           setLastFrameFileName(safeName);
           updateLastFrameInputPreview(file);
+        } else if (isEditImageWorkflowSelected && uploadedFileRef.current) {
+          const maximum=imageEditEngine==="qwen"?16:4;
+          if(1+editReferenceFiles.length>=maximum)throw Error(`This editor accepts at most ${maximum} images.`);
+          setEditReferenceFiles(current=>[...current,file]);setEditInputCount(current=>current+1);
         } else {
           uploadedFileRef.current = file;
           setUploadedFileName(safeName);
@@ -2196,7 +2206,7 @@ const activeGenerateStylePreset = useMemo(
         setGenerateGallerySelecting("");
       }
     },
-    [generateGalleryPickerTarget, getGenerateGalleryItemName, updateGenerateInputPreview, updateLastFrameInputPreview]
+    [generateGalleryPickerTarget, getGenerateGalleryItemName, updateGenerateInputPreview, updateLastFrameInputPreview, isEditImageWorkflowSelected, imageEditEngine, editReferenceFiles]
   );
 
   const clearSceneReferenceAnalysis = useCallback((slot: SceneReferenceSlotKey) => {
@@ -3743,8 +3753,8 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   const handleGenerate = useCallback(async () => {
     if (generateSubmitInFlightRef.current || generateBusy || progressStatus === "running") return;
     if (nativeEditJobId) {setStatusMessage("The previous image edit is unresolved. Cancel or reconcile that exact job before resubmitting."); return;}
-    if (isEditImageWorkflowSelected && imageEditEngine !== "qwen" && editInputCount > 1) {
-      setStatusMessage("Fibo currently supports one source here. Choose Qwen to retain all references, or explicitly remove the additional references first.");
+    if (isEditImageWorkflowSelected && imageEditEngine !== "qwen" && editInputCount > 4) {
+      setStatusMessage("Fibo accepts up to 4 images total. Remove extra references or choose Qwen; nothing was discarded.");
       return;
     }
     if (generateMediaMode === "video" && !videoWorkflowReady) {
@@ -3783,14 +3793,6 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
     if (isEditImageWorkflowSelected && !uploadedFileRef.current) {
       setStatusMessage("Upload an input image first.");
-      return;
-    }
-    if (isEditImageWorkflowSelected && editInputCount >= 2 && !secondImageFileRef.current) {
-      setStatusMessage("Upload the second reference image or remove that slot.");
-      return;
-    }
-    if (isEditImageWorkflowSelected && editInputCount >= 3 && !thirdImageFileRef.current) {
-      setStatusMessage("Upload the third reference image or remove that slot.");
       return;
     }
 
@@ -3837,7 +3839,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
       if (isEditImageWorkflowSelected && imageEditEngine !== "qwen") {
         nativeEditActive.current = true; setNativeCompletedJobId("");
         const abort = new AbortController(); nativeEditAbort.current = abort;
-        const output = await runNativeImageEdit({saveToGallery: true, model: imageEditEngine, image: uploadedFileRef.current!,
+        const output = await runNativeImageEdit({saveToGallery: true, model: imageEditEngine, image: uploadedFileRef.current!, referenceImages: editReferenceFiles,
           prompt: exactEditPrompt, negativePrompt, seed: String(randomSeed()), signal: abort.signal,
           width: orientation === "portrait" ? 768 : 1344, height: orientation === "portrait" ? 1344 : 768,
           onStatus: status => {if (["failed", "canceled"].includes(status)) setNativeEditJobId("");},
@@ -3935,12 +3937,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
         }
       }
 
-      if (isEditImageWorkflowSelected && editInputCount >= 2 && secondImageFileRef.current) {
-        body.set("imageB", secondImageFileRef.current);
-      }
-      if (isEditImageWorkflowSelected && editInputCount >= 3 && thirdImageFileRef.current) {
-        body.set("imageC", thirdImageFileRef.current);
-      }
+      if (isEditImageWorkflowSelected) editReferenceFiles.forEach((file, i) => body.set(`image${String.fromCharCode(66+i)}`, file));
 
       if (isCustomAudioVideoWorkflowSelected && customAudioFileRef.current) {
         body.set("audioA", customAudioFileRef.current);
@@ -3984,6 +3981,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     composeGeneratePrompt,
     durationSeconds,
     editInputCount,
+    editReferenceFiles,
     imageEditEngine,
     nativeEditJobId,
     generateBusy,
@@ -6839,7 +6837,12 @@ async function handleAskAi() {
             </div>
 
             <div>
-              {(videoNeedsStarterImage || isEditImageWorkflowSelected) ? <Card title={videoNeedsLastFrameImage ? "First frame image" : videoNeedsStarterImage ? "Starter image" : "Input image"}>
+              {isEditImageWorkflowSelected ? <Card title="Input images"><OrderedImageInputs files={uploadedFileRef.current ? [uploadedFileRef.current, ...editReferenceFiles] : []} maximum={imageEditEngine === "qwen" ? 16 : 4} disabled={generateBusy} onGallery={() => {setGenerateGalleryPickerTarget("input");setGenerateGalleryPickerOpen(true);void loadGenerateGalleryItems();}} onChange={files => {
+                uploadedFileRef.current = files[0] || null;setUploadedFileName(files[0]?.name || "");updateGenerateInputPreview(files[0] || null);
+                setEditReferenceFiles(files.slice(1));setEditInputCount(Math.max(1,files.length));
+                secondImageFileRef.current=files[1]||null;thirdImageFileRef.current=files[2]||null;
+              }} /></Card> : null}
+              {videoNeedsStarterImage ? <Card title={videoNeedsLastFrameImage ? "First frame image" : "Starter image"}>
                 <div className="flex flex-wrap items-center gap-3">
                   <ActionButton onClick={() => imageInputRef.current?.click()}>{videoNeedsLastFrameImage ? "Upload first image" : videoNeedsStarterImage ? "Upload starter image" : "Upload image"}</ActionButton>
                   <ActionButton
@@ -6891,55 +6894,6 @@ async function handleAskAi() {
                     </div>
                   </div>
                 </div>
-                {isEditImageWorkflowSelected && selectedImageModel ? (
-                  <div className="mt-4 space-y-3">
-                    {editInputCount >= 2 ? (
-                      <div className="flex flex-wrap items-center gap-3 rounded-[18px] border border-white/10 bg-white/[0.03] p-3">
-                        <ActionButton onClick={() => secondImageInputRef.current?.click()}>Upload image 2</ActionButton>
-                        <span className="min-w-0 flex-1 truncate text-sm text-white/60">{secondImageFileName || "No file selected"}</span>
-                        <GhostButton onClick={() => {
-                          secondImageFileRef.current = null;
-                          thirdImageFileRef.current = null;
-                          setSecondImageFileName("");
-                          setThirdImageFileName("");
-                          setEditInputCount(1);
-                        }}>Remove</GhostButton>
-                        <input ref={secondImageInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => {
-                          const file = event.target.files?.[0] || null;
-                          secondImageFileRef.current = file;
-                          setSecondImageFileName(file?.name || "");
-                        }} />
-                      </div>
-                    ) : null}
-                    {editInputCount >= 3 ? (
-                      <div className="flex flex-wrap items-center gap-3 rounded-[18px] border border-white/10 bg-white/[0.03] p-3">
-                        <ActionButton onClick={() => thirdImageInputRef.current?.click()}>Upload image 3</ActionButton>
-                        <span className="min-w-0 flex-1 truncate text-sm text-white/60">{thirdImageFileName || "No file selected"}</span>
-                        <GhostButton onClick={() => {
-                          thirdImageFileRef.current = null;
-                          setThirdImageFileName("");
-                          setEditInputCount(2);
-                        }}>Remove</GhostButton>
-                        <input ref={thirdImageInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => {
-                          const file = event.target.files?.[0] || null;
-                          thirdImageFileRef.current = file;
-                          setThirdImageFileName(file?.name || "");
-                        }} />
-                      </div>
-                    ) : null}
-                    {imageEditEngine === "qwen" && selectedImageModel.maxInputImages > editInputCount ? (
-                      <button
-                        type="button"
-                        aria-label="Add another reference image"
-                        onClick={() => setEditInputCount((count) => Math.min(selectedImageModel.maxInputImages, count + 1))}
-                        className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-cyan-300/35 bg-cyan-400/10 text-2xl font-black text-cyan-100"
-                      >
-                        +
-                      </button>
-                    ) : null}
-                    <p className="text-sm text-white/45">{imageEditEngine === "qwen" ? `This workflow accepts up to ${selectedImageModel.maxInputImages} reference images.` : "Fibo editing currently uses one source image."}</p>
-                  </div>
-                ) : null}
               </Card> : null}
               {generateGalleryPickerOpen ? (
                 <div className="fixed inset-0 z-[80] overflow-y-auto bg-black/80 px-4 py-6 backdrop-blur-sm">
@@ -8041,6 +7995,7 @@ async function handleAskAi() {
                 ) : null}
               </Card>
 
+              <GooglePhotosConnectionPanel admin={isAdmin} />
               <OpenAIConnectionPanel />
 
               <Card title="Comfy connection">

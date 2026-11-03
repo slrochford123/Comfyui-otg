@@ -21,8 +21,8 @@ describe("One explicit Qwen / Fibo image edit choice", () => {
     expect(change).toHaveBeenCalledWith("qwen");
   });
   it("does not discard additional references to enable Fibo", () => {
-    render(<ImageEditEngineSelect value="qwen" onChange={() => {}} referenceCount={2} />);
-    expect(screen.getByRole("option", {name: "Fibo · single source only"}).hasAttribute("disabled")).toBe(true);
+    render(<ImageEditEngineSelect value="qwen" onChange={() => {}} referenceCount={5} />);
+    expect(screen.getByRole("option", {name: "Fibo · maximum 4 images"}).hasAttribute("disabled")).toBe(true);
   });
   it("locks both family and variant while editing", () => {
     render(<ImageEditEngineSelect value="fibo2-edit-turbo" onChange={() => {}} disabled />);

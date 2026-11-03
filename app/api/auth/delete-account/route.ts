@@ -8,6 +8,7 @@ import { cookieName } from "@/lib/auth/cookies";
 import { verifySession } from "@/lib/auth/jwt";
 import { db, ensureMigrations } from "@/lib/auth/db";
 import { OTG_DATA_ROOT, OTG_USER_OUTPUT_ROOT } from "@/lib/paths";
+import {deleteGooglePhotosAccount} from "@/lib/googlePhotos";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -89,6 +90,7 @@ export async function POST(req: Request) {
   }
 
   try {
+    await deleteGooglePhotosAccount(user.id).catch(()=>{});
     rmrf(path.join(OTG_USER_OUTPUT_ROOT, username));
     rmrf(path.join(OTG_DATA_ROOT, "user_favorites", username));
 

@@ -2114,6 +2114,19 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       return setMessage(`H3 supports at most ${limit} ${kind} references.`);
     setReferences((current) => [...current, media(file, kind,saved)]);
   }
+  function addReferenceBatch(kind: MediaKind, files: File[], realism = false) {
+    const current = realism ? realismReferences : references;
+    const limit = kind === "image" ? 9 : 3;
+    const remaining = Math.max(0, Math.min(limit - current.filter(item => item.kind === kind).length, 12 - current.length));
+    if (files.length > remaining) {setMessage(`Choose at most ${remaining} more ${kind} references. Nothing was discarded.`); return;}
+    const added = files.map(file => media(file, kind));
+    if (realism) {
+      try {validateH3RealismReferences([...current, ...added].map(item => ({kind: item.kind, name: item.name, description: item.description, durationSeconds: item.sourceDurationSeconds})));}
+      catch (error) {added.forEach(release); setMessage(error instanceof Error ? error.message : "Reference limit exceeded."); return;}
+    }
+    (realism ? setRealismReferences : setReferences)(previous => [...previous, ...added]);
+    setMessage("");
+  }
   function addRealismReference(kind: MediaKind, file: File, saved?:SavedH3Upload) {
     const next = [...realismReferences, media(file, kind,saved)];
     try {
@@ -4091,6 +4104,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
             onFirstGallery={() => setGalleryTarget("first")} onRemoveFirst={() => {release(firstImage); setFirstImage(null);}}
             images={smartMedia.filter(item => item.kind === "image")} videos={smartMedia.filter(item => item.kind === "video").length} audios={smartMedia.filter(item => item.kind === "audio").length}
             slots={refModSlots} onAddImage={file => studioMode === "h3-realism" ? addRealismReference("image", file) : addReference("image", file)}
+            onAddImages={files => addReferenceBatch("image", files, studioMode === "h3-realism")}
             onImageGallery={() => setGalleryTarget("reference-image")}
             onRemoveImage={id => studioMode === "h3-realism" ? removeRealismReference(id) : removeReference(id)}
             onMoveImage={(id, direction) => {
@@ -4213,8 +4227,8 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                           type="file"
                           accept={H3_MEDIA_ACCEPT[kind]}
                           onChange={(event) => {
-                            const file = event.target.files?.[0];
-                            if (file) addRealismReference(kind, file);
+                            const files = Array.from(event.target.files || []);
+                            addReferenceBatch(kind, files, true);
                             event.currentTarget.value = "";
                           }}
                         />
@@ -5097,7 +5111,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                         accept={H3_MEDIA_ACCEPT[kind]}
                         onChange={(event) => {
                           const file = event.target.files?.[0];
-                          if (file) addReference(kind, file);
+                          if (file) addReferenceBatch(kind, Array.from(event.target.files || []));
                           event.currentTarget.value = "";
                         }}
                       />

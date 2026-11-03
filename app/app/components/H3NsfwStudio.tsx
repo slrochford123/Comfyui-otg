@@ -278,6 +278,20 @@ export default function H3NsfwStudio({ownerKey=""}:{ownerKey?:string}) {
     await save();
     updateUi({pendingUpload:null});if(ownerKey)await clearPersistedH3MediaFiles(uploadKey);
   }
+  async function attachBatch(files: File[]) {
+    const state = editorRef.current.settings;
+    const selected = (state.selectedSources || []).map(id => sessionRef.current?.assets.find(a => a.id === id)).filter(Boolean);
+    const replacing = ["image", "edit-image"].includes(state.mode);
+    if (files.length > (replacing ? 1 : MAX_H3_RENDER_REFERENCES - selected.length)) throw new Error("Too many references for this render. Nothing was discarded.");
+    for (const kind of ["image","video","audio"]) {
+      const added=files.filter(file=>labUploadMime(file.name,file.type).startsWith(kind+"/"));
+      const maximum=kind==="image"?(replacing?1:9):kind==="video"?(state.mode==="edit"?1:3):(state.mode==="edit"?0:3);
+      const remaining=maximum-(replacing?0:selected.filter(a=>a?.mime.startsWith(kind+"/")).length);
+      if(added.length>remaining)throw new Error(`Choose at most ${remaining} more ${kind} files. Nothing was discarded.`);
+      if(added.some(file=>file.size>(kind==="image"?MAX_LAB_IMAGE_BYTES:128*1024**2)))throw new Error("A selected file exceeds the upload size limit. Nothing was added.");
+    }
+    for (const file of files) await attach(file);
+  }
   async function resumeUpload(){
     const pending=uiRef.current.pendingUpload;if(!pending)return;
     const files=await readPersistedH3MediaFiles([{...pending,id:"pending",kind:pending.type.split('/')[0] as "image"|"video"|"audio",description:"",storageKey:pending.storageKey}]);
@@ -337,7 +351,7 @@ export default function H3NsfwStudio({ownerKey=""}:{ownerKey?:string}) {
           <div className="flex flex-wrap gap-2">{["image", "video", "audio"].filter(kind => kind === "image" || (kind === "video" && ["reference", "edit"].includes(settings.mode)) || (kind === "audio" && settings.mode === "reference")).map(kind => <button key={kind} className={button} disabled={busy} onClick={() => { setUploadType(kind + "/*"); if (fileInput.current) { fileInput.current.accept = kind + "/*"; fileInput.current.click(); } }}>+ {kind[0].toUpperCase() + kind.slice(1)}</button>)}<button className={button} disabled={busy} onClick={() => setSnapshotOpen(true)}>Snapshot</button></div>
           {inputProblem && <p className="text-sm text-white/60">{inputProblem}</p>}
         </>}
-        <input ref={fileInput} type="file" accept={uploadType} className="hidden" aria-label="Add reference file" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void act(() => attach(file)); }} />
+        <input ref={fileInput} type="file" multiple={!['image','edit-image'].includes(settings.mode)} data-max-files={['image','edit-image'].includes(settings.mode)?1:Math.max(0,Math.min(uploadType.startsWith('image')?9-imageCount:3-(uploadType.startsWith('video')?videoCount:audioCount),MAX_H3_RENDER_REFERENCES-sources.length))} accept={uploadType} className="hidden" aria-label="Add reference file" disabled={busy} onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ""; if (files.length) void act(() => attachBatch(files)); }} />
         {progress !== null && <div role="status" className="flex items-center gap-2 text-sm"><progress className="min-w-0 flex-1" value={progress} max={100} aria-label="Upload progress" /><span>{progress===100?"Preparing…":`${progress}%`}</span><button className={button} onClick={() => upload.current?.abort()}>Cancel upload</button></div>}
         <div className="grid gap-3 sm:grid-cols-2">{sources.map((asset, index) => <article key={asset.id} aria-label={`Reference ${asset.name}`} className="min-w-0 space-y-2 rounded-xl border border-white/10 p-2">
           <Media asset={asset} small /><div className="flex items-center justify-between gap-2"><span className="text-sm font-medium">{tag(asset)}</span><button className={button} disabled={busy} aria-label={`Remove ${asset.name}`} onClick={() => selectInputs(ids.filter(id => id !== asset.id))}>Remove</button></div>

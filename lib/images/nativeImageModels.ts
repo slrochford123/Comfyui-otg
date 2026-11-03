@@ -52,7 +52,7 @@ export const NATIVE_CREATE_CONFIGS = Object.fromEntries(
 }>;
 export function buildNativeImageGraph(args: {
   model: NativeImageModel; prompt: string; negativePrompt?: string;
-  width: number; height: number; seed: number; image?: string;
+  width: number; height: number; seed: number; image?: string; images?: string[];
 }): NativeImageGraph {
   const config = NATIVE_IMAGE_MODELS[args.model];
   if (!config) throw Error("Unknown native image model.");
@@ -64,8 +64,10 @@ export function buildNativeImageGraph(args: {
     }
   }
   if (args.width * args.height > 1_100_000) throw Error("Native image generation is limited to about one megapixel.");
-  if (config.operation === "edit" && !args.image) throw Error("Fibo Turbo is an edit model: a source image is required.");
-  if (args.model === "minimax-h3-image" && args.image) throw Error("This H3 template is text-to-image, not image editing.");
+  const images = args.images ?? (args.image ? [args.image] : []);
+  if (images.length > 4) throw Error("Fibo accepts at most 4 images total. Nothing was discarded.");
+  if (config.operation === "edit" && !images.length) throw Error("Fibo Turbo is an edit model: a source image is required.");
+  if (args.model === "minimax-h3-image" && images.length) throw Error("This H3 template is text-to-image, not image editing.");
   const graph: NativeImageGraph = {
     "451": {class_type: "UNETLoader", inputs: {unet_name: config.unet, weight_dtype: "default"}},
     "453": {class_type: "CLIPLoader", inputs: {clip_name: config.clip, type: config.clipType, device: "default"}},
@@ -77,9 +79,12 @@ export function buildNativeImageGraph(args: {
     graph["474"] = {class_type: "TextEncodeFibo2", inputs: {
       clip: ["453", 0], vae: ["454", 0], prompt: args.prompt,
       negative_prompt: args.negativePrompt || "", width: args.width, height: args.height, batch_size: 1,
-      ...(args.image ? {"images.image_1": ["470", 0]} : {}),
     }};
-    if (args.image) graph["470"] = {class_type: "LoadImage", inputs: {image: args.image}};
+    images.forEach((image, index) => {
+      const id = index === 0 ? "470" : `fibo_reference_${index + 1}`;
+      graph[id] = {class_type: "LoadImage", inputs: {image}};
+      graph["474"].inputs[`images.image_${index + 1}`] = [id, 0];
+    });
     graph["458"] = {class_type: "KSampler", inputs: {
       model: ["451", 0], positive: ["474", 0], negative: ["474", 1], latent_image: ["474", 2],
       seed: args.seed, steps: config.steps, cfg: config.cfg, sampler_name: "euler", scheduler: "simple", denoise: 1,

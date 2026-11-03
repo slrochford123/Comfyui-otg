@@ -35,41 +35,49 @@ export async function POST(req: NextRequest) {
     const multipart = req.headers.get("content-type")?.includes("multipart/form-data");
     // Enforce actual streamed bytes before parsing, not only the file's size
     // after an unbounded multipart body has already been loaded into RAM.
-    const form = multipart ? await limitedFormData(req, 21 * 1024 * 1024) : null;
+    const form = multipart ? await limitedFormData(req, 81 * 1024 * 1024) : null;
     const body = form ? Object.fromEntries(form) : await limitedJson(req, 256 * 1024);
     if (!isNativeImageModel(body.model)) throw Object.assign(Error("Choose a supported local image model."), {status: 400});
     const model: NativeImageModel = body.model;
-    if (["imageB", "imageC", "imageBPath", "imageCPath", "referenceImages"].some(key => body[key])) {
-      throw Object.assign(Error("This local image editor is verified with one source image. Use Qwen for multiple references; none have been discarded."), {status: 400});
-    }
+    if ((!form && body.referenceImages) || Object.keys(body).some(key => /^image[E-Z](Path)?$/.test(key))) throw Object.assign(Error("Fibo accepts at most 4 images. Use referencePaths for saved references."),{status:400});
     const prompt = String(body.prompt || body.positivePrompt || "").trim();
     if (!prompt || prompt.length > 12_000) throw Object.assign(Error("Enter a prompt of 1–12000 characters."), {status: 400});
     let width = Number(body.width || 1024), height = Number(body.height || 1024);
     const seed = body.seed === undefined || body.seed === "" ? randomInt(0, 2 ** 48 - 1) : Number(body.seed);
-    let source: Buffer | undefined;
-    const image = form?.get("image");
-    if (image instanceof File && image.size) {
+    let referencePaths: unknown = body.referencePaths || [];
+    if (typeof referencePaths === "string") {try {referencePaths = JSON.parse(referencePaths);} catch {throw Object.assign(Error("Invalid reference paths."), {status: 400});}}
+    if (!Array.isArray(referencePaths) || referencePaths.some(p => typeof p !== "string" || !p.trim())) throw Object.assign(Error("Invalid reference paths."), {status: 400});
+    const image = form?.get("image") || form?.get("imageA");
+    if (!image && !body.imageAPath && (form?.getAll("referenceImages").length || (referencePaths as unknown[]).length || ["imageB","imageC","imageD","imageBPath","imageCPath","imageDPath"].some(key=>body[key]))) throw Object.assign(Error("A source image is required before additional references."),{status:400});
+    const inputs: Array<File | string> = [image instanceof File && image.size ? image : String(body.imageAPath || ""),
+      ...(form?.getAll("referenceImages") || []), ...referencePaths,
+      ...["imageB", "imageC", "imageD"].flatMap(key => form?.get(key) instanceof File ? [form.get(key)!] : body[key + "Path"] ? [String(body[key + "Path"])] : [])].filter(Boolean) as Array<File | string>;
+    if (inputs.length > 4) throw Object.assign(Error("Fibo accepts at most 4 images total. Nothing was discarded."), {status: 400});
+    const sources: Buffer[] = [];
+    for (const image of inputs) {
+      let source: Buffer;
+      if (image instanceof File && image.size) {
       if (image.size > 20 * 1024 * 1024) throw Object.assign(Error("Source image must be at most 20 MB."), {status: 400});
       source = Buffer.from(await image.arrayBuffer());
-    } else if (body.imageAPath) {
+    } else if (typeof image === "string") {
       // Reuse the existing authenticated, realpath/owner-scoped media resolver.
       // Never read an arbitrary browser-supplied filesystem path directly.
-      const response = await ownedFile(new NextRequest(new URL(`/api/file?path=${encodeURIComponent(String(body.imageAPath))}`, req.url), {headers: req.headers}));
+      const response = await ownedFile(new NextRequest(new URL(`/api/file?path=${encodeURIComponent(image)}`, req.url), {headers: req.headers}));
       if (!response.ok) throw Object.assign(Error("The source image is not accessible to this account."), {status: 403});
       if (Number(response.headers.get("content-length") || 0) > 20 * 1024 * 1024) throw Object.assign(Error("Source image is too large."), {status: 400});
       source = Buffer.from(await response.arrayBuffer());
-    }
-    if (source) {
+      } else throw Object.assign(Error("Choose a valid reference image."), {status: 400});
       if (source.length > 20 * 1024 * 1024) throw Object.assign(Error("Source image is too large."), {status: 400});
       try { source = await sharp(source, {limitInputPixels: 16_777_216, animated: false}).rotate().png().toBuffer(); }
       catch { throw Object.assign(Error("The source must be a valid still image, up to 16 megapixels."), {status: 400}); }
-      if (!body.width && !body.height) {
+      if (!sources.length && !body.width && !body.height) {
         const metadata = await sharp(source).metadata();
         ({width, height} = nativeImageEditDimensions(metadata.width!, metadata.height!));
       }
+      sources.push(source);
     }
     // Validate semantics and dimensions before claiming a request or uploading.
-    try {buildNativeImageGraph({model, prompt, width, height, seed, image: source ? "pending.png" : undefined});}
+    try {buildNativeImageGraph({model, prompt, width, height, seed, images: sources.map((_, i) => `pending-${i}.png`)});}
     catch (error) {throw Object.assign(error as Error, {status: 400});}
     const id = String(body.clientRequestId || randomUUID());
     file = fileFor(owner.ownerKey, id);
@@ -82,17 +90,17 @@ export async function POST(req: NextRequest) {
     }
     const backend = await chooseNativeImageBackend(model);
     job.baseUrl = backend.baseUrl;
-    let name: string | undefined;
-    if (source) {
+    const names: string[] = [];
+    for (const [index, source] of sources.entries()) {
       const upload = new FormData();
-      upload.set("image", new File([new Uint8Array(source)], `slr-native-${id}.png`, {type: "image/png"}));
+      upload.set("image", new File([new Uint8Array(source)], `slr-native-${id}-${index}.png`, {type: "image/png"}));
       upload.set("overwrite", "false");
       const response = await fetch(backend.baseUrl + "/upload/image", {method: "POST", body: upload, signal: AbortSignal.timeout(30_000)});
       const uploaded = await response.json();
       if (!response.ok || !uploaded.name) throw Error("ComfyUI did not accept the source image.");
-      name = [uploaded.subfolder, uploaded.name].filter(Boolean).join("/");
+      names.push([uploaded.subfolder, uploaded.name].filter(Boolean).join("/"));
     }
-    const graph = buildNativeImageGraph({model, prompt, negativePrompt: String(body.negativePrompt || ""), width, height, seed, image: name});
+    const graph = buildNativeImageGraph({model, prompt, negativePrompt: String(body.negativePrompt || ""), width, height, seed, images: names});
     graph["461"].inputs.filename_prefix = `SLR_TEST_Images/${safeSegment(owner.ownerKey)}/${id}`;
     job.status = "submitting";
     await writeJob(file, job);
