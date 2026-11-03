@@ -5,7 +5,8 @@ import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { NextRequest, NextResponse } from "next/server";
-import { abandonAsset, finishAsset, getAsset, getSession, MAX_ASSET_BYTES, reserveAsset } from "@/lib/experiments/store";
+import { abandonAsset, finishAsset, getAsset, getSession, MAX_ASSET_BYTES, reserveAsset, removeSavedUpload } from "@/lib/experiments/store";
+import sharp from "sharp";
 import { privateHeaders } from "@/lib/experiments/http";
 import { assertNsfwSession } from "./apiHandlers";
 import { requireNsfwAccess } from "./nsfwAccess";
@@ -62,6 +63,11 @@ export async function assetServe(request:NextRequest, owner:string, restricted=f
   if(restricted)assertNsfwSession(owner,asset.session);
   const prepared=asset.role!=="generated"&&asset.mime.startsWith("image/")&&request.nextUrl.searchParams.get("download")!=="1"?await prepareLabImage(original,asset.sha256,request.signal):null;
   const file=prepared?.file||original;
+  if (request.nextUrl.searchParams.get("thumbnail") === "1" && prepared) {
+    // Decode only the bounded, validated derivative, never a huge original.
+    const thumbnail = await sharp(file).resize(160,160,{fit:"inside",withoutEnlargement:true}).webp({quality:75}).toBuffer();
+    return new Response(request.method === "HEAD" ? null : new Uint8Array(thumbnail), {headers:{...privateHeaders,"Content-Type":"image/webp","Content-Length":String(thumbnail.length),"Content-Security-Policy":"default-src 'none'; sandbox"}});
+  }
   const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   let streamOwnsFd = false;
   try {
@@ -77,4 +83,11 @@ export async function assetServe(request:NextRequest, owner:string, restricted=f
     const stream = fs.createReadStream(file, { fd, autoClose: true, ...(range || {}) }); streamOwnsFd = true;
     return new Response(Readable.toWeb(stream) as ReadableStream, { status: range ? 206 : 200, headers });
   } finally { if (!streamOwnsFd) fs.closeSync(fd); }
+}
+
+export async function assetRemoveSaved(request:NextRequest,owner:string) {
+  const id=request.nextUrl.searchParams.get("id")||"";
+  const {asset}=getAsset(owner,id);
+  assertNsfwSession(owner,asset.session);
+  return NextResponse.json({ok:true,session:removeSavedUpload(owner,id)});
 }

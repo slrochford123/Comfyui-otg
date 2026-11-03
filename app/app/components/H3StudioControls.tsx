@@ -14,6 +14,8 @@ import { newClientRequestId } from "@/lib/client/requestId";
 import css from "./H3StudioControls.module.css";
 import VideoSnapshotPicker from "./VideoSnapshotPicker";
 import H3SpeedIndicator from "./H3SpeedIndicator";
+import H3SavedUploads from "./H3SavedUploads";
+import {useH3SavedUploads,type SavedH3Upload} from "@/lib/client/h3SavedUploads";
 import { MEDIA_GPU_ROUTING_UI_ENABLED } from "./MediaGpuControl";
 export type H3StudioController = "auto" | "manual";
 type Asset = { id: string; kind: "image" | "video" | "audio"; role: "first" | "last" | "reference"; name: string; sha256: string; version: number | string; metadata: { durationSeconds?: number; width?: number; height?: number; hasAudio?: boolean }; url: string };
@@ -72,6 +74,9 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
   const backend = plan.backend ?? "rtx3090";
   const reviewedPlanElement = useRef<HTMLDivElement>(null);
   const [sources, setSources] = useState<Source[]>([]);
+  const savedInputs=useMemo(()=>sources.map(source=>({id:source.id,file:source.file,kind:source.kind,name:source.file.name,description:source.description,includeAudio:source.includeAudio,clipStartSeconds:source.clipStartSeconds,sourceDurationSeconds:(source.asset||source.registrationAsset)?.metadata.durationSeconds})),[sources]);
+  const savedUploads=useH3SavedUploads(ownerKey,savedInputs,true);
+  const [savedRole,setSavedRole]=useState<Source["role"]>("reference");
   const [snapshotRole, setSnapshotRole] = useState<Source["role"] | null>(null);
   const sourcesRef = useRef<Source[]>([]);
   const [catalog, setCatalog] = useState<H3StudioCatalogItem[]>([]);
@@ -137,6 +142,20 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
       return false;
     });
     updateSources([...kept, ...(role === "reference" ? added : added.slice(0, 1))]);
+  }
+  function canAddSaved(item:SavedH3Upload) {
+    if(sourceError(item.file,item.kind))return false;
+    if(savedRole!=="reference")return item.kind==="image";
+    return sources.filter(source=>source.kind===item.kind).length<(item.kind==="image"?9:3)&&sources.length<12;
+  }
+  function addSaved(id:string) {
+    const item=savedUploads.uploads.find(upload=>upload.id===id);
+    if(!item||!canAddSaved(item)||isActive(jobRef.current)||jobGuard.current)return;
+    const kept=savedRole==="reference"?sourcesRef.current:sourcesRef.current.filter(source=>{
+      if(source.role!==savedRole)return true;
+      const previous=source.asset||source.registrationAsset;if(previous)deleteAsset(previous.id);return false;
+    });
+    updateSources([...kept,{id:item.id,file:item.file,kind:item.kind,role:savedRole,description:item.description,includeAudio:!!item.includeAudio,clipStartSeconds:item.clipStartSeconds||0,revision:0}]);
   }
   const acceptJob = useCallback((next: Job) => {
     if (!next?.id || !next.status) throw new Error("The server did not return an H3 job. Refresh before retrying.");
@@ -445,6 +464,12 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
     <fieldset className={css.fields} aria-label="Source media">
       <legend>Optional source media</legend>
       <div className={css.grid}>{(videoEditControls ? ["image", "audio"] as const : ["image", "video", "audio"] as const).map(kind => <label key={kind}>Add {kind} references<input type="file" accept={MEDIA_ACCEPT[kind]} multiple onChange={event => { addSources(event.target.files, kind, "reference"); event.target.value = ""; }} /></label>)}</div>
+      {!videoEditControls&&<>
+        {savedUploads.error&&<p role="status">{savedUploads.error}<button type="button" onClick={()=>void savedUploads.retry()}>Retry saved uploads</button></p>}
+        <H3SavedUploads items={savedUploads.uploads.filter(item=>!sources.some(source=>source.id===item.id))} disabled={busy||jobBusy||isActive(job)} canAdd={item=>canAddSaved(savedUploads.uploads.find(upload=>upload.id===item.id)!)} onAdd={addSaved} onRemove={id=>void savedUploads.remove(id)} note="Saved on this device. Removing a saved copy does not change Gallery or past renders.">
+          <label className={css.row}>Use as<select aria-label="Saved upload role" value={savedRole} onChange={event=>setSavedRole(event.target.value as Source["role"])}><option value="reference">Reference</option><option value="first">First image</option><option value="last">Last image</option></select></label>
+        </H3SavedUploads>
+      </>}
       <div className={css.row}>{!videoEditControls && (controller === "auto" || plan.workflowId === "native-i2v") ? <><button type="button" onClick={() => setSnapshotRole("first")}>First-frame input from video</button><button type="button" onClick={() => setSnapshotRole("last")}>Last-frame input from video</button></> : <button type="button" onClick={() => setSnapshotRole("reference")}>Reference image from video</button>}</div>
       {sources.map((source, index) => <article className={css.status} key={source.id} aria-label={`Source ${index + 1}`}>
         <p>{source.file.name} · {source.kind}</p><SourcePreview source={source} />

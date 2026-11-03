@@ -73,12 +73,14 @@ export function withLab<T>(fn: (db: Database.Database, root: string) => T): T {
       id TEXT PRIMARY KEY, session TEXT NOT NULL REFERENCES sessions(id), owner TEXT NOT NULL,
       name TEXT NOT NULL, mime TEXT NOT NULL, role TEXT NOT NULL, bytes INTEGER NOT NULL,
       sha256 TEXT, ready INTEGER NOT NULL DEFAULT 0, created TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS assets_session ON assets(session);`);
+      CREATE INDEX IF NOT EXISTS assets_session ON assets(session);
+      CREATE TABLE IF NOT EXISTS hidden_uploads (
+        asset TEXT PRIMARY KEY REFERENCES assets(id), owner TEXT NOT NULL, created TEXT NOT NULL);`);
     return fn(db, root);
   } finally { db.close(); }
 }
 type SessionRow = { id: string; owner: string; experiment: string; title: string; settings: string; notes: string; archived: number; revision: number; created: string; updated: string };
-export type LabAsset = { id: string; session: string; name: string; mime: string; role: "source" | "comparison" | "generated"; bytes: number; sha256: string; created: string };
+export type LabAsset = { id: string; session: string; name: string; mime: string; role: "source" | "comparison" | "generated"; bytes: number; sha256: string; created: string; removedFromSaved?: boolean };
 export type LabSession = Omit<SessionRow, "owner" | "settings" | "archived"> & { settings: LabSettings; archived: boolean; assets: LabAsset[] };
 function owned(db: Database.Database, owner: string, id: string) {
   validId(id);
@@ -88,7 +90,7 @@ function owned(db: Database.Database, owner: string, id: string) {
 }
 function present(db: Database.Database, row: SessionRow): LabSession {
   const { owner: _owner, ...safe } = row;
-  const assets = db.prepare("SELECT id,session,name,mime,role,bytes,sha256,created FROM assets WHERE session=? AND ready=1 ORDER BY created,id").all(row.id) as LabAsset[];
+  const assets = db.prepare("SELECT a.id,a.session,a.name,a.mime,a.role,a.bytes,a.sha256,a.created,h.asset IS NOT NULL AS removedFromSaved FROM assets a LEFT JOIN hidden_uploads h ON h.asset=a.id AND h.owner=a.owner WHERE a.session=? AND a.ready=1 ORDER BY a.created,a.id").all(row.id) as LabAsset[];
   return { ...safe, settings: JSON.parse(row.settings), archived: !!row.archived, assets };
 }
 export function listSessions(owner: string) { return withLab(db => (db.prepare("SELECT * FROM sessions WHERE owner=? ORDER BY updated DESC").all(owner) as SessionRow[]).map(row => present(db, row))); }
@@ -169,4 +171,16 @@ export function getAsset(owner: string, id: string) {
     if (!asset) throw new RequestError("Asset not found.", 404);
     return { asset, file: path.join(root, id + ".media") };
   });
+}
+
+/** Remove from the reusable list, not from immutable jobs or their media. */
+export function removeSavedUpload(owner: string, id: string) {
+  validId(id);
+  return withLab(db => db.transaction(() => {
+    const asset = db.prepare("SELECT session,role FROM assets WHERE id=? AND owner=? AND ready=1").get(id, owner) as {session:string;role:string} | undefined;
+    if (!asset) throw new RequestError("Asset not found.",404);
+    if (asset.role !== "source") throw new RequestError("Only saved uploads can be removed from this list.",400);
+    db.prepare("INSERT OR IGNORE INTO hidden_uploads(asset,owner,created) VALUES (?,?,?)").run(id,owner,new Date().toISOString());
+    return present(db,owned(db,owner,asset.session));
+  })());
 }

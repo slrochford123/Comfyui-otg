@@ -25,6 +25,8 @@ import {
 import { H3StylePresetPicker } from "./H3StylePresetPicker";
 import H3AdvancedControls from "./H3AdvancedControls";
 import H3SmartReferences from "./H3SmartReferences";
+import H3SavedUploads from "./H3SavedUploads";
+import {useH3SavedUploads,type SavedH3Upload} from "@/lib/client/h3SavedUploads";
 import type { H3SmartReferenceSelection } from "@/lib/h3SmartReferences";
 import H3SingularitySelector from "./H3SingularitySelector";
 import H3SpeedIndicator from "./H3SpeedIndicator";
@@ -1137,6 +1139,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
   const [firstImage, setFirstImage] = useState<MediaInput | null>(null);
   const [lastImage, setLastImage] = useState<MediaInput | null>(null);
   const [references, setReferences] = useState<MediaInput[]>([]);
+  const [savedImageTarget,setSavedImageTarget]=useState<"first"|"last">("first");
   const [catalog, setCatalog] = useState<H3LoraCatalogEntry[]>([]);
   const [maxLoras, setMaxLoras] = useState(3);
   const [selectedLoras, setSelectedLoras] = useState<H3StudioLoraSelection[]>(
@@ -1167,6 +1170,10 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     >(),
   );
   const [inputStateHydrated, setInputStateHydrated] = useState(false);
+  const uploadInputs=useMemo(()=>[firstImage,lastImage,...references,...realismReferences].filter((item):item is MediaInput=>!!item).map(({url:_url,...item})=>item),[firstImage,lastImage,references,realismReferences]);
+  const savedUploads=useH3SavedUploads(storageOwnerKey,uploadInputs,inputStateHydrated);
+  const selectedUploadIds=new Set((studioMode==="h3-image-to-video"?[firstImage,lastImage]:studioMode==="h3-realism"?realismReferences:references).filter(Boolean).map(item=>item!.id));
+  const unusedUploads=savedUploads.uploads.filter(item=>!selectedUploadIds.has(item.id)&&(studioMode!=="h3-image-to-video"||item.kind==="image"));
   const active = Boolean(job && !isTerminalH3JobStatus(job.status));
   const legacyModeActive = isLegacyH3Mode(studioMode);
   const modeCapabilities = h3ModeCapabilities(studioMode);
@@ -2063,10 +2070,10 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     };
   }
 
-  function media(file: File, kind: MediaKind): MediaInput {
+  function media(file: File, kind: MediaKind, saved?:SavedH3Upload): MediaInput {
     const url = URL.createObjectURL(file);
     objectUrlsRef.current.add(url);
-    return {
+    return saved ? {...saved,file,url} : {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       kind,
       file,
@@ -2087,9 +2094,10 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     current: MediaInput | null,
     file: File,
     setter: (item: MediaInput | null) => void,
+    saved?:SavedH3Upload,
   ) {
     release(current);
-    setter(media(file, "image"));
+    setter(media(file, "image",saved));
   }
   function replaceMedia(
     current: MediaInput | null,
@@ -2100,14 +2108,14 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     release(current);
     setter(media(file, kind));
   }
-  function addReference(kind: MediaKind, file: File) {
+  function addReference(kind: MediaKind, file: File, saved?:SavedH3Upload) {
     const limit = kind === "image" ? 9 : 3;
     if (references.filter((item) => item.kind === kind).length >= limit)
       return setMessage(`H3 supports at most ${limit} ${kind} references.`);
-    setReferences((current) => [...current, media(file, kind)]);
+    setReferences((current) => [...current, media(file, kind,saved)]);
   }
-  function addRealismReference(kind: MediaKind, file: File) {
-    const next = [...realismReferences, media(file, kind)];
+  function addRealismReference(kind: MediaKind, file: File, saved?:SavedH3Upload) {
+    const next = [...realismReferences, media(file, kind,saved)];
     try {
       validateH3RealismReferences(
         next.map((item) => ({
@@ -2127,6 +2135,18 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
           : "Realism reference limit exceeded.",
       );
     }
+  }
+  function canAddSavedUpload(item:{kind:MediaKind}):boolean {
+    if(studioMode==="h3-image-to-video")return item.kind==="image";
+    const current=studioMode==="h3-realism"?realismReferences:references;
+    return current.filter(ref=>ref.kind===item.kind).length<(item.kind==="image"?9:3)&&(studioMode!=="h3-realism"||current.length<12);
+  }
+  function addSavedUpload(id:string) {
+    const item=savedUploads.uploads.find(upload=>upload.id===id);
+    if(!item||!canAddSavedUpload(item))return;
+    if(studioMode==="h3-image-to-video")replaceSingle(savedImageTarget==="first"?firstImage:lastImage,item.file,savedImageTarget==="first"?setFirstImage:setLastImage,item);
+    else if(studioMode==="h3-realism")addRealismReference(item.kind,item.file,item);
+    else addReference(item.kind,item.file,item);
   }
   function updateRealismReference(id: string, patch: Partial<MediaInput>) {
     setRealismReferences((current) =>
@@ -4057,6 +4077,13 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       ) : null}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(300px,.75fr)]">
         <main className="space-y-4">
+          {["h3-image-to-video","h3-reference-to-video","h3-realism"].includes(studioMode)&&<section className={surface} aria-label="Saved H3 uploads">
+            {savedUploads.error&&<div role="status" className="text-sm text-amber-200">{savedUploads.error}<button type="button" className={`${command} ml-2`} onClick={()=>void savedUploads.retry()}>Retry saved uploads</button></div>}
+            <H3SavedUploads items={unusedUploads} disabled={active||submissionBusy||!inputStateHydrated} canAdd={canAddSavedUpload} onAdd={addSavedUpload} onRemove={id=>void savedUploads.remove(id)} note="Saved on this device. Remove only removes the saved copy; Gallery and selected inputs stay unchanged.">
+              {studioMode==="h3-image-to-video"&&<label className="mb-2 flex min-h-11 items-center gap-2 text-sm">Use as<select aria-label="Saved image target" className={field} value={savedImageTarget} onChange={event=>setSavedImageTarget(event.target.value as "first"|"last")}><option value="first">First image</option><option value="last">Last image</option></select></label>}
+            </H3SavedUploads>
+            {!unusedUploads.length&&!savedUploads.error&&<p className="text-xs text-white/55">Uploads stay saved on this device for reuse after you remove them from the current inputs.</p>}
+          </section>}
           {smartWorkflow ? <H3SmartReferences key={h3Backend}
             backend={h3Backend} disabled={active || submissionBusy} useFirstFrame={smartUseFirstFrame} firstFrame={firstImage}
             validateSelection={smartFeatureActive} legacyEnhancementEnabled={h3Settings.refMod.enabled || h3Settings.motionLab.enabled}

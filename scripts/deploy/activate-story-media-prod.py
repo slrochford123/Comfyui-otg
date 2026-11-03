@@ -92,7 +92,7 @@ def main():
     if digest(ROOT/'activation-plan.json')!=PLAN_SHA:raise RuntimeError('Activation plan changed')
     plan=json.loads((ROOT/'activation-plan.json').read_text())
     version=plan['buildVersion']
-    if version not in ('2.21','2.22','2.23','2.24','2.25','2.26') or not re.fullmatch('[a-f0-9]{40}',plan['commit']):raise RuntimeError('Invalid release identity')
+    if version not in ('2.21','2.22','2.23','2.24','2.25','2.26','2.28') or not re.fullmatch('[a-f0-9]{40}',plan['commit']):raise RuntimeError('Invalid release identity')
     candidate=Path(plan['candidate']);old=Path(plan['expectedOld'])
     if ROOT!=Path('/mnt/otg_bulk/build-'+version+'-promotion-'+plan['commit'][:12]) or candidate!=Path('/opt/otg/releases/prod-build-'+version+'-'+plan['commit'][:12]):raise RuntimeError('Invalid release boundary')
     previous=load('previous_prod_guard',PREVIOUS_GUARD,plan['previousGuardSha256'])
@@ -116,6 +116,7 @@ def main():
         if (m.PROC/old_pid/'cwd').resolve()!=old or old_env.get('OTG_ENV')!='prod':raise RuntimeError('Production process mismatch')
         controller_pins=previous.verify_root_controller(plan,old_env)
         flags={'OTG_STORY_MEDIA_ENABLED':'1','OTG_STORY_QWEN_REMOTE_CONFIG':plan['speechConfig'],'OTG_AUDIO_WORKER_SCRIPT':str(candidate/'scripts/audio-editing-worker.py')}
+        if version=='2.28':flags['OTG_H3_CHARACTER_REFCARDS_ENABLED']='1'
         if plan.get('workerProbeConfig'):flags['OTG_COMFY_INSTANCE_PROBE_CONFIG']=plan['workerProbeConfig']
         if plan.get('nsfwConfig'):
             flags.update(OTG_H3_NSFW_ENABLED='1',OTG_H3_NSFW_ROOT=plan['nsfwRoot'])
@@ -124,6 +125,10 @@ def main():
         def idle():
             m.idle_gates();previous.extra_idle(m.DATA,plan);story_idle(m.DATA)
             if plan.get('nsfwRoot'):nsfw_idle(plan['nsfwRoot'])
+            for file in m.DATA.glob('before-after-jobs/*/*.json'):
+                if json.loads(file.read_text()).get('status') not in ('completed','failed','canceled'):raise RuntimeError('An image comparison is unfinished; nothing was interrupted')
+            for file in m.DATA.glob('h3-character-refcards/*/*/card.json'):
+                if json.loads(file.read_text()).get('state') in ('generating','encoding'):raise RuntimeError('A character RefMod is unfinished; nothing was interrupted')
         m.public_application_gates();m.application_gates();m.maintenance_gates();idle();m.active_child_gates(old_pid)
         # The exact qualified TEST bundle is required, including the served static build.
         for route in ('/experimental-workspace.json','/_next/static/'+plan['buildId']+'/_buildManifest.js'):

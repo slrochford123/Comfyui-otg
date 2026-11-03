@@ -61,6 +61,7 @@ const CharactersPanel = dynamic(() => import("./components/CharacterHubPanel"), 
 const VoicesPanel = dynamic(() => import("./components/VoicesPanel"), { loading: PanelLoading });
 const SupportPanel = dynamic(() => import("./components/SupportPanel"), { loading: PanelLoading });
 const EditVideoPanel = dynamic(() => import("./components/EditVideoPanel"), { loading: PanelLoading });
+const BeforeAfterPanel = dynamic(() => import("./components/BeforeAfterPanel"), { loading: PanelLoading });
 const GalleryWorkspace = dynamic(() => import("./components/GalleryWorkspace"), { loading: PanelLoading });
 const H3Panel = dynamic(() => import("./components/H3Panel"), { loading: PanelLoading });
 const H3NsfwAccessRequest = dynamic(() => import("./components/H3NsfwAccessRequest"), { loading: PanelLoading });
@@ -1331,7 +1332,7 @@ async function fetchWorkflowsForApp() {
     .filter((item: WorkflowItem) => item.id && item.label);
 }
 
-export default function AppPageClient({ initialUser = null, experimentalEnabled = false, nsfwAvailable = false }: { initialUser?: InitialAppUser; experimentalEnabled?: boolean; nsfwAvailable?: boolean }) {
+export default function AppPageClient({ initialUser = null, experimentalEnabled = false, refCardsEnabled = false, nsfwAvailable = false }: { initialUser?: InitialAppUser; experimentalEnabled?: boolean; refCardsEnabled?: boolean; nsfwAvailable?: boolean }) {
   const queryClient = useQueryClient();
 
   const [tab, setTab] = useState<SpinTabId>("generate");
@@ -1369,6 +1370,7 @@ export default function AppPageClient({ initialUser = null, experimentalEnabled 
   const [workflowId, setWorkflowId] = useState(WORKFLOW_FALLBACKS[0].id);
   const [generateMediaMode, setGenerateMediaMode] = useState<GenerateMediaMode>("image");
   const [imageOperation, setImageOperation] = useState<ImageOperation>("create");
+  const [beforeAfterOpen, setBeforeAfterOpen] = useState(false);
   const [videoGenerationType, setVideoGenerationType] = useState<VideoGenerationType>("create");
   const [selectedVideoLoras, setSelectedVideoLoras] = useState<VideoLoraSelectionValue[]>([]);
   const [adminImageLoras, setAdminImageLoras] = useState<ImageLoraCatalogEntry[]>([]);
@@ -1549,6 +1551,11 @@ export default function AppPageClient({ initialUser = null, experimentalEnabled 
     () => profileStorageKey(APP_STATE_KEY, authenticatedOwnerKey || "guest"),
     [authenticatedOwnerKey],
   );
+  const comparisonModeKey = profileStorageKey("otg:generate-before-after-mode:v1", authenticatedOwnerKey || "guest");
+  useEffect(() => {
+    try {setBeforeAfterOpen(window.localStorage.getItem(comparisonModeKey) === "open");}
+    catch {setBeforeAfterOpen(false);}
+  }, [comparisonModeKey]);
   const nativePreviewStorageKey = useMemo(
     () => profileStorageKey("otg:generate-native-preview:v1", authenticatedOwnerKey || "guest"),
     [authenticatedOwnerKey],
@@ -6498,8 +6505,14 @@ async function handleAskAi() {
               {generateMediaMode === "image" ? (
                 <div className="space-y-4">
                   <select
-                    value={imageOperation}
-                    onChange={(event) => handleImageOperationChange(event.target.value as ImageOperation)}
+                    aria-label="Image operation"
+                    value={beforeAfterOpen ? "before-after" : imageOperation}
+                    onChange={(event) => {
+                      const compare = event.target.value === "before-after";
+                      setBeforeAfterOpen(compare);
+                      try {window.localStorage.setItem(comparisonModeKey, compare ? "open" : "closed");} catch {}
+                      if (!compare) handleImageOperationChange(event.target.value as ImageOperation);
+                    }}
                     className="w-full rounded-[22px] border border-white/10 bg-black/55 px-5 py-4 text-white outline-none focus:border-cyan-400/45"
                   >
                     {(Object.keys(IMAGE_OPERATION_LABELS) as ImageOperation[]).map((operation) => (
@@ -6507,9 +6520,10 @@ async function handleAskAi() {
                         {IMAGE_OPERATION_LABELS[operation]}
                       </option>
                     ))}
+                    <option value="before-after" className="bg-[#0b1020]">Before &amp; After</option>
                   </select>
-                  <p className="text-sm text-white/60">{IMAGE_OPERATION_LABELS[imageOperation]}</p>
-                  {imageOperation === "edit" ? <ImageEditEngineSelect value={imageEditEngine} onChange={setImageEditEngine} disabled={generateBusy} referenceCount={editInputCount} /> : null}
+                  {!beforeAfterOpen ? <p className="text-sm text-white/60">{IMAGE_OPERATION_LABELS[imageOperation]}</p> : null}
+                  {!beforeAfterOpen && imageOperation === "edit" ? <ImageEditEngineSelect value={imageEditEngine} onChange={setImageEditEngine} disabled={generateBusy} referenceCount={editInputCount} /> : null}
                 </div>
               ) : (
                 <div className="space-y-5">
@@ -6550,9 +6564,10 @@ async function handleAskAi() {
                   </div>
                 </div>
               )}
-              <p className="text-sm text-white/72">{isEditImageWorkflowSelected && imageEditEngine !== "qwen" ? `${imageEditEngine === "fibo2-dev" ? "Fibo Dev · 50 steps · CFG 5" : "Fibo Turbo · 4 steps · CFG 1"} · Euler · selected Auto / Manual GPU` : selectedWorkflow.runtime}</p>
+              {!(generateMediaMode === "image" && beforeAfterOpen) ? <p className="text-sm text-white/72">{isEditImageWorkflowSelected && imageEditEngine !== "qwen" ? `${imageEditEngine === "fibo2-dev" ? "Fibo Dev · 50 steps · CFG 5" : "Fibo Turbo · 4 steps · CFG 1"} · Euler · selected Auto / Manual GPU` : selectedWorkflow.runtime}</p> : null}
             </Card>
 
+            {generateMediaMode === "image" && beforeAfterOpen ? <BeforeAfterPanel key={authenticatedOwnerKey || "guest"} owner={authenticatedOwnerKey || "guest"} /> : <>
             <Card title="Prompt">
               <textarea
                 value={prompt}
@@ -7188,7 +7203,7 @@ async function handleAskAi() {
                 />
               </Card>
             </div>
-
+            </>}
           </div>
         ) : null}
 
@@ -7721,7 +7736,7 @@ async function handleAskAi() {
         {tab === "h3" ? <H3Panel key={authenticatedOwnerKey || "h3-account-unavailable"} authenticatedOwnerKey={authenticatedOwnerKey} nsfwAvailable={nsfwAvailable} /> : null}
         {tab === "characters" ? (
           <CharactersPanel
-            refCardsEnabled={experimentalEnabled}
+            refCardsEnabled={refCardsEnabled}
             key={authenticatedOwnerKey || "character-account-unavailable"}
             isAdmin={isAdmin}
             authenticatedOwnerKey={authenticatedOwnerKey}

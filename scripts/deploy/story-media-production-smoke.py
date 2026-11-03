@@ -15,7 +15,7 @@ import time
 def main():
     os.umask(0o077)
     stage=Path(sys.argv[1]).resolve(strict=True);action=sys.argv[2]
-    if os.geteuid()!=0 or socket.gethostname()!='slr' or stage.parent!=Path('/mnt/otg_bulk') or not stage.name.startswith(('build-2.21-promotion-','build-2.22-promotion-','build-2.23-promotion-','build-2.24-promotion-')):raise RuntimeError('Incorrect smoke boundary')
+    if os.geteuid()!=0 or socket.gethostname()!='slr' or stage.parent!=Path('/mnt/otg_bulk') or not stage.name.startswith(('build-2.21-promotion-','build-2.22-promotion-','build-2.23-promotion-','build-2.24-promotion-','build-2.28-promotion-')):raise RuntimeError('Incorrect smoke boundary')
     plan=json.loads((stage/'activation-plan.json').read_text());candidate=Path(plan['candidate']);file=stage/'smoke-process.json'
     if action=='start':
         if file.exists():
@@ -38,6 +38,7 @@ def main():
             shutil.copyfile(plan['nsfwConfig'],lab/'runtime.json')
             env.update(OTG_H3_NSFW_ENABLED='1',OTG_H3_NSFW_ROOT=str(lab))
         if plan.get('workerProbeConfig'):env['OTG_COMFY_INSTANCE_PROBE_CONFIG']=plan['workerProbeConfig']
+        if plan['buildVersion']=='2.28':env.update(OTG_H3_CHARACTER_REFCARDS_ENABLED='1',OPENAI_API_KEY='',OPENAI_KILL_SWITCH='true')
         with (stage/('smoke-server-'+data.name+'.log')).open('xb') as log:
             process=subprocess.Popen(['/opt/otg/runtime/node-v22.23.4/bin/node',str(candidate/'server.js')],cwd=candidate,env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
         file.write_text(json.dumps({'pid':process.pid,'candidate':str(candidate),'data':str(data),'nsfw':env.get('OTG_H3_NSFW_ROOT')}));print(json.dumps({'ok':True,'pid':process.pid,'port':3308,'managedProductionChanged':False}))

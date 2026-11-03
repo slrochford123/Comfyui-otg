@@ -14,6 +14,7 @@ import { DEFAULT_NSFW_UI, readNsfwDraft, writeNsfwDraft, nsfwEditorKey, type Nsf
 import { mediaStorageKey,writePersistedH3MediaFiles,readPersistedH3MediaFiles,clearPersistedH3MediaFiles } from "./h3InputPersistence";
 import {labUploadMime,MAX_LAB_IMAGE_BYTES} from "@/lib/experiments/imageTypes";
 import {appendH3References,MAX_H3_RENDER_REFERENCES} from "@/lib/experiments/referenceLimits";
+import H3SavedUploads from "./H3SavedUploads";
 
 const root = "/api/h3/nsfw";
 const button = "min-h-11 rounded-xl border border-white/15 px-3 py-2 text-sm font-medium disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-400";
@@ -58,11 +59,11 @@ export default function H3NsfwStudio({ownerKey=""}:{ownerKey?:string}) {
   const [loras,setLoras]=useState<LabLora[]>([]),[conflict,setConflict]=useState(false),[clock,setClock]=useState(()=>Date.now());
   const [uploadType, setUploadType] = useState("image/*"), fileInput = useRef<HTMLInputElement>(null);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
-  const [savedUploadLimit,setSavedUploadLimit]=useState(20),[historyLimit,setHistoryLimit]=useState(20);
+  const [historyLimit,setHistoryLimit]=useState(20);
   const settings = editor.settings, ids = settings.selectedSources || [];
   const capability = capabilities.find(c => c.model === editor.experiment), recipe = capability?.recipe;
   const assets = session?.assets || [], sources = ids.map(id => assets.find(a => a.id === id)).filter((a): a is LabAsset => !!a);
-  const unused = assets.filter(a => a.role === "source" && !ids.includes(a.id));
+  const unused = assets.filter(a => a.role === "source" && !a.removedFromSaved && !ids.includes(a.id));
   const dirty = keyOf(editor) !== savedSignature;
   const latest = jobs[0], result = assets.find(a => a.id === latest?.output);
   const activeJobs = jobs.filter(j => !["completed", "failed", "canceled"].includes(j.state) || !j.cleanedUp);
@@ -89,7 +90,10 @@ export default function H3NsfwStudio({ownerKey=""}:{ownerKey?:string}) {
   function setStrength(value:NsfwUiState["strength"]){updateUi({strength:value});}
 
   const remember = useCallback((next: LabSession) => {
-    if (sessionRef.current?.id === next.id) next = { ...next, assets: [...next.assets, ...sessionRef.current.assets.filter(a => !next.assets.some(n => n.id === a.id))] };
+    if (sessionRef.current?.id === next.id) {
+      const hidden=new Set(sessionRef.current.assets.filter(a=>a.removedFromSaved).map(a=>a.id));
+      next = { ...next, assets: [...next.assets.map(a=>hidden.has(a.id)?{...a,removedFromSaved:true}:a), ...sessionRef.current.assets.filter(a => !next.assets.some(n => n.id === a.id))] };
+    }
     sessionRef.current = next;
     if (alive.current) { setSession(next); setSessions(current => [next, ...current.filter(s => s.id !== next.id)]); }
     persist();
@@ -100,7 +104,7 @@ export default function H3NsfwStudio({ownerKey=""}:{ownerKey?:string}) {
     const value = next ? fromSession(next) : fresh(model);
     sessionRef.current = next; editorRef.current = value; savedKey.current = keyOf(value);
     setSavedSignature(keyOf(value));
-    setSession(next); setEditor(value); setJobs([]); setSavedUploadLimit(20);setHistoryLimit(20);setError(""); setSaveStatus(next ? "Saved" : ""); pendingRequest.current = null;
+    setSession(next); setEditor(value); setJobs([]); setHistoryLimit(20);setError(""); setSaveStatus(next ? "Saved" : ""); pendingRequest.current = null;
     uiRef.current={...DEFAULT_NSFW_UI};setUi(uiRef.current);setConflict(false);persist();
   },[persist]);
   // Serialize saves. Read the latest revision at execution time, but never
@@ -198,6 +202,12 @@ export default function H3NsfwStudio({ownerKey=""}:{ownerKey?:string}) {
     setPromptUndo(current => [...current.slice(-19), previous]); patch({ prompt: value });
   }
   function selectInputs(next: string[]) { setInputUndo(editorRef.current.settings.selectedSources || []); patch({ selectedSources: next }); }
+  async function removeUpload(id:string) {
+    const response=await fetch(mediaUrl(id),{method:"DELETE",credentials:"same-origin"});
+    const data=await response.json();
+    if(!response.ok)throw new Error(data.error||"Could not remove this saved upload.");
+    if(sessionRef.current?.id===data.session.id)remember({...sessionRef.current!,assets:data.session.assets});
+  }
   async function enhance() {
     const original = editorRef.current.settings.prompt;
     const data = await api<{ enhancedPrompt?: string; prompt?: string }>("/api/enhance-prompt", {
@@ -334,7 +344,10 @@ export default function H3NsfwStudio({ownerKey=""}:{ownerKey?:string}) {
           <p className="truncate text-xs text-white/60" title={asset.name}>{asset.name}</p>
           {sources.length > 1 && <div className="flex gap-2"><button className={button} aria-label={`Move ${asset.name} earlier`} disabled={busy || index === 0} onClick={() => { const next = [...ids]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; selectInputs(next); }}>↑ Earlier</button><button className={button} aria-label={`Move ${asset.name} later`} disabled={busy || index === ids.length - 1} onClick={() => { const next = [...ids]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; selectInputs(next); }}>↓ Later</button></div>}
         </article>)}</div>
-        {unused.length > 0 && <details><summary className="min-h-11 cursor-pointer py-2 text-sm">Saved uploads · {unused.length}</summary><p className="mb-2 text-xs text-white/60">Kept for reuse, not deleted. Remove a selected reference to make room in this render.</p>{unused.slice(0,savedUploadLimit).map(a => <div className="flex min-w-0 items-center gap-2 py-1" key={a.id}><span className="min-w-0 flex-1 truncate text-sm">{a.name}</span><button className={button} disabled={busy||!appendH3References(ids,[a.id],assets,settings.mode).includes(a.id)} aria-label={`Add back ${a.name}`} onClick={() => selectInputs(appendH3References(ids,[a.id],assets,settings.mode))}>Add back</button></div>)}{unused.length>savedUploadLimit&&<button className={button} onClick={()=>setSavedUploadLimit(n=>n+20)}>Show more saved uploads</button>}</details>}
+        <H3SavedUploads items={unused.map(a=>({id:a.id,name:a.name,kind:a.mime.split("/")[0] as "image"|"video"|"audio",url:mediaUrl(a.id)+(a.mime.startsWith("image/")?"&thumbnail=1":"")}))} disabled={busy}
+          note="Remove hides an upload from this list. Past renders are kept."
+          canAdd={a=>appendH3References(ids,[a.id],assets,settings.mode).includes(a.id)}
+          onAdd={id=>selectInputs(appendH3References(ids,[id],assets,settings.mode))} onRemove={id=>void act(()=>removeUpload(id))}/>
       </div>}
       <div className={card}>
         <h3 className="font-semibold">Output</h3>

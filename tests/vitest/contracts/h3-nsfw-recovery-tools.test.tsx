@@ -65,3 +65,15 @@ it("shows older results in increments without deleting or capping retained histo
  jobs=Array.from({length:61},(_,i)=>({id:"old-"+i,model:"prism-pika",state:"completed",cleanedUp:true,created:100-i,stage:"Completed"}));await setup();fireEvent.click(screen.getByText("History & saved drafts"));await waitFor(()=>expect(screen.getAllByText("Technical receipt")).toHaveLength(20));
  fireEvent.click(screen.getByRole("button",{name:"Show older results"}));expect(screen.getAllByText("Technical receipt")).toHaveLength(40);fireEvent.click(screen.getByRole("button",{name:"Show older results"}));fireEvent.click(screen.getByRole("button",{name:"Show older results"}));expect(screen.getAllByText("Technical receipt")).toHaveLength(61);expect(screen.queryByRole("button",{name:"Show older results"})).not.toBeInTheDocument();expect(posts("delete")).toHaveLength(0);
 });
+it("removes a saved upload through the owner endpoint, retains selected references, and survives stale polling",async()=>{
+ session.settings.mode="reference";session.assets=[{id:"active",name:"active.png",mime:"image/png",role:"source"},{id:"saved",name:"saved.png",mime:"image/png",role:"source"}];session.settings.selectedSources=["active"];
+ const original=server.getMockImplementation()!;
+ server.mockImplementation(async(url,o)=>{
+   if(o?.method==="DELETE")return response({session:{...session,assets:session.assets.map((a:any)=>({...a,removedFromSaved:a.id==="saved"}))}});
+   return original(url,o);
+ });
+ await setup();fireEvent.click(screen.getByText("Saved uploads · 1"));expect(screen.getByAltText("Preview of saved.png")).toHaveAttribute("src","/api/h3/nsfw/assets?id=saved&thumbnail=1");
+ fireEvent.click(screen.getByRole("button",{name:"Remove saved upload saved.png"}));await waitFor(()=>expect(screen.queryByText("Saved uploads · 1")).not.toBeInTheDocument());
+ fireEvent(window,new Event("focus"));await waitFor(()=>expect(server.mock.calls.filter(([,o])=>o?.method==="DELETE")).toHaveLength(1));
+ expect(screen.getByRole("article",{name:"Reference active.png"})).toBeInTheDocument();expect(session.assets).toHaveLength(2);expect(screen.queryByRole("button",{name:"Add back saved.png"})).not.toBeInTheDocument();
+});

@@ -15,7 +15,8 @@ export async function register() {
   if (process.env.OTG_AUDIO_ISOLATED_DEV === "1") return;
   const { bootstrapContentCreationRecovery } = await import("./lib/workers/contentCreationRecovery");
   bootstrapContentCreationRecovery();
-  if (process.env.OTG_ENV === "test") {
+  const {characterRefCardsEnabled} = await import("./lib/h3SpecialModes/characterRefCardAvailability");
+  if (characterRefCardsEnabled()) {
     const {bootstrapCharacterRefCards} = await import("./lib/h3SpecialModes/characterRefCard");
     bootstrapCharacterRefCards();
   }

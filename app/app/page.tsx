@@ -5,6 +5,7 @@ import { isAdminUserId } from "@/lib/auth/admin";
 import { cookieName } from "@/lib/auth/cookies";
 import { verifySession } from "@/lib/auth/jwt";
 import { nsfwEnabled } from "@/lib/experiments/availability";
+import {characterRefCardsEnabled} from "@/lib/h3SpecialModes/characterRefCardAvailability";
 
 export const dynamic = "force-dynamic";
 
@@ -32,5 +33,5 @@ async function readInitialUser(): Promise<InitialAppUser> {
 
 export default async function AppPage() {
   const initialUser = await readInitialUser();
-  return <AppPageClient initialUser={initialUser} experimentalEnabled={process.env.OTG_ENV === "test"} nsfwAvailable={nsfwEnabled()} />;
+  return <AppPageClient initialUser={initialUser} experimentalEnabled={process.env.OTG_ENV === "test"} refCardsEnabled={characterRefCardsEnabled()} nsfwAvailable={nsfwEnabled()} />;
 }

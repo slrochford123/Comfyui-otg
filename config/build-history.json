@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.27",
+  "current": "2.28",
   "builds": [
     {
       "version": "2",
@@ -169,6 +169,12 @@
       "date": "2026-11-03",
       "summary": "TEST-only Character RefMod cards: one image to four separate FIBO 2.0 Turbo views, or 4–8 uploaded views; review, replace, reorder, regenerate, durable shared-GPU jobs and full-reference H3 encoding.",
       "sourceBaseCommit": "cca28c6c21c734a3138425461086181f121532d3"
+    },
+    {
+      "version": "2.28",
+      "date": "2026-11-03",
+      "summary": "Promote reviewed Character RefMod cards, Before & After image comparison and H3 saved-upload thumbnails, removal and reuse. Character cards have a separate production rollout; the Testing workspace remains TEST-only.",
+      "sourceBaseCommit": "81d0afa4e37a64f21d58f380402020f54f11235a"
     }
   ]
 }

@@ -19,13 +19,14 @@ import {createCharacter, listCharacters, loadCharacter} from "@/lib/characters/s
 import {resolveComfyPhysicalGpu} from "@/lib/workers/clusterGpu";
 import {characterRefOwnerHash} from "./characterRefCardAccess";
 import {CHARACTER_REF_VIEWS, CHARACTER_REF_PREFIX, characterRefViewPrompt, type CharacterRefAngle, type CharacterRefCardPublic} from "./characterRefCardContract";
+import {characterRefCardsEnabled} from "./characterRefCardAvailability";
 
 type Asset = {id: string; label: string; file?: string; original?: string; angle?: CharacterRefAngle; nativeId?: string; seed?: number; baseUrl?: string; gpu?: MediaGpu; state: string; error?: string};
 export type CharacterRefCard = Omit<CharacterRefCardPublic, "views" | "original"> & {ownerKey: string; original: Asset | null; views: Asset[]; encode?: {id: string; baseUrl?: string; gpu?: MediaGpu; libraryName?: string; count: number}; previewPath?: string};
 const root = () => path.join(OTG_DATA_ROOT, "h3-character-refcards");
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 function id(value: string) {if (!uuid.test(value)) throw new RequestError("Invalid card identifier.", 400); return value;}
-export function assertCharacterRefCardsEnabled() {if (process.env.OTG_ENV !== "test") throw new RequestError("Not found.",404);}
+export function assertCharacterRefCardsEnabled() {if (!characterRefCardsEnabled()) throw new RequestError("Not found.",404);}
 const directory = (owner: string, cardId: string) => path.join(root(), safeSegment(owner), id(cardId));
 const filename = (owner: string, cardId: string) => path.join(directory(owner,cardId), "card.json");
 type Coordinator = {timer?: ReturnType<typeof setInterval>; locks: Map<string,Promise<unknown>>; ticking: boolean};
@@ -161,7 +162,7 @@ async function ensureViewJob(card:CharacterRefCard,view:Asset) {
     const uploaded=await uploadH3InputToBaseUrl({baseUrl:backend.baseUrl,sourcePath:anchor,mediaType:"image",uploadName:"anchor-"+jobId,subfolder:"otg_refcards/"+card.id});
     const image="otg_refcards/"+card.id+"/"+uploaded;
     const prompt=characterRefViewPrompt(view.angle!,card.description),graph=buildNativeImageGraph({model:"fibo2-edit-turbo",image,prompt,width:768,height:1344,seed:view.seed!});
-    graph["461"].inputs.filename_prefix=`SLR_TEST_RefCards/${characterRefOwnerHash(card.ownerKey)}/${card.id}/${view.id}`;
+    graph["461"].inputs.filename_prefix=`SLR_${process.env.OTG_ENV === "prod" ? "PROD" : "TEST"}_RefCards/${characterRefOwnerHash(card.ownerKey)}/${card.id}/${view.id}`;
     const file=nativeImageJobFile(card.ownerKey,jobId);await fs.mkdir(path.dirname(file),{recursive:true,mode:0o700});
     await writeNativeImageJob(file,{id:jobId,model:"fibo2-edit-turbo",status:"queued",promptId:jobId,baseUrl:backend.baseUrl,width:768,height:1344,seed:view.seed!,createdAt:new Date().toISOString(),prompt});
     queue=enqueueMediaJob({id:jobId,gpu:backend.label,kind:"comfy",payload:{baseUrl:backend.baseUrl,body:{prompt:graph,prompt_id:jobId,client_id:jobId},workerId:"h3-refmods-card-view",preSubmitCleanup:null}});
@@ -228,7 +229,7 @@ export async function advanceCharacterRefCard(owner:string,cardId:string) {
   });
 }
 export function bootstrapCharacterRefCards() {
-  if(process.env.OTG_ENV!=="test"||state().timer)return;
+  if(!characterRefCardsEnabled()||state().timer)return;
   const tick=async()=>{
     if(state().ticking)return;state().ticking=true;
     try{for(const owner of await fs.readdir(root(),{withFileTypes:true}).catch(()=>[]))if(owner.isDirectory())for(const dir of await fs.readdir(path.join(root(),owner.name),{withFileTypes:true}))if(dir.isDirectory()&&uuid.test(dir.name)){
