@@ -24,8 +24,8 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllEnvs(); fs.rmSync(fixture, { recursive: true, force: true }); });
 describe("experimental boundary", () => {
-  it("pins the three available checkpoints without executable overrides", () => {
-    expect(EXPERIMENTS.filter(item => item.kind === "h3-admin").map(item => item.versionId)).toEqual([3441190,3429412,3391975]);
+  it("pins the two available checkpoints without executable overrides", () => {
+    expect(EXPERIMENTS.filter(item => item.kind === "h3-admin").map(item => item.versionId)).toEqual([3441190,3429412]);
     expect(EXPERIMENTS.filter(item => item.kind === "testing")).toHaveLength(7);
     for (const item of EXPERIMENTS.filter(item => item.kind === "h3-admin")) expect(item.sha256).toMatch(/^[A-F0-9]{64}$/);
   });
@@ -34,16 +34,16 @@ describe("experimental boundary", () => {
     expect((await POST(request(undefined, { action: "create", experiment: "prism-pika" }))).status).toBe(404);
     expect(fs.existsSync(path.join(fixture, "lab"))).toBe(false);
   });
-  it("blocks retired model creation before storage or worker access", async () => {
-    expect(isRetiredExperiment("dasiwa-v4")).toBe(true);
-    expect(labExperiment("dasiwa-v4")?.versionId).toBe(3391862);
-    const result = await POST(request(undefined, { action: "create", experiment: "dasiwa-v4" }));
+  it.each([["dasiwa-v4",3391862],["pinkcherry-v18",3391975]] as const)("blocks retired %s creation before storage or worker access", async (model,version) => {
+    expect(isRetiredExperiment(model)).toBe(true);
+    expect(labExperiment(model)?.versionId).toBe(version);
+    const result = await POST(request(undefined, { action: "create", experiment: model }));
     expect(result.status).toBe(409); expect(await result.text()).toContain("removed");
     expect(fs.existsSync(path.join(fixture, "lab"))).toBe(false);
   });
-  it("rejects switching an available session to the retired model", async () => {
+  it.each(["dasiwa-v4","pinkcherry-v18"])("rejects switching an available session to retired %s", async model => {
     const session = createSession("admin-a", "prism-pika");
-    const result = await POST(request(undefined, { ...session, action: "update", experiment: "dasiwa-v4" }));
+    const result = await POST(request(undefined, { ...session, action: "update", experiment: model }));
     expect(result.status).toBe(409); expect(getSession("admin-a", session.id)).toEqual(session);
   });
   it.each([401,403])("requires administrator authorization (%s)", async status => {
@@ -103,16 +103,16 @@ describe("private media", () => {
     expect((await mediaGet(request(url, undefined, { range: "bytes=99999-" }))).status).toBe(416);
     auth.result = { ok: true, id: "admin-b", status: 200 }; expect((await mediaGet(request(url))).status).toBe(404);
   });
-  it("keeps retired drafts, exports and media readable while blocking generation and preserving inputs on model change", async () => {
+  it.each(["dasiwa-v4","pinkcherry-v18"])("keeps retired %s drafts, exports and media readable while blocking generation and preserving inputs on model change", async model => {
     const { bytes, asset } = await pngUpload();
     let session = getSession("admin-a", asset.session);
     session = updateSession("admin-a", session.id, { ...session, settings: { ...session.settings, prompt: "My saved scene.", selectedSources: [asset.id] } });
     // Simulate a pre-retirement row, never a new executable retired session.
-    withLab(db => db.prepare("UPDATE sessions SET experiment=? WHERE id=?").run("dasiwa-v4", session.id));
+    withLab(db => db.prepare("UPDATE sessions SET experiment=? WHERE id=?").run(model, session.id));
     session = getSession("admin-a", session.id);
     const listing = await (await GET(request())).json();
-    expect(listing.catalog.some((item: {id:string}) => item.id === "dasiwa-v4")).toBe(false);
-    expect(listing.capabilities.some((item: {model:string}) => item.model === "dasiwa-v4")).toBe(false);
+    expect(listing.catalog.some((item: {id:string}) => item.id === model)).toBe(false);
+    expect(listing.capabilities.some((item: {model:string}) => item.model === model)).toBe(false);
     expect(listing.sessions.find((item: {id:string}) => item.id === session.id).settings.prompt).toBe("My saved scene.");
     expect((await GET(request(`/api/experiments?export=${session.id}`))).status).toBe(200);
     const generated = await POST(request(undefined, { action: "generate", id: session.id, requestId: crypto.randomUUID() }));
@@ -120,7 +120,7 @@ describe("private media", () => {
     expect(fs.existsSync(path.join(labRoot(), "jobs"))).toBe(false);
     const media = await mediaGet(request("/api/experiments/assets?id=" + asset.id));
     expect(media.status).toBe(200); expect(Buffer.from(await media.arrayBuffer())).toEqual(bytes);
-    const changed = updateSession("admin-a", session.id, { ...session, experiment: "pinkcherry-v18" });
+    const changed = updateSession("admin-a", session.id, { ...session, experiment: "eros-beta7" });
     expect(changed.id).toBe(session.id); expect(changed.settings).toEqual(session.settings); expect(changed.assets).toEqual(session.assets);
     auth.result = { ok: true, id: "admin-b", status: 200 };
     expect((await mediaGet(request("/api/experiments/assets?id=" + asset.id))).status).toBe(404);

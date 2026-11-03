@@ -52,7 +52,7 @@ try{
   record('Production: default-off account → Settings request → Admin enable; no self-grant; Testing 404 for users and admins');
   await a.page.goto(base+'/app?tab=testing');assert.equal(await a.page.getByRole('region',{name:'Testing workspace',exact:true}).count(),0);
   await page.goto(base+'/app?tab=h3');await page.getByRole('button',{name:'H3 NSFW',exact:true}).click();const panel=page.getByRole('region',{name:'H3 NSFW workspace',exact:true});await panel.getByLabel('Your scene',{exact:true}).waitFor();
-  const catalog=await api(user,'/api/h3/nsfw');assert.equal(catalog.environment,'prod');assert.equal(catalog.catalog.length,3);assert(catalog.capabilities.every(c=>c.modes.length===5));
+  const catalog=await api(user,'/api/h3/nsfw');assert.equal(catalog.environment,'prod');assert.equal(catalog.catalog.length,2);assert(catalog.capabilities.every(c=>c.modes.length===5));
   const image=path.join(out,'buzzy-reference.png');
   fs.copyFileSync('/home/shawn-rochford/AI/research/experimental-tabs-20261102-ojSrlL1V/build-suDvGm/real-story-media-tiaIWx/image-4d08e90e-e4dc-4a46-8724-ba3ed98bd905.png',image);
   const prompt='A charming white bunny with one pink ear and one white ear waves gently in a peaceful storybook meadow. Bright natural daylight, stable camera, subtle natural movement. Quiet outdoor ambience. No dialogue, no text.';
@@ -72,7 +72,7 @@ try{
   const firstJob=await wait(first.id,first.session),video=await inspect(firstJob,'prism-pika','text');
   await panel.getByRole('link',{name:'Download video',exact:true}).waitFor();const playback=panel.getByLabel('Latest result').locator('video');await playback.evaluate(v=>v.play());await sleep(400);assert.equal(await playback.evaluate(v=>v.paused),false);await playback.evaluate(v=>v.pause());
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2),false);await page.screenshot({path:path.join(out,'mobile.png'),fullPage:true});
-  for(const [model,mode,inputs] of [['eros-beta7','image',[image]],['eros-beta7','reference',[image]],['pinkcherry-v18','edit',[video,image]],['pinkcherry-v18','edit-image',[image]]]){
+  for(const [model,mode,inputs] of [['eros-beta7','image',[image]],['eros-beta7','reference',[image]],['prism-pika','edit',[video,image]],['prism-pika','edit-image',[image]]]){
     let s=(await api(user,'/api/h3/nsfw',{action:'create',experiment:model})).session;const sources=[];
     for(const file of inputs){const bytes=fs.readFileSync(file),r=await user.request.post(base+'/api/h3/nsfw/assets?session='+s.id+'&name='+encodeURIComponent(path.basename(file))+'&role=source',{headers:{Origin:base,'Content-Type':file.endsWith('.png')?'image/png':'video/mp4'},data:bytes});assert.equal(r.status(),201,await r.text());s=(await r.json()).session;sources.push(s.assets.at(-1).id);}
     s=(await api(user,'/api/h3/nsfw',{...s,action:'update',settings:{...s.settings,mode,seconds:2,resolution:'0.2',prompt,selectedSources:sources}})).session;

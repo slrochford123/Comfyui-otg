@@ -7,11 +7,13 @@ if(built.exitCode!==0||built.build!==build)throw Error('Successful exact build r
 // Narrow retirement-only qualification. All other web/runtime source must be
 // byte-identical to the previously qualified Build 2.24. This exception never
 // applies to model/runner changes or general feature releases.
-const retirement=process.argv[5]==='--retire-dasiwa-v4';
+const retirement=['--retire-dasiwa-v4','--retire-h3-models'].includes(process.argv[5]);
+const retireBoth=process.argv[5]==='--retire-h3-models';
 if(process.argv[5]&&!retirement)throw Error('Unknown qualification mode');
 if(retirement){
   const baseline='453f9d654580f9466148fd8015b3d7449276407a';
-  if(expected!=='/home/shawn-rochford/AI/deploy/otg-test/releases/test3001-build-2.24-20261102T205925Z')throw Error('Retirement baseline changed');
+  const previous=retireBoth?'/home/shawn-rochford/AI/deploy/otg-test/releases/test3001-experimental-tabs-20261103T005548Z':'/home/shawn-rochford/AI/deploy/otg-test/releases/test3001-build-2.24-20261102T205925Z';
+  if(expected!==previous)throw Error('Retirement baseline changed');
   const allowed=new Set(['app/app/components/H3NsfwStudio.tsx','lib/experiments/apiHandlers.ts','lib/experiments/catalog.ts','lib/experiments/generation.ts','lib/experiments/store.ts','config/build-history.json']);
   const changed=execFileSync('git',['diff','--name-only',baseline,'--','app','lib','config','comfy_workflows','package.json','package-lock.json'],{cwd:source,encoding:'utf8'}).trim().split('\n').filter(Boolean);
   if(changed.length!==allowed.size||changed.some(file=>!allowed.has(file)))throw Error('Not a retirement-only web change');
@@ -25,11 +27,13 @@ if(retirement){
   }
   const catalog=fs.readFileSync(path.join(build,'lib/experiments/catalog.ts'),'utf8');
   if(catalog.split('const RETIRED_EXPERIMENTS')[0].includes('dasiwa-v4')||!catalog.includes('isRetiredExperiment'))throw Error('Retirement catalog guard missing');
+  if(retireBoth&&(catalog.split('const RETIRED_EXPERIMENTS')[0].includes('pinkcherry-v18')||JSON.parse(fs.readFileSync(path.join(build,'config/build-history.json'))).current!=='2.26'))throw Error('Combined retirement identity mismatch');
 }
 const qa=fs.readdirSync(path.dirname(build)).filter(n=>n.startsWith('browser-')).map(n=>path.join(build,'..',n,'results.json')).filter(f=>fs.existsSync(f)).map(f=>JSON.parse(fs.readFileSync(f,'utf8')));
 if(!qa.some(result=>result.ok&&result.buildId===built.buildId&&result.suite==='experimental-workspace'))throw Error('Exact build experimental workspace browser qualification required');
 const accessCandidate=path.join(evidence,'runtime-candidate.json');
 if(retirement&&!qa.some(r=>r.ok&&r.buildId===built.buildId&&r.suite==='h3-nsfw-compact'&&Object.values(r.retirementChecks||{}).length===7&&Object.values(r.retirementChecks).every(v=>v===true)))throw Error('Exact retirement browser/API/media qualification required');
+if(retireBoth&&!qa.some(r=>r.ok&&r.buildId===built.buildId&&r.suite==='h3-nsfw-compact'&&JSON.stringify(r.retiredModels)===JSON.stringify(['dasiwa-v4','pinkcherry-v18'])))throw Error('Both removed models must pass historical-data and request-denial browser checks');
 if(retirement&&(fs.existsSync(accessCandidate)||fs.existsSync(path.join(evidence,'testing-runtime-candidate.json'))))throw Error('Retirement cannot replace runtime configurations');
 if(!retirement&&fs.existsSync(path.join(build,'lib/storyCreator/mediaExecution.ts'))){
   if(!qa.some(r=>r.ok&&r.buildId===built.buildId&&r.suite==='story-media'))throw Error('Exact-build Story media browser qualification required');

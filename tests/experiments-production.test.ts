@@ -29,12 +29,12 @@ afterEach(() => { vi.unstubAllEnvs(); fs.rmSync(root, { recursive: true, force: 
 const request = (route: string) => new NextRequest("https://app.test" + route);
 const post = (data: unknown) => nsfwPost(new NextRequest("https://app.test/api/h3/nsfw", {method:"POST",headers:{host:"app.test",origin:"https://app.test","content-type":"application/json"},body:JSON.stringify(data)}));
 
-it("removes DaSiWa from production choices and rejects stale requests without deleting history", async () => {
-  expect((await post({action:"create",experiment:"dasiwa-v4"})).status).toBe(409);
+it.each(["dasiwa-v4","pinkcherry-v18"])("removes %s from production choices and rejects stale requests without deleting history", async model => {
+  expect((await post({action:"create",experiment:model})).status).toBe(409);
   const session = withNsfwWorkspace(() => createSession("admin", "prism-pika"));
-  withNsfwWorkspace(() => withLab(db => db.prepare("UPDATE sessions SET experiment=? WHERE id=?").run("dasiwa-v4",session.id)));
+  withNsfwWorkspace(() => withLab(db => db.prepare("UPDATE sessions SET experiment=? WHERE id=?").run(model,session.id)));
   const listing = await (await nsfwGet(request("/api/h3/nsfw"))).json();
-  expect(listing.catalog.map((c: {id:string})=>c.id)).toEqual(["prism-pika","eros-beta7","pinkcherry-v18"]);
+  expect(listing.catalog.map((c: {id:string})=>c.id)).toEqual(["prism-pika","eros-beta7"]);
   expect(listing.sessions.some((s: {id:string})=>s.id===session.id)).toBe(true);
   expect((await post({action:"generate",id:session.id})).status).toBe(409);
   expect(fs.existsSync(path.join(root,"production","jobs"))).toBe(false);
@@ -48,7 +48,7 @@ it("enables only explicitly configured production NSFW; Testing stays 404 even f
   expect(() => labRoot()).toThrow("Not found");
   expect((await nsfwGet(request("/api/h3/nsfw"))).status).toBe(200);
   expect(fs.existsSync(path.join(root, "testing"))).toBe(false);
-  expect(withNsfwWorkspace(() => labCapabilities()).map(c => c.model)).toHaveLength(3);
+  expect(withNsfwWorkspace(() => labCapabilities()).map(c => c.model)).toHaveLength(2);
   expect(() => withNsfwWorkspace(() => createSession("admin", "pika-flex"))).toThrow("not available");
   vi.stubEnv("OTG_H3_NSFW_ENABLED", "0");
   expect((await nsfwGet(request("/api/h3/nsfw"))).status).toBe(404);
@@ -60,7 +60,7 @@ it("preserves production sign-in, default-off users, requests, grants and revoca
   expect(requestNsfwAccess("alice", true).status).toBe("pending");
   expect(setNsfwAccess("admin", "alice", true, 0).enabled).toBe(true);
   const catalog = await (await nsfwGet(request("/api/h3/nsfw"))).json();
-  expect(catalog.environment).toBe("prod"); expect(catalog.catalog).toHaveLength(3);
+  expect(catalog.environment).toBe("prod"); expect(catalog.catalog).toHaveLength(2);
   expect(setNsfwAccess("admin", "alice", false, 1).enabled).toBe(false);
   expect((await nsfwGet(request("/api/h3/nsfw"))).status).toBe(403);
   expect(getNsfwAccess("admin").enabled).toBe(true);

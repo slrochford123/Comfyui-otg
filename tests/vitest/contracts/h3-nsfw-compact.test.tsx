@@ -21,25 +21,26 @@ beforeEach(() => {
     if (body?.action === "create") return response({ session });
     if (body?.action === "generate") return response({ job: { id: body.requestId, state: "completed", cleanedUp: true, model: session.experiment, stage: "Unit fixture complete", created: 1 } });
     if (url === "/api/enhance-prompt") return response({ enhancedPrompt: "A red paper boat floats on a calm pond." });
-    return response({ catalog: EXPERIMENTS.filter(e => e.kind === "h3-admin"), sessions: [session], capabilities: EXPERIMENTS.filter(e => e.kind === "h3-admin").map(e => ({ model: e.id, modes: ["text", "image", "reference", "edit", "edit-image"], gpu: "rtx3090", recipe: { steps: e.id === "prism-pika" ? 8 : 20 } })) });
+    return response({ catalog: EXPERIMENTS.filter(e => e.kind === "h3-admin"), sessions: [session], capabilities: EXPERIMENTS.filter(e => e.kind === "h3-admin").map(e => ({ model: e.id, modes: ["text", "image", "reference", "edit", "edit-image"], gpu: "rtx3090", recipe: { steps: 8 } })) });
   });
   vi.stubGlobal("fetch", server);
 });
 afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals(); });
 async function setup() { render(<H3NsfwStudio />); await screen.findByRole("textbox", { name: "Your scene" }); }
-it("keeps a retired draft readable, disables its generation, and preserves text when choosing a replacement", async () => {
-  session.experiment = "dasiwa-v4";
+it.each(["dasiwa-v4","pinkcherry-v18"])("keeps retired %s readable, disables generation, and preserves text when choosing a replacement", async model => {
+  session.experiment = model;
   await setup();
   expect(screen.queryByRole("button", { name: "DaSiWa · Hybrid v4" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "PinkCherry · v1.8 Hybrid" })).not.toBeInTheDocument();
   expect(screen.getByText(/was removed\. Choose another model/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Create video" })).toBeDisabled();
   expect(screen.getByLabelText("Your scene")).toHaveValue("A paper boat.");
-  fireEvent.click(screen.getByRole("button", { name: "PinkCherry · v1.8 Hybrid" }));
+  fireEvent.click(screen.getByRole("button", { name: "H3 Eros Max · beta 7" }));
   expect(screen.getByLabelText("Your scene")).toHaveValue("A paper boat.");
   expect(screen.getByRole("button", { name: "Create video" })).toBeEnabled();
 });
-it("recovers unsaved local text for a retired model instead of silently discarding it", async () => {
-  session.experiment = "dasiwa-v4";
+it.each(["dasiwa-v4","pinkcherry-v18"])("recovers unsaved local text for retired %s instead of silently discarding it", async model => {
+  session.experiment = model;
   const saved = { experiment: session.experiment, settings: session.settings };
   writeNsfwDraft("retirement-fixture", { version: 1, sessionId: session.id, savedKey: nsfwEditorKey(saved), editor: { ...saved, settings: { ...saved.settings, prompt: "Unsaved Android draft." } }, ui: { ...DEFAULT_NSFW_UI }, pending: null, updatedAt: Date.now() });
   render(<H3NsfwStudio ownerKey="retirement-fixture" />);
@@ -74,8 +75,8 @@ it("serializes autosave without replacing newer text and preserves edits when sw
   fireEvent.change(prompt, { target: { value: "Newer edit" } }); release!();
   await waitFor(() => expect(session.settings.prompt).toBe("Newer edit"), { timeout: 2500 });
   expect(prompt).toHaveValue("Newer edit");
-  fireEvent.click(screen.getByRole("button", { name: "PinkCherry · v1.8 Hybrid" })); expect(prompt).toHaveValue("Newer edit");
-  expect(screen.getByRole("button", { name: "Turbo", exact: true })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "H3 Eros Max · beta 7" })); expect(prompt).toHaveValue("Newer edit");
+  expect(screen.getByRole("button", { name: "Native", exact: true })).toBeDisabled();
 });
 it("persists detached references, supports undo and never deletes source media", async () => {
   session.settings.mode = "reference"; session.settings.selectedSources = ["one", "two"];

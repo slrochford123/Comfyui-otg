@@ -21,7 +21,7 @@ it("retains 100 sources/results in one H3 session without arbitrary count or GB 
 });
 it("allows new H3 drafts after 200 old drafts without consuming the separate Testing allowance",()=>{
  const s=createSession("owner-a","prism-pika");withLab(db=>db.transaction(()=>{const insert=db.prepare("INSERT INTO sessions SELECT ?,owner,experiment,title,settings,notes,archived,revision,created,updated FROM sessions WHERE id=?");for(let i=0;i<200;i++)insert.run(crypto.randomUUID(),s.id);})());
- expect(()=>createSession("owner-a","pinkcherry-v18")).not.toThrow();expect(()=>createSession("owner-a","pika-flex")).not.toThrow();
+ expect(()=>createSession("owner-a","eros-beta7")).not.toThrow();expect(()=>createSession("owner-a","pika-flex")).not.toThrow();
 });
 it("keeps quarantined Testing limits separate from uncapped H3 retention",()=>{
  const h3=createSession("owner-a","prism-pika"),a=reserveAsset("owner-a",h3.id,"existing.mp4","video/mp4","generated");finishAsset("owner-a",a.id,20*1024**3,"fixture");

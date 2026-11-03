@@ -9,7 +9,7 @@ import sys
 def main():
     root=Path(sys.argv[1]).resolve(strict=True);package=json.loads((root/'production-package.json').read_text())
     version=package['buildVersion']
-    if root.parent!=Path('/home/shawn-rochford/AI/research') or version not in ('2.21','2.22','2.23','2.24','2.25') or not package['stage'].startswith('/mnt/otg_bulk/build-'+version+'-promotion-'):raise RuntimeError('Invalid staging boundary')
+    if root.parent!=Path('/home/shawn-rochford/AI/research') or version not in ('2.21','2.22','2.23','2.24','2.25','2.26') or not package['stage'].startswith('/mnt/otg_bulk/build-'+version+'-promotion-'):raise RuntimeError('Invalid staging boundary')
     ssh=['ssh','-o','BatchMode=yes','otg-slr'];stage=package['stage']
     subprocess.run([*ssh,'mkdir -p '+shlex.quote(stage)],check=True)
     subprocess.run(['scp','-q','-o','BatchMode=yes',package['archive'],str(root/('activate-build-'+version+'.py')),'otg-slr:'+stage+'/'],check=True)

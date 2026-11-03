@@ -72,13 +72,13 @@ try {
   for(const action of ['generate','promote'])assert.equal((await call('/api/experiments',{action,id})).status(),409); record('Generation and promotion are fail-closed, without GPU submissions');
   await page.screenshot({path:path.join(out,'testing-desktop.png'),fullPage:true});
   await page.setViewportSize({width:412,height:915}); await page.screenshot({path:path.join(out,'testing-mobile.png'),fullPage:true}); assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2),false);
-  await page.goto(base+'/app?tab=h3-admin'); const admin=page.getByRole('region',{name:'H3 administrator workspace'}); await admin.waitFor(); await admin.getByRole('option',{name:'PRISM-PIKA',exact:true}).waitFor({state:'attached'}); assert.equal(await admin.getByLabel('Model version').locator('option').count(),3);
-  await admin.getByLabel('Model version').selectOption('pinkcherry-v18'); await admin.getByRole('button',{name:'New test plan',exact:true}).click();
+  await page.goto(base+'/app?tab=h3-admin'); const admin=page.getByRole('region',{name:'H3 administrator workspace'}); await admin.waitFor(); await admin.getByRole('option',{name:'PRISM-PIKA',exact:true}).waitFor({state:'attached'}); assert.equal(await admin.getByLabel('Model version').locator('option').count(),2);
+  await admin.getByLabel('Model version').selectOption('eros-beta7'); await admin.getByRole('button',{name:'New test plan',exact:true}).click();
   assert.equal(await admin.getByLabel('GPU preference').locator('option[value="rtx5060ti"]').evaluate(option=>option.disabled),true);
   assert.equal(await admin.getByRole('button',{name:'Generate private H3 video',exact:true}).isDisabled(),true);
   assert.equal(await admin.getByLabel('Mode',{exact:true}).locator('option[value="edit-image"]').evaluate(option=>option.disabled),true);
   await admin.getByLabel('GPU preference').selectOption('rtx3090'); await admin.getByLabel('Mode',{exact:true}).selectOption('edit'); await admin.getByRole('button',{name:'Save plan',exact:true}).click();
-  await admin.getByText('Plan saved. No generation or promotion occurred.',{exact:true}).waitFor(); assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2),false); await page.screenshot({path:path.join(out,'h3-admin-mobile.png'),fullPage:true}); record('Three exact model choices and compact mobile controls; no horizontal overflow');
+  await admin.getByText('Plan saved. No generation or promotion occurred.',{exact:true}).waitFor(); assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2),false); await page.screenshot({path:path.join(out,'h3-admin-mobile.png'),fullPage:true}); record('Two exact model choices and compact mobile controls; no horizontal overflow');
   // Exercise the real job/UI/storage transport with an explicitly synthetic runner.
   // Actual model inference qualification remains a separate, recorded GPU test.
   const fakeRunner=path.join(build,'scripts/experiments/qa_fake_runner.py');

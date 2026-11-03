@@ -54,7 +54,7 @@ try{
   assert.equal(await adminPage.getByRole('switch',{name:'H3 NSFW access for '+a.username,exact:true}).isDisabled(),true);
   record('Actual Settings request and Admin Users enable switch; no self-grant, CSRF rejected, admins always enabled');
   await page.goto(base+'/app?tab=h3');await page.getByRole('button',{name:'H3 NSFW',exact:true}).click();const panel=page.getByRole('region',{name:'H3 NSFW workspace',exact:true});await panel.waitFor();
-  const catalog=await (await call(user,'/api/h3/nsfw')).json();assert.equal(catalog.catalog.length,3);assert(catalog.catalog.every(m=>m.kind==='h3-admin'));
+  const catalog=await (await call(user,'/api/h3/nsfw')).json();assert.equal(catalog.catalog.length,2);assert(catalog.catalog.every(m=>m.kind==='h3-admin'));
   assert.equal((await call(user,'/api/h3/nsfw',{action:'create',experiment:'pika-flex'})).status(),403);
   const testing=(await (await call(admin,'/api/experiments',{action:'create',experiment:'pika-flex'})).json()).session;
   assert.equal((await call(admin,'/api/h3/nsfw?export='+testing.id)).status(),404);
@@ -69,13 +69,13 @@ try{
   const range=await user.request.get(base+'/api/h3/nsfw/assets?id='+assetId,{headers:{Range:'bytes=0-7'}});assert.equal(range.status(),206);assert.equal((await range.body()).length,8);
   const file=await call(user,'/api/h3/nsfw/assets?id='+assetId+'&download=1');assert.equal(crypto.createHash('sha256').update(await file.body()).digest('hex'),session.assets[0].sha256);
   assert.equal((await call(user,'/api/h3/nsfw',{...session,action:'update',settings:{...session.settings,loras:['arbitrary.safetensors']}})).status(),400);
-  await panel.getByRole('button',{name:catalog.catalog.find(c=>c.id==='pinkcherry-v18').title,exact:true}).click();assert.equal(await panel.getByRole('button',{name:'Turbo · 8',exact:true}).isDisabled(),true);
+  await panel.getByRole('button',{name:catalog.catalog.find(c=>c.id==='eros-beta7').title,exact:true}).click();assert.equal(await panel.getByRole('button',{name:'Native · 20',exact:true}).isDisabled(),true);
   await panel.getByRole('button',{name:'Save plan',exact:true}).click();await panel.getByText('Plan saved. No generation or promotion occurred.',{exact:true}).waitFor();
   await panel.getByRole('button',{name:'PRISM-PIKA',exact:true}).click();await panel.getByRole('button',{name:'Save plan',exact:true}).click();await panel.getByText('Plan saved. No generation or promotion occurred.',{exact:true}).waitFor();
   session=(await (await call(user,'/api/h3/nsfw')).json()).sessions.find(s=>s.id===sessionId);assert.equal(session.assets[0].id,assetId);assert.match(session.settings.prompt,/paper boat/);
   assert.equal(await panel.getByRole('button',{name:'Native · 20',exact:true}).isDisabled(),true);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2),false);await page.screenshot({path:path.join(out,'nsfw-mobile.png'),fullPage:true});
-  record('Four models and compact H3 controls; prompt/references retained on switch; owner-only range/download; no unqualified LoRA injection');
+  record('Two models and compact H3 controls; prompt/references retained on switch; owner-only range/download; no unqualified LoRA injection');
   // Check GPU queues and production health immediately before the one GPU generation.
   report.preflight={prod:JSON.parse(execFileSync('/usr/bin/ssh',['-o','BatchMode=yes','otg-slr',"curl -fsS http://127.0.0.1:3000/api/healthz"],{encoding:'utf8'})),queues:[]};
   for(const url of ['http://100.75.162.64:8188/queue','http://100.75.162.64:8189/queue','http://100.98.212.116:8188/queue']){const q=await(await fetch(url,{signal:AbortSignal.timeout(6000)})).json();assert.equal(q.queue_running.length+q.queue_pending.length,0,'Owner queue busy');report.preflight.queues.push({url,running:q.queue_running.length,pending:q.queue_pending.length});}

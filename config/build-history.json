@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.25",
+  "current": "2.26",
   "builds": [
     {
       "version": "2",
@@ -157,6 +157,12 @@
       "date": "2026-11-03",
       "summary": "Remove DaSiWa Hybrid v4 from TEST and PROD model choices; block new jobs while preserving saved drafts, references and results.",
       "sourceBaseCommit": "1424e53ee37f1b79a34baf0253ac7f3cafedcde8"
+    },
+    {
+      "version": "2.26",
+      "date": "2026-11-03",
+      "summary": "Remove PinkCherry and DaSiWa Hybrid v4 from H3 NSFW choices on TEST and PROD; preserve historical drafts, references and results.",
+      "sourceBaseCommit": "5b9d02840797ea6470f1b95ee59d44998a3d428e"
     }
   ]
 }

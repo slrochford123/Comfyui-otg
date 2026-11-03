@@ -72,10 +72,12 @@ try{
   await panel.getByText('Saved uploads · 2',{exact:true}).click();await panel.getByRole('button',{name:'Add back reference-two.png',exact:true}).click();await panel.getByText('Saved',{exact:true}).waitFor();
   session=(await state())[0];assert.deepEqual(session.settings.selectedSources,[second]);assert.equal((await call(user,'/api/h3/nsfw/assets?id='+first)).status(),200);
   report.snapshotChecks=await checkSnapshotFlow({page,panel,user,call,state,out,sid,record});second=report.snapshotChecks.assetId;
-  assert.equal(catalog.length,3);assert.equal(catalog.some(c=>c.id==='dasiwa-v4'),false);
+  assert.equal(catalog.length,2);assert.deepEqual(catalog.map(c=>c.id),['prism-pika','eros-beta7']);
   assert.equal(await panel.getByRole('button',{name:'DaSiWa · Hybrid v4',exact:true}).count(),0);
   assert.equal((await call(user,'/api/h3/nsfw',{action:'create',experiment:'dasiwa-v4'})).status(),409);
-  await panel.getByRole('button',{name:'PinkCherry · v1.8 Hybrid',exact:true}).click();assert.equal(await prompt.inputValue(),'A paper boat floats on a quiet pond.');assert.equal(await panel.getByRole('article').count(),1);assert.equal(await panel.getByRole('button',{name:'Turbo',exact:true}).isDisabled(),true);
+  assert.equal(await panel.getByRole('button',{name:'PinkCherry · v1.8 Hybrid',exact:true}).count(),0);
+  assert.equal((await call(user,'/api/h3/nsfw',{action:'create',experiment:'pinkcherry-v18'})).status(),409);
+  await panel.getByRole('button',{name:'H3 Eros Max · beta 7',exact:true}).click();assert.equal(await prompt.inputValue(),'A paper boat floats on a quiet pond.');assert.equal(await panel.getByRole('article').count(),1);assert.equal(await panel.getByRole('button',{name:'Native',exact:true}).isDisabled(),true);
   await panel.getByRole('button',{name:'PRISM-PIKA',exact:true}).click();assert.equal(await panel.getByRole('button',{name:'Native',exact:true}).isDisabled(),true);
   await panel.getByRole('button',{name:'Portrait',exact:true}).click();await panel.getByLabel('Duration in seconds').fill('15');await panel.getByRole('button',{name:'0.6 MP',exact:true}).click();await panel.getByText('Saved',{exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2),false);
@@ -130,9 +132,11 @@ try{
   // Retired model fixture: immutable jobs/media remain owned and downloadable,
   // but stale clients cannot create, switch to, or submit that model again.
   const beforeRetirement=(await state()).find(s=>s.id===sid);
+  report.retiredModels=['dasiwa-v4','pinkcherry-v18'];
+  for(const retiredModel of report.retiredModels){
   const fixtureDb=new Database(path.join(lab,'experiments.sqlite'));
-  try{fixtureDb.prepare('UPDATE sessions SET experiment=?, revision=revision+1 WHERE id=?').run('dasiwa-v4',sid);}finally{fixtureDb.close();}
-  const historical=(await state()).find(s=>s.id===sid);assert.equal(historical.experiment,'dasiwa-v4');
+  try{fixtureDb.prepare('UPDATE sessions SET experiment=?, revision=revision+1 WHERE id=?').run(retiredModel,sid);}finally{fixtureDb.close();}
+  const historical=(await state()).find(s=>s.id===sid);assert.equal(historical.experiment,retiredModel);
   assert.equal((await call(user,'/api/h3/nsfw',{action:'generate',id:sid,requestId:crypto.randomUUID()})).status(),409);
   assert.equal((await call(user,'/api/h3/nsfw?export='+sid)).status(),200);
   const preserved=await call(user,'/api/h3/nsfw/assets?id='+outputId+'&download=1');assert.equal(hash(await preserved.body()),hash(fs.readFileSync(clip)));
@@ -140,13 +144,14 @@ try{
   // The fixture changed the server record behind a cached active-model draft;
   // resolve that intentional conflict through the existing recovery control.
   await panel.getByRole('button',{name:'Use server draft',exact:true}).click();
-  await panel.getByText(/DaSiWa.*was removed/).waitFor();assert.equal(await prompt.inputValue(),beforeRetirement.settings.prompt);
+  await panel.getByText(/was removed\. Choose another model/).waitFor();assert.equal(await prompt.inputValue(),beforeRetirement.settings.prompt);
   assert.equal(await panel.getByRole('button',{name:'Create video',exact:true}).isDisabled(),true);
-  await panel.getByRole('button',{name:'PinkCherry · v1.8 Hybrid',exact:true}).click();await panel.getByText('Saved',{exact:true}).waitFor();
-  const replaced=(await state()).find(s=>s.id===sid);assert.equal(replaced.experiment,'pinkcherry-v18');assert.deepEqual(replaced.assets,beforeRetirement.assets);assert.deepEqual(replaced.settings,beforeRetirement.settings);
-  assert.equal((await call(user,'/api/h3/nsfw',{...replaced,action:'update',experiment:'dasiwa-v4'})).status(),409);
+  await panel.getByRole('button',{name:'H3 Eros Max · beta 7',exact:true}).click();await panel.getByText('Saved',{exact:true}).waitFor();
+  const replaced=(await state()).find(s=>s.id===sid);assert.equal(replaced.experiment,'eros-beta7');assert.deepEqual(replaced.assets,beforeRetirement.assets);assert.deepEqual(replaced.settings,beforeRetirement.settings);
+  assert.equal((await call(user,'/api/h3/nsfw',{...replaced,action:'update',experiment:retiredModel})).status(),409);
+  }
   report.retirementChecks={retiredChoiceAbsent:true,createDenied:true,generateDenied:true,switchToRetiredDenied:true,oldMediaDownloadUnchanged:true,oldDraftPreserved:true,replacementPreservesInputs:true};
-  record('DaSiWa removed from choices and blocked by API; historical draft/media/export retained; replacement keeps all inputs');
+  record('DaSiWa and PinkCherry removed from choices and blocked by API; historical drafts/media/exports retained; replacement keeps all inputs');
   assert.equal((await call(admin,'/api/h3/nsfw?export='+sid)).status(),404);assert.equal((await call(admin,'/api/h3/nsfw/assets?id='+outputId)).status(),404);assert.equal((await call(user,'/api/experiments')).status(),403);
   assert.equal((await call(admin,'/api/admin/h3-nsfw-access',{userId:u.id,enabled:false,version:1})).status(),200);
   assert.equal((await call(user,'/api/h3/nsfw/assets?id='+outputId)).status(),403);await panel.waitFor({state:'hidden',timeout:15000});assert(fs.existsSync(path.join(lab,outputId+'.media')));
