@@ -14,10 +14,17 @@ const loaded=()=>page.getByRole('status',{name:'Launching SLR Studios',exact:tru
  const quote=s=>"'"+s.replaceAll("'","'\\''")+"'";execFileSync('ssh',['-o','BatchMode=yes','otg-slr','sudo -n /usr/bin/python3 -c '+quote(grant)],{input:JSON.stringify({stage:pack.stage,username})});
  await page.goto(base+'/login');await page.getByPlaceholder('you@domain.com or username').fill(username);await page.locator('input[autocomplete="current-password"]').fill(password);await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.waitForURL('**/app');await loaded();
  const identity=await(await api('/api/app/build')).json();assert.equal(identity.buildVersion,'2.31');assert.equal(identity.commit,pack.commit);
- const card=(await(await api('/api/h3/special/refmods/character-card')).json()).card;assert(card?.voiceEnabled);
+ const card=(await(await api('/api/h3/special/refmods/character-card',{action:'create',id:crypto.randomUUID()})).json()).card;assert(card?.voiceEnabled);
  const voice=await(await api('/api/h3/special/refmods/character-card/voice?card='+card.id)).json();
  assert.deepEqual(voice.engines.map(e=>e.id),['qwen3']);assert.equal(voice.engines[0].available,true);
  assert.equal((await api('/api/h3/special/refmods/library/trash')).status(),200);
+ const source=await sharp({create:{width:64,height:96,channels:3,background:'#663399'}}).png().toBuffer();
+ for(let i=0;i<4;i++)assert.equal((await context.request.put(base+'/api/h3/special/refmods/character-card?id='+card.id+'&role=view&asset='+crypto.randomUUID(),{headers:{Origin:base,'Content-Type':'image/png'},data:source})).status(),200);
+ await page.goto(base+'/app?tab=characters');await loaded();await page.getByText('Ref Mod Gallery',{exact:true}).click();await page.locator('[data-otg="refmod-gallery-create"]').click();await page.getByRole('dialog',{name:'Create RefMod'}).getByRole('button',{name:/^Character Create identity/}).click();
+ await page.locator('[data-otg="refvoice-step"] summary').click();const designer=page.locator('[data-otg="refvoice-design"]');await designer.getByText('Qwen3-TTS',{exact:true}).waitFor();
+ assert.equal(await designer.getByRole('combobox').count(),0);assert.equal(await designer.getByText(/AuK|CosyVoice|H3 audio/).count(),0);
+ await designer.getByLabel('Describe the voice',{exact:true}).fill('Warm and gentle');assert.equal(await designer.getByRole('button',{name:'Generate voice',exact:true}).isEnabled(),true);
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2),false);await page.screenshot({path:out+'/qwen-only-production-mobile.png'});
  report.checks.push('qwen-only-production-availability');
  for(const url of ['/api/experiments','/api/experiments/refmod-replacement'])assert.equal((await api(url)).status(),404);
  assert.equal((await api('/api/h3/nsfw')).status(),200);await page.goto(base+'/app?tab=testing');await loaded();await wait(300);assert.equal(await page.getByRole('region',{name:'Testing workspace'}).count(),0);assert.equal(await page.getByText('RefMod Character Replacement Lab',{exact:true}).count(),0);report.checks.push('testing-closed-even-for-admin');
