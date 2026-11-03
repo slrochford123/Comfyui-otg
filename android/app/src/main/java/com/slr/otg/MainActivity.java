@@ -22,6 +22,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        registerPlugin(SlrGoogleBrowserPlugin.class);
         if ("com.slr.otg.test".equals(getPackageName())) {
             getWindow().setBackgroundDrawable(new ColorDrawable(Color.rgb(22, 12, 50)));
         }

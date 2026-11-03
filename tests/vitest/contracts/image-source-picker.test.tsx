@@ -64,12 +64,18 @@ it("supports late-mounted and hidden programmatic inputs used by H3 and Characte
   open(field); expect(screen.getByRole("dialog")).toBeVisible(); fireEvent.keyDown(document, {key:"Escape"}); expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
-it("does not intercept desktop, explicit camera, disabled, audio-only or video-only selection", () => {
+it("does not intercept explicit camera, disabled, audio-only or non-media selection", () => {
   const view = render(<ImageSourcePickerBridge />);
-  for (const accept of ["audio/*", "video/*", ".pdf"]) input(accept).click();
+  for (const accept of ["audio/*", ".pdf"]) input(accept).click();
   const camera = input(); camera.setAttribute("capture", "environment"); camera.click();
   const disabled = input(); disabled.disabled = true; disabled.click(); expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  view.unmount(); vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Desktop Chrome"); render(<ImageSourcePickerBridge />); input().click(); expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  view.unmount();
+});
+
+it("offers connected Google Photos for video and desktop image selection too", () => {
+  render(<ImageSourcePickerBridge />); open(input("video/*")); expect(screen.getByRole("dialog")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", {name:"Cancel"}));
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Desktop Chrome"); open(input()); expect(screen.getByRole("dialog")).toBeVisible();
 });
 
 it("rejects unsupported local file types before existing uploader sees them", () => {

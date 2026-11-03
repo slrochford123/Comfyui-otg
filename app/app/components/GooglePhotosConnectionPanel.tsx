@@ -1,18 +1,19 @@
 "use client";
 import React, {useEffect,useRef,useState} from "react";
-import {GOOGLE_PHOTOS_ATTEMPT_KEY,GOOGLE_PHOTOS_ENDPOINT,externalGoogleWindow,googlePhotosRequest} from "@/lib/client/googlePhotos";
+import {GOOGLE_PHOTOS_ATTEMPT_KEY,GOOGLE_PHOTOS_ENDPOINT,externalGoogleWindow,googlePhotosRequest,googlePhotosJson,type GoogleWindow} from "@/lib/client/googlePhotos";
 type Status={configured:boolean;connected:boolean;connecting?:boolean};
 export default function GooglePhotosConnectionPanel({admin=false}:{admin?:boolean}){
   const [status,setStatus]=useState<Status|null>(null),[message,setMessage]=useState(""),[busy,setBusy]=useState(false);
   const inFlight=useRef(false);
+  const googleWindow=useRef<GoogleWindow|null>(null);
   const [redirectUri,setRedirectUri]=useState("");
   async function refresh(){
     if(inFlight.current)return;inFlight.current=true;
-    try{const attempt=sessionStorage.getItem(GOOGLE_PHOTOS_ATTEMPT_KEY);const response=await fetch(GOOGLE_PHOTOS_ENDPOINT+(attempt?"?attempt="+encodeURIComponent(attempt):""),{credentials:"same-origin",cache:"no-store"});const data=await response.json();if(!response.ok){sessionStorage.removeItem(GOOGLE_PHOTOS_ATTEMPT_KEY);throw Error(data.error||"Could not check Google Photos.");}setStatus(data);if(data.connected&&!data.connecting){sessionStorage.removeItem(GOOGLE_PHOTOS_ATTEMPT_KEY);setMessage("Google Photos connected. Only media you select will be imported.");}}
+    try{const attempt=sessionStorage.getItem(GOOGLE_PHOTOS_ATTEMPT_KEY);const response=await fetch(GOOGLE_PHOTOS_ENDPOINT+(attempt?"?attempt="+encodeURIComponent(attempt):""),{credentials:"same-origin",cache:"no-store"});if(response.status===400||response.status===401)sessionStorage.removeItem(GOOGLE_PHOTOS_ATTEMPT_KEY);const data=await googlePhotosJson<Status>(response);setStatus(data);if(data.connected&&!data.connecting){sessionStorage.removeItem(GOOGLE_PHOTOS_ATTEMPT_KEY);if(attempt){await googleWindow.current?.close();googleWindow.current=null;}setMessage("Google Photos connected. Only media you select will be imported.");}}
     catch(error){setMessage((error as Error).message);}finally{inFlight.current=false;}
   }
-  useEffect(()=>{void refresh();const timer=setInterval(()=>{if(document.visibilityState==="visible"&&sessionStorage.getItem(GOOGLE_PHOTOS_ATTEMPT_KEY))void refresh();},3000);const resume=()=>void refresh();window.addEventListener("focus",resume);return()=>{clearInterval(timer);window.removeEventListener("focus",resume);};},[]);
-  async function connect(){const popup=externalGoogleWindow();setBusy(true);setMessage("");try{const result=await googlePhotosRequest<{authorizationUrl:string;attempt:string}>("connect");sessionStorage.setItem(GOOGLE_PHOTOS_ATTEMPT_KEY,result.attempt);if(!popup)throw Error("Allow pop-ups for this site to connect Google Photos.");popup.navigate(result.authorizationUrl);setMessage("Approve Google Photos in your browser, then return here.");setStatus(current=>current?{...current,connecting:true}:current);}catch(error){popup?.close();setMessage((error as Error).message);}finally{setBusy(false);}}
+  useEffect(()=>{void refresh();const timer=setInterval(()=>{if((document.visibilityState==="visible"||googleWindow.current?.inApp)&&sessionStorage.getItem(GOOGLE_PHOTOS_ATTEMPT_KEY))void refresh();},3000);const resume=()=>void refresh();window.addEventListener("focus",resume);return()=>{clearInterval(timer);window.removeEventListener("focus",resume);void googleWindow.current?.close().catch(()=>{});};},[]);
+  async function connect(){if(busy)return;const popup=externalGoogleWindow();googleWindow.current=popup;setBusy(true);setMessage("");try{if(!popup)throw Error("Allow pop-ups for this site to connect Google Photos.");const result=await googlePhotosRequest<{authorizationUrl:string;attempt:string}>("connect");sessionStorage.setItem(GOOGLE_PHOTOS_ATTEMPT_KEY,result.attempt);await popup.navigate(result.authorizationUrl);setMessage(popup.inApp?"Approve Google Photos. You’ll return here automatically.":"Approve Google Photos in your browser, then return here.");setStatus(current=>current?{...current,connecting:true}:current);}catch(error){await popup?.close().catch(()=>{});googleWindow.current=null;setMessage((error as Error).message);}finally{setBusy(false);}}
   return <section aria-label="Google Photos connection" className="space-y-3 rounded-[22px] border border-white/10 bg-black/25 p-5">
     <h2 className="text-lg font-bold">Google Photos</h2>
     <p className="text-sm text-white/65">Import photos and videos you choose. Phone storage stays available. This does not back up your stories or settings.</p>

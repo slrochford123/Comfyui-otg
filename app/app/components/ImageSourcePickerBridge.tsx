@@ -35,6 +35,7 @@ export default function ImageSourcePickerBridge() {
       if (input.disabled || input.hasAttribute("capture") || (!acceptsImages(input.accept) && !input.accept.includes("video/"))) return;
       event.preventDefault();
       event.stopImmediatePropagation();
+      if (cloudAbort.current) return;
       clearTimeout(focusTimer);
       restore();
       launched.current = null;
@@ -112,18 +113,24 @@ export default function ImageSourcePickerBridge() {
   }
 
   async function chooseGoogle(){
-    const current=pending.current;if(!current)return;
+    const current=pending.current;if(!current||cloudAbort.current)return;
     const popup=externalGoogleWindow(),abort=new AbortController();cloudAbort.current=abort;
     setCloudStatus("Opening Google Photos…");setError("");
     try{
       const files=await pickGooglePhotos(current.input,popup,abort.signal,setCloudStatus);
+      abort.signal.throwIfAborted();
+      if(!files.length){pending.current=null;setSelection(null);setCloudStatus("");return;}
       if(files.some(file=>!matchesOriginalAccept(file,current.accept||"")))throw Error("Choose only the file types supported here. Nothing was added.");
       if(!current.input.isConnected||current.input.disabled)throw Error("The input changed while picking. Choose your media again.");
       const transfer=new DataTransfer();files.forEach(file=>transfer.items.add(file));current.input.files=transfer.files;
       pending.current=null;setSelection(null);setCloudStatus("");
       current.input.dispatchEvent(new Event("change",{bubbles:true}));
-    }catch(error){popup?.close();if(!abort.signal.aborted)setError((error as Error).message);setCloudStatus("");}
-    finally{cloudAbort.current=null;}
+    }catch(error){
+      if(abort.signal.aborted||(error as Error).name==="AbortError"){pending.current=null;setSelection(null);}
+      else setError((error as Error).message);
+      setCloudStatus("");
+    }
+    finally{if(cloudAbort.current===abort)cloudAbort.current=null;}
   }
 
   if (!selection && !error) return null;

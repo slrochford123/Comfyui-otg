@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.29",
+  "current": "2.30",
   "builds": [
     {
       "version": "2",
@@ -181,6 +181,12 @@
       "date": "2026-11-03",
       "summary": "Ordered multi-image editing: Qwen up to 16 inputs, FIBO up to 4; H3 batch uploads, reorder and input recovery; optional per-user Google Photos Picker setup. Experimental Testing changes are excluded.",
       "sourceBaseCommit": "08a43a14ee1527741aeec988ed349205efd1c057"
+    },
+    {
+      "version": "2.30",
+      "date": "2026-11-03",
+      "summary": "Google Photos in-app browser panel with automatic return, cancellation preservation and clearer connection errors; Android wrapper 2.0.5 support. Testing experiments remain excluded.",
+      "sourceBaseCommit": "5e1e6aaf38bed6a1f5dbe46492b37b84bf722042"
     }
   ]
 }
