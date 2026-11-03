@@ -136,8 +136,10 @@ try{
   assert.equal((await call(user,'/api/h3/nsfw',{action:'generate',id:sid,requestId:crypto.randomUUID()})).status(),409);
   assert.equal((await call(user,'/api/h3/nsfw?export='+sid)).status(),200);
   const preserved=await call(user,'/api/h3/nsfw/assets?id='+outputId+'&download=1');assert.equal(hash(await preserved.body()),hash(fs.readFileSync(clip)));
-  await page.evaluate(()=>{for(const key of Object.keys(localStorage))if(key.startsWith('otg:h3:nsfw:draft:'))localStorage.removeItem(key);});
   await page.reload();await page.getByRole('button',{name:'H3 NSFW',exact:true}).click();
+  // The fixture changed the server record behind a cached active-model draft;
+  // resolve that intentional conflict through the existing recovery control.
+  await panel.getByRole('button',{name:'Use server draft',exact:true}).click();
   await panel.getByText(/DaSiWa.*was removed/).waitFor();assert.equal(await prompt.inputValue(),beforeRetirement.settings.prompt);
   assert.equal(await panel.getByRole('button',{name:'Create video',exact:true}).isDisabled(),true);
   await panel.getByRole('button',{name:'PinkCherry · v1.8 Hybrid',exact:true}).click();await panel.getByText('Saved',{exact:true}).waitFor();
