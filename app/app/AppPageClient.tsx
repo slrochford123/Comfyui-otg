@@ -7721,6 +7721,7 @@ async function handleAskAi() {
         {tab === "h3" ? <H3Panel key={authenticatedOwnerKey || "h3-account-unavailable"} authenticatedOwnerKey={authenticatedOwnerKey} nsfwAvailable={nsfwAvailable} /> : null}
         {tab === "characters" ? (
           <CharactersPanel
+            refCardsEnabled={experimentalEnabled}
             key={authenticatedOwnerKey || "character-account-unavailable"}
             isAdmin={isAdmin}
             authenticatedOwnerKey={authenticatedOwnerKey}

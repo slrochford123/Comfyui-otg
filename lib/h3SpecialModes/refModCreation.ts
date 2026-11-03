@@ -56,6 +56,7 @@ export type H3RefModSidecar = {
   characterId?: string | null;
   description?: string;
   savedPath?: string | null;
+  cardPreviewPath?: string | null;
   motionType?: H3RefModMotionType | null;
   isolationEnabled?: boolean;
   alphaGenerator?: "ltx-2.5-alpha-gen" | null;

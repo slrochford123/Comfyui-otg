@@ -8,6 +8,8 @@ import { H3_BACKEND_PROFILES } from "@/lib/production/h3Workflows";
 
 import { normalizeH3RefModLibraryEntry } from "@/lib/h3SpecialModes/refMods";
 import { readH3RefModSidecar } from "@/lib/h3SpecialModes/refModCreation";
+import {canUseCharacterRefMod} from "@/lib/h3SpecialModes/characterRefCardAccess";
+import {CHARACTER_REF_PREFIX} from "@/lib/h3SpecialModes/characterRefCardContract";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,7 +31,8 @@ function noStore(payload: unknown, init?: ResponseInit) {
 
 export async function GET(request: NextRequest) {
   try {
-    try { await requireSessionUser(request); } catch { return noStore({ ok: false, error: "Sign in to read your RefMod library.", entries: [] }, { status: 401 }); }
+    let owner;
+    try { owner=await requireSessionUser(request); } catch { return noStore({ ok: false, error: "Sign in to read your RefMod library.", entries: [] }, { status: 401 }); }
     let target;
     try { target = parseH3TargetBackend(request.nextUrl.searchParams.get("backend") ?? undefined); }
     catch { return noStore({ ok: false, error: "Choose RTX 3090 or RTX 5060 Ti.", entries: [] }, { status: 400 }); }
@@ -42,8 +45,13 @@ export async function GET(request: NextRequest) {
       throw new Error(`RefMod library returned HTTP ${response.status}.`);
     }
     const raw = await response.json().catch(() => null);
+    // TEST cards can be created on either GPU. Merge only that new namespace;
+    // preserve the existing default library and its legacy lookup behavior.
+    if(!target&&process.env.OTG_ENV==="test"&&Array.isArray(raw)){
+      try{const remote=await fetch(H3_BACKEND_PROFILES.rtx5060ti.baseUrl+"/refmods/library",{cache:"no-store",signal:AbortSignal.timeout(10000)});const other=await remote.json();if(remote.ok&&Array.isArray(other))for(const item of other)if(String(item.name).startsWith(CHARACTER_REF_PREFIX)&&!raw.some(e=>e.name===item.name))raw.push({...item,otgBackend:"rtx5060ti"});}catch{}
+    }
     const entries = Array.isArray(raw)
-      ? raw.map((entry) => {
+      ? raw.filter(entry=>canUseCharacterRefMod(owner.ownerKey,String(entry.name||""))).map((entry) => {
           const normalized = normalizeH3RefModLibraryEntry(entry);
           if (target !== "rtx5060ti" && normalized.file && fs.existsSync(normalized.file)) {
             const stat = fs.statSync(normalized.file);
@@ -51,7 +59,9 @@ export async function GET(request: NextRequest) {
             normalized.createdAt = stat.birthtime.toISOString();
             normalized.modifiedAt = stat.mtime.toISOString();
           }
-          const sidecar = target === "rtx5060ti" ? null : readH3RefModSidecar(normalized.name);
+          const privateCard=normalized.name.startsWith(CHARACTER_REF_PREFIX);
+          if(privateCard)normalized.backend=target|| (entry.otgBackend==="rtx5060ti"?"rtx5060ti":"rtx3090");
+          const sidecar = target === "rtx5060ti"&&!privateCard ? null : readH3RefModSidecar(normalized.name);
           if (sidecar) {
             normalized.sourceType = "otg-created";
             normalized.characterId = sidecar.characterId || null;
@@ -64,6 +74,7 @@ export async function GET(request: NextRequest) {
             normalized.previewPath = sidecar.isolatedDerivativePath || sidecar.sourceClipPath || sidecar.sourceAssets?.[0]?.path || null;
             normalized.createdAt ||= sidecar.createdAt;
             normalized.modifiedAt ||= sidecar.updatedAt;
+            if(privateCard&&sidecar.ownerKey===owner.ownerKey){normalized.displayName=sidecar.name;normalized.description=sidecar.description||"";normalized.previewPath=`/api/h3/special/refmods/character-card?id=${sidecar.jobId}&preview=${sidecar.cardPreviewPath?normalized.name.split("/").pop():"1"}`;}
           }
           return normalized;
         })

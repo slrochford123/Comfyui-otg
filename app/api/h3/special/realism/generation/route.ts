@@ -304,12 +304,12 @@ async function startGenerationJob(
   media: H3RealismMedia,
 ) {
   const generation = readH3RealismGenerationConfig(config);
-  const targetBackend = parseH3TargetBackend(await (await import("@/lib/mediaGpuRoutingServer")).requestedH3MediaGpu(config.targetBackend));
-  const smartReferences = await makeH3SmartReferenceInput(config.smartReferences, targetBackend || "rtx3090", media.images, media.firstFrame || null, media.videos.length, media.audios.length, {videos: media.videos, audios: media.audios});
+  const targetBackend = await (await import("@/lib/h3SmartReferencesServer")).characterRefSelectionBackend(config.smartReferences,parseH3TargetBackend(await (await import("@/lib/mediaGpuRoutingServer")).requestedH3MediaGpu(config.targetBackend)),ownerKey);
+  const smartReferences = await makeH3SmartReferenceInput(config.smartReferences, targetBackend || "rtx3090", media.images, media.firstFrame || null, media.videos.length, media.audios.length, {videos: media.videos, audios: media.audios},ownerKey);
   if (smartReferences) smartReferences.originalPrompt = String(config.prompt || "");
   const input = validateH3RealismJobInput({
     smartReferences,
-    targetBackend: parseH3TargetBackend(await (await import("@/lib/mediaGpuRoutingServer")).requestedH3MediaGpu(config.targetBackend)),
+    targetBackend,
     ...generation,
     references: [
       ...media.images,

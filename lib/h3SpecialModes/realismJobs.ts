@@ -539,7 +539,7 @@ async function submitNewRealismPrompt(job: H3RealismJob) {
       uploadedFilename: uploaded[index],
     }));
     const oldSmart = job.input.smartReferences;
-    const smart = oldSmart ? await makeH3SmartReferenceInput(oldSmart, backend, oldSmart.images, oldSmart.firstFrame, job.input.references.filter(item => item.kind === "video").length, job.input.references.filter(item => item.kind === "audio").length, {videos: job.input.references.filter(item => item.kind === "video"), audios: job.input.references.filter(item => item.kind === "audio")}) : undefined;
+    const smart = oldSmart ? await makeH3SmartReferenceInput(oldSmart, backend, oldSmart.images, oldSmart.firstFrame, job.input.references.filter(item => item.kind === "video").length, job.input.references.filter(item => item.kind === "audio").length, {videos: job.input.references.filter(item => item.kind === "video"), audios: job.input.references.filter(item => item.kind === "audio")},job.ownerKey) : undefined;
     const firstFrameFilename = smart?.firstFrame ? await uploadH3Input({backend, sourcePath: smart.firstFrame.path, mediaType: "image", uploadName: `${job.id}-first-frame`}) : undefined;
     const built = buildH3RealismWorkflow({
       smartReferences: smart, smartFirstFrameFilename: firstFrameFilename,

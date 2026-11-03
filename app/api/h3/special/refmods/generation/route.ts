@@ -75,7 +75,7 @@ async function postRefMods(req: NextRequest) {
     const config = body?.config && typeof body.config === "object"
       ? body.config as Record<string, unknown>
       : {};
-    const targetBackend = await (await import("@/lib/mediaGpuRoutingServer")).requestedH3MediaGpu(config.targetBackend);
+    const targetBackend = await (await import("@/lib/h3SmartReferencesServer")).characterRefSelectionBackend(config.smartReferences,await (await import("@/lib/mediaGpuRoutingServer")).requestedH3MediaGpu(config.targetBackend),ownerKey);
     const selection = normalizeH3SmartReferenceSelection(config.smartReferences);
     const staged = body?.staged;
     if (selection && JSON.stringify(selection.refMods) !== JSON.stringify((await import("@/lib/h3SpecialModes/refMods")).normalizeH3RefModSlots(config.refMods))) throw Error("The RefMod selection changed. Recheck your references.");
@@ -84,7 +84,7 @@ async function postRefMods(req: NextRequest) {
     const notes = Array.isArray(config.imageDescriptions) ? config.imageDescriptions : [];
     images.forEach((image, i) => { image.description = String(notes[i] || ""); });
     const first = selection?.useFirstFrame ? await saveH3SmartReferenceImage(ownerKey, staged?.firstImage) : null;
-    const smartReferences = await makeH3SmartReferenceInput(selection, targetBackend || "rtx3090", images, first);
+    const smartReferences = await makeH3SmartReferenceInput(selection, targetBackend || "rtx3090", images, first,0,0,undefined,ownerKey);
     if (smartReferences) smartReferences.originalPrompt = String(config.prompt || "");
     const job = await createH3RefModsJob(ownerKey, {...config, smartReferences, targetBackend}, owner);
     startH3RefModsJob(job);

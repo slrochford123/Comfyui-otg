@@ -1,4 +1,5 @@
 import { makeH3SmartReferenceInput } from "@/lib/h3SmartReferencesServer";
+import {assertOwnedCharacterRefMods} from "./characterRefCardAccess";
 import { compileH3SmartReferencePrompt, type H3SmartReferenceInput } from "@/lib/h3SmartReferences";
 import { uploadH3Input } from "@/lib/production/h3Comfy";
 import { isComfyReadError } from "@/lib/comfyTransport";
@@ -297,6 +298,7 @@ export async function createH3RefModsJob(
   galleryOwner: H3RefModsJob["galleryOwner"] = null,
 ) {
   const normalized = validateH3RefModsJobInput(input);
+  assertOwnedCharacterRefMods(ownerKey,normalized.refMods);
   const id = `h3-refmods-${crypto.randomUUID()}`;
   const now = new Date().toISOString();
   const job: H3RefModsJob = {
@@ -495,7 +497,7 @@ async function execute(job: H3RefModsJob) {
     };
 
     const oldSmart = persisted.input.smartReferences;
-    const smart = oldSmart ? await makeH3SmartReferenceInput(oldSmart, selected.backend, oldSmart.images, oldSmart.firstFrame) : undefined;
+    const smart = oldSmart ? await makeH3SmartReferenceInput(oldSmart, selected.backend, oldSmart.images, oldSmart.firstFrame,0,0,undefined,job.ownerKey) : undefined;
     const upload = async (item: {path: string; name: string}, n: string) => uploadH3Input({backend: selected.backend, sourcePath: item.path, uploadName: `${safeSegment(job.id)}-${n}`, mediaType: "image"});
     const smartImageFilenames = smart ? await Promise.all(smart.images.map((item, i) => upload(item, `reference-${i}`))) : undefined;
     const smartFirstFrameFilename = smart?.firstFrame ? await upload(smart.firstFrame, "first-frame") : undefined;

@@ -581,7 +581,7 @@ async function execute(job: H3DirectJob) {
       uploadedFilename: audioFilenames[index],
     }));
 
-    const smartReferences = job.input.smartReferences ? await makeH3SmartReferenceInput(job.input.smartReferences, selectedBackend, job.input.images, job.input.firstImage, job.input.videos.length, job.input.audios.length, {videos: job.input.videos, audios: job.input.audios}) : undefined;
+    const smartReferences = job.input.smartReferences ? await makeH3SmartReferenceInput(job.input.smartReferences, selectedBackend, job.input.images, job.input.firstImage, job.input.videos.length, job.input.audios.length, {videos: job.input.videos, audios: job.input.audios},job.ownerKey) : undefined;
     let built = buildH3Workflow({
       smartReferenceMap: smartReferences?.referenceMap,
       preserveLegacyReference: !!job.input.videoEdit,

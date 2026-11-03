@@ -9,7 +9,8 @@ if(built.exitCode!==0||built.build!==build)throw Error('Successful exact build r
 // applies to model/runner changes or general feature releases.
 const retirement=['--retire-dasiwa-v4','--retire-h3-models'].includes(process.argv[5]);
 const retireBoth=process.argv[5]==='--retire-h3-models';
-if(process.argv[5]&&!retirement)throw Error('Unknown qualification mode');
+const refCards=process.argv[5]==='--character-refcards';
+if(process.argv[5]&&!retirement&&!refCards)throw Error('Unknown qualification mode');
 if(retirement){
   const baseline='453f9d654580f9466148fd8015b3d7449276407a';
   const previous=retireBoth?'/home/shawn-rochford/AI/deploy/otg-test/releases/test3001-experimental-tabs-20261103T005548Z':'/home/shawn-rochford/AI/deploy/otg-test/releases/test3001-build-2.24-20261102T205925Z';
@@ -29,13 +30,35 @@ if(retirement){
   if(catalog.split('const RETIRED_EXPERIMENTS')[0].includes('dasiwa-v4')||!catalog.includes('isRetiredExperiment'))throw Error('Retirement catalog guard missing');
   if(retireBoth&&(catalog.split('const RETIRED_EXPERIMENTS')[0].includes('pinkcherry-v18')||JSON.parse(fs.readFileSync(path.join(build,'config/build-history.json'))).current!=='2.26'))throw Error('Combined retirement identity mismatch');
 }
+if(refCards){
+  const baseline='cca28c6c21c734a3138425461086181f121532d3';
+  if(expected!=='/home/shawn-rochford/AI/deploy/otg-test/releases/test3001-experimental-tabs-20261103T012226Z')throw Error('RefCard baseline changed');
+  const files=['app/api/h3/generation/route.ts','app/api/h3/smart-references/route.ts','app/api/h3/special/realism/generation/route.ts','app/api/h3/special/refmods/generation/route.ts','app/api/h3/special/refmods/library/route.ts','app/api/h3/special/refmods/character-card/route.ts','app/app/AppPageClient.tsx','app/app/components/CharacterHubPanel.tsx','app/app/components/H3SmartReferences.tsx','app/app/components/CharacterRefCardCreator.tsx','config/build-history.json','instrumentation.ts','lib/h3DirectJobs.ts','lib/h3SmartReferencesServer.ts','lib/h3SpecialModes/realismJobs.ts','lib/h3SpecialModes/refModCreation.ts','lib/h3SpecialModes/refMods.ts','lib/h3SpecialModes/refModsJobs.ts','lib/images/nativeImageBackend.ts','lib/h3SpecialModes/characterRefCard.ts','lib/h3SpecialModes/characterRefCardAccess.ts','lib/h3SpecialModes/characterRefCardContract.ts'];
+  files.push('app/app/components/H3Panel.tsx');
+  const allowed=new Set(files),scope=['app','lib','config','comfy_workflows','instrumentation.ts','package.json','package-lock.json'];
+  const changed=[...new Set([...execFileSync('git',['diff','--name-only',baseline,'--',...scope],{cwd:source,encoding:'utf8'}).trim().split('\n'),...execFileSync('git',['ls-files','--others','--exclude-standard','--',...scope],{cwd:source,encoding:'utf8'}).trim().split('\n')].filter(Boolean))];
+  if(changed.some(file=>!allowed.has(file))||files.some(file=>!changed.includes(file)))throw Error('Not the scoped Character RefCard feature');
+  for(const file of [...execFileSync('git',['ls-files',...scope],{cwd:source,encoding:'utf8'}).trim().split('\n'),...files]){
+    if(!fs.readFileSync(path.join(source,file)).equals(fs.readFileSync(path.join(build,file))))throw Error('Qualified source changed: '+file);
+  }
+  const scripts=execFileSync('git',['diff','--name-only',baseline,'--','scripts'],{cwd:source,encoding:'utf8'}).trim().split('\n').filter(Boolean);
+  if(scripts.some(file=>file!=='scripts/experiments/stage-test.cjs'&&!file.startsWith('scripts/experiments/qa-')))throw Error('Unqualified runtime helper changed');
+  if(fs.existsSync(path.join(evidence,'runtime-candidate.json'))||fs.existsSync(path.join(evidence,'testing-runtime-candidate.json')))throw Error('RefCards must not replace the existing experimental runtimes');
+  if(JSON.parse(fs.readFileSync(path.join(build,'config/build-history.json'))).current!=='2.27')throw Error('Expected TEST Build 2.27');
+}
 const qa=fs.readdirSync(path.dirname(build)).filter(n=>n.startsWith('browser-')).map(n=>path.join(build,'..',n,'results.json')).filter(f=>fs.existsSync(f)).map(f=>JSON.parse(fs.readFileSync(f,'utf8')));
+if(refCards){
+  const real=qa.find(r=>r.ok&&r.buildId===built.buildId&&r.suite==='character-refcard'&&r.realInference&&r.paidCalls===0&&['rtx3090','rtx5060ti'].every(gpu=>r.gpus?.[gpu]?.h3Job?.status==='completed'&&r.gpus[gpu].viewIds?.length===4&&r.gpus[gpu].video?.probe?.format?.duration));
+  if(!real||!real.gpus.rtx3090.individualRegeneration||real.uploadedEightEncoding?.shape?.[0]!==8||!real.immutableSavedPreview||!real.useInH3Routing)throw Error('Exact-build dual-GPU FIBO/RefMod/H3, Use in H3 routing, eight-image encoding and immutable-preview qualification required');
+  const review=JSON.parse(fs.readFileSync(path.join(path.dirname(build),'refcard-quality-review.json')));
+  if(review.buildId!==built.buildId||!review.ok||!review.distinctViews||!review.h3IdentityRecognizable||!review.limitations)throw Error('Recorded visual quality review required');
+}
 if(!qa.some(result=>result.ok&&result.buildId===built.buildId&&result.suite==='experimental-workspace'))throw Error('Exact build experimental workspace browser qualification required');
 const accessCandidate=path.join(evidence,'runtime-candidate.json');
 if(retirement&&!qa.some(r=>r.ok&&r.buildId===built.buildId&&r.suite==='h3-nsfw-compact'&&Object.values(r.retirementChecks||{}).length===7&&Object.values(r.retirementChecks).every(v=>v===true)))throw Error('Exact retirement browser/API/media qualification required');
 if(retireBoth&&!qa.some(r=>r.ok&&r.buildId===built.buildId&&r.suite==='h3-nsfw-compact'&&JSON.stringify(r.retiredModels)===JSON.stringify(['dasiwa-v4','pinkcherry-v18'])))throw Error('Both removed models must pass historical-data and request-denial browser checks');
 if(retirement&&(fs.existsSync(accessCandidate)||fs.existsSync(path.join(evidence,'testing-runtime-candidate.json'))))throw Error('Retirement cannot replace runtime configurations');
-if(!retirement&&fs.existsSync(path.join(build,'lib/storyCreator/mediaExecution.ts'))){
+if(!retirement&&!refCards&&fs.existsSync(path.join(build,'lib/storyCreator/mediaExecution.ts'))){
   if(!qa.some(r=>r.ok&&r.buildId===built.buildId&&r.suite==='story-media'))throw Error('Exact-build Story media browser qualification required');
   const real=fs.readdirSync(path.dirname(build)).filter(n=>n.startsWith('real-story-media-')).map(n=>path.join(build,'..',n,'results.json')).filter(f=>fs.existsSync(f)).map(f=>JSON.parse(fs.readFileSync(f,'utf8')));
   if(!real.some(r=>r.ok&&r.realInference&&r.buildId===built.buildId&&r.suite==='story-media-real'))throw Error('Exact-build Story media real GPU qualification required');
@@ -67,7 +90,7 @@ const billingMarker=path.join(previous,'public/openai-billing-fix.json');
 const billing=fs.existsSync(billingMarker)?JSON.parse(fs.readFileSync(billingMarker,'utf8')):null;
 const billingFiles=['lib/openai/adminCredential.ts','lib/openai/billing.ts','lib/openai/connection.ts','app/api/admin/openai-billing/route.ts','app/app/admin/openai-billing/OpenAIBillingClient.tsx','scripts/install-openai-admin-key-test.py','scripts/install-openai-admin-key-test.sh'];
 if(billing){
-  if(!retirement&&!qa.some(result=>result.ok&&result.buildId===built.buildId&&result.suite==='openai-billing'))throw Error('Exact combined build billing browser qualification required');
+  if(!retirement&&!refCards&&!qa.some(result=>result.ok&&result.buildId===built.buildId&&result.suite==='openai-billing'))throw Error('Exact combined build billing browser qualification required');
   // The active standalone release retains lib/scripts, but not original app sources.
   for(const file of billingFiles){
     if(!fs.readFileSync(path.join(source,file)).equals(fs.readFileSync(path.join(build,file))))throw Error('Billing source changed since build: '+file);
@@ -95,6 +118,7 @@ for(const [name,target] of Object.entries({'.env.local':'/home/shawn-rochford/AI
 }
 const sourceHead=execFileSync('git',['rev-parse','HEAD'],{cwd:source,encoding:'utf8'}).trim();
 fs.writeFileSync(path.join(candidate,'public/experimental-workspace.json'),JSON.stringify({feature:'experimental-workspace',buildId:built.buildId,sourceHead,includesLocalChanges:true,testOnly:true,executionAdapterInstalled:true,executionPolicy:'private-runtime-qualified-model-and-mode-only',promotionEnabled:false}));
+if(refCards)fs.writeFileSync(path.join(candidate,'public/character-refmod-cards.json'),JSON.stringify({feature:'character-refmod-cards',buildId:built.buildId,sourceHead,testOnly:true,version:'2.27',paths:['one-image-four-fibo-views','four-to-eight-owned-reference-images'],encoder:'H3 Full Reference',gpus:['rtx3090','rtx5060ti'],paidCalls:0}));
 if(billing)fs.writeFileSync(path.join(candidate,'public/openai-billing-fix.json'),JSON.stringify({...billing,buildId:built.buildId,sourceHead,experimentalTabsIncluded:true,billingFixPreserved:true}));
 const helpers=path.join(evidence,'helpers');fs.mkdirSync(helpers,{mode:0o700});
 for(const [from,to] of [['scripts/deploy/systemd_runtime.py','helpers/systemd_runtime.py'],['scripts/deploy/activate_test_release.py','helpers/activate_test_release.py'],['scripts/audit/activate-test.py','helpers/audit_checks.py'],['scripts/experiments/activate-test.py','activate-test.py']])fs.copyFileSync(path.join(source,from),path.join(evidence,to),fs.constants.COPYFILE_EXCL);

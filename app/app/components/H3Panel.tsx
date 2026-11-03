@@ -1031,7 +1031,8 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
   const [studioBusy, setStudioBusy] = useState(false);
   const [h3Backend, setH3Backend] = useState<"rtx3090" | "rtx5060ti">("rtx3090");
   const [mediaGpuPreference]=useMediaGpuChoice();
-  useEffect(()=>{if(MEDIA_GPU_ROUTING_UI_ENABLED&&mediaGpuPreference!=="auto")setH3Backend(mediaGpuPreference);},[mediaGpuPreference]);
+  const latestMediaGpuPreference=useRef(mediaGpuPreference);
+  useEffect(()=>{latestMediaGpuPreference.current=mediaGpuPreference;if(MEDIA_GPU_ROUTING_UI_ENABLED&&mediaGpuPreference!=="auto")setH3Backend(mediaGpuPreference);},[mediaGpuPreference]);
   const refModLibraryAbort = useRef<AbortController | null>(null);
   useEffect(() => { refModLibraryAbort.current?.abort();setRefModLibraryStatus("idle");setRefModLibrary([]); }, [h3Backend]);
   useEffect(() => () => refModLibraryAbort.current?.abort(), []);
@@ -1938,12 +1939,21 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       });
   }, [studioMode, refModLibraryStatus, h3Backend]);
   useEffect(() => {
+    // Wait for IndexedDB restoration before consuming the pending card; an
+    // earlier selection could otherwise be overwritten by the saved slot list.
+    if(!inputStateHydrated)return;
     function consume(entry: H3RefModLibraryEntry | null) {
       if (!entry?.name) return;
+      if(entry.backend&&latestMediaGpuPreference.current==="auto")setH3Backend(entry.backend);
+      setStudioController("manual");
+      setManualControlsOpen(false);
+      setVideoEditOpen(false);
+      setImageCreateOpen(false);
+      showNsfw(false);
       setStudioMode("h3-refmods");
       setRefModLibraryStatus("idle");
       addRefModSlot(entry);
-      setMessage(`Added ${entry.name} to Ref Mods.`);
+      setMessage(`Added ${entry.displayName || entry.name} to Ref Mods.`);
     }
     consume(takePendingRefModSelection());
     const handler = (event: Event) => {
@@ -1951,7 +1961,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     };
     window.addEventListener(H3_REFMOD_USE_IN_H3_EVENT, handler);
     return () => window.removeEventListener(H3_REFMOD_USE_IN_H3_EVENT, handler);
-  }, []);
+  }, [inputStateHydrated]);
   useEffect(() => {
     if (!active) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);

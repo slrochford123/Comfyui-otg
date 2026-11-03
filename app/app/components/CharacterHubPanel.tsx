@@ -1,5 +1,6 @@
 "use client";
 import ImageEditEngineSelect from "./ImageEditEngineSelect";
+import CharacterRefCardCreator from "./CharacterRefCardCreator";
 import {nativeEditEngineLabel, type NativeEditEngine} from "@/lib/client/nativeImages";
 
 // OTG_CHARACTER_TAB_REWORK_CURRENT_STABLE_PHASE1
@@ -51,6 +52,7 @@ import {
 type CharacterHubPanelProps = {
   isAdmin?: boolean;
   authenticatedOwnerKey?: string;
+  refCardsEnabled?: boolean;
 };
 
 type CharacterHubView =
@@ -3626,11 +3628,13 @@ function RefModGalleryPanel({
   onCreateCharacter,
   initialCharacter,
   onInitialCharacterConsumed,
+  refCardsEnabled = false,
 }: {
   onBack: () => void;
   onCreateCharacter: () => void;
   initialCharacter?: SavedCharacterOption | null;
   onInitialCharacterConsumed?: () => void;
+  refCardsEnabled?: boolean;
 }) {
   const [entries, setEntries] = React.useState<H3RefModLibraryEntry[]>([]);
   const [status, setStatus] = React.useState<RefModLibraryStatus>("loading");
@@ -3729,6 +3733,7 @@ function RefModGalleryPanel({
       if (filter !== "all" && entry.category !== filter) return false;
       if (!q) return true;
       return [
+        entry.displayName,
         entry.name,
         entry.description,
         entry.file,
@@ -3965,7 +3970,7 @@ function RefModGalleryPanel({
                 <div className="space-y-3 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <h3 className="break-words text-lg font-black text-white">{entry.name}</h3>
+                      <h3 className="break-words text-lg font-black text-white">{entry.displayName || entry.name}</h3>
                       <p className="mt-1 text-xs font-bold uppercase tracking-[0.14em] text-violet-100/65">{refModCategoryLabel(entry.category)}</p>
                     </div>
                     <span className="shrink-0 rounded-full border border-white/10 px-2 py-1 text-[11px] font-bold text-white/45">{entry.kind}</span>
@@ -3986,7 +3991,7 @@ function RefModGalleryPanel({
       ) : null}
 
       {creatorOpen && typeof document !== "undefined" ? createPortal(
-        <div className="fixed inset-0 z-[100000] flex items-end bg-black/75 p-0 sm:items-center sm:justify-center sm:p-5" role="dialog" aria-modal="true">
+        <div className="fixed inset-0 z-[9000] flex items-end bg-black/75 p-0 sm:items-center sm:justify-center sm:p-5" role="dialog" aria-modal="true" aria-label="Create RefMod">
           <div className="max-h-[92vh] w-full overflow-y-auto rounded-t-[28px] border border-white/10 bg-zinc-950 p-4 shadow-2xl sm:max-w-4xl sm:rounded-[28px] sm:p-6" data-otg="refmod-create-wizard">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -4004,13 +4009,14 @@ function RefModGalleryPanel({
               </div>
             ) : (
               <div className="mt-5 space-y-4">
-                <div className="grid gap-3 sm:grid-cols-2">
+                {!(refCardsEnabled && createStep === "character") ? <div className="grid gap-3 sm:grid-cols-2">
                   <label className="text-xs font-black uppercase tracking-[0.18em] text-white/50">Name<input value={name} onChange={(event) => setName(event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm font-bold text-white outline-none focus:border-violet-200/60" /></label>
                   <label className="text-xs font-black uppercase tracking-[0.18em] text-white/50">Description<input value={description} onChange={(event) => setDescription(event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm font-bold text-white outline-none focus:border-violet-200/60" /></label>
-                </div>
+                </div> : null}
 
                 {createStep === "character" ? (
                   <div className="space-y-4" data-otg="refmod-character-creator">
+                    {refCardsEnabled ? <CharacterRefCardCreator characters={characters} initialCharacterId={selectedCharacterId} onSaved={loadLibrary} /> : <>
                     <div className="grid gap-2 sm:grid-cols-3">{(["upload", "existing", "new"] as const).map((value) => <button key={value} type="button" onClick={() => setCharacterPath(value)} className={cn("min-h-12 rounded-xl border px-3 text-sm font-black", characterPath === value ? "border-violet-200 bg-violet-300 text-zinc-950" : "border-white/10 bg-black/25 text-white/65")}>{value === "upload" ? "Upload Images" : value === "existing" ? "Choose from Character Gallery" : "Create New Character"}</button>)}</div>
                     {characterPath === "upload" ? (
                       <>
@@ -4027,6 +4033,7 @@ function RefModGalleryPanel({
                       <div className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-4 text-sm leading-6 text-cyan-50/80">Create Character opens the existing Character Creator. After the Character Card is approved, return here to create the standardized 8-image RefMod Card set.<button type="button" onClick={onCreateCharacter} className="mt-3 block min-h-10 rounded-xl bg-cyan-300 px-3 text-sm font-black text-zinc-950">Create New Character</button></div>
                     )}
                     <div className="rounded-2xl border border-white/10 bg-black/25 p-4 text-sm leading-6 text-white/55">Ref Mod Character Card target views: face front, left 3/4 face, right 3/4 face, side profile, smile, full body front, full body 3/4, and full body side/back. You can preview, regenerate one image, replace one image, remove an image, approve, then create the Character RefMod.</div>
+                    </>}
                   </div>
                 ) : null}
 
@@ -4050,7 +4057,7 @@ function RefModGalleryPanel({
                 {createError ? <div className="rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">{createError}</div> : null}
                 {createMessage ? <div className="rounded-xl border border-emerald-300/20 bg-emerald-400/10 p-3 text-sm text-emerald-100">{createMessage}</div> : null}
                 {createJob ? <div className="rounded-xl border border-white/10 bg-black/25 p-3 text-xs text-white/50">Job {createJob.id}: {createJob.status}</div> : null}
-                <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={() => resetCreator("choose")} className="min-h-11 rounded-xl border border-white/10 px-4 text-sm font-bold text-white/65">Back</button><button type="button" disabled={createBusy} onClick={handlePrimaryCreateAction} className="min-h-11 rounded-xl bg-violet-300 px-4 text-sm font-black text-zinc-950 disabled:opacity-50">{primaryCreateLabel()}</button></div>
+                <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={() => resetCreator("choose")} className="min-h-11 rounded-xl border border-white/10 px-4 text-sm font-bold text-white/65">Back</button>{!(refCardsEnabled && createStep === "character") ? <button type="button" disabled={createBusy} onClick={handlePrimaryCreateAction} className="min-h-11 rounded-xl bg-violet-300 px-4 text-sm font-black text-zinc-950 disabled:opacity-50">{primaryCreateLabel()}</button> : null}</div>
               </div>
             )}
           </div>
@@ -4064,6 +4071,7 @@ function RefModGalleryPanel({
 export default function CharacterHubPanel({
   isAdmin = false,
   authenticatedOwnerKey = "",
+  refCardsEnabled = false,
 }: CharacterHubPanelProps) {
   const [view, setView] = React.useState<CharacterHubView>("home");
   const [
@@ -4227,6 +4235,7 @@ export default function CharacterHubPanel({
   if (view === "refmod-gallery") {
     return (
       <RefModGalleryPanel
+        refCardsEnabled={refCardsEnabled}
         onBack={() => setView("home")}
         onCreateCharacter={() => setView("create-character")}
         initialCharacter={refModInitialCharacter}

@@ -57,6 +57,8 @@ export type H3RefModSlot = {
 };
 
 export type H3RefModLibraryEntry = {
+  displayName?: string;
+  backend?: "rtx3090" | "rtx5060ti";
   id: string;
   name: string;
   category: H3RefModCategory;

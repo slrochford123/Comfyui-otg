@@ -1,6 +1,6 @@
 import {buildNativeImageGraph, NATIVE_IMAGE_MODELS, type NativeImageModel} from "./nativeImageModels";
 import {requestedMediaGpu} from "@/lib/mediaGpuRoutingServer";
-import {mediaGpuCandidates, type MediaGpu} from "@/lib/mediaGpuRouting";
+import {mediaGpuCandidates, type MediaGpu, type MediaGpuChoice} from "@/lib/mediaGpuRouting";
 import {preferMediaGpu} from "@/lib/workers/mediaGpuQueue";
 import {resolveComfyPhysicalGpu} from "@/lib/workers/clusterGpu";
 import {privateMediaEnvironmentEnabled} from "@/lib/privateMediaRuntime";
@@ -32,10 +32,10 @@ export async function nativeImageSupport(baseUrl: string, model: NativeImageMode
     return {ok: true, reason: ""};
   } catch (error) { return {ok: false, reason: String((error as Error).message)}; }
 }
-export async function chooseNativeImageBackend(model: NativeImageModel) {
+export async function chooseNativeImageBackend(model: NativeImageModel, preference?: MediaGpuChoice) {
   if (!privateMediaEnvironmentEnabled()) throw Error("Native images require the configured private-research media environment.");
   const urls = nativeImageBackendUrls();
-  const requested = await requestedMediaGpu();
+  const requested = preference ?? await requestedMediaGpu();
   const probes = await Promise.all(mediaGpuCandidates(requested, ["rtx3090", "rtx5060ti"]).map(async gpu => ({
     gpu, ...await nativeImageSupport(urls[gpu], model),
   })));

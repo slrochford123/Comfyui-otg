@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 import crypto from "node:crypto";
 import sharp from "sharp";
+import {assertOwnedCharacterRefMods, canUseCharacterRefMod} from "@/lib/h3SpecialModes/characterRefCardAccess";
+import {CHARACTER_REF_PREFIX} from "@/lib/h3SpecialModes/characterRefCardContract";
+import {preferMediaGpu} from "@/lib/workers/mediaGpuQueue";
 import { H3_BACKEND_PROFILES, type ProductionV2H3BackendId } from "@/lib/production/h3Workflows";
 import { readCompletedH3StagedUpload } from "@/lib/h3StagedUploads";
 import { OTG_DATA_ROOT, safeJoin, safeSegment, ensureDir } from "@/lib/paths";
@@ -29,11 +32,26 @@ export async function inspectH3SmartReferences(backend: ProductionV2H3BackendId,
   };
   cache.set(backend, {at: Date.now(), value}); return value;
 }
-export async function makeH3SmartReferenceInput(value: unknown, backend: ProductionV2H3BackendId, images: H3SmartReferenceAsset[], firstFrame: H3SmartReferenceAsset | null, videos = 0, audios = 0, media?: {videos: Array<{name: string; description?: string; includeAudio?: boolean}>; audios: Array<{name: string; description?: string}>}): Promise<H3SmartReferenceInput | undefined> {
+export async function makeH3SmartReferenceInput(value: unknown, backend: ProductionV2H3BackendId, images: H3SmartReferenceAsset[], firstFrame: H3SmartReferenceAsset | null, videos = 0, audios = 0, media?: {videos: Array<{name: string; description?: string; includeAudio?: boolean}>; audios: Array<{name: string; description?: string}>}, ownerKey = ""): Promise<H3SmartReferenceInput | undefined> {
   const selection = normalizeH3SmartReferenceSelection(value); if (!selection) return undefined;
+  assertOwnedCharacterRefMods(ownerKey,selection.refMods);
   const cap = await inspectH3SmartReferences(backend, true);
   const checked = checkH3SmartReferences(cap, selection, images, videos, audios, !!firstFrame);
   return {...selection, images, firstFrame: selection.useFirstFrame ? firstFrame : null, referenceMap: appendH3SmartMediaMap(checked.referenceMap, media?.videos || Array.from({length: videos}, (_, i) => ({name: `Video ${i + 1}`})), media?.audios || Array.from({length: audios}, (_, i) => ({name: `Audio ${i + 1}`})))};
+}
+export function ownedH3SmartCapabilities(cap:H3SmartReferenceCapabilities,owner:string){return {...cap,refMods:cap.refMods.filter(item=>canUseCharacterRefMod(owner,item.name))};}
+/** AUTO must select a GPU that actually owns every selected saved RefMod. */
+export async function characterRefSelectionBackend(value:unknown,target:ProductionV2H3BackendId|undefined,owner:string){
+  const selection=normalizeH3SmartReferenceSelection(value);
+  if(!selection)return target;
+  assertOwnedCharacterRefMods(owner,selection.refMods);
+  if(target||!selection.refMods.some(s=>s.name.replaceAll("\\","/").startsWith(CHARACTER_REF_PREFIX)))return target;
+  const compatible=await Promise.all((["rtx3090","rtx5060ti"] as const).map(async gpu=>{
+    try{const cap=await inspectH3SmartReferences(gpu,true);return selection.refMods.every(s=>cap.refMods.some(m=>m.name===s.name))?gpu:null;}catch{return null;}
+  }));
+  const chosen=await preferMediaGpu(compatible.filter((gpu):gpu is ProductionV2H3BackendId=>!!gpu));
+  if(!chosen)throw Error("The selected character RefMod is unavailable on either GPU. Its saved images are kept.");
+  return chosen;
 }
 /** Only completed, owned staged uploads may become server-side smart inputs. */
 export async function saveH3SmartReferenceImage(ownerKey: string, value: unknown): Promise<H3SmartReferenceAsset> {

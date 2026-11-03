@@ -309,14 +309,14 @@ async function startGenerationJob(
     throw new Error("Auto/Manual plans require the exact media review and consent in H3 Studio. Submit through its reviewed generation action.");
   }
 
-  const targetBackend = await requestedH3MediaGpu(config.targetBackend);
+  const targetBackend = await (await import("@/lib/h3SmartReferencesServer")).characterRefSelectionBackend(config.smartReferences,await requestedH3MediaGpu(config.targetBackend),ownerKey);
   if (config.smartReferences && generation.mode !== "h3-reference-to-video") throw Error("Smart References is only available in Reference mode here.");
-  const smartReferences = await makeH3SmartReferenceInput(config.smartReferences, targetBackend || "rtx3090", media.images, media.firstFiles[0] || null, media.videos.length, media.audios.length, {videos: media.videos, audios: media.audios});
+  const smartReferences = await makeH3SmartReferenceInput(config.smartReferences, targetBackend || "rtx3090", media.images, media.firstFiles[0] || null, media.videos.length, media.audios.length, {videos: media.videos, audios: media.audios},ownerKey);
   if (smartReferences) smartReferences.originalPrompt = String(config.prompt || "");
   if (smartReferences?.useFirstFrame && media.firstFiles.length !== 1) throw Error("Choose exactly one opening image.");
   const input = validateH3DirectInput({
     smartReferences,
-    targetBackend: await requestedH3MediaGpu(config.targetBackend),
+    targetBackend,
     mode: generation.mode,
     quality: generation.quality,
     orientation: generation.orientation,
