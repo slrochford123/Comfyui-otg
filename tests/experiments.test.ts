@@ -5,8 +5,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import sharp from "sharp";
 import { NextRequest } from "next/server";
-import { EXPERIMENTS, DEFAULT_LAB_SETTINGS, canvas } from "@/lib/experiments/catalog";
-import { createSession, getSession, listSessions, updateSession, validateSettings, labRoot, reserveAsset, MAX_ASSETS } from "@/lib/experiments/store";
+import { EXPERIMENTS, DEFAULT_LAB_SETTINGS, canvas, labExperiment, isRetiredExperiment } from "@/lib/experiments/catalog";
+import { createSession, getSession, listSessions, updateSession, validateSettings, labRoot, reserveAsset, withLab, MAX_ASSETS } from "@/lib/experiments/store";
 import { parseRange } from "@/lib/experiments/range";
 const auth = vi.hoisted(() => ({ result: { ok: true, id: "admin-a", status: 200 } as Record<string, unknown> }));
 vi.mock("@/app/api/admin/_requireAdmin", () => ({ requireAdmin: async () => auth.result }));
@@ -24,8 +24,8 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllEnvs(); fs.rmSync(fixture, { recursive: true, force: true }); });
 describe("experimental boundary", () => {
-  it("pins all four exact checkpoints without executable overrides", () => {
-    expect(EXPERIMENTS.filter(item => item.kind === "h3-admin").map(item => item.versionId)).toEqual([3441190,3429412,3391862,3391975]);
+  it("pins the three available checkpoints without executable overrides", () => {
+    expect(EXPERIMENTS.filter(item => item.kind === "h3-admin").map(item => item.versionId)).toEqual([3441190,3429412,3391975]);
     expect(EXPERIMENTS.filter(item => item.kind === "testing")).toHaveLength(7);
     for (const item of EXPERIMENTS.filter(item => item.kind === "h3-admin")) expect(item.sha256).toMatch(/^[A-F0-9]{64}$/);
   });
@@ -33,6 +33,18 @@ describe("experimental boundary", () => {
     vi.stubEnv("OTG_ENV", "prod"); expect((await GET(request())).status).toBe(404);
     expect((await POST(request(undefined, { action: "create", experiment: "prism-pika" }))).status).toBe(404);
     expect(fs.existsSync(path.join(fixture, "lab"))).toBe(false);
+  });
+  it("blocks retired model creation before storage or worker access", async () => {
+    expect(isRetiredExperiment("dasiwa-v4")).toBe(true);
+    expect(labExperiment("dasiwa-v4")?.versionId).toBe(3391862);
+    const result = await POST(request(undefined, { action: "create", experiment: "dasiwa-v4" }));
+    expect(result.status).toBe(409); expect(await result.text()).toContain("removed");
+    expect(fs.existsSync(path.join(fixture, "lab"))).toBe(false);
+  });
+  it("rejects switching an available session to the retired model", async () => {
+    const session = createSession("admin-a", "prism-pika");
+    const result = await POST(request(undefined, { ...session, action: "update", experiment: "dasiwa-v4" }));
+    expect(result.status).toBe(409); expect(getSession("admin-a", session.id)).toEqual(session);
   });
   it.each([401,403])("requires administrator authorization (%s)", async status => {
     auth.result = { ok: false, status, error: "Not authorized" };
@@ -90,6 +102,28 @@ describe("private media", () => {
     const head = await mediaHead(new NextRequest("http://localhost:3001"+url, { method: "HEAD" })); expect(head.headers.get("content-length")).toBe(String(bytes.length)); expect(await head.text()).toBe("");
     expect((await mediaGet(request(url, undefined, { range: "bytes=99999-" }))).status).toBe(416);
     auth.result = { ok: true, id: "admin-b", status: 200 }; expect((await mediaGet(request(url))).status).toBe(404);
+  });
+  it("keeps retired drafts, exports and media readable while blocking generation and preserving inputs on model change", async () => {
+    const { bytes, asset } = await pngUpload();
+    let session = getSession("admin-a", asset.session);
+    session = updateSession("admin-a", session.id, { ...session, settings: { ...session.settings, prompt: "My saved scene.", selectedSources: [asset.id] } });
+    // Simulate a pre-retirement row, never a new executable retired session.
+    withLab(db => db.prepare("UPDATE sessions SET experiment=? WHERE id=?").run("dasiwa-v4", session.id));
+    session = getSession("admin-a", session.id);
+    const listing = await (await GET(request())).json();
+    expect(listing.catalog.some((item: {id:string}) => item.id === "dasiwa-v4")).toBe(false);
+    expect(listing.capabilities.some((item: {model:string}) => item.model === "dasiwa-v4")).toBe(false);
+    expect(listing.sessions.find((item: {id:string}) => item.id === session.id).settings.prompt).toBe("My saved scene.");
+    expect((await GET(request(`/api/experiments?export=${session.id}`))).status).toBe(200);
+    const generated = await POST(request(undefined, { action: "generate", id: session.id, requestId: crypto.randomUUID() }));
+    expect(generated.status).toBe(409); expect(await generated.text()).toContain("removed");
+    expect(fs.existsSync(path.join(labRoot(), "jobs"))).toBe(false);
+    const media = await mediaGet(request("/api/experiments/assets?id=" + asset.id));
+    expect(media.status).toBe(200); expect(Buffer.from(await media.arrayBuffer())).toEqual(bytes);
+    const changed = updateSession("admin-a", session.id, { ...session, experiment: "pinkcherry-v18" });
+    expect(changed.id).toBe(session.id); expect(changed.settings).toEqual(session.settings); expect(changed.assets).toEqual(session.assets);
+    auth.result = { ok: true, id: "admin-b", status: 200 };
+    expect((await mediaGet(request("/api/experiments/assets?id=" + asset.id))).status).toBe(404);
   });
   it("rejects mislabeled content and frees its reservation/file", async () => {
     const record = createSession("admin-a", "prism-pika");

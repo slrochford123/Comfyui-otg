@@ -4,10 +4,34 @@ const source=path.resolve(__dirname,'../..'),evidence=path.resolve(process.argv[
 if(!/^\/home\/shawn-rochford\/AI\/research\/(?:experimental-tabs|h3-nsfw-access)-\d{8}-\w+$/.test(evidence)||!build.startsWith(evidence+'/build-')||!fs.existsSync(path.join(evidence,'source-before.tar.gz')))throw Error('Expected backed-up isolated build');
 const built=JSON.parse(fs.readFileSync(path.join(build,'../result.json'),'utf8'));
 if(built.exitCode!==0||built.build!==build)throw Error('Successful exact build required');
+// Narrow retirement-only qualification. All other web/runtime source must be
+// byte-identical to the previously qualified Build 2.24. This exception never
+// applies to model/runner changes or general feature releases.
+const retirement=process.argv[5]==='--retire-dasiwa-v4';
+if(process.argv[5]&&!retirement)throw Error('Unknown qualification mode');
+if(retirement){
+  const baseline='453f9d654580f9466148fd8015b3d7449276407a';
+  if(expected!=='/home/shawn-rochford/AI/deploy/otg-test/releases/test3001-build-2.24-20261102T205925Z')throw Error('Retirement baseline changed');
+  const allowed=new Set(['app/app/components/H3NsfwStudio.tsx','lib/experiments/apiHandlers.ts','lib/experiments/catalog.ts','lib/experiments/generation.ts','lib/experiments/store.ts','config/build-history.json']);
+  const changed=execFileSync('git',['diff','--name-only',baseline,'--','app','lib','config','comfy_workflows','package.json','package-lock.json'],{cwd:source,encoding:'utf8'}).trim().split('\n').filter(Boolean);
+  if(changed.length!==allowed.size||changed.some(file=>!allowed.has(file)))throw Error('Not a retirement-only web change');
+  for(const file of execFileSync('git',['ls-files','app','lib','config','comfy_workflows','scripts','package.json','package-lock.json'],{cwd:source,encoding:'utf8'}).trim().split('\n')){
+    if(!fs.readFileSync(path.join(source,file)).equals(fs.readFileSync(path.join(build,file))))throw Error('Qualified source changed: '+file);
+    if(file.startsWith('scripts/')&&!file.startsWith('scripts/experiments/qa-')&&!['scripts/experiments/stage-test.cjs','scripts/deploy/package-story-media-prod.py','scripts/deploy/stage-story-media-prod.py','scripts/deploy/activate-story-media-prod.py'].includes(file)){
+      // The source checkpoint also contains already-completed Android tooling;
+      // it does not change the previously qualified web application.
+      if(!execFileSync('git',['show','1424e53ee37f1b79a34baf0253ac7f3cafedcde8:'+file],{cwd:source}).equals(fs.readFileSync(path.join(build,file))))throw Error('Existing runtime/helper changed: '+file);
+    }
+  }
+  const catalog=fs.readFileSync(path.join(build,'lib/experiments/catalog.ts'),'utf8');
+  if(catalog.split('const RETIRED_EXPERIMENTS')[0].includes('dasiwa-v4')||!catalog.includes('isRetiredExperiment'))throw Error('Retirement catalog guard missing');
+}
 const qa=fs.readdirSync(path.dirname(build)).filter(n=>n.startsWith('browser-')).map(n=>path.join(build,'..',n,'results.json')).filter(f=>fs.existsSync(f)).map(f=>JSON.parse(fs.readFileSync(f,'utf8')));
 if(!qa.some(result=>result.ok&&result.buildId===built.buildId&&result.suite==='experimental-workspace'))throw Error('Exact build experimental workspace browser qualification required');
 const accessCandidate=path.join(evidence,'runtime-candidate.json');
-if(fs.existsSync(path.join(build,'lib/storyCreator/mediaExecution.ts'))){
+if(retirement&&!qa.some(r=>r.ok&&r.buildId===built.buildId&&r.suite==='h3-nsfw-compact'&&Object.values(r.retirementChecks||{}).length===7&&Object.values(r.retirementChecks).every(v=>v===true)))throw Error('Exact retirement browser/API/media qualification required');
+if(retirement&&(fs.existsSync(accessCandidate)||fs.existsSync(path.join(evidence,'testing-runtime-candidate.json'))))throw Error('Retirement cannot replace runtime configurations');
+if(!retirement&&fs.existsSync(path.join(build,'lib/storyCreator/mediaExecution.ts'))){
   if(!qa.some(r=>r.ok&&r.buildId===built.buildId&&r.suite==='story-media'))throw Error('Exact-build Story media browser qualification required');
   const real=fs.readdirSync(path.dirname(build)).filter(n=>n.startsWith('real-story-media-')).map(n=>path.join(build,'..',n,'results.json')).filter(f=>fs.existsSync(f)).map(f=>JSON.parse(fs.readFileSync(f,'utf8')));
   if(!real.some(r=>r.ok&&r.realInference&&r.buildId===built.buildId&&r.suite==='story-media-real'))throw Error('Exact-build Story media real GPU qualification required');
@@ -39,7 +63,7 @@ const billingMarker=path.join(previous,'public/openai-billing-fix.json');
 const billing=fs.existsSync(billingMarker)?JSON.parse(fs.readFileSync(billingMarker,'utf8')):null;
 const billingFiles=['lib/openai/adminCredential.ts','lib/openai/billing.ts','lib/openai/connection.ts','app/api/admin/openai-billing/route.ts','app/app/admin/openai-billing/OpenAIBillingClient.tsx','scripts/install-openai-admin-key-test.py','scripts/install-openai-admin-key-test.sh'];
 if(billing){
-  if(!qa.some(result=>result.ok&&result.buildId===built.buildId&&result.suite==='openai-billing'))throw Error('Exact combined build billing browser qualification required');
+  if(!retirement&&!qa.some(result=>result.ok&&result.buildId===built.buildId&&result.suite==='openai-billing'))throw Error('Exact combined build billing browser qualification required');
   // The active standalone release retains lib/scripts, but not original app sources.
   for(const file of billingFiles){
     if(!fs.readFileSync(path.join(source,file)).equals(fs.readFileSync(path.join(build,file))))throw Error('Billing source changed since build: '+file);

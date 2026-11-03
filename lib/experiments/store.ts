@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import Database from "better-sqlite3";
-import { DEFAULT_LAB_SETTINGS, EXPERIMENTS, labExperiment, type LabSettings } from "./catalog";
+import { DEFAULT_LAB_SETTINGS, EXPERIMENTS, labExperiment, isRetiredExperiment, type LabSettings } from "./catalog";
 import { RequestError } from "@/lib/requestError";
 import { MAX_LAB_IMAGE_BYTES, MAX_LAB_REFERENCE_BYTES } from "./imageTypes";
 import { productionNsfwScope } from "./availability";
@@ -120,6 +120,7 @@ export function validateSettings(value: unknown): LabSettings {
 export function createSession(owner: string, experiment: string) {
   const entry = labExperiment(experiment);
   if (!entry) throw new RequestError("Unknown experiment.", 400);
+  if (isRetiredExperiment(experiment)) throw new RequestError("This model has been removed. Choose another H3 model; existing media is unchanged.",409);
   if (productionNsfwScope() && entry.kind !== "h3-admin") throw new RequestError("Model not available.", 403);
   return withLab(db => db.transaction(() => {
     if (!uncappedH3History(experiment) && (db.prepare(`SELECT count(*) AS n FROM sessions WHERE owner=? AND experiment IN (${TESTING_SQL_IDS})`).get(owner,...TESTING_EXPERIMENT_IDS) as { n: number }).n >= 200) throw new RequestError("The 200-record research limit has been reached; export and review storage with the administrator.", 409);
@@ -139,6 +140,7 @@ export function updateSession(owner: string, id: string, input: Record<string, u
       if (!db.prepare("SELECT id FROM assets WHERE id=? AND session=? AND owner=? AND role='source' AND ready=1").get(source,id,owner)) throw new RequestError("Reference not available in this draft.",400);
     }
     if(input.experiment !== undefined && input.experiment !== row.experiment) {
+      if(typeof input.experiment === "string" && isRetiredExperiment(input.experiment))throw new RequestError("This model has been removed. Choose another H3 model.",409);
       if(typeof input.experiment!=="string" || labExperiment(row.experiment)?.kind!=="h3-admin" || labExperiment(input.experiment)?.kind!=="h3-admin" || row.archived)throw new RequestError("Model change is not available for this session.",400);
       // Sources stay in the same owned session; completed jobs retain their immutable request/graph.
       db.prepare("UPDATE sessions SET experiment=? WHERE id=? AND owner=?").run(input.experiment,id,owner);

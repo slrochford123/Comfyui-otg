@@ -92,7 +92,7 @@ def main():
     if digest(ROOT/'activation-plan.json')!=PLAN_SHA:raise RuntimeError('Activation plan changed')
     plan=json.loads((ROOT/'activation-plan.json').read_text())
     version=plan['buildVersion']
-    if version not in ('2.21','2.22','2.23','2.24') or not re.fullmatch('[a-f0-9]{40}',plan['commit']):raise RuntimeError('Invalid release identity')
+    if version not in ('2.21','2.22','2.23','2.24','2.25') or not re.fullmatch('[a-f0-9]{40}',plan['commit']):raise RuntimeError('Invalid release identity')
     candidate=Path(plan['candidate']);old=Path(plan['expectedOld'])
     if ROOT!=Path('/mnt/otg_bulk/build-'+version+'-promotion-'+plan['commit'][:12]) or candidate!=Path('/opt/otg/releases/prod-build-'+version+'-'+plan['commit'][:12]):raise RuntimeError('Invalid release boundary')
     previous=load('previous_prod_guard',PREVIOUS_GUARD,plan['previousGuardSha256'])

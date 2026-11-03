@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { EXPERIMENTS, H3_LICENSE_URL, H3_LICENSE_NOTICE, canvas, labExperiment } from "@/lib/experiments/catalog";
+import { EXPERIMENTS, H3_LICENSE_URL, H3_LICENSE_NOTICE, canvas, labExperiment, isRetiredExperiment } from "@/lib/experiments/catalog";
 import { createSession, getSession, listSessions, updateSession } from "@/lib/experiments/store";
 import { boundedJson } from "@/lib/experiments/http";
 import { RequestError } from "@/lib/requestError";
@@ -26,7 +26,7 @@ export async function experimentGet(request:NextRequest, owner:string, restricte
   }
   const catalog=EXPERIMENTS.filter(e=>!restricted||e.kind==="h3-admin");
   const capabilities = labCapabilities().filter(c=>catalog.some(e=>e.id===c.model));
-  return NextResponse.json({ ok: true, environment: process.env.OTG_ENV, executionEnabled: capabilities.some(c => c.modes.length), capabilities, loras:labLoras(), catalog, sessions: listSessions(owner).filter(s=>catalog.some(e=>e.id===s.experiment)) });
+  return NextResponse.json({ ok: true, environment: process.env.OTG_ENV, executionEnabled: capabilities.some(c => c.modes.length), capabilities, loras:labLoras(), catalog, sessions: listSessions(owner).filter(s=>(!restricted||labExperiment(s.experiment)?.kind==="h3-admin")&&(catalog.some(e=>e.id===s.experiment)||isRetiredExperiment(s.experiment))) });
 }
 export async function experimentPost(request:NextRequest, owner:string, restricted=false) {
   const data = await boundedJson(request);

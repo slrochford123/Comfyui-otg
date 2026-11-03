@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { canvas, DEFAULT_LAB_SETTINGS, type Experiment, type LabSettings } from "@/lib/experiments/catalog";
+import { canvas, DEFAULT_LAB_SETTINGS, isRetiredExperiment, labExperiment, type Experiment, type LabSettings } from "@/lib/experiments/catalog";
 import type { LabAsset, LabSession } from "@/lib/experiments/store";
 import type { LabCapability, LabJob, LabLora } from "@/lib/experiments/generation";
 import { newClientRequestId } from "@/lib/client/requestId";
@@ -76,7 +76,8 @@ export default function H3NsfwStudio({ownerKey=""}:{ownerKey?:string}) {
     : settings.mode === "edit" ? (videoCount === 1 && audioCount === 0 && imageCount <= 9 ? "" : "Choose one video, with optional images.")
     : !sources.length ? "Add an image, video or audio reference."
     : imageCount > 9 || videoCount > 3 || audioCount > 3 || sources.length>MAX_H3_RENDER_REFERENCES ? "For one render: up to 9 images, 3 videos and 3 audio; 12 total. Saved uploads are unlimited." : "";
-  const available = !!capability?.modes.includes(settings.mode) && settings.gpu !== "rtx5060ti";
+  const retired = isRetiredExperiment(editor.experiment);
+  const available = !retired && !!capability?.modes.includes(settings.mode) && settings.gpu !== "rtx5060ti";
   const loraProblem=(settings.loras||[]).some(s=>!loras.some(l=>l.id===s.id&&l.models.includes(editor.experiment)));
   const persist=useCallback(()=>{
     if(!restored.current)return;
@@ -131,7 +132,7 @@ export default function H3NsfwStudio({ownerKey=""}:{ownerKey?:string}) {
       setCatalog(data.catalog); setCapabilities(data.capabilities); setSessions(data.sessions);setLoras(data.loras||[]);
       const recovered=readNsfwDraft(ownerKey),matching=recovered?.sessionId?data.sessions.find(s=>s.id===recovered.sessionId&&!s.archived):null;
       load(matching||data.sessions.find(s => !s.archived) || null, data.catalog[0]?.id || "prism-pika");
-      if(recovered && (matching||!recovered.sessionId) && data.catalog.some(c=>c.id===recovered.editor.experiment)){
+      if(recovered && (matching||!recovered.sessionId) && (data.catalog.some(c=>c.id===recovered.editor.experiment)||isRetiredExperiment(recovered.editor.experiment))){
         editorRef.current=recovered.editor;setEditor(recovered.editor);uiRef.current={...DEFAULT_NSFW_UI,...recovered.ui};setUi(uiRef.current);pendingRequest.current=recovered.pending;
         const serverKey=matching?keyOf(fromSession(matching)):keyOf(fresh(recovered.editor.experiment));
         const collision=!!matching&&serverKey!==recovered.savedKey&&serverKey!==keyOf(recovered.editor);
@@ -306,6 +307,7 @@ export default function H3NsfwStudio({ownerKey=""}:{ownerKey?:string}) {
     {conflict&&<div role="alert" className="space-y-2 rounded-xl border border-amber-400/40 p-3 text-sm"><p>A newer server draft exists. Your recovered edits are kept here.</p><div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={()=>{setConflict(false);void act(async()=>{await save(true);});}}>Use recovered draft</button><button className={button} disabled={busy} onClick={()=>load(sessionRef.current)}>Use server draft</button></div></div>}
     {error && <div role="alert" className="rounded-xl border border-red-400/40 bg-red-950/30 p-3 text-sm"><p>{error}</p><button className={`${button} mt-2`} disabled={busy} onClick={() => void act(async () => { if (!loaded) window.location.reload(); else if(uiRef.current.pendingUpload)await resumeUpload();else await save(); })}>{ui.pendingUpload?"Retry upload":"Retry save"}</button></div>}
     {!loaded ? <p role="status">Loading workspace…</p> : <>
+      {retired && <p role="status" className="rounded-xl border border-amber-400/30 p-3 text-sm">{labExperiment(editor.experiment)?.title} was removed. Choose another model to generate. Your prompt, references and past results are kept.</p>}
       <fieldset disabled={busy} className="grid grid-cols-2 gap-2 sm:grid-cols-5" aria-label="Generation mode">{modes.map(([mode, label]) => <button type="button" key={mode} className={`${button} ${settings.mode === mode ? "bg-violet-600/50 border-violet-400/60" : "bg-black/20"}`} aria-pressed={settings.mode === mode} disabled={!capability?.modes.includes(mode)} onClick={() => patch({ mode })}>{label}</button>)}</fieldset>
       <div className={card}>
         <label htmlFor="private-h3-prompt" className="block font-semibold">Your scene</label>

@@ -26,7 +26,7 @@ def main():
     commit=git('rev-parse','HEAD');p=json.loads((root/'activation-plan.json').read_text());test=Path(p['candidate'])
     if Path('/home/shawn-rochford/AI/deploy/otg-test/current').resolve()!=test:raise RuntimeError('Qualified TEST release is not active')
     version=json.loads((test/'config/build-history.json').read_text())['current']
-    if version not in ('2.21','2.22','2.23','2.24'):raise RuntimeError('Wrong TEST version')
+    if version not in ('2.21','2.22','2.23','2.24','2.25'):raise RuntimeError('Wrong TEST version')
     for row in p['files']:
         file=test/row['file']
         if row.get('link') is not None:
@@ -50,7 +50,11 @@ def main():
     (release/'DEPLOYMENT_MANIFEST.json').write_text(json.dumps({**identity,'artifactFiles':files},indent=2))
     old_root=Path('/home/shawn-rochford/AI/research/release-qualification-20261101-DYHhxBWc/promotion')
     old=json.loads((old_root/'activation-plan.json').read_text())
-    if version=='2.24':
+    if version=='2.25':
+        old=json.loads(Path('/home/shawn-rochford/AI/research/build-2.24-promotion-20261102-cOz3GMPn/production-plan.json').read_text())
+        if old['commit']!='453f9d654580f9466148fd8015b3d7449276407a':raise RuntimeError('Unexpected retirement baseline')
+        channel={'productionConfig':old['speechConfig']}
+    elif version=='2.24':
         old=json.loads((root/'previous-production-plan.json').read_text())
         if old['commit']!='6d9dd312e1868894d79a1a2a3b86c1bd4099ee2c':raise RuntimeError('Unexpected previous production identity')
         channel={'productionConfig':old['speechConfig']}
@@ -64,12 +68,14 @@ def main():
     guard='/mnt/otg_bulk/build-2.20-promotion-297172e2c7a7/activate-build-2.20.py'
     guard_sha=subprocess.check_output(['ssh','-o','BatchMode=yes','otg-slr','sha256sum '+guard],text=True).split()[0]
     speech_sha=subprocess.check_output(['ssh','-o','BatchMode=yes','otg-slr','sudo -n sha256sum '+shlex.quote(channel['productionConfig'])],text=True).split()[0]
-    expected_old={'2.21':'prod-build-2.20-297172e2c7a7','2.22':'prod-build-2.21-ad4b86c62d36','2.23':'prod-build-2.22-e81e31e42955','2.24':'prod-build-2.23-6d9dd312e186'}[version]
+    expected_old={'2.21':'prod-build-2.20-297172e2c7a7','2.22':'prod-build-2.21-ad4b86c62d36','2.23':'prod-build-2.22-e81e31e42955','2.24':'prod-build-2.23-6d9dd312e186','2.25':'prod-build-2.24-453f9d654580'}[version]
     expected_old='/mnt/otg_bulk/slr-offload/opt-otg/releases/'+expected_old
     plan={**identity,'candidate':'/opt/otg/releases/'+name,'expectedOld':expected_old,
         'manifestSha256':sha(release/'DEPLOYMENT_MANIFEST.json'),'previousGuardSha256':guard_sha,'runtime':old['runtime'],'rootEngineConfig':old['rootEngineConfig'],
         'cpuRoot':old['cpuRoot'],'cpuWorkerSha256':old['cpuWorkerSha256'],'speechConfig':channel['productionConfig'],'speechConfigSha256':speech_sha,'testRelease':str(test)}
-    if version=='2.22':
+    if version=='2.25':
+        plan.update({key:old[key] for key in ('nsfwConfig','nsfwConfigSha256','nsfwRoot','workerProbeConfig','workerProbeConfigSha256','workerProbePins','workerProbeLocalHelper','workerProbeLocalHelperSha256')})
+    elif version=='2.22':
         nsfw=json.loads((root/'h3-controller.json').read_text())
         plan.update(nsfwConfig=nsfw['config'],nsfwConfigSha256=nsfw['configSha256'],nsfwRoot=nsfw['storage'])
     elif version=='2.24':

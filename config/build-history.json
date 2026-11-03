@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.24",
+  "current": "2.25",
   "builds": [
     {
       "version": "2",
@@ -151,6 +151,12 @@
       "date": "2026-11-02",
       "summary": "H3 NSFW live previews, progress/ETA, prompt and style tools, compatible LoRAs, persistent mobile drafts, clear/reset and snapshot controls; safe large-image preparation, uncapped saved media/history and app-wide Android Phone storage/Photos selection. Testing remains TEST-only.",
       "sourceBaseCommit": "6d9dd312e1868894d79a1a2a3b86c1bd4099ee2c"
+    },
+    {
+      "version": "2.25",
+      "date": "2026-11-03",
+      "summary": "Remove DaSiWa Hybrid v4 from TEST and PROD model choices; block new jobs while preserving saved drafts, references and results.",
+      "sourceBaseCommit": "1424e53ee37f1b79a34baf0253ac7f3cafedcde8"
     }
   ]
 }

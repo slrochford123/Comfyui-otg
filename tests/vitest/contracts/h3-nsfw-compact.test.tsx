@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import H3NsfwStudio from "@/app/app/components/H3NsfwStudio";
 import { DEFAULT_LAB_SETTINGS, EXPERIMENTS } from "@/lib/experiments/catalog";
+import { DEFAULT_NSFW_UI, nsfwEditorKey, writeNsfwDraft } from "@/lib/client/h3NsfwDraft";
 let session: any, server: ReturnType<typeof vi.fn>;
 const response = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 const calls = (action: string) => server.mock.calls.filter(([, o]) => o?.body && JSON.parse(o.body).action === action);
@@ -24,8 +25,27 @@ beforeEach(() => {
   });
   vi.stubGlobal("fetch", server);
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals(); });
 async function setup() { render(<H3NsfwStudio />); await screen.findByRole("textbox", { name: "Your scene" }); }
+it("keeps a retired draft readable, disables its generation, and preserves text when choosing a replacement", async () => {
+  session.experiment = "dasiwa-v4";
+  await setup();
+  expect(screen.queryByRole("button", { name: "DaSiWa · Hybrid v4" })).not.toBeInTheDocument();
+  expect(screen.getByText(/was removed\. Choose another model/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Create video" })).toBeDisabled();
+  expect(screen.getByLabelText("Your scene")).toHaveValue("A paper boat.");
+  fireEvent.click(screen.getByRole("button", { name: "PinkCherry · v1.8 Hybrid" }));
+  expect(screen.getByLabelText("Your scene")).toHaveValue("A paper boat.");
+  expect(screen.getByRole("button", { name: "Create video" })).toBeEnabled();
+});
+it("recovers unsaved local text for a retired model instead of silently discarding it", async () => {
+  session.experiment = "dasiwa-v4";
+  const saved = { experiment: session.experiment, settings: session.settings };
+  writeNsfwDraft("retirement-fixture", { version: 1, sessionId: session.id, savedKey: nsfwEditorKey(saved), editor: { ...saved, settings: { ...saved.settings, prompt: "Unsaved Android draft." } }, ui: { ...DEFAULT_NSFW_UI }, pending: null, updatedAt: Date.now() });
+  render(<H3NsfwStudio ownerKey="retirement-fixture" />);
+  await waitFor(() => expect(screen.getByLabelText("Your scene")).toHaveValue("Unsaved Android draft."));
+  expect(screen.getByRole("button", { name: "Create video" })).toBeDisabled();
+});
 it("clears, undoes and enhances with the existing endpoint without a plan-creation step", async () => {
   await setup(); const prompt = screen.getByRole("textbox", { name: "Your scene" });
   fireEvent.click(screen.getByRole("button", { name: "Clear text" })); expect(prompt).toHaveValue("");
@@ -54,7 +74,7 @@ it("serializes autosave without replacing newer text and preserves edits when sw
   fireEvent.change(prompt, { target: { value: "Newer edit" } }); release!();
   await waitFor(() => expect(session.settings.prompt).toBe("Newer edit"), { timeout: 2500 });
   expect(prompt).toHaveValue("Newer edit");
-  fireEvent.click(screen.getByRole("button", { name: "DaSiWa · Hybrid v4" })); expect(prompt).toHaveValue("Newer edit");
+  fireEvent.click(screen.getByRole("button", { name: "PinkCherry · v1.8 Hybrid" })); expect(prompt).toHaveValue("Newer edit");
   expect(screen.getByRole("button", { name: "Turbo", exact: true })).toBeDisabled();
 });
 it("persists detached references, supports undo and never deletes source media", async () => {
