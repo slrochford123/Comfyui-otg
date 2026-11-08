@@ -98,7 +98,7 @@ describe("Story Creator V2 microphone and speaker contract", () => {
     expect(normalize).toContain("replace(/^#{1,6}");
     expect(normalize).toContain("replace(/`([^`]+)`/g");
     expect(normalize).toContain("replace(/^\\s*[-*+]\\s+/gm");
-    expect(ideas).toContain("<div className=\"whitespace-pre-wrap\">");
-    expect(ideas).toContain("{item.content}");
+    expect(ideas).toContain('<MessageContent content={item.content} />');
+    expect(ideas).toContain('className="whitespace-pre-wrap break-words">{expanded || !canExpand ? content');
   });
 });
