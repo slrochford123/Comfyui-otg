@@ -79,8 +79,8 @@ function sourceFor(record: StoryMediaRecord): {image?: string; video?:string; vo
     : ["image","edit"].includes(source.command.operation)?{image:file,name:source.command.name,characterId:source.characterId||undefined}
     : source.command.operation==="video"?{video:file,name:source.command.name}:{};
 }
-export function resolveStoryChatCommand(scope:StoryScope,raw:unknown,request:string,focusId?:string,local=false) {
-  const command=parseStoryMediaCommand(raw,request,true);
+export function resolveStoryChatCommand(scope:StoryScope,raw:unknown,request:string,focusId?:string,local=false,authorizedVoiceText?:string) {
+  const command=parseStoryMediaCommand(raw,request,true,authorizedVoiceText);
   if(local && command.sourceId && command.sourceId!==focusId &&
     !listStoryChatMedia(scope.ownerKey,scope.projectId).visible.some(item=>item.id===command.sourceId&&item.status==="ready") &&
     !loadCharacter(scope.ownerKey,command.sourceId)) {
@@ -154,13 +154,16 @@ export function findStoryCreation(scope:StoryScope,sourceId:string) {
   return {id:existing.id,name:existing.command.name||"your creation"};
 }
 
-export function requestStoryMedia(input: {ownerKey:string;projectId:string;sourceMessageId:string;arguments:unknown;openAIImageAccountId?:string},requestKey?:string) {
+export function requestStoryMedia(input: {ownerKey:string;projectId:string;sourceMessageId:string;arguments:unknown;openAIImageAccountId?:string},requestKey?:string,
+  voiceContext?:{instruction:string;text:string}) {
   requireStoryMediaTest();
   const messages = assertStoryMediaScope(input.ownerKey,input.projectId);
   const source = messages.find(m=>m.id===input.sourceMessageId&&m.role==="user");
   if (!source) throw Error("Saved user request is missing.");
   const expanded=storyChatMediaEnabled();
-  const command = parseStoryMediaCommand(input.arguments,source.content,expanded);
+  const command = parseStoryMediaCommand(input.arguments,voiceContext?.instruction??source.content,expanded,voiceContext?.text);
+  if(voiceContext && (command.operation!=="voice"||command.voiceMode!=="design"||command.text!==voiceContext.text))
+    throw Error("The voice audition changed before submission.");
   if(command.operation==="music"||command.operation==="effects")requireStoryAudioEngine(command.operation);
   if(["show","describe"].includes(command.operation))throw Error("Choose an existing creation to view.");
   if(expanded && command.operation==="voice" && !command.text && command.voiceMode==="design") {
@@ -198,6 +201,7 @@ export function requestStoryMedia(input: {ownerKey:string;projectId:string;sourc
     if (media.name && command.subject==="character")command.name=media.name;
     if(command.operation==="image"&&media.image)command.operation="edit";
   }
+  if(voiceContext&&!command.name)command.subject="scene";
   const imageAccountId=input.openAIImageAccountId;
   const wantsCloud = requestsStoryOpenAIImage(source.content);
   const visual = ["image","edit"].includes(command.operation);

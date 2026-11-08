@@ -23,6 +23,43 @@ async function setup() {
 }
 
 describe("server-owned Story Creator replies", () => {
+  it("queues the exact follow-up as one voice audition with the original accent", async () => {
+    vi.stubEnv("OTG_ENV","test");
+    vi.stubEnv("OTG_STORY_CHAT_MEDIA","1");
+    const {store,identity}=await setup();
+    const {executeStoryConversationTurn}=await import("../../../lib/storyCreator/conversationExecutor");
+    const media=await import("../../../lib/storyCreator/mediaExecution");
+    const dispatch=vi.spyOn(media,"executeStoryMedia").mockResolvedValue(undefined);
+    const add=(content:string)=>{
+      const source=store.addStoryCreatorMessage({...identity,role:"user",content});
+      const {turn}=store.createStoryConversationTurn({...identity,sourceMessageId:source.id});
+      return {...identity,turnId:turn.id,sourceMessageId:source.id};
+    };
+    const request=add("I want you to create her voice as a Russian accent, saying that phrase.");
+    await executeStoryConversationTurn(request,"");
+    expect(store.listStoryCreatorMessages(identity).at(-1)?.content).toBe("Please provide the exact line the character should speak.");
+    expect(dispatch).not.toHaveBeenCalled();
+    const line="hello I am Dr. Helena Boss I would like to welcome you to your new life.";
+    const reply=add("exact line is "+line);
+    await executeStoryConversationTurn(reply,"");
+    await executeStoryConversationTurn(reply,"");
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const record=dispatch.mock.calls[0][0];
+    expect(record.command).toMatchObject({operation:"voice",voiceMode:"design",name:"Dr. Helena Boss",text:line,prompt:expect.stringContaining("Russian accent")});
+    expect(record.sourceMessageId).toBe(reply.sourceMessageId);
+    expect(store.getStoryConversationTurn(reply)?.mediaResultId).toBe(record.id);
+  });
+
+  it("uses a single quoted line for a request to say that phrase",async()=>{
+    const {storyVoiceDraft,buildStoryVoiceAudition}=await import("../../../lib/storyCreator/voiceFollowup");
+    const draft=storyVoiceDraft("I want you to create her voice as a Russian accent, saying that phrase.")!;
+    const exact="Hello, I’m Dr. Helena Boss. Welcome to your new life.";
+    expect(buildStoryVoiceAudition(draft,undefined,"She says “"+exact+"”")?.command.text).toBe(exact);
+    expect(buildStoryVoiceAudition(draft,undefined,'She says “Hello” or “Goodbye”.')).toBeUndefined();
+    expect(storyVoiceDraft("Do not create her voice with a Russian accent.")).toBeUndefined();
+    expect(storyVoiceDraft("Create an image of a singer with a strong voice.")).toBeUndefined();
+  });
+
   it("deduplicates source messages and atomically saves exactly one completed assistant message", async () => {
     const { store, identity, source } = await setup();
     const first = store.createStoryConversationTurn({ ...identity, sourceMessageId: source.id });

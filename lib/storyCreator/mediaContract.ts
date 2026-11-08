@@ -125,7 +125,7 @@ export function directLocalStoryMedia(request: string): StoryMediaCommand | unde
   return command;
 }
 
-export function parseStoryMediaCommand(raw: unknown, request: string, expanded = false): StoryMediaCommand {
+export function parseStoryMediaCommand(raw: unknown, request: string, expanded = false, authorizedVoiceText?: string): StoryMediaCommand {
   const value = typeof raw === "string" ? JSON.parse(raw) : raw;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw Error("Invalid media request.");
   const allowed = ["operation","subject","name","prompt","sourceId","text","evidence",...(expanded?["durationSeconds","voiceMode","language","videoMode"]:[])];
@@ -154,7 +154,7 @@ export function parseStoryMediaCommand(raw: unknown, request: string, expanded =
   if (command.voiceMode && !["design","reuse"].includes(command.voiceMode)) throw Error("Choose a new or saved voice.");
   if (command.videoMode && !["reference","first-frame"].includes(command.videoMode)) throw Error("Choose a valid starting image method.");
   if (command.language && !spokenLanguages.includes(command.language)) throw Error("The chosen speech language is unavailable.");
-  if (expanded && command.operation==="voice" && command.text && !request.includes(command.text))
+  if (expanded && command.operation==="voice" && command.text && !request.includes(command.text) && command.text!==authorizedVoiceText)
     throw Error("Please provide the exact line the character should speak.");
   return command;
 }
