@@ -7,6 +7,7 @@ import { buildStoryDirectorProjectContext } from "./context";
 import { storyConversationInstructions, storyConversationOutputTokens } from "./conversationPolicy";
 import { retrieveStoryMemory } from "./retrieval";
 import { parseStoryConversation, partialStoryReply, STORY_CONVERSATION_SCHEMA, STORY_MEMORY_INSTRUCTION } from "./conversationMemory";
+import {buildStoryVoiceAudition,STORY_VOICE_LINE_PROMPT,storyVoiceDraft,storyVoiceLineReply} from "./voiceFollowup";
 import {
   claimStoryConversationTurn, completeStoryConversationTurn, getStoryConversationTurn,
   listStoryCreatorMessages, updateStoryConversationTurn,
@@ -56,7 +57,22 @@ export async function executeStoryConversationTurn(input: TurnIdentity, mediaCoo
     const automaticDictation = source.id.startsWith("dictation-");
     const expanded = storyChatMediaEnabled();
     const dictationInstruction = automaticDictation && !expanded ? "\nThis message came from automatic microphone dictation. Discuss requested media normally and ask the user to send the reviewed instruction to start generation." : "";
-    const mediaEnabled=(!automaticDictation || expanded) && storyMediaEnabled() && turn.purpose!=="writing" && mediaCookie!==undefined && explicitMediaRequest(source.content,expanded);
+    const canUseMedia=(!automaticDictation || expanded) && storyMediaEnabled() && turn.purpose!=="writing" && mediaCookie!==undefined;
+    const previousReply=allMessages[sourceIndex-1];
+    const previousUser=allMessages[sourceIndex-2];
+    const lineReply=storyVoiceLineReply(source.content);
+    const pendingVoice=expanded&&canUseMedia&&lineReply&&previousReply?.role==="assistant"&&
+      previousReply.content===STORY_VOICE_LINE_PROMPT&&previousUser?.role==="user"
+      ? getStoryConversationTurn({...input,turnId:undefined,sourceMessageId:previousUser.id,chatOnly:true}) : null;
+    const continuation=pendingVoice?.status==="completed"&&pendingVoice.assistantMessageId===previousReply?.id&&!pendingVoice.mediaResultId;
+    const voiceDraft=expanded&&canUseMedia?storyVoiceDraft(source.content)||
+      (continuation?storyVoiceDraft(previousUser.content):undefined):undefined;
+    const voice=voiceDraft?buildStoryVoiceAudition(voiceDraft,continuation?lineReply:undefined,previousReply?.role==="assistant"?previousReply.content:undefined):undefined;
+    if(voiceDraft&&!voice){
+      completeStoryConversationTurn({...scope,content:STORY_VOICE_LINE_PROMPT});
+      return;
+    }
+    const mediaEnabled=canUseMedia&&(!!voice||explicitMediaRequest(source.content,expanded));
     const media=mediaEnabled?await import("./mediaExecution"):null;
     if(expanded&&media&&turn.mediaSourceId){
       const line=source.content.trim();
@@ -74,9 +90,9 @@ export async function executeStoryConversationTurn(input: TurnIdentity, mediaCoo
         return;
       }
     }
-    const direct=expanded&&media?directLocalStoryMedia(source.content):undefined;
+    const direct=voice?.command??(expanded&&media?directLocalStoryMedia(source.content):undefined);
     let provider=turn.aiProvider||"openai";
-    let completed=!!direct && local;
+    let completed=!!direct && (local||!!voice);
     let toolCalls:Array<{name:string;arguments:string}>=completed?[{name:"create_story_media",arguments:JSON.stringify(direct)}]:[];
     if(!completed){
       const recall = await retrieveStoryMemory({ ...input, query: source.content });
@@ -131,7 +147,9 @@ export async function executeStoryConversationTurn(input: TurnIdentity, mediaCoo
       if(!media||toolCalls.length!==1||toolCalls[0].name!=="create_story_media")throw Error("Unsupported media tool call.");
       let result;
       try {
-        const command=expanded?media.resolveStoryChatCommand(input,toolCalls[0].arguments,source.content,turn.mediaSourceId,provider==="local3060"):toolCalls[0].arguments;
+        const focus=turn.mediaSourceId||(continuation?pendingVoice.mediaSourceId:undefined);
+        if(voice&&focus&&!focus.startsWith("visual:"))voice.command.subject="character";
+        const command=expanded?media.resolveStoryChatCommand(input,voice?.command??toolCalls[0].arguments,voice?.instruction??source.content,focus,provider==="local3060",voice?.command.text):toolCalls[0].arguments;
         if(typeof command!=="string"&&command.operation==="show"){
           const item=media.findStoryCreation(input,command.sourceId);
           completeStoryConversationTurn({...scope,content:`Here is ${item.name}.`,mediaResultId:item.id});return;
@@ -141,7 +159,8 @@ export async function executeStoryConversationTurn(input: TurnIdentity, mediaCoo
           completeStoryConversationTurn({...scope,content:description,mediaResultId:command.sourceId});return;
         }
         result=media.requestStoryMedia({ownerKey:input.ownerKey,projectId:input.projectId,sourceMessageId:source.id,arguments:command,
-          openAIImageAccountId:expanded?accountId:provider==="openai"?accountId:undefined});
+          openAIImageAccountId:expanded?accountId:provider==="openai"?accountId:undefined},undefined,
+          voice?{instruction:voice.instruction,text:voice.command.text}:undefined);
       }
       catch(error) {
         completeStoryConversationTurn({...scope,content:error instanceof Error?error.message:"I couldn't prepare that media request. Nothing was submitted."});return;
