@@ -92,6 +92,7 @@ export async function POST(request: NextRequest) {
       projectId: body?.projectId,
       role: body?.role,
       content: body?.content,
+      ...(process.env.STORY_DICTATION_ROOT ? { dictationId: body?.dictationId } : {}),
     });
 
     return NextResponse.json(

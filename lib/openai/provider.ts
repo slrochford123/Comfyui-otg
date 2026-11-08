@@ -438,13 +438,17 @@ export async function transcribeOpenAIAudio(args: {
   fileName: string;
   mimeType: string;
   prompt?: string;
+  keywords?: string[];
   language?: string;
   audioSeconds?: number;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }) {
+  args.signal?.throwIfAborted();
   const model = openAIModels().transcribe;
   const reservationId = assertOpenAIAuthorized(args.ownerKey, "transcribe", Math.max(0.25, audioCost(model, Math.max(0, Number(args.audioSeconds || 0)))));
   const controller = new AbortController();
+  const signal = args.signal ? AbortSignal.any([args.signal, controller.signal]) : controller.signal;
   const timer = setTimeout(() => controller.abort(), args.timeoutMs || 120_000);
 
   try {
@@ -456,9 +460,10 @@ export async function transcribeOpenAIAudio(args: {
         file,
         model,
         prompt: args.prompt || undefined,
+        keywords: args.keywords?.length ? args.keywords : undefined,
         languages: args.language ? [args.language] : undefined,
       } as any,
-      { signal: controller.signal, maxRetries: 0, headers: { "X-Client-Request-Id": reservationId } } as any,
+      { signal, maxRetries: 0, headers: { "X-Client-Request-Id": reservationId } } as any,
     );
     const text = String(response.text || "").trim();
     const usage = usageFromResponse(response);

@@ -16,9 +16,8 @@ export function storyCpuAvailable() {
 
 export function callStoryCpu<T extends Record<string, unknown>>(
   endpoint: "/embed" | "/tts" | "/transcribe" | "/cancel" | "/health",
-  data: Record<string, unknown> = {}, timeoutMs = 10_000,
+  data: Record<string, unknown> = {}, timeoutMs = 10_000, root = storyCpuRoot(),
 ): Promise<T> {
-  const root = storyCpuRoot();
   if (!root) return Promise.reject(new Error("Local Story Creator models are not configured."));
   return new Promise((resolve, reject) => {
     const body = Buffer.from(JSON.stringify(data));

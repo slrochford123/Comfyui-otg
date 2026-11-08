@@ -59,12 +59,14 @@ describe("Story Creator V2 microphone and speaker contract", () => {
     expect(speechInput).toContain("track.stop()");
   });
 
-  it("keeps mobile recordings reviewable before transcription and sends diagnostics", () => {
+  it("supports transcript review and sends microphone diagnostics", () => {
     expect(speechInput).toContain("<audio controls");
     expect(speechInput).toContain('body.set("durationSeconds"');
     expect(speechInput).toContain('body.set("chunkCount"');
     expect(speechInput).toContain('body.set("clientMimeType"');
-    expect(speechInput).toContain("Raw transcript added. Review and edit it before submitting.");
+    expect(speechInput).toContain("Transcript added to the composer. Review and send when ready.");
+    expect(ideas).toContain("Review before sending");
+    expect(ideas).toContain("maxSeconds: 600");
     expect(speechInput).not.toContain("onTranscript(text);\n          setState(\"idle\")");
   });
 

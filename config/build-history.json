@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.31",
+  "current": "2.32",
   "builds": [
     {
       "version": "2",
@@ -193,6 +193,12 @@
       "date": "2026-11-03",
       "summary": "Character RefMods with approved Qwen3-TTS voices, saved identity/audio conditioning and recoverable library deletion. Add Voice uses Qwen3 only; Testing experiments remain excluded.",
       "sourceBaseCommit": "8a48afb1960d8ba9761b7be857128e1c977a9d84"
+    },
+    {
+      "version": "2.32",
+      "date": "2026-11-08",
+      "summary": "Story Creator CPU dictation with Parakeet v3, a ten-minute recording limit, Stop & Send, and optional transcript review.",
+      "sourceBaseCommit": "ea6b450190a61969e6c5df9706c73d87ca4d5a13"
     }
   ]
 }

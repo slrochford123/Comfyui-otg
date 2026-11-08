@@ -2198,6 +2198,7 @@ export function addStoryCreatorMessage(input: {
   projectId: unknown;
   role: unknown;
   content: unknown;
+  dictationId?: unknown;
 }) {
   const { ownerKey, projectId } = assertOwnedActiveProject(
     input.ownerKey,
@@ -2207,9 +2208,14 @@ export function addStoryCreatorMessage(input: {
   const role = cleanMessageRole(input.role);
   const content = cleanMessageContent(input.content);
   const now = Date.now();
+  const dictationId = input.dictationId;
+  if (dictationId !== undefined && (role !== "user" || typeof dictationId !== "string" ||
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(dictationId))) {
+    throw new Error("Invalid dictation identifier.");
+  }
 
   const message: StoryCreatorMessage = {
-    id: randomUUID(),
+    id: dictationId ? `dictation-${dictationId}` : randomUUID(),
     projectId,
     ownerKey,
     role,
@@ -2218,6 +2224,18 @@ export function addStoryCreatorMessage(input: {
   };
 
   const write = db().transaction(() => {
+    if (dictationId) {
+      const previous = db().prepare("SELECT * FROM story_messages WHERE id=?").get(message.id) as Parameters<typeof rowToMessage>[0] | undefined;
+      if (previous) {
+        const saved = rowToMessage(previous);
+        if (saved.ownerKey !== ownerKey || saved.projectId !== projectId || saved.role !== role || saved.content !== content) {
+          throw new Error("Dictation identifier is already in use.");
+        }
+        if (db().prepare("SELECT 1 FROM story_chat_hidden WHERE project_id=? AND owner_key=? AND kind='message' AND item_id=?")
+            .get(projectId, ownerKey, saved.id)) throw new Error("This dictation was removed from the conversation.");
+        return saved;
+      }
+    }
     db()
       .prepare(`
         INSERT INTO story_messages (
@@ -2252,11 +2270,10 @@ export function addStoryCreatorMessage(input: {
         projectId,
         ownerKey,
       );
+    return message;
   });
 
-  write();
-
-  return message;
+  return write.immediate();
 }
 
 export type StoryConversationTurn = {

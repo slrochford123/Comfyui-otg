@@ -55,11 +55,15 @@ type Props = {
   openQuestionsError: string;
   onDraftChange: (value: string) => void;
   onSend: () => void;
+  onDictatedMessage: (voice: { text: string; id: string; projectId: string }) => Promise<void>;
   onExtract: (sourceMessageId: string) => void;
   visualAction: StoryVisualDirectorAction | null;
   visualActionError: string;
   onMediaAvailability?: (enabled:boolean)=>void;
 };
+
+const STORY_DICTATION = process.env.NEXT_PUBLIC_OTG_STORY_DICTATION === "1";
+const DICTATION_REVIEW_KEY = "otg.storyCreator.reviewDictation";
 
 const STORY_DIRECTOR_AUTO_SPEAK_KEY =
   "otg.storyCreator.autoSpeakResponses";
@@ -116,6 +120,7 @@ export function IdeasTab({
   openQuestionsError,
   onDraftChange,
   onSend,
+  onDictatedMessage,
   onExtract,
   visualAction,
   visualActionError,
@@ -126,6 +131,19 @@ export function IdeasTab({
   const [transcriptionProvider, setTranscriptionProvider] = useState<"local" | "openai">("local");
   const [dictationLanguage, setDictationLanguage] = useState("");
   const [translateSpeech, setTranslateSpeech] = useState(false);
+  const [reviewDictation, setReviewDictation] = useState(false);
+  useEffect(() => {
+    if (STORY_DICTATION) {
+      try { setReviewDictation(localStorage.getItem(DICTATION_REVIEW_KEY) === "1"); } catch { /* storage unavailable */ }
+    }
+  }, []);
+  useEffect(() => setRecorderStatus(""), [projectId]);
+  const useParakeet = STORY_DICTATION && transcriptionProvider === "local" && !translateSpeech;
+  const legacyDictationEndpoint = transcriptionProvider === "local"
+    ? `/api/story-creator/transcribe${translateSpeech ? "?translate=en" : ""}` : undefined;
+  const dictationEndpoint = STORY_DICTATION
+    ? `/api/story-creator/transcribe?provider=${useParakeet ? "parakeet" : transcriptionProvider === "openai" ? "openai" : "whisper&translate=en"}`
+    : legacyDictationEndpoint;
 
   const [autoSpeakResponses, setAutoSpeakResponses] =
     useState(false);
@@ -328,10 +346,10 @@ export function IdeasTab({
               </select></label>
               {speech.engine !== "browser" ? <label>Voice <select value={speech.voice} onChange={(event) => speech.setVoice(event.target.value as StorySpeechVoice)} className="ml-2 min-h-10 rounded-lg bg-slate-900 p-2">{STORY_VOICES[speech.engine].map((choice) => <option key={choice.id} value={choice.id}>{choice.label}</option>)}</select></label> : null}
               <label>Dictation <select value={transcriptionProvider} onChange={(event) => { setTranscriptionProvider(event.target.value as "local" | "openai"); if (event.target.value === "openai" && !dictationLanguage) setDictationLanguage("en"); }} className="ml-2 min-h-10 rounded-lg bg-slate-900 p-2">
-                <option value="local" disabled={!speech.capabilities.transcription}>Whisper · local CPU</option><option value="openai">OpenAI · API usage</option>
+                <option value="local" disabled={!STORY_DICTATION && !speech.capabilities.transcription}>{STORY_DICTATION ? "Parakeet v3 · local CPU" : "Whisper · local CPU"}</option><option value="openai">OpenAI · API usage</option>
               </select></label>
-              <label>Language <select value={dictationLanguage} onChange={(event) => setDictationLanguage(event.target.value)} className="ml-2 min-h-10 rounded-lg bg-slate-900 p-2">{transcriptionProvider === "local" ? <option value="">Detect automatically</option> : null}<option value="en">English</option><option value="es">Spanish</option><option value="fr">French</option><option value="de">German</option><option value="pt">Portuguese</option></select></label>
-              {transcriptionProvider === "local" ? <label className="flex items-center gap-2"><input type="checkbox" checked={translateSpeech} onChange={(event) => setTranslateSpeech(event.target.checked)} />Translate recording into English</label> : null}
+              {useParakeet ? <span>Language detected automatically</span> : <label>Language <select value={dictationLanguage} onChange={(event) => setDictationLanguage(event.target.value)} className="ml-2 min-h-10 rounded-lg bg-slate-900 p-2">{transcriptionProvider === "local" ? <option value="">Detect automatically</option> : null}<option value="en">English</option><option value="es">Spanish</option><option value="fr">French</option><option value="de">German</option><option value="pt">Portuguese</option></select></label>}
+              {transcriptionProvider === "local" ? <label className="flex items-center gap-2"><input type="checkbox" checked={translateSpeech} disabled={!speech.capabilities.transcription} onChange={(event) => setTranslateSpeech(event.target.checked)} />Translate recording into English</label> : null}
             </div>
             {speech.engine === "bark" ? <p>Bark Small is experimental on CPU: slower playback preparation, possible wording changes, maximum 400 characters. It is not the storyteller or transcriber.</p> : null}
             {speech.engine === "paradee" ? <p>Paradee 1.2 reads replies in English using your saved voice choice. Local CPU only; no paid speech calls or rendering GPU use. It does not translate or change the written reply.</p> : null}
@@ -437,7 +455,7 @@ export function IdeasTab({
           ) : null}
 
           {recorderStatus ? (
-            <div className="mb-3 rounded-[14px] border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs leading-5 text-cyan-100/80">
+            <div role="status" className="mb-3 rounded-[14px] border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs leading-5 text-cyan-100/80">
               {recorderStatus}
             </div>
           ) : null}
@@ -463,10 +481,16 @@ export function IdeasTab({
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <SpeechInputButton
+                key={projectId}
+                dictation={STORY_DICTATION ? {
+                  maxSeconds: 600,
+                  autoSend: !reviewDictation,
+                  onSend: (text, id) => onDictatedMessage({ text, id, projectId }),
+                } : undefined}
                 label="Record Story Director voice note"
-                disabled={chatBusy || (transcriptionProvider === "local" && !speech.capabilities.transcription)}
-                endpoint={transcriptionProvider === "local" ? `/api/story-creator/transcribe${translateSpeech ? "?translate=en" : ""}` : undefined}
-                language={dictationLanguage}
+                disabled={chatBusy || (!useParakeet && transcriptionProvider === "local" && !speech.capabilities.transcription)}
+                endpoint={dictationEndpoint}
+                language={useParakeet ? "" : dictationLanguage}
                 onRecordingStart={stopPlayback}
                 className="rounded-[14px] border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-black uppercase tracking-[0.12em] text-white/70 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
                 projectId={projectId}
@@ -477,9 +501,16 @@ export function IdeasTab({
                   onDraftChange(mergeTranscriptDraft(draft, text))
                 }
               />
-              <span className="text-[11px] text-white/35">
-                Ctrl/Cmd + Enter to send
-              </span>
+              {STORY_DICTATION ? (
+                <label className="inline-flex min-h-10 items-center gap-2 text-xs text-white/70">
+                  <input type="checkbox" checked={reviewDictation} onChange={(event) => {
+                    const enabled = event.target.checked;
+                    setReviewDictation(enabled);
+                    try { localStorage.setItem(DICTATION_REVIEW_KEY, enabled ? "1" : "0"); } catch { /* storage unavailable */ }
+                  }} />
+                  Review before sending
+                </label>
+              ) : <span className="text-[11px] text-white/35">Ctrl/Cmd + Enter to send</span>}
             </div>
 
             <button

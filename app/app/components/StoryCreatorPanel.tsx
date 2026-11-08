@@ -1431,6 +1431,7 @@ export default function StoryCreatorPanel({
     projectId: string,
     role: StoryMessage["role"],
     content: string,
+    dictationId?: string,
   ) {
     const response = await fetch(
       "/api/story-creator/messages",
@@ -1445,6 +1446,7 @@ export default function StoryCreatorPanel({
           projectId,
           role,
           content,
+          ...(dictationId ? { dictationId } : {}),
         }),
       },
     );
@@ -2145,9 +2147,10 @@ export default function StoryCreatorPanel({
     }
   }
 
-  async function sendStoryMessage() {
+  async function sendStoryMessage(voice?: { text: string; id: string; projectId: string }) {
     const project = selectedProject;
-    const content = draft.trim();
+    const content = (voice?.text ?? draft).trim();
+    if (voice && voice.projectId !== project?.id) throw Error("The recording belongs to a different story.");
 
     if (
       !project ||
@@ -2155,6 +2158,7 @@ export default function StoryCreatorPanel({
       chatBusy ||
       storySendLockRef.current
     ) {
+      if (voice) throw Error("Wait for the current reply, then retry sending your transcript.");
       return;
     }
     storySendLockRef.current = true;
@@ -2166,26 +2170,32 @@ export default function StoryCreatorPanel({
     }
 
     try {
-      const capability=await fetch("/api/story-creator/media?capabilities=1",{cache:"no-store"}).then(async response=>response.ok?response.json():{enabled:false});
-      const useStoryMedia=capability.enabled===true;
-      setStoryMediaEnabled(useStoryMedia);
-      if(useStoryMedia)setStoryDirectorVisualAction(null);
+      let useStoryMedia = false;
+      if (!voice) {
+        const capability=await fetch("/api/story-creator/media?capabilities=1",{cache:"no-store"}).then(async response=>response.ok?response.json():{enabled:false});
+        useStoryMedia=capability.enabled===true;
+        setStoryMediaEnabled(useStoryMedia);
+        if(useStoryMedia)setStoryDirectorVisualAction(null);
+      }
+      if (chatProject.current !== project.id) throw Error("The recording belongs to a different story.");
       const savedUserMessage =
         await persistMessage(
           project.id,
           "user",
           content,
+          voice?.id,
         );
+      if (chatProject.current !== project.id) throw Error("Message saved in the original story.");
 
       const history = [
         ...storyMessages,
         savedUserMessage,
       ];
 
-      setStoryMessages(history);
-      setDraft("");
+      setStoryMessages(current => current.some(item => item.id === savedUserMessage.id) ? current : [...current, savedUserMessage]);
+      if (!voice) setDraft("");
 
-      if (!useStoryMedia && isStoryVisualActionInstruction(content)) {
+      if (!voice && !useStoryMedia && isStoryVisualActionInstruction(content)) {
         const actionResponse = await fetch(
           "/api/story-creator/visual-actions",
           {
@@ -2239,6 +2249,7 @@ export default function StoryCreatorPanel({
       await conversation.start(savedUserMessage.id);
       setStoryExtractionNotice("Your message is saved. The reply will remain available when you return.");
     } catch (error) {
+      if (voice) throw error;
       if (isStoryVisualActionInstruction(content)) {
         setStoryDirectorVisualActionError(
           error instanceof Error
@@ -2339,6 +2350,7 @@ export default function StoryCreatorPanel({
             }
             onDraftChange={setDraft}
             onSend={() => void sendStoryMessage()}
+            onDictatedMessage={sendStoryMessage}
             onExtract={(sourceMessageId) => {
               const authorized = window.confirm(
                 "Reviewing your story will use AI credits. Continue?",
