@@ -617,7 +617,7 @@ def music():
 
 
 def effects():
-    gpu_ready(5500)
+    gpu_ready(7500 if JOB["params"]["mode"]=="automatic" else 5500)
     cfg=CONFIG["woosh"]
     params=JOB["params"]
     request=ROOT/"effects-request.json"

@@ -3,7 +3,7 @@ import type { MediaGpu } from "@/lib/mediaGpuRouting";
 export function audioMinimumVramMiB(operation: string, params: Record<string, unknown>, offload = true) {
   if (operation === "speech") return offload ? 12000 : 18000;
   if (operation === "music") return 8000;
-  if (operation === "effects") return 5500;
+  if (operation === "effects") return params.mode==="automatic" ? 7500 : 5500;
   if (operation === "separate") return params.engine === "bandit" ? 1800 : 1200;
   if (operation === "enhance" && params.engine === "mossformer") return 1800;
   return 0;

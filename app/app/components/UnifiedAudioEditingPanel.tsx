@@ -32,7 +32,15 @@ export default function UnifiedAudioEditingPanel({onOpenDialogue,initialSection=
   const [gpu,setGpu] = useState<AudioGpu>("rtx3090");
   const [preference]=useMediaGpuChoice();
   const routing=MEDIA_GPU_ROUTING_UI_ENABLED?preference:gpu;
-  const engineReady=(name:string)=>routing==="auto" ? !!(cap.engines[name]?.rtx3090||cap.engines[name]?.rtx5060ti) : !!cap.engines[name]?.[routing];
+  const engineDevice = (name: string) => {
+    const qualified = cap.engines[name];
+    return qualified?.cpu && !qualified.rtx3090 && !qualified.rtx5060ti ? "cpu" : routing;
+  };
+  const engineReady = (name: string) => {
+    const device = engineDevice(name);
+    const qualified = cap.engines[name];
+    return device === "auto" ? !!(qualified?.rtx3090 || qualified?.rtx5060ti) : !!qualified?.[device];
+  };
   const [comparison,setComparison] = useState("original");
   const [selectedAsset,setSelectedAsset] = useState("");
   const [audioCompare,setAudioCompare] = useState({assetId:"",original:false});
@@ -179,7 +187,9 @@ export default function UnifiedAudioEditingPanel({onOpenDialogue,initialSection=
   const process = (operation:string,params:Record<string,unknown>={},assetId?:string) => execute(async()=>{
     const saved=await save();
     const cpu=["import","mix","extract"].includes(operation)||operation==="enhance"&&params.engine!=="mossformer";
-    const result=await api({action:"process",sessionId:saved.id,operation,params,assetId,gpu:cpu?"cpu":routing});
+    const capability = operation === "separate" && params.engine === "bandit" ? "separate-bandit" :
+      operation === "enhance" && params.engine === "mossformer" ? "enhance-mossformer" : operation;
+    const result=await api({action:"process",sessionId:saved.id,operation,params,assetId,gpu:cpu?"cpu":engineDevice(capability)});
     await load(saved.id);
     if(result.cached)setNotice("Using the existing separated tracks; no AI inference was rerun.");
   });
@@ -348,6 +358,7 @@ export default function UnifiedAudioEditingPanel({onOpenDialogue,initialSection=
         </div>
         <details><summary className="min-h-11 cursor-pointer text-sm">Advanced processing & help</summary>
           {MEDIA_GPU_ROUTING_UI_ENABLED ? <Help>Use Rendering GPU above for Automatic or Manual routing. Mixing and conservative cleanup run on CPU.</Help> : <label className="text-xs">AI processing device<select className={input} value={gpu} onChange={e=>setGpu(e.target.value as AudioGpu)}><option value="rtx3090">RTX 3090</option><option value="rtx5060ti">RTX 5060 Ti</option><option value="cpu">CPU where supported</option></select></label>}
+          {engineReady("separate-bandit") && engineDevice("separate-bandit") === "cpu" && <Help>BandIt separates tracks on this server’s CPU.</Help>}
           <label className="text-xs">Separation method<select className={input} value={separator} onChange={e=>setSeparator(e.target.value)}><option value="bandit" disabled={!engineReady("separate-bandit")}>BandIt v2 · recommended{!engineReady("separate-bandit")?" · unavailable on this device":""}</option><option value="tiger">TIGER-DnR · alternative</option></select></label>
           <Help>Separate again only when deliberately changing the separation method. BandIt v2 weights carry CC-BY-SA-4.0 terms. Neither method guarantees perfect isolation.</Help>
           <Help>Mixing/export runs on CPU. AI operations are admitted only when their selected engine is qualified and the GPU is available. Existing work is never interrupted. Saving sliders does not rerun separation.</Help>
