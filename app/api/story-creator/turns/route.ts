@@ -1,3 +1,4 @@
+import {storyChatMediaEnabled} from "@/lib/storyCreator/mediaAvailability";
 import { after, NextRequest, NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/sessionUser";
 import { SessionInvalidError } from "@/lib/ownerKey";
@@ -59,7 +60,13 @@ export async function POST(request: NextRequest) {
     const purpose = body.purpose === "writing" ? "writing" : "conversation";
     const writingMode = purpose === "writing" && ["outline", "chapter", "episode", "scene", "dialogue"].includes(body.writingMode) ? body.writingMode : "";
     if (purpose === "writing" && !writingMode) return NextResponse.json({ ok: false, error: "Choose a writing mode." }, { status: 400, headers });
-    const result = createStoryConversationTurn({ ownerKey, projectId, purpose, writingMode,aiProvider,
+    const mediaSourceId = storyChatMediaEnabled() && purpose === "conversation" && typeof body.mediaSourceId === "string"
+      ? body.mediaSourceId : "";
+    if (mediaSourceId) {
+      const { validateStoryMediaFocus } = await import("@/lib/storyCreator/mediaExecution");
+      validateStoryMediaFocus({ownerKey,projectId},mediaSourceId);
+    }
+    const result = createStoryConversationTurn({ ownerKey, projectId, purpose, writingMode,aiProvider,mediaSourceId,
       sourceMessageId: String(body.sourceMessageId || "") });
     const mediaCookie=request.headers.get("cookie")||"";
     if (result.created) after(() => executeStoryConversationTurn({ ownerKey, projectId, turnId: result.turn.id },mediaCookie,accountId));

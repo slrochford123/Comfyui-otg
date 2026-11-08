@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {beforeEach,afterEach,it,expect,vi} from "vitest";
-import {explicitMediaRequest,parseStoryMediaCommand} from "@/lib/storyCreator/mediaContract";
+import {bindLocalStoryMediaEvidence,directLocalStoryMedia,explicitMediaRequest,parseStoryMediaCommand,requestsStoryOpenAIImage} from "@/lib/storyCreator/mediaContract";
 const backend=vi.hoisted(()=>({image:vi.fn(),edit:vi.fn(),voice:vi.fn()}));
 vi.mock("@/app/api/assets/create-image/route",()=>({POST:backend.image}));
 vi.mock("@/app/api/images/native/route",()=>({POST:backend.edit}));
@@ -92,4 +92,81 @@ it("saves a voice once, assigns it to the existing character, and uses it for ne
   backend.voice.mockRejectedValue(Error("fixture stop before inference"));await s.execution.executeStoryMedia(next,"");
   expect(backend.voice.mock.calls[0][1]).toMatchObject({refText:"Hello, friend.",characterId:character.characterId});
   expect(backend.voice.mock.calls[0][1].voice).toContain(saved.voiceId);
+});
+
+it("authorizes a natural dictated voice design with exact dialogue and rejects rewritten dialogue", () => {
+  const request = "Give Helena a Russian accent and make her say “The treatment is working.”";
+  const command = {operation:"voice",subject:"character",name:"Helena",prompt:"English with a moderate Russian accent",
+    sourceId:"",text:"The treatment is working.",evidence:request,voiceMode:"design",language:"English"};
+  expect(parseStoryMediaCommand(command,request,true)).toMatchObject({language:"English",voiceMode:"design",text:command.text});
+  expect(() => parseStoryMediaCommand({...command,text:"Treatment works."},request,true)).toThrow("exact line");
+  expect(explicitMediaRequest("What’s in this picture?",true)).toBe(true);
+});
+
+it("recovers paraphrased local evidence only for a matching explicit media instruction", () => {
+  const command={operation:"image",subject:"character",name:"Helena",prompt:"Helena in a blazer",sourceId:"",text:"",evidence:"Make a portrait"};
+  const request="Create a portrait image of Helena in a blazer.";
+  expect(parseStoryMediaCommand(bindLocalStoryMediaEvidence(command,request),request,true)).toMatchObject({evidence:request});
+  for(const unsafe of ["Create a story about a portrait.","Don't create a portrait of Helena."]) {
+    expect(()=>parseStoryMediaCommand(bindLocalStoryMediaEvidence(command,unsafe),unsafe,true)).toThrow();
+  }
+  const voiceRequest="Give her a Russian accent and make her say the treatment is working";
+  const voice={...command,operation:"voice",text:"The treatment is working.",voiceMode:"design"};
+  expect(parseStoryMediaCommand(bindLocalStoryMediaEvidence(voice,voiceRequest),voiceRequest,true).text).toBe("the treatment is working");
+});
+
+it.each([
+  ["Create a portrait image of Dr. Helena Voss, a fictional doctor.","image","Dr. Helena Voss",""],
+  ["Edit this portrait. Change the blazer to dark blue.","edit","",""],
+  ["Give her a Russian accent and make her say. The treatment is working.","voice","","The treatment is working."],
+  ["her a Russian accent, and make her say, The treatment is working.","voice","","The treatment is working."],
+  ["Have her speak another line in her saved voice. Make her say “We can begin.”","voice","","We can begin."],
+  ["Generate a five-second sound effect of a heavy steel door slamming.","effects","",""],
+  ["Generate 10 seconds of instrumental music with eerie piano.","music","",""],
+  ["Create a five-second video showing her taking one slow step.","video","",""],
+])("routes a clear local command: %s",(line,operation,name,text)=>{
+  const command=directLocalStoryMedia(line);
+  expect(parseStoryMediaCommand(command,line,true)).toMatchObject({operation,name,text,evidence:line});
+});
+
+it("keeps planning and incidental brand mentions outside media dispatch and paid image selection",()=>{
+  expect(directLocalStoryMedia("Create a shot list for a five-second video.")).toBeUndefined();
+  expect(directLocalStoryMedia("Make a playlist of cinematic music.")).toBeUndefined();
+  expect(requestsStoryOpenAIImage("Create an image of OpenAI's headquarters.")).toBe(false);
+  expect(requestsStoryOpenAIImage('Create a poster reading "Made with OpenAI".')).toBe(false);
+  expect(requestsStoryOpenAIImage("Create an image with GPT Image 2.6 Flare.")).toBe(true);
+});
+
+it("uses the explicitly selected portrait and limits the requested video duration before dispatch", async () => {
+  vi.stubEnv("OTG_STORY_CHAT_MEDIA","1");
+  const s=await ready(),scope={ownerKey:"alice",projectId:s.project.id};
+  const request="Show her doing a backflip in a twelve-second video.";
+  const command=s.execution.resolveStoryChatCommand(scope,{operation:"video",subject:"character",name:"Buzzy",
+    prompt:"The bunny does a backflip.",sourceId:"",text:"",evidence:request,durationSeconds:10},request,s.record.id);
+  expect(command).toMatchObject({sourceId:s.record.id,durationSeconds:12});
+  const message=s.store.addStoryCreatorMessage({...scope,role:"user",content:request});
+  expect(()=>s.execution.requestStoryMedia({...scope,sourceMessageId:message.id,arguments:command})).toThrow("between 1 and 10");
+});
+
+it("keeps image retrieval separate from rendering and enforces project ownership",async()=>{
+  vi.stubEnv("OTG_STORY_CHAT_MEDIA","1");
+  const s=await ready();
+  const scope={ownerKey:"alice",projectId:s.project.id},request="Show me what Buzzy looks like.";
+  const command=s.execution.resolveStoryChatCommand(scope,{operation:"show",subject:"character",name:"Buzzy",
+    prompt:"",sourceId:"",text:"",evidence:request},request);
+  expect(s.execution.findStoryCreation(scope,command.sourceId)).toEqual({id:s.record.id,name:"Buzzy"});
+  expect(()=>s.execution.validateStoryMediaFocus({...scope,ownerKey:"bob"},s.record.id)).toThrow();
+  expect(backend.image).not.toHaveBeenCalled();
+});
+
+it("uses only grounded local source IDs and preserves an explicit selection",async()=>{
+  const s=await ready(),scope={ownerKey:"alice",projectId:s.project.id};
+  const request="Create an image of a lighthouse.";
+  const fresh=s.execution.resolveStoryChatCommand(scope,{...s.command,subject:"scene",name:"Lighthouse",
+    evidence:request,sourceId:"fresh-image"},request,undefined,true);
+  expect(fresh.sourceId).toBe("");
+  const edit="Edit this portrait.";
+  const selected=s.execution.resolveStoryChatCommand(scope,{...s.command,operation:"edit",name:"Uncertain",
+    evidence:edit,sourceId:"selected"},edit,s.record.id,true);
+  expect(selected.sourceId).toBe(s.record.id);
 });

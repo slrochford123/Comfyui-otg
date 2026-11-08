@@ -5,3 +5,6 @@ export function storyMediaEnabled() {
 export function requireStoryMediaEnabled() {
   if (!storyMediaEnabled()) throw Error("Story media creation is not enabled on this server.");
 }
+
+/** Keep the conversational rollout independently reversible. */
+export const storyChatMediaEnabled = () => storyMediaEnabled() && process.env.OTG_STORY_CHAT_MEDIA === "1";

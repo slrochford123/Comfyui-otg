@@ -72,7 +72,7 @@ export function useStoryConversation(input: {
     };
   }, [recoveryScope, input.projectId, refresh]);
 
-  const start = useCallback(async (sourceMessageId: string, options: { purpose?: "writing"; writingMode?: string } = {}) => {
+  const start = useCallback(async (sourceMessageId: string, options: { purpose?: "writing"; writingMode?: string; mediaSourceId?: string } = {}) => {
     const projectId = input.projectId;
     setError("");
     try {

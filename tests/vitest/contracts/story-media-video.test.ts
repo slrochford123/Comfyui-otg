@@ -26,3 +26,11 @@ it("rejects an incomplete video instead of padding or freezing it",async()=>{
     await expect(finalizeStoryPreview(source,path.join(root,"out.mp4"))).rejects.toThrow("incomplete preview");
   } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
+
+it("preserves the difference between H3 identity references and first-frame conditioning",async()=>{
+  const {storyVideoPrompt}=await import("@/lib/storyCreator/mediaVideo");
+  expect(storyVideoPrompt("Helena does a backflip.","reference",5,"Helena",5)).toContain("subject_definitions:");
+  expect(storyVideoPrompt("Helena does a backflip.","reference",5,"Helena",5)).not.toContain("actual first frame");
+  expect(storyVideoPrompt("Helena does a backflip.","first-frame",6,"Helena",10)).toContain("actual first frame");
+  expect(storyVideoPrompt("Helena does a backflip.","first-frame",6,"Helena",10)).toContain("by 6 seconds");
+});

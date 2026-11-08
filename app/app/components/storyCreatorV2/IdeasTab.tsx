@@ -10,6 +10,7 @@ import {
 import SpeechInputButton from "../SpeechInputButton";
 import type { StoryVisualDirectorAction } from "@/lib/storyCreator/visualActions";
 import { StoryDirectorVisualCard } from "./StoryDirectorVisualCard";
+import { StoryImagePreview } from "./StoryPreview";
 import { StoryMediaCards } from "./StoryMediaCards";
 import { useStorySpeech } from "./useStorySpeech";
 import { STORY_VOICES, type StorySpeechEngine, type StorySpeechVoice } from "@/lib/storyCreator/speechVoices";
@@ -60,6 +61,12 @@ type Props = {
   visualAction: StoryVisualDirectorAction | null;
   visualActionError: string;
   onMediaAvailability?: (enabled:boolean)=>void;
+  onChatMediaAvailability?: (enabled:boolean)=>void;
+  chatMediaEnabled?: boolean;
+  mediaFocus?: {id:string;name:string}|null;
+  onMediaFocus?: (media:{id:string;name:string}|null)=>void;
+  resultId?: string;
+  resultMessageId?: string|null;
 };
 
 const STORY_DICTATION = process.env.NEXT_PUBLIC_OTG_STORY_DICTATION === "1";
@@ -124,9 +131,23 @@ export function IdeasTab({
   onExtract,
   visualAction,
   visualActionError,
-  onMediaAvailability,
+  onMediaAvailability,onChatMediaAvailability,chatMediaEnabled,mediaFocus,onMediaFocus,resultId,resultMessageId,
 }: Props) {
   const [recorderStatus, setRecorderStatus] = useState("");
+  const [uploadStatus,setUploadStatus]=useState("");
+  const [uploading,setUploading]=useState(false);
+  async function attachForChat(file:File){
+    setUploadStatus("");setUploading(true);
+    try {
+      const data=new FormData();
+      data.set("projectId",projectId);data.set("image",file);data.set("name",file.name.slice(0,100));data.set("visualKind","scene_image");
+      const response=await fetch("/api/story-creator/visual-assets/upload",{method:"POST",body:data});
+      const value=await response.json();
+      if(!response.ok||!value.version?.id)throw Error(value.error||"Could not attach the image.");
+      onMediaFocus?.({id:"visual:"+value.version.id,name:file.name});
+    }catch(error){setUploadStatus(error instanceof Error?error.message:"Could not attach the image.");}
+    finally{setUploading(false);}
+  }
   const speech = useStorySpeech(projectId);
   const [transcriptionProvider, setTranscriptionProvider] = useState<"local" | "openai">("local");
   const [dictationLanguage, setDictationLanguage] = useState("");
@@ -406,6 +427,10 @@ export function IdeasTab({
                 </div>
 
                 <MessageContent content={item.content} />
+                {item.id===resultMessageId&&resultId?(resultId.startsWith("visual:")
+                  ? <StoryImagePreview className="mt-2 max-h-64 w-auto rounded-lg" alt="Attached Story image" src={`/api/story-creator/visual-assets/media?projectId=${encodeURIComponent(projectId)}&versionId=${encodeURIComponent(resultId.slice(7))}`}/>
+                  : <a className="mt-2 inline-flex min-h-10 items-center underline" href={`#story-creation-${encodeURIComponent(resultId)}`}>View creation</a>
+                ):null}
                 {speech.preparedMessageId === item.id && speech.audioUrl ? <audio ref={speech.audioRef} controls src={speech.audioUrl}
                   className="mt-2 h-10 max-w-full" aria-label="Story Director spoken reply" onPlay={() => { try { window.speechSynthesis?.cancel(); } catch { /* optional */ } }} /> : null}
                 {item.role === "assistant" && speech.engine !== "browser" && speech.failedMessageId === item.id && !speech.preparing ? <button type="button"
@@ -435,7 +460,7 @@ export function IdeasTab({
             </div>
           ) : null}
 
-          <StoryMediaCards key={projectId} projectId={projectId} removedMessages={removedChatMessages} onAvailability={onMediaAvailability}/>
+          <StoryMediaCards key={projectId} projectId={projectId} removedMessages={removedChatMessages} onAvailability={onMediaAvailability} onChatAvailability={onChatMediaAvailability} onFocus={onMediaFocus} resultId={resultId}/>
           <div ref={chatEndRef} />
         </div>
 
@@ -460,6 +485,20 @@ export function IdeasTab({
             </div>
           ) : null}
 
+          {chatMediaEnabled ? <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+            {mediaFocus?<span className="min-w-0 break-all">Using {mediaFocus.name}
+              <button type="button" className="ml-2 min-h-10 underline" onClick={()=>onMediaFocus?.(null)}>Clear selection</button>
+            </span>:null}
+            <label className="inline-flex min-h-10 cursor-pointer items-center rounded-lg border border-white/20 px-3 focus-within:ring-2">
+              {uploading?"Attaching…":"Attach image"}
+              <input aria-label="Attach image for Story Director" type="file" accept="image/png,image/jpeg,image/webp" className="sr-only"
+                disabled={uploading||chatBusy} onChange={event=>{
+                  const file=event.target.files?.[0];event.target.value="";
+                  if(file)void attachForChat(file);
+                }}/>
+            </label>
+            {uploadStatus?<span role="alert">{uploadStatus}</span>:null}
+          </div>:null}
           <textarea
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}

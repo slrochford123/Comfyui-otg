@@ -42,7 +42,7 @@ type TextRequest = {
   useCase:Exclude<OpenAIUseCase,"transcribe" | "story-image">; model:string; instructions:string; input:any;
   maxOutputTokens?:number; timeoutMs?:number; signal?:AbortSignal; maxRetries?:number; store?:boolean;
   responseSchema?:{name:string;schema:Record<string,unknown>};tools?:Array<Record<string,unknown>>;
-  localVariant?:{instructions:string;input:any};
+  localVariant?:{instructions:string;input:any;responseSchema?:TextRequest["responseSchema"];tools?:TextRequest["tools"]};
 };
 
 export type OpenAITextStreamEvent =

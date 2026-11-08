@@ -19,7 +19,7 @@ import { readDispatchProcess, dispatchProcessState, type DispatchProcess } from 
 export type MediaQueueStatus = "queued" | "dispatching" | "running" | "unknown" | "completed" | "failed" | "canceled";
 export type ComfyMediaPayload = { baseUrl: string; body: Record<string, unknown>; workerId: string;
   preSubmitCleanup?: "free" | null; releaseIdlePeer?: boolean;
-  producer?: { kind: "direct" | "refmods-generation" | "realism" | "body-swap" | "story-3060-image" | "story-3060-audio"; ownerKey: string; id: string;projectId?:string } };
+  producer?: { kind: "direct" | "refmods-generation" | "realism" | "body-swap" | "story-3060-image" | "story-3060-audio" | "story-3060-voice"; ownerKey: string; id: string;projectId?:string } };
 export type AudioMediaPayload = { owner: string; sessionId: string; jobId: string };
 export type ExternalMediaPayload = { pid:number; operation:string; eligibleGpus?:MediaGpu[];caller?:DispatchProcess;backend?:DispatchProcess };
 export type MediaQueueJob = { id: string; sequence: number; gpu: MediaGpu; kind: "comfy" | "audio" | "external";
@@ -248,16 +248,18 @@ function producerState(job: MediaQueueJob): "active" | "terminal" | "unavailable
       } catch { return "unavailable"; }
       finally { db?.close(); }
     }
-    if(producer?.kind!=="story-3060-image"||payload.workerId!=="story-3060-image")return "unavailable";
+    if(!producer || !["story-3060-image","story-3060-voice"].includes(producer.kind)||payload.workerId!==producer.kind)return "unavailable";
     let db:Database.Database|undefined;
     try{
       db=new Database(path.join(OTG_DATA_ROOT,"story-creator","story-media.sqlite"),{readonly:true,fileMustExist:true});
       const row=db.prepare("SELECT project,status,record FROM media WHERE id=? AND owner=?").get(producer.id,producer.ownerKey) as {project:string;status:string;record:string}|undefined;
       if(!row)return "unavailable";
       const record=JSON.parse(row.record);
-      const profileMatches=(record.profile==="z-image-turbo-3060"&&record.command?.operation==="image")
+      const profileMatches=producer.kind==="story-3060-voice"
+        ? record.profile==="qwen3-tts-3060"&&record.command?.operation==="voice"
+        : (record.profile==="z-image-turbo-3060"&&record.command?.operation==="image")
         ||(record.profile==="flux2-klein-edit-3060"&&record.command?.operation==="edit"&&typeof record.command.sourceId==="string"&&record.command.sourceId.length>0);
-      if(!profileMatches||record.status!==row.status||record.id!==producer.id||record.ownerKey!==producer.ownerKey||record.projectId!==row.project||producer.projectId!==row.project||record.backendJob?.promptId!==job.id||payload.body.client_id!=="story-3060-"+record.id)return "unavailable";
+      if(!profileMatches||record.status!==row.status||record.id!==producer.id||record.ownerKey!==producer.ownerKey||record.projectId!==row.project||producer.projectId!==row.project||record.backendJob?.promptId!==job.id||payload.body.client_id!==(producer.kind==="story-3060-voice"?"story-3060-voice-":"story-3060-")+record.id)return "unavailable";
       if(record.cancelRequested)return "terminal";
       return row.status==="running"?"active":["failed","canceled","ready"].includes(row.status)?"terminal":"unavailable";
     }catch{return "unavailable";}finally{db?.close();}

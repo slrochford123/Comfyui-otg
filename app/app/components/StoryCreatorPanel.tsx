@@ -244,6 +244,9 @@ export default function StoryCreatorPanel({
     useState(false);
   const [chatSubmitting, setChatBusy] = useState(false);
   const [chatError, setChatError] = useState("");
+  const [selectedChatMedia,setSelectedChatMedia]=useState<{projectId:string;id:string;name:string}|null>(null);
+  const chatMediaFocus=selectedChatMedia?.projectId===selectedProjectId?selectedChatMedia:null;
+  const [chatMediaEnabled,setChatMediaEnabled]=useState(false);
   const removedChatMessages = useRef(new Set<string>());
   const chatProject = useRef(selectedProjectId);
   useEffect(() => { chatProject.current = selectedProjectId; }, [selectedProjectId]);
@@ -2246,7 +2249,7 @@ export default function StoryCreatorPanel({
         return;
       }
 
-      await conversation.start(savedUserMessage.id);
+      await conversation.start(savedUserMessage.id,{mediaSourceId:chatMediaFocus?.id});
       setStoryExtractionNotice("Your message is saved. The reply will remain available when you return.");
     } catch (error) {
       if (voice) throw error;
@@ -2365,6 +2368,12 @@ export default function StoryCreatorPanel({
             visualAction={storyDirectorVisualAction}
             visualActionError={storyDirectorVisualActionError}
             onMediaAvailability={setStoryMediaEnabled}
+            onChatMediaAvailability={setChatMediaEnabled}
+            chatMediaEnabled={chatMediaEnabled}
+            mediaFocus={chatMediaFocus}
+            onMediaFocus={(media)=>setSelectedChatMedia(media?{...media,projectId:selectedProject.id}:null)}
+            resultId={conversation.turn?.mediaResultId}
+            resultMessageId={conversation.turn?.assistantMessageId}
             />
             </>
           )}

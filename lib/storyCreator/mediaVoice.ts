@@ -10,7 +10,7 @@ import {prepareAudioGpuMemory} from "@/lib/audioEditing/gpuMemory";
 import {getStoryMedia, updateStoryMedia, type StoryMediaRecord} from "./mediaStore";
 import {storyMediaRoot} from "./mediaExecution";
 
-type Run = {canceled:boolean; child?:ChildProcess; done?:Promise<void>; remoteRoot?:string};
+type Run = {canceled:boolean; waiting?:AbortController; child?:ChildProcess; done?:Promise<void>; remoteRoot?:string};
 const shared=globalThis as typeof globalThis & {__storyMediaVoices?:Map<string,Run>};
 const active = shared.__storyMediaVoices ||= new Map<string,Run>();
 function canceled(){const error=Error("Speech canceled.");error.name="AbortError";return error;}
@@ -19,6 +19,7 @@ export async function cancelStoryVoice(id:string) {
   const run=active.get(id);
   if(!run)throw Error("The original speech process is not attached. No new job was submitted.");
   run.canceled=true;
+  run.waiting?.abort(canceled());
   if(run.remoteRoot) {
     fs.writeFileSync(path.join(run.remoteRoot,"cancel"),"",{mode:0o600});
     // The restricted client waits for the exact remote worker to exit.
@@ -71,11 +72,15 @@ export async function generateStoryVoice(record:StoryMediaRecord, source:{voice?
     }
     if(!runtimes.size)throw Error("No qualified Qwen3-TTS runtime is available. No substitute voice engine was used.");
     await check();
-    const reservation=await acquireExternalMediaGpuChoice([...runtimes.keys()],"story-qwen3-tts");
+    run.waiting=new AbortController();
+    const waiting=getStoryMedia(record.ownerKey,record.projectId,record.id);
+    updateStoryMedia(waiting,{stage:gpuChoice==="auto"?"Waiting for a qualified speech GPU":`Waiting for ${gpuChoice==="rtx3090"?"RTX 3090":"RTX 5060 Ti"}`});
+    const reservation=await acquireExternalMediaGpuChoice([...runtimes.keys()],"story-qwen3-tts",600_000,run.waiting.signal);
+    run.waiting=undefined;
     const gpu=reservation.gpu,config=runtimes.get(gpu)!;
     release=reservation.release;markUncertain=reservation.uncertain;
     await check();
-    updateStoryMedia(getStoryMedia(record.ownerKey,record.projectId,record.id),{backendJob:{engine:"qwen3",gpu}});
+    updateStoryMedia(getStoryMedia(record.ownerKey,record.projectId,record.id),{backendJob:{engine:"qwen3",gpu,pid:process.pid},stage:`Generating voice on ${gpu==="rtx3090"?"RTX 3090":"RTX 5060 Ti"}`});
     if(!config.remoteConfig)releaseVoice=await acquireVoiceGpuFileLease();
     await prepareAudioGpuMemory(gpu,6500,check);
     await check();
@@ -121,7 +126,7 @@ export async function generateStoryVoice(record:StoryMediaRecord, source:{voice?
     // Listen immediately so cancellation cannot produce an unhandled rejection.
     const done=run.done;
     child.stdin!.on("error",()=>{});
-    child.stdin!.end(config.remoteConfig?undefined:JSON.stringify({parent_pid:process.pid,model:config.model,output,text:record.command.text,instruction:record.command.prompt,reference:source.voice||"",reference_text:source.refText||""}));
+    child.stdin!.end(config.remoteConfig?undefined:JSON.stringify({parent_pid:process.pid,model:config.model,output,text:record.command.text,language:record.command.language,instruction:record.command.prompt,reference:source.voice||"",reference_text:source.refText||""}));
     const timeout=setTimeout(()=>{void cancelStoryVoice(record.id).catch(()=>{});},15*60_000);
     try { await done; } finally { clearTimeout(timeout); }
     await check();

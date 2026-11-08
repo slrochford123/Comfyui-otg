@@ -42,11 +42,11 @@ def main():
         if not reference.is_file():
             raise ValueError("Reference file unavailable")
         ref_text = request.get("reference_text", "").strip()
-        wavs, rate = model.generate_voice_clone(text=text, language="Auto",
+        wavs, rate = model.generate_voice_clone(text=text, language=request.get("language") or "Auto",
             ref_audio=str(reference), ref_text=ref_text or None,
             x_vector_only_mode=not bool(ref_text), max_new_tokens=4096)
     else:
-        wavs, rate = model.generate_voice_design(text=text, language="Auto",
+        wavs, rate = model.generate_voice_design(text=text, language=request.get("language") or "Auto",
             instruct=request["instruction"], max_new_tokens=4096)
     samples = np.asarray(wavs[0])
     if not np.isfinite(samples).all() or samples.size < rate // 5:
