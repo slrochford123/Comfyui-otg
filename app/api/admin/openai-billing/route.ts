@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireAdmin } from "@/app/api/admin/_requireAdmin";
 import { openAIAdminConfigured } from "@/lib/openai/adminCredential";
+import { conversationPolicyEnabled, getConversationAccount, listConversationAccounts } from "@/lib/openai/conversationAccount";
+import { adjustConversationCredit, conversationAdminLedger, conversationCreditStatus, releaseUnbilledConversationHold } from "@/lib/openai/usageLedger";
+import { RequestError } from "@/lib/requestError";
+import { reconcileConversationUsage } from "@/lib/openai/provider";
 import {
   addOpenAICreditEvent,
   buildOpenAIBillingSnapshot,
@@ -48,6 +52,8 @@ export async function GET(request: NextRequest) {
   const admin = await requireAdmin();
   if (!admin.ok) return noStore({ ok: false, error: admin.error }, admin.status);
 
+  if(request.nextUrl.searchParams.get("view")==="allowances"&&conversationPolicyEnabled())
+    return noStore({ok:true,accounts:listConversationAccounts().map(account=>({...account,...conversationCreditStatus(account)})),...conversationAdminLedger()});
   return noStore(buildOpenAIBillingSnapshot(filtersFromRequest(request)));
 }
 
@@ -64,6 +70,20 @@ export async function POST(request: NextRequest) {
   const action = String(body?.action || "");
 
   try {
+    if(action==="conversation-credit" && conversationPolicyEnabled()){
+      const account=getConversationAccount(String(body?.accountId||""));
+      const balance=adjustConversationCredit({account,actor:admin.id,key:String(body?.key||""),kind:String(body?.kind||""),
+        amountUsd:Number(body?.amountUsd),note:String(body?.note||"").trim().slice(0,500)});
+      return noStore({ok:true,balance});
+    }
+    if(action==="conversation-release-unbilled" && conversationPolicyEnabled()){
+      releaseUnbilledConversationHold(String(body?.reservation||""),admin.id,String(body?.note||"").trim().slice(0,500));
+      return noStore({ok:true});
+    }
+    if(action==="conversation-reconcile" && conversationPolicyEnabled()){
+      await reconcileConversationUsage(String(body?.reservation||""),admin.id);
+      return noStore({ok:true});
+    }
     if (action === "credit") {
       const amountUsd = Number(body?.amountUsd);
       if (body?.amountUsd == null || String(body.amountUsd).trim() === "" || !Number.isFinite(amountUsd)) return noStore({ ok: false, error: "Amount is required." }, 400);
@@ -104,7 +124,7 @@ export async function POST(request: NextRequest) {
     return noStore({ ok: false, error: "Unknown OpenAI billing action." }, 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : "OpenAI billing update failed.";
-    return noStore({ ok: false, error: message }, 500);
+    return noStore({ ok: false, error: message }, error instanceof RequestError?error.status:500);
   }
 }
 

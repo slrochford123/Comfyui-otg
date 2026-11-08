@@ -74,7 +74,11 @@ export type OpenAIBillingFilters = {
 
 type UnknownRecord = Record<string, unknown>;
 
-const FEATURE_LABELS: Record<OpenAIUseCase, string> = {
+const FEATURE_LABELS: Record<string, string> = {
+  "story-creator": "Story Creator",
+  storyteller: "Storyteller",
+  "ai-assistants": "AI Assistants",
+  "production-studio": "Production Studio",
   "h3-director": "H3 AI Scene Director",
   "story-helper": "Story Helper",
   "story-write": "Story Creator",
@@ -247,7 +251,7 @@ function currentEnvironment() {
 function matchesFilter(record: OpenAIUsageRecord, filters: OpenAIBillingFilters) {
   if (filters.environment && filters.environment !== "organization" && filters.environment !== currentEnvironment()) return false;
   if (filters.user && record.ownerKey !== filters.user) return false;
-  if (filters.feature && record.useCase !== filters.feature) return false;
+  if (filters.feature && (record.feature||record.useCase) !== filters.feature) return false;
   if (filters.model && record.model !== filters.model) return false;
   if (filters.start && record.ts < filters.start) return false;
   if (filters.end && record.ts > filters.end) return false;
@@ -336,9 +340,10 @@ export function buildOpenAIBillingSnapshot(filters: OpenAIBillingFilters = {}) {
   }>();
 
   for (const record of localRecordsForPeriod) {
-    const current = features.get(record.useCase) || {
-      feature: record.useCase,
-      label: FEATURE_LABELS[record.useCase] || record.useCase,
+    const feature=record.feature||record.useCase;
+    const current = features.get(feature) || {
+      feature,
+      label: FEATURE_LABELS[feature] || feature,
       estimatedCostUsd: 0,
       requestCount: 0,
       inputTokens: 0,
@@ -354,7 +359,7 @@ export function buildOpenAIBillingSnapshot(filters: OpenAIBillingFilters = {}) {
     current.totalTokens += Math.max(0, Number(record.totalTokens || 0) || 0);
     current.audioSeconds += Math.max(0, Number(record.audioSeconds || 0) || 0);
     if (record.model) current.models.add(record.model);
-    features.set(record.useCase, current);
+    features.set(feature, current);
   }
 
   const officialUsage = state.officialUsage.filter((record) => matchesOfficialUsageFilter(record, filters));
@@ -363,7 +368,7 @@ export function buildOpenAIBillingSnapshot(filters: OpenAIBillingFilters = {}) {
     ...allRecords.map((record) => record.model).filter(Boolean),
     ...state.officialUsage.map((record) => record.model).filter(Boolean),
   ])].sort();
-  const featureIds = [...new Set(allRecords.map((record) => record.useCase).filter(Boolean))].sort();
+  const featureIds = [...new Set(allRecords.map((record) => record.feature||record.useCase).filter(Boolean))].sort();
   const officialUsageSummary = {
     completionsRequestCount: officialUsage
       .filter((record) => record.endpoint === "completions")
@@ -444,7 +449,7 @@ export function buildOpenAIBillingSnapshot(filters: OpenAIBillingFilters = {}) {
     recentUsage: records.slice(-100).reverse().map((record) => ({
       ...record,
       approximateCostUsd: estimateOpenAIUsageCost(record),
-      featureLabel: FEATURE_LABELS[record.useCase] || record.useCase,
+      featureLabel: FEATURE_LABELS[record.feature||record.useCase] || record.feature || record.useCase,
     })),
   };
 }

@@ -3,6 +3,7 @@ import AdminSummary from "./AdminSummary";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 const sections = [
+  ["Infrastructure", "Both GPUs, cloud connection health, storage and backup verification.", "/app/admin/infrastructure"],
   ["Users", "Inspect accounts, reset stuck generation state, and manage supported account actions.", "/app/admin/users"],
   ["Gallery", "Search and browse images and videos across both GPU sources.", "/app/admin/gallery"],
   ["GPU / Services", "Identity-pinned GPU maintenance and service health diagnostics.", "/app/admin/health"],

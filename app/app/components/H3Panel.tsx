@@ -1,4 +1,5 @@
 "use client";
+import AssistantProviderPicker,{selectedAssistantProvider} from "./AssistantProviderPicker";
 import { isH3SingularityMode } from "@/lib/production/h3Settings";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -2650,15 +2651,26 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       return setMessage("Type or dictate a direction for the H3 AI Director.");
     }
     setH3DirectorBusy(true);
-    setMessage("OpenAI H3 Director is refining the scene...");
+    setMessage("H3 Director is refining the scene...");
+    const keyName="otg:h3-director:pending";
+    let requestId=sessionStorage.getItem(keyName);
     try {
-      const response = await fetch("/api/openai-ai/h3-director", {
+      let response:Response;
+      if(requestId){
+        response=await fetch(`/api/openai-ai/h3-director?requestId=${encodeURIComponent(requestId)}`,{cache:"no-store"});
+        if(response.status===404) { sessionStorage.removeItem(keyName); requestId=null; }
+      }
+      if(!requestId){
+        requestId=Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,"0")).join("");
+        sessionStorage.setItem(keyName,requestId);
+        response=await fetch("/api/openai-ai/h3-director", {
         method: "POST",
         cache: "no-store",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Prefer:"respond-async", "Idempotency-Key":requestId },
         body: JSON.stringify({
           message: text,
+          aiProvider:process.env.NEXT_PUBLIC_OTG_OPENAI_CONVERSATION_CREDITS==="1"?selectedAssistantProvider("h3-director"):undefined,
           conversationId: h3DirectorConversationId,
           currentPrompt: originalPrompt,
           mode,
@@ -2682,10 +2694,17 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                 : selection;
             }),
         }),
-      });
-      const data = await response.json().catch(() => ({}));
+        });
+      }
+      while(response!.status===202){
+        setMessage("H3 Director request saved. Waiting for the selected AI provider…");
+        await new Promise(resolve=>setTimeout(resolve,1800));
+        response=await fetch(`/api/openai-ai/h3-director?requestId=${encodeURIComponent(requestId)}`,{cache:"no-store"});
+      }
+      const data = await response!.json().catch(() => ({}));
+      if(response!.ok||response!.status<500||response!.headers.get("X-OTG-H3-Request")==="complete")sessionStorage.removeItem(keyName);
       const nextPrompt = String(data.prompt || "").trim();
-      if (!response.ok || !nextPrompt) {
+      if (!response!.ok || !nextPrompt) {
         throw new Error(data.error || "OpenAI H3 Director returned no prompt.");
       }
       replaceOriginal(nextPrompt);
@@ -2711,7 +2730,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
           : [],
       );
       setH3DirectorDraft("");
-      setMessage("OpenAI H3 Director updated your editable H3 prompt.");
+      setMessage("H3 Director updated your editable prompt.");
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "OpenAI H3 Director failed.",
@@ -4813,7 +4832,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <p className="text-xs font-black uppercase text-cyan-100/80">
-                    OpenAI H3 Scene Director
+                    H3 Scene Director
                   </p>
                   <p className="mt-1 text-xs text-white/55">
                     Refines the editable scene prompt while preserving locked H3 controls.
@@ -4825,6 +4844,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                   </span>
                 ) : null}
               </div>
+              {process.env.NEXT_PUBLIC_OTG_OPENAI_CONVERSATION_CREDITS==="1"&&<AssistantProviderPicker scope="h3-director" feature="h3-director" disabled={h3DirectorBusy} />}
               <textarea
                 rows={3}
                 className={`${field} mt-3 resize-y text-sm leading-5`}

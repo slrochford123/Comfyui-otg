@@ -283,13 +283,13 @@ function fromRow(
     ).filter(
       (node) =>
         node === "slr"
-        || node === "shawn",
+        || node === "shawn" || node === "local3060",
     );
 
   const assignedNode =
     row.assigned_node === "slr"
     || row.assigned_node
-      === "shawn"
+      === "shawn" || row.assigned_node === "local3060"
       ? row.assigned_node
       : null;
 
@@ -519,7 +519,7 @@ export function createQwenDurableJob(
         ).filter(
           (node) =>
             node === "slr"
-            || node === "shawn",
+            || node === "shawn" || node === "local3060",
         ),
       ),
     );
@@ -723,7 +723,7 @@ function verifyDeterministicQwenJobIdentity(
         ).filter(
           (node) =>
             node === "slr"
-            || node === "shawn",
+            || node === "shawn" || node === "local3060",
         ),
       ),
     );
@@ -1017,7 +1017,7 @@ export function markQwenDurableJobRunning(
       .run(
         node === "slr"
           ? "Running Qwen on RTX 5060 Ti"
-          : "Running Qwen on RTX 3090",
+          : node === "local3060" ? "Running Qwen on RTX 3060" : "Running Qwen on RTX 3090",
         node,
         timestamp,
         timestamp,

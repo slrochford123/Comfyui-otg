@@ -1,5 +1,7 @@
 "use client";
 
+import { StoryMediaPreview } from "./StoryPreview";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { StoryProductionPlanRecord } from "@/lib/storyCreator/productionPlan";
@@ -27,6 +29,8 @@ type Snapshot = {
   batches: StoryAudioBatch[];
   voices: VoiceOption[];
   approvedVisuals: ApprovedVisualOption[];
+  local3060Speech?: boolean;
+  local3060Music?: boolean;
 };
 
 const kinds: Array<{ value: StoryAudioKind; label: string }> = [
@@ -54,6 +58,11 @@ export function StoryAudioProductionStudio({ projectId, record, mode }: Props) {
   const shot = scene?.shots.find((item) => item.id === shotId) || scene?.shots[0] || null;
   const [snapshot, setSnapshot] = useState<Snapshot>({ context: null, assignments: [], assets: [], batches: [], voices: [], approvedVisuals: [] });
   const [kind, setKind] = useState<StoryAudioKind>("dialogue");
+  const [use3060, setUse3060] = useState(false);
+  const speech = kind === "dialogue" || kind === "narration";
+  const localOption = speech ? snapshot.local3060Speech : kind === "music" && snapshot.local3060Music;
+  const localMusic = Boolean(use3060 && localOption && kind === "music");
+  const localSpeech = Boolean(use3060 && localOption && speech);
   const [speaker, setSpeaker] = useState("");
   const [exactText, setExactText] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -91,6 +100,8 @@ export function StoryAudioProductionStudio({ projectId, record, mode }: Props) {
       batches: data.batches || [],
       voices: data.voices || [],
       approvedVisuals: data.approvedVisuals || [],
+      local3060Speech: data.local3060Speech === true,
+      local3060Music: data.local3060Music === true,
     });
   }, [projectId, scene, shot]);
 
@@ -167,6 +178,7 @@ export function StoryAudioProductionStudio({ projectId, record, mode }: Props) {
       sceneId: scene.id,
       shotId: shot.id,
       kind,
+      provider: localMusic ? "ace-step-1.5-3060" : localSpeech ? "qwen3-tts-3060" : undefined,
       speakerName: speaker,
       exactText,
       prompt,
@@ -286,7 +298,7 @@ export function StoryAudioProductionStudio({ projectId, record, mode }: Props) {
       <div className="space-y-3 border-y border-white/10 py-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="text-xs font-bold text-white/55">Operation
-            <select value={kind} onChange={(event) => setKind(event.target.value as StoryAudioKind)} className="mt-1 min-h-11 w-full rounded-lg border border-white/12 bg-black/40 px-3 text-sm text-white">
+            <select value={kind} onChange={(event) => { setKind(event.target.value as StoryAudioKind); setUse3060(false); }} className="mt-1 min-h-11 w-full rounded-lg border border-white/12 bg-black/40 px-3 text-sm text-white">
               {kinds.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
           </label>
@@ -299,9 +311,17 @@ export function StoryAudioProductionStudio({ projectId, record, mode }: Props) {
             <input type="number" min={0} step={0.1} value={startSeconds} onChange={(event) => setStartSeconds(Number(event.target.value))} className="mt-1 min-h-11 w-full rounded-lg border border-white/12 bg-black/40 px-3 text-sm text-white" />
           </label>
           <label className="text-xs font-bold text-white/55">Duration
-            <input type="number" min={0.5} step={0.1} value={durationSeconds} onChange={(event) => setDurationSeconds(Number(event.target.value))} className="mt-1 min-h-11 w-full rounded-lg border border-white/12 bg-black/40 px-3 text-sm text-white" />
+            <input type="number" min={localMusic ? 10 : 0.5} max={localMusic ? 30 : undefined} step={0.1} value={durationSeconds} onChange={(event) => setDurationSeconds(Number(event.target.value))} className="mt-1 min-h-11 w-full rounded-lg border border-white/12 bg-black/40 px-3 text-sm text-white" />
           </label>
         </div>
+        {localOption ? <div className="space-y-1 text-sm text-white/65">
+          <label className="flex min-h-11 items-center gap-2">
+            <input type="checkbox" checked={use3060} onChange={(event) => setUse3060(event.target.checked)} />
+            {speech ? "Qwen3-TTS on RTX 3060" : "ACE-Step 1.5 on RTX 3060"}
+          </label>
+          {localSpeech ? <p>Uses the speaker’s authorized voice if assigned. Otherwise, it designs a new voice you can save.</p> : null}
+          {localMusic ? <p>Choose 10–30 seconds. Download the result to place it across clips in your editor.</p> : null}
+        </div> : null}
 
         {(kind === "dialogue" || kind === "narration") ? (
           <>
@@ -344,7 +364,7 @@ export function StoryAudioProductionStudio({ projectId, record, mode }: Props) {
           </>
         )}
 
-        <button type="button" disabled={Boolean(busy) || ((kind === "dialogue" || kind === "narration") && !exactText.trim()) || (kind === "lip-sync" && (!visualVersionId || !sourceAudioAssetId))} onClick={() => void prepare()} className="min-h-11 rounded-lg bg-white px-4 text-sm font-black text-black disabled:opacity-40">Prepare Audio</button>
+        <button type="button" disabled={Boolean(busy) || (speech && !exactText.trim()) || (localSpeech && exactText.trim().length > 1200) || (localMusic && (!prompt.trim() || durationSeconds < 10 || durationSeconds > 30)) || (kind === "lip-sync" && (!visualVersionId || !sourceAudioAssetId))} onClick={() => void prepare()} className="min-h-11 rounded-lg bg-white px-4 text-sm font-black text-black disabled:opacity-40">Prepare Audio</button>
         <p className="text-xs text-white/40">Preparation does not start a provider, GPU, or paid request.</p>
       </div>
 
@@ -389,13 +409,24 @@ export function StoryAudioProductionStudio({ projectId, record, mode }: Props) {
             </div>
             <div className="mt-3 text-xs text-white/42">{asset.providerContract.provider} · starts {asset.startSeconds.toFixed(1)}s {asset.durationSeconds != null ? `· ${asset.durationSeconds.toFixed(1)}s` : "· duration pending"}</div>
             {asset.timingConflict ? <p className="mt-2 text-xs font-bold text-amber-200">Timing conflict: this audio exceeds the shot duration.</p> : null}
+            {asset.error ? <p role="alert" className="mt-2 text-sm text-rose-200">{asset.error}</p> : null}
             {asset.providerContract.limitations.length ? <details className="mt-3 text-xs text-white/48"><summary className="cursor-pointer font-bold">Technical details</summary><ul className="mt-2 space-y-1">{asset.providerContract.limitations.map((item) => <li key={item}>{item}</li>)}</ul></details> : null}
-            {asset.outputPath ? (["sound-effect", "ambience", "mix", "enhancement", "lip-sync"].includes(asset.kind)
-              ? <video controls preload="metadata" className="mt-3 w-full rounded-lg"><source src={`/api/story-creator/audio-production/media?projectId=${encodeURIComponent(projectId)}&assetId=${encodeURIComponent(asset.id)}`} /></video>
-              : <audio controls preload="metadata" className="mt-3 w-full"><source src={`/api/story-creator/audio-production/media?projectId=${encodeURIComponent(projectId)}&assetId=${encodeURIComponent(asset.id)}`} /></audio>) : null}
+            {asset.outputPath ? <StoryMediaPreview
+              kind={["sound-effect", "ambience", "mix", "enhancement", "lip-sync"].includes(asset.kind) ? "video" : "audio"}
+              title={asset.speakerName || asset.kind}
+              src={`/api/story-creator/audio-production/media?projectId=${encodeURIComponent(projectId)}&assetId=${encodeURIComponent(asset.id)}`}
+              className="mt-3 w-full rounded-lg"/> : null}
             <div className="mt-3 flex flex-wrap gap-2">
               {asset.status === "prepared" ? <button type="button" disabled={Boolean(busy)} onClick={() => void authorizeAsset(asset.id)} className="min-h-10 rounded-lg bg-cyan-300 px-3 text-sm font-black text-black">Generate</button> : null}
+              {["ace-step-1.5-3060","qwen3-tts-3060"].includes(asset.providerContract.provider) && ["queued","running"].includes(asset.status) ?
+                <button type="button" disabled={Boolean(busy)} onClick={() => void action({action:"cancel-asset",assetId:asset.id},`cancel-${asset.id}`)} className="min-h-10 rounded-lg border border-white/15 px-3 text-sm text-white">Cancel Audio</button> : null}
               {["completed", "accepted", "rejected"].includes(asset.status) ? <>
+                {asset.outputPath ? <a className="flex min-h-10 items-center rounded-lg border border-white/15 px-3 text-sm text-white" href={`/api/story-creator/audio-production/media?projectId=${encodeURIComponent(projectId)}&assetId=${encodeURIComponent(asset.id)}&download=1`}>Download</a> : null}
+                {asset.providerContract.provider === "qwen3-tts-3060" && !asset.voiceAssignmentId && asset.status !== "rejected" ?
+                  <button type="button" disabled={Boolean(busy)} onClick={async () => {
+                    const data = await action({action:"save-designed-voice",assetId:asset.id},`save-voice-${asset.id}`);
+                    if (data?.voice) setNotice(`${data.voice.name} saved to your voice library.`);
+                  }} className="min-h-10 rounded-lg border border-white/15 px-3 text-sm text-white">Save Voice</button> : null}
                 <button type="button" onClick={() => void action({ action: "accept-asset", assetId: asset.id }, `accept-${asset.id}`)} className="min-h-10 rounded-lg border border-emerald-300/30 px-3 text-sm font-black text-emerald-100">Keep</button>
                 <button type="button" onClick={() => void action({ action: "reject-asset", assetId: asset.id }, `reject-${asset.id}`)} className="min-h-10 rounded-lg border border-rose-300/25 px-3 text-sm font-black text-rose-100">Reject</button>
                 <button type="button" onClick={() => void action({ action: "revise-asset", assetId: asset.id, emotion, delivery, idempotencyKey: requestKey("story-audio-revision") }, `revise-${asset.id}`)} className="min-h-10 rounded-lg border border-white/12 px-3 text-sm font-black text-white">Try Again</button>

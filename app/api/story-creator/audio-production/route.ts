@@ -13,8 +13,11 @@ import {
   saveStoryVoiceAssignment,
   setStoryAudioDecision,
   storyAudioProductionSnapshot,
+  story3060MusicEnabled,
+  story3060SpeechEnabled,
 } from "@/lib/storyCreator/audioProduction";
 import { dispatchStoryAudioAssets } from "@/lib/storyCreator/audioProductionExecutor";
+import {cancelStory3060Audio,refreshStory3060Audio,saveStory3060Voice} from "@/lib/storyCreator/audio3060";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,7 +51,9 @@ export async function GET(request: NextRequest) {
     const projectId = String(request.nextUrl.searchParams.get("projectId") || "").trim();
     const sceneId = String(request.nextUrl.searchParams.get("sceneId") || "").trim();
     const shotId = String(request.nextUrl.searchParams.get("shotId") || "").trim();
-    const queued = listStoryAudioAssets({ ownerKey: user.ownerKey, projectId })
+    const assets = listStoryAudioAssets({ ownerKey: user.ownerKey, projectId });
+    for(const asset of assets)refreshStory3060Audio({ownerKey:user.ownerKey,projectId,assetId:asset.id},asset);
+    const queued = assets
       .filter((asset) => asset.status === "queued")
       .slice(0, 2);
     if (queued.length) {
@@ -61,6 +66,8 @@ export async function GET(request: NextRequest) {
     }
     return response({
       ok: true,
+      local3060Speech: story3060SpeechEnabled(),
+      local3060Music: story3060MusicEnabled(),
       ...storyAudioProductionSnapshot({ ownerKey: user.ownerKey, projectId, sceneId, shotId }),
     });
   } catch (error) {
@@ -74,6 +81,13 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const action = String(body.action || "").trim();
     const common = { ownerKey: user.ownerKey, projectId: body.projectId };
+
+    if (action === "cancel-asset" || action === "save-designed-voice") {
+      const context = { ownerKey:user.ownerKey,projectId:String(body.projectId||""),assetId:String(body.assetId||"") };
+      if (action === "cancel-asset") return response({ok:true,asset:cancelStory3060Audio(context)});
+      const voice=await saveStory3060Voice(context);
+      return response({ok:true,voice:{voiceId:voice.voiceId,name:voice.name}});
+    }
 
     if (action === "assign-voice") {
       return response({

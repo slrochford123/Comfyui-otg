@@ -11,7 +11,7 @@ export type StoryMediaCommand = {
 };
 export const STORY_MEDIA_TOOL = {
   type: "function", name: "create_story_media", strict: true,
-  description: "Create ONE requested image (Krea 2 Turbo), image edit (Fibo 2.0 Turbo), short video (FastH3), or voice/dialogue (Qwen3-TTS). Only for an explicit current user request, never brainstorming, quoted dialogue or automatic illustration. For a new character with no user-provided name, pass an empty name: the application will ask before rendering. sourceId is an exact ready media ID or saved character ID from AVAILABLE MEDIA; never a path or URL. Empty sourceId means a new asset, NOT permission to guess which image/voice to reuse. For edits, animation and saved voices always identify the actual source. text is the exact speech requested; prompt describes the visual, motion or new voice. evidence is an exact quote of the user's current request authorizing this operation.",
+  description: "Create ONE requested image, image edit, short video (FastH3), or voice/dialogue (Qwen3-TTS). Only for an explicit current user request, never brainstorming, quoted dialogue or automatic illustration. For a new character with no user-provided name, pass an empty name: the application will ask before rendering. sourceId is an exact ready media ID or saved character ID from AVAILABLE MEDIA; never a path or URL. Empty sourceId means a new asset, NOT permission to guess which image/voice to reuse. For edits, animation and saved voices always identify the actual source. text is the exact speech requested; prompt describes the visual, motion or new voice. evidence is an exact quote of the user's current request authorizing this operation.",
   parameters: {
     type: "object", additionalProperties: false,
     required: ["operation", "subject", "name", "prompt", "sourceId", "text", "evidence"],
@@ -47,6 +47,8 @@ export function parseStoryMediaCommand(raw: unknown, request: string): StoryMedi
   }
   if (!explicitMediaRequest(request) || !command.evidence || !request.includes(command.evidence)
     || !explicitMediaRequest(command.evidence)) throw Error("Media generation needs your explicit request. Nothing was submitted.");
+  if(command.operation==="voice"&&!/\b(voice|voices|speech|speak|say|synthesize|narrate|narration|read aloud|record dialogue)\b/i.test(command.evidence.replace(/"[^"\n]*"|“[^”\n]*”/g," ")))
+    throw Error("Speech needs its own explicit instruction. Nothing was submitted.");
   if (!command.prompt || command.prompt.length > 12000 || command.text.length > 1200 || command.name.length > 100 || command.sourceId.length > 150) throw Error("Media request is too long or missing a description.");
   return command;
 }

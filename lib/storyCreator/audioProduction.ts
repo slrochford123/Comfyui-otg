@@ -22,6 +22,13 @@ import type {
   StoryAudioStatus,
   StoryVoiceAssignment,
 } from "@/lib/storyCreator/audioProductionTypes";
+import {local3060Enabled} from "@/lib/workers/local3060";
+
+export const story3060MusicProvider="ace-step-1.5-3060";
+export const story3060SpeechProvider="qwen3-tts-3060";
+export const story3060MusicEnabled=()=>local3060Enabled()&&process.env.OTG_STORY_MUSIC_3060==="1";
+export const story3060SpeechEnabled=()=>local3060Enabled()&&process.env.OTG_STORY_SPEECH_3060==="1";
+export const isStory3060Audio=(provider:string)=>provider===story3060MusicProvider||provider===story3060SpeechProvider;
 
 let connection: Database.Database | null = null;
 let connectionPath = "";
@@ -259,6 +266,27 @@ function rowToBatch(row: any): StoryAudioBatch {
 }
 
 function providerContract(kind: StoryAudioKind, input: Record<string, unknown>): StoryAudioProviderContract {
+  if(input.provider===story3060SpeechProvider){
+    if(!story3060SpeechEnabled()||!["dialogue","narration"].includes(kind))throw Error("The RTX 3060 speech option is unavailable.");
+    return {
+      provider:story3060SpeechProvider,operation:"text-to-speech",endpoint:"/api/story-creator/audio-production",
+      method:"POST",contentType:"application/json",model:"Qwen3-TTS 1.7B",workflowId:"story-qwen3-3060",workflowFile:null,
+      request:{voiceId:clean(input.voiceId,160),delivery:clean(input.delivery,500)},
+      capabilityStatus:"verified-runtime",limitations:["Uses VoiceDesign for a new voice and Base for an authorized saved reference."],
+    };
+  }
+  if(input.provider===story3060MusicProvider){
+    if(!story3060MusicEnabled()||kind!=="music")throw Error("The RTX 3060 music option is unavailable.");
+    const durationSeconds=Number(input.durationSeconds);
+    if(!Number.isFinite(durationSeconds)||durationSeconds<10||durationSeconds>30)throw Error("Choose a duration from 10 to 30 seconds for RTX 3060 music.");
+    if(!clean(input.prompt))throw Error("Describe the requested music.");
+    return {
+      provider:story3060MusicProvider,operation:"generate-music",endpoint:"/api/story-creator/audio-production",
+      method:"POST",contentType:"application/json",model:"ACE-Step 1.5 XL Base",workflowId:"story-ace-step-3060",workflowFile:null,
+      request:{durationSeconds,bpm:number(input.bpm,72,30,240),lyrics:clean(input.lyrics,1500)||"[Instrumental]",keyScale:"C major"},
+      capabilityStatus:"verified-runtime",limitations:["Runs only after explicit authorization and shares the RTX 3060 reservation."],
+    };
+  }
   if (kind === "dialogue" || kind === "narration") {
     return {
       provider: clean(input.provider, 80) || "indextts2", operation: "text-to-speech",
@@ -420,7 +448,9 @@ export function prepareStoryAudioAsset(input: {
   const assignment = clean(input.voiceAssignmentId)
     ? assignments.find((item) => item.id === clean(input.voiceAssignmentId))
     : assignments.find((item) => item.characterKey === key(speakerName));
-  if ((kind === "dialogue" || kind === "narration") && !assignment) throw new Error("Assign an authorized character voice before preparing speech.");
+  if(input.provider===story3060SpeechProvider&&exactText.length>1200)throw Error("RTX 3060 dialogue is limited to 1200 characters per request.");
+  if ((kind === "dialogue" || kind === "narration") && !assignment && input.provider!==story3060SpeechProvider) throw new Error("Assign an authorized character voice before preparing speech.");
+  if(input.provider===story3060SpeechProvider&&clean(input.voiceAssignmentId)&&!assignment)throw Error("The saved voice assignment could not be verified.");
   if (assignment && !assignment.authorizedReference) throw new Error("The selected voice reference has not been marked as authorized.");
   const sourceAssetIds = Array.isArray(input.sourceAssetIds) ? input.sourceAssetIds.map((item) => clean(item, 160)).filter(Boolean).slice(0, 30) : [];
   const sourcePaths = Array.isArray(input.sourcePaths) ? input.sourcePaths.map((item) => clean(item, 2_000)).filter(Boolean).slice(0, 30) : [];
@@ -472,12 +502,14 @@ export function authorizeStoryAudioAsset(input: { ownerKey: unknown; projectId: 
   if (!["prepared", "failed"].includes(String(row.status))) return rowToAsset(row);
   const now = Date.now();
   const jobId = row.job_id || `story-audio-${randomUUID()}`;
-  db().prepare(`UPDATE story_audio_assets SET status='queued', job_id=?, authorized_at=COALESCE(authorized_at, ?), updated_at=?, error=NULL WHERE id=?`).run(jobId, now, now, assetId);
+  const local = isStory3060Audio(rowToAsset(row).providerContract.provider);
+  db().prepare(`UPDATE story_audio_assets SET status='queued', job_id=?, authorized_at=COALESCE(authorized_at, ?), updated_at=?, error=NULL,
+    external_job_id=CASE WHEN ? THEN NULL ELSE external_job_id END WHERE id=?`).run(jobId, now, now, local ? 1 : 0, assetId);
   return rowToAsset(db().prepare(`SELECT * FROM story_audio_assets WHERE id = ?`).get(assetId));
 }
 
 export function recordStoryAudioResult(input: {
-  ownerKey: unknown; projectId: unknown; assetId: unknown; status: "running" | "completed" | "failed";
+  ownerKey: unknown; projectId: unknown; assetId: unknown; status: "running" | "completed" | "failed" | "canceled";
   outputPath?: unknown; durationSeconds?: unknown; error?: unknown; derivedVideoTakeId?: unknown; externalJobId?: unknown;
 }) {
   const { ownerKey, projectId } = assertProject(input.ownerKey, input.projectId);
@@ -487,7 +519,8 @@ export function recordStoryAudioResult(input: {
   const now = Date.now();
   const duration = input.durationSeconds == null ? row.duration_seconds : number(input.durationSeconds, 0, 0, 43_200);
   const conflict = duration != null && Number(row.start_seconds) + Number(duration) > Number(row.shot_duration_seconds);
-  db().prepare(`UPDATE story_audio_assets SET status=?, output_path=?, duration_seconds=?, timing_conflict=?, derived_video_take_id=?, external_job_id=?, error=?, updated_at=?, completed_at=? WHERE id=?`).run(
+  const requiredStatus = input.status === "canceled" ? "status IN ('queued','running')" : "status!='canceled'";
+  db().prepare(`UPDATE story_audio_assets SET status=?, output_path=?, duration_seconds=?, timing_conflict=?, derived_video_take_id=?, external_job_id=?, error=?, updated_at=?, completed_at=? WHERE id=? AND ${requiredStatus}`).run(
     input.status, clean(input.outputPath, 2_000) || row.output_path, duration, conflict ? 1 : 0,
     clean(input.derivedVideoTakeId, 160) || row.derived_video_take_id,
     clean(input.externalJobId, 240) || row.external_job_id,
@@ -528,6 +561,9 @@ export function prepareStoryAudioRevision(input: { ownerKey: unknown; projectId:
     sourceAssetIds: [original.id, ...original.sourceAssetIds], sourcePaths: [...original.sourcePaths, ...(original.outputPath ? [original.outputPath] : [])],
     keepOriginalAudio: original.keepOriginalAudio, idempotencyKey: input.idempotencyKey,
     parentAssetId: original.id,
+    ...(isStory3060Audio(original.providerContract.provider)?{provider:original.providerContract.provider,
+      durationSeconds:original.providerContract.request.durationSeconds??original.durationSeconds,
+      lyrics:original.providerContract.request.lyrics,bpm:original.providerContract.request.bpm}:{}),
     visualVersionId: original.providerContract.request.visualVersionId,
     sourceAudioAssetId: original.providerContract.request.audioAssetId,
   });

@@ -32,6 +32,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from worker_gpu_admission import WorkerGpuAdmission, assert_same_claim
+
 
 TERMINAL_STATUSES = {"canceled", "cancelled", "terminated", "completed", "ready_for_review"}
 
@@ -701,7 +703,8 @@ def run_command(
                     checkpoint(args, owner_key, job_id, progress, f"Applio {command['step']} running.", result)
                     last_heartbeat = now
                 time.sleep(2)
-        except (TerminatedJob, KeyboardInterrupt):
+        except BaseException:
+            # A control-plane/network failure must not orphan a training child.
             kill_process_tree(proc)
             raise
 
@@ -1433,13 +1436,40 @@ def run_training(args: argparse.Namespace, job: Dict[str, Any]) -> None:
     if not owner_key or not job_id:
         raise RuntimeError("Claimed Applio job is missing ownerKey or jobId.")
     gpu_lock = None
+    admission = None
+    execution_completed = False
+    last_wait_heartbeat = 0.0
+
+    def waiting_active():
+        nonlocal last_wait_heartbeat
+        assert_same_claim(fetch_job(args, owner_key, job_id), job, args.worker_id)
+        now = time.monotonic()
+        if not last_wait_heartbeat or now - last_wait_heartbeat >= 20:
+            # Unlike best-effort progress updates, loss of this lease renewal
+            # must stop admission. No model work has started at this point.
+            response = request_json(
+                "POST", build_url(args.base_url, "/api/worker/jobs/checkpoint"),
+                auth_headers(args, owner_key),
+                {"jobId": job_id, "progress": max(5, int(job.get("progress") or 0)),
+                 "message": "Waiting for shared RTX 3090 admission before Applio training.",
+                 "result": {"remoteWorker": True, "workerId": args.worker_id,
+                            "currentStage": "waiting_for_gpu_admission"}}, timeout=30,
+            )
+            if response.get("ok") is not True:
+                raise RuntimeError("Waiting Applio job lease renewal was not confirmed.")
+            last_wait_heartbeat = now
+
     try:
+        admission = WorkerGpuAdmission(args.worker_id, job_id)
+        admission.acquire(waiting_active)
+        admission.begin()
         gpu_lock = acquire_gpu_lock(args, owner_key, job_id)
         wait_for_comfy_idle(args, owner_key, job_id)
         release_comfy_models(args)
         free = wait_for_free_vram(args, owner_key, job_id)
         log(f"[gpu] RTX 3090 free VRAM before Applio: {free if free is not None else 'unknown'} MiB")
         run_training_body(args, job)
+        execution_completed = True
     finally:
         if gpu_lock is not None:
             try:
@@ -1448,6 +1478,15 @@ def run_training(args: argparse.Namespace, job: Dict[str, Any]) -> None:
                 log("[gpu-lock] Released shared voice GPU lock.")
             except Exception as error:
                 log(f"[warn] Could not release GPU lock cleanly: {error}")
+                execution_completed = False
+        if admission is not None:
+            try:
+                if not admission.finish(cleanup_confirmed=execution_completed):
+                    log("[gpu-admission] Reservation retained: verify original execution before recovery.")
+            except Exception:
+                log("[gpu-admission] Release unconfirmed; durable same-token release intent retained.")
+            finally:
+                admission.close()
 
 
 def main() -> int:

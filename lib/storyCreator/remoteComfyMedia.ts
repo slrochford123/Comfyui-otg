@@ -7,7 +7,7 @@ import { pipeline } from "node:stream/promises";
 
 import { normalizeRelativePath } from "@/lib/security/pathValidation";
 
-export type ProtectedMediaKind = "image" | "video";
+export type ProtectedMediaKind = "image" | "video" | "audio";
 
 export type RemoteComfyFile = {
   filename: string;
@@ -26,6 +26,7 @@ export type PublishedProtectedMedia = {
 const ALLOWED_COMFY_TYPES = new Set(["input", "output", "temp"]);
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv"]);
+const AUDIO_EXTENSIONS = new Set([".flac", ".wav"]);
 
 function normalizeBaseUrl(value: unknown) {
   const text = String(value || "").trim().replace(/\/+$/, "");
@@ -67,7 +68,7 @@ function cleanRemoteFile(file: RemoteComfyFile, kind: ProtectedMediaKind) {
     throw new Error("ComfyUI output filename is invalid.");
   }
   const extension = path.extname(filename).toLowerCase();
-  const extensions = kind === "image" ? IMAGE_EXTENSIONS : VIDEO_EXTENSIONS;
+  const extensions = kind === "image" ? IMAGE_EXTENSIONS : kind === "audio" ? AUDIO_EXTENSIONS : VIDEO_EXTENSIONS;
   if (!extensions.has(extension)) {
     throw new Error(`ComfyUI output type is not an allowed ${kind} format.`);
   }
@@ -84,6 +85,9 @@ function detectedContentType(kind: ProtectedMediaKind, bytes: Buffer) {
     if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
     if (bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
     if (["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"))) return "image/gif";
+  } else if (kind === "audio") {
+    if (bytes.subarray(0, 4).toString("ascii") === "fLaC") return "audio/flac";
+    if (bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WAVE") return "audio/wav";
   } else {
     if (bytes.subarray(4, 8).toString("ascii") === "ftyp") return "video/mp4";
     if (bytes.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return "video/webm";

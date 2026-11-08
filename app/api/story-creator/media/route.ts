@@ -2,9 +2,11 @@ import {after,NextRequest,NextResponse} from "next/server";
 import {requireSessionUser} from "@/lib/sessionUser";
 import {SessionInvalidError} from "@/lib/ownerKey";
 import {listCharacters} from "@/lib/characters/store";
-import {getStoryMedia,listStoryMedia,publicStoryMedia} from "@/lib/storyCreator/mediaStore";
+import {getStoryMedia,listStoryChatMedia,publicStoryMedia} from "@/lib/storyCreator/mediaStore";
 import {limitedJson} from "@/lib/limitedRequestBody";
+import {storyOpenAIImagesEnabled} from "@/lib/storyCreator/mediaOpenAI";
 import {storyMediaEnabled} from "@/lib/storyCreator/mediaAvailability";
+import {story3060ImageEnabled,story3060EditEnabled} from "@/lib/storyCreator/media3060";
 import {requireStoryMediaTest,refreshStoryMedia,executeStoryMedia,nameStoryMedia,requestStoryMediaFromCard,saveStoryCharacter,saveStoryVoice,cancelStoryMedia} from "@/lib/storyCreator/mediaExecution";
 
 export const runtime="nodejs";
@@ -17,24 +19,28 @@ function failure(error:unknown) {
 }
 export async function GET(request:NextRequest) {
   try {
-    const {ownerKey}=await requireSessionUser(request);
+    const {ownerKey,accountId}=await requireSessionUser(request);
     if(!storyMediaEnabled())return NextResponse.json({ok:true,enabled:false,media:[],characters:[]},{headers});
-    if(request.nextUrl.searchParams.get("capabilities")==="1")return NextResponse.json({ok:true,enabled:true},{headers});
+    const lightweightImage=story3060ImageEnabled();
+    const lightweightEdit=story3060EditEnabled();
+    const openAIImage=storyOpenAIImagesEnabled(accountId);
+    if(request.nextUrl.searchParams.get("capabilities")==="1")return NextResponse.json({ok:true,enabled:true,lightweightImage,lightweightEdit,openAIImage},{headers});
     const projectId=request.nextUrl.searchParams.get("projectId")||"";
-    const records=listStoryMedia(ownerKey,projectId);
+    const {visible:records,background}=listStoryChatMedia(ownerKey,projectId);
+    if (background.length) after(() => Promise.allSettled(background.map(refreshStoryMedia)).then(() => {}));
     const media=await Promise.all(records.map(async record=>publicStoryMedia(await refreshStoryMedia(record).catch(()=>record))));
-    return NextResponse.json({ok:true,enabled:true,media,characters:listCharacters(ownerKey).map(c=>({id:c.id,name:c.name,hasVoice:!!c.referenceAudioPath}))},{headers});
+    return NextResponse.json({ok:true,enabled:true,lightweightImage,lightweightEdit,openAIImage,media,characters:listCharacters(ownerKey).map(c=>({id:c.id,name:c.name,hasVoice:!!c.referenceAudioPath}))},{headers});
   } catch(error) {return failure(error);}
 }
 export async function POST(request:NextRequest) {
   try {
-    const {ownerKey}=await requireSessionUser(request);requireStoryMediaTest();
+    const {ownerKey,accountId}=await requireSessionUser(request);requireStoryMediaTest();
     const origin=request.headers.get("origin");
     if(origin&&new URL(origin).host!==request.headers.get("host"))throw Error("Cross-origin media actions are not allowed.");
     if(Number(request.headers.get("content-length")||0)>32_000)throw Error("Request is too large.");
     const body=await limitedJson(request,32_000),projectId=String(body.projectId||"");
     let record;
-    if(body.action==="create")record=requestStoryMediaFromCard(ownerKey,projectId,body).record;
+    if(body.action==="create")record=requestStoryMediaFromCard(ownerKey,projectId,body,accountId).record;
     else {
       record=getStoryMedia(ownerKey,projectId,String(body.id||""));
       if(body.action==="name")record=nameStoryMedia(record,String(body.name||""));

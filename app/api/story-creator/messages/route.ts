@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { SessionInvalidError } from "@/lib/ownerKey";
 import { requireSessionUser } from "@/lib/sessionUser";
+import { getStoryMedia } from "@/lib/storyCreator/mediaStore";
 
 import {
   addStoryCreatorMessage,
   listStoryCreatorMessages,
+  removeStoryChatItems,
 } from "../../../../lib/storyCreator/store";
 
 export const runtime = "nodejs";
@@ -27,9 +29,9 @@ function jsonError(error: unknown) {
   const status =
     error instanceof SessionInvalidError
       ? 401
-      : code === "STORY_PROJECT_NOT_FOUND"
+      : code.endsWith("_NOT_FOUND")
         ? 404
-        : 400;
+        : code === "STORY_TURN_BUSY" ? 409 : 400;
 
   return NextResponse.json(
     {
@@ -104,6 +106,31 @@ export async function POST(request: NextRequest) {
         },
       },
     );
+  } catch (error) {
+    return jsonError(error);
+  }
+}
+
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const ownerKey = await authenticatedOwnerKey(request);
+    const headers = { "Cache-Control": "no-store" };
+    const origin = request.headers.get("origin");
+    if ((origin && new URL(origin).host !== request.headers.get("host")) ||
+        request.headers.get("sec-fetch-site") === "cross-site") {
+      return NextResponse.json({ ok: false, error: "Same-origin request required." }, { status: 403, headers });
+    }
+    const params = request.nextUrl.searchParams;
+    const projectId = params.get("projectId") || "";
+    const kind = params.get("kind");
+    const id = params.get("id") || "";
+    if (kind !== "all" && ((kind !== "message" && kind !== "media") || !id)) {
+      return NextResponse.json({ ok: false, error: "Choose content to remove from this chat." }, { status: 400, headers });
+    }
+    if (kind === "media") getStoryMedia(ownerKey, projectId, id);
+    const removedMessages = removeStoryChatItems({ ownerKey, projectId, target: kind === "all" ? { kind } : { kind, id } });
+    return NextResponse.json({ ok: true, removedMessages }, { headers });
   } catch (error) {
     return jsonError(error);
   }

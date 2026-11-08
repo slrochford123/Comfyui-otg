@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import {local3060Enabled} from "@/lib/workers/local3060";
+import {conversationPolicyEnabled} from "@/lib/openai/conversationAccount";
+import {createAssistantStream,createAssistantText,resolveAssistantProvider,withAssistantProvider} from "@/lib/workers/assistantProvider";
 import {
   QWEN_CLUSTER_MODEL,
+  QwenClusterBusyError,
 } from "@/lib/workers/qwenClusterRouter";
 import {
   qwenDurableFetch,
@@ -11,7 +15,7 @@ import {
   openAIEnabled,
   openAIModels,
 } from "@/lib/openai/provider";
-import { requireSessionUser } from "@/lib/sessionUser";
+import { requireSessionUser, SessionInvalidError } from "@/lib/sessionUser";
 import { buildStoryDirectorProjectContext } from "@/lib/storyCreator/context";
 import { storyConversationInstructions, storyConversationOutputTokens } from "@/lib/storyCreator/conversationPolicy";
 import { retrieveStoryMemory } from "@/lib/storyCreator/retrieval";
@@ -855,22 +859,29 @@ async function enforceStoryHelperCompliance(
 
 function storyDirectorStreamResponse(input: {
   events: AsyncGenerator<
+    | { type: "status"; phase: "queued" | "generating" }
     | { type: "delta"; delta: string }
     | { type: "done"; text: string; usage: Record<string, number> }
   >;
   model: string;
   storyContextCounts?: Record<string, number>;
   storyHelperGuard?: StoryHelperGuardMode | null;
+  provider?: "openai"|"local3060";
+  fallbackReason?: "allowance" | "global-budget";
 }) {
   const encoder = new TextEncoder();
   const iterator = input.events[Symbol.asyncIterator]();
+  let canceled=false;
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
+      const heartbeat=setInterval(()=>{
+        if(!canceled)controller.enqueue(encoder.encode('{"type":"heartbeat"}\n'));
+      },12000);
       try {
         while (true) {
           const next = await iterator.next();
-          if (next.done) break;
-          if (next.value.type === "delta") {
+          if (next.done||canceled) break;
+          if (next.value.type === "delta"||next.value.type === "status") {
             controller.enqueue(encoder.encode(`${JSON.stringify(next.value)}\n`));
             continue;
           }
@@ -881,8 +892,9 @@ function storyDirectorStreamResponse(input: {
             text,
             usage: next.value.usage,
             model: input.model,
-            provider: "openai",
-            cpuOnly: true,
+            provider: input.provider||"openai",
+            fallbackReason:input.fallbackReason,
+            cpuOnly: input.provider !== "local3060",
             ...(input.storyContextCounts
               ? { storyContextCounts: input.storyContextCounts }
               : {}),
@@ -891,16 +903,22 @@ function storyDirectorStreamResponse(input: {
               : {}),
           })}\n`));
         }
-      } catch {
-        controller.enqueue(encoder.encode(`${JSON.stringify({
+      } catch (error) {
+        if(!canceled)controller.enqueue(encoder.encode(`${JSON.stringify({
           type: "error",
-          error: "Story Director streaming was interrupted. Please retry.",
+          error: error instanceof QwenClusterBusyError
+            ? "Local AI is busy on the RTX 3060. Please retry when the queue clears."
+            : input.provider === "local3060"
+              ? "The RTX 3060 response was interrupted. Please retry."
+              : "Story Director streaming was interrupted. Please retry.",
         })}\n`));
       } finally {
-        controller.close();
+        clearInterval(heartbeat);
+        if(!canceled)controller.close();
       }
     },
     async cancel() {
+      canceled=true;
       await iterator.return?.(undefined);
     },
   });
@@ -910,6 +928,8 @@ function storyDirectorStreamResponse(input: {
       "Cache-Control": "no-store",
       "Content-Type": "application/x-ndjson; charset=utf-8",
       "X-Content-Type-Options": "nosniff",
+      "X-Accel-Buffering": "no",
+      "X-OTG-AI-Provider":input.provider||"openai",
     },
   });
 }
@@ -944,6 +964,8 @@ export async function POST(req: NextRequest) {
     const storyCreatorStreaming =
       storyCreatorRequest &&
       req.headers.get("x-otg-stream") === "1";
+    const visualUtility=images.length>0&&req.headers.get("x-otg-ai-utility")==="visual-analysis";
+    const eligible=conversationPolicyEnabled() && aiAssistanceProfile!=="describe"&&!visualUtility;
     const model = aiAssistance
       ? AI_ASSISTANCE_MODEL
       : QWEN_CLUSTER_MODEL;
@@ -955,7 +977,7 @@ export async function POST(req: NextRequest) {
 
     const timeoutMs = parsePositiveInt(process.env.OLLAMA_CHAT_TIMEOUT_MS, images.length ? 180000 : 90000);
 
-    if (storyCreatorRequest && !openAIEnabled()) {
+    if (storyCreatorRequest && !local3060Enabled() && !openAIEnabled()) {
       return NextResponse.json(
         {
           error: "OpenAI Story Creator is unavailable. Please retry.",
@@ -965,8 +987,8 @@ export async function POST(req: NextRequest) {
       );
     }
     if (
-      aiAssistanceProfile === "story-helper" &&
-      openAIEnabled()
+      eligible || (aiAssistanceProfile === "story-helper" && !local3060Enabled() &&
+      openAIEnabled())
     ) {
       try {
         const user = await requireSessionUser(req);
@@ -987,7 +1009,7 @@ export async function POST(req: NextRequest) {
           : null;
         const instructions = storyCreatorRequest
           ? storyConversationInstructions(projectContext?.context)
-          : buildSystemMessage("story-helper").content;
+          : buildSystemMessage(aiAssistanceProfile).content;
         const outputTokens = storyCreatorRequest
           ? storyConversationOutputTokens(latestUserMessage) : AI_ASSISTANCE_NUM_PREDICT;
         const input = buildOpenAIStoryInput(
@@ -996,44 +1018,45 @@ export async function POST(req: NextRequest) {
           aiAssistanceProfile,
         );
 
-        if (storyCreatorStreaming) {
-          const events = await createOpenAITextStream({
+        const preference=eligible?resolveAssistantProvider(req.headers.get("x-otg-ai-provider")):"openai";
+        const request = {
             ownerKey: user.ownerKey,
+            accountId:user.accountId,
+            feature:storyCreatorRequest?"storyteller":"ai-assistants",
+            requestKey:req.headers.get("idempotency-key")||undefined,
             projectId,
-            useCase: "story-helper",
+            useCase: "story-helper" as const,
             model: openAIModel,
             instructions,
             input,
             maxOutputTokens: outputTokens,
             timeoutMs,
             signal: req.signal,
-          });
+            localVariant:{instructions:projectContext?storyConversationInstructions(buildStoryDirectorProjectContext({ownerKey:user.ownerKey,
+              projectId:projectId!,query:latestUserMessage,recall,maxChars:4800}).context):instructions,input:input.slice(-6)},
+        };
+        if (storyCreatorStreaming || eligible && req.headers.get("x-otg-stream")==="1") {
+          const events = await (eligible?createAssistantStream(request,preference):createOpenAITextStream(request));
           return storyDirectorStreamResponse({
             events,
-            model: openAIModel,
+            model: events.routing?.model||openAIModel,
+            provider:events.routing?.provider,
+            fallbackReason:events.routing?.fallbackReason,
             storyContextCounts: projectContext?.counts,
             storyHelperGuard: storyHelperGuardMode,
           });
         }
 
-        const openAIResponse = await createOpenAIText({
-          ownerKey: user.ownerKey,
-          projectId: storyCreatorRequest ? projectId : undefined,
-          useCase: "story-helper",
-          model: openAIModel,
-          instructions,
-          input,
-          maxOutputTokens: outputTokens,
-          timeoutMs,
-        });
+        const openAIResponse = await (eligible?withAssistantProvider(preference,()=>createAssistantText(request)):createOpenAIText(request));
         const message = cleanOutput(openAIResponse.text);
         if (message) {
           return NextResponse.json(
             {
               message,
-              model: openAIModel,
-              provider: "openai",
-              cpuOnly: true,
+              model: openAIResponse.model||openAIModel,
+              provider: openAIResponse.provider||"openai",
+              fallbackReason:"fallbackReason" in openAIResponse?openAIResponse.fallbackReason:undefined,
+              cpuOnly: openAIResponse.provider !== "local3060",
               usage: openAIResponse.usage,
               ...(projectContext
                 ? { storyContextCounts: projectContext.counts }
@@ -1045,7 +1068,7 @@ export async function POST(req: NextRequest) {
             { headers: { "Cache-Control": "no-store" } },
           );
         }
-        if (storyCreatorRequest) {
+        if (storyCreatorRequest || eligible) {
           return NextResponse.json(
             {
               error: "OpenAI returned an empty Story Creator reply.",
@@ -1055,14 +1078,20 @@ export async function POST(req: NextRequest) {
           );
         }
       } catch (error) {
-        const status =
+        if (error instanceof QwenClusterBusyError) {
+          return NextResponse.json({
+            error: "Local AI is busy on the RTX 3060. Please retry when the queue clears.",
+            code: "LOCAL_AI_BUSY",
+          }, { status: 503 });
+        }
+        const status = error instanceof SessionInvalidError?401:
           typeof error === "object" &&
           error &&
           "status" in error
             ? Number((error as { status?: unknown }).status) || 0
             : 0;
 
-        if ([401, 403, 404, 429].includes(status)) {
+        if ([401, 402, 403, 404, 409, 429].includes(status)) {
           const message =
             status === 401
               ? "Unauthorized"
@@ -1083,7 +1112,7 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        if (storyCreatorRequest) {
+        if (storyCreatorRequest || eligible) {
           return NextResponse.json(
             {
               error: "OpenAI Story Creator could not respond. Please retry.",

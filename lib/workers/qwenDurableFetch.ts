@@ -14,6 +14,7 @@ import {
   kickQwenDurableScheduler,
   type QwenDurableSchedulerDependencies,
 } from "@/lib/workers/qwenDurableScheduler";
+import {LOCAL_CONTEXT,LOCAL_MODEL,local3060Enabled,localPromptBudget} from "./local3060";
 
 /*
  * OTG_QWEN_DURABLE_FETCH_V1
@@ -224,8 +225,9 @@ export async function qwenDurableFetch(
     QwenDurableFetchOptions =
       {},
 ): Promise<Response> {
+  const dedicated=local3060Enabled();
   const requiredContextTokens =
-    Math.max(
+    dedicated ? localPromptBudget(payload).estimatedTokens : Math.max(
       1,
       Math.floor(
         Number(
@@ -238,7 +240,7 @@ export async function qwenDurableFetch(
     );
 
   const allowedNodes =
-    normalizedAllowedNodes(
+    dedicated ? ["local3060" as const] : normalizedAllowedNodes(
       options.allowedNodes,
     );
 
@@ -249,7 +251,7 @@ export async function qwenDurableFetch(
   }
 
   const maximumContextTokens =
-    maximumContextForNodes(
+    dedicated ? LOCAL_CONTEXT : maximumContextForNodes(
       allowedNodes,
     );
 
@@ -299,11 +301,11 @@ export async function qwenDurableFetch(
       allowedNodes,
 
       model:
-        options.model
+        (dedicated ? LOCAL_MODEL : options.model)
         || null,
 
       modelByNode:
-        options.modelByNode
+        (dedicated ? {} : options.modelByNode)
         || {},
 
       keepAlive:

@@ -19,7 +19,7 @@ export const SHAWN_QWEN_URL = "http://100.75.162.64:11435";
 export const SLR_COMFY_URL = "http://100.98.212.116:8188";
 export const SHAWN_COMFY_URL = "http://100.75.162.64:8188";
 
-export type ClusterGpuId = "slr-5060" | "shawn-3090";
+export type ClusterGpuId = "slr-5060" | "shawn-3090" | "shawn-3060";
 
 export type ClusterGpuPurpose = "image" | "video" | "ltx-fallback" | "qwen36" | "external-qwen-code";
 export type ClusterGpuLease = ResourceLock & { purpose: ClusterGpuPurpose };
@@ -92,6 +92,7 @@ export function resolveComfyPhysicalGpu(rawUrl: string, hostname = os.hostname()
     const parsed = new URL(rawUrl);
     const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
     const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+    if (port === "8190") return parsed.origin === "http://127.0.0.1:8190" && hostname.split(".")[0] === "shawn" ? "shawn-3060" : null;
     const generationPorts = new Set([
       "8188",
       "8189",

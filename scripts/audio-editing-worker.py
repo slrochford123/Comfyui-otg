@@ -601,18 +601,19 @@ def import_audio():
 
 def music():
     gpu_ready(8000)
-    cfg=CONFIG["ace"]
+    yue2=CONFIG.get("musicEngine")=="yue2"
+    cfg=CONFIG["yue2" if yue2 else "ace"]
     request=ROOT/"music-request.json"
     result=ROOT/"music-result.json"
     params=JOB["params"]
     atomic(request,{"prompt":params["prompt"],"seconds":params["seconds"],"seed":params.get("seed",42),
-        "directory":str(ROOT/"ace-output"),"result":str(result)})
-    status(stage="ACE-Step instrumental generation",progress=10)
-    run([cfg["python"],str(Path(__file__).with_name("audio-editing-music.py")),request],timeout=1800)
+        "directory":str(ROOT/("yue2-output" if yue2 else "ace-output")),"result":str(result)})
+    status(stage="YuE2 instrumental generation" if yue2 else "ACE-Step instrumental generation",progress=10)
+    run([cfg["python"],str(Path(__file__).with_name("audio-editing-yue2.py" if yue2 else "audio-editing-music.py")),request],timeout=1800)
     generated=json.loads(result.read_text())
     output=ROOT/"music.wav"
     ffmpeg(["-i",generated["file"],"-ar","48000","-c:a","pcm_s24le",output])
-    asset(output,"Generated instrumental music","ACE-Step-1.5-Turbo",license="MIT",suggestedLane="music")
+    asset(output,"Generated instrumental music",generated["engine"] if yue2 else "ACE-Step-1.5-Turbo",license=generated["license"] if yue2 else "MIT",suggestedLane="music")
     return {k:v for k,v in generated.items() if k!="file"}
 
 

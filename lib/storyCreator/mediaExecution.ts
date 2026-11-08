@@ -7,9 +7,11 @@ import {listCharacters, loadCharacter, createCharacter, updateCharacterVoiceSele
 import {upsertVoice, voicesSamplesDir} from "@/lib/voicesStudio";
 import {attachStoryVisualUpload,addStoryCreatorMessage,listStoryVisualAssets} from "./store";
 import {contentTypeForMedia} from "@/lib/mediaResponse";
-import {assertStoryMediaScope, claimStoryMedia, createStoryMedia, getStoryMedia, listStoryMedia, storyMediaByRequest, updateStoryMedia, type StoryMediaRecord} from "./mediaStore";
+import {assertStoryMediaScope, claimStoryMedia, createStoryMedia, getStoryMedia, listStoryChatMedia, listStoryMedia, storyMediaByRequest, updateStoryMedia, type StoryMediaRecord} from "./mediaStore";
+import {storyOpenAIImageProfile,storyOpenAIImagesEnabled,renderStoryOpenAIImage,storyOpenAIImageTimeoutMs} from "./mediaOpenAI";
 import {parseStoryMediaCommand} from "./mediaContract";
 import {requireStoryMediaEnabled} from "./mediaAvailability";
+import {story3060ImageEnabled,story3060ImageProfile,story3060EditEnabled,story3060EditProfile,isStory3060Visual,submitStory3060Image,collectStory3060Image,cancelStory3060Image,readStory3060Image} from "./media3060";
 
 export function requireStoryMediaTest() {
   requireStoryMediaEnabled();
@@ -31,7 +33,7 @@ export function storyMediaFile(record: StoryMediaRecord) {
 export function storyMediaContext(ownerKey: string, projectId: string,query="") {
   const characters=listCharacters(ownerKey).sort((a,b)=>Number(query.toLowerCase().includes(b.name.toLowerCase()))-Number(query.toLowerCase().includes(a.name.toLowerCase())));
   return JSON.stringify({
-    media:listStoryMedia(ownerKey,projectId).slice(0,20).map(r=>({id:r.id,name:r.command.name,operation:r.command.operation,status:r.status,description:r.command.prompt.slice(0,400),characterId:r.characterId})),
+    media:listStoryChatMedia(ownerKey,projectId).visible.slice(0,20).map(r=>({id:r.id,name:r.command.name,operation:r.command.operation,status:r.status,description:r.command.prompt.slice(0,400),characterId:r.characterId})),
     characters:characters.slice(0,40).map(c=>({id:c.id,name:c.name,description:c.description?.slice(0,300),hasVoice:!!c.referenceAudioPath})),
   });
 }
@@ -50,7 +52,7 @@ function sourceFor(record: StoryMediaRecord): {image?: string; voice?: string; n
   return source.command.operation === "voice" ? {voice:file,name:source.command.name,characterId:source.characterId||undefined,refText:source.command.text}
     : ["image","edit"].includes(source.command.operation)?{image:file,name:source.command.name,characterId:source.characterId||undefined}:{};
 }
-export function requestStoryMedia(input: {ownerKey:string;projectId:string;sourceMessageId:string;arguments:unknown},requestKey?:string) {
+export function requestStoryMedia(input: {ownerKey:string;projectId:string;sourceMessageId:string;arguments:unknown;openAIImageAccountId?:string},requestKey?:string) {
   requireStoryMediaTest();
   const messages = assertStoryMediaScope(input.ownerKey,input.projectId);
   const source = messages.find(m=>m.id===input.sourceMessageId&&m.role==="user");
@@ -76,15 +78,52 @@ export function requestStoryMedia(input: {ownerKey:string;projectId:string;sourc
     if (media.name && command.subject==="character")command.name=media.name;
     if(command.operation==="image"&&media.image)command.operation="edit";
   }
-  return createStoryMedia({...input,command},requestKey);
+  const imageAccountId=input.openAIImageAccountId;
+  const cloud=!!imageAccountId && ["image","edit"].includes(command.operation) && storyOpenAIImagesEnabled(imageAccountId);
+  return createStoryMedia({...input,command,...(cloud?{profile:storyOpenAIImageProfile,imageAccountId}:{})},requestKey);
 }
 /** Direct, explicit result-card action. The replay key survives a lost HTTP response. */
-export function requestStoryMediaFromCard(ownerKey:string,projectId:string,body:Record<string,unknown>) {
+export function requestStoryMediaFromCard(ownerKey:string,projectId:string,body:Record<string,unknown>,accountId?:string) {
   requireStoryMediaTest();assertStoryMediaScope(ownerKey,projectId);
   const requestKey=String(body.requestKey||"");
   if(!/^[a-zA-Z0-9_-]{16,100}$/.test(requestKey))throw Error("A stable request ID is required.");
   const existing=storyMediaByRequest(ownerKey,projectId,`ui:${requestKey}`);
   if(existing)return {record:existing,created:false};
+  if(body.profile===storyOpenAIImageProfile){
+    if(!accountId||!storyOpenAIImagesEnabled(accountId)||!["image","edit"].includes(String(body.operation)))
+      throw Error("GPT Image 2.6 is unavailable for this account.");
+    const edit=body.operation==="edit";
+    const source=edit?getStoryMedia(ownerKey,projectId,String(body.sourceId||"")):null;
+    if(source){
+      if(!["image","edit"].includes(source.command.operation))throw Error("Choose a saved Story image to edit.");
+      storyMediaFile(source);
+    }
+    const evidence=edit?"Edit the selected Story image.":"Create a Story image.";
+    const command=parseStoryMediaCommand({operation:body.operation,subject:source?.command.subject||"scene",
+      name:source?.command.name||"Story image",sourceId:source?.id||"",prompt:String(body.prompt||""),text:"",evidence},evidence);
+    const message=addStoryCreatorMessage({ownerKey,projectId,role:"user",content:evidence+"\n"+command.prompt});
+    return createStoryMedia({ownerKey,projectId,sourceMessageId:message.id,command,profile:storyOpenAIImageProfile,imageAccountId:accountId},`ui:${requestKey}`);
+  }
+  if(body.profile!==undefined){
+    if(body.profile===story3060EditProfile){
+      if(body.operation!=="edit"||!story3060EditEnabled())throw Error("The RTX 3060 Story edit profile is unavailable.");
+      const source=getStoryMedia(ownerKey,projectId,String(body.sourceId||""));
+      if(!["image","edit"].includes(source.command.operation))throw Error("Choose a saved Story image to edit.");
+      storyMediaFile(source);
+      const evidence="Edit the selected Story image.";
+      const command=parseStoryMediaCommand({operation:"edit",subject:source.command.subject,name:source.command.name,
+        prompt:String(body.prompt||""),sourceId:source.id,text:"",evidence},evidence);
+      const message=addStoryCreatorMessage({ownerKey,projectId,role:"user",content:evidence+"\n"+command.prompt});
+      return createStoryMedia({ownerKey,projectId,sourceMessageId:message.id,command,profile:story3060EditProfile},`ui:${requestKey}`);
+    }
+    if(body.profile!==story3060ImageProfile||body.operation!=="image"||body.sourceId||!story3060ImageEnabled())
+      throw Error("This lightweight image profile is unavailable.");
+    const evidence="Create a lightweight Story image.";
+    const command=parseStoryMediaCommand({operation:"image",subject:"scene",name:"Story image",
+      prompt:String(body.prompt||""),sourceId:"",text:"",evidence},evidence);
+    const message=addStoryCreatorMessage({ownerKey,projectId,role:"user",content:evidence+"\n"+command.prompt});
+    return createStoryMedia({ownerKey,projectId,sourceMessageId:message.id,command,profile:story3060ImageProfile},`ui:${requestKey}`);
+  }
   const sourceId=String(body.sourceId||"");
   const source=getStoryMedia(ownerKey,projectId,sourceId);
   storyMediaFile(source);
@@ -128,6 +167,22 @@ export async function executeStoryMedia(record:StoryMediaRecord,cookie:string) {
   try {
     const source=sourceFor(record), prompt=record.command.prompt;
     let backendJob:Record<string,any>;
+    if(record.profile===storyOpenAIImageProfile) {
+      if(!record.imageAccountId || (record.command.operation==="edit"&&!source.image))throw Error("Select a ready image and sign in again.");
+      record=updateStoryMedia(record,{status:"running",backendJob:{engine:storyOpenAIImageProfile,pid:process.pid}});
+      if(record.status!=="running")return;
+      const bytes=await renderStoryOpenAIImage({accountId:record.imageAccountId!,ownerKey:record.ownerKey,
+        projectId:record.projectId,prompt,source:record.command.operation==="edit"?source.image:undefined});
+      const current=getStoryMedia(record.ownerKey,record.projectId,record.id);
+      if(current.cancelRequested){updateStoryMedia(current,{status:"canceled",error:null});return;}
+      if(current.status!=="running")return;
+      const dir=storyMediaRoot(current);
+      fs.mkdirSync(dir,{recursive:true,mode:0o700});
+      const file=path.join(dir,"result.png");
+      fs.writeFileSync(file,bytes,{flag:"wx",mode:0o600});
+      await finishStoryMedia(current,file);return;
+    }
+    if(isStory3060Visual(record.profile)){await submitStory3060Image(record,source.image);return;}
     if(record.command.operation==="image") {
       const {POST}=await import("@/app/api/assets/create-image/route");
       backendJob=await responseJson(await POST(internalRequest("/api/assets/create-image",cookie,{
@@ -161,12 +216,14 @@ export async function executeStoryMedia(record:StoryMediaRecord,cookie:string) {
   } catch(error) {
     const current=getStoryMedia(record.ownerKey,record.projectId,record.id);
     if(current.status==="canceled")return;
-    updateStoryMedia(current,{status:error instanceof Error&&error.name==="AbortError"?"canceled":error instanceof Error&&error.name==="RejectedStoryMedia"?"failed":error instanceof Error&&error.name==="UnconfirmedStoryVoice"||current.status==="submitting"?"unknown":"failed",error:error instanceof Error?error.message:"Generation failed."});
+    updateStoryMedia(current,{status:error instanceof Error&&error.name==="AbortError"?"canceled":error instanceof Error&&error.name==="RejectedStoryMedia"?"failed":error instanceof Error&&["UnconfirmedStoryVoice","UnconfirmedStoryOpenAIImage"].includes(error.name)||current.status==="submitting"?"unknown":"failed",error:error instanceof Error?error.message:"Generation failed."});
   }
 }
 async function finishStoryMedia(record:StoryMediaRecord,file:string) {
   const current=getStoryMedia(record.ownerKey,record.projectId,record.id);
   if(current.status!=="running")return current;
+  if(isStory3060Visual(current.profile)&&current.cancelRequested)
+    return updateStoryMedia(current,{status:"canceled",error:null});
   const root=storyMediaRoot(record);fs.mkdirSync(root,{recursive:true,mode:0o700});
   const destination=path.join(root,`result${path.extname(file).toLowerCase()}`);
   if(path.resolve(file)!==destination)fs.copyFileSync(safeDataFile(file),destination);
@@ -174,8 +231,19 @@ async function finishStoryMedia(record:StoryMediaRecord,file:string) {
   if(["image","edit"].includes(record.command.operation)&&!listStoryVisualAssets(record).some(asset=>asset.metadata.storyMediaId===record.id)) attachStoryVisualUpload({ownerKey:record.ownerKey,projectId:record.projectId,
     visualKind:record.command.subject==="character"?"character":record.command.subject==="object"?"object":"scene_image",
     name:record.command.name||"Story image",prompt:record.command.prompt,url:`/api/story-creator/media/file?projectId=${record.projectId}&id=${record.id}`,filePath:destination,
-    metadata:{storyMediaId:record.id,engine:record.command.operation==="image"?"krea-2":"fibo2-edit-turbo"}});
+    metadata:{storyMediaId:record.id,engine:record.profile|| (record.command.operation==="image"?"krea-2":"fibo2-edit-turbo")}});
   return updateStoryMedia(current,{status:"ready",filePath:destination,error:null});
+}
+/** Called by the durable queue before releasing the 3060 grant. */
+export async function publishStory3060Image(producer:{ownerKey:string;projectId?:string;id:string},promptId:string,receipt:unknown){
+  const record=getStoryMedia(producer.ownerKey,producer.projectId||"",producer.id);
+  if(!isStory3060Visual(record.profile)||record.backendJob?.promptId!==promptId)throw Error("The Story image output is not bound to this owner and execution.");
+  if(record.status==="ready"||record.status==="failed"||record.status==="canceled")return;
+  if(record.status!=="running")throw Error("The Story image is not eligible for publication.");
+  if(record.cancelRequested){updateStoryMedia(record,{status:"canceled",error:null});return;}
+  const result=await readStory3060Image(record,storyMediaRoot(record),receipt);
+  if(result.filePath)await finishStoryMedia(record,result.filePath);
+  else updateStoryMedia(record,{status:"failed",error:result.error||"The qualified worker did not produce a usable image."});
 }
 const refreshing = new Map<string,Promise<StoryMediaRecord>>();
 export async function refreshStoryMedia(record:StoryMediaRecord):Promise<StoryMediaRecord> {
@@ -186,6 +254,18 @@ export async function refreshStoryMedia(record:StoryMediaRecord):Promise<StoryMe
   const task=(async()=>{
     const job=record.backendJob;
     if(!job)return record;
+    if(record.profile===storyOpenAIImageProfile){
+      if(job.pid!==process.pid || Date.now()-record.updatedAt>storyOpenAIImageTimeoutMs+60_000)
+        return updateStoryMedia(record,{status:"unknown",error:"The original OpenAI image request is unconfirmed. No duplicate request was submitted."});
+      return record;
+    }
+    if(isStory3060Visual(record.profile)){
+      const output=await collectStory3060Image(record,storyMediaRoot(record));
+      if("filePath" in output&&output.filePath)return finishStoryMedia(record,output.filePath);
+      if(output.error)return updateStoryMedia(record,output.unknown?{error:output.error}
+        :record.cancelRequested?{status:"canceled",error:null}:{status:"failed",error:output.error});
+      return record;
+    }
     if(record.command.operation==="image") {
       const {resolveComfyPromptImageStatus,candidateComfyImageBaseUrls}=await import("@/lib/comfyImageOutputLookup");
       const result=await resolveComfyPromptImageStatus({promptId:job.promptId,filters:{nodeId:job.outputNodeId},preferredBaseUrl:job.comfyBaseUrl,strictPreferred:true});
@@ -249,6 +329,8 @@ export async function cancelStoryMedia(record:StoryMediaRecord) {
   if(["ready","failed","canceled","unknown"].includes(record.status))return record;
   if(record.status==="submitting")throw Error("Checking the original submission. Wait for its job ID before canceling; no second job will run.");
   if(record.status==="running") {
+    if(record.profile===storyOpenAIImageProfile)return updateStoryMedia(record,{cancelRequested:true});
+    if(isStory3060Visual(record.profile))return cancelStory3060Image(record);
     if(record.command.operation==="voice") {
       const {cancelStoryVoice}=await import("./mediaVoice");await cancelStoryVoice(record.id).catch(error=>{if(!String(error).includes("Speech canceled"))throw error;});
     } else if(record.command.operation==="video") {

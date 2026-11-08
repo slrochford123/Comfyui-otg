@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import { StoryImagePreview } from "./StoryPreview";
 import {
   useMemo,
   useState,
@@ -246,12 +246,9 @@ export function StoryAssetGrid({
               <div className="grid gap-3 sm:grid-cols-[112px_minmax(0,1fr)]">
                 <div className="relative flex aspect-square items-center justify-center overflow-hidden rounded-[12px] border border-white/10 bg-black/40">
                   {asset.status === "ready" && asset.url ? (
-                    <Image
+                    <StoryImagePreview
                       src={asset.url}
                       alt={asset.name || "Story asset"}
-                      width={224}
-                      height={224}
-                      unoptimized
                       className="h-full w-full object-cover"
                     />
                   ) : (

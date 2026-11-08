@@ -9,7 +9,7 @@ import {
 } from "@/lib/workers/comfySubmissionCriticalSection";
 import { releaseIdle3090Peer } from "@/lib/workers/comfy3090Peer";
 import { acquireVoiceGpuFileLease } from "@/lib/workers/voiceGpuFileLease";
-import { mediaQueueEnabled, enqueueComfyMedia } from "./mediaGpuQueue";
+import { mediaQueueEnabled, enqueueComfyMedia, assertComfyMediaDispatch } from "./mediaGpuQueue";
 
 
 export class Comfy5060BusyError extends Error {
@@ -66,11 +66,21 @@ export async function submitComfyPromptWithGpuLease(args: {
       promptId: string,
     ) => Promise<void> | void;
 }): Promise<Response> {
-  const inMediaScope = args.mediaQueueScope ?? /^(?:api-(?:comfy$|otg-generate$|characters?-|assets?-|background-)|h3-(?:direct$|body-swap$|realism$|refmods-)|edit-video-|character-animate-preview$)/.test(args.workerId);
-  if (mediaQueueEnabled() && inMediaScope && !args.queueDispatch) {
+  if (mediaQueueEnabled() && args.queueDispatch) {
+    assertComfyMediaDispatch({ownerId:args.ownerId,baseUrl:args.baseUrl,workerId:args.workerId,body:args.init.body});
+    // The durable queue and the worker's ingress gate already fence this
+    // device. Never fall into either rendering card's legacy submit mutex.
+    if(resolveComfyPhysicalGpu(args.baseUrl)==="shawn-3060"){
+      await args.beforeSubmit?.();
+      return (args.fetcher||fetch)(normalizeBaseUrl(args.baseUrl)+"/prompt",{...args.init,redirect:"error",signal:AbortSignal.timeout(args.submitTimeoutMs||60000)});
+    }
+  }
+  // Every application Comfy submission participates. A feature-name allowlist
+  // previously let legacy production, storyboard and voice callers bypass it.
+  if (mediaQueueEnabled() && !args.queueDispatch) {
     // HTTP-only fixed-tool adapters must not silently ignore the shared Manual
     // selection. Durable H3 runners already persist their target in job input.
-    if(!args.workerId.startsWith("h3-")){
+    if(args.workerId.startsWith("api-")){
       const {requestedMediaGpu}=await import("@/lib/mediaGpuRoutingServer");
       const requested=await requestedMediaGpu();
       const actual=resolveComfyPhysicalGpu(args.baseUrl);
@@ -157,6 +167,11 @@ export async function submitComfyPromptWithGpuLease(args: {
             null,
       },
       async () => {
+        // The submission mutex can wait. Recheck the persisted claim before
+        // any /free or /prompt operation after that wait.
+        if (mediaQueueEnabled() && args.queueDispatch) {
+          assertComfyMediaDispatch({ownerId:args.ownerId,baseUrl:args.baseUrl,workerId:args.workerId,body:args.init.body});
+        }
         let releaseVoice:(()=>void)|null=null;
         if(on3090){
           try{releaseVoice=await acquireVoiceGpuFileLease();}

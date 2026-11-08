@@ -8,7 +8,7 @@ export function sameComfyWorker(a: ComfyWorkerInstance, b: ComfyWorkerInstance) 
   return a.host === b.host && a.unit === b.unit && a.pid === b.pid && a.startTicks === b.startTicks && a.bootId === b.bootId;
 }
 function validInstance(i: ComfyWorkerInstance | undefined): i is ComfyWorkerInstance {
-  return !!i && ["shawn", "slr"].includes(i.host) && ["otg-comfyui.service", "otg-comfyui-h3.service", "comfyui-5060.service"].includes(i.unit)
+  return !!i && ["shawn", "slr"].includes(i.host) && ["otg-comfyui.service", "otg-comfyui-h3.service", "otg-comfyui-3060.service", "comfyui-5060.service"].includes(i.unit)
     && Number.isSafeInteger(i.pid) && i.pid > 1 && /^\d+$/.test(i.startTicks) && /^[a-f0-9-]{36}$/.test(i.bootId);
 }
 /** Optional trusted read-only probe. Missing/failed proof never authorizes release. */

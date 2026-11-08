@@ -29,6 +29,7 @@ async function serve(request: NextRequest, method: "GET" | "HEAD") {
     }
     return mediaFileResponse(request, resolved, {
       method,
+      download: request.nextUrl.searchParams.get("download") === "1",
       cacheControl: "private, no-transform, max-age=3600",
     });
   } catch (error) {

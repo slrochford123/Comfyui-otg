@@ -8,6 +8,8 @@ export type H3DirectorTurn = {
   role: "user" | "assistant";
   content: string;
   createdAt: number;
+  provider?: "openai"|"local3060";
+  model?: string;
 };
 
 export type H3DirectorPromptVersion = {
@@ -59,16 +61,13 @@ function readStore(ownerKey: string): Store {
 }
 
 function writeStore(ownerKey: string, store: Store) {
-  fs.writeFileSync(
-    ownerPath(ownerKey),
-    JSON.stringify(
-      {
-        conversations: store.conversations.slice(-50),
-      },
-      null,
-      2,
-    ),
-  );
+  const file=ownerPath(ownerKey), temporary=`${file}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporary,JSON.stringify({conversations:store.conversations.slice(-50)},null,2),{mode:0o600,flag:"wx"});
+    fs.renameSync(temporary,file);
+  } finally {
+    fs.rmSync(temporary,{force:true});
+  }
 }
 
 function cleanText(value: unknown, limit = 20_000) {
@@ -83,6 +82,8 @@ export function upsertH3DirectorConversation(args: {
   conversationId?: string;
   userText: string;
   assistantText: string;
+  provider?: "openai"|"local3060";
+  model?: string;
   prompt: string;
 }) {
   const now = Date.now();
@@ -115,6 +116,8 @@ export function upsertH3DirectorConversation(args: {
     role: "assistant",
     content: cleanText(args.assistantText),
     createdAt: now,
+    provider:args.provider,
+    model:args.model,
   });
 
   const prompt = cleanText(args.prompt, 4000);

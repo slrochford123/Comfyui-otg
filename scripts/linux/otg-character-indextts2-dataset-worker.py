@@ -33,6 +33,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from worker_gpu_admission import WorkerGpuAdmission, assert_same_claim
+
 
 SOURCE_URL_KEYS = [
     "approvedSampleUrl",
@@ -1814,6 +1816,8 @@ def process_one(args: argparse.Namespace) -> int:
     gpu_lock = None
     tts = None
     torch_module = None
+    admission = None
+    model_load_started = False
 
     try:
         claim = request_json(
@@ -2197,6 +2201,11 @@ def process_one(args: argparse.Namespace) -> int:
             },
         )
 
+        admission = WorkerGpuAdmission(args.worker_id, job_id)
+        admission.acquire(lambda: assert_same_claim(
+            assert_job_active(args, headers, job_id), job, args.worker_id,
+        ))
+        admission.begin()
         gpu_lock = acquire_gpu_lock(
             args,
             headers,
@@ -2261,6 +2270,7 @@ def process_one(args: argparse.Namespace) -> int:
             },
         )
 
+        model_load_started = True
         tts, torch_module = load_indextts2(
             args
         )
@@ -3102,6 +3112,7 @@ def process_one(args: argparse.Namespace) -> int:
         return 1
 
     finally:
+        cleanup_confirmed = not model_load_started
         if heartbeat is not None:
             heartbeat.stop()
 
@@ -3115,8 +3126,11 @@ def process_one(args: argparse.Namespace) -> int:
 
         if torch_module is not None:
             try:
+                # infer() is synchronous; confirm outstanding CUDA work also ended.
+                torch_module.cuda.synchronize()
                 torch_module.cuda.empty_cache()
                 torch_module.cuda.ipc_collect()
+                cleanup_confirmed = True
             except Exception as error:
                 log(
                     "[warn] Could not fully clear "
@@ -3141,6 +3155,16 @@ def process_one(args: argparse.Namespace) -> int:
                     "[warn] Could not release GPU lock cleanly: "
                     f"{error}"
                 )
+                cleanup_confirmed = False
+
+        if admission is not None:
+            try:
+                if not admission.finish(cleanup_confirmed=cleanup_confirmed):
+                    log("[gpu-admission] Reservation retained: verify original execution before recovery.")
+            except Exception:
+                log("[gpu-admission] Release unconfirmed; durable same-token release intent retained.")
+            finally:
+                admission.close()
 
 
 def main() -> int:

@@ -18,15 +18,18 @@ export type ResourceLock = {
   heartbeatAt: string;
   expiresAt: string;
   fencingToken: string;
+  persistent?: boolean;
 };
 
-type AcquireResourceLockInput = {
+export type AcquireResourceLockInput = {
   lockId: WorkerResourceLockId;
   ownerId: string;
   ownerType: ResourceLockOwnerType;
   workerId: string;
   resourceName?: string;
   ttlSeconds?: number;
+  /** Internal admission bridge only: uncertainty must not expire a GPU grant. */
+  persistent?: boolean;
 };
 
 type LockRow = {
@@ -39,6 +42,7 @@ type LockRow = {
   heartbeat_at: string;
   expires_at: string;
   fencing_token: string;
+  persistent?: number;
 };
 
 const DEFAULT_LOCK_TTL_SECONDS = 10 * 60;
@@ -112,10 +116,15 @@ function db(): any {
     );
     CREATE INDEX IF NOT EXISTS resource_locks_expires_at_idx ON resource_locks(expires_at);
   `);
+  if (!next.prepare("PRAGMA table_info(resource_locks)").all().some((row: {name: string}) => row.name === "persistent"))
+    next.exec("ALTER TABLE resource_locks ADD COLUMN persistent INTEGER NOT NULL DEFAULT 0");
   connection = next;
   connectionPath = filePath;
   return next;
 }
+
+/** Internal synchronous transactions shared with the durable legacy admission bridge. */
+export function resourceLockStore(): Database.Database { return db(); }
 
 function fromRow(row: LockRow): ResourceLock {
   return {
@@ -128,6 +137,7 @@ function fromRow(row: LockRow): ResourceLock {
     heartbeatAt: row.heartbeat_at,
     expiresAt: row.expires_at,
     fencingToken: row.fencing_token,
+    ...(row.persistent ? {persistent: true} : {}),
   };
 }
 
@@ -136,6 +146,7 @@ export function createFencingToken(): string {
 }
 
 export function isResourceLockExpired(lock: ResourceLock, now = new Date()): boolean {
+  if (lock.persistent) return false;
   const parsed = Date.parse(lock.expiresAt);
   return Number.isFinite(parsed) && parsed <= now.getTime();
 }
@@ -143,7 +154,7 @@ export function isResourceLockExpired(lock: ResourceLock, now = new Date()): boo
 export function cleanupExpiredResourceLocks(now = new Date()): ResourceLock[] {
   const database = db();
   const cleanup = database.transaction((timestamp: string) => {
-    database.prepare("DELETE FROM resource_locks WHERE expires_at <= ?").run(timestamp);
+    database.prepare("DELETE FROM resource_locks WHERE expires_at <= ? AND persistent=0").run(timestamp);
     return database.prepare("SELECT * FROM resource_locks ORDER BY lock_id").all() as LockRow[];
   });
   return cleanup(now.toISOString()).map(fromRow);
@@ -174,7 +185,7 @@ export function acquireResourceLock(
     // Stale removal and replacement execute under one SQLite write transaction.
     // A concurrent process cannot observe the lock as absent and insert until this
     // transaction commits; the primary key is the final exclusivity constraint.
-    database.prepare("DELETE FROM resource_locks WHERE lock_id = ? AND expires_at <= ?").run(lockId, timestamp);
+    database.prepare("DELETE FROM resource_locks WHERE lock_id = ? AND expires_at <= ? AND persistent=0").run(lockId, timestamp);
     const existingRow = database.prepare("SELECT * FROM resource_locks WHERE lock_id = ?").get(lockId) as LockRow | undefined;
     if (existingRow) {
       const existing = fromRow(existingRow);
@@ -193,8 +204,8 @@ export function acquireResourceLock(
     database.prepare(`
       INSERT INTO resource_locks (
         lock_id, owner_id, owner_type, worker_id, resource_name,
-        acquired_at, heartbeat_at, expires_at, fencing_token
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        acquired_at, heartbeat_at, expires_at, fencing_token, persistent
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       lockId,
       ownerId,
@@ -205,6 +216,7 @@ export function acquireResourceLock(
       timestamp,
       addSecondsIso(now, ttlSeconds),
       fencingToken,
+      input.persistent ? 1 : 0,
     );
     return {
       ok: true as const,
@@ -226,7 +238,7 @@ export function heartbeatResourceLock(
   const now = new Date();
   const result = database.prepare(`
     UPDATE resource_locks SET heartbeat_at = ?, expires_at = ?
-    WHERE lock_id = ? AND owner_id = ? AND fencing_token = ? AND expires_at > ?
+    WHERE lock_id = ? AND owner_id = ? AND fencing_token = ? AND (expires_at > ? OR persistent=1)
   `).run(
     now.toISOString(),
     addSecondsIso(now, ttlSeconds),

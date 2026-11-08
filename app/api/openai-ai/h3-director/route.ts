@@ -1,11 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 
+import {claimH3DirectorRequest,readH3DirectorRequest,finishH3DirectorRequest} from "@/lib/openai/h3DirectorRequests";
 import { SessionInvalidError } from "@/lib/ownerKey";
 import { requireSessionUser } from "@/lib/sessionUser";
-import {
-  createOpenAIText,
-  openAIModels,
-} from "@/lib/openai/provider";
+import {openAIModels} from "@/lib/openai/provider";
+import {createAssistantText,resolveAssistantProvider,withAssistantProvider} from "@/lib/workers/assistantProvider";
 import {
   getH3DirectorConversation,
   upsertH3DirectorConversation,
@@ -13,7 +12,7 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 240;
 
 const MODE_LABELS: Record<string, string> = {
   "h3-text-to-video": "Text to Video",
@@ -99,10 +98,38 @@ function normalizePrompt(value: unknown) {
     .trim();
 }
 
+export async function GET(request: NextRequest) {
+  try {
+    const user=await requireSessionUser(request);
+    if(!user.accountId)throw new SessionInvalidError("Sign in with an account.");
+    const result=readH3DirectorRequest(user.accountId,request.nextUrl.searchParams.get("requestId")||"");
+    return NextResponse.json(result.body,{status:result.status,headers:{"Cache-Control":"no-store","X-OTG-H3-Request":result.status===202?"pending":"complete"}});
+  }catch(error){return jsonError(error);}
+}
+
 export async function POST(request: NextRequest) {
   try {
     const user = await requireSessionUser(request);
     const body = await request.json().catch(() => ({}));
+    const requestKey=request.headers.get("idempotency-key")||undefined;
+    if(request.headers.get("prefer")==="respond-async"){
+      const accountId=user.accountId;
+      if(!accountId)throw new SessionInvalidError("Sign in with an account.");
+      const instruction=cleanText(body?.message||body?.text,4000);
+      if(!requestKey||!instruction)throw new Error("A request ID and H3 Director instruction are required.");
+      const {accepted,result}=claimH3DirectorRequest(accountId,requestKey,body,instruction);
+      if(accepted)after(async()=>{
+        const response=await directShot(user,body,requestKey);
+        finishH3DirectorRequest(accountId,requestKey,{status:response.status,body:await response.json()});
+      });
+      return NextResponse.json(result.body,{status:result.status,headers:{"Cache-Control":"no-store","X-OTG-H3-Request":result.status===202?"pending":"complete"}});
+    }
+    return await directShot(user,body,requestKey);
+  }catch(error){return jsonError(error);}
+}
+
+async function directShot(user:Awaited<ReturnType<typeof requireSessionUser>>,body:any,requestKey?:string){
+  try {
 
     const userText = cleanText(body?.message || body?.text || "", 4000);
     if (!userText) {
@@ -167,15 +194,18 @@ export async function POST(request: NextRequest) {
       },
     ];
 
-    const result = await createOpenAIText({
+    const result = await withAssistantProvider(resolveAssistantProvider(body.aiProvider),()=>createAssistantText({
       ownerKey: user.ownerKey,
+      accountId:user.accountId,
+      feature:"h3-director",
+      requestKey,
       useCase: "h3-director",
       model: openAIModels().h3,
       instructions,
       input,
       maxOutputTokens: 650,
       timeoutMs: 90_000,
-    });
+    }));
 
     let parsed: any;
     try {
@@ -207,6 +237,8 @@ export async function POST(request: NextRequest) {
       conversationId: previous?.id,
       userText,
       assistantText: reply,
+      provider:result.provider,
+      model:result.model,
       prompt,
     });
 
@@ -219,7 +251,9 @@ export async function POST(request: NextRequest) {
         conversationId: conversation.id,
         promptVersions: conversation.promptVersions,
         usage: result.usage,
-        model: openAIModels().h3,
+        model: result.model,
+        provider:result.provider,
+        fallbackReason:result.fallbackReason,
       },
       {
         headers: {

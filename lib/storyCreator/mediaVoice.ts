@@ -2,11 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import {spawn, execFileSync, type ChildProcess} from "node:child_process";
-import {acquireExternalMediaGpu} from "@/lib/workers/mediaGpuQueue";
+import {acquireExternalMediaGpuChoice} from "@/lib/workers/mediaGpuQueue";
 import {acquireVoiceGpuFileLease} from "@/lib/workers/voiceGpuFileLease";
 import {requestedMediaGpu} from "@/lib/mediaGpuRoutingServer";
+import {MEDIA_GPUS, type MediaGpu, type MediaGpuChoice} from "@/lib/mediaGpuRouting";
 import {prepareAudioGpuMemory} from "@/lib/audioEditing/gpuMemory";
-import {getStoryMedia, type StoryMediaRecord} from "./mediaStore";
+import {getStoryMedia, updateStoryMedia, type StoryMediaRecord} from "./mediaStore";
 import {storyMediaRoot} from "./mediaExecution";
 
 type Run = {canceled:boolean; child?:ChildProcess; done?:Promise<void>; remoteRoot?:string};
@@ -29,11 +30,15 @@ export async function cancelStoryVoice(id:string) {
     try { await run.done?.catch(()=>{}); } finally { clearTimeout(timer); }
   }
 }
-export function storyVoiceRuntime(clone=false) {
-  const remoteConfig=process.env.OTG_STORY_QWEN_REMOTE_CONFIG;
+export function storyVoiceRuntime(clone=false, gpu:MediaGpu="rtx3090") {
+  // This TEST-only sidecar is separate from the installed PROD voice worker.
+  const remoteConfig=gpu==="rtx5060ti" ? process.env.OTG_STORY_QWEN_5060_CONFIG : process.env.OTG_STORY_QWEN_REMOTE_CONFIG;
+  if(gpu==="rtx5060ti" && !remoteConfig)throw Error("Qwen3-TTS is not yet qualified on the RTX 5060 Ti. Select Automatic or RTX 3090.");
   if(remoteConfig) {
-    const cfg=JSON.parse(fs.readFileSync(remoteConfig,"utf8")),target=cfg.transports?.rtx3090;
-    if(target?.protocol!=="slr-audio-v1"||!target.qualified||target.host!=="shawn-rochford@100.75.162.64")throw Error("The Story speech connection is not qualified.");
+    const cfg=JSON.parse(fs.readFileSync(remoteConfig,"utf8")),target=cfg.transports?.[gpu];
+    const host=gpu==="rtx3090"?"shawn-rochford@100.75.162.64":"slrochford123@100.98.212.116";
+    if(target?.protocol!=="slr-audio-v1"||!target.qualified||target.host!==host)throw Error("The Story speech connection is not qualified.");
+    if(gpu==="rtx5060ti" && (cfg.engine!=="qwen3"||!cfg.verified?.[clone?"speech-base":"speech"]?.[gpu]))throw Error("This Qwen3 voice operation is not qualified on the RTX 5060 Ti.");
     return {python:"/usr/bin/python3",model:"",remoteConfig};
   }
   const root=process.env.OTG_RUNTIME_ROOT || path.join(os.homedir(),"AI/runtime/test");
@@ -47,21 +52,32 @@ export function storyVoiceRuntime(clone=false) {
   return {python,model,remoteConfig:undefined};
 }
 /** Dedicated one-job process, protected by the same cross-app GPU admission as renders. */
-export async function generateStoryVoice(record:StoryMediaRecord, source:{voice?:string;refText?:string}) {
-  const config=storyVoiceRuntime(!!source.voice), run:Run={canceled:false};
+export async function generateStoryVoice(record:StoryMediaRecord, source:{voice?:string;refText?:string}, context?:{gpuChoice:MediaGpuChoice}) {
+  const run:Run={canceled:false};
   active.set(record.id,run);
-  let release:(()=>void)|undefined,releaseVoice:(()=>void)|undefined;
+  let release:(()=>void)|undefined,releaseVoice:(()=>void)|undefined,markUncertain:(()=>void)|undefined;
   let unconfirmed=false;
   const check=async()=>{
     if(run.canceled || getStoryMedia(record.ownerKey,record.projectId,record.id).status!=="running") throw canceled();
   };
   try {
-    if(await requestedMediaGpu()==="rtx5060ti")throw Error("Story Qwen3-TTS currently requires Automatic or RTX 3090. A 5060 Ti voice runtime is not yet qualified.");
+    // Durable callers carry the request-time preference, never request cookies.
+    // Keep the request-scoped path for existing Story Creator callers.
+    const gpuChoice=context ? context.gpuChoice : await requestedMediaGpu();
+    const runtimes=new Map<MediaGpu,ReturnType<typeof storyVoiceRuntime>>();
+    for(const gpu of MEDIA_GPUS.filter(g=>gpuChoice==="auto"||gpuChoice===g)) {
+      try {runtimes.set(gpu,storyVoiceRuntime(!!source.voice,gpu));}
+      catch(error) {if(gpuChoice!=="auto")throw error;}
+    }
+    if(!runtimes.size)throw Error("No qualified Qwen3-TTS runtime is available. No substitute voice engine was used.");
     await check();
-    release=await acquireExternalMediaGpu("rtx3090","story-qwen3-tts");
+    const reservation=await acquireExternalMediaGpuChoice([...runtimes.keys()],"story-qwen3-tts");
+    const gpu=reservation.gpu,config=runtimes.get(gpu)!;
+    release=reservation.release;markUncertain=reservation.uncertain;
     await check();
+    updateStoryMedia(getStoryMedia(record.ownerKey,record.projectId,record.id),{backendJob:{engine:"qwen3",gpu}});
     if(!config.remoteConfig)releaseVoice=await acquireVoiceGpuFileLease();
-    await prepareAudioGpuMemory("rtx3090",6500,check);
+    await prepareAudioGpuMemory(gpu,6500,check);
     await check();
     // UUID selection remains stable if another card is installed later.
     let uuid="";
@@ -82,7 +98,7 @@ export async function generateStoryVoice(record:StoryMediaRecord, source:{voice?
         reference=path.join(root,"reference"+suffix);fs.copyFileSync(source.voice,reference);
       }
       const request=path.join(root,"request.json");
-      fs.writeFileSync(request,JSON.stringify({id:record.id,gpu:"rtx3090",operation:"speech",source:reference,params:{text:record.command.text,instruction:record.command.prompt,description:source.refText||"",seconds:5,variant:reference?"base":"flash"}}),{mode:0o600});
+      fs.writeFileSync(request,JSON.stringify({id:record.id,gpu,operation:"speech",source:reference,params:{text:record.command.text,instruction:record.command.prompt,description:source.refText||"",seconds:5,variant:reference?"base":"flash"}}),{mode:0o600});
       args=[path.join(process.cwd(),"scripts/audio-editing-restricted-remote.py"),request];
     }
     const child=spawn(config.python,args,{
@@ -97,7 +113,7 @@ export async function generateStoryVoice(record:StoryMediaRecord, source:{voice?
           try {pending=JSON.parse(fs.readFileSync(path.join(root,"remote-execution.json"),"utf8")).outcome==="pending";} catch {pending=true;}
         }
         if(config.remoteConfig&&(code===2||pending)) {
-          unconfirmed=true;const error=Error("Speech execution is unconfirmed. Its GPU reservation is retained; no duplicate was submitted.");error.name="UnconfirmedStoryVoice";reject(error);
+          unconfirmed=true;markUncertain?.();const error=Error("Speech execution is unconfirmed. Its GPU reservation is retained; no duplicate was submitted.");error.name="UnconfirmedStoryVoice";reject(error);
         } else if(code===0)resolve();
         else reject(run.canceled?canceled():Error("Qwen3-TTS failed. The private job log contains diagnostic details; no fallback engine was used."));
       });

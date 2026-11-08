@@ -1,4 +1,5 @@
 "use client";
+import ConversationAllowances from "./ConversationAllowances";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { adminStyles as styles } from "../AdminShell";
@@ -374,6 +375,7 @@ export default function OpenAIBillingClient() {
         </div>
 
         <OpenAIConnectionPanel />
+        {process.env.NEXT_PUBLIC_OTG_OPENAI_CONVERSATION_CREDITS==="1"&&<ConversationAllowances />}
         <label style={{ display: "flex", gap: 8, margin: "14px 0" }}><input type="checkbox" checked={autoRefresh} onChange={event => setAutoRefresh(event.target.checked)} />Refresh while open (local usage each minute; official costs every 15 minutes when connected)</label>
         {error ? <p role="alert" style={{ color: "var(--color-error)" }}>{error}</p> : null}
         {loading && !snapshot ? <p className="otg-help">Loading OpenAI billing...</p> : null}

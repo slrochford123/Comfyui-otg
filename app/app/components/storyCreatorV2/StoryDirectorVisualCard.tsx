@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import { StoryImagePreview } from "./StoryPreview";
 import ImageEditEngineSelect from "../ImageEditEngineSelect";
 import {submitNativeImageEdit, type NativeEditEngine} from "@/lib/client/nativeImages";
 import { useCallback, useEffect, useState } from "react";
@@ -161,7 +161,7 @@ export function StoryDirectorVisualCard({ projectId, action, onChange }: {
     <h3 className="mt-2 text-base font-black text-white">{action.name}</h3>
     <p className="mt-2 text-sm leading-6 text-white/65">{action.prompt}</p>
     {action.action === "prepare-edit" ? <ImageEditEngineSelect value={editEngine} onChange={setEditEngine} disabled={busy || Boolean(version)} referenceCount={new Set([action.sourceVersionId, ...(action.referenceVersionIds || [])].filter(Boolean)).size} /> : null}
-    {imageUrl ? <Image src={imageUrl} alt={action.name} width={768} height={512} unoptimized className="mt-3 max-h-[520px] w-full rounded-[12px] object-contain" /> : null}
+    {imageUrl ? <StoryImagePreview src={imageUrl} alt={action.name} className="mt-3 max-h-[520px] w-full rounded-[12px] object-contain" /> : null}
     {version && !imageUrl ? <div className="mt-3 rounded-[12px] border border-white/10 p-3 text-sm text-white/55">{version.status === "failed" ? "Image creation failed." : "Creating image..."}</div> : null}
     {error ? <div className="mt-3 rounded-[10px] border border-red-300/20 bg-red-500/10 p-2 text-xs text-red-100">{error}</div> : null}
     {notice ? <div className="mt-3 text-xs text-cyan-50/70">{notice}</div> : null}

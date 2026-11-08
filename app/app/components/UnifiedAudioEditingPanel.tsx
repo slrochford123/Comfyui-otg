@@ -8,7 +8,7 @@ type Asset = AudioAsset & { url?: string };
 type Session = Omit<AudioSession,"assets"> & { assets: Asset[] };
 type Edit = Pick<AudioSession,"title"|"tracks"|"clips"|"ducking">;
 type Job = {id:string;status:string;stage:string;progress:number;elapsedSeconds?:number;assets?:Asset[]};
-type Capabilities = {enabled?:boolean;engines:Record<string,Partial<Record<AudioGpu,boolean>>>;notes:string[];pythonReady:boolean};
+type Capabilities = {enabled?:boolean;engines:Record<string,Partial<Record<AudioGpu,boolean>>>;notes:string[];pythonReady:boolean;musicEngine?:"ace"|"yue2";musicMaxSeconds?:number};
 type Character = {id:string;name:string;referenceAudioPath?:string};
 type Voice = {voiceId?:string;id:string;name:string};
 const ENDPOINT = "/api/edit-video/audio";
@@ -305,9 +305,9 @@ export default function UnifiedAudioEditingPanel({onOpenDialogue,initialSection=
             <Help>Use voices you own or are authorized to reproduce. Saving a reference does not train a voice model. No automatic lip-sync is claimed.</Help>
           </>:createKind==="music"?<>
             <label className="block text-sm">Describe the music<textarea className={`${input} min-h-24`} value={musicPrompt} maxLength={2000} onChange={e=>setMusicPrompt(e.target.value)}/></label>
-            <label className="block text-sm">Music length (seconds)<input className={input} type="number" min="10" max="600" value={musicSeconds} onChange={e=>setMusicSeconds(Number(e.target.value))}/></label>
-            <Help>ACE-Step 1.5 Turbo · 8 steps · instrumental. Describe mood, instruments, pace and environment. Generated music remains an editable asset; it never shortens your video.</Help>
-            <button className={button} disabled={!musicPrompt.trim()||!engineReady("music")} onClick={()=>void process("music",{prompt:musicPrompt,seconds:musicSeconds,seed})}>Generate instrumental music</button>
+            <label className="block text-sm">Music length (seconds)<input className={input} type="number" min="10" max={cap.musicMaxSeconds||600} value={musicSeconds} onChange={e=>setMusicSeconds(Number(e.target.value))}/></label>
+            <Help>{cap.musicEngine==="yue2"?"YuE2 3B BF16 · 32 steps · instrumental. Private non-commercial TEST evaluation. Each generation uses a fresh random seed and generates to the requested length.":"ACE-Step 1.5 Turbo · 8 steps · instrumental."} Describe mood, instruments, pace and environment. Generated music remains an editable asset; it never shortens your video.</Help>
+            <button className={button} disabled={!musicPrompt.trim()||!engineReady("music")} onClick={()=>void process("music",{prompt:musicPrompt,seconds:musicSeconds,...(cap.musicEngine==="yue2"?{}:{seed})})}>Generate instrumental music</button>
             {!engineReady("music")&&<Help>This music engine has not been qualified on the selected device. Existing music can be uploaded or selected in Add.</Help>}
           </>:<div className="space-y-3 rounded-xl border border-white/15 p-3">
             <label className="block text-sm">Sound effects<select className={input} value={effectsMode} onChange={e=>setEffectsMode(e.target.value)}><option value="automatic">Automatic — follow the visible action</option><option value="manual">Manual — describe a sound</option></select></label>

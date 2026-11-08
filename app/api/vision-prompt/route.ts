@@ -9,6 +9,7 @@ import path from "path";
 import fs from "fs";
 import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
 import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
+import {local3060Enabled,LOCAL_MODEL} from "@/lib/workers/local3060";
 
 const require = createRequire(import.meta.url);
 
@@ -767,14 +768,14 @@ export const POST = withOwner(async (req, owner) => {
 
     const isBackground = selectedPurpose === "background";
     const isFreeformCharacter = String(characterAnatomyMode || "").toLowerCase() === "freeform";
-    const completeDescriptionProvider = cleanProviderName(
+    const completeDescriptionProvider = local3060Enabled()?"ollama":cleanProviderName(
       process.env.OTG_COMPLETE_DESCRIPTION_PROVIDER || DEFAULT_COMPLETE_DESCRIPTION_PROVIDER
     );
     const completeDescriptionOpenAiModel =
       process.env.OTG_COMPLETE_DESCRIPTION_OPENAI_MODEL || DEFAULT_COMPLETE_DESCRIPTION_OPENAI_MODEL;
     const completeDescriptionLocalModel =
       process.env.OTG_COMPLETE_DESCRIPTION_LOCAL_MODEL || DEFAULT_COMPLETE_DESCRIPTION_LOCAL_MODEL;
-    const model = QWEN_CLUSTER_MODEL;
+    const model = local3060Enabled()?LOCAL_MODEL:QWEN_CLUSTER_MODEL;
 
     let visionImage:
       VisionImagePayload;
@@ -1129,7 +1130,9 @@ export const POST = withOwner(async (req, owner) => {
     const manualBlock = manualSummary ? ` Manual details: ${manualSummary}.` : "";
 
     const finalPrompt = isBackground
-      ? `Describe ONLY the background/environment for AI video prompting. ${jsonSchema}${hint}`
+      ? local3060Enabled()
+        ? `Describe the visible setting in the supplied image. Include the main visible buildings, furnishings, scenery and objects, even if they fill the foreground. Name the largest visible element and its color first in "objects". Exclude people. ${jsonSchema}${hint}`
+        : `Describe ONLY the background/environment for AI video prompting. ${jsonSchema}${hint}`
       : isCharacterDetails
         ? [
             "OTG_COMPLETE_DESCRIPTION_CLOTHING_EXTRACTION",

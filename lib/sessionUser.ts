@@ -16,6 +16,7 @@ export type OwnerContextLite = {
 };
 
 export type SessionUser = OwnerContextLite & {
+  accountId?: string;
   email: string | null;
   tier: string | null;
   admin: boolean;
@@ -92,7 +93,7 @@ export async function requireSessionUser(req: Request | NextRequest): Promise<Se
   const tier = (payload as any).tier ?? null;
   const admin = isAdminUserId(payload.sub);
 
-  return { ...ctx, username, email, tier, admin };
+  return { ...ctx, username, email, tier, admin, accountId: String(payload.sub) };
 }
 
 /**
@@ -114,7 +115,7 @@ export async function getSessionUser(req: Request | NextRequest): Promise<Sessio
   const admin = isAdminUserId(payload.sub);
 
   const ownerKey = resolveOwnerAlias(username || ctx.deviceId);
-  return { ...ctx, username, ownerKey, scope: username ? "user" : "device", email, tier, admin };
+  return { ...ctx, username, ownerKey, scope: username ? "user" : "device", email, tier, admin, accountId: String(payload.sub) };
 }
 
 // Back-compat aliases (some routes/patterns use these names)

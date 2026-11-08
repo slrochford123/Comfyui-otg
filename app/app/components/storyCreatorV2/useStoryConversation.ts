@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { StoryConversationTurn, StoryCreatorMessage } from "@/lib/storyCreator/store";
+import {selectedAssistantProvider} from "../AssistantProviderPicker";
 
 type Snapshot = { turn: StoryConversationTurn | null; message: StoryCreatorMessage | null };
 const pending = (turn: StoryConversationTurn | null) => Boolean(turn && ["queued", "running"].includes(turn.status));
@@ -77,7 +78,7 @@ export function useStoryConversation(input: {
     try {
       const response = await fetch("/api/story-creator/turns", { method: "POST", cache: "no-store",
         credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, sourceMessageId, ...options }) });
+        body: JSON.stringify({ projectId, sourceMessageId, ...options,aiProvider:selectedAssistantProvider("story:"+input.ownerKey+":"+projectId) }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not start the saved reply.");
       if (projectRef.current === projectId) { setTurn(data.turn); wakeRef.current(); }
@@ -89,7 +90,7 @@ export function useStoryConversation(input: {
       }
       throw error;
     }
-  }, [input.projectId, refresh]);
+  }, [input.projectId, input.ownerKey, refresh]);
 
   const cancel = useCallback(async () => {
     if (!turn || !pending(turn)) return;

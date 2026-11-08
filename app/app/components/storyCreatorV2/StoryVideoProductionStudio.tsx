@@ -1,5 +1,7 @@
 "use client";
 
+import { StoryMediaPreview } from "./StoryPreview";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { StoryProductionPlanRecord } from "@/lib/storyCreator/productionPlan";
@@ -350,7 +352,7 @@ export function StoryVideoProductionStudio({ projectId, record, mode }: Props) {
             <article key={take.id} className="min-w-0 rounded-lg border border-white/10 bg-white/[0.03] p-4">
               <div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-sm text-white">Take {take.takeNumber}</strong><span className="rounded-md border border-white/10 px-2 py-1 text-[10px] font-black uppercase text-white/55">{take.status}</span></div>
               <div className="mt-2 text-xs text-white/45">{methodLabels[take.method]} · {take.settings.durationSeconds}s · {take.settings.quality.toUpperCase()} · seed {take.settings.seed}</div>
-              {take.previewUrl ? <video controls preload="metadata" src={take.previewUrl} className="mt-3 aspect-video w-full bg-black" /> : null}
+              {take.previewUrl ? <StoryMediaPreview kind="video" title={`Take ${take.takeNumber}`} src={take.previewUrl} className="mt-3 aspect-video w-full bg-black" /> : null}
               {take.error ? <p className="mt-2 text-xs leading-5 text-red-200">{take.error}</p> : null}
               <div className="mt-3 flex flex-wrap gap-2">
                 {["completed", "accepted", "rejected"].includes(take.status) ? <button type="button" onClick={() => void action({ action: "accept-take", takeId: take.id }, "decision")} className="min-h-10 rounded-md bg-emerald-300 px-3 text-xs font-black text-black">Keep</button> : null}

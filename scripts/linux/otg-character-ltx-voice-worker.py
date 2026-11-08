@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Linux LTX character voice worker for ComfyUI-OTG TEST.
+"""Linux LTX character voice worker with bounded primary-only PROD routing.
 
 Claims only durable character voice jobs with:
   jobType=character_voice_pipeline
@@ -9,26 +9,32 @@ Claims only durable character voice jobs with:
 The worker uses the Linux RTX 3090 ComfyUI endpoint, validates the workflow
 against /object_info before claiming, patches the installed official full LTX 2.3
 checkpoint into the model, audio-VAE, and text-projection loaders, renders a
-deliberately low-resolution visual carrier, copies node 384 MP3 output, uploads
-the sample, and completes the durable job.
+deliberately low-resolution visual carrier, downloads node384 FLAC and converts
+it to real PCM WAV, uploads the sample, and completes the durable job. Unknown
+ownership remains fenced in a private client journal; it is never replayed.
 """
 
 from __future__ import annotations
 
 import argparse
+import copy
 import fcntl
+import hashlib
 import json
+import math
 import mimetypes
 import os
 import random
 import subprocess
 import threading
+import tempfile
 import time
 import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import wave
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
@@ -39,6 +45,76 @@ class WorkerError(RuntimeError):
 
 class SubmissionUnknownError(WorkerError):
     pass
+
+
+class WorkerHTTPError(WorkerError):
+    def __init__(self, status: int, url: str, body: Any):
+        self.status, self.body = status, body if isinstance(body, dict) else {}
+        # Never echo credential-bearing response bodies or headers to journald.
+        super().__init__(f"HTTP {status} {urllib.parse.urlsplit(url).path}")
+
+
+class AdmissionBusyError(WorkerError):
+    pass
+
+
+class OwnershipJournal:
+    """Client-side crash fence, not a second admission authority.
+
+    No automatic recovery/expiry: an uncertain claim, grant or submit requires
+    reconciliation with the app and the existing protocol-2 authority.
+    """
+    def __init__(self, path: Path):
+        self.path = path
+        self.lock = None
+        self.state: Dict[str, Any] = {}
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        st = self.path.parent.stat()
+        if self.path.parent.is_symlink() or st.st_uid != os.getuid() or st.st_mode & 0o077:
+            raise WorkerError("LTX journal directory must be private and owned by the worker.")
+        fd = os.open(str(self.path) + ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        self.lock = os.fdopen(fd, "a+")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if self.path.exists():
+                if self.path.is_symlink() or self.path.stat().st_mode & 0o077:
+                    raise WorkerError("Untrusted LTX ownership journal.")
+                self.state = json.loads(self.path.read_text())
+                if not isinstance(self.state, dict) or self.state.get("phase") != "settled":
+                    raise WorkerError("LTX ownership needs manual reconciliation; no job will be claimed.")
+        except BaseException:
+            self.lock.close()
+            raise
+        return self
+
+    def write(self, phase: str, **fields: Any) -> None:
+        self.state.update(fields)
+        self.state.update(phase=phase, updatedAt=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        fd, name = tempfile.mkstemp(prefix=".ltx-state-", dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "w") as out:
+                json.dump(self.state, out, sort_keys=True)
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(name, self.path)
+            directory = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
+
+    def __exit__(self, *_):
+        if self.lock is not None:
+            self.lock.close()
+
+
+def journal_phase(args: argparse.Namespace, phase: str, **fields: Any) -> None:
+    args.ownership_journal.write(phase, **fields)
 
 
 LTX_VOICE_NEGATIVE_PROMPT = (
@@ -60,6 +136,12 @@ UPSCALER_CANDIDATES = (
     "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
 )
 TEXT_ENCODER_DEVICE = "default"
+PRIMARY_GPU_UUID = "GPU-c5d34248-3562-c0e1-5fa6-5e10849a72b3"
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_args, **_kwargs):
+        return None
 
 def clean(value: Any) -> str:
     return str(value or "").strip()
@@ -83,12 +165,16 @@ def request_json(
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=timeout) as response:
             raw = response.read().decode("utf-8", errors="replace")
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as error:
         body = error.read().decode("utf-8", errors="replace")
-        raise WorkerError(f"HTTP {error.code} {url}: {body}") from error
+        try:
+            body = json.loads(body)
+        except ValueError:
+            body = {}
+        raise WorkerHTTPError(error.code, url, body) from error
     except urllib.error.URLError as error:
         raise WorkerError(f"Could not reach {url}: {error}") from error
 
@@ -251,8 +337,8 @@ def choose_option(options: Iterable[str], candidates: Iterable[str], label: str)
     )
 
 
-def resolve_runtime_contract(args: argparse.Namespace, graph: Dict[str, Any]) -> Dict[str, str]:
-    object_info = request_json(
+def resolve_runtime_contract(args: argparse.Namespace, graph: Dict[str, Any], object_info=None) -> Dict[str, str]:
+    object_info = object_info if object_info is not None else request_json(
         "GET",
         build_url(args.comfy_url, "/object_info"),
         {"content-type": "application/json"},
@@ -321,6 +407,171 @@ def resolve_runtime_contract(args: argparse.Namespace, graph: Dict[str, Any]) ->
     )
     return contract
 
+
+def validate_graph_schema(graph: Dict[str, Any], schema: Dict[str, Any]) -> Dict[str, int]:
+    """Read-only API-graph checks, including this graph's V3 dynamic inputs.
+
+    This is NOT Comfy execution/VRAM qualification and never POSTs /prompt.
+    Unknown schema constructs fail closed instead of treating them as valid.
+    """
+    definitions, required = {}, {}
+    links = enums = 0
+    for node_id, entry in graph.items():
+        if not isinstance(entry, dict) or entry.get("class_type") not in schema:
+            raise WorkerError(f"Unknown graph node {node_id}")
+        ins = entry.get("inputs", {})
+        definitions[node_id], required[node_id] = {}, set()
+
+        def expand(groups, prefix=""):
+            for group in ("required", "optional"):
+                for name, definition in groups.get(group, {}).items():
+                    key = prefix + name
+                    kind = definition[0]
+                    options = definition[1] if len(definition) > 1 else {}
+                    if kind == "COMFY_AUTOGROW_V3":
+                        template = options["template"]
+                        names = template["names"]
+                        sub = template["input"]["required"]
+                        if len(sub) != 1:
+                            raise WorkerError("Unqualified autogrow schema")
+                        present = [k for k in ins if k.startswith(key + ".")]
+                        if len(present) < template.get("min", 0):
+                            raise WorkerError(f"Missing autogrow inputs {node_id}:{key}")
+                        for child in present:
+                            if child[len(key) + 1:] not in names:
+                                raise WorkerError(f"Unknown autogrow input {node_id}:{child}")
+                            definitions[node_id][child] = next(iter(sub.values()))
+                        continue
+                    definitions[node_id][key] = definition
+                    if group == "required":
+                        required[node_id].add(key)
+                    if kind == "COMFY_DYNAMICCOMBO_V3":
+                        selected = next((o for o in options["options"] if o["key"] == ins.get(key)), None)
+                        if not selected:
+                            raise WorkerError(f"Invalid dynamic enum {node_id}:{key}")
+                        definitions[node_id][key] = [[o["key"] for o in options["options"]]]
+                        expand(selected["inputs"], key + ".")
+        expand(schema[entry["class_type"]]["input"])
+        if required[node_id] - ins.keys() or ins.keys() - definitions[node_id].keys():
+            raise WorkerError(f"Graph inputs differ from schema at node {node_id}")
+
+    def output_type(source, index, seen=None):
+        seen = set() if seen is None else seen
+        if source in seen:
+            raise WorkerError("Cyclic match-type graph")
+        seen.add(source)
+        if source not in graph or type(index) is not int or index < 0:
+            raise WorkerError("Invalid graph link source/index")
+        info = schema[graph[source]["class_type"]]
+        outputs = info.get("output", [])
+        if index >= len(outputs):
+            raise WorkerError("Graph link output index out of range")
+        kind = outputs[index]
+        if kind == "COMFY_MATCHTYPE_V3":
+            matches = [k for k, d in definitions[source].items() if d[0] == "COMFY_MATCHTYPE_V3"]
+            if len(matches) != 1:
+                raise WorkerError("Unqualified match-type output")
+            ref = graph[source]["inputs"][matches[0]]
+            if not isinstance(ref, list) or len(ref) != 2:
+                raise WorkerError("Match-type input must link")
+            return output_type(str(ref[0]), ref[1], seen)
+        return kind
+
+    edges = {n: [] for n in graph}
+    for node_id, entry in graph.items():
+        for key, value in entry["inputs"].items():
+            definition = definitions[node_id][key]
+            kind, options = definition[0], definition[1] if len(definition) > 1 else {}
+            enum = kind if isinstance(kind, list) else options.get("options") if kind == "COMBO" else None
+            if isinstance(value, list):
+                if len(value) != 2:
+                    raise WorkerError(f"Invalid link at {node_id}:{key}")
+                source, index = str(value[0]), value[1]
+                actual = output_type(source, index)
+                accepted = options["template"]["allowed_types"] if kind == "COMFY_MATCHTYPE_V3" else kind
+                if enum is not None or not isinstance(accepted, str) or actual not in accepted.split(","):
+                    raise WorkerError(f"Graph link type mismatch at {node_id}:{key}: {actual} -> {accepted}")
+                edges[node_id].append(source)
+                links += 1
+            elif enum is not None:
+                if value not in enum:
+                    raise WorkerError(f"Invalid enum at {node_id}:{key}")
+                enums += 1
+            else:
+                valid = {"INT": type(value) is int, "FLOAT": type(value) in (float, int),
+                         "STRING": isinstance(value, str), "BOOLEAN": type(value) is bool}
+                if not isinstance(kind, str) or not any(valid.get(k, False) for k in kind.split(",")):
+                    raise WorkerError(f"Invalid literal at {node_id}:{key}")
+                if type(value) in (float, int):
+                    if not math.isfinite(value) or value < options.get("min", -math.inf) or value > options.get("max", math.inf):
+                        raise WorkerError(f"Literal out of range at {node_id}:{key}")
+    visited, visiting = set(), set()
+    def visit(n):
+        if n in visiting:
+            raise WorkerError("Cyclic workflow graph")
+        if n not in visited:
+            visiting.add(n)
+            for source in edges[n]:
+                visit(source)
+            visiting.remove(n)
+            visited.add(n)
+    for n in graph:
+        visit(n)
+    return {"nodes": len(graph), "links": links, "enums": enums}
+
+
+def verify_qualification_manifest(args: argparse.Namespace) -> None:
+    path = Path(args.qualification_manifest)
+    if not path.is_file() or path.is_symlink() or path.stat().st_mode & 0o022 or path.stat().st_uid not in (0, os.getuid()):
+        raise WorkerError("Missing or untrusted LTX qualification manifest")
+    manifest = json.loads(path.read_text())
+    if manifest.get("schema") != 1 or manifest.get("primary") != args.comfy_url:
+        raise WorkerError("LTX qualification manifest is not for this primary")
+    for item in manifest["bundle"]:
+        file = path.parent / item["path"]
+        if ".." in Path(item["path"]).parts or Path(item["path"]).is_absolute():
+            raise WorkerError("Invalid bundle path")
+        if not file.is_file() or hashlib.sha256(file.read_bytes()).hexdigest() != item["sha256"]:
+            raise WorkerError("LTX pinned dependency changed")
+    workflow = path.parent / manifest["workflow"]
+    if workflow.resolve() != Path(args.workflow_path).resolve():
+        raise WorkerError("LTX workflow differs from qualified bundle")
+    for item in manifest["models"]:
+        model = Path(item["path"])
+        st = model.stat()
+        if str(model.resolve()) != item["canonical"] or st.st_size != item["size"] or st.st_mtime_ns != item["mtime_ns"]:
+            raise WorkerError("LTX qualified model file changed")
+        with model.open("rb") as stream:
+            if hashlib.sha256(stream.read(item["header_bytes"])).hexdigest() != item["header_sha256"]:
+                raise WorkerError("LTX model header changed")
+    converter = manifest.get("audio_converter", {})
+    if converter.get("path") != "/usr/bin/ffmpeg" or hashlib.sha256(Path("/usr/bin/ffmpeg").read_bytes()).hexdigest() != converter.get("sha256"):
+        raise WorkerError("Qualified CPU audio converter is missing or changed")
+
+
+def preclaim_qualification(args: argparse.Namespace):
+    flag = getattr(args, "fallback_setting", None)
+    if flag not in (None, "0", "1"):
+        raise WorkerError("OTG_LTX_5060_FALLBACK_ENABLED must be exactly 0 or 1")
+    args.fallback_enabled = flag == "1"
+    if "prod" in args.worker_id.lower() and flag != "0":
+        raise WorkerError("PROD LTX requires explicit OTG_LTX_5060_FALLBACK_ENABLED=0")
+    if "prod" in args.worker_id.lower() and args.base_url != "http://127.0.0.1:3030":
+        raise WorkerError("PROD LTX requires the managed private loopback forward")
+    verify_qualification_manifest(args)
+    health = request_json("GET", build_url(args.base_url, "/api/healthz"), {}, timeout=10)
+    status = request_json("GET", build_url(args.base_url, "/api/worker-control/status"), auth_headers(args), timeout=15)
+    if health.get("ok") is not True or status.get("ok") is not True or status.get("enabled") is not True:
+        raise WorkerError("App health or authenticated worker control unavailable")
+    graph = load_workflow(Path(args.workflow_path))
+    schema = request_json("GET", build_url(args.comfy_url, "/object_info"), {}, timeout=30)
+    contract = resolve_runtime_contract(args, graph, schema)
+    patched = copy.deepcopy(graph)
+    patch_workflow(patched, "Qualification only; not submitted.", "audio/qualification-only", 42, contract,
+                   args.carrier_width, args.carrier_height, args.duration_seconds)
+    validate_graph_schema(patched, schema)
+    return graph, contract
+
 def patch_workflow(
     graph: Dict[str, Any],
     prompt: str,
@@ -369,7 +620,9 @@ def patch_workflow(
 
     save_audio = node(graph, "384")
     save_audio["class_type"] = "SaveAudio"
-    save_audio["_meta"] = {"title": "Save Audio (WAV)"}
+    # Current ComfyUI SaveAudio emits FLAC. The worker converts that container
+    # to real PCM WAV after download; never rename FLAC bytes with a .wav suffix.
+    save_audio["_meta"] = {"title": "Save Audio (FLAC; worker converts to WAV)"}
     save_audio["inputs"] = {"filename_prefix": filename_prefix, "audio": save_audio.get("inputs", {}).get("audio", ["354", 0])}
     if save_audio["inputs"].get("audio") != ["354", 0]:
         save_audio["inputs"]["audio"] = ["354", 0]
@@ -442,7 +695,7 @@ def query_free_vram_mib() -> int | None:
                 "nvidia-smi",
                 "--query-gpu=memory.free",
                 "--format=csv,noheader,nounits",
-                "--id=0",
+                f"--id={PRIMARY_GPU_UUID}",
             ],
             text=True,
             timeout=15,
@@ -611,11 +864,43 @@ def copy_comfy_audio(args: argparse.Namespace, audio: Dict[str, str], output_pat
         timeout=args.comfy_timeout_seconds,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(data)
+    persist_audio_as_wav(data, output_path)
     if output_path.stat().st_size < 1024:
         raise WorkerError(
             f"LTX voice audio output is too small to be usable: {output_path.stat().st_size} bytes."
         )
+
+
+def persist_audio_as_wav(data: bytes, output_path: Path) -> None:
+    """CPU-only container conversion; no models, CUDA or generated speech."""
+    if output_path.suffix.lower() != ".wav":
+        raise WorkerError("LTX sample destination must be WAV")
+    if data.startswith(b"RIFF") and data[8:12] == b"WAVE":
+        output_path.write_bytes(data)
+    elif data.startswith(b"fLaC"):
+        source = output_path.with_suffix(".source.flac")
+        source.write_bytes(data)  # Retain the authentic Comfy output for recovery.
+        fd, temporary = tempfile.mkstemp(prefix=".ltx-pcm-", suffix=".wav", dir=output_path.parent)
+        os.close(fd)
+        try:
+            result = subprocess.run(["/usr/bin/ffmpeg", "-nostdin", "-hide_banner", "-v", "error",
+                "-y", "-i", str(source), "-map", "0:a:0", "-vn", "-c:a", "pcm_s16le", temporary],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+            if result.returncode:
+                raise WorkerError("LTX FLAC-to-WAV conversion failed; original FLAC retained")
+            with wave.open(temporary, "rb") as stream:
+                if stream.getnframes() < 1 or stream.getcomptype() != "NONE":
+                    raise WorkerError("LTX conversion did not produce PCM WAV")
+            os.replace(temporary, output_path)
+        finally:
+            if os.path.exists(temporary):os.unlink(temporary)
+    else:
+        raise WorkerError("LTX node384 output is not qualified FLAC/WAV; refusing mislabeled upload")
+    try:
+        with wave.open(str(output_path), "rb") as stream:
+            if stream.getnframes() < 1:raise WorkerError("Empty LTX WAV sample")
+    except (wave.Error, EOFError) as error:
+        raise WorkerError("Invalid LTX WAV sample") from error
 
 
 def multipart_post(
@@ -633,7 +918,7 @@ def multipart_post(
         body.extend(f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode("utf-8"))
         body.extend(str(value).encode("utf-8"))
         body.extend(b"\r\n")
-    mime = mimetypes.guess_type(str(file_path))[0] or "audio/mpeg"
+    mime = "audio/wav" if file_path.suffix.lower() == ".wav" else mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
     body.extend(f"--{boundary}\r\n".encode("utf-8"))
     body.extend(
         f'Content-Disposition: form-data; name="{file_field}"; filename="{file_path.name}"\r\n'.encode(
@@ -970,6 +1255,31 @@ def acquire_cluster_gpu_lease(
     lock_id: str,
     resource_name: str,
 ) -> Dict[str, Any]:
+    journal_phase(args, "admitting", jobId=job_id, lockId=lock_id)
+    try:
+        return _acquire_cluster_gpu_lease(args, job_id, lock_id, resource_name)
+    except WorkerHTTPError as error:
+        if error.status != 409:
+            raise SubmissionUnknownError("GPU admission outcome unconfirmed; reconcile before retry") from error
+        # A waiting token cancels only an ungranted ticket. A race to a grant
+        # returns 409 and MUST leave the journal fenced instead of guessing.
+        detail = error.body.get("detail") or {}
+        token = detail.get("waitingToken") if isinstance(detail, dict) else None
+        if token:
+            journal_phase(args, "canceling_wait", waitingToken=token)
+            try:
+                release_cluster_gpu_lease(args, job_id, {"lockId": lock_id, "fencingToken": token})
+            except Exception as uncertain:
+                raise SubmissionUnknownError("Waiting ownership is unconfirmed") from uncertain
+        journal_phase(args, "pre_submit", lease=None)
+        raise AdmissionBusyError("primary-resource-locked") from error
+    except SubmissionUnknownError:
+        raise
+    except Exception as error:
+        raise SubmissionUnknownError("GPU admission outcome unconfirmed; reconcile before retry") from error
+
+
+def _acquire_cluster_gpu_lease(args, job_id, lock_id, resource_name):
     response = request_json(
         "POST",
         build_url(args.base_url, "/api/worker-control/resource-lock/acquire"),
@@ -979,16 +1289,18 @@ def acquire_cluster_gpu_lease(
             "ownerId": job_id,
             "workerId": args.worker_id,
             "resourceName": resource_name,
-            # Safety backstop if the app/control-plane heartbeat channel is
-            # interrupted after 8191 submission. Normal cleanup releases this
-            # immediately; expiry must never race a still-running LTX job.
+            # Protocol-2 ownership is persistent; this legacy TTL field never
+            # authorizes expiry/replay of an uncertain or running generation.
             "ttlSeconds": 21600,
         },
         timeout=args.app_timeout_seconds,
     )
     lease = response.get("lock")
-    if not isinstance(lease, dict) or not clean(lease.get("fencingToken")):
-        raise WorkerError(f"Cluster GPU resource lease {lock_id} is unavailable.")
+    if (not isinstance(lease, dict) or not clean(lease.get("fencingToken"))
+            or lease.get("lockId") != lock_id or lease.get("ownerId") != job_id
+            or lease.get("workerId") != args.worker_id or lease.get("persistent") is not True):
+        raise SubmissionUnknownError("GPU response is not this worker's persistent fenced reservation")
+    journal_phase(args, "pre_submit", lease=lease)
     return lease
 
 
@@ -1008,13 +1320,15 @@ def heartbeat_cluster_gpu_lease(args: argparse.Namespace, job_id: str, lease: Di
 
 
 def release_cluster_gpu_lease(args: argparse.Namespace, job_id: str, lease: Dict[str, Any]) -> None:
-    request_json(
+    response = request_json(
         "POST",
         build_url(args.base_url, "/api/worker-control/resource-lock/release"),
         auth_headers(args),
         {"lockId": lease["lockId"], "ownerId": job_id, "fencingToken": lease["fencingToken"]},
         timeout=args.app_timeout_seconds,
     )
+    if response.get("released") is not True:
+        raise SubmissionUnknownError("GPU release was not confirmed")
 
 
 def lease_heartbeat_loop(
@@ -1031,6 +1345,8 @@ def lease_heartbeat_loop(
 
 
 def enqueue_lifecycle(args: argparse.Namespace, action: str, job_id: str) -> str:
+    if not getattr(args, "fallback_enabled", False):
+        raise WorkerError("8191 fallback is disabled; lifecycle actions forbidden")
     response = request_json(
         "POST",
         build_url(args.base_url, "/api/worker-control/enqueue"),
@@ -1154,7 +1470,7 @@ def fail_claimed_job(
     error: Exception,
     metadata: Dict[str, Any],
 ) -> None:
-    request_json(
+    response = request_json(
         "POST",
         build_url(args.base_url, "/api/worker/jobs/fail"),
         auth_headers(args, owner_key),
@@ -1174,6 +1490,8 @@ def fail_claimed_job(
         },
         timeout=args.app_timeout_seconds,
     )
+    if response.get("ok") is not True:
+        raise SubmissionUnknownError("Job failure update was not confirmed")
 
 
 def requeue_claimed_job(
@@ -1183,7 +1501,7 @@ def requeue_claimed_job(
     message: str,
     result: Dict[str, Any] | None = None,
 ) -> None:
-    request_json(
+    response = request_json(
         "POST",
         build_url(args.base_url, "/api/worker/jobs/requeue"),
         auth_headers(args, owner_key),
@@ -1194,6 +1512,8 @@ def requeue_claimed_job(
         },
         timeout=args.app_timeout_seconds,
     )
+    if response.get("ok") is not True:
+        raise SubmissionUnknownError("Job requeue was not confirmed")
 
 
 def retryable_pre_submit_failure(
@@ -1218,6 +1538,7 @@ def retryable_pre_submit_failure(
     text = str(error).lower()
 
     retry_tokens = (
+        "primary-unreachable-or-not-ready",
         "primary-busy",
         "primary-resource-locked",
         "is busy",
@@ -1265,6 +1586,7 @@ def process_claimed_ltx25_voice_creator(
                 "queueKind": "ltx25_voice_creator",
             },
         )
+        journal_phase(args, "settled", lease=None)
         return 1
 
     headers = auth_headers(args, owner_key)
@@ -1277,6 +1599,7 @@ def process_claimed_ltx25_voice_creator(
     )
 
     try:
+        journal_phase(args, "creator_submitting", jobId=job_id, ownerKey=owner_key)
         result = request_json(
             "POST",
             build_url(args.base_url, "/api/voices/creator"),
@@ -1304,6 +1627,7 @@ def process_claimed_ltx25_voice_creator(
             }
         )
 
+        journal_phase(args, "creator_finalizing")
         complete = request_json(
             "POST",
             build_url(
@@ -1325,28 +1649,15 @@ def process_claimed_ltx25_voice_creator(
             f"[creator-complete] job={job_id} "
             f"{json.dumps(complete, indent=2)}"
         )
+        if complete.get("ok") is not True:
+            raise SubmissionUnknownError("Creator finalization was not confirmed")
+        journal_phase(args, "settled", lease=None)
         return 0
 
     except Exception as error:
         text = str(error)
-        lower = text.lower()
-
-        retryable = (
-            "retryable" in lower
-            or (
-                "409" in lower
-                and any(
-                    token in lower
-                    for token in (
-                        "busy",
-                        "occupied",
-                        "locked",
-                        "resource",
-                        "unavailable",
-                    )
-                )
-            )
-        )
+        retryable = (isinstance(error, WorkerHTTPError) and error.status == 409
+                     and error.body.get("retryable") is True and error.body.get("submitted") is False)
 
         if retryable:
             message = (
@@ -1370,6 +1681,7 @@ def process_claimed_ltx25_voice_creator(
             log(
                 f"[creator-requeue] job={job_id}: {message}"
             )
+            journal_phase(args, "settled", lease=None)
             return 0
 
         log(
@@ -1377,22 +1689,25 @@ def process_claimed_ltx25_voice_creator(
             f"{text}\n{traceback.format_exc()}"
         )
 
-        fail_claimed_job(
-            args,
-            owner_key,
-            job_id,
-            "ltx",
-            error,
-            {
-                "preferredGpu": "3090",
-                "submissionState": "failed",
-                "queueKind": "ltx25_voice_creator",
-            },
-        )
+        journal_phase(args, "submission_unknown")
+        checkpoint(args, auth_headers(args, owner_key), job_id, 40,
+                   "Creator response is unconfirmed; manual reconciliation required, no automatic retry.",
+                   {"submissionState": "submission_unknown", "queueKind": "ltx25_voice_creator"})
         return 1
 
 
 def process_one_failover(args: argparse.Namespace) -> int:
+    try:
+        with OwnershipJournal(Path(args.ownership_state)) as journal:
+            args.ownership_journal = journal
+            graph, contract = preclaim_qualification(args)
+            return _process_one_failover(args, graph, contract)
+    except Exception as error:
+        log(f"[blocked] LTX pre-claim safety gate: {error}")
+        return 1
+
+
+def _process_one_failover(args, qualified_graph, qualified_contract) -> int:
     job_id = ""
     owner_key = ""
     provider = "ltx"
@@ -1412,6 +1727,7 @@ def process_one_failover(args: argparse.Namespace) -> int:
         "submissionState": "pre_submit",
     }
     try:
+        journal_phase(args, "claiming", lease=None, jobId=None, ownerKey=None, workerId=args.worker_id)
         claim = request_json(
             "POST",
             build_url(args.base_url, "/api/worker/jobs/claim"),
@@ -1420,7 +1736,10 @@ def process_one_failover(args: argparse.Namespace) -> int:
             timeout=args.app_timeout_seconds,
         )
         job = claim.get("job")
+        if claim.get("ok") is not True:
+            raise SubmissionUnknownError("Claim response is unconfirmed")
         if not isinstance(job, dict):
+            journal_phase(args, "settled", lease=None)
             log("[idle] No queued LTX create_voice_sample job available.")
             return 0
 
@@ -1431,6 +1750,7 @@ def process_one_failover(args: argparse.Namespace) -> int:
         provider = clean(job_input.get("provider")).lower()
         if provider not in ("ltx", "unnatural_ltx") or not job_id or not owner_key or not character_id:
             raise WorkerError(f"Invalid claimed LTX voice job: {job}")
+        journal_phase(args, "claimed", jobId=job_id, ownerKey=owner_key)
 
         if clean(job_input.get("queueKind")) == "ltx25_voice_creator":
             return process_claimed_ltx25_voice_creator(
@@ -1454,33 +1774,47 @@ def process_one_failover(args: argparse.Namespace) -> int:
         checkpoint(args, headers, job_id, 10, "LTX failover worker claimed the voice job.", {**metadata, "provider": provider, "adapter": adapter, "currentStage": "claimed"})
 
         primary_failure = ""
-        primary_graph = None
-        primary_contract = None
+        primary_graph = qualified_graph
+        primary_contract = qualified_contract
         try:
             request_json("GET", build_url(args.comfy_url, "/system_stats"), {}, None, timeout=10)
-            primary_graph = load_workflow(Path(args.workflow_path))
-            primary_contract = resolve_runtime_contract(args, primary_graph)
-            try:
-                active_gpu_lease = acquire_cluster_gpu_lease(
-                    args, job_id, "gpu:shawn-3090", "video"
-                )
-            except Exception as error:
-                raise WorkerError("primary-resource-locked") from error
+            active_gpu_lease = acquire_cluster_gpu_lease(args, job_id, "gpu:shawn-3090", "video")
             queue = request_json("GET", build_url(args.comfy_url, "/queue"), {}, None, timeout=10)
             running, pending = queue_counts(queue)
             if running or pending:
                 raise WorkerError("primary-busy")
+            for queue_key in ("queue_running", "queue_pending"):
+                if not isinstance(queue.get(queue_key), list):
+                    raise WorkerError("primary-unreachable-or-not-ready")
+            sibling = request_json("GET", "http://100.75.162.64:8189/queue", {}, timeout=10)
+            if any(not isinstance(sibling.get(k), list) for k in ("queue_running", "queue_pending")):
+                raise WorkerError("primary-unreachable-or-not-ready")
+            if any(queue_counts(sibling)):
+                raise WorkerError("primary-busy")
 
             require_primary_vram_ready(args)
+        except SubmissionUnknownError:
+            metadata["submissionState"] = "admission_unknown"
+            raise
         except Exception as error:
             primary_failure = clean(error)
             if "primary-resource-locked" not in primary_failure and "primary-busy" not in primary_failure:
                 primary_failure = "primary-unreachable-or-not-ready"
             if active_gpu_lease is not None:
-                release_cluster_gpu_lease(args, job_id, active_gpu_lease)
+                journal_phase(args, "releasing", lease=active_gpu_lease)
+                try:
+                    release_cluster_gpu_lease(args, job_id, active_gpu_lease)
+                except Exception as uncertain:
+                    metadata["submissionState"] = "release_unknown"
+                    raise SubmissionUnknownError("Pre-submit GPU release is unconfirmed") from uncertain
                 active_gpu_lease = None
+                journal_phase(args, "pre_submit", lease=None)
 
         using_fallback = bool(primary_failure)
+        if using_fallback and not args.fallback_enabled:
+            metadata.update(fallbackReason=primary_failure, fallbackDisabled=True)
+            # No 5060 lease, workflow load, 8191 probe or lifecycle command.
+            raise WorkerError(primary_failure)
         if using_fallback:
             metadata.update({"actualGpu": "5060-ti", "backend": "fallback", "fallbackReason": primary_failure, "backendEndpoint": args.fallback_comfy_url, "backendService": "otg-character-ltx-audio-5060-3003.service"})
             checkpoint(args, headers, job_id, 18, "Primary unavailable before submission; preparing RTX 5060 Ti fallback.", metadata)
@@ -1505,7 +1839,7 @@ def process_one_failover(args: argparse.Namespace) -> int:
             heartbeat_thread = threading.Thread(target=lease_heartbeat_loop, args=(args, job_id, active_gpu_lease, heartbeat_stop), daemon=True)
             heartbeat_thread.start()
             metadata.update({"actualGpu": "3090", "backend": "primary", "fallbackReason": None, "backendEndpoint": args.comfy_url, "backendService": "otg-comfyui.service"})
-            graph = load_workflow(Path(args.workflow_path))
+            graph = copy.deepcopy(primary_graph)
             patch_workflow(graph, prompt, filename_prefix, seed, primary_contract, args.carrier_width, args.carrier_height, args.duration_seconds)
             patched_workflow_path = work_dir / "ltx_voice_workflow_patched.json"
             write_json(patched_workflow_path, graph)
@@ -1516,15 +1850,16 @@ def process_one_failover(args: argparse.Namespace) -> int:
 
         checkpoint(args, headers, job_id, 28, "LTX workflow validated before submission.", {**metadata, "currentStage": "workflow_patched", "patchedWorkflowPath": str(patched_workflow_path)})
         try:
+            journal_phase(args, "submitting", lease=active_gpu_lease, backend=active_args.comfy_url)
+            metadata["submissionState"] = "submitting"
             prompt_id = submit_comfy(active_args, graph)
         except Exception as error:
-            if not using_fallback:
-                metadata["submissionState"] = "submission_unknown"
-                checkpoint(args, headers, job_id, 40, "Primary submission outcome is unknown; fallback forbidden.", metadata)
-                raise SubmissionUnknownError(str(error)) from error
-            metadata["submissionState"] = "failed"
-            raise
+            metadata["submissionState"] = "submission_unknown"
+            journal_phase(args, "submission_unknown")
+            checkpoint(args, headers, job_id, 40, "Submission outcome is unknown; retry and fallback forbidden.", metadata)
+            raise SubmissionUnknownError(str(error)) from error
         metadata.update({"submissionId": prompt_id, "promptId": prompt_id, "submissionState": "submitted"})
+        journal_phase(args, "submitted", promptId=prompt_id)
         checkpoint(args, headers, job_id, 40, "LTX prompt submitted exactly once.", {**metadata, "currentStage": "submitted"})
 
         history = history_for_prompt(active_args, prompt_id, headers, job_id)
@@ -1543,12 +1878,24 @@ def process_one_failover(args: argparse.Namespace) -> int:
             "comfyPromptId": prompt_id, "comfyBaseUrl": active_args.comfy_url, "outputNodeId": output_node,
         }
         result["submissionState"] = "completed"
-        request_json("POST", build_url(args.base_url, "/api/worker/jobs/complete"), headers, {"jobId": job_id, "result": result, "message": "Linux LTX character voice sample completed."}, timeout=args.app_timeout_seconds)
+        journal_phase(args, "finalizing")
+        complete = request_json("POST", build_url(args.base_url, "/api/worker/jobs/complete"), headers, {"jobId": job_id, "result": result, "message": "Linux LTX character voice sample completed."}, timeout=args.app_timeout_seconds)
+        if complete.get("ok") is not True:
+            raise SubmissionUnknownError("Job finalization was not confirmed")
         metadata["submissionState"] = "completed"
         log(f"[complete] job={job_id} backend={metadata['backend']} prompt={prompt_id}")
         return 0
     except Exception as error:
         log(f"[error] {error}\n{traceback.format_exc()}")
+
+        if (isinstance(error, SubmissionUnknownError) or metadata["submissionState"] != "pre_submit"
+                or args.ownership_journal.state.get("phase") in ("claiming", "admitting", "canceling_wait", "releasing")):
+            metadata["submissionState"] = "submission_unknown"
+            journal_phase(args, "submission_unknown")
+            if job_id and owner_key:
+                checkpoint(args, auth_headers(args, owner_key), job_id, 40,
+                           "Ownership or execution is unconfirmed; retained for manual reconciliation.", metadata)
+            return 1
 
         if (
             job_id
@@ -1576,6 +1923,8 @@ def process_one_failover(args: argparse.Namespace) -> int:
                 log(
                     f"[requeue] job={job_id}: {message}"
                 )
+                if active_gpu_lease is None:
+                    journal_phase(args, "settled", lease=None)
                 return 0
 
             except Exception as requeue_error:
@@ -1583,6 +1932,9 @@ def process_one_failover(args: argparse.Namespace) -> int:
                     "[warn] Could not immediately requeue "
                     f"LTX job: {requeue_error}"
                 )
+                journal_phase(args, "requeue_unknown")
+                metadata["submissionState"] = "submission_unknown"
+                return 1
 
         if job_id and owner_key:
             if metadata.get("submissionState") != "submission_unknown":
@@ -1597,6 +1949,8 @@ def process_one_failover(args: argparse.Namespace) -> int:
                     error,
                     metadata,
                 )
+                if active_gpu_lease is None:
+                    journal_phase(args, "settled", lease=None)
             except Exception as fail_error:
                 log(
                     f"[warn] Could not mark LTX job failed: "
@@ -1610,12 +1964,17 @@ def process_one_failover(args: argparse.Namespace) -> int:
             if heartbeat_thread is not None:
                 heartbeat_thread.join(timeout=2)
             try:
-                released_lock_id = clean(active_gpu_lease.get("lockId"))
-                release_cluster_gpu_lease(args, job_id, active_gpu_lease)
-                log(f"[gpu-lock] Released {released_lock_id} after output persistence and job finalization.")
+                if metadata["submissionState"] not in ("pre_submit", "completed", "failed"):
+                    log("[fenced] Retaining cluster GPU lease; no retry/release after uncertain execution.")
+                else:
+                    journal_phase(args, "releasing", lease=active_gpu_lease)
+                    released_lock_id = clean(active_gpu_lease.get("lockId"))
+                    release_cluster_gpu_lease(args, job_id, active_gpu_lease)
+                    journal_phase(args, "settled", lease=None)
+                    log(f"[gpu-lock] Confirmed release of {released_lock_id}.")
             except Exception as release_error:
                 log(f"[warn] Could not release cluster GPU lease: {release_error}")
-        if fallback_started:
+        if fallback_started and args.ownership_journal.state.get("phase") == "settled":
             try:
                 enqueue_lifecycle(args, "release", job_id)
             except Exception as stop_error:
@@ -1657,6 +2016,9 @@ def main() -> int:
         default=os.environ.get("OTG_LTX_COMFY_URL", "http://100.75.162.64:8188"),
     )
     parser.add_argument("--fallback-comfy-url", default=os.environ.get("OTG_LTX_FALLBACK_COMFY_URL", "http://100.98.212.116:8191"))
+    parser.add_argument("--fallback-setting", default=os.environ.get("OTG_LTX_5060_FALLBACK_ENABLED"))
+    parser.add_argument("--qualification-manifest", default=os.environ.get("OTG_LTX_QUALIFICATION_MANIFEST", ""))
+    parser.add_argument("--ownership-state", default=os.environ.get("OTG_LTX_OWNERSHIP_STATE", "/home/shawn-rochford/AI/runtime/prod/ltx-worker-ownership/state.json"))
     parser.add_argument("--fallback-image-url", default=os.environ.get("OTG_LTX_FALLBACK_IMAGE_URL", "http://100.98.212.116:8188"))
     parser.add_argument(
         "--fallback-workflow-path",

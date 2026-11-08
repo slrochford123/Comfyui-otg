@@ -10,6 +10,15 @@ import { mediaFileResponse } from "@/lib/mediaResponse";
 import { RequestError } from "@/lib/requestError";
 
 type Receipt = ComfyHistoryImagePayload & { ownerKey: string; baseUrl: string; promptId?: string };
+async function assertExperimentalMediaAccess(media: ComfyHistoryImagePayload) {
+  if (media.subfolder.split("/")[0] !== "refmod_lab") return;
+  // Generic history/view proxies must not bypass a lab's admin-only boundary,
+  // including when a former administrator still owns the original prompt.
+  if (process.env.OTG_ENV !== "test") throw new RequestError("Media not found.", 404);
+  const { requireAdmin } = await import("@/app/api/admin/_requireAdmin");
+  const auth = await requireAdmin();
+  if (!auth.ok) throw new RequestError(auth.error, auth.status);
+}
 const mediaExtension = /\.(png|jpe?g|webp|gif|bmp|mp4|webm|mov|mkv|m4v|wav|mp3|m4a|flac|ogg)$/i;
 
 export function validateWorkerMedia(input: ComfyHistoryImagePayload) {
@@ -72,11 +81,13 @@ export async function ownedHistoryImage(ownerKey: string, promptId: string, filt
   if (matches.length > 1) throw new RequestError("Ambiguous job backend. Refresh the job from its gallery.", 409);
   const result = matches[0];
   if (!result) throw new RequestError(reachable ? "This job has no matching saved media yet." : "The job worker is temporarily unavailable.", reachable ? 404 : 503);
+  await assertExperimentalMediaAccess(result.image);
   await recordOwnedWorkerMedia(ownerKey, result.baseUrl, result.image, promptId);
   return result;
 }
 
 export async function proxyOwnedWorkerMedia(request: NextRequest, baseUrl: string, media: ComfyHistoryImagePayload) {
+  await assertExperimentalMediaAccess(media);
   validateWorkerMedia(media);
   const url = new URL(`${baseUrl}/view`);
   for (const key of ["filename", "type", "subfolder"] as const) url.searchParams.set(key, media[key]);

@@ -211,6 +211,9 @@ export async function POST(request: NextRequest) {
       }).slice(-20);
       const result = await createOpenAIText({
         ownerKey: user.ownerKey,
+        accountId:user.accountId,
+        feature:"story-creator",
+        requestKey:request.headers.get("idempotency-key")||undefined,
         projectId,
         useCase: "story-write",
         model: openAIModels().story,
@@ -252,6 +255,9 @@ export async function POST(request: NextRequest) {
           record,
           workload: storyProductionWorkload(record.plan),
           usage: result.usage,
+          provider:result.provider,
+          model:result.model,
+          fallbackReason:result.fallbackReason,
           message:
             "Draft production plan created for review. No generation jobs were started.",
         },

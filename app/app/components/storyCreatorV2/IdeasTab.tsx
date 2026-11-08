@@ -35,6 +35,9 @@ type Props = {
   storyMessages: StoryMessage[];
   messagesLoading: boolean;
   chatBusy: boolean;
+  removingChat: boolean;
+  removedChatMessages: ReadonlySet<string>;
+  onRemoveChat: (id?: string) => void;
   chatError: string;
   activeReply?: { partialText: string; status: string } | null;
   onCancelReply?: () => void;
@@ -75,6 +78,17 @@ export function normalizeStoryDirectorSpeechText(value: string) {
   return normalizeStorySpeechText(value);
 }
 
+function MessageContent({content}: {content: string}) {
+  const [expanded, setExpanded] = useState(false);
+  const preview = content.slice(0, 480).split("\n").slice(0, 7).join("\n").trimEnd();
+  const canExpand = preview.length < content.trimEnd().length;
+  return <>
+    <div className="whitespace-pre-wrap break-words">{expanded || !canExpand ? content : preview + "…"}</div>
+    {canExpand ? <button type="button" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}
+      className="mt-1 min-h-9 text-xs font-semibold underline underline-offset-4">{expanded ? "Show less" : "Expand message"}</button> : null}
+  </>;
+}
+
 export function IdeasTab({
   projectId,
   projectTitle,
@@ -82,6 +96,9 @@ export function IdeasTab({
   storyMessages,
   messagesLoading,
   chatBusy,
+  removingChat,
+  removedChatMessages,
+  onRemoveChat,
   chatError,
   activeReply,
   onCancelReply,
@@ -276,8 +293,18 @@ export function IdeasTab({
               </label>
 
               <span className="text-xs text-white/35">
-                {storyMessages.length} saved messages
+                {storyMessages.length} chat messages
               </span>
+              <button type="button" disabled={messagesLoading || chatBusy || removingChat}
+                onClick={() => {
+                  if (window.confirm("Clear the conversation for this story? Saved assets, drafts, and Story Memory will be kept.")) {
+                    stopPlayback();
+                    onRemoveChat();
+                  }
+                }}
+                className="min-h-10 rounded-lg border border-white/20 px-3 text-xs font-semibold text-white disabled:opacity-40">
+                {removingChat ? "Updating chat…" : "Clear chat"}
+              </button>
             </div>
           </div>
 
@@ -352,11 +379,15 @@ export function IdeasTab({
                         : "Listen"}
                     </button>
                   ) : null}
+                  <button type="button" disabled={chatBusy || removingChat || messagesLoading} aria-label={`Remove ${item.role === "user" ? "your message" : "Story Director reply"} from chat`}
+                    className="ml-auto min-h-9 rounded-full border border-current px-2 py-1 text-[10px] font-bold disabled:opacity-40"
+                    onClick={() => {
+                      if (speakingMessageId === item.id || speech.messageId === item.id) stopPlayback();
+                      onRemoveChat(item.id);
+                    }}>Remove</button>
                 </div>
 
-                <div className="whitespace-pre-wrap">
-                  {item.content}
-                </div>
+                <MessageContent content={item.content} />
                 {speech.preparedMessageId === item.id && speech.audioUrl ? <audio ref={speech.audioRef} controls src={speech.audioUrl}
                   className="mt-2 h-10 max-w-full" aria-label="Story Director spoken reply" onPlay={() => { try { window.speechSynthesis?.cancel(); } catch { /* optional */ } }} /> : null}
                 {item.role === "assistant" && speech.engine !== "browser" && speech.failedMessageId === item.id && !speech.preparing ? <button type="button"
@@ -386,7 +417,7 @@ export function IdeasTab({
             </div>
           ) : null}
 
-          <StoryMediaCards key={projectId} projectId={projectId} onAvailability={onMediaAvailability}/>
+          <StoryMediaCards key={projectId} projectId={projectId} removedMessages={removedChatMessages} onAvailability={onMediaAvailability}/>
           <div ref={chatEndRef} />
         </div>
 
@@ -496,6 +527,7 @@ export function IdeasTab({
             disabled={
               extractionBusy ||
               messagesLoading ||
+              removingChat ||
               chatBusy ||
               !extractionSourceMessageId
             }

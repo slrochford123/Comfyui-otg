@@ -388,6 +388,14 @@ function db() {
     CREATE INDEX IF NOT EXISTS idx_story_messages_project_created
       ON story_messages(project_id, created_at ASC);
 
+    CREATE TABLE IF NOT EXISTS story_chat_hidden (
+      project_id TEXT NOT NULL REFERENCES story_projects(id) ON DELETE CASCADE,
+      owner_key TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('message','media')),
+      item_id TEXT NOT NULL,
+      PRIMARY KEY (project_id, owner_key, kind, item_id)
+    );
+
     CREATE TABLE IF NOT EXISTS story_entities (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -1159,7 +1167,7 @@ function migrateStoryCreatorSchema(database: Database.Database) {
   }
   const turnColumns = new Set((database.prepare("PRAGMA table_info(story_conversation_turns)").all() as Array<{ name: string }>).map((column) => column.name));
   for (const [name, declaration] of Object.entries({ memory_summary: "TEXT NOT NULL DEFAULT ''",
-    memory_fact_ids_json: "TEXT NOT NULL DEFAULT '[]'", purpose: "TEXT NOT NULL DEFAULT 'conversation'", writing_mode: "TEXT NOT NULL DEFAULT ''" })) {
+    memory_fact_ids_json: "TEXT NOT NULL DEFAULT '[]'", purpose: "TEXT NOT NULL DEFAULT 'conversation'", writing_mode: "TEXT NOT NULL DEFAULT ''", ai_provider: "TEXT NOT NULL DEFAULT 'openai'" })) {
     if (!turnColumns.has(name)) database.exec(`ALTER TABLE story_conversation_turns ADD COLUMN ${name} ${declaration}`);
   }
 }
@@ -2073,14 +2081,52 @@ export function listStoryCreatorMessages(input: {
         role,
         content,
         created_at
-      FROM story_messages
+      FROM story_messages AS m
       WHERE project_id = ?
         AND owner_key = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM story_chat_hidden h WHERE h.project_id=m.project_id
+          AND h.owner_key=m.owner_key AND h.kind='message' AND h.item_id=m.id
+        )
       ORDER BY created_at ASC, message_rowid ASC
     `)
     .all(projectId, ownerKey);
 
   return rows.map(rowToMessage);
+}
+
+export function hiddenStoryChatItems(input: { ownerKey: string; projectId: string }) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  const rows = db().prepare("SELECT kind,item_id FROM story_chat_hidden WHERE project_id=? AND owner_key=?")
+    .all(projectId, ownerKey) as { kind: "message" | "media"; item_id: string }[];
+  const hidden = { message: new Set<string>(), media: new Set<string>() };
+  for (const row of rows) hidden[row.kind].add(row.item_id);
+  return hidden;
+}
+
+export function removeStoryChatItems(input: {
+  ownerKey: string; projectId: string; target: {kind: "message" | "media"; id: string} | {kind: "all"};
+}) {
+  const { ownerKey, projectId } = assertOwnedActiveProject(input.ownerKey, input.projectId);
+  return db().transaction(() => {
+    const target = input.target;
+    if (target.kind === "all" || target.kind === "message") {
+      const turn = getStoryConversationTurn({ ownerKey, projectId });
+      if (turn && ["queued", "running"].includes(turn.status)) {
+        throw storyBibleError("STORY_TURN_BUSY", "Wait for the current reply or stop it before clearing chat messages.");
+      }
+    }
+    if (target.kind === "all") {
+      db().prepare(`INSERT OR IGNORE INTO story_chat_hidden (project_id,owner_key,kind,item_id)
+        SELECT project_id,owner_key,'message',id FROM story_messages WHERE project_id=? AND owner_key=?`)
+        .run(projectId, ownerKey);
+    } else {
+      if (target.kind === "message") assertOwnedStoryCreatorMessage({ ownerKey, projectId, messageId: target.id });
+      db().prepare("INSERT OR IGNORE INTO story_chat_hidden VALUES (?,?,?,?)")
+        .run(projectId, ownerKey, target.kind, target.id);
+    }
+    return [...hiddenStoryChatItems({ ownerKey, projectId }).message];
+  }).immediate();
 }
 
 function assertOwnedStoryCreatorMessage(input: {
@@ -2218,6 +2264,8 @@ export type StoryConversationTurn = {
   projectId: string;
   ownerKey: string;
   sourceMessageId: string;
+  // Requested provider before dispatch, actual provider once routed.
+  aiProvider?: "openai" | "local3060";
   purpose: "conversation" | "writing";
   writingMode: string;
   status: "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
@@ -2235,6 +2283,7 @@ function rowToConversationTurn(row: any): StoryConversationTurn {
   return {
     id: row.id, projectId: row.project_id, ownerKey: row.owner_key,
     sourceMessageId: row.source_message_id, status: row.status,
+    aiProvider: row.ai_provider === "local3060" ? "local3060" : "openai",
     purpose: row.purpose || "conversation", writingMode: row.writing_mode || "",
     partialText: row.partial_text, assistantMessageId: row.assistant_message_id,
     error: row.error, cancelRequested: Boolean(row.cancel_requested),
@@ -2245,15 +2294,19 @@ function rowToConversationTurn(row: any): StoryConversationTurn {
 }
 
 export function getStoryConversationTurn(input: {
-  ownerKey: string; projectId: string; turnId?: string; sourceMessageId?: string;
+  ownerKey: string; projectId: string; turnId?: string; sourceMessageId?: string; chatOnly?: boolean;
 }) {
   const { ownerKey, projectId } = assertOwnedActiveProject(input.ownerKey, input.projectId);
-  const row = db().prepare(`SELECT * FROM story_conversation_turns
+  const row = db().prepare(`SELECT * FROM story_conversation_turns AS t
     WHERE owner_key=? AND project_id=?
       AND (?='' OR id=?) AND (?='' OR source_message_id=?)
+      AND (?=0 OR NOT EXISTS (
+        SELECT 1 FROM story_chat_hidden h WHERE h.project_id=t.project_id AND h.owner_key=t.owner_key
+        AND h.kind='message' AND h.item_id IN (t.source_message_id,t.assistant_message_id)
+      ))
     ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(
       ownerKey, projectId, input.turnId || "", input.turnId || "",
-      input.sourceMessageId || "", input.sourceMessageId || "",
+      input.sourceMessageId || "", input.sourceMessageId || "", input.chatOnly ? 1 : 0,
     ) as any;
   if (!row) return null;
   // A lost process must not silently replay a potentially billable request.
@@ -2271,11 +2324,15 @@ export function getStoryConversationTurn(input: {
 
 export function createStoryConversationTurn(input: {
   ownerKey: string; projectId: string; sourceMessageId: string;
-  purpose?: "conversation" | "writing"; writingMode?: string;
+  purpose?: "conversation" | "writing"; writingMode?: string; aiProvider?: "openai" | "local3060";
 }) {
   const source = getStoryCreatorMessage({ ...input, messageId: input.sourceMessageId });
   if (source.role !== "user") throw storyBibleError("STORY_TURN_SOURCE_INVALID", "A reply requires a saved user message.");
   return db().transaction(() => {
+    if (db().prepare("SELECT 1 FROM story_chat_hidden WHERE project_id=? AND owner_key=? AND kind='message' AND item_id=?")
+      .get(source.projectId, source.ownerKey, source.id)) {
+      throw storyBibleError("STORY_MESSAGE_NOT_FOUND", "This message was removed from the chat.");
+    }
     const existing = getStoryConversationTurn(input);
     if (existing) return { turn: existing, created: false };
     db().prepare(`UPDATE story_conversation_turns SET status='interrupted',error=?,updated_at=?
@@ -2288,9 +2345,9 @@ export function createStoryConversationTurn(input: {
     const now = Date.now();
     const id = randomUUID();
     db().prepare(`INSERT INTO story_conversation_turns
-      (id,project_id,owner_key,source_message_id,status,purpose,writing_mode,lease_until,created_at,updated_at)
-      VALUES (?,?,?,?,'queued',?,?,?,?,?)`).run(id, source.projectId, source.ownerKey,
-        source.id, input.purpose || "conversation", input.writingMode || "", now + 180_000, now, now);
+      (id,project_id,owner_key,source_message_id,status,purpose,writing_mode,ai_provider,lease_until,created_at,updated_at)
+      VALUES (?,?,?,?,'queued',?,?,?,?,?,?)`).run(id, source.projectId, source.ownerKey,
+        source.id, input.purpose || "conversation", input.writingMode || "", input.aiProvider || "openai", now + 180_000, now, now);
     return { turn: getStoryConversationTurn({ ...input, turnId: id })!, created: true };
   })();
 }
@@ -2307,13 +2364,13 @@ export function claimStoryConversationTurn(input: {
 
 export function updateStoryConversationTurn(input: {
   ownerKey: string; projectId: string; turnId: string; leaseToken: string;
-  partialText?: string; terminal?: "failed" | "cancelled"; error?: string;
+  partialText?: string; terminal?: "failed" | "cancelled"; error?: string; aiProvider?: "openai"|"local3060";
 }) {
   getStoryConversationTurn(input);
   db().prepare(`UPDATE story_conversation_turns SET partial_text=COALESCE(?,partial_text),
-    status=COALESCE(?,status),error=?,lease_until=?,updated_at=?
+    status=COALESCE(?,status),ai_provider=COALESCE(?,ai_provider),error=?,lease_until=?,updated_at=?
     WHERE id=? AND owner_key=? AND project_id=? AND lease_token=? AND status='running'`)
-    .run(input.partialText?.slice(0, 100_000) ?? null, input.terminal ?? null, input.error || "",
+    .run(input.partialText?.slice(0, 100_000) ?? null, input.terminal ?? null,input.aiProvider??null, input.error || "",
       Date.now() + 180_000, Date.now(), input.turnId, input.ownerKey, input.projectId, input.leaseToken);
   return getStoryConversationTurn(input);
 }
@@ -2483,6 +2540,10 @@ export function listStoryRecallSources(input: { ownerKey: string; projectId: str
   const scope = assertOwnedActiveProject(input.ownerKey, input.projectId);
   const messages = db().prepare(`SELECT m.* FROM story_messages m
     WHERE m.owner_key=? AND m.project_id=? AND m.role='user'
+    AND NOT EXISTS (
+      SELECT 1 FROM story_chat_hidden h WHERE h.project_id=m.project_id
+      AND h.owner_key=m.owner_key AND h.kind='message' AND h.item_id=m.id
+    )
     AND NOT EXISTS (
       SELECT 1 FROM story_facts f WHERE f.owner_key=m.owner_key AND f.project_id=m.project_id
       AND f.source_message_id=m.id AND (

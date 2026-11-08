@@ -7,6 +7,7 @@ import { downloadH3VideoFromBaseUrl, getH3PromptHistoryFromBaseUrl } from "@/lib
 import {
   claimStoryAudioAssetExecution,
   getStoryAudioAsset,
+  isStory3060Audio,
   listStoryAudioAssets,
   listStoryVoiceAssignments,
   recordStoryAudioResult,
@@ -222,6 +223,10 @@ export async function executeStoryAudioAsset(context: DispatchContext) {
     const claim = claimStoryAudioAssetExecution(context);
     if (!claim.claimed) return claim.asset;
     const asset = claim.asset;
+    if (isStory3060Audio(asset.providerContract.provider)) {
+      const { enqueueStory3060Audio } = await import("@/lib/storyCreator/audio3060");
+      return await enqueueStory3060Audio(context, asset);
+    }
     if (asset.kind === "dialogue" || asset.kind === "narration") return await executeSpeech(context, asset);
     if (asset.kind === "music") return await executeMusic(context, asset);
     if (asset.kind === "sound-effect" || asset.kind === "ambience") return await executeSoundEffect(context, asset);

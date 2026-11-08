@@ -2,6 +2,8 @@
 import ImageSourcePickerBridge from "./components/ImageSourcePickerBridge";
 
 import StoryCreatorPanel from "./components/StoryCreatorPanel";
+import AssistantProviderPicker,{selectedAssistantProvider} from "./components/AssistantProviderPicker";
+import {readStoryDirectorStream} from "./components/storyDirectorStream";
 import OpenAIConnectionPanel from "./components/OpenAIConnectionPanel";
 
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -154,6 +156,7 @@ type StoryHelperMessage = {
   content: string;
   createdAt: number;
   imageName?: string;
+  provider?: "openai"|"local3060";
 };
 
 type SavedStoryConversation = {
@@ -1665,6 +1668,7 @@ const [askInput, setAskInput] = useState("");
 const [askMessages, setAskMessages] =
   useState<StoryHelperMessage[]>([]);
 const [askBusy, setAskBusy] = useState(false);
+const [askPartial, setAskPartial] = useState("");
 const [askRetryAvailable, setAskRetryAvailable] = useState(false);
 const [askImageName, setAskImageName] = useState("");
 const [askImagePreviewUrl, setAskImagePreviewUrl] =
@@ -1772,6 +1776,7 @@ useEffect(() => {
               typeof message.imageName === "string"
                 ? message.imageName
                 : undefined,
+            ...(message.provider==="openai"||message.provider==="local3060"?{provider:message.provider as "openai"|"local3060"}:{}),
           })),
       }))
       .sort(
@@ -2396,6 +2401,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       const res = await fetch("/api/ollama-ai/chat", {
         method: "POST",
+        headers: {"X-OTG-AI-Utility":"visual-analysis"},
         body,
       });
 
@@ -3522,6 +3528,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       const res = await fetch("/api/ollama-ai/chat", {
         method: "POST",
+        headers: {"X-OTG-AI-Utility":"visual-analysis"},
         body,
         credentials: "include",
       });
@@ -4645,6 +4652,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
 
       const res = await fetch("/api/ollama-ai/chat", {
         method: "POST",
+        headers: {"X-OTG-AI-Utility":"visual-analysis"},
         body,
         credentials: "include",
       });
@@ -6290,6 +6298,8 @@ async function handleAskAi() {
             "X-OTG-AI-Assistance": "1",
             "X-OTG-AI-Assistance-Profile":
               "story-helper",
+            "X-OTG-AI-Provider":selectedAssistantProvider("story-helper")||"openai",
+            ...(process.env.NEXT_PUBLIC_OTG_OPENAI_CONVERSATION_CREDITS==="1"?{"X-OTG-Stream":"1","Idempotency-Key":userMessage.id}:{}),
           },
           body,
           credentials: "include",
@@ -6306,6 +6316,8 @@ async function handleAskAi() {
             "X-OTG-AI-Assistance": "1",
             "X-OTG-AI-Assistance-Profile":
               "story-helper",
+            "X-OTG-AI-Provider":selectedAssistantProvider("story-helper")||"openai",
+            ...(process.env.NEXT_PUBLIC_OTG_OPENAI_CONVERSATION_CREDITS==="1"?{"X-OTG-Stream":"1","Idempotency-Key":userMessage.id}:{}),
           },
           credentials: "include",
           body: JSON.stringify({
@@ -6315,9 +6327,9 @@ async function handleAskAi() {
       );
     }
 
-    const data = await res
-      .json()
-      .catch(() => ({}));
+    const data=res.ok&&res.headers.get("content-type")?.includes("application/x-ndjson")
+      ?{message:await readStoryDirectorStream(res,setAskPartial,phase=>setStatusMessage(phase==="queued"?"Queued for the RTX 3060.":"Local AI is responding.")),provider:res.headers.get("X-OTG-AI-Provider")}
+      :await res.json().catch(()=>({}));
 
     if (!res.ok) {
       throw new Error(
@@ -6350,6 +6362,7 @@ async function handleAskAi() {
         role: "assistant",
         content: answer,
         createdAt: Date.now(),
+        ...(data.provider==="openai"||data.provider==="local3060"?{provider:data.provider}:{}),
       };
 
     const nextMessages = [
@@ -6393,6 +6406,7 @@ async function handleAskAi() {
     );
   } finally {
     setAskBusy(false);
+    setAskPartial("");
   }
 }
 
@@ -7355,6 +7369,8 @@ async function handleAskAi() {
 
             {assistanceTab === "ask" ? (
               <Card title="Story Helper">
+                {process.env.NEXT_PUBLIC_OTG_OPENAI_CONVERSATION_CREDITS==="1"&&<AssistantProviderPicker scope="story-helper" />}
+                {askPartial&&<p className="my-3 whitespace-pre-wrap text-sm text-white/85">{askPartial}</p>}
                 <p className="text-white/70">
                   Develop stories, characters, scenes,
                   dialogue, plot progression, screenplay

@@ -1,7 +1,7 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/sessionUser";
 import { SessionInvalidError } from "@/lib/ownerKey";
-import { openAIEnabled } from "@/lib/openai/provider";
+import { assistantAvailable,resolveAssistantProvider } from "@/lib/workers/assistantProvider";
 import {
   cancelStoryConversationTurn, createStoryConversationTurn, getStoryConversationTurn,
   getStoryCreatorMessage,
@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
     const projectId = request.nextUrl.searchParams.get("projectId") || "";
     if (request.nextUrl.searchParams.get("view") === "writing") return NextResponse.json({ ok: true,
       versions: listStoryWritingTurns({ ownerKey, projectId }) }, { headers });
-    const turn = getStoryConversationTurn({ ownerKey, projectId,
+    const turn = getStoryConversationTurn({ ownerKey, projectId, chatOnly: true,
       turnId: request.nextUrl.searchParams.get("turnId") || undefined,
       sourceMessageId: request.nextUrl.searchParams.get("sourceMessageId") || undefined });
     const message = turn?.assistantMessageId ? getStoryCreatorMessage({ ownerKey, projectId,
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { ownerKey } = await requireSessionUser(request);
+    const { ownerKey,accountId } = await requireSessionUser(request);
     const body = await request.json();
     const projectId = String(body.projectId || "");
     if (body.action === "undo-memory") {
@@ -54,14 +54,15 @@ export async function POST(request: NextRequest) {
       abortStoryConversationExecution(identity);
       return NextResponse.json({ ok: true, turn }, { headers });
     }
-    if (!openAIEnabled()) return NextResponse.json({ ok: false, error: "Story conversation is unavailable. Your saved messages are unchanged." }, { status: 503, headers });
+    const aiProvider=resolveAssistantProvider(body.aiProvider);
+    if (!assistantAvailable(aiProvider)) return NextResponse.json({ ok: false, error: "The selected story provider is unavailable. Your saved messages are unchanged; no fallback was used." }, { status: 503, headers });
     const purpose = body.purpose === "writing" ? "writing" : "conversation";
     const writingMode = purpose === "writing" && ["outline", "chapter", "episode", "scene", "dialogue"].includes(body.writingMode) ? body.writingMode : "";
     if (purpose === "writing" && !writingMode) return NextResponse.json({ ok: false, error: "Choose a writing mode." }, { status: 400, headers });
-    const result = createStoryConversationTurn({ ownerKey, projectId, purpose, writingMode,
+    const result = createStoryConversationTurn({ ownerKey, projectId, purpose, writingMode,aiProvider,
       sourceMessageId: String(body.sourceMessageId || "") });
     const mediaCookie=request.headers.get("cookie")||"";
-    if (result.created) after(() => executeStoryConversationTurn({ ownerKey, projectId, turnId: result.turn.id },mediaCookie));
+    if (result.created) after(() => executeStoryConversationTurn({ ownerKey, projectId, turnId: result.turn.id },mediaCookie,accountId));
     return NextResponse.json({ ok: true, ...result }, { status: result.created ? 202 : 200, headers });
   } catch (error) { return failure(error); }
 }

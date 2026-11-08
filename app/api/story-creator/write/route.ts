@@ -2,6 +2,7 @@ import {
   NextRequest,
   NextResponse,
 } from "next/server";
+import {conversationPolicyEnabled} from "@/lib/openai/conversationAccount";
 
 import {
   SessionInvalidError,
@@ -249,11 +250,14 @@ export async function POST(request: NextRequest) {
       ),
     ].join("\n");
 
-    if (openAIEnabled()) {
+    if (openAIEnabled() || conversationPolicyEnabled()) {
       try {
         const openAIModel = openAIModels().story;
         const openAIResponse = await createOpenAIText({
           ownerKey: user.ownerKey,
+          accountId:user.accountId,
+          feature:"story-creator",
+          requestKey:request.headers.get("idempotency-key")||undefined,
           projectId,
           useCase: "story-write",
           model: openAIModel,
@@ -276,8 +280,9 @@ export async function POST(request: NextRequest) {
               ok: true,
               mode,
               draft,
-              provider: "openai",
-              model: openAIModel,
+              provider: openAIResponse.provider,
+              model: openAIResponse.model,
+              fallbackReason:openAIResponse.fallbackReason,
               usage: openAIResponse.usage,
             },
             {
@@ -287,7 +292,9 @@ export async function POST(request: NextRequest) {
             },
           );
         }
-      } catch {
+        if(conversationPolicyEnabled())throw new Error("The writing assistant returned an empty response.");
+      } catch (error) {
+        if(conversationPolicyEnabled())throw error;
         // Preserve the existing Qwen write path as rollback.
       }
     }

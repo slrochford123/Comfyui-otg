@@ -3,6 +3,7 @@ import { limitedJson, limitedFormData } from "@/lib/limitedRequestBody";
 import { enforceRequestLimit } from "@/lib/auth/requestLimits";
 import { NextRequest, NextResponse } from "next/server";
 import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
+import {local3060Enabled,LOCAL_MODEL} from "@/lib/workers/local3060";
 import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
 import {
   appendProtectedDialogueBlock,
@@ -466,7 +467,7 @@ export const POST = withOwner(async (req, owner) => {
       return NextResponse.json({ error: "Starter image is required for image-to-video formatting." }, { status: 400 });
     }
 
-    const model = QWEN_CLUSTER_MODEL;
+    const model = local3060Enabled()?LOCAL_MODEL:QWEN_CLUSTER_MODEL;
     const timeoutMs = parseIntEnv("OLLAMA_FORMAT_TIMEOUT_MS") || (mode === "video_i2v" ? 180000 : 120000);
     const numThread = parseIntEnv("OLLAMA_FORMAT_NUM_THREAD") || parseIntEnv("OLLAMA_ENHANCE_NUM_THREAD");
     const keepAliveOff = truthyEnv("OLLAMA_FORMAT_KEEPALIVE_OFF") || truthyEnv("OLLAMA_ENHANCE_KEEPALIVE_OFF");
@@ -520,6 +521,7 @@ export const POST = withOwner(async (req, owner) => {
         compileFormattedPrompt(mode, structured),
       );
     } catch {
+      if(local3060Enabled())return NextResponse.json({ok:false,error:"Local prompt formatting failed. The source prompt was preserved."},{status:502});
       structured = null;
       rawText = "";
       formattedPrompt = "";

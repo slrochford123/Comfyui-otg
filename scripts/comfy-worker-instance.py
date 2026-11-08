@@ -7,7 +7,8 @@ import sys
 
 UNITS = {
     'shawn': {'http://100.75.162.64:8188': ('otg-comfyui.service', '8188'),
-              'http://100.75.162.64:8189': ('otg-comfyui-h3.service', '8189')},
+              'http://100.75.162.64:8189': ('otg-comfyui-h3.service', '8189'),
+              'http://127.0.0.1:8190': ('otg-comfyui-3060.service', '8190')},
     'slr': {'http://100.98.212.116:8188': ('comfyui-5060.service', '8188')},
 }
 

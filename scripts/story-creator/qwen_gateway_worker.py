@@ -15,8 +15,9 @@ def main():
     request = Path(sys.argv[1]).resolve(strict=True)
     root, job = request.parent, json.loads(request.read_text())
     config = json.loads(Path(os.environ['OTG_AUDIO_ENGINE_CONFIG']).read_text())
-    if os.getuid() == 0 or job['operation'] != 'speech' or job['gpu'] != 'rtx3090':
-        raise ValueError('Qwen requires the unprivileged RTX 3090 worker')
+    local_gpu = config.get('localGpu', 'rtx3090')
+    if os.getuid() == 0 or job['operation'] != 'speech' or job['gpu'] != local_gpu or local_gpu not in ('rtx3090','rtx5060ti'):
+        raise ValueError('Qwen requires its qualified unprivileged GPU worker')
     parent, child = os.getppid(), None
     (root/'worker.pid').write_text(str(os.getpid()))
 
@@ -46,14 +47,15 @@ def main():
                 except BlockingIOError:
                     time.sleep(.25)
             devices=subprocess.check_output(['/usr/bin/nvidia-smi','--query-gpu=uuid,name','--format=csv,noheader'],text=True,timeout=5)
-            gpu=next((line.split(',')[0].strip() for line in devices.splitlines() if 'RTX 3090' in line),'')
+            expected = 'RTX 3090' if local_gpu == 'rtx3090' else 'RTX 5060 Ti'
+            gpu=next((line.split(',')[0].strip() for line in devices.splitlines() if expected in line),'')
             if not gpu:
-                raise ValueError('Qualified RTX 3090 unavailable')
+                raise ValueError('Qualified speech GPU unavailable')
             output=root/'speech.wav'
             params=job['params']
             payload={'parent_pid':os.getpid(),'model':config['base' if job.get('source') else 'design'],
                 'output':str(output),'text':params['text'],'instruction':params['instruction'],
-                'reference':job.get('source') or '', 'reference_text':params.get('description','')}
+                'reference':job.get('source') or '', 'reference_text':params.get('description',''), 'expected_gpu':expected}
             if 'seed' in params:
                 payload['seed']=params['seed']
             check()

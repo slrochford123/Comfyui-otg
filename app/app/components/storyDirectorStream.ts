@@ -1,6 +1,7 @@
 export async function readStoryDirectorStream(
   response: Response,
   onDelta: (text: string) => void,
+  onPhase?: (phase: "queued" | "generating") => void,
 ) {
   if (!response.body) {
     throw new Error("Story Director returned an empty stream.");
@@ -18,7 +19,9 @@ export async function readStoryDirectorStream(
       delta?: string;
       text?: string;
       error?: string;
+      phase?: "queued" | "generating";
     };
+    if (event.type === "status" && event.phase) onPhase?.(event.phase);
     if (event.type === "delta" && event.delta) {
       accumulated += event.delta;
       onDelta(accumulated);

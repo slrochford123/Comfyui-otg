@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 
 import { jsonError, jsonOk, readJsonBody } from "@/lib/http/routeHelpers";
 import { requireWorkerControlToken } from "@/lib/workers/workerLifecycleAuth";
-import { heartbeatResourceLock } from "@/lib/workers/resourceLocks";
+import { heartbeatLegacyGpu } from "@/lib/workers/legacyGpuAdmission";
 import { REQUIRED_RESOURCE_LOCK_IDS, type WorkerResourceLockId } from "@/lib/workers/workerCatalog";
 
 export const runtime = "nodejs";
@@ -15,7 +15,8 @@ export async function POST(req: NextRequest) {
   if (!body.ok) return jsonError(body.error, { status: body.status });
   const lockId = String(body.value.lockId || "gpu:linux-5060ti") as WorkerResourceLockId;
   if (!(REQUIRED_RESOURCE_LOCK_IDS as readonly string[]).includes(lockId)) return jsonError("Unknown resource lock ID.", { status: 400 });
-  const lock = heartbeatResourceLock(
+  try {
+  const lock = await heartbeatLegacyGpu(
     lockId,
     String(body.value.ownerId || "").trim(),
     String(body.value.fencingToken || "").trim(),
@@ -23,4 +24,7 @@ export async function POST(req: NextRequest) {
   );
   if (!lock) return jsonError("Lease not found, expired, or owned by another token.", { status: 409 });
   return jsonOk({ lock });
+  } catch {
+    return jsonError("GPU ownership could not be confirmed; its reservation remains protected.", { status: 503 });
+  }
 }

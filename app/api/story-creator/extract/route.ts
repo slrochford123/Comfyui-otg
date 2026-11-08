@@ -318,6 +318,9 @@ export async function POST(request: NextRequest) {
 
     const aiResult = await createOpenAIText({
       ownerKey: user.ownerKey,
+      accountId:user.accountId,
+      feature:"story-creator",
+      requestKey:request.headers.get("idempotency-key")||undefined,
       projectId,
       useCase: "story-helper",
       model: openAIModels().story,
@@ -377,6 +380,7 @@ export async function POST(request: NextRequest) {
       {
         ok: true,
         ...result,
+        provider:aiResult.provider,
         messagesReviewed: reviewMessages.length,
         messagesRemaining,
         message: messagesRemaining

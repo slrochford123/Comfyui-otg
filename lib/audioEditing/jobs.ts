@@ -38,6 +38,7 @@ export function capabilities() {
     const cfg = engineConfig();
     const pythonReady = typeof cfg.python === "string" && fs.existsSync(cfg.python);
     return { enabled, engines: enabled && pythonReady ? cfg.verified || {} : {}, researchOnly: cfg.researchOnly || [],
+      musicEngine:cfg.musicEngine==="yue2"?"yue2":"ace",musicMaxSeconds:cfg.musicEngine==="yue2"?Number(cfg.musicMaxSeconds||120):600,
       notes: [...(!enabled ? ["Unified Audio Editing is not enabled on this deployment. Your saved sessions are retained."] : []), ...(cfg.notes || [])], pythonReady };
   } catch { return { enabled, engines: {}, researchOnly: [], pythonReady: false,
     notes: ["The isolated audio engine configuration is not installed."] }; }
@@ -146,6 +147,8 @@ async function startReservedJob(owner: string, sessionId: string, operation: Aud
   if (existing) throw Error("This session already has an active operation. Wait or cancel it first.");
   const cfg = engineConfig();
   const ai = ["separate","speech","music","effects"].includes(operation) || operation === "enhance" && params.engine === "mossformer";
+  if(operation==="music"&&cfg.musicEngine==="yue2"&&(!Number.isFinite(Number(params.seconds))||Number(params.seconds)>Number(cfg.musicMaxSeconds||120)))
+    throw Error(`This YuE2 TEST runtime supports music requests up to ${Number(cfg.musicMaxSeconds||120)} seconds. Existing audio was not changed.`);
   if (params.voiceDesignEngine) {
     const runtime = refVoiceRuntime(String(params.voiceDesignEngine));
     if (operation !== "speech" || !runtime || gpu !== "rtx3090" || source || (!runtime.remoteConfig&&((cfg.localGpu&&cfg.localGpu!=="rtx3090")||cfg.transports?.rtx3090)))

@@ -2,8 +2,7 @@ import { NextRequest } from "next/server";
 
 import { jsonError, jsonOk, readJsonBody } from "@/lib/http/routeHelpers";
 import { requireWorkerControlToken } from "@/lib/workers/workerLifecycleAuth";
-import { acquireResourceLock } from "@/lib/workers/resourceLocks";
-import { detectShawnExternalOccupancy } from "@/lib/workers/clusterGpu";
+import { acquireLegacyGpu } from "@/lib/workers/legacyGpuAdmission";
 import { REQUIRED_RESOURCE_LOCK_IDS, type WorkerResourceLockId } from "@/lib/workers/workerCatalog";
 
 export const runtime = "nodejs";
@@ -18,11 +17,8 @@ export async function POST(req: NextRequest) {
   if (!(REQUIRED_RESOURCE_LOCK_IDS as readonly string[]).includes(lockId) || !["gpu:slr-5060", "gpu:shawn-3090", "gpu:linux-5060ti", "gpu:linux-3090"].includes(lockId)) {
     return jsonError("This endpoint is restricted to cluster GPU resources.", { status: 400 });
   }
-  if (["gpu:shawn-3090", "gpu:linux-3090"].includes(lockId)) {
-    const occupancy = await detectShawnExternalOccupancy();
-    if (!occupancy.available) return jsonError(occupancy.external ? "RTX 3090 is externally occupied." : "RTX 3090 is busy.", { status: 409 });
-  }
-  const result = acquireResourceLock({
+  try {
+  const result = await acquireLegacyGpu({
     lockId,
     ownerId: String(body.value.ownerId || "").trim(),
     ownerType: "job",
@@ -30,6 +26,9 @@ export async function POST(req: NextRequest) {
     resourceName: String(body.value.resourceName || "ltx-fallback").trim(),
     ttlSeconds: Number(body.value.ttlSeconds) || 120,
   });
-  if (!result.ok) return jsonError(result.error, { status: 409 });
+  if (!result.ok) return jsonError(result.error, { status: 409, detail: result.waitingToken ? { waitingToken: result.waitingToken } : undefined });
   return jsonOk({ lock: result.lock });
+  } catch {
+    return jsonError("Shared GPU admission is unconfirmed; do not start or retry generation.", { status: 503 });
+  }
 }

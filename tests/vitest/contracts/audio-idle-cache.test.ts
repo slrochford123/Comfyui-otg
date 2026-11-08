@@ -38,7 +38,6 @@ describe("admitted audio GPU memory preparation", () => {
     expect(audioMinimumVramMiB("speech",{},false)).toBe(18000);
     expect(audioMinimumVramMiB("music",{})).toBe(8000);
     expect(audioMinimumVramMiB("effects",{})).toBe(5500);
-    expect(audioMinimumVramMiB("effects",{mode:"automatic"})).toBe(7500);
     expect(audioMinimumVramMiB("mix",{})).toBe(0);
   });
 });

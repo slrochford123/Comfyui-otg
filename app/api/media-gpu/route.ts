@@ -19,7 +19,7 @@ export async function GET(request:NextRequest) {
     const jobs=queuedMediaJobs();
     const devices=await Promise.all(MEDIA_GPUS.map(async gpu=>({gpu,label:mediaGpuLabel(gpu),...await probeMediaGpu(gpu),
       queued:jobs.filter(job=>job.gpu===gpu&&job.status==="queued").length})));
-    return json({enabled:true,sharedAdmission:{configured:sharedMediaAdmissionConfigured(),authorityId:sharedMediaAdmissionIdentity()},devices,jobs:jobs.filter(job=>owns(user.ownerKey,job)).map(job=>({id:job.id,gpu:job.gpu,kind:job.kind,status:job.status,error:job.error}))});
+    return json({enabled:true,sharedAdmission:{configured:sharedMediaAdmissionConfigured(),authorityId:sharedMediaAdmissionIdentity()},devices,jobs:jobs.filter(job=>owns(user.ownerKey,job)).map(job=>({id:job.id,gpu:job.gpu,kind:job.kind,status:job.status,error:job.error,queuePosition:job.status==="queued"?jobs.filter(other=>other.gpu===job.gpu&&other.status==="queued"&&other.sequence<=job.sequence).length:null}))});
   }catch{return json({enabled:false,error:"Sign in to view your GPU queue."},401);}
 }
 export async function POST(request:NextRequest) {

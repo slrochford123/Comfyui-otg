@@ -4,6 +4,7 @@ import sys
 import os
 import signal
 import ctypes
+import time
 from pathlib import Path
 
 
@@ -23,6 +24,11 @@ def main():
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA unavailable; CPU fallback is not qualified")
+    device = torch.cuda.get_device_name(0)
+    if request.get('expected_gpu') and request['expected_gpu'] not in device:
+        raise RuntimeError('Speech device does not match the reserved GPU')
+    started = time.monotonic()
+    torch.cuda.reset_peak_memory_stats()
     if "seed" in request:
         seed=request["seed"]
         if isinstance(seed,bool) or not isinstance(seed,int) or not 0 <= seed <= 2147483647:
@@ -46,7 +52,11 @@ def main():
     if not np.isfinite(samples).all() or samples.size < rate // 5:
         raise ValueError("Invalid or empty generated audio")
     sf.write(request["output"], samples, rate, subtype="PCM_16")
-    print(json.dumps({"ok": True, "sample_rate": rate, "duration": len(samples) / rate}))
+    receipt={"ok": True, "sample_rate": rate, "duration": len(samples) / rate,
+        "device": device, "cuda": torch.version.cuda, "torch": torch.__version__,
+        "peak_vram_bytes": torch.cuda.max_memory_allocated(), "elapsed_seconds": time.monotonic()-started}
+    Path(request['output']+'.receipt.json').write_text(json.dumps(receipt))
+    print(json.dumps(receipt))
 
 
 if __name__ == "__main__":

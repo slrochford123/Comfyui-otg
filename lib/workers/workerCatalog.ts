@@ -28,6 +28,7 @@ export type WorkerCatalogEntry = {
 };
 
 export const REQUIRED_RESOURCE_LOCK_IDS = [
+  "gpu:GPU-e94b5b3f-0d6e-09a7-473f-a85fe4b248ea",
   "gpu:slr-5060",
   "gpu:shawn-3090",
   "gpu:linux-3090",

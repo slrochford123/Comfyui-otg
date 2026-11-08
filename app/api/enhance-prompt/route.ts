@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { QWEN_CLUSTER_MODEL } from "@/lib/workers/qwenClusterRouter";
 import { qwenDurableFetch } from "@/lib/workers/qwenDurableFetch";
+import {LOCAL_MODEL,local3060Enabled} from "@/lib/workers/local3060";
 import { requireSessionUser } from "@/lib/sessionUser";
 import { SessionInvalidError } from "@/lib/ownerKey";
 import { createOpenAIText, openAIEnabled, openAIModels } from "@/lib/openai/provider";
@@ -483,8 +484,7 @@ async function qwenGenerateEnhancement(
   level: EnhanceLevel,
   context: GenerateEnhanceContext,
 ) {
-  const routedModel =
-    promptEnhanceModelForContext(context);
+  const routedModel = local3060Enabled() ? LOCAL_MODEL : promptEnhanceModelForContext(context);
 
   /*
    * Production V2 is intentionally scoped by its exact scene modes.
@@ -705,13 +705,13 @@ function safeEnhanceFallbackMessage(error: unknown) {
 
 export async function POST(req: NextRequest): Promise<Response> {
   let originalPrompt = "";
+  let exactSource = "";
 
   try {
     const user = await requireSessionUser(req);
     const body: any = await parseIncoming(req);
-    originalPrompt = normalizePromptInput(
-      body.prompt || body.userPrompt || body.input || body.text,
-    );
+    exactSource = String(body.prompt || body.userPrompt || body.input || body.text || "");
+    originalPrompt = normalizePromptInput(exactSource);
     if (!originalPrompt) {
       return Response.json(
         { ok: false, error: "Missing prompt.", originalPrompt },
@@ -723,7 +723,8 @@ export async function POST(req: NextRequest): Promise<Response> {
       body.enhanceLevel || body.level || body.size || body.amount,
     );
     const context = buildGenerateContext(body);
-    const useOpenAI = openAIEnabled();
+    const useOpenAI = local3060Enabled()?body.aiProvider==="openai":openAIEnabled();
+    if(useOpenAI&&!openAIEnabled())throw Error("The selected OpenAI provider is unavailable.");
     const enhancement = useOpenAI
       ? await (async () => {
           const model = openAIModels().h3;
@@ -775,7 +776,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         Boolean(
           context.visualContext,
         ),
-      provider: useOpenAI ? "openai" : "qwenCluster",
+      provider: useOpenAI ? "openai" : local3060Enabled()?"local3060":"qwenCluster",
       model: enhancement.model,
     });
   } catch (error) {
@@ -783,6 +784,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       return Response.json({ ok: false, error: "Sign in to enhance a prompt." }, { status: 401 });
     }
     const message = safeEnhanceFallbackMessage(error);
+    if(local3060Enabled())return Response.json({ok:false,error:message,originalPrompt:exactSource},{status:errorStatus(error)});
     return Response.json(
       {
         ok: true,

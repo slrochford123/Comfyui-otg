@@ -1,4 +1,5 @@
 "use client";
+import AssistantProviderPicker from "./AssistantProviderPicker";
 
 import { useStoryConversation } from "./storyCreatorV2/useStoryConversation";
 import { useStoryDraft } from "./storyCreatorV2/useStoryDraft";
@@ -243,11 +244,45 @@ export default function StoryCreatorPanel({
     useState(false);
   const [chatSubmitting, setChatBusy] = useState(false);
   const [chatError, setChatError] = useState("");
+  const removedChatMessages = useRef(new Set<string>());
+  const chatProject = useRef(selectedProjectId);
+  useEffect(() => { chatProject.current = selectedProjectId; }, [selectedProjectId]);
+  const [removingChat, setRemovingChat] = useState(false);
+
+  async function removeChatContent(id?: string) {
+    const projectId = selectedProjectId;
+    if (!projectId || storySendLockRef.current) return;
+    storySendLockRef.current = true;
+    setRemovingChat(true);
+    setChatError("");
+    try {
+      const params = new URLSearchParams({projectId, kind: id ? "message" : "all", ...(id ? {id} : {})});
+      const response = await fetch("/api/story-creator/messages?" + params, {method: "DELETE"});
+      const data = await response.json();
+      if (!response.ok) throw Error(data.error || "Could not clear the conversation.");
+      if (chatProject.current !== projectId) return;
+      for (const removed of data.removedMessages as string[]) removedChatMessages.current.add(removed);
+      setStoryMessages(current => current.filter(message => !removedChatMessages.current.has(message.id)));
+      if (!id) {
+        setStoryDirectorVisualAction(null);
+        setStoryDirectorVisualActionError("");
+        setStoryExtractionNotice("");
+        setStoryExtractionError("");
+      }
+      void conversation.refresh().catch(() => {});
+    } catch (error) {
+      if (chatProject.current === projectId) setChatError(error instanceof Error ? error.message : "Could not clear the conversation.");
+    } finally {
+      storySendLockRef.current = false;
+      setRemovingChat(false);
+    }
+  }
+
   const conversation = useStoryConversation({
     projectId: selectedProjectId,
     ownerKey,
     onMessage: (message) => setStoryMessages((current) => {
-      if (current.some((item) => item.id === message.id)) return current;
+      if (removedChatMessages.current.has(message.id) || current.some((item) => item.id === message.id)) return current;
       return [...current, message].sort((left, right) => left.createdAt - right.createdAt);
     }),
   });
@@ -2269,6 +2304,8 @@ export default function StoryCreatorPanel({
           }}
           onToolChange={changeStoryStudioTool}
           director={(
+            <>
+            <AssistantProviderPicker scope={"story:"+ownerKey+":"+selectedProject.id} disabled={chatBusy}/>
             <IdeasTab
             projectId={selectedProject.id}
             projectTitle={selectedProject.title}
@@ -2276,6 +2313,9 @@ export default function StoryCreatorPanel({
             storyMessages={storyMessages}
             messagesLoading={messagesLoading}
             chatBusy={chatBusy}
+            removingChat={removingChat}
+            removedChatMessages={removedChatMessages.current}
+            onRemoveChat={(id) => void removeChatContent(id)}
             chatError={chatError || conversation.error}
             activeReply={conversation.pending ? conversation.turn : null}
             onCancelReply={() => void conversation.cancel()}
@@ -2314,6 +2354,7 @@ export default function StoryCreatorPanel({
             visualActionError={storyDirectorVisualActionError}
             onMediaAvailability={setStoryMediaEnabled}
             />
+            </>
           )}
           memory={(
             <BibleTab
