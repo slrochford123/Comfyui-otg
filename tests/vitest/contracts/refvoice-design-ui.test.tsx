@@ -23,6 +23,8 @@ it("restores an audition and description without starting another GPU job",async
   vi.stubGlobal("fetch",vi.fn(async()=>Response.json({ok:true,engines,audition:{job:"saved",engine:"qwen3",description:"Low, warm voice",text:"Hello",status:"completed",message:"Ready",progress:100,elapsedSeconds:3,audioUrl:"/owned/saved"}})));
   localStorage.setItem("otg:refvoice:card2",JSON.stringify({engine:"cosy",description:"Low, warm voice",text:"Hello"}));
   render(<CharacterRefVoiceDesigner cardId="card2" revision={4} disabled={false} onApprove={()=>{}}/>);
-  await waitFor(()=>expect((screen.getByLabelText("Describe the voice") as HTMLTextAreaElement).value).toBe("Low, warm voice"));expect(fetch).toHaveBeenCalledTimes(1);
-  expect(JSON.parse(localStorage.getItem("otg:refvoice:card2")!).engine).toBe("qwen3");
+  await waitFor(()=>expect(JSON.parse(localStorage.getItem("otg:refvoice:card2")!).engine).toBe("qwen3"));
+  expect((screen.getByLabelText("Describe the voice") as HTMLTextAreaElement).value).toBe("Low, warm voice");
+  expect(document.querySelector("audio")?.src).toContain("/owned/saved");
+  expect(fetch).toHaveBeenCalledTimes(1);
 });
