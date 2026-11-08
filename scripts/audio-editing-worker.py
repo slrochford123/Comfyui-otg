@@ -98,7 +98,7 @@ def protect_worker_lifetime():
             YIELD_REASON=reason;os.kill(os.getpid(),signal.SIGTERM);return
 
 
-def protect_existing_workloads():
+def protect_existing_workloads(gpu_uuid):
     global YIELD_REASON
     host=CONFIG.get("queueHost","100.75.162.64")
     ports=CONFIG.get("queuePorts",[8188,8189])
@@ -108,7 +108,7 @@ def protect_existing_workloads():
         # successful generation when NVIDIA still reports the previous child.
         with OWNED_PROCESS_LOCK:
             own = dict(OWNED_PROCESS_STARTS)
-            raw=subprocess.check_output(["nvidia-smi","--query-compute-apps=pid,used_memory","--format=csv,noheader,nounits"],timeout=3).decode()
+            raw=subprocess.check_output(["nvidia-smi","-i",gpu_uuid,"--query-compute-apps=pid,used_memory","--format=csv,noheader,nounits"],timeout=3).decode()
         values={}
         for line in raw.splitlines():
             fields=line.split(",")
@@ -194,16 +194,32 @@ def asset(file, name, origin, **extra):
     return result
 
 
+def pin_assigned_gpu(gpu):
+    expected = {"rtx3090": "NVIDIA GeForce RTX 3090", "rtx5060ti": "NVIDIA GeForce RTX 5060 Ti"}[gpu]
+    raw = run(["nvidia-smi", "--query-gpu=uuid,name", "--format=csv,noheader"], capture=True).decode()
+    matches = []
+    for line in raw.splitlines():
+        gpu_uuid, _, name = line.partition(",")
+        if name.strip() == expected and re.fullmatch(r"GPU-[0-9a-fA-F-]{36}", gpu_uuid.strip()):
+            matches.append(gpu_uuid.strip())
+    if len(matches) != 1:
+        raise RuntimeError(f"Cannot identify exactly one {expected}; no inference was started.")
+    os.environ["CUDA_VISIBLE_DEVICES"] = matches[0]
+    return matches[0]
+
+
 def gpu_ready(minimum_mb):
     gpu = JOB.get("gpu", "cpu")
     if gpu == "cpu":
         return "cpu"
     expected = "3090" if gpu == "rtx3090" else "5060 Ti"
-    raw = run(["nvidia-smi", "--query-gpu=name,memory.free", "--format=csv,noheader,nounits"], capture=True).decode()
-    name, free = raw.strip().split(",")
-    if expected not in name:
-        raise RuntimeError(f"GPU identity mismatch: {expected} required; no inference was started.")
-    if float(free)<minimum_mb and CONFIG.get("releaseIdleCaches",False):
+    def free_memory():
+        raw = run(["nvidia-smi", "-i", os.environ["CUDA_VISIBLE_DEVICES"],
+                   "--query-gpu=memory.free", "--format=csv,noheader,nounits"], capture=True).decode()
+        return int(raw.strip())
+
+    free = free_memory()
+    if free < minimum_mb and CONFIG.get("releaseIdleCaches",False):
         host=CONFIG.get("queueHost","100.75.162.64")
         ports=CONFIG.get("queuePorts",[8188,8189])
         for port in ports:
@@ -218,11 +234,10 @@ def gpu_ready(minimum_mb):
         deadline=time.monotonic()+20
         while time.monotonic()<deadline:
             cancelled()
-            raw=run(["nvidia-smi","--query-gpu=name,memory.free","--format=csv,noheader,nounits"],capture=True).decode()
-            name,free=raw.strip().split(",")
-            if float(free)>=minimum_mb:break
+            free = free_memory()
+            if free >= minimum_mb:break
             time.sleep(.25)
-    if float(free) < minimum_mb:
+    if free < minimum_mb:
         raise RuntimeError(f"{expected} needs at least {minimum_mb} MiB free for this operation. Existing workloads were not interrupted.")
     return "cuda:0"
 
@@ -653,12 +668,15 @@ try:
     if operation not in functions:
         raise ValueError("Unsupported audio operation")
     ai_operation=operation in ("separate","speech","music","effects") or operation=="enhance" and JOB["params"].get("engine")=="mossformer"
-    if ai_operation and JOB.get("gpu")!="cpu":
-        threading.Thread(target=protect_existing_workloads,daemon=True).start()
+    gpu = JOB.get("gpu", "cpu")
+    needs_gpu = ai_operation and gpu != "cpu"
+    if needs_gpu:
+        gpu_uuid = pin_assigned_gpu(gpu)
+        threading.Thread(target=protect_existing_workloads,args=(gpu_uuid,),daemon=True).start()
     # The outer application admission lease protects shared GPUs; also share the
     # physical voice file lock for native model processes on this host.
     with contextlib.ExitStack() as stack:
-        if (operation in ("separate", "speech", "music", "effects") or operation=="enhance" and JOB["params"].get("engine")=="mossformer") and JOB.get("gpu") != "cpu":
+        if needs_gpu:
             import fcntl
             lock = stack.enter_context(open(CONFIG["gpuLock"], "a"))
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

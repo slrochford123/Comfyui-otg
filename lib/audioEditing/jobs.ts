@@ -19,23 +19,30 @@ import { assertSharedMediaGpuOwned, sharedMediaAdmissionConfigured } from "@/lib
 import { audioMinimumVramMiB, prepareAudioGpuMemory } from "./gpuMemory";
 
 export type AudioOperation = "import" | "separate" | "mix" | "enhance" | "speech" | "extract" | "music" | "effects";
+type AudioRuntimeScope = "story";
 type Manifest = { id: string; sessionId: string; operation: AudioOperation; gpu: AudioGpu; source?: string;
-  session: AudioSession; params: Record<string, unknown>; createdAt: string; pid?: number };
+  session: AudioSession; params: Record<string, unknown>; createdAt: string; pid?: number; runtimeScope?: AudioRuntimeScope };
 export type AudioJobStatus = { id: string; status: "queued" | "running" | "completed" | "failed" | "canceled";
   stage: string; progress: number; elapsedSeconds?: number; assets?: AudioAsset[]; };
-export const engineConfigPath = () => {
+export const engineConfigPath = (scope?: AudioRuntimeScope) => {
+  if(scope==="story" && process.env.OTG_ENV==="prod"){
+    const config=process.env.OTG_STORY_AUDIO_ENGINE_CONFIG||"";
+    if(process.env.OTG_STORY_AUDIO_PROD!=="1"||!path.isAbsolute(config)||!mediaQueueEnabled()||!sharedMediaAdmissionConfigured())
+      throw Error("Story audio is unavailable on this deployment.");
+    return config;
+  }
   if(process.env.OTG_ENV!=="test" && !path.isAbsolute(process.env.OTG_AUDIO_ENGINE_CONFIG||""))
     throw Error("The deployment's isolated audio runtime is not configured.");
   return process.env.OTG_AUDIO_ENGINE_CONFIG || "/home/shawn-rochford/AI/runtime/test/unified-audio/engines.json";
 };
-export function engineConfig() { return JSON.parse(fs.readFileSync(engineConfigPath(), "utf8")); }
+export function engineConfig(scope?:AudioRuntimeScope) { return JSON.parse(fs.readFileSync(engineConfigPath(scope), "utf8")); }
 export function assertAudioTestEnabled() {
   if (!privateMediaFeatureEnabled("OTG_AUDIO_EDITING_ENABLED")) throw new RequestError("Unified Audio Editing is not enabled on this deployment. Your saved sessions are retained.", 503);
 }
-export function capabilities() {
+export function capabilities(scope?:AudioRuntimeScope) {
   const enabled = privateMediaFeatureEnabled("OTG_AUDIO_EDITING_ENABLED");
   try {
-    const cfg = engineConfig();
+    const cfg = engineConfig(scope);
     const pythonReady = typeof cfg.python === "string" && fs.existsSync(cfg.python);
     return { enabled, engines: enabled && pythonReady ? cfg.verified || {} : {}, researchOnly: cfg.researchOnly || [],
       musicEngine:cfg.musicEngine==="yue2"?"yue2":"ace",musicMaxSeconds:cfg.musicEngine==="yue2"?Number(cfg.musicMaxSeconds||120):600,
@@ -130,25 +137,28 @@ async function admission(gpu: AudioGpu, id: string): Promise<ResourceLock[]> {
   } catch(error) { release(); throw error; }
 }
 export async function startJob(owner: string, sessionId: string, operation: AudioOperation, source: string | undefined,
-  params: Record<string, unknown>, gpu: AudioGpu | "auto" = "cpu") {
+  params: Record<string, unknown>, gpu: AudioGpu | "auto" = "cpu", runtimeScope?: AudioRuntimeScope) {
   // Reserve synchronously before the first await, across Node processes as well
   // as concurrent requests. Never steal a live process's admission reservation.
   const releaseReservation=reserveSessionStart(owner,sessionId);
-  try { return await startReservedJob(owner,sessionId,operation,source,params,gpu); }
+  try { return await startReservedJob(owner,sessionId,operation,source,params,gpu,runtimeScope); }
   finally { releaseReservation(); }
 }
 async function startReservedJob(owner: string, sessionId: string, operation: AudioOperation, source: string | undefined,
-  params: Record<string, unknown>, gpu: AudioGpu | "auto") {
+  params: Record<string, unknown>, gpu: AudioGpu | "auto", runtimeScope?:AudioRuntimeScope) {
   const session = readSession(owner,sessionId);
   const sourceBytes = source ? fs.statSync(source).size : 0;
   const seconds = session.assets.find(asset => asset.id === session.sourceId)?.duration || Number(params.seconds) || 0;
   requireStorageHeadroom(sessionRoot(owner, sessionId), sourceBytes * 2 + Math.max(0, seconds) * 48000 * 2 * 4 * 8);
   const existing = sessionJobs(owner,sessionId).find(j=>j.status==="queued"||j.status==="running");
   if (existing) throw Error("This session already has an active operation. Wait or cancel it first.");
-  const cfg = engineConfig();
+  const configFile=engineConfigPath(runtimeScope);
+  const cfg = engineConfig(runtimeScope);
+  if(runtimeScope==="story" && operation!=="music" && operation!=="effects")
+    throw Error("Unsupported Story audio operation.");
   const ai = ["separate","speech","music","effects"].includes(operation) || operation === "enhance" && params.engine === "mossformer";
   if(operation==="music"&&cfg.musicEngine==="yue2"&&(!Number.isFinite(Number(params.seconds))||Number(params.seconds)>Number(cfg.musicMaxSeconds||120)))
-    throw Error(`This YuE2 TEST runtime supports music requests up to ${Number(cfg.musicMaxSeconds||120)} seconds. Existing audio was not changed.`);
+    throw Error(`This YuE2 runtime supports music requests up to ${Number(cfg.musicMaxSeconds||120)} seconds.`);
   if (params.voiceDesignEngine) {
     const runtime = refVoiceRuntime(String(params.voiceDesignEngine));
     if (operation !== "speech" || !runtime || gpu !== "rtx3090" || source || (!runtime.remoteConfig&&((cfg.localGpu&&cfg.localGpu!=="rtx3090")||cfg.transports?.rtx3090)))
@@ -160,12 +170,15 @@ async function startReservedJob(owner: string, sessionId: string, operation: Aud
     : operation === "separate" && params.engine === "bandit" ? "separate-bandit" : operation;
   if (gpu === "auto") {
     const supported = mediaGpuCandidates("auto",["rtx3090","rtx5060ti"].filter(candidate=>cfg.verified?.[capability]?.[candidate] &&
+      (runtimeScope!=="story" || process.env.OTG_ENV!=="prod" || cfg.transports?.[candidate]?.protocol==="slr-audio-v1") &&
       audioTransportReady(cfg,candidate as MediaGpu)) as MediaGpu[]);
     const selected = await preferMediaGpu(supported);
     if (!selected) throw Error("This audio engine has no qualified GPU configuration. Existing workloads were not changed.");
     gpu = selected;
   }
   if (ai && !cfg.verified?.[capability]?.[gpu]) throw Error(`This operation has not been qualified on ${gpu}. Select an available engine.`);
+  if(runtimeScope==="story"&&process.env.OTG_ENV==="prod"&&cfg.transports?.[gpu]?.protocol!=="slr-audio-v1")
+    throw Error("A restricted Story audio worker is required.");
   if (!audioTransportReady(cfg,gpu)) throw Error("The selected GPU isolated audio connection is not qualified. Existing workloads remain untouched.");
   if(gpu!=="cpu"&&cfg.transports?.[gpu]?.protocol==="slr-audio-v1"&&!mediaQueueEnabled())
     throw Error("The restricted audio connection requires the durable GPU queue; no worker was started.");
@@ -173,7 +186,7 @@ async function startReservedJob(owner: string, sessionId: string, operation: Aud
   const id = crypto.randomUUID();
   const root = jobDir(owner,sessionId,id);
   fs.mkdirSync(root,{recursive:true,mode:0o700});
-  const manifest: Manifest = {id,sessionId,operation,gpu,source,params,session,createdAt:new Date().toISOString()};
+  const manifest: Manifest = {id,sessionId,operation,gpu,source,params,session,createdAt:new Date().toISOString(),runtimeScope};
   const file = path.join(root,"request.json");
   if (mediaQueueEnabled() && gpu !== "cpu") {
     atomicJson(file,manifest);
@@ -188,11 +201,11 @@ async function startReservedJob(owner: string, sessionId: string, operation: Aud
     atomicJson(path.join(root,"status.json"),{id,status:"queued",stage:"Starting isolated worker",progress:0});
     const script = audioWorkerScript(cfg,gpu);
     const log = fs.openSync(path.join(root,"worker.log"),"a",0o600);
-    const cache=path.join(path.dirname(engineConfigPath()),"engine-cache");
+    const cache=path.join(path.dirname(configFile),"engine-cache");
     const temp=path.join(root,"temp");fs.mkdirSync(temp,{recursive:true,mode:0o700});
     const workerEnv:NodeJS.ProcessEnv={NODE_ENV:process.env.NODE_ENV||"production",PATH:process.env.PATH,HOME:process.env.HOME,LANG:process.env.LANG||"C.UTF-8",
       ...(process.env.SSH_AUTH_SOCK?{SSH_AUTH_SOCK:process.env.SSH_AUTH_SOCK}:{}),
-      OTG_AUDIO_ENGINE_CONFIG:engineConfigPath(),OMP_NUM_THREADS:"4",MKL_NUM_THREADS:"4",TMPDIR:temp,PYTHONNOUSERSITE:"1",PYTHONDONTWRITEBYTECODE:"1",
+      OTG_AUDIO_ENGINE_CONFIG:configFile,OMP_NUM_THREADS:"4",MKL_NUM_THREADS:"4",TMPDIR:temp,PYTHONNOUSERSITE:"1",PYTHONDONTWRITEBYTECODE:"1",
       HF_HUB_OFFLINE:"1",TRANSFORMERS_OFFLINE:"1",HF_HOME:path.join(cache,"huggingface"),
       TORCH_HOME:path.join(cache,"torch"),TRITON_CACHE_DIR:path.join(cache,"triton"),XDG_CACHE_HOME:path.join(cache,"xdg")};
     const child = spawn(audioControllerPython(cfg),[script,file],{detached:true,stdio:["ignore",log,log],
@@ -239,8 +252,11 @@ export async function executeQueuedAudioJob(payload: AudioMediaPayload, gpu: Med
   if (manifest.id!==id || manifest.sessionId!==sessionId || manifest.gpu!==gpu) throw Error("Queued audio identity changed.");
   if (fs.existsSync(path.join(root,"cancel"))) throw Error("Canceled before audio execution.");
   if (manifest.pid) throw Error("This audio job already owns a worker; refusing duplicate execution.");
-  let cfg=engineConfig();
-  let configFile=engineConfigPath();
+  let cfg=engineConfig(manifest.runtimeScope);
+  let configFile=engineConfigPath(manifest.runtimeScope);
+  if(manifest.runtimeScope==="story"&&process.env.OTG_ENV==="prod"&&
+     (!["music","effects"].includes(manifest.operation)||cfg.transports?.[gpu]?.protocol!=="slr-audio-v1"))
+    throw Error("The queued job is outside the restricted Story audio scope.");
   if(manifest.params.voiceDesignEngine){
     const runtime=refVoiceRuntime(String(manifest.params.voiceDesignEngine));
     if(!runtime||gpu!=="rtx3090"||manifest.operation!=="speech"||manifest.source||(!runtime.remoteConfig&&((cfg.localGpu&&cfg.localGpu!=="rtx3090")||cfg.transports?.rtx3090)))throw Error("Voice design runtime is not available on this GPU.");
@@ -261,7 +277,7 @@ export async function executeQueuedAudioJob(payload: AudioMediaPayload, gpu: Med
   }
   const script=audioWorkerScript(cfg,gpu);
   const log=fs.openSync(path.join(root,"worker.log"),"a",0o600);
-  const cache=path.join(path.dirname(engineConfigPath()),"engine-cache"),temp=path.join(root,"temp");
+  const cache=path.join(path.dirname(configFile),"engine-cache"),temp=path.join(root,"temp");
   fs.mkdirSync(temp,{recursive:true,mode:0o700});
   const env:NodeJS.ProcessEnv={NODE_ENV:process.env.NODE_ENV||"production",PATH:process.env.PATH,HOME:process.env.HOME,LANG:process.env.LANG||"C.UTF-8",
     ...(process.env.SSH_AUTH_SOCK?{SSH_AUTH_SOCK:process.env.SSH_AUTH_SOCK}:{}),OTG_AUDIO_ENGINE_CONFIG:configFile,

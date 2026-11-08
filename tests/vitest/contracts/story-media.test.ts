@@ -10,6 +10,29 @@ vi.mock("@/lib/storyCreator/mediaVoice",()=>({generateStoryVoice:backend.voice,s
 let root="";
 beforeEach(()=>{root=fs.mkdtempSync(path.join(os.tmpdir(),"story-media-"));vi.stubEnv("OTG_DATA_ROOT",root);vi.stubEnv("OTG_DATA_DIR",root);vi.stubEnv("OTG_ENV","test");vi.resetModules();vi.clearAllMocks();});
 afterEach(()=>{vi.resetModules();vi.unstubAllEnvs();fs.rmSync(root,{recursive:true,force:true});});
+it("keeps production Story audio explicitly enabled and separate from the editor's engines",async()=>{
+  const storyConfig=path.join(root,"story.json"),editorConfig=path.join(root,"editor.json");
+  fs.writeFileSync(storyConfig,JSON.stringify({python:process.execPath,musicEngine:"yue2",verified:{music:{rtx3090:true},effects:{rtx3090:true}}}));
+  fs.writeFileSync(editorConfig,JSON.stringify({python:process.execPath,verified:{"separate-bandit":{cpu:true}}}));
+  vi.stubEnv("OTG_ENV","prod");
+  vi.stubEnv("OTG_PRIVATE_RESEARCH_MEDIA","1");
+  vi.stubEnv("OTG_AUDIO_EDITING_ENABLED","1");
+  vi.stubEnv("OTG_MEDIA_GPU_ROUTING","1");
+  vi.stubEnv("OTG_MEDIA_ADMISSION_CONFIG",path.join(root,"admission.json"));
+  vi.stubEnv("OTG_AUDIO_ENGINE_CONFIG",editorConfig);
+  vi.stubEnv("OTG_STORY_AUDIO_ENGINE_CONFIG",storyConfig);
+  vi.stubEnv("OTG_STORY_AUDIO_PROD","0");
+  const {requireStoryAudioEngine}=await import("@/lib/storyCreator/mediaAudio");
+  const {capabilities,engineConfigPath}=await import("@/lib/audioEditing/jobs");
+  expect(()=>requireStoryAudioEngine("music")).toThrow("YuE2 is unavailable");
+  vi.stubEnv("OTG_STORY_AUDIO_PROD","1");
+  expect(requireStoryAudioEngine("music").musicEngine).toBe("yue2");
+  expect(requireStoryAudioEngine("effects").engines.effects).toEqual({rtx3090:true});
+  expect(capabilities().engines).toEqual({"separate-bandit":{cpu:true}});
+  expect(engineConfigPath()).toBe(editorConfig);
+  vi.stubEnv("OTG_MEDIA_GPU_ROUTING","0");
+  expect(()=>requireStoryAudioEngine("effects")).toThrow("Sony Woosh is unavailable");
+});
 async function setup(content="Generate a character image of Buzzy, a white bunny with one pink ear.") {
   const store=await import("@/lib/storyCreator/store"), media=await import("@/lib/storyCreator/mediaStore"),execution=await import("@/lib/storyCreator/mediaExecution");
   const project=store.createStoryCreatorProject({ownerKey:"alice",title:"Buzzy"});

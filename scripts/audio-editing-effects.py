@@ -118,4 +118,5 @@ if written!=round(seconds*48000):raise RuntimeError("Window assembly did not pre
 Path(request["result"]).write_text(json.dumps({"engine":"Sony Woosh-DVFlow-8s" if auto else "Sony Woosh-DFlow",
     "videoConditioned":auto,"segments":segments,"initializationSeconds":load_seconds,
     "checkpointAudit":audits,
-    "peakTorchVramMiB":torch.cuda.max_memory_allocated()/1048576,"license":"CC-BY-NC-4.0 private TEST evaluation only"},indent=2))
+    "peakTorchVramMiB":torch.cuda.max_memory_allocated()/1048576,
+    "license":cfg.get("outputLicense","CC-BY-NC-4.0 private TEST evaluation only")},indent=2))

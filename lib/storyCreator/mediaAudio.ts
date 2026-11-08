@@ -10,8 +10,8 @@ import { updateStoryMedia, type StoryMediaRecord } from "./mediaStore";
 
 const exec = promisify(execFile);
 export function requireStoryAudioEngine(operation: "music" | "effects") {
-  const caps = capabilities();
-  if (process.env.OTG_ENV !== "test" || !caps.enabled ||
+  const caps = capabilities("story");
+  if (!(process.env.OTG_ENV === "test" || process.env.OTG_ENV === "prod" && process.env.OTG_STORY_AUDIO_PROD === "1") || !caps.enabled ||
     !Object.values(caps.engines[operation] || {}).some(Boolean) ||
     (operation === "music" && caps.musicEngine !== "yue2")) {
     throw Error(operation === "music" ? "YuE2 is unavailable on this deployment." : "Sony Woosh is unavailable on this deployment.");
@@ -48,9 +48,10 @@ export async function submitStoryAudio(record: StoryMediaRecord, video?: string)
     fs.copyFileSync(video,source,fs.constants.COPYFILE_EXCL);
   }
   const job = await startJob(record.ownerKey,session.id,operation,source,{
-    seconds, seed:randomInt(0,2**31), mode:video?"automatic":"manual",
+    seconds, seed:randomInt(0,2**31),
+    ...(operation==="effects"?{mode:video?"automatic":"manual"}:{}),
     prompt:record.command.prompt.slice(0,1900),
-  },"auto");
+  },"auto","story");
   updateStoryMedia(pending,{backendJob:{...pending.backendJob,audioJobId:job.id,gpu:job.gpu}});
 }
 
