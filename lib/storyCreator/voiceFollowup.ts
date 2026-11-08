@@ -13,7 +13,7 @@ function literal(text: string) {
 
 export function storyVoiceDraft(request: string) {
   const raw=request.trim();
-  const line=raw.replace(/^(?:please\s+|i (?:want|would like) you to\s+)+/i,"");
+  const line=raw.replace(/^(?:(?:yes|yeah|yep|okay|ok|sure)[,.!]\s*|please\s+|i (?:want|would like) you to\s+)+/i,"");
   const cue=/\b(?:say(?:ing)?\b\s*[:.,–-]?|(?:speak|read)(?:ing)?\b\s*[:.,–-])\s*(.*)$/i.exec(line);
   const instruction=(cue?line.slice(0,cue.index):line).replace(/\s+and\s+(?:make|have)\s+(?:her|him|them)$/i,"").replace(/[,\s]+$/,"");
   if(!explicitMediaRequest(instruction,true))return;
@@ -43,4 +43,17 @@ export function buildStoryVoiceAudition(draft:NonNullable<ReturnType<typeof stor
   const command:StoryMediaCommand={operation:"voice",subject:name?"character":"scene",name,prompt:draft.instruction,
     sourceId:"",text,evidence:draft.instruction,voiceMode:"design"};
   return {instruction:draft.instruction,command};
+}
+
+/** A specific previous offer supplies the dialogue and delivery for an explicit create request. */
+export function confirmedStoryVoiceAudition(request:string,previousReply:string,dialogue?:string) {
+  const draft=storyVoiceDraft(request);
+  if(!draft || draft.dialogue)return;
+  const offered=previousReply.match(/\bshould\s+(?:she|he|they|the character)\s+say\s*[:,]?\s*("[^"\n]+"|“[^”\n]+”)\s*,?\s*([^?\n]*)\?\s*$/i);
+  if(!offered||storyVoiceQuotedLine(previousReply)!==literal(offered[1]))return;
+  const direction=offered[2].trim();
+  if(direction&&!/^(?:in [\p{L}-]+(?:\s+|$))?(?:with (?:an?\s+)?[\p{L}][\p{L} -]{0,55} accent)?$/iu.test(direction))return;
+  const voice=buildStoryVoiceAudition(draft,dialogue||literal(offered[1]));
+  if(voice&&direction)voice.command.prompt+=". Speak "+direction+".";
+  return voice;
 }

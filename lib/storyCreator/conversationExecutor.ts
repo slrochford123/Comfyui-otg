@@ -7,7 +7,7 @@ import { buildStoryDirectorProjectContext } from "./context";
 import { storyConversationInstructions, storyConversationOutputTokens } from "./conversationPolicy";
 import { retrieveStoryMemory } from "./retrieval";
 import { parseStoryConversation, partialStoryReply, STORY_CONVERSATION_SCHEMA, STORY_MEMORY_INSTRUCTION } from "./conversationMemory";
-import {buildStoryVoiceAudition,STORY_VOICE_LINE_PROMPT,storyVoiceDraft,storyVoiceLineReply} from "./voiceFollowup";
+import {buildStoryVoiceAudition,confirmedStoryVoiceAudition,STORY_VOICE_LINE_PROMPT,storyVoiceDraft,storyVoiceLineReply} from "./voiceFollowup";
 import {
   claimStoryConversationTurn, completeStoryConversationTurn, getStoryConversationTurn,
   listStoryCreatorMessages, updateStoryConversationTurn,
@@ -67,7 +67,15 @@ export async function executeStoryConversationTurn(input: TurnIdentity, mediaCoo
     const continuation=pendingVoice?.status==="completed"&&pendingVoice.assistantMessageId===previousReply?.id&&!pendingVoice.mediaResultId;
     const voiceDraft=expanded&&canUseMedia?storyVoiceDraft(source.content)||
       (continuation?storyVoiceDraft(previousUser.content):undefined):undefined;
-    const voice=voiceDraft?buildStoryVoiceAudition(voiceDraft,continuation?lineReply:undefined,previousReply?.role==="assistant"?previousReply.content:undefined):undefined;
+    const priorOffer=allMessages[sourceIndex-3];
+    const confirmed=expanded&&canUseMedia
+      ? continuation&&priorOffer?.role==="assistant"
+        ? confirmedStoryVoiceAudition(previousUser.content,priorOffer.content,lineReply)
+        : previousReply?.role==="assistant"
+          ? confirmedStoryVoiceAudition(source.content,previousReply.content)
+          : undefined
+      : undefined;
+    const voice=confirmed??(voiceDraft?buildStoryVoiceAudition(voiceDraft,continuation?lineReply:undefined,previousReply?.role==="assistant"?previousReply.content:undefined):undefined);
     if(voiceDraft&&!voice){
       completeStoryConversationTurn({...scope,content:STORY_VOICE_LINE_PROMPT});
       return;
