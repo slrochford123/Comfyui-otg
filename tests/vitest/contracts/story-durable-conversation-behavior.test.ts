@@ -23,6 +23,37 @@ async function setup() {
 }
 
 describe("server-owned Story Creator replies", () => {
+  it.each([false,true])("continues a confirmed voice offer without losing its accent (already asked for the line: %s)",async legacy=>{
+    vi.stubEnv("OTG_ENV","test");
+    vi.stubEnv("OTG_STORY_CHAT_MEDIA","1");
+    const {store,identity}=await setup();
+    const {executeStoryConversationTurn}=await import("../../../lib/storyCreator/conversationExecutor");
+    const media=await import("../../../lib/storyCreator/mediaExecution");
+    const dispatch=vi.spyOn(media,"executeStoryMedia").mockResolvedValue(undefined);
+    const offered="Hello, I’m Dr. Helena Boss. Welcome to your new life,";
+    store.addStoryCreatorMessage({...identity,role:"assistant",content:
+      "Her name is **Dr. Helena Boss**. Should she say, “"+offered+"” in English with a Russian accent?"});
+    const add=(content:string)=>{
+      const source=store.addStoryCreatorMessage({...identity,role:"user",content});
+      const {turn}=store.createStoryConversationTurn({...identity,sourceMessageId:source.id});
+      return {...identity,turnId:turn.id,sourceMessageId:source.id};
+    };
+    let request=add("Yeah. Yes, please create the voice.");
+    const corrected="Hello, I’m Dr. Helena Boss. Welcome.";
+    if(legacy){
+      const scope={...request,leaseToken:"previous-release"};
+      store.claimStoryConversationTurn(scope);
+      store.completeStoryConversationTurn({...scope,content:"Please provide the exact line the character should speak."});
+      request=add("Exact line is "+corrected);
+    }
+    await executeStoryConversationTurn(request,"");
+    await executeStoryConversationTurn(request,"");
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls[0][0].command).toMatchObject({
+      operation:"voice",voiceMode:"design",text:legacy?corrected:offered,prompt:expect.stringContaining("English with a Russian accent"),
+    });
+  });
+
   it("queues the exact follow-up as one voice audition with the original accent", async () => {
     vi.stubEnv("OTG_ENV","test");
     vi.stubEnv("OTG_STORY_CHAT_MEDIA","1");
