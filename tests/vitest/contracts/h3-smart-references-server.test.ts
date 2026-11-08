@@ -29,10 +29,10 @@ describe("live selected-worker capability metadata and owned first-frame resolut
   vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json(url.endsWith("/object_info") ? {...info, PK_MiniMaxH3Combined: undefined} : [{name: "cat", kind: "image", tokens: 50}])));
   const cap = await inspectH3SmartReferences("rtx5060ti", true);expect(cap.mixedReferences).toBe(false);
   expect(fetch).toHaveBeenCalledWith("http://100.98.212.116:8188/object_info", expect.anything());
-  await expect(makeH3SmartReferenceInput({useFirstFrame: false, refMods: [slot]}, "rtx5060ti", [{path: "/owned/girl", name: "girl", description: ""}], null)).rejects.toThrow("not installed");
+  await expect(makeH3SmartReferenceInput({useFirstFrame: false, refMods: [slot]}, "rtx5060ti", [{path: "/owned/girl", name: "girl", description: ""}], null, 0, 0, undefined, "qa")).rejects.toThrow("not installed");
  });
  it("reads actual library kind instead of trusting the client’s source-kind label", async () => {
-  const value = await makeH3SmartReferenceInput({useFirstFrame: false, refMods: [{...slot, sourceKind: "audio"}]}, "rtx3090", [], null);
+  const value = await makeH3SmartReferenceInput({useFirstFrame: false, refMods: [{...slot, sourceKind: "audio"}]}, "rtx3090", [], null, 0, 0, undefined, "qa");
   expect(value?.referenceMap[0]).toMatchObject({kind: "image", tag: "<Picture 1>"});
  });
  it("refuses another owner’s staged image before any file read, decode, or GPU request", async () => {

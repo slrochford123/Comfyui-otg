@@ -79,7 +79,8 @@ describe("Story Creator V2 extraction contract", () => {
     const executor = read("lib/storyCreator/conversationExecutor.ts");
     expect(executor).toContain("STORY_CONVERSATION_SCHEMA");
     expect(executor).toContain("parseStoryConversation");
-    expect(executor.match(/await createOpenAITextStream\(/g)).toHaveLength(1);
+    expect([...executor.matchAll(/await createAssistantStream\(/g)]).toHaveLength(1);
+    expect(executor).not.toContain("createOpenAITextStream(");
     expect(executor).not.toContain("/api/story-creator/extract");
     expect(panel).not.toContain("extractionResults.push");
     expect(route).toContain("AI_PAYMENT_AUTHORIZATION_REQUIRED");

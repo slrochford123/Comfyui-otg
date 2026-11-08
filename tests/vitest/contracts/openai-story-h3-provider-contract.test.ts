@@ -26,7 +26,7 @@ describe("OpenAI Storyteller and H3 Director provider contract", () => {
     expect(provider).toContain("audio.transcriptions.create");
   });
 
-  it("routes Story Helper and Story Creator Write through OpenAI first with Qwen rollback", () => {
+  it("routes eligible Story requests through the conversational provider policy and reports the actual provider", () => {
     const chat = read("app/api/ollama-ai/chat/route.ts");
     const write = read("app/api/story-creator/write/route.ts");
     const panel = read("app/app/components/StoryCreatorPanel.tsx");
@@ -35,7 +35,9 @@ describe("OpenAI Storyteller and H3 Director provider contract", () => {
     expect(chat).toContain("openAIEnabled()");
     expect(chat).toContain('useCase: "story-helper"');
     expect(chat).toContain("openAIModels().story");
-    expect(chat).toContain("provider: \"openai\"");
+    expect(chat).toContain("createAssistantStream(request,preference)");
+    expect(chat).toContain("provider:events.routing?.provider");
+    expect(chat).toContain('provider: openAIResponse.provider||"openai"');
     expect(chat).toContain("qwenFetchForChatRequest");
     expect(chat).toContain("You are Story Helper inside the SLR Studios OTG app.");
     expect(chat).toContain("buildStoryDirectorProjectContext");

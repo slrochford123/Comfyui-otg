@@ -29,7 +29,14 @@ it("uses purple production branding and the SLR Studios label without changing t
  expect(read("capacitor.config.ts")).toContain("appName: 'SLR Studios'");
  expect(read("capacitor.config.ts")).toContain("url: 'https://comf-otg.comfyui-otg.win'");
  expect(read("android/app/build.gradle")).toContain('applicationId "com.slr.otg"');
- expect(read("android/app/build.gradle")).toMatch(/versionCode\s+38/);
- expect(read("android/app/build.gradle")).toContain('versionName "2.0.4"');
+ const gradle=read("android/app/build.gradle");
+ const buildCodes=[...gradle.matchAll(/versionCode\s+(\d+)/g)].map((match)=>Number(match[1]));
+ expect(buildCodes.length).toBeGreaterThanOrEqual(2);
+ expect(buildCodes[0]).toBeGreaterThanOrEqual(38);
+ expect(buildCodes.every((code)=>code===buildCodes[0])).toBe(true);
+ const [base,qa,prod]=[...gradle.matchAll(/versionName\s+"([^"]+)"/g)].map((match)=>match[1]);
+ expect(base).toMatch(/^\d+\.\d+\.\d+$/);
+ expect(qa).toBe(base+"-test");
+ expect(prod ?? base).toBe(base);
  expect(read("android/app/src/qa/res/values/strings.xml")).toContain("SLR Studios TEST");
 });

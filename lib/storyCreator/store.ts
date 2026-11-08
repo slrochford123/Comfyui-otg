@@ -1167,7 +1167,7 @@ function migrateStoryCreatorSchema(database: Database.Database) {
   }
   const turnColumns = new Set((database.prepare("PRAGMA table_info(story_conversation_turns)").all() as Array<{ name: string }>).map((column) => column.name));
   for (const [name, declaration] of Object.entries({ memory_summary: "TEXT NOT NULL DEFAULT ''",
-    memory_fact_ids_json: "TEXT NOT NULL DEFAULT '[]'", purpose: "TEXT NOT NULL DEFAULT 'conversation'", writing_mode: "TEXT NOT NULL DEFAULT ''", ai_provider: "TEXT NOT NULL DEFAULT 'openai'" })) {
+    memory_fact_ids_json: "TEXT NOT NULL DEFAULT '[]'", purpose: "TEXT NOT NULL DEFAULT 'conversation'", writing_mode: "TEXT NOT NULL DEFAULT ''", ai_provider: "TEXT NOT NULL DEFAULT 'openai'", media_source_id: "TEXT", media_result_id: "TEXT" })) {
     if (!turnColumns.has(name)) database.exec(`ALTER TABLE story_conversation_turns ADD COLUMN ${name} ${declaration}`);
   }
 }
@@ -2281,6 +2281,8 @@ export type StoryConversationTurn = {
   projectId: string;
   ownerKey: string;
   sourceMessageId: string;
+  mediaSourceId?: string;
+  mediaResultId?: string;
   // Requested provider before dispatch, actual provider once routed.
   aiProvider?: "openai" | "local3060";
   purpose: "conversation" | "writing";
@@ -2300,6 +2302,7 @@ function rowToConversationTurn(row: any): StoryConversationTurn {
   return {
     id: row.id, projectId: row.project_id, ownerKey: row.owner_key,
     sourceMessageId: row.source_message_id, status: row.status,
+    mediaSourceId: row.media_source_id || undefined, mediaResultId: row.media_result_id || undefined,
     aiProvider: row.ai_provider === "local3060" ? "local3060" : "openai",
     purpose: row.purpose || "conversation", writingMode: row.writing_mode || "",
     partialText: row.partial_text, assistantMessageId: row.assistant_message_id,
@@ -2341,7 +2344,7 @@ export function getStoryConversationTurn(input: {
 
 export function createStoryConversationTurn(input: {
   ownerKey: string; projectId: string; sourceMessageId: string;
-  purpose?: "conversation" | "writing"; writingMode?: string; aiProvider?: "openai" | "local3060";
+  purpose?: "conversation" | "writing"; writingMode?: string; aiProvider?: "openai" | "local3060"; mediaSourceId?: string;
 }) {
   const source = getStoryCreatorMessage({ ...input, messageId: input.sourceMessageId });
   if (source.role !== "user") throw storyBibleError("STORY_TURN_SOURCE_INVALID", "A reply requires a saved user message.");
@@ -2362,9 +2365,9 @@ export function createStoryConversationTurn(input: {
     const now = Date.now();
     const id = randomUUID();
     db().prepare(`INSERT INTO story_conversation_turns
-      (id,project_id,owner_key,source_message_id,status,purpose,writing_mode,ai_provider,lease_until,created_at,updated_at)
-      VALUES (?,?,?,?,'queued',?,?,?,?,?,?)`).run(id, source.projectId, source.ownerKey,
-        source.id, input.purpose || "conversation", input.writingMode || "", input.aiProvider || "openai", now + 180_000, now, now);
+      (id,project_id,owner_key,source_message_id,status,purpose,writing_mode,ai_provider,media_source_id,lease_until,created_at,updated_at)
+      VALUES (?,?,?,?,'queued',?,?,?,?,?,?,?)`).run(id, source.projectId, source.ownerKey,
+        source.id, input.purpose || "conversation", input.writingMode || "", input.aiProvider || "openai", input.mediaSourceId || null, now + 180_000, now, now);
     return { turn: getStoryConversationTurn({ ...input, turnId: id })!, created: true };
   })();
 }
@@ -2393,7 +2396,7 @@ export function updateStoryConversationTurn(input: {
 }
 
 export function completeStoryConversationTurn(input: {
-  ownerKey: string; projectId: string; turnId: string; leaseToken: string; content: string;
+  ownerKey: string; projectId: string; turnId: string; leaseToken: string; content: string; mediaResultId?: string;
   memory?: Pick<Parameters<typeof applyStoryExtraction>[0], "entities" | "facts">;
 }) {
   return db().transaction(() => {
@@ -2421,8 +2424,8 @@ export function completeStoryConversationTurn(input: {
       } catch { memorySummary = "Reply saved. Automatic memory update could not finish; review Story Details when convenient."; }
     }
     db().prepare(`UPDATE story_conversation_turns SET status='completed',partial_text=?,
-      assistant_message_id=?,memory_summary=?,memory_fact_ids_json=?,updated_at=? WHERE id=? AND owner_key=? AND project_id=?`)
-      .run(message.content, message.id, memorySummary, JSON.stringify(savedFactIds), Date.now(), input.turnId, input.ownerKey, input.projectId);
+      assistant_message_id=?,memory_summary=?,memory_fact_ids_json=?,media_result_id=?,updated_at=? WHERE id=? AND owner_key=? AND project_id=?`)
+      .run(message.content, message.id, memorySummary, JSON.stringify(savedFactIds), input.mediaResultId || null, Date.now(), input.turnId, input.ownerKey, input.projectId);
     return message;
   })();
 }

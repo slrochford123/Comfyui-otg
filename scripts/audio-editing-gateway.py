@@ -84,6 +84,8 @@ class Gateway:
         operation = raw.get("operation")
         if operation not in PARAMS:
             raise ValueError("Unsupported audio operation")
+        if operation not in self.config.get("allowedOperations", PARAMS):
+            raise ValueError("Audio operation is outside this worker's scope")
         params = raw.get("params", {})
         object_only(params, PARAMS[operation])
         for key, value in params.items():

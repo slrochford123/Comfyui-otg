@@ -19,7 +19,7 @@ describe("Dialogue Replacement performance conversion contract", () => {
       "app/app/components/EditVideoVoiceDubbingPanel.tsx",
     );
 
-    expect(source).toContain('engine: target.engine === "character" ? "applio" : "auto"');
+    expect(source).toContain('engine: target.engine === "character" ? "applio" : target.engine === "seed-vc" ? "seed-vc" : "auto"');
     expect(source).toContain('dubMode: mode === "rewrite" ? "rewrite_line" : "preserve_performance"');
     expect(source).toContain('emotion: "preserve"');
     expect(source).toContain("modelPath: target.modelPath || \"\"");

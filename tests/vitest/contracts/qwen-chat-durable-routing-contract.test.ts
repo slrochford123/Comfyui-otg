@@ -51,9 +51,7 @@ describe(
 
         expect(
           chatSource,
-        ).not.toContain(
-          "QwenClusterBusyError",
-        );
+        ).toMatch(/error instanceof QwenClusterBusyError[\s\S]+?code: "LOCAL_AI_BUSY"[\s\S]+?status: 503/);
       },
     );
 
@@ -87,7 +85,7 @@ describe(
     );
 
     it(
-      "makes router node order caller-controlled while preserving SLR-first default",
+      "makes router node order caller-controlled while preserving the Shawn-first legacy default",
       () => {
         expect(
           routerSource,
@@ -110,8 +108,9 @@ describe(
         expect(
           routerSource,
         ).toContain(
-          '|| ["slr", "shawn"]',
+          '|| ["shawn", "slr"]',
         );
+        expect(routerSource).toContain('return execute3060(path,payload');
 
         expect(
           routerSource,

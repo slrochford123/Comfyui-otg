@@ -78,7 +78,7 @@ if trimmed or positive[0][1].get('yue2_truncated'):
     samples[-fade_frames:]*=np.linspace(1,0,fade_frames,dtype=samples.dtype)[:,None]
 output=Path(request['directory'])/'yue2.wav';output.parent.mkdir(parents=True,exist_ok=True)
 sf.write(output,samples,rate,subtype='PCM_24')
-receipt={'file':str(output),'engine':'YuE2-3B-BF16','license':'CC-BY-NC-4.0 private TEST evaluation only',
+receipt={'file':str(output),'engine':'YuE2-3B-BF16','license':cfg.get('outputLicense','CC-BY-NC-4.0 private TEST evaluation only'),
     'seed':seed,'requestedSeconds':seconds,'duration':len(samples)/rate,'nativeSeconds':native_samples/rate,
     'trimmedToRequest':trimmed,'sampleRate':rate,'channels':samples.shape[1],
     'device':torch.cuda.get_device_name(0),'peakTorchVramMiB':torch.cuda.max_memory_allocated()/1048576,

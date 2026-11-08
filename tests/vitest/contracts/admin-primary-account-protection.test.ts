@@ -5,13 +5,15 @@ vi.mock("next/headers",()=>({cookies:async()=>({get:()=>({value:"qa-session"})})
 vi.mock("@/app/api/admin/_requireAdmin",()=>({requireAdmin:async()=>({ok:true,id:"qa-admin-id",username:"qa-admin",email:"qa-admin@example.com"})}));
 vi.mock("@/lib/auth/admin",()=>({isAdminUserId:(id:string)=>id==="qa-admin-id"}));
 vi.mock("@/lib/auth/jwt",()=>({verifySession:async()=>({email:"qa-admin@example.com",username:"qa-admin"})}));
+vi.mock("@/lib/experiments/nsfwAccess",()=>({getNsfwAccess:()=>({allowed:false})}));
 vi.mock("@/lib/auth/db",()=>({ensureMigrations:()=>{},db:{prepare:()=>({get:()=>state.target,all:()=>[state.target],run:state.run})}}));
 beforeAll(()=>vi.stubEnv("ADMIN_IDENTIFIERS","qa-admin@example.com"));
 afterAll(()=>vi.unstubAllEnvs());
 describe("Administrator deletion lockout protection",()=>{
  it("marks the configured Admin protected in the account list",async()=>{
    const {GET}=await import("@/app/api/admin/users/route");const response=await GET(new NextRequest("http://localhost/api/admin/users"));
-   expect((await response.json()).users[0].protected).toBe(true);
+   expect(response.status).toBe(200);
+   expect((await response.json()).users).toEqual([expect.objectContaining({id:state.target.id,role:"Admin",protected:true})]);
  });
  it("refuses current configured Admin deletion before any SQL mutation",async()=>{
    const {DELETE}=await import("@/app/api/admin/users/route");const response=await DELETE(new NextRequest("http://localhost/api/admin/users",{method:"DELETE",headers:{"content-type":"application/json"},body:JSON.stringify({id:state.target.id})}));
