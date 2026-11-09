@@ -12,7 +12,9 @@ export type StoryMediaRecord = {
   command: StoryMediaCommand; status: StoryMediaStatus; createdAt: number; updatedAt: number;
   backendJob: Record<string, any> | null; filePath: string | null; error: string | null;
   characterId: string | null; voiceId: string | null;
-  profile?: "z-image-turbo-3060" | "flux2-klein-edit-3060" | "gpt-image-2.6-flare" | "qwen3-tts-3060";
+  profile?: "z-image-turbo-3060" | "flux2-klein-edit-3060" | "gpt-image-2.6-flare" | "qwen3-tts-3060" | "story-voice-auto" | "ltx25-story";
+  cloudVoice?: {previews?: {id:string;file:string}[]; audition?:string; description?:string; providerVoiceId?:string; selected?:number};
+  voiceNotice?:string;
   imageAccountId?: string;
   cancelRequested?: boolean;
   stage?: string;
@@ -28,7 +30,10 @@ function db() {
   connection.pragma("journal_mode = WAL"); connection.pragma("busy_timeout = 10000");
   connection.exec(`CREATE TABLE IF NOT EXISTS media (
     id TEXT PRIMARY KEY, owner TEXT NOT NULL, project TEXT NOT NULL, source TEXT NOT NULL,
-    status TEXT NOT NULL, record TEXT NOT NULL, UNIQUE(owner,project,source));`);
+    status TEXT NOT NULL, record TEXT NOT NULL, UNIQUE(owner,project,source));
+    CREATE TABLE IF NOT EXISTS story_voice_cloud_requests (media TEXT PRIMARY KEY, owner TEXT NOT NULL, day TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS story_voice_cloud_requests_day ON story_voice_cloud_requests(day,owner);
+    CREATE TABLE IF NOT EXISTS story_voice_cloud_slots (media TEXT PRIMARY KEY, candidate INTEGER NOT NULL, voice TEXT);`);
   return connection;
 }
 export function assertStoryMediaScope(ownerKey: string, projectId: string) {
@@ -89,10 +94,46 @@ export function claimStoryMedia(record: StoryMediaRecord) {
   const next = {...record,status:"submitting" as const,updatedAt:Date.now()};
   return db().prepare("UPDATE media SET status='submitting',record=? WHERE id=? AND owner=? AND status='queued'").run(JSON.stringify(next),record.id,record.ownerKey).changes === 1;
 }
+export function reserveStoryVoiceRequest(record:StoryMediaRecord, design:boolean) {
+  const database=db(), day=new Date().toISOString().slice(0,10);
+  return database.transaction(()=>{
+    const usage=database.prepare("SELECT count(*) AS total, count(CASE WHEN owner=? THEN 1 END) AS personal FROM story_voice_cloud_requests WHERE day=?")
+      .get(record.ownerKey,day) as {total:number;personal:number};
+    if(usage.total>=5||usage.personal>=3||(design&&storyVoiceSlotsFull(database)))return false;
+    return database.prepare("INSERT OR IGNORE INTO story_voice_cloud_requests VALUES (?,?,?)").run(record.id,record.ownerKey,day).changes===1;
+  }).immediate();
+}
+function storyVoiceSlotsFull(database:Database.Database) {
+  return (database.prepare("SELECT count(*) AS total FROM story_voice_cloud_slots").get() as {total:number}).total>=3;
+}
+export function claimStoryVoiceSlot(record:StoryMediaRecord,candidate:number) {
+  const database=db();
+  return database.transaction(()=>{
+    const existing=database.prepare("SELECT candidate,voice FROM story_voice_cloud_slots WHERE media=?").get(record.id) as {candidate:number;voice:string|null}|undefined;
+    if(existing){
+      if(existing.candidate!==candidate)throw Error("A different audition was selected for this voice.");
+      if(!existing.voice)throw Error("ElevenLabs has not confirmed this approval. Contact the administrator before retrying.");
+      return existing.voice;
+    }
+    if(storyVoiceSlotsFull(database))throw Error("All three ElevenLabs voice slots are reserved.");
+    database.prepare("INSERT INTO story_voice_cloud_slots VALUES (?,?,NULL)").run(record.id,candidate);
+    return null;
+  }).immediate();
+}
+export function settleStoryVoiceSlot(record:StoryMediaRecord,candidate:number,providerId:string|null) {
+  if(providerId)db().prepare("UPDATE story_voice_cloud_slots SET voice=? WHERE media=? AND candidate=? AND voice IS NULL").run(providerId,record.id,candidate);
+  else db().prepare("DELETE FROM story_voice_cloud_slots WHERE media=? AND candidate=? AND voice IS NULL").run(record.id,candidate);
+}
+export function approvedStoryCloudVoice(ownerKey:string,voiceId:unknown) {
+  if(typeof voiceId!=="string"||!voiceId)return undefined;
+  const row=db().prepare("SELECT json_extract(record,'$.cloudVoice.providerVoiceId') AS voice FROM media WHERE owner=? AND status='ready' AND json_extract(record,'$.voiceId')=? LIMIT 1")
+    .get(ownerKey,voiceId) as {voice:string|null}|undefined;
+  return row?.voice||undefined;
+}
 export function publicStoryMedia(record: StoryMediaRecord) {
-  const {filePath,backendJob,ownerKey,imageAccountId: _imageAccountId,...rest} = record;
+  const {filePath,backendJob,ownerKey,imageAccountId: _imageAccountId,cloudVoice,...rest} = record;
   const stage=rest.stage?.replace(/(?:\/home\/|\/mnt\/|\/opt\/|\/var\/|https?:\/\/)[^\s)]+/g,"[private worker]").slice(0,200);
   const error=rest.error?.replace(/(?:\/home\/|\/mnt\/|\/opt\/|\/var\/|https?:\/\/)[^\s)]+/g,"[private worker]").slice(0,600)||null;
-  return {...rest,error,stage,engine:record.command.operation==="music"?"YuE2":record.command.operation==="effects"?"Sony Woosh":record.profile==="qwen3-tts-3060"?"Qwen3-TTS · RTX 3060":record.profile==="gpt-image-2.6-flare"?"GPT Image 2.6 Flare · OpenAI":record.profile==="z-image-turbo-3060"?"Z-Image Turbo · RTX 3060":record.profile==="flux2-klein-edit-3060"?"FLUX.2 Klein 4B · RTX 3060":record.command.operation==="image"?"Krea 2 Turbo":record.command.operation==="edit"?"Fibo 2.0 Turbo":record.command.operation==="video"?"FastH3":`Qwen3-TTS${backendJob?.gpu==="rtx5060ti"?" · RTX 5060 Ti":backendJob?.gpu==="rtx3090"?" · RTX 3090":""}`,
+  return {...rest,error,stage,voiceCandidates:cloudVoice?.previews?.length,voiceCandidate:cloudVoice?.selected,voiceAuditionText:cloudVoice?.audition,engine:record.profile==="story-voice-auto"?"ElevenLabs":record.profile==="ltx25-story"?"LTX 2.5 · RTX 3090":record.command.operation==="music"?"YuE2":record.command.operation==="effects"?"Sony Woosh":record.profile==="qwen3-tts-3060"?"Qwen3-TTS · RTX 3060":record.profile==="gpt-image-2.6-flare"?"GPT Image 2.6 Flare · OpenAI":record.profile==="z-image-turbo-3060"?"Z-Image Turbo · RTX 3060":record.profile==="flux2-klein-edit-3060"?"FLUX.2 Klein 4B · RTX 3060":record.command.operation==="image"?"Krea 2 Turbo":record.command.operation==="edit"?"Fibo 2.0 Turbo":record.command.operation==="video"?"FastH3":`Qwen3-TTS${backendJob?.gpu==="rtx5060ti"?" · RTX 5060 Ti":backendJob?.gpu==="rtx3090"?" · RTX 3090":""}`,
     url:record.status==="ready"&&filePath?`/api/story-creator/media/file?projectId=${encodeURIComponent(record.projectId)}&id=${encodeURIComponent(record.id)}`:null};
 }

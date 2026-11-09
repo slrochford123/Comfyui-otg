@@ -193,3 +193,53 @@ it("uses only grounded local source IDs and preserves an explicit selection",asy
     evidence:edit,sourceId:"selected"},edit,s.record.id,true);
   expect(selected.sourceId).toBe(s.record.id);
 });
+it("approves one cloud audition and uses its voice ID for new dialogue",async()=>{
+  vi.stubEnv("OTG_STORY_CHAT_MEDIA","1");
+  vi.stubEnv("OTG_STORY_ELEVENLABS","1");
+  const key=path.join(root,"elevenlabs-test.key");
+  fs.writeFileSync(key,"test_placeholder_key",{mode:0o600});
+  vi.stubEnv("OTG_STORY_ELEVENLABS_KEY_FILE",key);
+  const s=await ready();
+  const audition=s.execution.requestStoryMediaFromCard("alice",s.project.id,{
+    requestKey:"cloudvoice12345678",sourceId:s.record.id,operation:"voice",
+    voiceMode:"design",prompt:"Mature woman speaking English with a Russian accent.",text:"Welcome to your new life.",
+  }).record;
+  expect(audition.profile).toBe("story-voice-auto");
+  const dir=s.execution.storyMediaRoot(audition);
+  fs.mkdirSync(dir,{recursive:true});
+  const file=path.join(dir,"preview.wav");
+  fs.writeFileSync(file,"fixture WAV");
+  const generated=s.media.updateStoryMedia(audition,{
+    status:"ready",filePath:file,cloudVoice:{description:"Russian accent",audition:audition.command.text,previews:[{id:"preview_fixture",file}]},
+  });
+  const cloud=vi.fn(async(url:string,request:RequestInit)=>{
+    const body=JSON.parse(String(request.body));
+    if(url.endsWith("/text-to-voice")){
+      expect(body.generated_voice_id).toBe("preview_fixture");
+      return Response.json({voice_id:"approved_fixture"});
+    }
+    expect(url).toContain("/text-to-speech/approved_fixture?");
+    expect(body.text).toBe("Your next appointment is tomorrow.");
+    return new Response(null,{status:429});
+  });
+  vi.stubGlobal("fetch",cloud);
+  try {
+    const saved=await s.execution.approveStoryMediaVoice(generated,0);
+    expect(saved.voiceId).toBeTruthy();
+    expect(await s.execution.approveStoryMediaVoice(generated,0)).toMatchObject({voiceId:saved.voiceId});
+    expect(cloud).toHaveBeenCalledTimes(1);
+    expect(s.media.approvedStoryCloudVoice("mallory",saved.voiceId)).toBeUndefined();
+    const manual=s.execution.requestStoryMediaFromCard("alice",s.project.id,{
+      requestKey:"manualvoice1234567",sourceId:generated.id,operation:"voice",
+      voiceEngine:"qwen3",prompt:"Sound welcoming.",text:"Good evening.",
+    }).record;
+    expect(manual.profile).not.toBe("story-voice-auto");
+    const reuse=s.execution.requestStoryMediaFromCard("alice",s.project.id,{
+      requestKey:"cloudvoice87654321",sourceId:generated.id,operation:"voice",
+      prompt:"Sound welcoming.",text:"Your next appointment is tomorrow.",
+    }).record;
+    const {renderStoryElevenLabs}=await import("@/lib/storyCreator/mediaVoiceProviders");
+    await expect(renderStoryElevenLabs(reuse,dir,s.media.approvedStoryCloudVoice("alice",saved.voiceId))).rejects.toMatchObject({status:429});
+    expect(cloud).toHaveBeenCalledTimes(2);
+  }finally{vi.unstubAllGlobals();}
+});
