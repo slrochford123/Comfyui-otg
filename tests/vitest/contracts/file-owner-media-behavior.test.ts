@@ -21,6 +21,15 @@ afterEach(()=>{process.env={...originalEnv};fs.rmSync(root,{recursive:true,force
 function file(owner:string) { const p=path.join(root,'background_removal',owner,'portrait.png'); fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,Buffer.from('89504e470d0a1a0a','hex'));return p; }
 function get(p:string){return route.GET(new NextRequest('http://localhost/api/file?path='+encodeURIComponent(p)));}
 describe('owner-scoped saved portrait delivery',()=>{
+  it('serves owned Story Creator character portraits and rejects other owners and symlink escapes',async()=>{
+    const own=path.join(root,'story-creator','generated',auth.ownerKey,'project','media','portrait.png');
+    const other=path.join(root,'story-creator','generated','another-owner','project','media','portrait.png');
+    for(const p of [own,other]){fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,Buffer.from('89504e470d0a1a0a','hex'));}
+    const response=await get(own);expect(response.status).toBe(200);expect(response.headers.get('content-type')).toContain('image/png');
+    expect((await get(other)).status).toBe(404);
+    const link=path.join(path.dirname(own),'escape.png');fs.symlinkSync(other,link);expect((await get(link)).status).toBe(404);
+  });
+
   it('serves saved Asset candidates without widening the owner boundary',async()=>{
     const own=path.join(root,'assets-saved-for-later',auth.ownerKey,'qa.png');
     const other=path.join(root,'assets-saved-for-later','another-owner','qa.png');

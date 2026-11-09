@@ -1,5 +1,6 @@
 "use client";
 
+import SavedCharacterVoicePicker from "./SavedCharacterVoicePicker";
 import React from "react";
 import type { CharacterReferencePackage } from "@/lib/characters/store";
 // OTG_CHARACTER_IDENTITY_FIVE_REFERENCES_V1
@@ -420,12 +421,13 @@ export function SavedCharacterLibrary({
                       {item.description || "No appearance description saved."}
                     </p>
                   </div>
-                  <div className="flex items-center justify-between gap-3">
+                  {audioUrl ? <audio key={audioUrl} aria-label={`Voice for ${item.name}`} src={audioUrl} controls preload="none" className="w-full" /> : null}
+                  <SavedCharacterVoicePicker characterId={item.id} name={item.name} hasVoice={!!audioUrl} onSaved={()=>void load().then(()=>setMessage(`Voice saved with ${item.name}.`))}/>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
                     <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/35">
-                      {item.voiceEngineUsed || (audioUrl ? "Saved Voice" : "Voice Pending")}
+                      {audioUrl ? `Voice attached · ${item.voiceEngineUsed || "Saved Voice"}` : "Image only · no voice attached"}
                     </span>
                     <div className="flex items-center gap-2">
-                      <VoicePlayButton url={audioUrl} />
                       {onCreateCharacterRefMod ? (
                         <button
                           type="button"

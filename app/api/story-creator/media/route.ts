@@ -2,12 +2,12 @@ import {after,NextRequest,NextResponse} from "next/server";
 import {requireSessionUser} from "@/lib/sessionUser";
 import {SessionInvalidError} from "@/lib/ownerKey";
 import {listCharacters} from "@/lib/characters/store";
-import {getStoryMedia,listStoryChatMedia,publicStoryMedia} from "@/lib/storyCreator/mediaStore";
+import {getStoryMedia,listStoryMedia,listStoryChatMedia,publicStoryMedia} from "@/lib/storyCreator/mediaStore";
 import {limitedJson} from "@/lib/limitedRequestBody";
 import {storyOpenAIImagesEnabled} from "@/lib/storyCreator/mediaOpenAI";
 import {storyChatMediaEnabled,storyMediaEnabled} from "@/lib/storyCreator/mediaAvailability";
 import {story3060ImageEnabled,story3060EditEnabled} from "@/lib/storyCreator/media3060";
-import {requireStoryMediaTest,refreshStoryMedia,executeStoryMedia,nameStoryMedia,retryStoryMedia,requestStoryMediaFromCard,saveStoryCharacter,approveStoryMediaVoice,cancelStoryMedia} from "@/lib/storyCreator/mediaExecution";
+import {requireStoryMediaTest,refreshStoryMedia,executeStoryMedia,nameStoryMedia,retryStoryMedia,requestStoryMediaFromCard,saveStoryCharacter,saveStoryCharacterVoice,storyCharacterSaveHints,approveStoryMediaVoice,cancelStoryMedia} from "@/lib/storyCreator/mediaExecution";
 
 import {storyVoiceAutoEnabled} from "@/lib/storyCreator/mediaVoiceProviders";
 
@@ -30,7 +30,9 @@ export async function GET(request:NextRequest) {
     const projectId=request.nextUrl.searchParams.get("projectId")||"";
     const {visible:records,background}=listStoryChatMedia(ownerKey,projectId);
     if (background.length) after(() => Promise.allSettled(background.map(refreshStoryMedia)).then(() => {}));
-    const media=await Promise.all(records.map(async record=>publicStoryMedia(await refreshStoryMedia(record).catch(()=>record))));
+    const fresh=await Promise.all(records.map(record=>refreshStoryMedia(record).catch(()=>record)));
+    const hints=storyCharacterSaveHints(fresh);
+    const media=fresh.map(record=>({...publicStoryMedia(record),...hints.get(record.id)}));
     return NextResponse.json({ok:true,enabled:true,chatMedia:storyChatMediaEnabled(),lightweightImage,lightweightEdit,openAIImage,voiceAuto:storyVoiceAutoEnabled(),media,characters:listCharacters(ownerKey).map(c=>({id:c.id,name:c.name,hasVoice:!!c.referenceAudioPath}))},{headers});
   } catch(error) {return failure(error);}
 }
@@ -47,7 +49,8 @@ export async function POST(request:NextRequest) {
       record=getStoryMedia(ownerKey,projectId,String(body.id||""));
       if(body.action==="retry" && storyChatMediaEnabled())record=retryStoryMedia(record,String(body.requestKey||""),accountId);
       else if(body.action==="name")record=nameStoryMedia(record,String(body.name||""));
-      else if(body.action==="save-character")record=saveStoryCharacter(record);
+      else if(body.action==="save-character")record=saveStoryCharacter(record,typeof body.voiceMediaId==="string"?body.voiceMediaId:undefined);
+      else if(body.action==="save-character-voice")record=await saveStoryCharacterVoice(record,body.candidate);
       else if(body.action==="save-voice")record=await approveStoryMediaVoice(record,body.candidate,body.characterId?String(body.characterId):undefined);
       else if(body.action==="cancel")record=await cancelStoryMedia(record);
       else throw Error("Unsupported media action.");
@@ -57,6 +60,6 @@ export async function POST(request:NextRequest) {
       const cookie=request.headers.get("cookie")||"";
       after(()=>executeStoryMedia(queued,cookie));
     }
-    return NextResponse.json({ok:true,media:publicStoryMedia(record)},{headers});
+    return NextResponse.json({ok:true,media:{...publicStoryMedia(record),...storyCharacterSaveHints(listStoryMedia(ownerKey,projectId)).get(record.id)}},{headers});
   } catch(error) {return failure(error);}
 }
