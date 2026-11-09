@@ -19,7 +19,7 @@ import { readDispatchProcess, dispatchProcessState, type DispatchProcess } from 
 export type MediaQueueStatus = "queued" | "dispatching" | "running" | "unknown" | "completed" | "failed" | "canceled";
 export type ComfyMediaPayload = { baseUrl: string; body: Record<string, unknown>; workerId: string;
   preSubmitCleanup?: "free" | null; releaseIdlePeer?: boolean;
-  producer?: { kind: "direct" | "refmods-generation" | "realism" | "body-swap" | "production-studio-finish" | "story-3060-image" | "story-3060-audio" | "story-3060-voice"; ownerKey: string; id: string;projectId?:string } };
+  producer?: { kind: "direct" | "refmods-generation" | "realism" | "body-swap" | "production-studio-finish" | "story-3060-image" | "story-3060-audio" | "story-3060-voice" | "story-3060-video"; ownerKey: string; id: string;projectId?:string } };
 export type AudioMediaPayload = { owner: string; sessionId: string; jobId: string };
 export type ExternalMediaPayload = { pid:number; operation:string; eligibleGpus?:MediaGpu[];caller?:DispatchProcess;backend?:DispatchProcess };
 export type MediaQueueJob = { id: string; sequence: number; gpu: MediaGpu; kind: "comfy" | "audio" | "external";
@@ -248,18 +248,20 @@ function producerState(job: MediaQueueJob): "active" | "terminal" | "unavailable
       } catch { return "unavailable"; }
       finally { db?.close(); }
     }
-    if(!producer || !["story-3060-image","story-3060-voice"].includes(producer.kind)||payload.workerId!==producer.kind)return "unavailable";
+    if(!producer || !["story-3060-image","story-3060-voice","story-3060-video"].includes(producer.kind)||payload.workerId!==producer.kind)return "unavailable";
     let db:Database.Database|undefined;
     try{
       db=new Database(path.join(OTG_DATA_ROOT,"story-creator","story-media.sqlite"),{readonly:true,fileMustExist:true});
       const row=db.prepare("SELECT project,status,record FROM media WHERE id=? AND owner=?").get(producer.id,producer.ownerKey) as {project:string;status:string;record:string}|undefined;
       if(!row)return "unavailable";
       const record=JSON.parse(row.record);
-      const profileMatches=producer.kind==="story-3060-voice"
+      const profileMatches=producer.kind==="story-3060-video"
+        ? record.profile==="fasth3-3060"&&record.command?.operation==="video"
+        : producer.kind==="story-3060-voice"
         ? record.profile==="qwen3-tts-3060"&&record.command?.operation==="voice"
         : (record.profile==="z-image-turbo-3060"&&record.command?.operation==="image")
         ||(record.profile==="flux2-klein-edit-3060"&&record.command?.operation==="edit"&&typeof record.command.sourceId==="string"&&record.command.sourceId.length>0);
-      if(!profileMatches||record.status!==row.status||record.id!==producer.id||record.ownerKey!==producer.ownerKey||record.projectId!==row.project||producer.projectId!==row.project||record.backendJob?.promptId!==job.id||payload.body.client_id!==(producer.kind==="story-3060-voice"?"story-3060-voice-":"story-3060-")+record.id)return "unavailable";
+      if(!profileMatches||record.status!==row.status||record.id!==producer.id||record.ownerKey!==producer.ownerKey||record.projectId!==row.project||producer.projectId!==row.project||record.backendJob?.promptId!==job.id||payload.body.client_id!==(producer.kind==="story-3060-video"?"story-3060-video-":producer.kind==="story-3060-voice"?"story-3060-voice-":"story-3060-")+record.id)return "unavailable";
       if(record.cancelRequested)return "terminal";
       return row.status==="running"?"active":["failed","canceled","ready"].includes(row.status)?"terminal":"unavailable";
     }catch{return "unavailable";}finally{db?.close();}
@@ -277,7 +279,7 @@ function producerState(job: MediaQueueJob): "active" | "terminal" | "unavailable
       if (parent.id !== producer.id || parent.kind !== "finish" || parent.projectId !== row.project
         || parent.status !== row.status || parent.backendId !== job.id
         || payload.workerId !== "production-studio-finish" || payload.body.client_id !== `studio-${parent.id}`
-        || job.gpu !== "rtx5060ti") return "unavailable";
+        || job.gpu !== (parent.input?.finishBackend === "rtx3090" ? "rtx3090" : "rtx5060ti")) return "unavailable";
       return ["failed","canceled","completed","canceling","attention"].includes(parent.status) ? "terminal"
         : ["queued","running"].includes(parent.status) ? "active" : "unavailable";
     } catch { return "unavailable"; }

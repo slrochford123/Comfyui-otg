@@ -178,7 +178,7 @@ export async function enqueueStudioJob(
     );
   if (kind === "finish" && !p.shots[shot!.id]?.approvedTakeId)
     throw new StudioError("Approve a take before finishing.");
-  const input: Record<string, unknown> = { snapshot: p, shotId: shot?.id,...(exactRetakePrompt?{exactRetakePrompt,retakeReferenceManifest,retakePromptSource,retakePreserveExactPrompt,retakeTakeId:b.retakeTakeId}:{}) };
+  const input: Record<string, unknown> = { ...(kind==="finish"?{finishBackend:"rtx3090"}:{}), snapshot: p, shotId: shot?.id,...(exactRetakePrompt?{exactRetakePrompt,retakeReferenceManifest,retakePromptSource,retakePreserveExactPrompt,retakeTakeId:b.retakeTakeId}:{}) };
   if(context?.accountId) input.conversationAccountId=context.accountId;
   if(["assistant","asset-analysis","asset-assistant"].includes(kind))input.aiProvider=resolveAssistantProvider(b.aiProvider);
   if(b.editClipId)input.editClipId=String(b.editClipId);
@@ -625,7 +625,8 @@ async function finish(s: StudioStore, owner: string, job: Job) {
   const { buildH3VsrWorkflow, H3_BACKEND_PROFILES } = await import(
     "@/lib/production/h3Workflows"
   );
-  const backend = "rtx5060ti";
+  // Persist the lane for new jobs; older in-flight finishes retain their original worker.
+  const backend = job.input.finishBackend === "rtx3090" ? "rtx3090" : "rtx5060ti";
   const {getMediaQueueJob} = await import("@/lib/workers/mediaGpuQueue");
   let promptId = job.backendId;
   if (!promptId) {

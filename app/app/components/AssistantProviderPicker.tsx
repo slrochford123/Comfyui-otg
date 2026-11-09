@@ -4,7 +4,7 @@ import {useCallback,useEffect,useState,useSyncExternalStore} from "react";
 const ENABLED=process.env.NEXT_PUBLIC_OTG_LOCAL_AI_3060==="1";
 const ALLOWANCE=process.env.NEXT_PUBLIC_OTG_OPENAI_CONVERSATION_CREDITS==="1";
 const key=(scope:string)=>`otg:assistant-provider:${ALLOWANCE?"v2":"v1"}:${scope}`;
-const defaultProvider=ALLOWANCE?"openai":"local3060";
+const defaultProvider="openai";
 const eventName="otg:assistant-provider";
 const subscribe=(notify:()=>void)=>{
   window.addEventListener("storage",notify);

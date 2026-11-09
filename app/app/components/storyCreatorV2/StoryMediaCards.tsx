@@ -4,7 +4,7 @@ import {StoryImagePreview,StoryMediaPreview} from "./StoryPreview";
 import {newClientRequestId} from "@/lib/client/requestId";
 import type {StoryMediaCommand} from "@/lib/storyCreator/mediaContract";
 type SaveHints={characterTarget?:{id:string;name:string}|null;characterImageId?:string|null;characterImageName?:string|null;approvedVoiceMediaId?:string|null;characterVoiceSaved?:boolean};
-type Media=SaveHints&{imageNotice?:string;imageSize?:{width:number;height:number};id:string;sourceMessageId:string;status:string;command:StoryMediaCommand;url:string|null;engine:string;error:string|null;characterId:string|null;voiceId:string|null;cancelRequested?:boolean;stage?:string;durationSeconds?:number;license?:string;voiceNotice?:string;voiceCandidates?:number;voiceCandidate?:number;voiceAuditionText?:string};
+type Media=SaveHints&{imageNotice?:string;imageSize?:{width:number;height:number};id:string;projectId:string;sourceMessageId:string;status:string;command:StoryMediaCommand;url:string|null;engine:string;error:string|null;characterId:string|null;voiceId:string|null;cancelRequested?:boolean;stage?:string;durationSeconds?:number;license?:string;voiceNotice?:string;voiceCandidates?:number;voiceCandidate?:number;voiceAuditionText?:string};
 type Character={id:string;name:string;hasVoice:boolean};
 const button="min-h-11 rounded-xl border border-white/20 px-3 py-2 text-sm disabled:opacity-40";
 const input="w-full rounded-xl border border-white/20 bg-black/20 p-3 text-sm";
@@ -115,6 +115,7 @@ function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,ch
   const saveVoice=()=>void run(characterId.startsWith("image:")?{action:"save-character-voice",candidate}:{action:"save-voice",characterId,candidate});
   const [editProfile,setEditProfile]=useState("");
   const [voiceEngine,setVoiceEngine]=useState("");
+  const [videoMode,setVideoMode]=useState("first-frame"),[videoSeconds,setVideoSeconds]=useState(5);
   const [audition,setAudition]=useState(0);
   const retryKey=useRef("");
   const lock=useRef(false),request=useRef<{key:string;signature:string}|null>(null);
@@ -129,9 +130,9 @@ function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,ch
   }
   function create() {
     const profile = action === "edit" ? editProfile || (openAIImage ? "gpt-image-2.6-flare" : undefined) : undefined;
-    const signature=JSON.stringify([action,prompt,text,profile,voiceEngine]);
+    const signature=JSON.stringify([action,prompt,text,profile,voiceEngine,videoMode,videoSeconds]);
     if(!request.current||request.current.signature!==signature)request.current={key:newClientRequestId(),signature};
-    void run({action:"create",operation:action,sourceId:record.id,prompt,text,profile,voiceEngine:action==="voice"?voiceEngine:undefined,voiceMode:action==="voice"&&/\b(?:accent|new voice|different voice)\b/i.test(prompt)?"design":undefined,requestKey:request.current.key});
+    void run({action:"create",operation:action,sourceId:record.id,prompt,text,profile,videoMode:action==="video"?videoMode:undefined,durationSeconds:action==="video"?videoSeconds:undefined,voiceEngine:action==="voice"?voiceEngine:undefined,voiceMode:action==="voice"&&/\b(?:accent|new voice|different voice)\b/i.test(prompt)?"design":undefined,requestKey:request.current.key});
   }
   return <article id={`story-creation-${record.id}`} className="scroll-mt-36 min-w-0 space-y-3 rounded-2xl border border-white/15 p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -157,12 +158,14 @@ function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,ch
       <p className="whitespace-pre-wrap">{record.voiceAuditionText}</p>
     </details>:null}
     {ready&&["voice","music","effects"].includes(record.command.operation)?<StoryMediaPreview key={previewUrl} kind="audio" src={previewUrl!} title={record.command.name||"Story audio"} className="w-full"/>:null}
+    {ready&&record.command.operation==="video"?<button type="button" className={button} disabled={busy} onClick={()=>{if(lock.current)return;lock.current=true;setBusy(true);setError("");void fetch("/api/story-creator/media/production",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({projectId:record.projectId,id:record.id})}).then(async response=>{const data=await response.json();if(!response.ok)throw Error(data.error||"Could not open Production.");window.location.assign(data.url);}).catch(cause=>setError(cause.message)).finally(()=>{lock.current=false;setBusy(false);});}}>Send to Production</button>:null}
     {ready?<div className="flex flex-wrap gap-2"><a className={button} href={`${previewUrl}&download=1`}>Download</a>
       {onFocus?<button type="button" className={button} onClick={()=>onFocus({id:record.id,name:record.command.name||"this creation"})}>Use in chat</button>:null}
-      {image?<><button type="button" className={button} disabled={busy} onClick={()=>setAction("edit")}>Edit</button><button type="button" className={button} disabled={busy} onClick={()=>setAction("video")}>Animate · 5 sec</button></>:null}
+      {image?<><button type="button" className={button} disabled={busy} onClick={()=>setAction("edit")}>Edit</button><button type="button" className={button} disabled={busy} onClick={()=>setAction("video")}>Animate</button></>:null}
       {record.command.subject==="character"&&(image||record.command.operation==="voice"&&(!chatMedia||record.voiceId))?<button type="button" className={button} disabled={busy} onClick={()=>setAction("voice")}>{record.command.operation==="voice"?"New dialogue":"Give a voice"}</button>:null}
       {image&&record.command.subject==="character"?<>
         <button type="button" className={button} disabled={busy||(!!record.characterId&&(!record.approvedVoiceMediaId||record.characterVoiceSaved))} onClick={()=>void run({action:"save-character",voiceMediaId:record.approvedVoiceMediaId||undefined})}>{record.characterVoiceSaved?"Character & Voice Saved":record.approvedVoiceMediaId?(record.characterId?`Save Voice to ${record.command.name}`:"Save Character & Voice"):record.characterId?"Saved to Characters":"Save to Characters"}</button>
+        {record.characterId?<a className={button} href={`/app?tab=characters&storyRefModCharacter=${encodeURIComponent(record.characterId)}`}>Create Character RefMod</a>:null}
         {!record.characterId&&record.approvedVoiceMediaId?<button type="button" className={button} disabled={busy} onClick={()=>void run({action:"save-character"})}>Save Image Only</button>:null}
       </>:null}
     </div>:null}
@@ -186,6 +189,7 @@ function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,ch
           {openAIImage&&<option value="gpt-image-2.6-flare">GPT Image 2.6 Flare · OpenAI · paid</option>}
         </select>
       </label>:null}
+      {action==="video"?<div className="flex flex-wrap gap-2"><label className="text-sm">Image use<select className={input} value={videoMode} disabled={busy} onChange={e=>setVideoMode(e.target.value)}><option value="first-frame">Start from this image</option><option value="reference">Use as a reference</option></select></label><label className="text-sm">Duration<select className={input} value={videoSeconds} disabled={busy} onChange={e=>setVideoSeconds(Number(e.target.value))}><option value={5}>5 seconds</option><option value={10}>10 seconds</option></select></label></div>:null}
       {action==="voice"&&voiceAuto?<label className="block text-sm">Voice engine
         <select className={input} value={voiceEngine} disabled={busy} onChange={e=>setVoiceEngine(e.target.value)}>
           <option value="">Automatic · ElevenLabs / RTX 3060</option>

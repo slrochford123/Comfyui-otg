@@ -4,6 +4,8 @@ import { canvas, H3_LICENSE_URL, H3_LICENSE_NOTICE, type Experiment, type LabKin
 import type { LabAsset, LabSession } from "@/lib/experiments/store";
 import type { LabCapability, LabJob } from "@/lib/experiments/generation";
 import { newClientRequestId } from "@/lib/client/requestId";
+import dynamic from "next/dynamic";
+const RefModReplacementLab = dynamic(() => import("./RefModReplacementLab"));
 
 const endpoint = "/api/experiments";
 const input = "w-full min-w-0 rounded-lg border border-white/20 bg-black/30 p-2.5 text-sm";
@@ -60,7 +62,7 @@ export default function ExperimentLabPanel({ kind, restricted = false }: { kind:
     void fetch(apiRoot, { cache: "no-store", signal: controller.signal }).then(async response => {
       const result = await response.json(); if (!response.ok) throw new Error(result.error);
       if (!alive.current) return;
-      const filtered = (result as CatalogResponse).catalog.filter(item => item.kind === kind);
+      const filtered = (result as CatalogResponse).catalog.filter(item => item.kind === kind && item.id !== "refmod-replacement");
       setCatalog(filtered); setSelected(filtered[0]?.id || ""); setSessions(result.sessions); setCapabilities(result.capabilities || []);
     }).catch(reason => { if (alive.current && reason.name !== "AbortError") setError(reason.message); });
     const players = videos.current;
@@ -138,6 +140,7 @@ export default function ExperimentLabPanel({ kind, restricted = false }: { kind:
     {message && <div role="status" className="text-sm text-emerald-300">{message}</div>}
     {restricted ? <fieldset disabled={busy || !!draft?.archived}><legend className="mb-2 text-sm font-semibold">Model</legend><div className="grid grid-cols-2 gap-2">{catalog.map(item => <button key={item.id} type="button" className={`${button} ${selected === item.id ? "bg-violet-700/60" : "bg-black/20"}`} aria-pressed={selected === item.id} onClick={() => {setSelected(item.id);setDraft(current => current ? {...current,experiment:item.id} : null);setError("");}}>{item.title}</button>)}</div></fieldset> : <label className="block text-sm">{kind === "testing" ? "Experiment" : "Model version"}<select aria-label={kind === "testing" ? "Experiment" : "Model version"} className={`${input} mt-1`} value={selected} disabled={busy || !catalog.length} onChange={event => { if (dirty) { setError("Save or reset this plan before changing experiments."); return; } setSelected(event.target.value); setDraft(null); setError(""); setMessage(""); }}>
       {catalog.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>}
+    {kind === "testing" && !restricted ? <RefModReplacementLab /> : null}
     {entry && <>
       <div className="rounded-xl border border-white/10 p-4 text-sm"><h2 className="font-semibold">{entry.title}</h2><p className="mt-1 text-white/80">{entry.purpose}</p><p className="mt-2 text-white/60">{entry.replaces}</p>
         <details className="mt-3"><summary className="cursor-pointer text-cyan-300">Recipe, sources and compatibility</summary><p className="my-2">{entry.recipe}</p>

@@ -1,0 +1,12 @@
+import {beforeEach,expect,it,vi} from "vitest";
+const mocks=vi.hoisted(()=>({key:vi.fn(()=>"test-key"),record:{} as any,fetch:vi.fn()}));
+vi.mock("@/lib/storyCreator/mediaVoiceProviders",()=>({elevenLabsKey:mocks.key}));
+vi.mock("@/lib/storyCreator/mediaStore",()=>({getStoryMedia:()=>mocks.record,updateStoryMedia:(_:unknown,patch:object)=>Object.assign(mocks.record,patch)}));
+import {cloudAudioRequest,renderStoryCloudAudio} from "@/lib/storyCreator/mediaCloudAudio";
+beforeEach(()=>{vi.clearAllMocks();mocks.key.mockReturnValue("test-key");mocks.record={id:"r",ownerKey:"owner",projectId:"p",status:"submitting",command:{operation:"music",prompt:"Quiet strings",durationSeconds:10}};vi.stubGlobal("fetch",mocks.fetch);});
+it("submits explicit instrumental music length and sound-effect duration",()=>{expect(cloudAudioRequest(mocks.record)).toMatchObject({endpoint:"music",body:{music_length_ms:10000,force_instrumental:true}});mocks.record.command.operation="effects";expect(cloudAudioRequest(mocks.record)).toMatchObject({endpoint:"sound-generation",body:{duration_seconds:10}});});
+it("rejects invalid durations before a paid request",async()=>{mocks.record.command.durationSeconds=900;await expect(renderStoryCloudAudio(mocks.record,"/unused")).rejects.toMatchObject({name:"RejectedStoryMedia"});expect(mocks.fetch).not.toHaveBeenCalled();});
+it("falls back only after a definite unavailable response",async()=>{mocks.fetch.mockResolvedValue(new Response("",{status:429}));expect(await renderStoryCloudAudio(mocks.record,"/unused")).toBeNull();expect(mocks.fetch).toHaveBeenCalledTimes(1);expect(mocks.record.backendJob).toBeNull();});
+it("does not duplicate a request after an ambiguous network failure",async()=>{mocks.fetch.mockRejectedValue(new Error("socket ended"));await expect(renderStoryCloudAudio(mocks.record,"/unused")).rejects.toMatchObject({name:"UnconfirmedStoryCloudAudio"});expect(mocks.fetch).toHaveBeenCalledTimes(1);expect(mocks.record.backendJob.engine).toBe("elevenlabs-audio");});
+it("uses local fallback when no key is configured",async()=>{mocks.key.mockReturnValue("");expect(await renderStoryCloudAudio(mocks.record,"/unused")).toBeNull();expect(mocks.fetch).not.toHaveBeenCalled();});
+it("never falls back on a rejected prompt",async()=>{mocks.fetch.mockResolvedValue(new Response("",{status:422}));await expect(renderStoryCloudAudio(mocks.record,"/unused")).rejects.toMatchObject({name:"RejectedStoryMedia"});});

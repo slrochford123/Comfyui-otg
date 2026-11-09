@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.40",
+  "current": "2.41",
   "builds": [
     {
       "version": "2",
@@ -243,6 +243,11 @@
       "version": "2.40",
       "date": "2026-11-09",
       "summary": "Production promotion of Story media quality and provider fixes, saved character voices and Final Export Studio."
+    },
+    {
+      "version": "2.41",
+      "date": "2026-11-09",
+      "summary": "Story Creator dictation parity, OpenAI default, ElevenLabs music/effects, character RefMod handoff, qualified RTX 3060 Fast H3 and RTX 3090 finishing."
     }
   ]
 }

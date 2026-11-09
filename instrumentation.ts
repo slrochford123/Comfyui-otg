@@ -42,5 +42,10 @@ export async function register() {
     );
 
   bootstrapProductionV2PromptOperationScheduler();
+  const {productionStudioEnabled}=await import("./lib/productionStudio/availability");
+  if (productionStudioEnabled()) {
+    const { bootstrapStudioWorker } = await import("./lib/productionStudio/jobs");
+    bootstrapStudioWorker();
+  }
   }
 }

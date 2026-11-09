@@ -37,6 +37,15 @@ beforeEach(async()=>{
 });
 afterEach(()=>{closeMediaGpuQueueForTests();setResourceLockStorePathForTests(null);vi.unstubAllGlobals();vi.unstubAllEnvs();fs.rmSync(directory,{recursive:true,force:true});});
 describe("shared physical media routing",()=>{
+  it.each(["rtx3090","legacy"])("dispatches a %s finish only on its persisted worker",async lane=>{
+    const studio=path.join(directory,"production-studio");fs.mkdirSync(studio);
+    const db=new Database(path.join(studio,"studio.sqlite"));db.exec("CREATE TABLE jobs(id TEXT,owner TEXT,project TEXT,status TEXT,json TEXT)");
+    const parent={id:"finish-owner",projectId:"project",kind:"finish",status:"running",input:lane==="rtx3090"?{finishBackend:"rtx3090"}:{},backendId:""};
+    const jobPayload={...payload(lane==="rtx3090"?base3090:base5060),workerId:"production-studio-finish",producer:{kind:"production-studio-finish" as const,ownerKey:"alice",id:parent.id},body:{...payload().body,client_id:"studio-"+parent.id}};
+    const accepted=await(await enqueueComfyMedia(jobPayload,id=>{parent.backendId=id;db.prepare("INSERT INTO jobs VALUES(?,?,?,?,?)").run(parent.id,"alice",parent.projectId,parent.status,JSON.stringify(parent));})).json();
+    try{await tickMediaGpuQueue();for(let i=0;i<100&&!mocks.submit.mock.calls.length;i++)await flush();expect(mocks.submit).toHaveBeenCalledTimes(1);expect(getMediaQueueJob(accepted.prompt_id)?.gpu).toBe(lane==="rtx3090"?"rtx3090":"rtx5060ti");}finally{db.close();}
+  });
+
   it("registers durable head tickets across environments and cancels waiting intent",async()=>{
     const authority=path.join(directory,"authority");fs.mkdirSync(authority);
     fs.copyFileSync("scripts/media-gpu-admission.py",path.join(authority,"media-gpu-admission.py"));

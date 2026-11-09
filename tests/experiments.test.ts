@@ -26,7 +26,7 @@ afterEach(() => { vi.unstubAllEnvs(); fs.rmSync(fixture, { recursive: true, forc
 describe("experimental boundary", () => {
   it("pins the two available checkpoints without executable overrides", () => {
     expect(EXPERIMENTS.filter(item => item.kind === "h3-admin").map(item => item.versionId)).toEqual([3441190,3429412]);
-    expect(EXPERIMENTS.filter(item => item.kind === "testing")).toHaveLength(7);
+    expect(EXPERIMENTS.filter(item => item.kind === "testing")).toHaveLength(8);
     for (const item of EXPERIMENTS.filter(item => item.kind === "h3-admin")) expect(item.sha256).toMatch(/^[A-F0-9]{64}$/);
   });
   it("refuses PROD before creating any storage", async () => {

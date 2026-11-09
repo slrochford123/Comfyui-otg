@@ -19,7 +19,7 @@ export const uncappedH3History = (experiment: string) => labExperiment(experimen
 
 export function assertLabAssetCapacity(db: Database.Database, root: string, owner: string, session: {id:string;experiment:string}, reservationBytes: number, mime: string, safetyReserveBytes = 8 * 1024 ** 3) {
   if (!uncappedH3History(session.experiment)) {
-    if ((db.prepare("SELECT count(*) AS n FROM assets WHERE session=? AND (ready=1 OR bytes>0)").get(session.id) as {n:number}).n >= MAX_ASSETS) throw new RequestError("At most 12 assets per experiment.",409);
+    if (session.experiment !== "refmod-replacement" && (db.prepare("SELECT count(*) AS n FROM assets WHERE session=? AND (ready=1 OR bytes>0)").get(session.id) as {n:number}).n >= MAX_ASSETS) throw new RequestError("At most 12 assets per experiment.",409);
     const usage = `SELECT coalesce(sum(a.bytes + CASE WHEN a.mime LIKE 'image/%' AND a.role<>'generated' THEN ? ELSE 0 END),0) AS n FROM assets a JOIN sessions s ON s.id=a.session WHERE s.experiment IN (${TESTING_SQL_IDS})`;
     const ownerBytes = (db.prepare(usage+" AND a.owner=?").get(MAX_LAB_REFERENCE_BYTES,...TESTING_EXPERIMENT_IDS,owner) as {n:number}).n;
     const totalBytes = (db.prepare(usage).get(MAX_LAB_REFERENCE_BYTES,...TESTING_EXPERIMENT_IDS) as {n:number}).n;
