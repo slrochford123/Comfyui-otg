@@ -8,9 +8,11 @@ import { assetFile, createSession, readSession, saveSession, sessionRoot } from 
 import { resolveFfprobePath } from "@/lib/ffmpeg";
 import { updateStoryMedia, type StoryMediaRecord } from "./mediaStore";
 
+import { storyElevenLabsConfigured } from "./mediaVoiceProviders";
 const exec = promisify(execFile);
 export function requireStoryAudioEngine(operation: "music" | "effects") {
   const caps = capabilities("story");
+  if (storyElevenLabsConfigured()) return caps;
   if (!(process.env.OTG_ENV === "test" || process.env.OTG_ENV === "prod" && process.env.OTG_STORY_AUDIO_PROD === "1") || !caps.enabled ||
     !Object.values(caps.engines[operation] || {}).some(Boolean) ||
     (operation === "music" && caps.musicEngine !== "yue2")) {

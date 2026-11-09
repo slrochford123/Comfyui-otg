@@ -16,7 +16,7 @@ const ClipEditor=dynamic(()=>import('./ClipEditor'));
 const Finish=dynamic(()=>import('./Finish'));
 export default function Studio({ownerKey}:{ownerKey:string}){
  const [projects,setProjects]=useState<{id:string;name:string}[]>([]),[id,setId]=useState(''),[name,setName]=useState(''),[error,setError]=useState(''),key='otg:production-studio:active:'+ownerKey;
- useEffect(()=>{let alive=true;void request('/api/production-studio/projects').then(data=>{if(!alive)return;setProjects(data.projects);const last=localStorage.getItem(key);if(data.projects.some((p:{id:string})=>p.id===last))setId(last||'');}).catch(e=>setError(e.message));return()=>{alive=false;};},[key]);
+ useEffect(()=>{let alive=true;void request('/api/production-studio/projects').then(data=>{if(!alive)return;setProjects(data.projects);const requested=new URL(window.location.href).searchParams.get('productionProject'),last=requested||localStorage.getItem(key);if(data.projects.some((p:{id:string})=>p.id===last)){setId(last||'');localStorage.setItem(key,last||'');}}).catch(e=>setError(e.message));return()=>{alive=false;};},[key]);
  const choose=(id:string)=>{localStorage.setItem(key,id);setId(id);};
  return <div className="min-w-0 space-y-3"><p className="text-xs uppercase text-purple-300">TEST · Six-stage filmmaking studio</p>
   <Field label="Your productions"><select className={inputClass} value={id} onChange={e=>choose(e.target.value)}><option value="">Choose a production</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>

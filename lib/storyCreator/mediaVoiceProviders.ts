@@ -19,7 +19,7 @@ export function storyVoiceAutoEnabled() {
     (process.env.OTG_ENV === "test" || process.env.OTG_ENV === "prod");
 }
 
-function elevenLabsKey() {
+export function elevenLabsKey() {
   if (!storyVoiceAutoEnabled()) return "";
   const file = process.env.OTG_STORY_ELEVENLABS_KEY_FILE;
   if (!file || !path.isAbsolute(file)) return "";

@@ -1,3 +1,4 @@
+import { renderStoryCloudAudio } from "./mediaCloudAudio";
 import fs from "node:fs";
 import {storyCharacterSource} from "./mediaCharacterLink";
 import path from "node:path";
@@ -13,6 +14,7 @@ import {assertStoryMediaScope, claimStoryMedia, createStoryMedia, getStoryMedia,
 import {storyOpenAIImageProfile,storyOpenAIImagesEnabled,renderStoryOpenAIImage,storyOpenAIImageTimeoutMs} from "./mediaOpenAI";
 import {parseStoryMediaCommand} from "./mediaContract";
 import {storyChatMediaEnabled,requireStoryMediaEnabled} from "./mediaAvailability";
+import {story3060VideoProfile,story3060VideoEnabled,submitStory3060Video,readStory3060Video,story3060VideoProgress} from "./mediaVideo3060";
 import {story3060SpeechEnabled} from "./audioProduction";
 import {story3060VoiceProfile,submitStory3060Voice,readStory3060Voice} from "./mediaVoice3060";
 import {cancelStoryAudio,requireStoryAudioEngine,storyAudioJob,storyAudioOutput,submitStoryAudio} from "./mediaAudio";
@@ -210,7 +212,7 @@ export function requestStoryMedia(input: {ownerKey:string;projectId:string;sourc
   const imageAccountId=input.openAIImageAccountId;
   const visual = ["image","edit"].includes(command.operation);
   const cloud=visual && !!imageAccountId && storyOpenAIImagesEnabled(imageAccountId);
-  const profile=cloud?storyOpenAIImageProfile:expanded && command.operation==="image" && story3060ImageEnabled()?story3060ImageProfile
+  const profile=command.operation==="video"&&story3060VideoEnabled()?story3060VideoProfile:cloud?storyOpenAIImageProfile:expanded && command.operation==="image" && story3060ImageEnabled()?story3060ImageProfile
     :expanded && command.operation==="edit" && story3060EditEnabled()?story3060EditProfile
     :expanded && command.operation==="voice" && storyVoiceAutoEnabled() && !input.manualVoice?storyVoiceAutoProfile
     :expanded && command.operation==="voice" && story3060SpeechEnabled() && (!command.language || command.language==="Auto" || command.language==="English")?story3060VoiceProfile:undefined;
@@ -270,7 +272,7 @@ export function requestStoryMediaFromCard(ownerKey:string,projectId:string,body:
   const evidence=`Generate ${operation} for ${source.command.name||"this image"}.`;
   const expanded=storyChatMediaEnabled();
   const command=parseStoryMediaCommand({operation,subject:source.command.subject,name:source.command.name,sourceId,
-    prompt:String(body.prompt||""),text,evidence,...(expanded&&operation==="voice"?{voiceMode:body.voiceMode==="design"?"design":source.command.operation==="voice"?"reuse":undefined}:{})},
+    prompt:String(body.prompt||""),text,evidence,...(expanded&&operation==="video"?{videoMode:body.videoMode===undefined?"first-frame":body.videoMode,durationSeconds:body.durationSeconds===undefined?5:body.durationSeconds}:{}),...(expanded&&operation==="voice"?{voiceMode:body.voiceMode==="design"?"design":source.command.operation==="voice"?"reuse":undefined}:{})},
     evidence+"\n"+text,expanded);
   const message=addStoryCreatorMessage({ownerKey,projectId,role:"user",content:`${evidence}\n${command.prompt}\n${command.text}`});
   return requestStoryMedia({ownerKey,projectId,sourceMessageId:message.id,arguments:command,openAIImageAccountId:accountId,manualVoice:operation==="voice"&&body.voiceEngine==="qwen3"},`ui:${requestKey}`);
@@ -322,6 +324,13 @@ export async function executeStoryMedia(record:StoryMediaRecord,cookie:string) {
       error.name="RejectedStoryMedia";throw error;
     }
     if(record.command.operation==="music"||record.command.operation==="effects"){
+      const video=record.command.operation==="effects"?source.video:undefined;
+      // Synchronized video effects retain the qualified video-aware local path.
+      if(!video){
+        const cloud=await renderStoryCloudAudio(record,storyMediaRoot(record));
+        if(cloud){await finishStoryMedia(getStoryMedia(record.ownerKey,record.projectId,record.id),cloud);return;}
+        if(getStoryMedia(record.ownerKey,record.projectId,record.id).cancelRequested)return;
+      }
       try {await submitStoryAudio(record,record.command.operation==="effects"?source.video:undefined);}
       catch(error){
         const current=getStoryMedia(record.ownerKey,record.projectId,record.id);
@@ -396,6 +405,7 @@ export async function executeStoryMedia(record:StoryMediaRecord,cookie:string) {
       fs.writeFileSync(file,bytes,{flag:"wx",mode:0o600});
       await finishStoryMedia(current,file);return;
     }
+    if(record.profile===story3060VideoProfile){await submitStory3060Video(record,source.image);return;}
     if(isStory3060Visual(record.profile)){await submitStory3060Image(record,source.image);return;}
     if(record.command.operation==="image") {
       const {POST}=await import("@/app/api/assets/create-image/route");
@@ -435,7 +445,7 @@ export async function executeStoryMedia(record:StoryMediaRecord,cookie:string) {
   } catch(error) {
     const current=getStoryMedia(record.ownerKey,record.projectId,record.id);
     if(current.status==="canceled")return;
-    updateStoryMedia(current,{status:error instanceof Error&&error.name==="AbortError"?"canceled":error instanceof Error&&error.name==="RejectedStoryMedia"?"failed":error instanceof Error&&["UnconfirmedStoryVoice","UnconfirmedStoryOpenAIImage"].includes(error.name)||current.status==="submitting"?"unknown":"failed",error:error instanceof Error?error.message:"Generation failed."});
+    updateStoryMedia(current,{status:error instanceof Error&&error.name==="AbortError"?"canceled":error instanceof Error&&error.name==="RejectedStoryMedia"?"failed":error instanceof Error&&["UnconfirmedStoryVoice","UnconfirmedStoryOpenAIImage","UnconfirmedStoryCloudAudio"].includes(error.name)||current.status==="submitting"?"unknown":"failed",error:error instanceof Error?error.message:"Generation failed."});
   }
 }
 async function finishStoryMedia(record:StoryMediaRecord,file:string) {
@@ -462,11 +472,13 @@ async function finishStoryMedia(record:StoryMediaRecord,file:string) {
 /** Called by the durable queue before releasing the 3060 grant. */
 export async function publishStory3060Image(producer:{ownerKey:string;projectId?:string;id:string},promptId:string,receipt:unknown){
   const record=getStoryMedia(producer.ownerKey,producer.projectId||"",producer.id);
-  if((!isStory3060Visual(record.profile)&&record.profile!==story3060VoiceProfile)||record.backendJob?.promptId!==promptId)throw Error("The Story image output is not bound to this owner and execution.");
+  if((!isStory3060Visual(record.profile)&&record.profile!==story3060VoiceProfile&&record.profile!==story3060VideoProfile)||record.backendJob?.promptId!==promptId)throw Error("The Story image output is not bound to this owner and execution.");
   if(record.status==="ready"||record.status==="failed"||record.status==="canceled")return;
   if(record.status!=="running")throw Error("The Story image is not eligible for publication.");
   if(record.cancelRequested){updateStoryMedia(record,{status:"canceled",error:null});return;}
-  const result=record.profile===story3060VoiceProfile
+  const result=record.profile===story3060VideoProfile
+    ? await readStory3060Video(record,storyMediaRoot(record),receipt)
+    :record.profile===story3060VoiceProfile
     ? await readStory3060Voice(record,storyMediaRoot(record),receipt)
     : await readStory3060Image(record,storyMediaRoot(record),receipt);
   if(result.filePath)await finishStoryMedia(record,result.filePath);
@@ -481,6 +493,10 @@ export async function refreshStoryMedia(record:StoryMediaRecord):Promise<StoryMe
   const task=(async()=>{
     const job=record.backendJob;
     if(!job)return record;
+    if(job.engine==="elevenlabs-audio"){
+      if(job.pid!==process.pid||Date.now()-record.updatedAt>360_000)return updateStoryMedia(record,{status:"unknown",error:"The original ElevenLabs audio request is unconfirmed. No duplicate request was sent."});
+      return record;
+    }
     if(record.command.operation==="music"||record.command.operation==="effects"){
       const audio=storyAudioJob(record);
       if(!audio)return Date.now()-record.updatedAt>120_000
@@ -510,6 +526,7 @@ export async function refreshStoryMedia(record:StoryMediaRecord):Promise<StoryMe
       if("status" in output&&output.status)return updateStoryMedia(record,{status:record.cancelRequested?"canceled":output.status,error:record.cancelRequested?null:output.error});
       return updateStoryMedia(record,{stage:output.stage});
     }
+    if(record.profile===story3060VideoProfile)return story3060VideoProgress(record);
     if(record.profile===story3060VoiceProfile){
       const queue=getMediaQueueJob(String(job.promptId||""));
       if(queue?.status==="failed"||queue?.status==="canceled")return updateStoryMedia(record,{status:queue.status,error:queue.error});
@@ -666,13 +683,13 @@ export async function cancelStoryMedia(record:StoryMediaRecord) {
   if(["ready","failed","canceled","unknown"].includes(record.status))return record;
   if(record.status==="submitting")throw Error("Checking the original submission. Wait for its job ID before canceling; no second job will run.");
   if(record.status==="running") {
-    if(record.profile===storyOpenAIImageProfile||record.backendJob?.engine==="voice-dispatch")return updateStoryMedia(record,{cancelRequested:true});
+    if(record.profile===storyOpenAIImageProfile||["voice-dispatch","elevenlabs-audio"].includes(record.backendJob?.engine))return updateStoryMedia(record,{cancelRequested:true});
     if(record.profile===storyLtxVoiceProfile){
       const job=record.backendJob;
       if(cancelQueuedMediaJob(String(job?.promptId||""),job?.comfyBaseUrl))return updateStoryMedia(record,{status:"canceled",error:null});
       return updateStoryMedia(record,{cancelRequested:true,stage:"Finishing the current worker job safely"});
     }
-    if(isStory3060Visual(record.profile)||record.profile===story3060VoiceProfile)return cancelStory3060Image(record);
+    if(isStory3060Visual(record.profile)||record.profile===story3060VoiceProfile||record.profile===story3060VideoProfile)return cancelStory3060Image(record);
     if(record.command.operation==="music"||record.command.operation==="effects"){
       const result=cancelStoryAudio(record);
       return updateStoryMedia(record,result.status==="canceled"?{status:"canceled",error:null}:{cancelRequested:true});

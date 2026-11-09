@@ -69,7 +69,8 @@ type Props = {
   resultMessageId?: string|null;
 };
 
-const STORY_DICTATION = process.env.NEXT_PUBLIC_OTG_STORY_DICTATION === "1";
+// Story Creator uses the same dictation workflow in TEST and PROD.
+const STORY_DICTATION = true;
 const DICTATION_REVIEW_KEY = "otg.storyCreator.reviewDictation";
 
 const STORY_DIRECTOR_AUTO_SPEAK_KEY =

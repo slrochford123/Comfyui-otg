@@ -4104,6 +4104,19 @@ export default function CharacterHubPanel({
   const [refModInitialCharacter, setRefModInitialCharacter] =
     React.useState<SavedCharacterOption | null>(null);
 
+  React.useEffect(() => {
+    const url=new URL(window.location.href),id=url.searchParams.get("storyRefModCharacter");
+    if(!id)return;
+    const abort=new AbortController();
+    void fetch("/api/characters?library=1",{cache:"no-store",signal:abort.signal})
+      .then(async response=>{if(!response.ok)throw Error("Characters unavailable");return response.json();})
+      .then(data=>{const character=data.items?.find((item:SavedCharacterOption)=>item.id===id);
+        if(character&&!abort.signal.aborted){setRefModInitialCharacter(character);setView("refmod-gallery");
+          url.searchParams.delete("storyRefModCharacter");window.history.replaceState(null,"",url);}})
+      .catch(()=>{/* The normal Characters library remains available for retry. */});
+    return()=>abort.abort();
+  }, [authenticatedOwnerKey]);
+
   function openCharacterRefModCreator(character: SavedCharacterOption) {
     setRefModInitialCharacter(character);
     setView("refmod-gallery");

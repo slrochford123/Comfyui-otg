@@ -12,7 +12,7 @@ export type StoryMediaRecord = {
   command: StoryMediaCommand; status: StoryMediaStatus; createdAt: number; updatedAt: number;
   backendJob: Record<string, any> | null; filePath: string | null; error: string | null;
   characterId: string | null; voiceId: string | null;
-  profile?: "z-image-turbo-3060" | "flux2-klein-edit-3060" | "gpt-image-2.6-flare" | "qwen3-tts-3060" | "story-voice-auto" | "ltx25-story";
+  profile?: "fasth3-3060" | "z-image-turbo-3060" | "flux2-klein-edit-3060" | "gpt-image-2.6-flare" | "qwen3-tts-3060" | "story-voice-auto" | "ltx25-story";
   cloudVoice?: {previews?: {id:string;file:string}[]; audition?:string; description?:string; providerVoiceId?:string; selected?:number};
   voiceNotice?:string;
   imageNotice?:string;
@@ -136,6 +136,6 @@ export function publicStoryMedia(record: StoryMediaRecord) {
   const {filePath,backendJob,ownerKey,imageAccountId: _imageAccountId,cloudVoice,...rest} = record;
   const stage=rest.stage?.replace(/(?:\/home\/|\/mnt\/|\/opt\/|\/var\/|https?:\/\/)[^\s)]+/g,"[private worker]").slice(0,200);
   const error=rest.error?.replace(/(?:\/home\/|\/mnt\/|\/opt\/|\/var\/|https?:\/\/)[^\s)]+/g,"[private worker]").slice(0,600)||null;
-  return {...rest,error,stage,voiceCandidates:cloudVoice?.previews?.length,voiceCandidate:cloudVoice?.selected,voiceAuditionText:cloudVoice?.audition,engine:record.profile==="story-voice-auto"?"ElevenLabs":record.profile==="ltx25-story"?"LTX 2.5 · RTX 3090":record.command.operation==="music"?"YuE2":record.command.operation==="effects"?"Sony Woosh":record.profile==="qwen3-tts-3060"?"Qwen3-TTS · RTX 3060":record.profile==="gpt-image-2.6-flare"?"GPT Image 2.6 Flare · OpenAI":record.profile==="z-image-turbo-3060"?"Z-Image Turbo · RTX 3060":record.profile==="flux2-klein-edit-3060"?"FLUX.2 Klein 4B · RTX 3060":record.command.operation==="image"?"Krea 2 Turbo":record.command.operation==="edit"?"Fibo 2.0 Turbo":record.command.operation==="video"?"FastH3":`Qwen3-TTS${backendJob?.gpu==="rtx5060ti"?" · RTX 5060 Ti":backendJob?.gpu==="rtx3090"?" · RTX 3090":""}`,
+  return {...rest,error,stage,voiceCandidates:cloudVoice?.previews?.length,voiceCandidate:cloudVoice?.selected,voiceAuditionText:cloudVoice?.audition,engine:record.profile==="fasth3-3060"?"Fast H3 · RTX 3060":backendJob?.engine==="elevenlabs-audio"?"ElevenLabs":record.profile==="story-voice-auto"?"ElevenLabs":record.profile==="ltx25-story"?"LTX 2.5 · RTX 3090":record.command.operation==="music"?"YuE2":record.command.operation==="effects"?"Sony Woosh":record.profile==="qwen3-tts-3060"?"Qwen3-TTS · RTX 3060":record.profile==="gpt-image-2.6-flare"?"GPT Image 2.6 Flare · OpenAI":record.profile==="z-image-turbo-3060"?"Z-Image Turbo · RTX 3060":record.profile==="flux2-klein-edit-3060"?"FLUX.2 Klein 4B · RTX 3060":record.command.operation==="image"?"Krea 2 Turbo":record.command.operation==="edit"?"Fibo 2.0 Turbo":record.command.operation==="video"?"FastH3":`Qwen3-TTS${backendJob?.gpu==="rtx5060ti"?" · RTX 5060 Ti":backendJob?.gpu==="rtx3090"?" · RTX 3090":""}`,
     url:record.status==="ready"&&filePath?`/api/story-creator/media/file?projectId=${encodeURIComponent(record.projectId)}&id=${encodeURIComponent(record.id)}`:null};
 }
