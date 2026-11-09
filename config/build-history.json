@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.32",
+  "current": "2.33",
   "builds": [
     {
       "version": "2",
@@ -199,6 +199,12 @@
       "date": "2026-11-08",
       "summary": "Story Creator CPU dictation with Parakeet v3, a ten-minute recording limit, Stop & Send, and optional transcript review.",
       "sourceBaseCommit": "ea6b450190a61969e6c5df9706c73d87ca4d5a13"
+    },
+    {
+      "version": "2.33",
+      "date": "2026-11-08",
+      "summary": "Story Creator uses ElevenLabs for character voice auditions and saved-voice dialogue, with LTX 2.5 fallback and voice usage limits.",
+      "sourceBaseCommit": "5a7b1c9268f00eb501cadbc7e3feef90b8999136"
     }
   ]
 }

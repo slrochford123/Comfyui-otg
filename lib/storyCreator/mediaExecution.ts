@@ -7,15 +7,17 @@ import {listCharacters, loadCharacter, createCharacter, updateCharacterVoiceSele
 import {upsertVoice, voicesSamplesDir} from "@/lib/voicesStudio";
 import {attachStoryVisualUpload,addStoryCreatorMessage,listStoryVisualAssets,getStoryVisualVersion} from "./store";
 import {contentTypeForMedia} from "@/lib/mediaResponse";
-import {assertStoryMediaScope, claimStoryMedia, createStoryMedia, getStoryMedia, listStoryChatMedia, listStoryMedia, storyMediaByRequest, updateStoryMedia, type StoryMediaRecord} from "./mediaStore";
+import {assertStoryMediaScope, claimStoryMedia, createStoryMedia, getStoryMedia, approvedStoryCloudVoice, claimStoryVoiceSlot, settleStoryVoiceSlot, listStoryChatMedia, listStoryMedia, storyMediaByRequest, updateStoryMedia, type StoryMediaRecord} from "./mediaStore";
 import {storyOpenAIImageProfile,storyOpenAIImagesEnabled,renderStoryOpenAIImage,storyOpenAIImageTimeoutMs} from "./mediaOpenAI";
 import {parseStoryMediaCommand,requestsStoryOpenAIImage} from "./mediaContract";
 import {storyChatMediaEnabled,requireStoryMediaEnabled} from "./mediaAvailability";
 import {story3060SpeechEnabled} from "./audioProduction";
 import {story3060VoiceProfile,submitStory3060Voice,readStory3060Voice} from "./mediaVoice3060";
 import {cancelStoryAudio,requireStoryAudioEngine,storyAudioJob,storyAudioOutput,submitStoryAudio} from "./mediaAudio";
-import {getMediaQueueJob} from "@/lib/workers/mediaGpuQueue";
+import {getMediaQueueJob,cancelQueuedMediaJob} from "@/lib/workers/mediaGpuQueue";
 import {story3060ImageEnabled,story3060ImageProfile,story3060EditEnabled,story3060EditProfile,isStory3060Visual,submitStory3060Image,collectStory3060Image,cancelStory3060Image,readStory3060Image} from "./media3060";
+
+import {storyVoiceAutoEnabled,storyVoiceAutoProfile,storyLtxVoiceProfile,renderStoryElevenLabs,enqueueStoryLtxVoice,collectStoryLtxVoice,createStoryElevenLabsVoice,ElevenLabsRejection} from "./mediaVoiceProviders";
 
 export function requireStoryMediaTest() {
   requireStoryMediaEnabled();
@@ -28,9 +30,10 @@ function safeDataFile(file: string) {
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || !fs.statSync(resolved).isFile()) throw Error("Source is not available in protected app storage.");
   return resolved;
 }
-export function storyMediaFile(record: StoryMediaRecord) {
-  if (!record.filePath || record.status !== "ready") throw Error("Media is not ready.");
-  const file = safeDataFile(record.filePath), root = fs.realpathSync(storyMediaRoot(record));
+export function storyMediaFile(record: StoryMediaRecord, candidate?:number) {
+  const filePath=candidate===undefined?record.filePath:record.cloudVoice?.previews?.[candidate]?.file;
+  if (!filePath || record.status !== "ready") throw Error("Media is not ready.");
+  const file = safeDataFile(filePath), root = fs.realpathSync(storyMediaRoot(record));
   if (!file.startsWith(root+path.sep)) throw Error("Invalid media storage location.");
   return file;
 }
@@ -52,7 +55,7 @@ export function storyMediaContext(ownerKey: string, projectId: string,query="",f
     characters:characters.slice(0,40).map(c=>({id:c.id,name:c.name,description:c.description?.slice(0,300),hasVoice:!!c.referenceAudioPath})),
   });
 }
-function sourceFor(record: StoryMediaRecord): {image?: string; video?:string; voice?: string; name?: string; characterId?: string; refText?:string} {
+function sourceFor(record: StoryMediaRecord): {image?: string; video?:string; voice?: string; name?: string; characterId?: string; refText?:string; providerVoiceId?:string; voiceDirection?:string} {
   const sourceId = record.command.sourceId;
   if (!sourceId) return {};
   if(sourceId.startsWith("visual:")){
@@ -62,20 +65,20 @@ function sourceFor(record: StoryMediaRecord): {image?: string; video?:string; vo
   }
   const character = loadCharacter(record.ownerKey,sourceId);
   if (character) return {image:safeDataFile(character.imagePath),voice:character.referenceAudioPath?safeDataFile(character.referenceAudioPath):undefined,
-    name:character.name,characterId:character.id,refText:String(character.metadata?.storyVoiceText||character.introLine||"")};
+    name:character.name,characterId:character.id,providerVoiceId:approvedStoryCloudVoice(record.ownerKey,character.metadata?.storyVoiceId),voiceDirection:String(character.metadata?.storyVoiceDirection||""),refText:String(character.metadata?.storyVoiceText||character.introLine||"")};
   const source = getStoryMedia(record.ownerKey,record.projectId,sourceId);
   const file = storyMediaFile(source);
   if(record.command.operation==="voice"&&source.characterId) {
     const saved=loadCharacter(record.ownerKey,source.characterId);
-    if(saved?.referenceAudioPath)return {voice:safeDataFile(saved.referenceAudioPath),name:saved.name,characterId:saved.id,refText:String(saved.metadata?.storyVoiceText||saved.introLine||"")};
+    if(saved?.referenceAudioPath)return {voice:safeDataFile(saved.referenceAudioPath),name:saved.name,characterId:saved.id,providerVoiceId:approvedStoryCloudVoice(record.ownerKey,saved.metadata?.storyVoiceId),voiceDirection:String(saved.metadata?.storyVoiceDirection||""),refText:String(saved.metadata?.storyVoiceText||saved.introLine||"")};
   }
   if(record.command.operation==="voice" && ["image","edit"].includes(source.command.operation) && record.command.voiceMode!=="design"){
     const approved=listStoryMedia(record.ownerKey,record.projectId)
       .filter(v=>v.command.operation==="voice" && v.command.sourceId===source.id && v.status==="ready" && !!v.voiceId)
       .sort((a,b)=>b.updatedAt-a.updatedAt)[0];
-    if(approved)return {image:file,voice:storyMediaFile(approved),name:source.command.name,refText:approved.command.text};
+    if(approved)return {image:file,voice:storyMediaFile(approved),name:source.command.name,refText:approved.cloudVoice?.audition||approved.command.text,providerVoiceId:approved.cloudVoice?.providerVoiceId,voiceDirection:approved.command.prompt};
   }
-  return source.command.operation === "voice" ? {voice:file,name:source.command.name,characterId:source.characterId||undefined,refText:source.command.text}
+  return source.command.operation === "voice" ? {voice:file,name:source.command.name,characterId:source.characterId||undefined,refText:source.cloudVoice?.audition||source.command.text,providerVoiceId:source.voiceId?source.cloudVoice?.providerVoiceId:undefined,voiceDirection:source.command.prompt}
     : ["image","edit"].includes(source.command.operation)?{image:file,name:source.command.name,characterId:source.characterId||undefined}
     : source.command.operation==="video"?{video:file,name:source.command.name}:{};
 }
@@ -154,7 +157,7 @@ export function findStoryCreation(scope:StoryScope,sourceId:string) {
   return {id:existing.id,name:existing.command.name||"your creation"};
 }
 
-export function requestStoryMedia(input: {ownerKey:string;projectId:string;sourceMessageId:string;arguments:unknown;openAIImageAccountId?:string},requestKey?:string,
+export function requestStoryMedia(input: {ownerKey:string;projectId:string;sourceMessageId:string;arguments:unknown;openAIImageAccountId?:string;manualVoice?:boolean},requestKey?:string,
   voiceContext?:{instruction:string;text:string}) {
   requireStoryMediaTest();
   const messages = assertStoryMediaScope(input.ownerKey,input.projectId);
@@ -209,6 +212,7 @@ export function requestStoryMedia(input: {ownerKey:string;projectId:string;sourc
   if(expanded && visual && wantsCloud && !cloud)throw Error("The paid OpenAI image option is unavailable for this account.");
   const profile=cloud?storyOpenAIImageProfile:expanded && command.operation==="image" && story3060ImageEnabled()?story3060ImageProfile
     :expanded && command.operation==="edit" && story3060EditEnabled()?story3060EditProfile
+    :expanded && command.operation==="voice" && storyVoiceAutoEnabled() && !input.manualVoice?storyVoiceAutoProfile
     :expanded && command.operation==="voice" && story3060SpeechEnabled() && (!command.language || command.language==="Auto" || command.language==="English")?story3060VoiceProfile:undefined;
   return createStoryMedia({...input,command,profile,...(cloud?{imageAccountId}:{})},requestKey);
 }
@@ -266,7 +270,7 @@ export function requestStoryMediaFromCard(ownerKey:string,projectId:string,body:
     prompt:String(body.prompt||""),text,evidence,...(expanded&&operation==="voice"?{voiceMode:body.voiceMode==="design"?"design":source.command.operation==="voice"?"reuse":undefined}:{})},
     evidence+"\n"+text,expanded);
   const message=addStoryCreatorMessage({ownerKey,projectId,role:"user",content:`${evidence}\n${command.prompt}\n${command.text}`});
-  return requestStoryMedia({ownerKey,projectId,sourceMessageId:message.id,arguments:command},`ui:${requestKey}`);
+  return requestStoryMedia({ownerKey,projectId,sourceMessageId:message.id,arguments:command,manualVoice:operation==="voice"&&body.voiceEngine==="qwen3"},`ui:${requestKey}`);
 }
 export function retryStoryMedia(record:StoryMediaRecord,requestKey:string,accountId?:string) {
   if(record.status!=="failed"||!/^[-_a-zA-Z0-9]{16,100}$/.test(requestKey))
@@ -309,7 +313,7 @@ export async function executeStoryMedia(record:StoryMediaRecord,cookie:string) {
     const source=sourceFor(record), prompt=record.command.prompt;
     if(record.command.operation==="voice"&&source.characterId&&!record.characterId)
       record=updateStoryMedia(record,{characterId:source.characterId});
-    if(record.command.voiceMode==="design"){delete source.voice;delete source.refText;}
+    if(record.command.voiceMode==="design"){delete source.voice;delete source.refText;delete source.providerVoiceId;}
     if(record.command.operation==="voice"&&record.command.voiceMode==="reuse"&&!source.voice){
       const error=Error("The approved reference voice is unavailable.");
       error.name="RejectedStoryMedia";throw error;
@@ -322,6 +326,32 @@ export async function executeStoryMedia(record:StoryMediaRecord,cookie:string) {
         if(!current.backendJob?.audioSessionId && error instanceof Error)error.name="RejectedStoryMedia";
         throw error;
       }
+      return;
+    }
+    if(record.profile===storyVoiceAutoProfile||record.profile===storyLtxVoiceProfile){
+      record=updateStoryMedia(record,{status:"running",backendJob:{engine:"voice-dispatch",pid:process.pid},
+        stage:record.profile===storyVoiceAutoProfile?"Preparing an ElevenLabs voice":"Preparing a local LTX voice"});
+      if(record.status!=="running")return;
+      const reuse=record.command.voiceMode!=="design"&&Boolean(source.voice);
+      const cloud=record.profile===storyVoiceAutoProfile
+        ? await renderStoryElevenLabs(record,storyMediaRoot(record),source.providerVoiceId,reuse)
+          .catch(error=>({reason:error instanceof ElevenLabsRejection?error.message:"ElevenLabs could not finish this voice request."}))
+        : {reason:"Retrying the local audition."} as const;
+      record=getStoryMedia(record.ownerKey,record.projectId,record.id);
+      if(record.status!=="running")return;
+      if(record.cancelRequested){updateStoryMedia(record,{status:"canceled",error:null});return;}
+      if("file" in cloud&&cloud.file){
+        const cloudVoice=cloud.previews?{previews:cloud.previews,audition:cloud.audition,description:cloud.description}
+          :{providerVoiceId:cloud.providerVoiceId};
+        record=updateStoryMedia(record,{cloudVoice,stage:undefined});
+        await finishStoryMedia(record,cloud.file);return;
+      }
+      const notice=cloud.reason+(reuse?" Using LTX 2.5 for a new audition. The saved voice is still selected.":" Using local LTX 2.5.");
+      record=updateStoryMedia(record,{profile:storyLtxVoiceProfile,voiceNotice:notice,stage:"Preparing a local LTX voice"});
+      const current=record;
+      await enqueueStoryLtxVoice(current,[source.voiceDirection,prompt].filter(Boolean).join(" "),backendJob=>{
+        updateStoryMedia(current,{backendJob,stage:"Waiting for RTX 3090"});
+      });
       return;
     }
     if(record.profile===story3060VoiceProfile){await submitStory3060Voice(record,source);return;}
@@ -437,6 +467,18 @@ export async function refreshStoryMedia(record:StoryMediaRecord):Promise<StoryMe
       if(state.status==="failed"||state.status==="canceled")return updateStoryMedia(record,{status:state.status,error:state.status==="failed"?state.stage:null});
       return updateStoryMedia(record,{stage:state.stage});
     }
+    if(job.engine==="voice-dispatch"){
+      if(job.pid!==process.pid||Date.now()-record.updatedAt>240_000)
+        return updateStoryMedia(record,{status:"unknown",error:"The original voice submission could not be confirmed. No duplicate was sent."});
+      return record;
+    }
+    if(record.profile===storyLtxVoiceProfile){
+      const output=await collectStoryLtxVoice(record,storyMediaRoot(record));
+      if(!output)return record;
+      if("file" in output&&output.file)return finishStoryMedia(record,output.file);
+      if("status" in output&&output.status)return updateStoryMedia(record,{status:record.cancelRequested?"canceled":output.status,error:record.cancelRequested?null:output.error});
+      return updateStoryMedia(record,{stage:output.stage});
+    }
     if(record.profile===story3060VoiceProfile){
       const queue=getMediaQueueJob(String(job.promptId||""));
       if(queue?.status==="failed"||queue?.status==="canceled")return updateStoryMedia(record,{status:queue.status,error:queue.error});
@@ -509,16 +551,52 @@ export function saveStoryVoice(record:StoryMediaRecord,characterId?:string) {
   if(characterId&&!character)throw Error("Character not found for this account.");
   const voiceId=record.voiceId||`${safeSegment(record.ownerKey)}__story_${record.id}`,dir=voicesSamplesDir(voiceId),target=path.join(dir,"ref.wav");
   fs.copyFileSync(file,target);
-  upsertVoice(record.ownerKey,{voiceId,name:record.command.name||"Story voice",tags:["story-creator","qwen3"],type:record.command.voiceMode==="design"?"created":record.command.sourceId?"cloned":"created",
-    refText:record.command.text,refAudioRel:`samples/${voiceId}/ref.wav`,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
-  if(character)updateCharacterVoiceSelection(record.ownerKey,character.id,{referenceAudioPath:target,voiceEngineUsed:"qwen3",metadata:{storyVoiceId:voiceId,storyVoiceText:record.command.text}});
+  const engine=record.profile===storyVoiceAutoProfile?"elevenlabs":record.profile===storyLtxVoiceProfile?"ltx25":"qwen3";
+  const refText=record.cloudVoice?.audition||record.command.text;
+  upsertVoice(record.ownerKey,{voiceId,name:record.command.name||"Story voice",tags:["story-creator",engine],type:record.command.voiceMode==="design"?"created":record.command.sourceId?"cloned":"created",
+    refText,refAudioRel:`samples/${voiceId}/ref.wav`,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+  if(character)updateCharacterVoiceSelection(record.ownerKey,character.id,{referenceAudioPath:target,voiceEngineUsed:engine,metadata:{storyVoiceId:voiceId,storyVoiceText:refText,storyVoiceDirection:record.command.prompt}});
   return updateStoryMedia(record,{voiceId,characterId:character?.id||record.characterId});
+}
+export async function approveStoryMediaVoice(record:StoryMediaRecord,candidate:unknown,characterId?:string){
+  const cloud=record.cloudVoice;
+  if(!cloud?.previews)return saveStoryVoice(record,characterId);
+  if(!storyVoiceAutoEnabled()||record.status!=="ready")throw Error("This audition is unavailable.");
+  if(characterId&&!loadCharacter(record.ownerKey,characterId))throw Error("Character not found for this account.");
+  const index=record.voiceId?cloud.selected:candidate??0;
+  if(typeof index!=="number"||!Number.isSafeInteger(index)||!cloud.previews[index])
+    throw Error("Choose one of the generated auditions.");
+  const preview=cloud.previews[index];
+  storyMediaFile(record,index);
+  if(record.voiceId)return saveStoryVoice(record,characterId);
+  const existing=claimStoryVoiceSlot(record,index);
+  let providerId=existing;
+  if(!providerId){
+    try {
+      providerId=await createStoryElevenLabsVoice(record.command.name||"Story voice",cloud.description!,preview.id);
+      settleStoryVoiceSlot(record,index,providerId);
+    } catch(error){
+      if(error instanceof ElevenLabsRejection && [400,401,402,403,404,422,429].includes(error.status)){
+        settleStoryVoiceSlot(record,index,null);
+        throw error;
+      }
+      throw Error("ElevenLabs did not confirm approval. This slot is reserved until an administrator checks it.");
+    }
+  }
+  if(!providerId)throw Error("ElevenLabs did not confirm the saved voice.");
+  const approved=updateStoryMedia(record,{cloudVoice:{...cloud,providerVoiceId:providerId,selected:index},filePath:preview.file});
+  return saveStoryVoice(approved,characterId);
 }
 export async function cancelStoryMedia(record:StoryMediaRecord) {
   if(["ready","failed","canceled","unknown"].includes(record.status))return record;
   if(record.status==="submitting")throw Error("Checking the original submission. Wait for its job ID before canceling; no second job will run.");
   if(record.status==="running") {
-    if(record.profile===storyOpenAIImageProfile)return updateStoryMedia(record,{cancelRequested:true});
+    if(record.profile===storyOpenAIImageProfile||record.backendJob?.engine==="voice-dispatch")return updateStoryMedia(record,{cancelRequested:true});
+    if(record.profile===storyLtxVoiceProfile){
+      const job=record.backendJob;
+      if(cancelQueuedMediaJob(String(job?.promptId||""),job?.comfyBaseUrl))return updateStoryMedia(record,{status:"canceled",error:null});
+      return updateStoryMedia(record,{cancelRequested:true,stage:"Finishing the current worker job safely"});
+    }
     if(isStory3060Visual(record.profile)||record.profile===story3060VoiceProfile)return cancelStory3060Image(record);
     if(record.command.operation==="music"||record.command.operation==="effects"){
       const result=cancelStoryAudio(record);

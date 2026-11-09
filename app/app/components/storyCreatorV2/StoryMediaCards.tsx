@@ -3,7 +3,7 @@ import {useCallback,useEffect,useRef,useState} from "react";
 import {StoryImagePreview,StoryMediaPreview} from "./StoryPreview";
 import {newClientRequestId} from "@/lib/client/requestId";
 import type {StoryMediaCommand} from "@/lib/storyCreator/mediaContract";
-type Media={id:string;sourceMessageId:string;status:string;command:StoryMediaCommand;url:string|null;engine:string;error:string|null;characterId:string|null;voiceId:string|null;cancelRequested?:boolean;stage?:string;durationSeconds?:number;license?:string};
+type Media={id:string;sourceMessageId:string;status:string;command:StoryMediaCommand;url:string|null;engine:string;error:string|null;characterId:string|null;voiceId:string|null;cancelRequested?:boolean;stage?:string;durationSeconds?:number;license?:string;voiceNotice?:string;voiceCandidates?:number;voiceCandidate?:number;voiceAuditionText?:string};
 type Character={id:string;name:string;hasVoice:boolean};
 const button="min-h-11 rounded-xl border border-white/20 px-3 py-2 text-sm disabled:opacity-40";
 const input="w-full rounded-xl border border-white/20 bg-black/20 p-3 text-sm";
@@ -16,6 +16,7 @@ export function StoryMediaCards({projectId,removedMessages,onAvailability,onChat
   const [lightweightImage,setLightweightImage]=useState(false);
   const [lightweightEdit,setLightweightEdit]=useState(false);
   const [openAIImage,setOpenAIImage]=useState(false);
+  const [voiceAuto,setVoiceAuto]=useState(false);
   const hidden=useRef(new Set<string>());
   const refreshRef=useRef<()=>Promise<void>>(async()=>{});
   useEffect(()=>{
@@ -32,6 +33,7 @@ export function StoryMediaCards({projectId,removedMessages,onAvailability,onChat
         setLightweightImage(data.lightweightImage===true);
         setLightweightEdit(data.lightweightEdit===true);
         setOpenAIImage(data.openAIImage===true);
+        setVoiceAuto(data.voiceAuto===true);
         setMedia((data.media||[]).filter((item:Media)=>!hidden.current.has(item.id)));setCharacters(data.characters||[]);setError("");
       }catch(cause){if(!controller.signal.aborted)setError(cause instanceof Error?cause.message:"Reconnect to check your media. No new job was sent.");}
       finally{busy=false;}
@@ -67,7 +69,7 @@ export function StoryMediaCards({projectId,removedMessages,onAvailability,onChat
     {lightweightImage||openAIImage?<StoryImageForm act={act} local={lightweightImage} cloud={openAIImage}/>:null}
     {!visible.length?<p className="text-sm text-white/65">Ask to create an image, edit it, animate it, or give a named character a voice.{chatMedia?" You can also ask for music or sound effects.":""}</p>:null}
     {error?<p role="status" className="text-sm text-amber-200">{error}</p>:null}
-    {(expanded?ordered:ordered.slice(0,4)).map(record=><MediaCard key={record.id} record={record} characters={characters} act={act} lightweightEdit={lightweightEdit} openAIImage={openAIImage} onFocus={chatMedia?onFocus:undefined} chatMedia={chatMedia}/>)}
+    {(expanded?ordered:ordered.slice(0,4)).map(record=><MediaCard key={record.id} record={record} characters={characters} act={act} lightweightEdit={lightweightEdit} openAIImage={openAIImage} onFocus={chatMedia?onFocus:undefined} chatMedia={chatMedia} voiceAuto={voiceAuto}/>)}
     {visible.length>4?<button type="button" className={button} onClick={()=>setExpanded(v=>!v)}>{expanded?"Show recent":"Show older creations"}</button>:null}
   </section>;
 }
@@ -101,14 +103,18 @@ function StoryImageForm({act,local,cloud}:{act:(body:Record<string,unknown>)=>Pr
     {error?<p role="alert" className="text-sm text-amber-200">{error}</p>:null}
   </details>;
 }
-function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,chatMedia}:{record:Media;characters:Character[];act:(body:Record<string,unknown>)=>Promise<void>;lightweightEdit:boolean;openAIImage:boolean;onFocus?:(media:{id:string;name:string})=>void;chatMedia:boolean}) {
+function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,chatMedia,voiceAuto}:{record:Media;characters:Character[];act:(body:Record<string,unknown>)=>Promise<void>;lightweightEdit:boolean;openAIImage:boolean;onFocus?:(media:{id:string;name:string})=>void;chatMedia:boolean;voiceAuto:boolean}) {
   const [name,setName]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
   const [action,setAction]=useState<"edit"|"video"|"voice"|null>(null),[prompt,setPrompt]=useState(""),[text,setText]=useState("");
   const [characterId,setCharacterId]=useState(record.characterId||"");
   const [editProfile,setEditProfile]=useState("");
+  const [voiceEngine,setVoiceEngine]=useState("");
+  const [audition,setAudition]=useState(0);
   const retryKey=useRef("");
   const lock=useRef(false),request=useRef<{key:string;signature:string}|null>(null);
   const image=["image","edit"].includes(record.command.operation),ready=record.status==="ready"&&!!record.url;
+  const candidate=record.voiceCandidate??audition;
+  const previewUrl=record.voiceCandidates?record.url+"&candidate="+candidate:record.url;
   async function run(body:Record<string,unknown>) {
     if(lock.current)return;lock.current=true;setBusy(true);setError("");
     try{await act({id:record.id,...body});if(body.action==="create"){setAction(null);setPrompt("");setText("");request.current=null;}}
@@ -117,9 +123,9 @@ function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,ch
   }
   function create() {
     const profile=action==="edit"&&((lightweightEdit&&editProfile==="flux2-klein-edit-3060")||(openAIImage&&editProfile==="gpt-image-2.6-flare"))?editProfile:undefined;
-    const signature=JSON.stringify([action,prompt,text,profile]);
+    const signature=JSON.stringify([action,prompt,text,profile,voiceEngine]);
     if(!request.current||request.current.signature!==signature)request.current={key:newClientRequestId(),signature};
-    void run({action:"create",operation:action,sourceId:record.id,prompt,text,profile,voiceMode:action==="voice"&&/\b(?:accent|new voice|different voice)\b/i.test(prompt)?"design":undefined,requestKey:request.current.key});
+    void run({action:"create",operation:action,sourceId:record.id,prompt,text,profile,voiceEngine:action==="voice"?voiceEngine:undefined,voiceMode:action==="voice"&&/\b(?:accent|new voice|different voice)\b/i.test(prompt)?"design":undefined,requestKey:request.current.key});
   }
   return <article id={`story-creation-${record.id}`} className="scroll-mt-36 min-w-0 space-y-3 rounded-2xl border border-white/15 p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -132,14 +138,24 @@ function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,ch
     {!ready&&record.status!=="needs_name"?<p role="status" className="text-sm">{record.cancelRequested&&record.status==="running"?"Cancellation requested. Waiting for the provider to finish safely.":(record.stage||({queued:record.engine.startsWith("GPT Image")?"Queued for OpenAI…":"Waiting for a free GPU…",submitting:"Sending your request…",running:"Queued or creating. You can leave and come back.",failed:"Generation failed.",unknown:"Checking an unconfirmed request. No automatic retry.",canceled:"Canceled."} as Record<string,string>)[record.status]||record.status)}</p>:null}
     {ready&&image?<StoryImagePreview src={record.url!} alt={record.command.name||"Generated story image"} className="mx-auto max-h-[480px] w-auto max-w-full rounded-xl"/>:null}
     {ready&&record.command.operation==="video"?<StoryMediaPreview kind="video" src={record.url!} title={record.command.name||"Story video"} className="max-h-[480px] w-full rounded-xl"/>:null}
-    {ready&&["voice","music","effects"].includes(record.command.operation)?<StoryMediaPreview kind="audio" src={record.url!} title={record.command.name||"Story audio"} className="w-full"/>:null}
-    {ready?<div className="flex flex-wrap gap-2"><a className={button} href={`${record.url}&download=1`}>Download</a>
+    {record.voiceNotice?<p className="text-xs text-white/65">{record.voiceNotice}</p>:null}
+    {ready&&Boolean(record.voiceCandidates)&&!record.voiceId?<label className="block text-sm">Voice audition
+      <select className={input} value={candidate} disabled={busy} onChange={e=>setAudition(Number(e.target.value))}>
+        {Array.from({length:record.voiceCandidates!},(_,index)=><option key={index} value={index}>Audition {index+1}</option>)}
+      </select>
+    </label>:null}
+    {ready&&record.voiceAuditionText&&record.voiceAuditionText!==record.command.text?<details className="text-xs text-white/65">
+      <summary>Audition script · short lines repeat for voice design</summary>
+      <p className="whitespace-pre-wrap">{record.voiceAuditionText}</p>
+    </details>:null}
+    {ready&&["voice","music","effects"].includes(record.command.operation)?<StoryMediaPreview key={previewUrl} kind="audio" src={previewUrl!} title={record.command.name||"Story audio"} className="w-full"/>:null}
+    {ready?<div className="flex flex-wrap gap-2"><a className={button} href={`${previewUrl}&download=1`}>Download</a>
       {onFocus?<button type="button" className={button} onClick={()=>onFocus({id:record.id,name:record.command.name||"this creation"})}>Use in chat</button>:null}
       {image?<><button type="button" className={button} disabled={busy} onClick={()=>setAction("edit")}>Edit</button><button type="button" className={button} disabled={busy} onClick={()=>setAction("video")}>Animate · 5 sec</button></>:null}
       {record.command.subject==="character"&&(image||record.command.operation==="voice"&&(!chatMedia||record.voiceId))?<button type="button" className={button} disabled={busy} onClick={()=>setAction("voice")}>{record.command.operation==="voice"?"New dialogue":"Give a voice"}</button>:null}
       {image&&record.command.subject==="character"?<button type="button" className={button} disabled={busy||!!record.characterId} onClick={()=>void run({action:"save-character"})}>{record.characterId?"Saved to Characters":"Save to Characters"}</button>:null}
     </div>:null}
-    {ready&&record.command.operation==="voice"?<div className="flex flex-wrap gap-2"><label className="min-w-0 flex-1 text-sm">Assign voice (optional)<select value={characterId} onChange={e=>setCharacterId(e.target.value)} className={input}><option value="">Voice Library only</option>{characters.map(c=><option key={c.id} value={c.id}>{c.name}{c.hasVoice?" · replace saved voice":""}</option>)}</select></label><button type="button" className={button} disabled={busy} onClick={()=>void run({action:"save-voice",characterId})}>{characterId?"Save & Assign Voice":record.voiceId?"Voice approved":chatMedia?"Use This Voice":"Save Voice"}</button></div>:null}
+    {ready&&record.command.operation==="voice"?<div className="flex flex-wrap gap-2"><label className="min-w-0 flex-1 text-sm">Assign voice (optional)<select value={characterId} onChange={e=>setCharacterId(e.target.value)} className={input}><option value="">Voice Library only</option>{characters.map(c=><option key={c.id} value={c.id}>{c.name}{c.hasVoice?" · replace saved voice":""}</option>)}</select></label><button type="button" className={button} disabled={busy} onClick={()=>void run({action:"save-voice",characterId,candidate})}>{characterId?"Save & Assign Voice":record.voiceId?"Voice approved":chatMedia?"Use This Voice":"Save Voice"}</button></div>:null}
     {action?<div className="space-y-2 rounded-xl bg-white/5 p-3">
       <label className="block text-sm">{action==="edit"?"What should change?":action==="video"?"What happens in the video?":"Describe the voice or delivery"}<textarea className={input} rows={2} value={prompt} maxLength={4000} onChange={e=>setPrompt(e.target.value)}/></label>
       {action==="edit"&&(lightweightEdit||openAIImage)?<label className="block text-sm">Edit model
@@ -147,6 +163,12 @@ function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,ch
           <option value="">Existing workflow (default)</option>
           {lightweightEdit&&<option value="flux2-klein-edit-3060">FLUX.2 Klein 4B · RTX 3060</option>}
           {openAIImage&&<option value="gpt-image-2.6-flare">GPT Image 2.6 Flare · OpenAI · paid</option>}
+        </select>
+      </label>:null}
+      {action==="voice"&&voiceAuto?<label className="block text-sm">Voice engine
+        <select className={input} value={voiceEngine} disabled={busy} onChange={e=>setVoiceEngine(e.target.value)}>
+          <option value="">Automatic · ElevenLabs / LTX 2.5</option>
+          <option value="qwen3">Manual · Qwen3-TTS</option>
         </select>
       </label>:null}
       {action==="voice"?<label className="block text-sm">Dialogue<textarea className={input} rows={2} value={text} maxLength={1200} onChange={e=>setText(e.target.value)}/></label>:null}
