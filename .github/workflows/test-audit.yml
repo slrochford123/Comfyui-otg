@@ -19,7 +19,16 @@ jobs:
         with:
           node-version: "22.23.4"
           cache: npm
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Ensure FFmpeg is available
+        timeout-minutes: 5
+        run: |
+          if command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null; then
+            ffmpeg -version
+            ffprobe -version
+          else
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y ffmpeg
+          fi
       - run: npm ci
       - run: node scripts/audit/run-offline-tests.cjs
       - run: npx tsc --noEmit --incremental false
