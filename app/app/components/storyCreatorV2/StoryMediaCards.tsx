@@ -3,7 +3,8 @@ import {useCallback,useEffect,useRef,useState} from "react";
 import {StoryImagePreview,StoryMediaPreview} from "./StoryPreview";
 import {newClientRequestId} from "@/lib/client/requestId";
 import type {StoryMediaCommand} from "@/lib/storyCreator/mediaContract";
-type Media={id:string;sourceMessageId:string;status:string;command:StoryMediaCommand;url:string|null;engine:string;error:string|null;characterId:string|null;voiceId:string|null;cancelRequested?:boolean;stage?:string;durationSeconds?:number;license?:string;voiceNotice?:string;voiceCandidates?:number;voiceCandidate?:number;voiceAuditionText?:string};
+type SaveHints={characterTarget?:{id:string;name:string}|null;characterImageId?:string|null;characterImageName?:string|null;approvedVoiceMediaId?:string|null;characterVoiceSaved?:boolean};
+type Media=SaveHints&{id:string;sourceMessageId:string;status:string;command:StoryMediaCommand;url:string|null;engine:string;error:string|null;characterId:string|null;voiceId:string|null;cancelRequested?:boolean;stage?:string;durationSeconds?:number;license?:string;voiceNotice?:string;voiceCandidates?:number;voiceCandidate?:number;voiceAuditionText?:string};
 type Character={id:string;name:string;hasVoice:boolean};
 const button="min-h-11 rounded-xl border border-white/20 px-3 py-2 text-sm disabled:opacity-40";
 const input="w-full rounded-xl border border-white/20 bg-black/20 p-3 text-sm";
@@ -106,7 +107,12 @@ function StoryImageForm({act,local,cloud}:{act:(body:Record<string,unknown>)=>Pr
 function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,chatMedia,voiceAuto}:{record:Media;characters:Character[];act:(body:Record<string,unknown>)=>Promise<void>;lightweightEdit:boolean;openAIImage:boolean;onFocus?:(media:{id:string;name:string})=>void;chatMedia:boolean;voiceAuto:boolean}) {
   const [name,setName]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
   const [action,setAction]=useState<"edit"|"video"|"voice"|null>(null),[prompt,setPrompt]=useState(""),[text,setText]=useState("");
-  const [characterId,setCharacterId]=useState(record.characterId||"");
+  const [selectedCharacter,setSelectedCharacter]=useState<string|null>(null);
+  const suggestedCharacter=record.characterTarget?.id||(record.characterImageId?`image:${record.characterImageId}`:record.characterId||"");
+  const characterId=selectedCharacter??suggestedCharacter;
+  const targetName=characters.find(c=>c.id===characterId)?.name||record.characterTarget?.name||record.characterImageName||record.command.name;
+  const voiceSaved=record.characterVoiceSaved&&characterId===record.characterTarget?.id;
+  const saveVoice=()=>void run(characterId.startsWith("image:")?{action:"save-character-voice",candidate}:{action:"save-voice",characterId,candidate});
   const [editProfile,setEditProfile]=useState("");
   const [voiceEngine,setVoiceEngine]=useState("");
   const [audition,setAudition]=useState(0);
@@ -117,7 +123,7 @@ function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,ch
   const previewUrl=record.voiceCandidates?record.url+"&candidate="+candidate:record.url;
   async function run(body:Record<string,unknown>) {
     if(lock.current)return;lock.current=true;setBusy(true);setError("");
-    try{await act({id:record.id,...body});if(body.action==="create"){setAction(null);setPrompt("");setText("");request.current=null;}}
+    try{await act({id:record.id,...body});if(body.action==="save-character-voice"||body.action==="save-voice"&&body.characterId)setSelectedCharacter(null);if(body.action==="create"){setAction(null);setPrompt("");setText("");request.current=null;}}
     catch(cause){setError(cause instanceof Error?cause.message:"Could not complete this action.");}
     finally{lock.current=false;setBusy(false);}
   }
@@ -153,9 +159,22 @@ function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,ch
       {onFocus?<button type="button" className={button} onClick={()=>onFocus({id:record.id,name:record.command.name||"this creation"})}>Use in chat</button>:null}
       {image?<><button type="button" className={button} disabled={busy} onClick={()=>setAction("edit")}>Edit</button><button type="button" className={button} disabled={busy} onClick={()=>setAction("video")}>Animate · 5 sec</button></>:null}
       {record.command.subject==="character"&&(image||record.command.operation==="voice"&&(!chatMedia||record.voiceId))?<button type="button" className={button} disabled={busy} onClick={()=>setAction("voice")}>{record.command.operation==="voice"?"New dialogue":"Give a voice"}</button>:null}
-      {image&&record.command.subject==="character"?<button type="button" className={button} disabled={busy||!!record.characterId} onClick={()=>void run({action:"save-character"})}>{record.characterId?"Saved to Characters":"Save to Characters"}</button>:null}
+      {image&&record.command.subject==="character"?<>
+        <button type="button" className={button} disabled={busy||(!!record.characterId&&(!record.approvedVoiceMediaId||record.characterVoiceSaved))} onClick={()=>void run({action:"save-character",voiceMediaId:record.approvedVoiceMediaId||undefined})}>{record.characterVoiceSaved?"Character & Voice Saved":record.approvedVoiceMediaId?(record.characterId?`Save Voice to ${record.command.name}`:"Save Character & Voice"):record.characterId?"Saved to Characters":"Save to Characters"}</button>
+        {!record.characterId&&record.approvedVoiceMediaId?<button type="button" className={button} disabled={busy} onClick={()=>void run({action:"save-character"})}>Save Image Only</button>:null}
+      </>:null}
     </div>:null}
-    {ready&&record.command.operation==="voice"?<div className="flex flex-wrap gap-2"><label className="min-w-0 flex-1 text-sm">Assign voice (optional)<select value={characterId} onChange={e=>setCharacterId(e.target.value)} className={input}><option value="">Voice Library only</option>{characters.map(c=><option key={c.id} value={c.id}>{c.name}{c.hasVoice?" · replace saved voice":""}</option>)}</select></label><button type="button" className={button} disabled={busy} onClick={()=>void run({action:"save-voice",characterId,candidate})}>{characterId?"Save & Assign Voice":record.voiceId?"Voice approved":chatMedia?"Use This Voice":"Save Voice"}</button></div>:null}
+    {ready&&record.command.operation==="voice"?<div className="space-y-2">
+      {record.characterVoiceSaved&&record.characterTarget?<p role="status" className="text-sm text-emerald-200">Voice saved with {record.characterTarget.name}. Play it from Characters.</p>:null}
+      <div className="flex flex-wrap items-end gap-2"><label className="min-w-0 flex-1 text-sm">Save voice with
+        <select value={characterId} disabled={busy} onChange={e=>setSelectedCharacter(e.target.value)} className={input}>
+          <option value="">Voice Library only</option>
+          {record.characterImageId&&!record.characterTarget?<option value={`image:${record.characterImageId}`}>{record.characterImageName} · save character and voice</option>:null}
+          {characters.map(c=><option key={c.id} value={c.id}>{c.name}{c.hasVoice?" · saved voice":""}</option>)}
+        </select></label>
+        <button type="button" className={button} disabled={busy||!!voiceSaved} onClick={saveVoice}>{voiceSaved?"Character & Voice Saved":characterId.startsWith("image:")?"Save Character & Voice":characterId?`Save Voice to ${targetName}`:record.voiceId?"Saved to Voice Library":chatMedia?"Use This Voice":"Save Voice"}</button>
+      </div>
+    </div>:null}
     {action?<div className="space-y-2 rounded-xl bg-white/5 p-3">
       <label className="block text-sm">{action==="edit"?"What should change?":action==="video"?"What happens in the video?":"Describe the voice or delivery"}<textarea className={input} rows={2} value={prompt} maxLength={4000} onChange={e=>setPrompt(e.target.value)}/></label>
       {action==="edit"&&(lightweightEdit||openAIImage)?<label className="block text-sm">Edit model

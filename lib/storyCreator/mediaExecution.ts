@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import {storyCharacterSource} from "./mediaCharacterLink";
 import path from "node:path";
 import {randomInt} from "node:crypto";
 import {NextRequest} from "next/server";
@@ -532,16 +533,60 @@ export async function refreshStoryMedia(record:StoryMediaRecord):Promise<StoryMe
   })();
   refreshing.set(key,task);try{return await task;}finally{refreshing.delete(key);}
 }
-export function saveStoryCharacter(record:StoryMediaRecord) {
+function characterSource(record:StoryMediaRecord) {
+  return storyCharacterSource(record,{
+    media:id=>{try{return getStoryMedia(record.ownerKey,record.projectId,id);}catch{return null;}},
+    character:id=>loadCharacter(record.ownerKey,id),
+  });
+}
+/** UI hints contain identities, never storage paths or provider credentials. */
+export function storyCharacterSaveHints(records:StoryMediaRecord[]) {
+  const byId=new Map(records.map(r=>[r.id,r]));
+  const sources=new Map<string,ReturnType<typeof characterSource>>();
+  const resolve=(record:StoryMediaRecord)=>{
+    let source=sources.get(record.id);
+    if(!source){source=storyCharacterSource(record,{
+      media:id=>{const cached=byId.get(id);if(cached)return cached;try{return getStoryMedia(record.ownerKey,record.projectId,id);}catch{return null;}},
+      character:id=>loadCharacter(record.ownerKey,id),
+    });sources.set(record.id,source);}return source;
+  };
+  const approved=records.filter(r=>r.status==="ready"&&r.command.operation==="voice"&&r.voiceId);
+  return new Map(records.map(record=>{
+    const source=resolve(record),character=source.character;
+    const voice=["image","edit"].includes(record.command.operation)?approved.find(v=>resolve(v).image?.id===record.id||!!character&&resolve(v).character?.id===character.id):undefined;
+    return [record.id,{
+      characterTarget:character?{id:character.id,name:character.name}:null,
+      characterImageId:source.image?.id||null,
+      characterImageName:source.image?.command.name||null,
+      approvedVoiceMediaId:voice?.id||null,
+      characterVoiceSaved:!!character&&!!(voice?.voiceId||record.voiceId)&&character.metadata?.storyVoiceId===(voice?.voiceId||record.voiceId),
+    }];
+  }));
+}
+export function saveStoryCharacter(record:StoryMediaRecord,voiceMediaId?:string) {
   requireStoryMediaTest();
-  if(record.characterId)return record;
   if(record.command.subject!=="character"||!["image","edit"].includes(record.command.operation)||!record.command.name)throw Error("Choose a named character image.");
   const image=storyMediaFile(record);
-  const existing=listCharacters(record.ownerKey).find(c=>c.metadata?.storyMediaId===record.id);
+  const voice=voiceMediaId?getStoryMedia(record.ownerKey,record.projectId,voiceMediaId):null;
+  const voiceSource=voice?characterSource(voice):null;
+  if(voice&&(!voice.voiceId||voice.status!=="ready"||voice.command.operation!=="voice"||!(voiceSource?.image?.id===record.id||!!record.characterId&&voiceSource?.character?.id===record.characterId)))
+    throw Error("Choose an approved voice created for this character image.");
+  const existing=(record.characterId?loadCharacter(record.ownerKey,record.characterId):null)||listCharacters(record.ownerKey).find(c=>c.metadata?.storyMediaId===record.id);
   const character=existing||createCharacter(record.ownerKey,{id:`story-${record.id}`,name:record.command.name,imagePath:image,previewImagePath:image,
     description:record.command.prompt,characterCardPath:image,defaultCharacterImagePath:image,characterStatus:"complete",voiceStatus:"not_added",hasCustomVoice:false,
     source:"story-creator",metadata:{storyMediaId:record.id,storyProjectId:record.projectId}});
+  if(voice)saveStoryVoice(voice,character.id);
   return updateStoryMedia(record,{characterId:character.id});
+}
+/** Explicit one-button action; approval reuses an existing provider voice on retry. */
+export async function saveStoryCharacterVoice(record:StoryMediaRecord,candidate:unknown) {
+  requireStoryMediaTest();
+  if(record.command.operation!=="voice")throw Error("Choose a generated character voice.");
+  storyMediaFile(record);
+  const source=characterSource(record);
+  const characterId=source.character?.id||(source.image?saveStoryCharacter(source.image).characterId:null);
+  if(!characterId)throw Error("Choose a saved character to attach this voice.");
+  return approveStoryMediaVoice(record,candidate,characterId);
 }
 export function saveStoryVoice(record:StoryMediaRecord,characterId?:string) {
   requireStoryMediaTest();
@@ -555,7 +600,7 @@ export function saveStoryVoice(record:StoryMediaRecord,characterId?:string) {
   const refText=record.cloudVoice?.audition||record.command.text;
   upsertVoice(record.ownerKey,{voiceId,name:record.command.name||"Story voice",tags:["story-creator",engine],type:record.command.voiceMode==="design"?"created":record.command.sourceId?"cloned":"created",
     refText,refAudioRel:`samples/${voiceId}/ref.wav`,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
-  if(character)updateCharacterVoiceSelection(record.ownerKey,character.id,{referenceAudioPath:target,voiceEngineUsed:engine,metadata:{storyVoiceId:voiceId,storyVoiceText:refText,storyVoiceDirection:record.command.prompt}});
+  if(character)updateCharacterVoiceSelection(record.ownerKey,character.id,{referenceAudioPath:target,voiceEngineUsed:engine,voiceStyleDefinition:record.command.prompt,voiceSettings:{...character.voiceSettings,voiceId,audioUrl:`/api/file?path=${encodeURIComponent(target)}`,refText},metadata:{storyVoiceId:voiceId,storyVoiceMediaId:record.id,storyVoiceText:refText,storyVoiceDirection:record.command.prompt}});
   return updateStoryMedia(record,{voiceId,characterId:character?.id||record.characterId});
 }
 export async function approveStoryMediaVoice(record:StoryMediaRecord,candidate:unknown,characterId?:string){

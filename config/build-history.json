@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.33",
+  "current": "2.34",
   "builds": [
     {
       "version": "2",
@@ -167,7 +167,7 @@
     {
       "version": "2.27",
       "date": "2026-11-03",
-      "summary": "TEST-only Character RefMod cards: one image to four separate FIBO 2.0 Turbo views, or 4–8 uploaded views; review, replace, reorder, regenerate, durable shared-GPU jobs and full-reference H3 encoding.",
+      "summary": "TEST-only Character RefMod cards: one image to four separate FIBO 2.0 Turbo views, or 4\u20138 uploaded views; review, replace, reorder, regenerate, durable shared-GPU jobs and full-reference H3 encoding.",
       "sourceBaseCommit": "cca28c6c21c734a3138425461086181f121532d3"
     },
     {
@@ -205,6 +205,12 @@
       "date": "2026-11-08",
       "summary": "Story Creator uses ElevenLabs for character voice auditions and saved-voice dialogue, with LTX 2.5 fallback and voice usage limits.",
       "sourceBaseCommit": "5a7b1c9268f00eb501cadbc7e3feef90b8999136"
+    },
+    {
+      "version": "2.34",
+      "date": "2026-11-08",
+      "summary": "Save Story Creator character images with their approved voices, attach or change saved library voices in Characters, and restore owner-scoped saved portrait delivery.",
+      "sourceBaseCommit": "e54d5e97154c75f66d4f0951b68c45dd3e5fefd6"
     }
   ]
 }

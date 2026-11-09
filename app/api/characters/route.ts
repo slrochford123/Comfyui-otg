@@ -1,3 +1,4 @@
+import {attachSavedCharacterVoice} from "@/lib/characters/savedVoice";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
@@ -84,6 +85,17 @@ export async function POST(req: NextRequest) {
       }
       const result = deleteCharacter(ownerKey, id);
       return NextResponse.json({ ok: true, ...result, items: listCharacters(ownerKey) });
+    }
+
+    if (action === "attach_saved_voice") {
+      const origin=req.headers.get("origin");
+      if(origin&&new URL(origin).host!==req.headers.get("host"))return NextResponse.json({ok:false,error:"Cross-origin character actions are not allowed."},{status:403});
+      try {
+        const character=attachSavedCharacterVoice(ownerKey,String(body?.id||""),String(body?.voiceId||""));
+        return NextResponse.json({ok:true,character,items:listCharacters(ownerKey)});
+      } catch(error) {
+        return NextResponse.json({ok:false,error:error instanceof Error?error.message:"Could not attach this voice."},{status:400});
+      }
     }
 
     if (action === "update_voice_selection") {

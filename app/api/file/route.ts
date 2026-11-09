@@ -69,6 +69,7 @@ function ownerAllowedRoots(owner: Awaited<ReturnType<typeof getOwnerContext>>) {
     path.join(OTG_DATA_ROOT, "assets-saved-for-later", ownerSafe),
     path.join(OTG_DATA_ROOT, "backgrounds", ownerSafe),
     path.join(OTG_DATA_ROOT, "characters", ownerSafe),
+    path.join(OTG_DATA_ROOT, "story-creator", "generated", ownerSafe),
     path.join(OTG_DATA_ROOT, "background_removal", ownerSafe),
     path.join(OTG_DATA_ROOT, "edit-video", ownerSafe),
     path.join(OTG_DATA_ROOT, "edit_video", "music", ownerSafe),
