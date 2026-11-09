@@ -3,6 +3,8 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { assertAllowedWorkerTargetUrl } from "@/lib/runtime/workerTargetPolicy";
+import { mediaGpuRoutingEnabled, requestedMediaGpu } from "@/lib/mediaGpuRoutingServer";
+import { getMediaQueueJob } from "@/lib/workers/mediaGpuQueue";
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -311,6 +313,13 @@ async function pollHistoryForImage(comfyBaseUrl: string, promptId: string) {
   let lastPayload: any = null;
 
   while (Date.now() - started < POLL_MAX_MS) {
+    const job = getMediaQueueJob(promptId);
+    if (job?.status === "failed" || job?.status === "canceled") {
+      throw new StageError("poll_history", "Background removal did not finish on its assigned GPU. Your source image is saved.", 409);
+    }
+    if (job?.status === "unknown") {
+      throw new StageError("poll_history", "Background removal is awaiting worker recovery. Your source image is saved.", 409);
+    }
     const res = await fetchStage(`${comfyBaseUrl}/history/${encodeURIComponent(promptId)}`, { method: "GET" }, "poll_history", 25_000);
     const parsed = await readJsonOrText(res);
 
@@ -383,7 +392,15 @@ export async function POST(req: NextRequest) {
   try {
     const owner = await getOwnerContext(req);
     const input = await readInputImage(req);
-    const comfyBaseUrl = normalizeBaseUrl(assertAllowedWorkerTargetUrl(configuredImageComfyBaseUrl() || "http://127.0.0.1:8188", "background-remove ComfyUI worker target"));
+    // BiRefNet is assigned to its qualified 3090 lane. The 5060 Ti worker
+    // can load the model but has crashed during the forward pass.
+    const qualified3090 = mediaGpuRoutingEnabled() ? process.env.OTG_MEDIA_3090_IMAGE_URL : undefined;
+    if (qualified3090 && await requestedMediaGpu() === "rtx5060ti") {
+      throw new StageError("select_worker", "Background removal requires the RTX 3090. Select Automatic or RTX 3090 and try again.", 422);
+    }
+    const comfyBaseUrl = normalizeBaseUrl(assertAllowedWorkerTargetUrl(
+      qualified3090 || configuredImageComfyBaseUrl() || "http://127.0.0.1:8188", "background-remove ComfyUI worker target",
+    ));
 
     const comfyImageName = await uploadImageToComfy({ comfyBaseUrl, input });
     const graph = loadWorkflowGraph(comfyImageName);

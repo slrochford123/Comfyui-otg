@@ -61,6 +61,7 @@ const PanelLoading = () => (
 );
 
 const ProductionV2Panel = dynamic(() => import("./components/ProductionV2Panel"), { loading: PanelLoading });
+const ProductionStudioEntry = dynamic(() => import("./components/production-studio/Entry"), { loading: PanelLoading });
 const CharactersPanel = dynamic(() => import("./components/CharacterHubPanel"), { loading: PanelLoading });
 const VoicesPanel = dynamic(() => import("./components/VoicesPanel"), { loading: PanelLoading });
 const SupportPanel = dynamic(() => import("./components/SupportPanel"), { loading: PanelLoading });
@@ -380,11 +381,12 @@ const APP_TAB_LABELS: Record<SpinTabId, string> = {
   testing: "Testing",
   "h3-admin": "H3 Admin",
   machine: "Story Creator",
-  storyboard: "Production",
+  storyboard: "Production v.2",
   characters: "Characters",
   gallery: "Gallery",
   voices: "Voices",
   editvideo: "Edit Video",
+  finalexport: "Final Export Studio",
   settings: "Settings",
   support: "Support",
 };
@@ -1337,10 +1339,11 @@ async function fetchWorkflowsForApp() {
     .filter((item: WorkflowItem) => item.id && item.label);
 }
 
-export default function AppPageClient({ initialUser = null, experimentalEnabled = false, refCardsEnabled = false, nsfwAvailable = false }: { initialUser?: InitialAppUser; experimentalEnabled?: boolean; refCardsEnabled?: boolean; nsfwAvailable?: boolean }) {
+export default function AppPageClient({ initialUser = null, experimentalEnabled = false, finalExportStudioEnabled = false, refCardsEnabled = false, nsfwAvailable = false }: { initialUser?: InitialAppUser; experimentalEnabled?: boolean; finalExportStudioEnabled?: boolean; refCardsEnabled?: boolean; nsfwAvailable?: boolean }) {
   const queryClient = useQueryClient();
 
   const [tab, setTab] = useState<SpinTabId>("generate");
+  const [studioMenuOpen, setStudioMenuOpen] = useState(false);
 
   // OTG_PRODUCTION_FORCE_DARK_THEME_V1: force Production tab surfaces to dark even if stale light classes persist.
   useEffect(() => {
@@ -2473,7 +2476,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
   useEffect(() => {
     const persisted = readPersistedState(appStateStorageKey);
     if (persisted) {
-      if (persisted.tab && Object.prototype.hasOwnProperty.call(APP_TAB_LABELS, persisted.tab)) {
+      if (persisted.tab && persisted.tab !== "finalexport" && Object.prototype.hasOwnProperty.call(APP_TAB_LABELS, persisted.tab)) {
         setTab(!PRODUCTION_FEATURE_ENABLED && persisted.tab === "storyboard" ? "generate" : persisted.tab);
       }
       if (
@@ -2548,6 +2551,10 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     try {
       const url = new URL(window.location.href);
       const rawTabParam = url.searchParams.get("tab");
+      if (finalExportStudioEnabled && (rawTabParam === "finalexport" || rawTabParam === "final-export-studio")) {
+        window.location.replace("/app/final-export-studio");
+        return;
+      }
       // Keep the human-facing AI Assistants route compatible with the
       // historical internal `gethelp` tab id used by the navigation state.
       const tabParam =
@@ -2574,7 +2581,7 @@ ${sceneReferenceCard || ""}`.toLowerCase();
     } catch {
       // ignore
     }
-  }, [appStateStorageKey]);
+  }, [appStateStorageKey, finalExportStudioEnabled]);
 
   useEffect(() => {
     try {
@@ -6426,16 +6433,17 @@ async function handleAskAi() {
         <div className="absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(circle_at_center,rgba(80,120,255,0.18),rgba(120,60,255,0.10),transparent_62%)]" />
       </div>
 
-        <header ref={sharedHeaderRef} data-otg="shared-app-header" style={{backgroundColor:"var(--color-surface-elevated)"}} className="sticky inset-x-0 top-0 z-50 border-b border-white/10 px-3 py-3 md:px-5">
+        <header ref={sharedHeaderRef} data-otg="shared-app-header" style={{backgroundColor:"var(--color-surface-elevated)",...(tab==="storyboard"?{paddingTop:"max(0.5rem, env(safe-area-inset-top))"}:{})}} className={`${tab==="storyboard"?"relative md:sticky":"sticky"} inset-x-0 top-0 z-50 border-b border-white/10 px-3 py-3 md:px-5`}>
           <div className="mx-auto flex max-w-[1480px] flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-[11px] font-black uppercase tracking-[0.18em] text-white/42">SLR Studios OTG</div>
+              <div className={`${tab==="storyboard"?"hidden md:block ":""}text-[11px] font-black uppercase tracking-[0.18em] text-white/42`}>SLR Studios OTG</div>
               <div className="mt-0.5 flex items-center gap-3">
                 <h1 className="truncate text-xl font-black tracking-tight text-white">{activeTabLabel}</h1>
               </div>
-              <div className="mt-1 flex flex-wrap gap-2 text-xs text-white/65"><span>{connected ? "ComfyUI reachable" : "ComfyUI offline"}</span>{videoBackendStatus ? <span>{videoBackendStatus.activeLabel}{videoBackendStatus.fallbackActive ? " · fallback" : ""}</span> : null}</div>
+              <div className={`${tab==="storyboard"?"hidden md:flex":"flex"} mt-1 flex-wrap gap-2 text-xs text-white/65`}><span>{connected ? "ComfyUI reachable" : "ComfyUI offline"}</span>{videoBackendStatus ? <span>{videoBackendStatus.activeLabel}{videoBackendStatus.fallbackActive ? " · fallback" : ""}</span> : null}</div>
             </div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            {tab==="storyboard"&&<button type="button" className="md:hidden min-h-11 rounded-xl border border-white/20 px-3 text-sm" aria-expanded={studioMenuOpen} aria-controls="studio-header-controls" onClick={()=>setStudioMenuOpen(v=>!v)}>Studio Menu</button>}
+            <div id={tab==="storyboard"?"studio-header-controls":undefined} className={`${tab==="storyboard"&&!studioMenuOpen?"hidden md:flex":"flex"} flex-wrap items-center justify-end gap-2`}>
               <button
                 type="button"
                 onClick={toggleColorMode}
@@ -7702,7 +7710,7 @@ async function handleAskAi() {
         {tab === "machine" ? (
           <StoryCreatorPanel ownerKey={authenticatedOwnerKey} />
         ) : null}
-        {tab === "storyboard" ? <ProductionV2Panel key={authenticatedOwnerKey || "production-account-unavailable"} /> : null}
+        {tab === "storyboard" ? <ProductionStudioEntry key={authenticatedOwnerKey || "production-account-unavailable"} ownerKey={authenticatedOwnerKey} legacy={<ProductionV2Panel />} /> : null}
         {tab === "h3" ? <H3Panel key={authenticatedOwnerKey || "h3-account-unavailable"} authenticatedOwnerKey={authenticatedOwnerKey} nsfwAvailable={nsfwAvailable} /> : null}
         {tab === "characters" ? (
           <CharactersPanel
@@ -8193,7 +8201,13 @@ async function handleAskAi() {
 
             <ProductionCharacterReferencePickerBridge />
             <ImageSourcePickerBridge />
-<SpinDialNav tab={tab} onTab={setTab} isAdmin={isAdmin} showProduction={true} showExperimental={experimentalEnabled} uiMode={appUiMode} />
+<SpinDialNav tab={tab} onTab={(next) => {
+  if (next === "finalexport") {
+    if (finalExportStudioEnabled) window.location.assign("/app/final-export-studio");
+    return;
+  }
+  setTab(next);
+}} isAdmin={isAdmin} showProduction={true} showExperimental={experimentalEnabled} showFinalExportStudio={finalExportStudioEnabled} uiMode={appUiMode} />
     </main>
   );
 }

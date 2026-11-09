@@ -79,6 +79,9 @@ export type H3DirectJobInput = {
   orientation: H3Orientation;
   durationSeconds: H3ProductionDuration;
   prompt: string;
+  /** Already compiled from an approved Production shot; never append legacy scene context. */
+  promptFormat?: "minimax-official-v1";
+  preserveExactPrompt?: boolean;
   h3Settings?: H3AdvancedSettings;
   rifeInterpolation60Fps?: boolean;
   seed: number;
@@ -101,6 +104,7 @@ export type H3DirectJob = {
   promptId: string | null;
   workflowId: string | null;
   workflowFile: string | null;
+  submittedPrompt?: string;
   studioManifest?: unknown;
   studioSubmissionState?: "submitting" | "accepted" | "unknown" | "rejected";
   cancelRequestedAt?: string;
@@ -440,7 +444,9 @@ export async function saveH3DirectJobToGallery(
   }
 }
 
-function promptWithReferences(input: H3DirectJobInput) {
+export function promptWithReferences(input: H3DirectJobInput, smartReferences=input.smartReferences) {
+  if(input.promptFormat==="minimax-official-v1")return input.prompt;
+  if(smartReferences)return compileH3SmartReferencePrompt(smartReferences.originalPrompt ?? input.prompt,smartReferences);
   if (input.smartReferences) return compileH3SmartReferencePrompt(input.smartReferences.originalPrompt ?? input.prompt, input.smartReferences);
   const references = [
     ...input.images.map((item, index) => ({ id: `image-${index}`, kind: "image" as const, name: item.name, description: item.description })),
@@ -582,7 +588,12 @@ async function execute(job: H3DirectJob) {
     }));
 
     const smartReferences = job.input.smartReferences ? await makeH3SmartReferenceInput(job.input.smartReferences, selectedBackend, job.input.images, job.input.firstImage, job.input.videos.length, job.input.audios.length, {videos: job.input.videos, audios: job.input.audios},job.ownerKey) : undefined;
+    if(job.input.promptFormat==="minimax-official-v1"&&smartReferences){
+      const mapping=(value:H3SmartReferenceInput)=>JSON.stringify(value.referenceMap.map(r=>[r.tag,r.name,r.kind,r.source,r.characterKey,r.voiceId]));
+      if(mapping(job.input.smartReferences!)!==mapping(smartReferences))throw Error("The qualified reference order or voice identities changed while queued. Review the current direction and references; no changed mapping was submitted.");
+    }
     let built = buildH3Workflow({
+      preserveExactPrompt: job.input.promptFormat === "minimax-official-v1" && job.input.preserveExactPrompt === true,
       smartReferenceMap: smartReferences?.referenceMap,
       preserveLegacyReference: !!job.input.videoEdit,
       backend: selectedBackend,
@@ -590,7 +601,7 @@ async function execute(job: H3DirectJob) {
       h3Quality: job.input.quality,
       orientation: job.input.orientation,
       durationSeconds: job.input.durationSeconds,
-      finalPrompt: smartReferences ? compileH3SmartReferencePrompt(job.input.smartReferences?.originalPrompt ?? job.input.prompt, smartReferences) : promptWithReferences(job.input),
+      finalPrompt: promptWithReferences(job.input,smartReferences),
       seed: job.input.seed,
       outputPrefix: `otg_h3_direct/${safeSegment(job.id)}`,
       startImageFilename: job.input.smartReferences ? "" : firstImageFilename,
@@ -620,7 +631,7 @@ async function execute(job: H3DirectJob) {
       assertH3StudioAvailable();
       studioBuildInput = { backend: selectedBackend, mode: job.input.mode,
         h3Quality: job.input.quality, orientation: job.input.orientation, durationSeconds: job.input.durationSeconds,
-        finalPrompt: smartReferences ? compileH3SmartReferencePrompt(job.input.smartReferences?.originalPrompt ?? job.input.prompt, smartReferences) : promptWithReferences(job.input), seed: job.input.seed, outputPrefix: `otg_h3_direct/${safeSegment(job.id)}`,
+        finalPrompt: promptWithReferences(job.input,smartReferences), seed: job.input.seed, outputPrefix: `otg_h3_direct/${safeSegment(job.id)}`,
         startImageFilename: firstImageFilename, lastImageFilename, references, voices,
         videoReferences: job.input.videos.map((item, index) => ({ uploadedFilename: videoFilenames[index], includeAudio: item.includeAudio === true })) };
       const result = compileH3StudioPlan(job.input.studioPlan, studioBuildInput,
@@ -693,13 +704,13 @@ async function execute(job: H3DirectJob) {
             if (!admission) throw new Error("Qualification admission is not valid for this idle worker and exact configuration.");
             qualification.captureH3StudioQualificationGraph({ jobId: job.id, ownerKey: job.ownerKey, graph: built.graph });
           }
-          await updateJob(job.ownerKey, job.id, { studioSubmissionState: "submitting", clientId, workflowId: built.workflowId, workflowFile: built.workflowFile });
+          await updateJob(job.ownerKey, job.id, { studioSubmissionState: "submitting", clientId, workflowId: built.workflowId, workflowFile: built.workflowFile, submittedPrompt: String(built.graph["39"]?.inputs.prompt || job.input.prompt) });
         },
       } : {
         beforeSubmit: async () => {
           const latest = await getH3DirectJob(job.ownerKey, job.id);
           if (!latest || latest.cancelRequestedAt || ["canceling", "canceled"].includes(latest.status)) throw new Error("Canceled before backend submission.");
-          await updateJob(job.ownerKey, job.id, { studioSubmissionState: "submitting", clientId, workflowId: built.workflowId, workflowFile: built.workflowFile });
+          await updateJob(job.ownerKey, job.id, { studioSubmissionState: "submitting", clientId, workflowId: built.workflowId, workflowFile: built.workflowFile, submittedPrompt: String(built.graph["39"]?.inputs.prompt || job.input.prompt) });
         },
       }),
     });

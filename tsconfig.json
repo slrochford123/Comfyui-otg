@@ -38,6 +38,8 @@
     "**/*.mts"
   ],
   "exclude": [
+    "vendor/**",
+    "timeline-editor/**",
     "_local_patches_hold",
     "node_modules",
     "tests",

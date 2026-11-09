@@ -3,7 +3,8 @@ import path from "node:path";
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { extractReferenceAudio, generateAceMusic } from "@/lib/aceStep";
+import { AceMusicUnavailableError, AceMusicUnconfirmedError, extractReferenceAudio, generateAceMusic } from "@/lib/aceStep";
+import { AuxiliaryGpuBusyError } from "@/lib/workers/auxiliary3090Lease";
 import { getGallerySourcesForRequest, resolveGalleryItemByName, safeGalleryName, writeMetaForFile } from "@/lib/gallery";
 import { SessionInvalidError } from "@/lib/ownerKey";
 import { OTG_DATA_ROOT, ensureDir, safeJoin, safeSegment } from "@/lib/paths";
@@ -120,6 +121,8 @@ export async function POST(req: NextRequest) {
         sourceFileName,
         durationSeconds: generated.durationSeconds || durationSeconds,
         model: generated.model || "acestep-v15-turbo",
+        taskId: generated.taskId,
+        admissionOperationId: generated.admissionOperationId,
       },
       ownerKey: owner.ownerKey,
       username: owner.username,
@@ -130,6 +133,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       jobId,
+      taskId: generated.taskId,
+      admissionOperationId: generated.admissionOperationId,
       fileName,
       audioPath,
       url: galleryUrl,
@@ -142,6 +147,12 @@ export async function POST(req: NextRequest) {
       referenceUsed: true,
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error: any) {
+    if (error instanceof AceMusicUnconfirmedError) {
+      return NextResponse.json({ ok: false, error: error.message, outcomeUnknown: true,
+        admissionOperationId: error.operationId, taskId: error.taskId }, { status: 502 });
+    }
+    if (error instanceof AceMusicUnavailableError) return NextResponse.json({ ok: false, error: error.message }, { status: 503 });
+    if (error instanceof AuxiliaryGpuBusyError) return NextResponse.json({ ok: false, error: error.message }, { status: 409 });
     if (error instanceof SessionInvalidError) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }

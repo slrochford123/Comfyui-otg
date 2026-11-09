@@ -24,6 +24,9 @@ const nextConfig = {
   // Create a self-contained production artifact under .next/standalone.
   // This enables build-once / promote-the-same-artifact deployments.
   output: "standalone",
+  outputFileTracingIncludes: {
+    "/api/timeline-editor/app/**": ["./timeline-editor/**/*"],
+  },
 
   // Force Next.js to treat THIS folder as the workspace root even if there are
   // multiple lockfiles elsewhere. This stabilizes builds/starts.

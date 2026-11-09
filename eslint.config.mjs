@@ -6,6 +6,8 @@ import reactHooks from "eslint-plugin-react-hooks";
 export default [
   {
     ignores: [
+      "vendor/**",
+      "timeline-editor/**",
       ".next/**",
       "node_modules/**",
       "out/**",

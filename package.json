@@ -5,7 +5,7 @@
   "scripts": {
     "predev": "node scripts/ensure-native-deps.cjs",
     "dev": "next dev",
-    "prebuild": "node scripts/ensure-native-deps.cjs",
+    "prebuild": "node scripts/ensure-native-deps.cjs && node scripts/build-final-export-studio.cjs",
     "build": "next build",
     "start": "next start -p 3001",
     "lint": "eslint",
@@ -13,7 +13,7 @@
     "test:watch": "vitest --config vitest.config.ts",
     "voice-worker:once": "node -r ./scripts/register-ts-worker.cjs ./scripts/run-voice-pipeline-worker-once.ts",
     "e2e": "playwright test",
-    "postinstall": "node scripts/ensure-native-deps.cjs",
+    "postinstall": "node scripts/ensure-native-deps.cjs && npm --prefix vendor/sequence ci --ignore-scripts",
     "check:native": "node scripts/ensure-native-deps.cjs"
   },
   "dependencies": {

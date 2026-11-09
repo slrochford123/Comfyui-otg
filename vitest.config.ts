@@ -20,6 +20,8 @@ export default defineConfig({
     pool: "forks",
     exclude: [
       ...configDefaults.exclude,
+      "vendor/**",
+      "timeline-editor/**",
       "**/.patch-backups/**",
     ],
   },

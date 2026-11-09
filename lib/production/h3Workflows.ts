@@ -587,6 +587,8 @@ function assertReferencePromptMatchesManifest(
 }
 
 export type H3WorkflowBuildInput = {
+  /** Opt-in for an already approved, mode-specific Production clip prompt. */
+  preserveExactPrompt?: boolean;
   /** Internal structural/reference editor keeps its separate existing architecture. */
   preserveLegacyReference?: boolean;
   /** Internally resolved map, never copied from an HTTP request. */
@@ -1261,7 +1263,7 @@ export function buildH3Workflow(input: H3WorkflowBuildInput) {
   graph[contract.conditioningNodeId].inputs.width = nativeDimensions.width;
   graph[contract.conditioningNodeId].inputs.height = nativeDimensions.height;
   const originalPrompt = clean(input.finalPrompt);
-  const prompt = originalPrompt ? applyH3LoraTriggers(originalPrompt, [
+  const prompt = input.preserveExactPrompt ? input.finalPrompt : originalPrompt ? applyH3LoraTriggers(originalPrompt, [
     ...resolved.singularityLoras,
     ...resolveProductionV2H3UserLoras(input.userLoras).map(lora => ({ ...lora, triggerWords: lora.triggerPhrases })),
     ...(input.optionalLoras || []),

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.35",
+  "current": "2.40",
   "builds": [
     {
       "version": "2",
@@ -217,6 +217,32 @@
       "date": "2026-11-08",
       "summary": "Story image HD rendering and zoom, API-first images and ElevenLabs-first voices with RTX 3060 fallbacks, and saved-character loading recovery.",
       "sourceBaseCommit": "74e833b79d32a4e3f6349a1304a9191a5d16abda"
+    },
+    {
+      "version": "2.36",
+      "date": "2026-11-09",
+      "summary": "TEST-only free, self-hosted Sequence timeline editor evaluation with owner-scoped projects, media import, audio/video editing and export review.",
+      "sourceBaseCommit": "6003eb2ccb752222aa1c06571486c103b0151f73"
+    },
+    {
+      "version": "2.37",
+      "date": "2026-11-09",
+      "summary": "TEST Timeline Editor LAN HTTP identity fix, secure editor guidance and completed-export save guard."
+    },
+    {
+      "version": "2.38",
+      "date": "2026-11-09",
+      "summary": "TEST Timeline Editor full studio layout, compact Project menu and phone portrait/landscape rotation button."
+    },
+    {
+      "version": "2.39",
+      "date": "2026-11-09",
+      "summary": "TEST Final Export Studio main navigation tab and dedicated studio route."
+    },
+    {
+      "version": "2.40",
+      "date": "2026-11-09",
+      "summary": "Production promotion of Story media quality and provider fixes, saved character voices and Final Export Studio."
     }
   ]
 }
