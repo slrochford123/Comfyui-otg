@@ -3,6 +3,7 @@ import {
   NextResponse,
 } from "next/server";
 import fs from "node:fs";
+import {productionReferencePolicy} from "@/lib/assets/productionReferencePolicy";
 import { buildMossWorkflow, MOSS_FILES, MOSS_REQUIRED_NODES, mossDimensions, mossSeed, mossTarget, mossOutputShape, MossInputError } from "@/lib/images/mossImage";
 import { chooseMossBackend } from "@/lib/images/mossBackend";
 import {NATIVE_CREATE_CONFIGS, isNativeImageModel, buildNativeImageGraph, nativeImageDimensions} from "@/lib/images/nativeImageModels";
@@ -423,6 +424,8 @@ function buildAssetPrompt(args: {
   visualKind?: string;
 }) {
   const kind = String(args.visualKind || "object").trim().toLowerCase();
+  const scopedPolicy=process.env.OTG_ENV==="test"?productionReferencePolicy(kind):undefined;
+  if(scopedPolicy)return [args.prompt.trim(),...scopedPolicy,"No watermark; preserve requested visual identity details."].join("\n");
   const locationKinds = new Set(["location", "environment", "storyboard", "scene_image", "shot_reference"]);
   const characterKinds = new Set(["character", "villain", "creature", "animal"]);
   const productionRules = locationKinds.has(kind)

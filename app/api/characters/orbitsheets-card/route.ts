@@ -5,6 +5,8 @@ import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 
+import { getMediaQueueJob } from "@/lib/workers/mediaGpuQueue";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -48,6 +50,7 @@ function comfyBaseUrl(backend: CardBackend = "rtx5060ti") {
   if (backend === "rtx3090") {
     return String(
       process.env.OTG_H3_CARD_COMFY_BACKUP_BASE_URL ||
+        process.env.OTG_MEDIA_3090_IMAGE_URL ||
         process.env.OTG_VIDEO_PRIMARY_COMFY_URL ||
         "http://100.75.162.64:8188",
     )
@@ -246,6 +249,11 @@ async function waitForOutputs(
   const deadline = Date.now() + 10 * 60 * 1000;
 
   while (Date.now() < deadline) {
+    const job = getMediaQueueJob(promptId);
+    if (job?.status === "failed" || job?.status === "canceled" || job?.status === "unknown") {
+      throw new Error("The assigned worker could not finish this Character Card. The source and completed checkpoints remain saved.");
+    }
+
     const history = await comfyJson(
       `${baseUrl}/history/${encodeURIComponent(promptId)}`,
     );
@@ -510,15 +518,11 @@ export async function POST(request: NextRequest) {
       | { backend: CardBackend; baseUrl: string; promptId: string }
       | null = null;
 
-    try {
-      submission = await submitOnBackend("rtx5060ti");
-    } catch (primaryError) {
-      console.warn(
-        "[qwen21-character-card] RTX 5060 Ti primary submission failed; trying RTX 3090 backup.",
-        primaryError,
-      );
-      submission = await submitOnBackend("rtx3090");
-    }
+    // The 5060 Ti worker crashes during this workflow's Qwen3-VL encoder
+    // pass. Use the configured production 3090 lane before uploading inputs.
+    // Once a prompt is submitted, keep it bound to that one worker.
+    const production3090 = process.env.OTG_ENV === "prod" && process.env.OTG_MEDIA_3090_IMAGE_URL;
+    submission = await submitOnBackend(production3090 ? "rtx3090" : "rtx5060ti");
 
     const { backend, baseUrl, promptId } = submission;
     const result = await waitForOutputs(promptId, baseUrl);

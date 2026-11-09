@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomInt, randomUUID } from "node:crypto";
 import { submitComfyPromptWith5060Lease } from "@/lib/workers/comfyPromptLease";
 import { getOwnerContext } from "@/lib/ownerKey";
+import { readPromptRequestMeta, writePromptRequestMeta } from "@/lib/promptRequestMeta";
 import { QWEN21_TURBO_LORA } from "@/lib/imageGenerateWorkflows";
 import { buildMossWorkflow, MOSS_FILES, MOSS_REQUIRED_NODES, mossDimensions, mossSeed, mossTarget, mossOutputShape } from "@/lib/images/mossImage";
 import { chooseMossBackend } from "@/lib/images/mossBackend";
@@ -105,6 +106,7 @@ const MODEL_CONFIG: Record<CharacterCreateModelId, ModelConfig> = {
       "EmptyFlux2LatentImage",
       "KSampler",
       "VAEDecode",
+      "ImageScale",
       "PreviewImage",
     ],
     requirements: {
@@ -415,7 +417,18 @@ function mutateWorkflow(args: {
       setInput(graph, "88:71", "width", OUTPUT_WIDTH);
       setInput(graph, "88:71", "height", OUTPUT_HEIGHT);
       setInput(graph, "88:70", "seed", seed);
-      replaceOutputWithPreview(graph, config.outputNodeId);
+      graph["900001"] = {
+        inputs: {
+          upscale_method: "lanczos",
+          width: OUTPUT_WIDTH,
+          height: OUTPUT_HEIGHT,
+          crop: "disabled",
+          image: ["88:65", 0],
+        },
+        class_type: "ImageScale",
+        _meta: { title: "OTG Exact 1080x1920 Output" },
+      };
+      replaceOutputWithPreview(graph, config.outputNodeId, ["900001", 0]);
       break;
 
     case "z-image":
@@ -672,6 +685,7 @@ function validMode(value: unknown): value is CharacterCreateMode {
 
 export async function POST(request: NextRequest) {
   let persistentRequestId = "";
+  let submitted = false;
   try {
     // Authentication may consume the incoming Request body.
     // Clone it first so JSON parsing has an independent stream.
@@ -756,6 +770,14 @@ export async function POST(request: NextRequest) {
 
     if (!claim.claimed) {
       if (claim.record.status === "submitted" && claim.record.promptId) {
+        submitted = true;
+        if (!readPromptRequestMeta(owner.ownerKey, claim.record.promptId)) {
+          writePromptRequestMeta(owner.ownerKey, claim.record.promptId, {
+            comfyBaseUrl: claim.record.comfyBaseUrl,
+            requestKind: "character-create-image",
+            workflowLabel: claim.record.modelLabel,
+          });
+        }
         return NextResponse.json(
           {
             ok: true,
@@ -816,11 +838,20 @@ export async function POST(request: NextRequest) {
     // submission begins; a lost HTTP response could otherwise duplicate work.
     const backend = isNativeImageModel(config.id) ? await chooseNativeImageBackend(config.id) : target ? await chooseMossBackend(target) : await chooseBackend(request, config);
     const promptId = await submitPrompt(backend.baseUrl, graph, target === "3090");
+    submitted = true;
     markCharacterCreateRequestSubmitted(persistentRequestId, {
       promptId,
       comfyBaseUrl: backend.baseUrl,
       backend: backend.label,
       fallbackUsed: backend.fallbackUsed,
+    });
+    writePromptRequestMeta(owner.ownerKey, promptId, {
+      comfyBaseUrl: backend.baseUrl,
+      requestKind: "character-create-image",
+      workflowId: config.workflowFile,
+      workflowLabel: config.label,
+      username: owner.username,
+      deviceId: owner.deviceId,
     });
 
     return NextResponse.json(
@@ -849,7 +880,7 @@ export async function POST(request: NextRequest) {
     );
   } catch (error: any) {
     const message = error?.message || String(error);
-    if (persistentRequestId) {
+    if (persistentRequestId && !submitted) {
       try {
         markCharacterCreateRequestFailed(persistentRequestId, message);
       } catch {

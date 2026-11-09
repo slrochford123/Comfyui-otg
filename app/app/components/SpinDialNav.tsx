@@ -14,6 +14,7 @@ export type SpinTabId =
   | "gallery"
   | "voices"
   | "editvideo"
+  | "finalexport"
   | "settings"
   | "support";
 
@@ -23,6 +24,7 @@ type Props = {
   isAdmin?: boolean;
   showProduction?: boolean;
   showExperimental?: boolean;
+  showFinalExportStudio?: boolean;
   uiMode?: "clean" | "classic";
 };
 
@@ -36,7 +38,7 @@ function classNames(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-export default function SpinDialNav({ tab, onTab, isAdmin = false, showProduction = false, showExperimental = false, uiMode = "classic" }: Props) {
+export default function SpinDialNav({ tab, onTab, isAdmin = false, showProduction = false, showExperimental = false, showFinalExportStudio = false, uiMode = "classic" }: Props) {
   const items: Item[] = useMemo(
     () => [
       { id: "gethelp", label: "AI Assistance" },
@@ -44,13 +46,14 @@ export default function SpinDialNav({ tab, onTab, isAdmin = false, showProductio
       { id: "h3", label: "H3" },
       ...(isAdmin && showExperimental ? [{ id: "testing", label: "Testing" }] as Item[] : []),
       { id: "machine", label: "Story Creator" },
-      ...(showProduction ? [{ id: "storyboard", label: "Production" } as Item] : []),
+      ...(showProduction ? [{ id: "storyboard", label: "Production v.2" } as Item] : []),
       { id: "characters", label: "Characters" },
       { id: "gallery", label: "Gallery" },
       { id: "editvideo", label: "Edit Video" },
+      ...(showFinalExportStudio ? [{ id: "finalexport", label: "Final Export Studio" } as Item] : []),
       { id: "settings", label: "Settings" },
     ],
-    [isAdmin, showProduction, showExperimental]
+    [isAdmin, showProduction, showExperimental, showFinalExportStudio]
   );
 
   return (

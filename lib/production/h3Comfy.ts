@@ -493,8 +493,9 @@ export async function submitH3PromptToBaseUrl(args: {
     () => false,
   );
 
-  const producerKinds: Record<string, "direct" | "refmods-generation" | "realism" | "body-swap" | undefined> = {
+  const producerKinds: Record<string, "direct" | "refmods-generation" | "realism" | "body-swap" | "production-studio-finish" | undefined> = {
     "h3-direct": "direct", "h3-refmods-t2v": "refmods-generation", "h3-realism": "realism", "h3-body-swap": "body-swap",
+    "production-studio-finish": "production-studio-finish",
   };
   const producerKind = producerKinds[args.workerId || ""];
   const response =

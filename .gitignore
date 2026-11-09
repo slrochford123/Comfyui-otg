@@ -9,6 +9,11 @@ out/
 .vercel/
 server.js
 *.tsbuildinfo
+/timeline-editor/
+/.timeline-editor-build-*/
+/vendor/sequence/dist/
+/vendor/sequence/dist-otg/
+/vendor/sequence/dist-mcp/
 
 # Runtime state, local databases, and generated job output
 data/
@@ -99,3 +104,7 @@ docs/EXECUTION_CONTROL_MATRIX_*.csv
 docs/FEATURE_ACCEPTANCE_CONTROL_MATRIX_*.csv
 docs/FEATURE_ADDENDUM_EXECUTION_*.md
 docs/FINAL_EXECUTION_CLOSURE_REPORT_*.md
+
+# Sequence core is source, not an OS core dump.
+!/vendor/sequence/src/core/
+!/vendor/sequence/src/core/**

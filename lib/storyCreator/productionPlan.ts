@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readStoryPreview, type StoryPreview } from "@/lib/productionStudio/storyPreview";
 
 export type StoryPlanStatus = "draft" | "approved";
 export type StoryShotStatus =
@@ -24,6 +25,8 @@ export type StoryPlanDialogueLine = {
   speaker: string;
   line: string;
   delivery: string;
+  startSeconds?: number;
+  endSeconds?: number;
 };
 
 export type StoryProductionTake = {
@@ -54,6 +57,9 @@ export type StoryProductionShot = {
   status: StoryShotStatus;
   acceptedTakeId: string | null;
   takes: StoryProductionTake[];
+  storySegmentId?: string;
+  plannedStartSeconds?: number;
+  plannedDurationSeconds?: number;
 };
 
 export type StoryProductionScene = {
@@ -72,6 +78,11 @@ export type StoryProductionScene = {
   durationTargetSeconds: number;
   screenplaySource: string;
   shots: StoryProductionShot[];
+  lighting?: string;
+  plotline?: string;
+  music?: string;
+  soundEffects?: string;
+  ambience?: string;
 };
 
 export type StoryProductionAct = {
@@ -91,6 +102,7 @@ export type StoryProductionPlan = {
   targetDurationSeconds: number;
   status: StoryPlanStatus;
   acts: StoryProductionAct[];
+  storyPreview?: StoryPreview;
 };
 
 export type StoryProductionPlanRecord = {
@@ -131,6 +143,8 @@ function dialogue(value: unknown) {
       speaker: text((item as any)?.speaker, 120),
       line: text((item as any)?.line, 4_000),
       delivery: text((item as any)?.delivery, 500),
+      ...(typeof (item as any)?.startSeconds === "number" ? { startSeconds: (item as any).startSeconds } : {}),
+      ...(typeof (item as any)?.endSeconds === "number" ? { endSeconds: (item as any).endSeconds } : {}),
     }))
     .filter((item) => item.speaker || item.line)
     .slice(0, 80);
@@ -191,7 +205,7 @@ function normalizeShot(value: unknown, index: number): StoryProductionShot {
   const item = value && typeof value === "object" ? value as any : {};
   const duration = Number(item.requestedDurationSeconds) === 10 ? 10 : 5;
   const takes: StoryProductionTake[] = Array.isArray(item.takes)
-    ? item.takes.slice(0, 100).map(normalizeTake)
+    ? item.takes.map(normalizeTake)
     : [];
   const acceptedTakeId = text(item.acceptedTakeId, 160) || null;
 
@@ -214,6 +228,7 @@ function normalizeShot(value: unknown, index: number): StoryProductionShot {
         ? acceptedTakeId
         : null,
     takes,
+    ...(typeof item.storySegmentId === "string" ? { storySegmentId: text(item.storySegmentId, 160), plannedStartSeconds: Number(item.plannedStartSeconds) || 0, plannedDurationSeconds: Number(item.plannedDurationSeconds) || duration } : {}),
   };
 }
 
@@ -232,11 +247,12 @@ function normalizeScene(value: unknown, index: number): StoryProductionScene {
     dialogue: dialogue(item.dialogue),
     emotionalTone: text(item.emotionalTone, 500),
     continuityRequirements: stringList(item.continuityRequirements, 40),
-    durationTargetSeconds: positiveInt(item.durationTargetSeconds, 30, 7_200),
+    durationTargetSeconds: Number.isFinite(item.durationTargetSeconds) && item.durationTargetSeconds>0 ? item.durationTargetSeconds : 30,
     screenplaySource: text(item.screenplaySource, 40_000),
     shots: Array.isArray(item.shots)
-      ? item.shots.slice(0, 300).map(normalizeShot)
+      ? item.shots.map(normalizeShot)
       : [],
+    ...Object.fromEntries(["lighting", "plotline", "music", "soundEffects", "ambience"].filter(k => typeof item[k] === "string").map(k => [k, text(item[k])])),
   };
 }
 
@@ -248,7 +264,7 @@ function normalizeAct(value: unknown, index: number): StoryProductionAct {
     title: text(item.title, 200) || `Act ${index + 1}`,
     summary: text(item.summary, 4_000),
     scenes: Array.isArray(item.scenes)
-      ? item.scenes.slice(0, 200).map(normalizeScene)
+      ? item.scenes.map(normalizeScene)
       : [],
   };
 }
@@ -267,12 +283,13 @@ export function normalizeStoryProductionPlan(
     targetDurationSeconds: positiveInt(
       item.targetDurationSeconds,
       60,
-      43_200,
+      Number.MAX_SAFE_INTEGER / 1000,
     ),
     status: item.status === "approved" ? "approved" : "draft",
     acts: Array.isArray(item.acts)
-      ? item.acts.slice(0, 50).map(normalizeAct)
+      ? item.acts.map(normalizeAct)
       : [],
+    ...(item.storyPreview ? { storyPreview: readStoryPreview(item.storyPreview) } : {}),
   };
 }
 

@@ -9,7 +9,7 @@ import { RequestError } from "@/lib/requestError";
 import { requireStorageHeadroom } from "@/lib/storageAdmission";
 
 /** One bounded file, written with backpressure to an account-private staging directory. */
-export async function receiveMediaUpload(request: Request, root: string, maxBytes = 750 * 1024 ** 2) {
+export async function receiveMediaUpload(request: Request, root: string, maxBytes = 750 * 1024 ** 2, options: {images?:boolean} = {}) {
   const claimed = Number(request.headers.get("content-length") || 0);
   if (claimed > maxBytes + 16384) throw new RequestError("Choose a media file up to 750 MB.", 413);
   if (!request.body) throw new RequestError("Choose a non-empty media file.", 400);
@@ -29,7 +29,7 @@ export async function receiveMediaUpload(request: Request, root: string, maxByte
   });
   for (const event of ["filesLimit", "fieldsLimit", "partsLimit"] as const) parser.on(event, () => fail("Upload exactly one media file and its session.", 413));
   parser.on("file", (key, stream, info) => {
-    if (key !== "file" || filename || !/\.(mp4|webm|mov|mkv|wav|mp3|flac|ogg|m4a|aac)$/i.test(info.filename)) {
+    if (key !== "file" || filename || !(/\.(mp4|webm|mov|mkv|wav|mp3|flac|ogg|m4a|aac)$/i.test(info.filename)||options.images&&/\.(png|jpe?g|webp|gif)$/i.test(info.filename))) {
       fail("Choose one supported audio or video file."); stream.resume(); return;
     }
     filename = path.basename(info.filename).slice(0, 180);
