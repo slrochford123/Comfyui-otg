@@ -1,6 +1,6 @@
 {
   "76": {"class_type":"LoadImage","inputs":{"image":""}},
-  "80": {"class_type":"ImageScaleToTotalPixels","inputs":{"image":["76",0],"upscale_method":"nearest-exact","megapixels":0.25,"resolution_steps":16}},
+  "80": {"class_type":"ImageScaleToTotalPixels","inputs":{"image":["76",0],"upscale_method":"lanczos","megapixels":0.87890625,"resolution_steps":16}},
   "99": {"class_type":"GetImageSize","inputs":{"image":["80",0]}},
   "70": {"class_type":"UNETLoader","inputs":{"unet_name":"flux-2-klein-4b-fp8.safetensors","weight_dtype":"default"}},
   "71": {"class_type":"CLIPLoader","inputs":{"clip_name":"qwen_3_4b.safetensors","type":"flux2","device":"default"}},

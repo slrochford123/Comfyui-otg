@@ -42,3 +42,11 @@ it("uses the original media ID and the same replay key after a lost response",as
   const create=screen.getByRole("button",{name:"Create",exact:true});fireEvent.click(create);fireEvent.click(create);await screen.findByText("Connection lost");expect(posts()).toHaveLength(1);
   fireEvent.click(create);await waitFor(()=>expect(posts()).toHaveLength(2));expect(posts()[0].requestKey).toBe(posts()[1].requestKey);expect(posts()[0]).toMatchObject({sourceId:"one",operation:"edit"});
 });
+
+it("defaults new images and edits to the API when available",async()=>{
+  const original=server.getMockImplementation()!;
+  server.mockImplementation(async(url,o)=>o?.method==="POST"?original(url,o):Response.json({enabled:true,media:records,characters:[],lightweightImage:true,lightweightEdit:true,openAIImage:true,voiceAuto:true}));
+  render(<StoryMediaCards projectId="project"/>);
+  const model=await screen.findByLabelText("Image model");
+  expect(model).toHaveValue("gpt-image-2.6-flare");
+});

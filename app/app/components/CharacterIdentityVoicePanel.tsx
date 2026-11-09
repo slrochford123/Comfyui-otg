@@ -1,5 +1,6 @@
 "use client";
 
+import {loadSavedCharacters} from "@/lib/characters/libraryClient";
 import SavedCharacterVoicePicker from "./SavedCharacterVoicePicker";
 import React from "react";
 import type { CharacterReferencePackage } from "@/lib/characters/store";
@@ -294,23 +295,22 @@ export function SavedCharacterLibrary({
   const [error, setError] = React.useState("");
   const [message, setMessage] = React.useState("");
 
+  const loadingRequest = React.useRef<AbortController | null>(null);
+  React.useEffect(() => () => loadingRequest.current?.abort(), []);
   const load = React.useCallback(async () => {
+    loadingRequest.current?.abort();
+    const request = new AbortController();
+    loadingRequest.current = request;
     setLoading(true);
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/characters", {
-        cache: "no-store",
-        credentials: "include",
-        headers: { "x-otg-device-id": getCharacterDeviceId() },
-      });
-      const json = await response.json().catch(() => null);
-      if (!response.ok || !json?.ok) throw new Error(json?.error || "Could not load saved characters.");
-      setItems(Array.isArray(json.items) ? json.items : []);
+      const characters = await loadSavedCharacters(request.signal);
+      if (!request.signal.aborted) setItems(characters);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load saved characters.");
+      if (!request.signal.aborted) setError(err instanceof Error ? err.message : "Could not load saved characters.");
     } finally {
-      setLoading(false);
+      if (!request.signal.aborted) setLoading(false);
     }
   }, []);
 

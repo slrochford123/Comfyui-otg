@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import {storyImageSizeForSource} from "./imageSize";
 import {getOpenAIClient, openAIEnabled, assertOpenAIAuthorized} from "@/lib/openai/provider";
 import {finishUnsettledOpenAIUsage, settleOpenAIUsage} from "@/lib/openai/usageLedger";
 import {isAdminUserId} from "@/lib/auth/admin";
@@ -38,14 +39,20 @@ export function storyImageUsageCost(usage: ImageUsage) {
 export async function renderStoryOpenAIImage(options: {
   accountId: string; ownerKey: string; projectId: string; prompt: string; source?: string;
 }) {
-  if (!storyOpenAIImagesEnabled(options.accountId)) throw Error("GPT Image 2.6 is unavailable in this session.");
+  if (!storyOpenAIImagesEnabled(options.accountId)) throw Object.assign(Error("GPT Image 2.6 is unavailable in this session."), {fallbackAllowed:true});
   if (!options.prompt || Buffer.byteLength(options.prompt) > 8192) throw Error("Shorten the GPT Image prompt to 8 KiB or less.");
   const image = options.source ? await toFile(await sharp(options.source, {limitInputPixels:50_000_000})
-    .rotate().resize(1024,1024,{fit:"inside",withoutEnlargement:true}).png().toBuffer(),
+    .rotate().resize(2048,2048,{fit:"inside",withoutEnlargement:true}).png().toBuffer(),
   "story-source.png",{type:"image/png"}) : null;
-  const request = {model:storyOpenAIImageProfile,n:1, size:"1024x1024", quality:"low",
-    output_format:"png", complexity:"low"} as const;
-  const budget = assertOpenAIAuthorized(options.ownerKey,"story-image",reserveUsd);
+  const dimensions = await storyImageSizeForSource(options.source);
+  const request = {model:storyOpenAIImageProfile,n:1, size:`${dimensions.width}x${dimensions.height}`, quality:"medium",
+    output_format:"png", complexity:"medium"} as const;
+  let budget: ReturnType<typeof assertOpenAIAuthorized>;
+  try {
+    budget = assertOpenAIAuthorized(options.ownerKey,"story-image",reserveUsd);
+  } catch {
+    throw Object.assign(new Error("The image API budget is unavailable."), {fallbackAllowed: true});
+  }
   try {
     const client = getOpenAIClient();
     const settings = {timeout:storyOpenAIImageTimeoutMs,maxRetries:0};
@@ -61,7 +68,7 @@ export async function renderStoryOpenAIImage(options: {
     if (!encoded || encoded.length > 24_000_000) throw Error("The image provider returned no usable PNG.");
     const bytes = Buffer.from(encoded,"base64");
     const metadata = await sharp(bytes,{limitInputPixels:2_000_000}).metadata();
-    if (metadata.format !== "png" || metadata.width !== 1024 || metadata.height !== 1024) throw Error("The image provider returned an unexpected image format or size.");
+    if (metadata.format !== "png" || metadata.width !== dimensions.width || metadata.height !== dimensions.height) throw Error("The image provider returned an unexpected image format or size.");
     return bytes;
   } catch (cause) {
     const status = Number((cause as {status?:number})?.status);
@@ -71,6 +78,9 @@ export async function renderStoryOpenAIImage(options: {
       ? `OpenAI rejected the GPT Image 2.6 request (HTTP ${status}). Check project access or the request and try again.`
       : "OpenAI did not confirm a usable image. The original request will not be retried automatically.");
     error.name = rejected ? "RejectedStoryMedia" : "UnconfirmedStoryOpenAIImage";
-    throw error;
+    const code = String((cause as {code?: string})?.code || "");
+    const policyRejection = /moderation|content_policy|content_filter|safety/i.test(code);
+    const invalidRequest = [400, 413, 415, 422].includes(status) && !/invalid_size|unsupported_size|model_not_found/.test(code);
+    throw Object.assign(error, {fallbackAllowed: !policyRejection && !invalidRequest});
   }
 }

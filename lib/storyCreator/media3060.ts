@@ -1,6 +1,7 @@
 import path from "node:path";
 import {randomInt} from "node:crypto";
 import sharp from "sharp";
+import {storyImageSize, storyImageSizeForSource} from "./imageSize";
 import {check3060Gate,local3060Enabled,LOCAL_COMFY,localJson} from "@/lib/workers/local3060";
 import {enqueueComfyMedia,getMediaQueueJob,cancelQueuedMediaJob} from "@/lib/workers/mediaGpuQueue";
 import {getStoryMedia,updateStoryMedia,type StoryMediaRecord} from "./mediaStore";
@@ -17,15 +18,18 @@ export const isStory3060Visual=(profile:StoryMediaRecord["profile"])=>profile===
 export function story3060ImageGraph(record:StoryMediaRecord) {
   if(record.profile!==story3060ImageProfile||record.command.operation!=="image"||record.command.sourceId)throw Error("This request does not have the qualified RTX 3060 image profile.");
   const graph=structuredClone(graphTemplate);
+  const dimensions = storyImageSize();
+  graph["13"].inputs.width = dimensions.width;
+  graph["13"].inputs.height = dimensions.height;
   graph["27"].inputs.text=record.command.prompt;
   graph["3"].inputs.seed=randomInt(0,2**32);
   graph["9"].inputs.filename_prefix="story-3060/"+record.id;
   return graph;
 }
 async function editGraph(record:StoryMediaRecord,source:string) {
-  const bytes=await sharp(source,{limitInputPixels:32_000_000}).rotate().resize({
-    width:768,height:768,fit:"inside",withoutEnlargement:true,
-  }).png().toBuffer();
+  const dimensions = await storyImageSizeForSource(source);
+  const bytes = await sharp(source, {limitInputPixels: 32_000_000}).rotate()
+    .resize(dimensions.width, dimensions.height, {fit: "fill"}).png().toBuffer();
   const name=record.id+".png", form=new FormData();
   form.set("image",new Blob([new Uint8Array(bytes)],{type:"image/png"}),name);
   form.set("subfolder","story-3060-input");
@@ -35,6 +39,7 @@ async function editGraph(record:StoryMediaRecord,source:string) {
   if(uploaded.name!==name||uploaded.subfolder!=="story-3060-input"||uploaded.type!=="input")
     throw Error("The RTX 3060 worker did not confirm the bound source image.");
   const graph=structuredClone(editTemplate);
+  graph["80"].inputs.megapixels = dimensions.width * dimensions.height / (1024 * 1024);
   graph["76"].inputs.image=uploaded.subfolder+"/"+uploaded.name;
   graph["74"].inputs.text=record.command.prompt;
   graph["73"].inputs.noise_seed=randomInt(0,2**32);

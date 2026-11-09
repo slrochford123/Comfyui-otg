@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, type ReactNode, type SyntheticEvent } from "react";
+import ExpandedMediaViewer from "../ExpandedMediaViewer";
 
 const previewButton = "rounded-lg border border-white/20 bg-black/80 px-3 py-2 text-xs font-semibold text-white";
 
@@ -42,10 +43,15 @@ function Preview({title, children, expanded, image = false}: {
 }
 
 export function StoryImagePreview({src, alt, className}: {src: string; alt: string; className: string}) {
-  return <Preview title={alt} image expanded={() =>
-    <img src={src} alt={alt} className="mx-auto max-h-[80dvh] max-w-full object-contain"/>}>
-    <img src={src} alt={alt} loading="lazy" className={className}/>
-  </Preview>;
+  const [expanded, setExpanded] = useState(false);
+  return <>
+    <button type="button" aria-label={`Expand ${alt}`} onClick={() => setExpanded(true)}
+      className="relative block w-full cursor-zoom-in rounded-xl focus-visible:outline focus-visible:outline-cyan-300">
+      <img src={src} alt={alt} loading="lazy" className={className}/>
+      <span className={`absolute right-2 top-2 ${previewButton}`}>Expand</span>
+    </button>
+    {expanded ? <ExpandedMediaViewer url={src} name={alt} kind="image" onClose={() => setExpanded(false)}/> : null}
+  </>;
 }
 
 export function StoryMediaPreview({src, title, kind, className}: {

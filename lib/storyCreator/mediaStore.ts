@@ -15,6 +15,8 @@ export type StoryMediaRecord = {
   profile?: "z-image-turbo-3060" | "flux2-klein-edit-3060" | "gpt-image-2.6-flare" | "qwen3-tts-3060" | "story-voice-auto" | "ltx25-story";
   cloudVoice?: {previews?: {id:string;file:string}[]; audition?:string; description?:string; providerVoiceId?:string; selected?:number};
   voiceNotice?:string;
+  imageNotice?:string;
+  imageSize?: {width: number; height: number};
   imageAccountId?: string;
   cancelRequested?: boolean;
   stage?: string;

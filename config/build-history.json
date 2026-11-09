@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.34",
+  "current": "2.35",
   "builds": [
     {
       "version": "2",
@@ -211,6 +211,12 @@
       "date": "2026-11-08",
       "summary": "Save Story Creator character images with their approved voices, attach or change saved library voices in Characters, and restore owner-scoped saved portrait delivery.",
       "sourceBaseCommit": "e54d5e97154c75f66d4f0951b68c45dd3e5fefd6"
+    },
+    {
+      "version": "2.35",
+      "date": "2026-11-08",
+      "summary": "Story image HD rendering and zoom, API-first images and ElevenLabs-first voices with RTX 3060 fallbacks, and saved-character loading recovery.",
+      "sourceBaseCommit": "74e833b79d32a4e3f6349a1304a9191a5d16abda"
     }
   ]
 }

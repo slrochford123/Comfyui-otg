@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import {storyCharacterSource} from "./mediaCharacterLink";
 import path from "node:path";
+import sharp from "sharp";
 import {randomInt} from "node:crypto";
 import {NextRequest} from "next/server";
 import {OTG_DATA_ROOT, safeSegment} from "@/lib/paths";
@@ -10,7 +11,7 @@ import {attachStoryVisualUpload,addStoryCreatorMessage,listStoryVisualAssets,get
 import {contentTypeForMedia} from "@/lib/mediaResponse";
 import {assertStoryMediaScope, claimStoryMedia, createStoryMedia, getStoryMedia, approvedStoryCloudVoice, claimStoryVoiceSlot, settleStoryVoiceSlot, listStoryChatMedia, listStoryMedia, storyMediaByRequest, updateStoryMedia, type StoryMediaRecord} from "./mediaStore";
 import {storyOpenAIImageProfile,storyOpenAIImagesEnabled,renderStoryOpenAIImage,storyOpenAIImageTimeoutMs} from "./mediaOpenAI";
-import {parseStoryMediaCommand,requestsStoryOpenAIImage} from "./mediaContract";
+import {parseStoryMediaCommand} from "./mediaContract";
 import {storyChatMediaEnabled,requireStoryMediaEnabled} from "./mediaAvailability";
 import {story3060SpeechEnabled} from "./audioProduction";
 import {story3060VoiceProfile,submitStory3060Voice,readStory3060Voice} from "./mediaVoice3060";
@@ -207,10 +208,8 @@ export function requestStoryMedia(input: {ownerKey:string;projectId:string;sourc
   }
   if(voiceContext&&!command.name)command.subject="scene";
   const imageAccountId=input.openAIImageAccountId;
-  const wantsCloud = requestsStoryOpenAIImage(source.content);
   const visual = ["image","edit"].includes(command.operation);
-  const cloud=visual && (!expanded || wantsCloud) && !!imageAccountId && storyOpenAIImagesEnabled(imageAccountId);
-  if(expanded && visual && wantsCloud && !cloud)throw Error("The paid OpenAI image option is unavailable for this account.");
+  const cloud=visual && !!imageAccountId && storyOpenAIImagesEnabled(imageAccountId);
   const profile=cloud?storyOpenAIImageProfile:expanded && command.operation==="image" && story3060ImageEnabled()?story3060ImageProfile
     :expanded && command.operation==="edit" && story3060EditEnabled()?story3060EditProfile
     :expanded && command.operation==="voice" && storyVoiceAutoEnabled() && !input.manualVoice?storyVoiceAutoProfile
@@ -225,9 +224,12 @@ export function requestStoryMediaFromCard(ownerKey:string,projectId:string,body:
   const existing=storyMediaByRequest(ownerKey,projectId,`ui:${requestKey}`);
   if(existing)return {record:existing,created:false};
   if(body.profile===storyOpenAIImageProfile){
-    if(!accountId||!storyOpenAIImagesEnabled(accountId)||!["image","edit"].includes(String(body.operation)))
-      throw Error("GPT Image 2.6 is unavailable for this account.");
+    if(!accountId||!["image","edit"].includes(String(body.operation)))throw Error("Sign in to create a Story image.");
     const edit=body.operation==="edit";
+    const cloud=storyOpenAIImagesEnabled(accountId);
+    const localAvailable=edit?story3060EditEnabled():story3060ImageEnabled();
+    if(!cloud&&!localAvailable)throw Error("Story image generation is unavailable.");
+    const profile=cloud?storyOpenAIImageProfile:edit?story3060EditProfile:story3060ImageProfile;
     const source=edit?getStoryMedia(ownerKey,projectId,String(body.sourceId||"")):null;
     if(source){
       if(!["image","edit"].includes(source.command.operation))throw Error("Choose a saved Story image to edit.");
@@ -237,7 +239,7 @@ export function requestStoryMediaFromCard(ownerKey:string,projectId:string,body:
     const command=parseStoryMediaCommand({operation:body.operation,subject:source?.command.subject||"scene",
       name:source?.command.name||"Story image",sourceId:source?.id||"",prompt:String(body.prompt||""),text:"",evidence},evidence);
     const message=addStoryCreatorMessage({ownerKey,projectId,role:"user",content:evidence+"\n"+command.prompt});
-    return createStoryMedia({ownerKey,projectId,sourceMessageId:message.id,command,profile:storyOpenAIImageProfile,imageAccountId:accountId},`ui:${requestKey}`);
+    return createStoryMedia({ownerKey,projectId,sourceMessageId:message.id,command,profile,...(cloud?{imageAccountId:accountId}:{})},`ui:${requestKey}`);
   }
   if(body.profile!==undefined){
     if(body.profile===story3060EditProfile){
@@ -271,7 +273,7 @@ export function requestStoryMediaFromCard(ownerKey:string,projectId:string,body:
     prompt:String(body.prompt||""),text,evidence,...(expanded&&operation==="voice"?{voiceMode:body.voiceMode==="design"?"design":source.command.operation==="voice"?"reuse":undefined}:{})},
     evidence+"\n"+text,expanded);
   const message=addStoryCreatorMessage({ownerKey,projectId,role:"user",content:`${evidence}\n${command.prompt}\n${command.text}`});
-  return requestStoryMedia({ownerKey,projectId,sourceMessageId:message.id,arguments:command,manualVoice:operation==="voice"&&body.voiceEngine==="qwen3"},`ui:${requestKey}`);
+  return requestStoryMedia({ownerKey,projectId,sourceMessageId:message.id,arguments:command,openAIImageAccountId:accountId,manualVoice:operation==="voice"&&body.voiceEngine==="qwen3"},`ui:${requestKey}`);
 }
 export function retryStoryMedia(record:StoryMediaRecord,requestKey:string,accountId?:string) {
   if(record.status!=="failed"||!/^[-_a-zA-Z0-9]{16,100}$/.test(requestKey))
@@ -347,6 +349,13 @@ export async function executeStoryMedia(record:StoryMediaRecord,cookie:string) {
         record=updateStoryMedia(record,{cloudVoice,stage:undefined});
         await finishStoryMedia(record,cloud.file);return;
       }
+      if(record.profile===storyVoiceAutoProfile){
+        if(!story3060SpeechEnabled())throw Error(cloud.reason+" The RTX 3060 voice fallback is unavailable.");
+        record=updateStoryMedia(record,{status:"submitting",backendJob:null,profile:story3060VoiceProfile,
+          voiceNotice:cloud.reason+" Using Qwen3-TTS on RTX 3060.",stage:"Preparing the local voice fallback"});
+        if(record.status==="submitting")await submitStory3060Voice(record,source);
+        return;
+      }
       const notice=cloud.reason+(reuse?" Using LTX 2.5 for a new audition. The saved voice is still selected.":" Using local LTX 2.5.");
       record=updateStoryMedia(record,{profile:storyLtxVoiceProfile,voiceNotice:notice,stage:"Preparing a local LTX voice"});
       const current=record;
@@ -361,8 +370,23 @@ export async function executeStoryMedia(record:StoryMediaRecord,cookie:string) {
       if(!record.imageAccountId || (record.command.operation==="edit"&&!source.image))throw Error("Select a ready image and sign in again.");
       record=updateStoryMedia(record,{status:"running",backendJob:{engine:storyOpenAIImageProfile,pid:process.pid}});
       if(record.status!=="running")return;
-      const bytes=await renderStoryOpenAIImage({accountId:record.imageAccountId!,ownerKey:record.ownerKey,
-        projectId:record.projectId,prompt,source:record.command.operation==="edit"?source.image:undefined});
+      let bytes:Buffer;
+      try {
+        bytes=await renderStoryOpenAIImage({accountId:record.imageAccountId!,ownerKey:record.ownerKey,
+          projectId:record.projectId,prompt,source:record.command.operation==="edit"?source.image:undefined});
+      } catch(error) {
+        const current=getStoryMedia(record.ownerKey,record.projectId,record.id);
+        if(current.status!=="running")return;
+        if(current.cancelRequested){updateStoryMedia(current,{status:"canceled",error:null});return;}
+        const localAvailable=record.command.operation==="edit"?story3060EditEnabled():story3060ImageEnabled();
+        if(!(error as {fallbackAllowed?:boolean})?.fallbackAllowed||!localAvailable)throw error;
+        record=updateStoryMedia(current,{status:"submitting",backendJob:null,
+          profile:record.command.operation==="edit"?story3060EditProfile:story3060ImageProfile,
+          imageNotice:"The image API could not finish this request. Using the RTX 3060 HD fallback.",
+          stage:"Preparing the local HD image fallback"});
+        if(record.status==="submitting")await submitStory3060Image(record,source.image);
+        return;
+      }
       const current=getStoryMedia(record.ownerKey,record.projectId,record.id);
       if(current.cancelRequested){updateStoryMedia(current,{status:"canceled",error:null});return;}
       if(current.status!=="running")return;
@@ -427,7 +451,13 @@ async function finishStoryMedia(record:StoryMediaRecord,file:string) {
     visualKind:record.command.subject==="character"?"character":record.command.subject==="object"?"object":"scene_image",
     name:record.command.name||"Story image",prompt:record.command.prompt,url:`/api/story-creator/media/file?projectId=${record.projectId}&id=${record.id}`,filePath:destination,
     metadata:{storyMediaId:record.id,engine:record.profile|| (record.command.operation==="image"?"krea-2":"fibo2-edit-turbo")}});
-  return updateStoryMedia(current,{status:"ready",filePath:destination,error:null});
+  const dimensions=["image","edit"].includes(record.command.operation)
+    ? await sharp(destination,{limitInputPixels:50_000_000}).metadata():null;
+  const imageSize=dimensions?.width&&dimensions.height?{width:dimensions.width,height:dimensions.height}:undefined;
+  const latest=getStoryMedia(record.ownerKey,record.projectId,record.id);
+  if(latest.status!=="running")return latest;
+  if(latest.cancelRequested)return updateStoryMedia(latest,{status:"canceled",error:null});
+  return updateStoryMedia(latest,{status:"ready",filePath:destination,error:null,...(imageSize?{imageSize}:{})});
 }
 /** Called by the durable queue before releasing the 3060 grant. */
 export async function publishStory3060Image(producer:{ownerKey:string;projectId?:string;id:string},promptId:string,receipt:unknown){

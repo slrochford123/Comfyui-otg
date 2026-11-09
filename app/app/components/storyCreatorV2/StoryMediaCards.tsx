@@ -4,7 +4,7 @@ import {StoryImagePreview,StoryMediaPreview} from "./StoryPreview";
 import {newClientRequestId} from "@/lib/client/requestId";
 import type {StoryMediaCommand} from "@/lib/storyCreator/mediaContract";
 type SaveHints={characterTarget?:{id:string;name:string}|null;characterImageId?:string|null;characterImageName?:string|null;approvedVoiceMediaId?:string|null;characterVoiceSaved?:boolean};
-type Media=SaveHints&{id:string;sourceMessageId:string;status:string;command:StoryMediaCommand;url:string|null;engine:string;error:string|null;characterId:string|null;voiceId:string|null;cancelRequested?:boolean;stage?:string;durationSeconds?:number;license?:string;voiceNotice?:string;voiceCandidates?:number;voiceCandidate?:number;voiceAuditionText?:string};
+type Media=SaveHints&{imageNotice?:string;imageSize?:{width:number;height:number};id:string;sourceMessageId:string;status:string;command:StoryMediaCommand;url:string|null;engine:string;error:string|null;characterId:string|null;voiceId:string|null;cancelRequested?:boolean;stage?:string;durationSeconds?:number;license?:string;voiceNotice?:string;voiceCandidates?:number;voiceCandidate?:number;voiceAuditionText?:string};
 type Character={id:string;name:string;hasVoice:boolean};
 const button="min-h-11 rounded-xl border border-white/20 px-3 py-2 text-sm disabled:opacity-40";
 const input="w-full rounded-xl border border-white/20 bg-black/20 p-3 text-sm";
@@ -77,7 +77,7 @@ export function StoryMediaCards({projectId,removedMessages,onAvailability,onChat
 function StoryImageForm({act,local,cloud}:{act:(body:Record<string,unknown>)=>Promise<void>;local:boolean;cloud:boolean}) {
   const [prompt,setPrompt]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const [choice,setChoice]=useState("");
-  const profile=cloud&&(!local||choice==="gpt-image-2.6-flare")?"gpt-image-2.6-flare":"z-image-turbo-3060";
+  const profile=cloud&&choice!=="z-image-turbo-3060"?"gpt-image-2.6-flare":"z-image-turbo-3060";
   const request=useRef<{signature:string;key:string}|null>(null),sending=useRef(false);
   async function create(){
     const text=prompt.trim();
@@ -94,10 +94,10 @@ function StoryImageForm({act,local,cloud}:{act:(body:Record<string,unknown>)=>Pr
   return <details className="space-y-2 rounded-xl border border-white/15 p-3">
     <summary className="cursor-pointer text-sm">{cloud?"Create Story image":"Create lightweight image"}</summary>
     {cloud&&local?<label className="block text-sm">Image model<select className={input} value={profile} disabled={busy} onChange={event=>setChoice(event.target.value)}>
-      <option value="z-image-turbo-3060">Z-Image Turbo · RTX 3060 · 512 × 512</option>
       <option value="gpt-image-2.6-flare">GPT Image 2.6 Flare · OpenAI · paid</option>
+      <option value="z-image-turbo-3060">Z-Image Turbo · RTX 3060 · HD</option>
     </select></label>:null}
-    <label className="block text-sm">{cloud?"Image prompt":"Z-Image Turbo · RTX 3060 · 512 × 512"}
+    <label className="block text-sm">{cloud?"Image prompt":"Z-Image Turbo · RTX 3060 · HD"}
       <textarea className={input} value={prompt} maxLength={4000} rows={2} disabled={busy} onChange={event=>setPrompt(event.target.value)}/>
     </label>
     <button type="button" className={button} disabled={busy||!prompt.trim()} onClick={()=>void create()}>{busy?"Sending…":"Create image"}</button>
@@ -128,7 +128,7 @@ function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,ch
     finally{lock.current=false;setBusy(false);}
   }
   function create() {
-    const profile=action==="edit"&&((lightweightEdit&&editProfile==="flux2-klein-edit-3060")||(openAIImage&&editProfile==="gpt-image-2.6-flare"))?editProfile:undefined;
+    const profile = action === "edit" ? editProfile || (openAIImage ? "gpt-image-2.6-flare" : undefined) : undefined;
     const signature=JSON.stringify([action,prompt,text,profile,voiceEngine]);
     if(!request.current||request.current.signature!==signature)request.current={key:newClientRequestId(),signature};
     void run({action:"create",operation:action,sourceId:record.id,prompt,text,profile,voiceEngine:action==="voice"?voiceEngine:undefined,voiceMode:action==="voice"&&/\b(?:accent|new voice|different voice)\b/i.test(prompt)?"design":undefined,requestKey:request.current.key});
@@ -144,6 +144,8 @@ function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,ch
     {!ready&&record.status!=="needs_name"?<p role="status" className="text-sm">{record.cancelRequested&&record.status==="running"?"Cancellation requested. Waiting for the provider to finish safely.":(record.stage||({queued:record.engine.startsWith("GPT Image")?"Queued for OpenAI…":"Waiting for a free GPU…",submitting:"Sending your request…",running:"Queued or creating. You can leave and come back.",failed:"Generation failed.",unknown:"Checking an unconfirmed request. No automatic retry.",canceled:"Canceled."} as Record<string,string>)[record.status]||record.status)}</p>:null}
     {ready&&image?<StoryImagePreview src={record.url!} alt={record.command.name||"Generated story image"} className="mx-auto max-h-[480px] w-auto max-w-full rounded-xl"/>:null}
     {ready&&record.command.operation==="video"?<StoryMediaPreview kind="video" src={record.url!} title={record.command.name||"Story video"} className="max-h-[480px] w-full rounded-xl"/>:null}
+    {record.imageNotice?<p className="text-xs text-white/65">{record.imageNotice}</p>:null}
+    {image&&record.imageSize?<p className="text-xs text-white/65">HD · {record.imageSize.width} × {record.imageSize.height}</p>:null}
     {record.voiceNotice?<p className="text-xs text-white/65">{record.voiceNotice}</p>:null}
     {ready&&Boolean(record.voiceCandidates)&&!record.voiceId?<label className="block text-sm">Voice audition
       <select className={input} value={candidate} disabled={busy} onChange={e=>setAudition(Number(e.target.value))}>
@@ -179,14 +181,14 @@ function MediaCard({record,characters,act,lightweightEdit,openAIImage,onFocus,ch
       <label className="block text-sm">{action==="edit"?"What should change?":action==="video"?"What happens in the video?":"Describe the voice or delivery"}<textarea className={input} rows={2} value={prompt} maxLength={4000} onChange={e=>setPrompt(e.target.value)}/></label>
       {action==="edit"&&(lightweightEdit||openAIImage)?<label className="block text-sm">Edit model
         <select className={input} value={editProfile} disabled={busy} onChange={e=>setEditProfile(e.target.value)}>
-          <option value="">Existing workflow (default)</option>
+          <option value="">Automatic · API first</option>
           {lightweightEdit&&<option value="flux2-klein-edit-3060">FLUX.2 Klein 4B · RTX 3060</option>}
           {openAIImage&&<option value="gpt-image-2.6-flare">GPT Image 2.6 Flare · OpenAI · paid</option>}
         </select>
       </label>:null}
       {action==="voice"&&voiceAuto?<label className="block text-sm">Voice engine
         <select className={input} value={voiceEngine} disabled={busy} onChange={e=>setVoiceEngine(e.target.value)}>
-          <option value="">Automatic · ElevenLabs / LTX 2.5</option>
+          <option value="">Automatic · ElevenLabs / RTX 3060</option>
           <option value="qwen3">Manual · Qwen3-TTS</option>
         </select>
       </label>:null}

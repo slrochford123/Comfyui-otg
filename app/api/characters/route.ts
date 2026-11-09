@@ -49,6 +49,7 @@ function loadCharacterWithFallback(primaryOwnerKey: string, id: string): ReturnT
 }
 
 export async function GET(req: NextRequest) {
+  const headers = {"Cache-Control":"private, no-store",Vary:"Cookie"};
   try {
     const { ownerKey } = await getOwnerContext(req);
     const id = String(req.nextUrl.searchParams.get("id") || "").trim();
@@ -57,18 +58,18 @@ export async function GET(req: NextRequest) {
     if (id) {
       const record = explicitOwner ? loadCharacter(ownerKey, id) : loadCharacterWithFallback(ownerKey, id);
       if (!record) {
-        return NextResponse.json({ ok: false, error: "Character not found" }, { status: 404 });
+        return NextResponse.json({ ok: false, error: "Character not found" }, { status: 404, headers });
       }
-      return NextResponse.json({ ok: true, character: record });
+      return NextResponse.json({ ok: true, character: record }, {headers});
     }
 
     const items = explicitOwner ? listCharacters(ownerKey) : listCharactersWithFallback(ownerKey);
-    return NextResponse.json({ ok: true, items });
+    return NextResponse.json({ ok: true, items }, {headers});
   } catch (e: any) {
     if (e instanceof SessionInvalidError) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401, headers });
     }
-    return NextResponse.json({ ok: false, error: e?.message || "Characters request failed" }, { status: 500 });
+    return NextResponse.json({ ok: false, error: e?.message || "Characters request failed" }, { status: 500, headers });
   }
 }
 
