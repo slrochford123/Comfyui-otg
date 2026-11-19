@@ -5,7 +5,7 @@ const {once}=require('node:events');
 const {labRoot}=require('../../lib/experiments/store.ts');
 const {directorRoot,director3060Runtime,directorMessages,validateDirectorRevision,directorResponseSchema,nsfwPlanMessages}=require('../../lib/experiments/director3060.ts');
 const {nsfwClipMessages}=require('../../lib/experiments/nsfwClipDirection.ts');
-const {h3DraftEnhancementInstructions,h3DraftEnhancementInput,h3DraftEnhancementSchema,readH3DraftEnhancement}=require('../../lib/h3DraftEnhancement.ts');
+const {H3EnhancementDetailError,h3DraftExpansionReminder,h3DraftEnhancementInstructions,h3DraftEnhancementInput,h3DraftEnhancementSchema,readH3DraftEnhancement}=require('../../lib/h3DraftEnhancement.ts');
 const {compileH3SceneDirection,h3SceneDirectionSchema,validateH3DirectedDialogue}=require('../../lib/openai/h3SceneDirection.ts');
 const {acquireExternalMediaGpuChoice,tickMediaGpuQueue,getMediaQueueJob}=require('../../lib/workers/mediaGpuQueue.ts');
 const {assertSharedMediaGpuOwned}=require('../../lib/workers/mediaGpuAdmission.ts');
@@ -91,12 +91,30 @@ async function main(){
    const mb=Number(execFileSync('nvidia-smi',['-i',cfg.gpuUuid,'--query-gpu=memory.used','--format=csv,noheader,nounits'],{encoding:'utf8',timeout:3000}).trim());peak=Math.max(peak,mb);
    update({peakGpuMiB:peak});
  }catch(e){abort.abort(e);}finally{monitorBusy=false;}},4000);
+ async function infer(){
  const response=await fetch(base+'/api/chat',{method:'POST',headers:{'content-type':'application/json'},signal:AbortSignal.any([abort.signal,AbortSignal.timeout(600000)]),body:JSON.stringify({model:cfg.model,messages,stream:true,think:false,format,keep_alive:'30s',options:{seed:request.settings.seed,temperature:enhancement?.level==='short'?.25:enhancement?.level==='medium'?.35:.6,num_ctx:8192,num_predict:2200}})});
  if(!response.ok)throw Error('Director inference HTTP '+response.status);
  let text='',buffer='',final;
  const reader=response.body.pipeThrough(new TextDecoderStream()).getReader();
  try{while(true){cancelled();const next=await reader.read();if(next.done)break;buffer+=next.value;if(buffer.length>100000)throw Error('Oversized Director response');let n;while((n=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,n).trim();buffer=buffer.slice(n+1);if(!line)continue;const row=JSON.parse(line);if(row.error)throw Error('Director inference error');text+=row.message?.content||'';if(text.length>30000)throw Error('Director plan too large');if(row.done)final=row;}}}finally{reader.releaseLock();}
  if(buffer.trim()||!final||final.done_reason==='length')throw Error('Incomplete Director response; previous plan preserved');
+
+ return {text,final};
+ }
+ if(enhancement)update({enhancementAttempts:1});
+ let {text,final}=await infer();
+ if(enhancement){
+  try{readH3DraftEnhancement(enhancement.scene,text,enhancement.level);}
+  catch(error){
+   if(!(error instanceof H3EnhancementDetailError))throw error;
+   write("model-response-attempt-1.json",JSON.parse(text));
+   update({stage:"Expanding the Long draft with more visual detail",enhancementAttempts:2});
+   messages=[...messages,{role:"user",content:h3DraftExpansionReminder(enhancement.scene)}];
+   write("messages-expansion.json",messages);
+   ({text,final}=await infer());
+   readH3DraftEnhancement(enhancement.scene,text,enhancement.level);
+  }
+ }
  const resident=await (await fetch(base+'/api/ps',{signal:AbortSignal.timeout(5000)})).json();
  const model=resident.models?.find(m=>m.name===cfg.model);
  if(!model||model.size<=0||model.size_vram!==model.size||model.context_length!==8192)throw Error('Director did not verify full RTX 3060 residency');
@@ -107,7 +125,7 @@ async function main(){
  checkAccess();
  let plan=rawPlan;
  if(enhancement){
-   plan={prompt:readH3DraftEnhancement(enhancement.scene,text)};
+   plan={prompt:readH3DraftEnhancement(enhancement.scene,text,enhancement.level)};
  }else if(clipDirection){
    const repaired=repairVisualDialogueMarkup(rawPlan,clipDirection.styleLabel);
    const result=compileH3SceneDirection(JSON.stringify(repaired),clipDirection.context,{shotFlow:clipDirection.shotFlow,styleLabel:clipDirection.styleLabel});

@@ -1,3 +1,4 @@
+import {longDraft} from "../fixtures/h3LongDraft";
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 import {NextRequest} from 'next/server';
 const m=vi.hoisted(()=>({qwen:vi.fn(),cloud:vi.fn(),local:true}));
@@ -9,7 +10,7 @@ vi.mock('@/lib/openai/provider',()=>({createOpenAIText:m.cloud,openAIEnabled:()=
 import {POST} from '@/app/api/enhance-prompt/route';
 const source='the boy tells his mother that he has been making fun of by his friends at school, the mother says im so sorry what have they been saying';
 const req=(extra:Record<string,unknown>={})=>new NextRequest('http://localhost/api/enhance-prompt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:source,purpose:'h3-scene-draft',...extra})});
-beforeEach(()=>{vi.clearAllMocks();m.local=true;m.qwen.mockResolvedValue(Response.json({response:JSON.stringify({enhancedPrompt:'The boy confides in his mother about being mocked at school. His mother says [[SLR_DIALOGUE_1]]'})}));});
+beforeEach(()=>{vi.clearAllMocks();m.local=true;m.qwen.mockImplementation(async(_endpoint,payload)=>Response.json({response:JSON.stringify({enhancedPrompt:(payload.prompt.includes('200–300')?longDraft+' ':'')+'The boy confides in his mother about being mocked at school. His mother says [[SLR_DIALOGUE_1]]'})}));});
 describe('H3 Enhance API with protected server-side dialogue rendering',()=>{
  it.each(['short','medium','long'])('uses the dedicated local provider and typed description schema for %s',async level=>{const r=await POST(req({enhanceLevel:level})),b=await r.json();expect(r.status).toBe(200);expect(b.ok).toBe(true);expect(b.provider).toBe('local3060');expect(b.enhancedPrompt).toContain('im so sorry what have they been saying');const [endpoint,payload,options]=m.qwen.mock.calls[0];expect(endpoint).toBe('/api/generate');expect(options.model).toBe('qwen3.5:4b');expect(payload.format.required).toEqual(['enhancedPrompt']);expect(payload.prompt).not.toContain('im so sorry');expect(payload.options.num_predict).toBeGreaterThanOrEqual(350);expect(m.cloud).not.toHaveBeenCalled();});
  it('retains the original exactly and reports failure for an invented output slot',async()=>{m.qwen.mockResolvedValue(Response.json({response:JSON.stringify({narrative:{description_99:'A changed scene'}})}));const r=await POST(req()),b=await r.json();expect(r.status).toBeGreaterThanOrEqual(400);expect(b.ok).toBe(false);expect(b.originalPrompt).toBe(source);expect(b.enhancedPrompt).toBeUndefined();});
@@ -18,3 +19,17 @@ describe('H3 Enhance API with protected server-side dialogue rendering',()=>{
 });
 
 it('never silently spills H3 enhancement onto a rendering GPU or paid provider when its dedicated lane is disabled',async()=>{m.local=false;const r=await POST(req()),b=await r.json();expect(r.status).toBe(503);expect(b.originalPrompt).toBe(source);expect(m.qwen).not.toHaveBeenCalled();expect(m.cloud).not.toHaveBeenCalled();});
+
+it('retries an underdeveloped Long answer once using the original draft and no cloud fallback',async()=>{
+ m.qwen.mockResolvedValueOnce(Response.json({response:JSON.stringify({enhancedPrompt:'The boy confides in his mother. His mother says [[SLR_DIALOGUE_1]]'})}));
+ const response=await POST(req({enhanceLevel:'long'})),body=await response.json();
+ expect(body.ok).toBe(true);expect(m.qwen).toHaveBeenCalledTimes(2);expect(m.qwen.mock.calls[1][1].prompt).toContain('ORIGINAL scene idea');expect(m.qwen.mock.calls[1][1].prompt).toContain('the boy tells his mother that');expect(m.cloud).not.toHaveBeenCalled();
+});
+it('never retries indefinitely or passes off a short paraphrase as Long',async()=>{
+ m.qwen.mockImplementation(async()=>Response.json({response:JSON.stringify({enhancedPrompt:'The boy confides in his mother. His mother says [[SLR_DIALOGUE_1]]'})}));
+ const body=await(await POST(req({enhanceLevel:'long'}))).json();expect(body.ok).toBe(false);expect(body.error).toContain('did not expand');expect(body.originalPrompt).toBe(source);expect(body.enhancedPrompt).toBeUndefined();expect(m.qwen).toHaveBeenCalledTimes(2);expect(m.cloud).not.toHaveBeenCalled();
+});
+it('does not use the detail retry to conceal changed dialogue',async()=>{
+ m.qwen.mockImplementation(async()=>Response.json({response:JSON.stringify({enhancedPrompt:'The mother says something different.'})}));
+ const body=await(await POST(req({enhanceLevel:'long'}))).json();expect(body.ok).toBe(false);expect(m.qwen).toHaveBeenCalledTimes(1);
+});
