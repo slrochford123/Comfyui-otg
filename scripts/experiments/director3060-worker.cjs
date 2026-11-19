@@ -5,7 +5,7 @@ const {once}=require('node:events');
 const {labRoot}=require('../../lib/experiments/store.ts');
 const {directorRoot,director3060Runtime,directorMessages,validateDirectorRevision,directorResponseSchema,nsfwPlanMessages}=require('../../lib/experiments/director3060.ts');
 const {nsfwClipMessages}=require('../../lib/experiments/nsfwClipDirection.ts');
-const {h3DraftExpansionReminder,h3DraftEnhancementInstructions,h3DraftEnhancementInput,h3DraftEnhancementSchema,readH3DraftEnhancement}=require('../../lib/h3DraftEnhancement.ts');
+const {H3EnhancementDetailError,h3DraftExpansionReminder,h3DraftEnhancementInstructions,h3DraftEnhancementInput,h3DraftEnhancementSchema,readH3DraftEnhancement}=require('../../lib/h3DraftEnhancement.ts');
 const {compileH3SceneDirection,h3SceneDirectionSchema,validateH3DirectedDialogue}=require('../../lib/openai/h3SceneDirection.ts');
 const {acquireExternalMediaGpuChoice,tickMediaGpuQueue,getMediaQueueJob}=require('../../lib/workers/mediaGpuQueue.ts');
 const {assertSharedMediaGpuOwned}=require('../../lib/workers/mediaGpuAdmission.ts');
@@ -92,7 +92,7 @@ async function main(){
    update({peakGpuMiB:peak});
  }catch(e){abort.abort(e);}finally{monitorBusy=false;}},4000);
  async function infer(){
- const response=await fetch(base+'/api/chat',{method:'POST',headers:{'content-type':'application/json'},signal:AbortSignal.any([abort.signal,AbortSignal.timeout(600000)]),body:JSON.stringify({model:cfg.model,messages,stream:true,think:false,format,keep_alive:'30s',options:{seed:request.settings.seed,temperature:enhancement?.level==='short'?.25:enhancement?.level==='medium'?.35:enhancement?.level==='long'?.3:.6,num_ctx:8192,num_predict:2200}})});
+ const response=await fetch(base+'/api/chat',{method:'POST',headers:{'content-type':'application/json'},signal:AbortSignal.any([abort.signal,AbortSignal.timeout(600000)]),body:JSON.stringify({model:cfg.model,messages,stream:true,think:false,format,keep_alive:'30s',options:{seed:request.settings.seed,temperature:enhancement?.level==='short'?.25:enhancement?.level==='medium'?.35:.6,num_ctx:8192,num_predict:2200}})});
  if(!response.ok)throw Error('Director inference HTTP '+response.status);
  let text='',buffer='',final;
  const reader=response.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -104,16 +104,16 @@ async function main(){
  if(enhancement)update({enhancementAttempts:1});
  let {text,final}=await infer();
  if(enhancement){
-  // Reject damaged dialogue before any revision. Long receives one grounded review.
-  readH3DraftEnhancement(enhancement.scene,text);
-  if(enhancement.level==='long'){
+  try{readH3DraftEnhancement(enhancement.scene,text,enhancement.level);}
+  catch(error){
+   if(!(error instanceof H3EnhancementDetailError))throw error;
    write("model-response-attempt-1.json",JSON.parse(text));
-   update({stage:"Checking the Long draft against the original scene",enhancementAttempts:2});
-   messages=[...messages,{role:"assistant",content:text},{role:"user",content:h3DraftExpansionReminder(enhancement.scene)}];
+   update({stage:"Expanding the Long draft with more visual detail",enhancementAttempts:2});
+   messages=[...messages,{role:"user",content:h3DraftExpansionReminder(enhancement.scene)}];
    write("messages-expansion.json",messages);
    ({text,final}=await infer());
+   readH3DraftEnhancement(enhancement.scene,text,enhancement.level);
   }
-  readH3DraftEnhancement(enhancement.scene,text,enhancement.level);
  }
  const resident=await (await fetch(base+'/api/ps',{signal:AbortSignal.timeout(5000)})).json();
  const model=resident.models?.find(m=>m.name===cfg.model);
