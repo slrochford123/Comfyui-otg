@@ -92,7 +92,7 @@ async function main(){
    update({peakGpuMiB:peak});
  }catch(e){abort.abort(e);}finally{monitorBusy=false;}},4000);
  async function infer(){
- const response=await fetch(base+'/api/chat',{method:'POST',headers:{'content-type':'application/json'},signal:AbortSignal.any([abort.signal,AbortSignal.timeout(600000)]),body:JSON.stringify({model:cfg.model,messages,stream:true,think:false,format,keep_alive:'30s',options:{seed:request.settings.seed,temperature:enhancement?.level==='short'?.25:enhancement?.level==='medium'?.35:.6,num_ctx:8192,num_predict:2200}})});
+ const response=await fetch(base+'/api/chat',{method:'POST',headers:{'content-type':'application/json'},signal:AbortSignal.any([abort.signal,AbortSignal.timeout(600000)]),body:JSON.stringify({model:cfg.model,messages,stream:true,think:false,format,keep_alive:'30s',options:{seed:request.settings.seed,temperature:enhancement?.level==='short'?.25:enhancement?.level==='medium'?.35:enhancement?.level==='long'?.3:.6,num_ctx:8192,num_predict:2200}})});
  if(!response.ok)throw Error('Director inference HTTP '+response.status);
  let text='',buffer='',final;
  const reader=response.body.pipeThrough(new TextDecoderStream()).getReader();

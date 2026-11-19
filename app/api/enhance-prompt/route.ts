@@ -550,7 +550,7 @@ async function qwenGenerateEnhancement(
         additionalProperties: false,
       },
       options: {
-        temperature: temperatureForLevel(level),
+        temperature: h3Draft && level === "long" ? 0.3 : temperatureForLevel(level),
         top_p: 0.85,
         repeat_penalty: 1.08,
         num_predict: h3Draft ? h3DraftEnhancementTokens(prompt,level) : numPredictForLevel(level),
