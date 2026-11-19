@@ -216,7 +216,7 @@ export function requestStoryMedia(input: {ownerKey:string;projectId:string;sourc
     :expanded && command.operation==="edit" && story3060EditEnabled()?story3060EditProfile
     :expanded && command.operation==="voice" && storyVoiceAutoEnabled() && !input.manualVoice?storyVoiceAutoProfile
     :expanded && command.operation==="voice" && story3060SpeechEnabled() && (!command.language || command.language==="Auto" || command.language==="English")?story3060VoiceProfile:undefined;
-  return createStoryMedia({...input,command,profile,...(cloud?{imageAccountId}:{})},requestKey);
+  return createStoryMedia({...input,command,profile,accountId:input.openAIImageAccountId,...(cloud?{imageAccountId}:{})},requestKey);
 }
 /** Direct, explicit result-card action. The replay key survives a lost HTTP response. */
 export function requestStoryMediaFromCard(ownerKey:string,projectId:string,body:Record<string,unknown>,accountId?:string) {
@@ -283,7 +283,7 @@ export function retryStoryMedia(record:StoryMediaRecord,requestKey:string,accoun
   if(record.profile===storyOpenAIImageProfile && (!accountId || !storyOpenAIImagesEnabled(accountId)))
     throw Error("The paid OpenAI image option is unavailable for this account.");
   if(record.command.operation==="music"||record.command.operation==="effects")requireStoryAudioEngine(record.command.operation);
-  return createStoryMedia(record,`retry:${record.id}:${requestKey}`).record;
+  return createStoryMedia({...record,accountId:accountId||record.accountId},`retry:${record.id}:${requestKey}`).record;
 }
 export function nameStoryMedia(record:StoryMediaRecord,name:string) {
   if(record.status!=="needs_name")return record;
@@ -431,7 +431,7 @@ export async function executeStoryMedia(record:StoryMediaRecord,cookie:string) {
         mode:first?"h3-image-to-video":ref?"h3-reference-to-video":"h3-text-to-video",quality:"sh",orientation:"landscape",durationSeconds:native,prompt:compiled,seed:randomInt(0,2**32),targetBackend:await requestedH3MediaGpu(),
         h3Settings:{renderMode:"turbo",checkpointMode:"fasth3",combatLoraEnabled:false,refMod:{enabled:false,strength:"balanced"},motionLab:{enabled:false}},
         optionalLoras:[],firstImage:first?ref:null,lastImage:null,images:ref&&!first?[ref]:[],videos:[],audios:[],
-      }));
+      },record.ownerKey));
       backendJob={id:job.id};
       record=updateStoryMedia(record,{backendJob,status:"running"});
       startH3DirectJob(job);return;
@@ -541,7 +541,7 @@ export async function refreshStoryMedia(record:StoryMediaRecord):Promise<StoryMe
     if(isStory3060Visual(record.profile)){
       const output=await collectStory3060Image(record,storyMediaRoot(record));
       if("filePath" in output&&output.filePath)return finishStoryMedia(record,output.filePath);
-      if(output.error)return updateStoryMedia(record,output.unknown?{error:output.error}
+      if(output.error)return updateStoryMedia(record,("unknown" in output&&output.unknown)?{error:output.error}
         :record.cancelRequested?{status:"canceled",error:null}:{status:"failed",error:output.error});
       return record;
     }

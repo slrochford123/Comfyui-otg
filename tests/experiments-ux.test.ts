@@ -5,6 +5,9 @@ import {createSession,labRoot,reserveAsset,validateSettings,withLab} from "@/lib
 import {labFinalPrompt} from "@/lib/experiments/creative";
 import {GET as preview} from "@/app/api/h3/nsfw/preview/route";
 import {GET as poll,POST as build} from "@/app/api/h3/nsfw/prompt/route";
+vi.mock("@/lib/experiments/director3060",()=>({director3060Runtime:()=>({}),huihuiDirectorAvailable:()=>true}));
+vi.mock("node:child_process",async original=>({...await original<typeof import("node:child_process")>(),spawn:()=>{const e=new EventEmitter();Object.assign(e,{unref:()=>{}});queueMicrotask(()=>e.emit("spawn"));return e;}}));
+import {EventEmitter} from "node:events";
 const state=vi.hoisted(()=>({actor:"owner-a",job:null as any,ensure:vi.fn(),kick:vi.fn()}));
 vi.mock("next/headers",()=>({cookies:async()=>({get:()=>state.actor?{value:state.actor}:undefined})}));
 vi.mock("@/lib/auth/jwt",()=>({verifySession:async(value:string)=>({sub:value})}));
@@ -27,13 +30,15 @@ it("requires approval and owner identity for previews; supports private ranges a
  const r=await preview(req('/api/h3/nsfw/preview?jobId='+id,undefined,{Range:"bytes=0-6"}));expect(r.status).toBe(206);expect(await r.text()).toBe("preview");expect(r.headers.get('cache-control')).toBe('private, no-store');expect((await preview(req('/api/h3/nsfw/preview?jobId=../../private'))).status).toBe(400);
 });
 it("does not follow a preview symlink or leak its target",async()=>{const {id,dir}=ownPreview();fs.unlinkSync(path.join(dir,'preview.mp4'));fs.symlinkSync('/etc/passwd',path.join(dir,'preview.mp4'));const r=await preview(req('/api/h3/nsfw/preview?jobId='+id));expect(r.status).not.toBe(200);expect(await r.text()).not.toMatch(/passwd|root:/);});
-it("queues the exact 2-15 second prompt context through the existing guarded Qwen scheduler",async()=>{
- let s=createSession('owner-a','prism-pika');withLab(db=>db.prepare('UPDATE sessions SET settings=? WHERE id=?').run(JSON.stringify({...s.settings,prompt:'A paper boat',seconds:13,stylePresetId:'anime'}),s.id));
- const id=crypto.randomUUID(),r=await build(req('/api/h3/nsfw/prompt',{sessionId:s.id,requestId:id}));expect(r.status).toBe(202);expect(state.ensure).toHaveBeenCalledWith(expect.objectContaining({id,ownerKey:'owner-a',requestKind:'h3-nsfw-prompt',keepAlive:0,executionTimeoutMs:120000}));expect(state.ensure.mock.calls[0][0].payload.messages[0].content).toContain('exactly 13 seconds');expect(state.kick).toHaveBeenCalledTimes(1);
- state.actor='owner-b';expect((await build(req('/api/h3/nsfw/prompt',{sessionId:s.id,requestId:crypto.randomUUID()}))).status).toBe(404);
- state.actor='owner-a';expect((await build(req('/api/h3/nsfw/prompt',{sessionId:s.id,requestId:id},{Origin:'https://other.invalid'}))).status).toBe(403);
+it("queues Huihui with locked duration/style and deduplicates retries",async()=>{
+ const s=createSession('owner-a','prism-pika');withLab(db=>db.prepare('UPDATE sessions SET settings=? WHERE id=?').run(JSON.stringify({...s.settings,prompt:'A paper boat',seconds:13,stylePresetId:'anime'}),s.id));
+ const id=crypto.randomUUID(),r=await build(req('/api/h3/nsfw/prompt',{sessionId:s.id,requestId:id,message:'Keep the exact dialogue'}));expect(r.status).toBe(202);
+ const dir=path.join(labRoot(),'jobs',id),request=JSON.parse(fs.readFileSync(path.join(dir,'request.json'),'utf8'));expect(request.model).toBe('h3-nsfw-prompt');expect(request.settings.directorModel).toBe('huihui9b');expect(JSON.parse(request.settings.prompt)).toMatchObject({duration:13,direction:'Keep the exact dialogue'});expect(JSON.parse(request.settings.prompt).lockedStyle).toMatch(/anime/i);expect(state.ensure).not.toHaveBeenCalled();
+ expect((await build(req('/api/h3/nsfw/prompt',{sessionId:s.id,requestId:id}))).status).toBe(202);
+ state.actor='owner-b';expect((await poll(req('/api/h3/nsfw/prompt?id='+id))).status).toBe(404);
+ state.actor='owner-a';fs.writeFileSync(path.join(dir,'result.json'),JSON.stringify({prompt:'A paper boat.',reply:'Ready'}));fs.writeFileSync(path.join(dir,'status.json'),JSON.stringify({state:'completed',cleanedUp:true}));const result=await(await poll(req('/api/h3/nsfw/prompt?id='+id))).json();expect(result.prompt.indexOf('A paper boat.')).toBeGreaterThan(0);expect(result.prompt).toMatch(/anime/i);
+ expect((await build(req('/api/h3/nsfw/prompt',{sessionId:s.id,requestId:id},{Origin:'https://other.invalid'}))).status).toBe(403);
 });
-it("does not expose another owner's prompt suggestion",async()=>{const id=crypto.randomUUID();state.job={ownerKey:'owner-b',requestKind:'h3-nsfw-prompt',status:'completed',responseBody:JSON.stringify({message:{content:'Private words'}})};expect((await poll(req('/api/h3/nsfw/prompt?id='+id))).status).toBe(404);state.job.ownerKey='owner-a';const r=await poll(req('/api/h3/nsfw/prompt?id='+id));expect((await r.json()).prompt).toBe('Private words');});
-it("retains creative options, strips untrusted LoRA fields and appends styles/triggers without changing raw text",()=>{
- const s=createSession('owner-a','prism-pika');const v=validateSettings({...s.settings,prompt:'A boat',stylePresetId:'anime',cameraFeel:'Static composition',loras:[{id:'style-3d',strength:.6,path:'/arbitrary/file'}]});expect(v.loras).toEqual([{id:'style-3d',strength:.6}]);expect(labFinalPrompt(v,['3dsrx'])).toMatch(/anime/i);expect(labFinalPrompt(v,['3dsrx'])).toContain('3dsrx');expect(v.prompt).toBe('A boat');for(const loras of [[{id:'../bad',strength:1}],[{id:'valid',strength:null}],Array.from({length:7},(_,i)=>({id:'l'+i,strength:1}))])expect(()=>validateSettings({...s.settings,loras})).toThrow();expect(()=>validateSettings({...s.settings,visualStyle:['Anime']})).toThrow();
+it("retains creative options, strips untrusted LoRA fields and prepends styles and appends triggers without changing raw text",()=>{
+ const s=createSession('owner-a','prism-pika');const v=validateSettings({...s.settings,prompt:'A boat',stylePresetId:'anime',cameraFeel:'Static composition',loras:[{id:'style-3d',strength:.6,path:'/arbitrary/file'}]});expect(v.loras).toEqual([{id:'style-3d',strength:.6}]);expect(labFinalPrompt(v,['3dsrx'])).toMatch(/anime/i);expect(labFinalPrompt(v,['3dsrx'])).toContain('3dsrx');expect(v.prompt).toBe('A boat');for(const loras of [[{id:'../bad',strength:1}],[{id:'valid',strength:null}]])expect(()=>validateSettings({...s.settings,loras})).toThrow();expect(()=>validateSettings({...s.settings,visualStyle:['Anime']})).toThrow();
 });

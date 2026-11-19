@@ -22,6 +22,8 @@ export type VoiceStudioEntry = {
   // Optional: when the reference was uploaded as a video, keep the original video file path too
   // (still under samples/<voiceId>/...). The clone/transcribe pipelines always use refAudioRel.
   refVideoRel?: string;
+  // Provider provenance for an approved, separately versioned designed voice.
+  design?: Record<string, unknown>;
 
   createdAt: string;
   updatedAt: string;

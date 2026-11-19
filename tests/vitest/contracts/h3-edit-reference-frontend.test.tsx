@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import H3VideoEditPanel from "@/app/app/components/H3VideoEditPanel";
 import H3StudioControls from "@/app/app/components/H3StudioControls";
@@ -32,14 +32,14 @@ function reviewBody() { return JSON.parse(server.mock.calls.findLast(([url, init
 describe("H3 Edit Video tab uses the attached reference architecture", () => {
   it("shows only source, trim, MP, prompt and one direct Create action", async () => {
     const view = render(<H3VideoEditPanel authenticatedOwnerKey="qa" onBack={vi.fn()} />);
-    expect(screen.getByLabelText("Megapixel size")).toBeVisible();
-    expect(screen.getAllByRole("option").map(v => v.textContent)).toEqual(["0.2 MP", "0.6 MP", "1 MP"]);
+    expect(screen.getByRole("group", {name:"Megapixel size"})).toBeVisible();
+    expect(within(screen.getByRole("group", {name:"Megapixel size"})).getAllByRole("button").map(v => v.textContent)).toEqual(["0.2 MP", "0.6 MP", "1 MP"]);
     for (const name of [/Auto Mode/, /Manual Mode/, /Review/, /Accept/, /Native/, /Select 5 seconds/]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Editing workflow")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Aspect")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Duration")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("H3 video edit prompt"), { target: { value: "Make the coat blue" } });
-    fireEvent.change(screen.getByLabelText("Megapixel size"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button",{name:"1 MP",exact:true}));
     fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files: [new File(["video"], "source.mp4", { type: "video/mp4" })] } });
     await screen.findByText(/Full video ready/);
     expect(screen.getByRole("button", { name: "Create Video" })).toBeEnabled();
@@ -49,7 +49,7 @@ describe("H3 Edit Video tab uses the attached reference architecture", () => {
     const calls = server.mock.calls.filter(([url]) => url === "/api/h3/video-edit/simple");
     expect(calls).toHaveLength(1);
     expect(JSON.parse(calls[0][1].body)).toMatchObject({ sourceId: "selection", prompt: "Make the coat blue", quality: "1" });
-    expect(Object.keys(JSON.parse(calls[0][1].body)).sort()).toEqual(["backend", "prompt", "quality", "requestId", "sourceId"]);
+    expect(Object.keys(JSON.parse(calls[0][1].body)).sort()).toEqual(["backend", "prompt", "quality", "requestId", "rifeInterpolation60Fps", "sourceId", "upscale1080p"]);
     expect(screen.getByRole("link", { name: "Download Video" })).toHaveAttribute("href", "/api/h3/generation/media?jobId=job&download=1");
     expect(screen.getByRole("button", { name: "Expand Video" })).toBeVisible();
     expect(screen.getByText(/Saved to Gallery/)).toBeVisible();
@@ -82,7 +82,7 @@ describe("H3 Edit Video tab uses the attached reference architecture", () => {
     const view = render(<H3VideoEditPanel authenticatedOwnerKey="qa" onBack={vi.fn()} />);
     fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files: [new File(["image"], "bad.jpg", { type: "image/jpeg" })] } });
     expect(screen.getByRole("alert")).toHaveTextContent("Choose a video");
-    expect(screen.getByLabelText("Megapixel size")).toBeVisible();
+    expect(screen.getByRole("group", {name:"Megapixel size"})).toBeVisible();
     expect(screen.getByRole("button", { name: "Create Video" })).toBeDisabled();
   });
   it("keeps cancelling non-terminal and offers a new request only after backend cancellation", async () => {

@@ -36,7 +36,7 @@ describe("H3 Studio redesign contracts", () => {
     expect(panel).toContain('id: "h3-realism"');
     expect(panel).toContain('id: "h3-body-swap"');
     expect(panel).toContain('id: "h3-refmods"');
-    expect(panel).toContain("grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6");
+    expect(panel).toContain("H3WorkspaceTabs");
     expect(panel).toContain('data-otg="h3-special-mode-quarantine"');
     expect(panel).toContain('/api/h3/special/realism/generation');
     expect(panel).toContain('/api/h3/special/body-swap/generation');
@@ -54,20 +54,7 @@ describe("H3 Studio redesign contracts", () => {
     expect(workflows).not.toContain("h3-refmods");
   });
 
-  it("uses the shared durable Production Ollama operation and explicit review UI", () => {
-    const panel = read("app/app/components/H3Panel.tsx");
-    const route = read("app/api/h3/prompt/route.ts");
-    expect(route).toContain("enqueueProductionV2PromptOperation");
-    expect(route).toContain("createProductionV2Scene");
-    expect(panel).toContain("Your Original");
-    expect(panel).toContain("Ollama Suggestion");
-    expect(panel).toContain("Keep Original");
-    expect(panel).toContain("Use Suggested Prompt");
-    expect(panel).toContain(
-      "The optional Builder prompt changed.",
-    );
-    expect(panel).toContain("Use Current Raw Prompt");
-  });
+  it("retains durable prompt services and the current explicit scene-direction action",()=>{const panel=read("app/app/components/H3Panel.tsx"),route=read("app/api/h3/prompt/route.ts");expect(route).toContain("enqueueProductionV2PromptOperation");expect(route).toContain("createProductionV2Scene");expect(panel).toContain("Direct Scene");expect(panel).toContain("Exact Final Prompt");expect(panel).toContain("/api/openai-ai/h3-director");});
 
   it("assembles protected image, video-audio, and standalone-audio mappings deterministically", () => {
     const locked = buildH3StudioLockedReferences({

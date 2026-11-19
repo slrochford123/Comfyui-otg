@@ -80,15 +80,15 @@ describe("OpenAI Storyteller and H3 Director provider contract", () => {
 
     expect(route).toContain('useCase: "h3-director"');
     expect(route).toContain("openAIModels().h3");
-    expect(route).toContain("Do not alter locked generation settings");
-    expect(route).toContain("LoRAs:");
+    expect(read("lib/openai/h3SceneDirection.ts")).toContain("h3SceneDirectionInstructions");
+    expect(read("lib/openai/h3SceneDirection.ts")).toContain("rendering settings");
     expect(route).toContain("upsertH3DirectorConversation");
     expect(route).toContain("requireSessionUser");
 
-    expect(panel).toContain('data-otg="h3-openai-director"');
+    expect(panel).toContain('aria-label="H3 Scene Director"');
     expect(panel).toContain("/api/openai-ai/h3-director");
     expect(panel).toContain("replaceOriginal(nextPrompt)");
-    expect(panel).toContain("Prompt version history");
+    expect(panel).toContain("h3DirectorPromptVersions");
     expect(panel).toContain("h3DirectorConversationId");
 
     expect(persistence).toContain("h3DirectorPromptVersions");

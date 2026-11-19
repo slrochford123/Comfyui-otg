@@ -1,7 +1,8 @@
+import { videoCharacterProducerState } from "./videoCharacterProducer";
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { OTG_DATA_ROOT, safeSegment } from "@/lib/paths";
 import { MEDIA_GPUS as RENDER_GPUS, PHYSICAL_MEDIA_GPUS as MEDIA_GPUS, GPU_UUIDS, mediaGpuLabel, type PhysicalMediaGpu as MediaGpu, type MediaGpu as RenderGpu } from "@/lib/mediaGpuRouting";
 import { resolveComfyPhysicalGpu, detectShawnExternalOccupancy } from "./clusterGpu";
@@ -9,17 +10,22 @@ import { acquireResourceLock, heartbeatResourceLock, releaseResourceLock, listRe
 import { voiceGpuFileBusy } from "./voiceGpuFileLease";
 import { privateMediaFeatureEnabled } from "@/lib/privateMediaRuntime";
 import { requireStorageHeadroom } from "@/lib/storageAdmission";
-import {acquireSharedMediaGpu,releaseSharedMediaGpu,sharedMediaGpuAvailable,sharedMediaAdmissionConfigured,registerSharedMediaTicket,cancelSharedMediaTicket,assertSharedMediaGpuOwned,shared3060FenceEnabled} from "./mediaGpuAdmission";
+import {acquireSharedMediaGpu,releaseSharedMediaGpu,sharedMediaGpuAvailable,sharedMediaAdmissionConfigured,registerSharedMediaTicket,cancelSharedMediaTicket,assertSharedMediaGpuOwned,assertH3QualificationSharedGrant,shared3060FenceEnabled} from "./mediaGpuAdmission";
 import { inspectComfyWorkerInstance, sameComfyWorker, type ComfyWorkerInstance } from "./comfyWorkerInstance";
 import {physicalGpuState,physicalGpuCapacity} from "./physicalGpu";
 import {check3060Gate,local3060Enabled,local3060Headroom,unload3060Ollama,verify3060Ollama,localJson,LOCAL_OLLAMA,LOCAL_COMFY,local3060Headers,type Local3060Fence} from "./local3060";
 import { qualifyPreparedComfyGraph } from "./comfyGraphQualification";
 import { readDispatchProcess, dispatchProcessState, type DispatchProcess } from "./dispatchProcess";
+import type { H3StudioLeasedSubmission } from "@/lib/h3StudioQualification";
+import type { H3QualificationBridgeRoute } from "@/lib/h3QualificationBridgeRoute";
+import { assertH3QualificationSharedAdmission } from "@/lib/h3QualificationSharedAdmission";
 
 export type MediaQueueStatus = "queued" | "dispatching" | "running" | "unknown" | "completed" | "failed" | "canceled";
 export type ComfyMediaPayload = { baseUrl: string; body: Record<string, unknown>; workerId: string;
   preSubmitCleanup?: "free" | null; releaseIdlePeer?: boolean;
-  producer?: { kind: "direct" | "refmods-generation" | "realism" | "body-swap" | "production-studio-finish" | "story-3060-image" | "story-3060-audio" | "story-3060-voice" | "story-3060-video"; ownerKey: string; id: string;projectId?:string } };
+  qualification?: H3StudioLeasedSubmission;
+  characterVoicesBridgeRoute?: H3QualificationBridgeRoute;
+  producer?: { kind: "video-character" | "direct" | "refmods-generation" | "realism" | "body-swap" | "production-studio-finish" | "story-3060-image" | "story-3060-audio" | "story-3060-voice" | "story-3060-video"; ownerKey: string; id: string;projectId?:string } };
 export type AudioMediaPayload = { owner: string; sessionId: string; jobId: string };
 export type ExternalMediaPayload = { pid:number; operation:string; eligibleGpus?:MediaGpu[];caller?:DispatchProcess;backend?:DispatchProcess };
 export type MediaQueueJob = { id: string; sequence: number; gpu: MediaGpu; kind: "comfy" | "audio" | "external";
@@ -31,6 +37,11 @@ export type MediaQueueJob = { id: string; sequence: number; gpu: MediaGpu; kind:
 type Row = Omit<MediaQueueJob,"payload"|"lease"|"workerInstance"|"dispatchProcess"> & {payload: string; lease: string | null; workerInstance: string | null; dispatchProcess: string | null};
 export type MediaGpuReadiness = { ready: boolean; reason: string };
 export const mediaQueueEnabled = () => privateMediaFeatureEnabled("OTG_MEDIA_GPU_ROUTING");
+export function requireH3QualificationSharedQueue(route?: H3QualificationBridgeRoute) {
+  if (!mediaQueueEnabled() || process.env.OTG_ENV !== "test" || !sharedMediaAdmissionConfigured("rtx3090"))
+    throw Error("Qualification requires the enabled TEST durable media queue and shared RTX 3090 admission.");
+  return route && assertH3QualificationSharedAdmission(route);
+}
 const active = ["dispatching", "running", "unknown"];
 const physical = (gpu: MediaGpu) => ({rtx3090:"shawn-3090",rtx5060ti:"slr-5060",rtx3060:"shawn-3060"} as const)[gpu];
 const lockId = (gpu: MediaGpu) => ({rtx3090:"gpu:shawn-3090",rtx5060ti:"gpu:slr-5060",rtx3060:`gpu:${GPU_UUIDS.rtx3060}`} as const)[gpu];
@@ -66,7 +77,7 @@ export function getMediaQueueJob(id: string): MediaQueueJob | null {
   return row ? decode(row) : null;
 }
 /** A boolean dispatcher flag alone must never bypass physical admission. */
-export function assertComfyMediaDispatch(input: {ownerId?: string; baseUrl: string; workerId: string; body: BodyInit | null | undefined}) {
+export function assertComfyMediaDispatch(input: {ownerId?: string; baseUrl: string; workerId: string; body: BodyInit | null | undefined; qualification?: H3StudioLeasedSubmission; characterVoicesBridgeRoute?: H3QualificationBridgeRoute}) {
   const job = input.ownerId ? getMediaQueueJob(input.ownerId) : null;
   if (!job || job.kind !== "comfy" || job.status !== "dispatching" || !job.lease
     || job.lease.lockId !== lockId(job.gpu)
@@ -75,13 +86,20 @@ export function assertComfyMediaDispatch(input: {ownerId?: string; baseUrl: stri
   const payload = job.payload as ComfyMediaPayload;
   if (payload.baseUrl !== input.baseUrl.replace(/\/+$/, "") || payload.workerId !== input.workerId
     || typeof input.body !== "string" || input.body !== JSON.stringify(payload.body)
+    || JSON.stringify(payload.qualification) !== JSON.stringify(input.qualification)
+    || JSON.stringify(payload.characterVoicesBridgeRoute) !== JSON.stringify(input.characterVoicesBridgeRoute)
     || resolveComfyPhysicalGpu(payload.baseUrl) !== physical(job.gpu)
     || !listResourceLocks().some(lock => lock.lockId === job.lease!.lockId
       && lock.ownerId === job.lease!.ownerId && lock.fencingToken === job.lease!.fencingToken))
     throw Error("Comfy dispatch does not match its reserved graph, worker and GPU.");
+  if (input.qualification && (job.gpu !== "rtx3090" || !job.admissionOwner || job.admissionPhase !== "executing"
+    || !Number.isSafeInteger(job.admissionTicket) || job.admissionTicket! <= 0 || !Number.isSafeInteger(job.admissionToken) || job.admissionToken! <= 0)) {
+    throw Error("Qualification requires the current shared GPU ticket and fencing token.");
+  }
 }
 export function mediaQueueMessage(promptId:string|null|undefined,fallback:string) {
   const job=promptId?getMediaQueueJob(promptId):null;
+  if(job?.status==="queued"&&job.error)return job.error;
   if(job?.status==="queued")return `Queued for ${mediaGpuLabel(job.gpu)}; waiting for earlier work to finish.`;
   if(job?.status==="unknown")return "Waiting for confirmation from the original GPU; no duplicate generation will be submitted.";
   return fallback;
@@ -169,7 +187,10 @@ export async function enqueueComfyMedia(payload: ComfyMediaPayload, onAccepted?:
   if (!resolved) throw Error("ComfyUI endpoint does not map to a known physical GPU.");
   const id = randomUUID();
   payload = {...payload,baseUrl:payload.baseUrl.replace(/\/+$/,""),body:{...payload.body,prompt_id:id}};
-  const bindBeforeEnqueue = payload.producer?.kind === "story-3060-audio";
+  if (payload.qualification && (resolved !== "shawn-3090" || payload.releaseIdlePeer !== false || payload.preSubmitCleanup
+    || payload.producer?.kind !== "direct" || payload.qualification.jobId !== payload.producer.id || payload.qualification.ownerKey !== payload.producer.ownerKey)) throw Error("Qualification must retain the original producer and non-displacing 3090 lease.");
+  if (payload.qualification) requireH3QualificationSharedQueue(payload.characterVoicesBridgeRoute);
+  const bindBeforeEnqueue = payload.producer?.kind === "story-3060-audio" || !!payload.qualification;
   if (bindBeforeEnqueue) await onAccepted?.(id);
   const job = enqueueMediaJob({id,gpu:resolved==="shawn-3060"?"rtx3060":resolved==="shawn-3090"?"rtx3090":"rtx5060ti",kind:"comfy",payload});
   // This is durable APPLICATION acceptance, not proof of Comfy execution.
@@ -177,9 +198,11 @@ export async function enqueueComfyMedia(payload: ComfyMediaPayload, onAccepted?:
   return Response.json({prompt_id:id,number:job.sequence,node_errors:{},otg_queue:"waiting-for-gpu"},{status:202});
 }
 function finish(job: MediaQueueJob, status: "completed"|"failed", error: string | null = null) {
-  update(job.id,status,error,null);
-  if(job.admissionToken!==null)database().prepare("UPDATE media_jobs SET admissionPhase='releasing' WHERE id=?").run(job.id);
-  if (job.lease) releaseResourceLock(job.lease.lockId,job.lease.ownerId,job.lease.fencingToken);
+  const changed = database().prepare(`UPDATE media_jobs SET status=?,error=?,updatedAt=?,lease=NULL,
+    admissionPhase=CASE WHEN admissionToken IS NOT NULL THEN 'releasing' ELSE NULL END
+    WHERE id=? AND status IN ('queued','dispatching','running','unknown') AND lease IS ?`)
+    .run(status,error,Date.now(),job.id,job.lease ? JSON.stringify(job.lease) : null).changes;
+  if (changed && job.lease) releaseResourceLock(job.lease.lockId,job.lease.ownerId,job.lease.fencingToken);
 }
 async function releaseCompletedAdmissions(gpus:readonly MediaGpu[]) {
   const rows=database().prepare(`SELECT * FROM media_jobs WHERE gpu IN (${gpus.map(()=>"?").join(",")}) AND admissionPhase='releasing' AND admissionToken IS NOT NULL LIMIT 32`).all(...gpus) as Row[];
@@ -231,6 +254,7 @@ function releaseLocalReservation(job:MediaQueueJob) {
 function producerState(job: MediaQueueJob): "active" | "terminal" | "unavailable" {
   if (job.kind !== "comfy") return "active";
   const payload = job.payload as ComfyMediaPayload, producer = payload.producer;
+  if (producer?.kind === "video-character") return videoCharacterProducerState(job, OTG_DATA_ROOT, process.env.OTG_ENV);
   if(job.gpu==="rtx3060"){
     if (producer?.kind === "story-3060-audio") {
       if (payload.workerId !== producer.kind || payload.body.client_id !== `story-3060-audio-${producer.id}`) return "unavailable";
@@ -298,6 +322,17 @@ function producerState(job: MediaQueueJob): "active" | "terminal" | "unavailable
   } catch { return "unavailable"; }
 }
 async function authorizeSharedDispatch(job:MediaQueueJob) {
+  const guarded = job.kind === "comfy" ? job.payload as ComfyMediaPayload : null;
+  if (guarded?.qualification) {
+    try {
+      requireH3QualificationSharedQueue(guarded.characterVoicesBridgeRoute);
+      if (job.gpu !== "rtx3090" || !job.admissionOwner || !Number.isSafeInteger(job.admissionTicket) || job.admissionTicket! <= 0)
+        throw Error("Qualification requires a shared RTX 3090 waiting ticket.");
+    } catch (error) {
+      finish(job, "failed", error instanceof Error ? error.message : "The shared qualification queue could not be verified.");
+      return false;
+    }
+  }
   if(!sharedMediaAdmissionConfigured(job.gpu)&&process.env.OTG_ENV==="test"&&job.gpu!=="rtx3060")return true;
   try {
     const grant=await acquireSharedMediaGpu(job.gpu,job.admissionOwner!,job.admissionTicket);
@@ -305,6 +340,8 @@ async function authorizeSharedDispatch(job:MediaQueueJob) {
       database().prepare("UPDATE media_jobs SET status='queued',lease=NULL,admissionPhase=NULL,admissionToken=NULL WHERE id=? AND status='dispatching' AND lease=? AND admissionPhase='admitting'").run(job.id,JSON.stringify(job.lease));
       releaseLocalReservation(job);return false;
     }
+    if (guarded?.qualification && (!Number.isSafeInteger(grant.token) || grant.token! <= 0))
+      throw Error("The shared qualification grant has no fencing token.");
     // The exact attempt's local fencing token prevents a delayed SSH response
     // from executing after another process recovered/requeued this admission.
     const changed=database().prepare("UPDATE media_jobs SET admissionToken=?,admissionPhase='executing' WHERE id=? AND status='dispatching' AND admissionPhase='admitting' AND lease=?")
@@ -349,7 +386,7 @@ async function reconcileComfy(job: MediaQueueJob) {
           if (payload.producer?.kind === "story-3060-audio") {
             const {publishStory3060Audio}=await import("@/lib/storyCreator/audio3060");
             await publishStory3060Audio(payload.producer,job.id,record);
-          } else {
+          } else if (payload.producer?.kind !== "video-character") {
             const {publishStory3060Image}=await import("@/lib/storyCreator/mediaExecution");
             await publishStory3060Image(payload.producer!,job.id,record);
           }
@@ -436,10 +473,15 @@ async function dispatch(job: MediaQueueJob) {
           job.workerInstance = observed.instance;
           database().prepare("UPDATE media_jobs SET workerInstance=?,workerConfirmed=NULL WHERE id=?").run(JSON.stringify(observed.instance),job.id);
         }
+      }, onPostAttempt: () => {
+        if (payload.qualification && payload.characterVoicesBridgeRoute) {
+          const authority = requireH3QualificationSharedQueue(payload.characterVoicesBridgeRoute)!;
+          assertH3QualificationSharedGrant(authority.ledgerPath, job.admissionOwner!, job.admissionTicket!, job.admissionToken!);
+        }
         postStarted = true;
       } });
     if (!response.ok) {
-      if (!postStarted || response.status < 500) finish(job,"failed",(await response.text()).slice(0,2000));
+      if (!postStarted || !payload.qualification && response.status < 500) finish(job,"failed",(await response.text()).slice(0,2000));
       else update(job.id,"unknown","Submission response was inconclusive; no automatic retry.");
       return;
     }
@@ -458,6 +500,16 @@ async function dispatch(job: MediaQueueJob) {
     database().prepare("UPDATE media_jobs SET submissionSettled=? WHERE id=?").run(Date.now(),job.id);
   }
 }
+type DispatchCleanup = {job:MediaQueueJob; owner:string};
+const pendingDispatchCleanup = new Map<string,DispatchCleanup>();
+
+function clearSettledDispatch({job,owner}:DispatchCleanup) {
+  // Only the exact process and lease that settled this attempt can clear it.
+  database().prepare("UPDATE media_jobs SET dispatchProcess=NULL WHERE id=? AND dispatchProcess=? AND (lease=? OR lease IS NULL)")
+    .run(job.id,owner,JSON.stringify(job.lease));
+  pendingDispatchCleanup.delete(job.id);
+}
+
 type QueueGlobals = typeof globalThis & {__otgMediaQueue?: {timer:ReturnType<typeof setInterval>;ticking:Set<string>;audio:Set<string>;external:Map<string,(release:()=>void)=>void>}};
 const globals = globalThis as QueueGlobals;
 /** Legacy local services can queue safely without pretending they have a 5060 runtime. */
@@ -466,7 +518,7 @@ export async function acquireExternalMediaGpu(gpu:MediaGpu,operation:string):Pro
   return result.release;
 }
 /** Endpoint/model qualification happens in the caller; only unstarted external jobs can move. */
-export async function acquireExternalMediaGpuChoice<G extends MediaGpu>(eligibleGpus:readonly G[],operation:string,waitMs?:number,signal?:AbortSignal):Promise<{gpu:G;release:()=>void;lease:ResourceLock;uncertain:()=>void;bindBackend:(pid:number)=>void;fence?:Local3060Fence}> {
+export async function acquireExternalMediaGpuChoice<G extends MediaGpu>(eligibleGpus:readonly G[],operation:string,waitMs?:number,signal?:AbortSignal):Promise<{jobId:string;gpu:G;release:()=>void;lease:ResourceLock;uncertain:()=>void;bindBackend:(pid:number)=>void;fence?:Local3060Fence}> {
   signal?.throwIfAborted();
   if(!mediaQueueEnabled())throw Error("The shared media queue is not enabled.");
   const choices=MEDIA_GPUS.filter(g=>(eligibleGpus as readonly MediaGpu[]).includes(g));
@@ -482,7 +534,7 @@ export async function acquireExternalMediaGpuChoice<G extends MediaGpu>(eligible
       ended=true;cleanup();
       const job=getMediaQueueJob(id);
       if(!job?.lease){release();reject(Error("GPU reservation was not confirmed"));return;}
-      resolve({gpu:job.gpu as G,release,lease:job.lease,fence:localFence(job),uncertain:()=>update(id,"unknown","External execution is unconfirmed. Reservation retained; do not retry until the original service is reconciled."),
+      resolve({jobId:id,gpu:job.gpu as G,release,lease:job.lease,fence:localFence(job),uncertain:()=>update(id,"unknown","External execution is unconfirmed. Reservation retained; do not retry until the original service is reconciled."),
         bindBackend:pid=>{
           const backend=readDispatchProcess(pid);
           const changed=database().prepare("UPDATE media_jobs SET payload=? WHERE id=? AND status='running' AND gpu='rtx3060'")
@@ -511,6 +563,9 @@ async function tickGroup(group:string,gpus:readonly MediaGpu[]){
   if (state?.ticking.has(group)) return;
   state?.ticking.add(group);
   try {
+    for (const entry of pendingDispatchCleanup.values()) {
+      if (gpus.includes(entry.job.gpu)) clearSettledDispatch(entry);
+    }
     await releaseCompletedAdmissions(gpus);
     await synchronizeWaitingTickets(gpus);
     // External operations have not uploaded worker-specific assets or bound a parent
@@ -530,7 +585,13 @@ async function tickGroup(group:string,gpus:readonly MediaGpu[]){
     for (const gpu of gpus) {
       let running = queuedMediaJobs().find(job=>job.gpu===gpu&&active.includes(job.status));
       if (running) {
-        if (running.lease) heartbeatResourceLock(running.lease.lockId,running.lease.ownerId,running.lease.fencingToken,300);
+        if (running.lease) {
+          const lease = running.lease;
+          const current = listResourceLocks().find(lock => lock.lockId===lease.lockId && lock.fencingToken===lease.fencingToken);
+          if (current && Date.now()-Date.parse(current.heartbeatAt)>=30_000) {
+            heartbeatResourceLock(lease.lockId,lease.ownerId,lease.fencingToken,300);
+          }
+        }
         // Admission, inventory checks and the final POST are asynchronous. A
         // polling tick (including another Node process) must not recover their
         // live owner or rewrite dispatching -> unknown before POST is possible.
@@ -580,9 +641,26 @@ async function tickGroup(group:string,gpus:readonly MediaGpu[]){
       }
       const waiting = orderedMediaWaiters(queuedMediaJobs().filter(job=>job.gpu===gpu&&job.status==="queued"),gpu)[0];
       if (waiting) {
+        if (waiting.kind === "comfy") {
+          const qualification = (waiting.payload as ComfyMediaPayload).qualification;
+          if (qualification) {
+            const { isOriginatingH3StudioLeaseProcess } = await import("@/lib/h3StudioQualification");
+            if (!isOriginatingH3StudioLeaseProcess(qualification)) {
+              if (dispatchProcessState(qualification.process) === "stopped") finish(waiting, "failed", "The local qualification process ended before dispatch. No render was submitted.");
+              continue;
+            }
+          }
+        }
         const producer = producerState(waiting);
         if (producer === "terminal") { cancelQueuedMediaJob(waiting.id); continue; }
-        if (producer === "unavailable") { update(waiting.id, "queued", "The original request cannot be verified; no render was submitted."); continue; }
+        if (producer === "unavailable") {
+          const message = "The original request cannot be verified; no render was submitted.";
+          if (waiting.error !== message) {
+            database().prepare("UPDATE media_jobs SET error=?,updatedAt=? WHERE id=? AND status='queued' AND lease IS NULL")
+              .run(message,Date.now(),waiting.id);
+          }
+          continue;
+        }
       }
       if(waiting?.kind==="external"&&!state?.external.has(waiting.id)){
         const pid=(waiting.payload as ExternalMediaPayload).pid;
@@ -597,20 +675,28 @@ async function tickGroup(group:string,gpus:readonly MediaGpu[]){
       // release the winning process's reentrant resource-lock token.
       const acquired = acquireResourceLock({lockId:lockId(gpu),ownerId:`${waiting.id}:${randomUUID()}`,ownerType:"job",workerId:"media-gpu-queue",resourceName:"media-render",ttlSeconds:300});
       if (!acquired.ok) continue;
-      const claimed = database().transaction(() => {
-        if (database().prepare("SELECT id FROM media_jobs WHERE gpu=? AND status IN ('dispatching','running','unknown')").get(gpu)) return false;
-        return database().prepare("UPDATE media_jobs SET status='dispatching',lease=?,updatedAt=?,admissionOwner=COALESCE(admissionOwner,?),admissionPhase=?,dispatchProcess=?,submissionSettled=NULL WHERE id=? AND gpu=? AND status='queued' AND lease IS NULL AND (admissionPhase IS NULL OR admissionPhase!='releasing') AND admissionTicket IS ?")
-          .run(JSON.stringify(acquired.lock),Date.now(),randomUUID(),sharedMediaAdmissionConfigured(gpu)?"admitting":null,dispatchOwner,waiting.id,gpu,waiting.admissionTicket).changes===1;
-      }).immediate();
-      if (!claimed) { releaseResourceLock(acquired.lock.lockId,acquired.lock.ownerId,acquired.lock.fencingToken); continue; }
-      const job = getMediaQueueJob(waiting.id)!;
+      let job: MediaQueueJob | null = null;
+      try {
+        job = database().transaction(() => {
+          if (database().prepare("SELECT id FROM media_jobs WHERE gpu=? AND status IN ('dispatching','running','unknown')").get(gpu)) return null;
+          const row = database().prepare("UPDATE media_jobs SET status='dispatching',lease=?,updatedAt=?,admissionOwner=COALESCE(admissionOwner,?),admissionPhase=?,dispatchProcess=?,submissionSettled=NULL WHERE id=? AND gpu=? AND status='queued' AND lease IS NULL AND (admissionPhase IS NULL OR admissionPhase!='releasing') AND admissionTicket IS ? RETURNING *")
+            .get(JSON.stringify(acquired.lock),Date.now(),randomUUID(),sharedMediaAdmissionConfigured(gpu)?"admitting":null,dispatchOwner,waiting.id,gpu,waiting.admissionTicket) as Row | undefined;
+          return row ? decode(row) : null;
+        }).immediate();
+      } finally {
+        if (!job) releaseResourceLock(acquired.lock.lockId,acquired.lock.ownerId,acquired.lock.fencingToken);
+      }
+      if (!job) continue;
       if (job.kind === "audio") state?.audio.add(job.id);
-      void dispatch(job).finally(()=>{
-        // Do not clear a successor's ownership if recovery replaced this claim.
-        database().prepare("UPDATE media_jobs SET dispatchProcess=NULL WHERE id=? AND dispatchProcess=? AND (lease=? OR lease IS NULL)")
-          .run(job.id,dispatchOwner,JSON.stringify(job.lease));
-        state?.audio.delete(job.id);
-      });
+      const entry = {job,owner:dispatchOwner};
+      void dispatch(job)
+        .catch(error => console.warn("Media GPU dispatch stopped; the original queue entry will be reconciled",job.id,error))
+        .then(()=>{
+          state?.audio.delete(entry.job.id);
+          pendingDispatchCleanup.set(entry.job.id,entry);
+          try { clearSettledDispatch(entry); }
+          catch { /* The next tick retries the exact same cleanup. */ }
+        });
     }
   } finally { state?.ticking.delete(group); }
 }
@@ -622,5 +708,6 @@ export function bootstrapMediaGpuQueue() {
 }
 export function closeMediaGpuQueueForTests() {
   if(globals.__otgMediaQueue)clearInterval(globals.__otgMediaQueue.timer);
+  pendingDispatchCleanup.clear();
   delete globals.__otgMediaQueue; connection?.close();connection=undefined;connectionPath="";
 }

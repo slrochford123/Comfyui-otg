@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 
 import { useMemo } from "react";
 
@@ -6,6 +7,7 @@ export type SpinTabId =
   | "gethelp"
   | "generate"
   | "h3"
+  | "director"
   | "testing"
   | "h3-admin"
   | "machine"

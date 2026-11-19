@@ -1,3 +1,4 @@
+import {isAdminOwner} from "@/lib/auth/adminOwner";
 import { isH3SingularityMode } from "@/lib/production/h3Settings";
 import fs from "node:fs";
 import crypto from "node:crypto";
@@ -178,8 +179,9 @@ function validAssetEvidence(value: H3StudioAssetEvidence | undefined): value is 
     && value.minStrength >= (registered?.minStrength ?? 0) && value.maxStrength <= (registered?.maxStrength ?? 2) && value.minStrength <= value.maxStrength;
 }
 /** Enrich the existing canonical policy store; never create a second writable catalog. */
-export function h3StudioCatalog(inventory: H3StudioInventory, evidence = readH3StudioEvidence(inventory.backend)): H3StudioCatalogItem[] {
+export function h3StudioCatalog(inventory: H3StudioInventory, evidence = readH3StudioEvidence(inventory.backend),ownerKey?:string): H3StudioCatalogItem[] {
   evidence = isH3StudioEvidenceV2(evidence) ? evidence : null;
+  const admin=isAdminOwner(ownerKey);
   const policies = readH3LoraCatalog().entries;
   const selected = h3Stage1cDecisions().selected.map<H3StudioCatalogItem>(entry => {
     const id = `civitai-${entry.modelId}-${entry.versionId}`;
@@ -188,14 +190,14 @@ export function h3StudioCatalog(inventory: H3StudioInventory, evidence = readH3S
     const sourceFile = record?.files.find(file => file.primary) || (record?.files.length === 1 ? record.files[0] : undefined);
     const proofSource = record?.files.find(file => proof && file.name === proof.filename.split("/").at(-1));
     const valid = validAssetEvidence(proof) && validH3StudioRights(proof.rights, evidence?.upstreamAuthorization.ownerKey) && !!proofSource && proofSource.bytes === proof.bytes && proofSource.sha256?.toLowerCase() === proof.sha256;
-    const production = h3StudioProduction();
+    const production = h3StudioProduction()||admin;
     const installedVersion = installedStage1c.entries.find(model => model.versionId === entry.versionId && model.modelId === entry.modelId);
     const registered = production ? policies.find(policy => policy.id === `stage1c-${entry.versionId}` || policy.filename === installedVersion?.filename) : undefined;
     const filename = production && registered ? registered.filename : valid ? proof.filename : entry.fileNames || sourceFile?.name || null;
     // Exact path first; basename is only a discovery lead, never an enablement grant.
     const matches = filename ? [...inventory.loras].filter(name => name === filename || name.split("/").at(-1) === filename) : [];
     const installed = matches.length > 0;
-    const legacy = (valid || production) ? policies.find(policy => policy.filename === filename && policy.enabled && policy.approvedForH3 && policy.compatibilityStatus === "approved") : undefined;
+    const legacy = (valid || production) ? policies.find(policy => policy.filename === filename && (admin || policy.enabled && policy.approvedForH3 && policy.compatibilityStatus === "approved")) : undefined;
     const reasons: string[] = [];
     if (!filename) reasons.push("FILENAME_UNRESOLVED");
     else if (!installed) reasons.push(inventory.backend === "rtx5060ti" ? "NOT_LOCATED_ON_5060TI" : "NOT_LOCATED_ON_3090");
@@ -225,8 +227,8 @@ export function h3StudioCatalog(inventory: H3StudioInventory, evidence = readH3S
       const valid = validH3StudioDependency(asset) && asset.sha256 === entry.sha256 && asset.bytes === entry.bytes
         && validH3StudioRights(asset.rights, evidence?.upstreamAuthorization.ownerKey);
       const reasons: string[] = [];
-      if (!policy?.enabled || !policy.approvedForH3 || policy.compatibilityStatus !== "approved") reasons.push("CANONICAL_POLICY_REVIEW_REQUIRED");
-      if (!h3StudioProduction() && !valid) reasons.push("TARGET_ASSET_PROVENANCE_REQUIRED");
+      if (!admin && (!policy?.enabled || !policy.approvedForH3 || policy.compatibilityStatus !== "approved")) reasons.push("CANONICAL_POLICY_REVIEW_REQUIRED");
+      if (!admin && !h3StudioProduction() && !valid) reasons.push("TARGET_ASSET_PROVENANCE_REQUIRED");
       return {
         id: entry.id, modelId: null, versionId: null, name: entry.displayName,
         version: "Existing installed H3 adapter", category: "Existing H3 library", categories: ["Existing H3 library"], source: "",
@@ -301,10 +303,11 @@ export function listH3StudioQualifiedPlans(evidence: H3StudioEvidence | null): H
     } catch { return []; }
   });
 }
-export function validateStudioReadiness(plan: H3StudioPlan, inventory: H3StudioInventory, evidence: H3StudioEvidence | null, templateHash: string) {
+export function validateStudioReadiness(plan: H3StudioPlan, inventory: H3StudioInventory, evidence: H3StudioEvidence | null, templateHash: string,ownerKey?:string) {
+  const admin=isAdminOwner(ownerKey);
   const reasons: string[] = [];
   if (!inventory.models.has(studioCheckpoint(plan))) reasons.push(studioBackend(plan) === "rtx5060ti" ? "CHECKPOINT_NOT_LISTED_ON_5060TI" : "CHECKPOINT_NOT_LISTED_ON_3090");
-  if (!h3StudioProduction() && evidence?.target !== (studioBackend(plan) === "rtx5060ti" ? "5060ti" : "3090")) reasons.push("TARGET_ASSET_PROVENANCE_REQUIRED");
+  if (!admin && !h3StudioProduction() && evidence?.target !== (studioBackend(plan) === "rtx5060ti" ? "5060ti" : "3090")) reasons.push("TARGET_ASSET_PROVENANCE_REQUIRED");
   if (!isH3OmniRefMode(plan.checkpoint) && plan.profile === "ref2va-8step" && !inventory.loras.has(H3_REF2VA_8STEP_FILE)) reasons.push("MATCHING_REF2VA_8STEP_ADAPTER_MISSING");
   if (plan.checkpoint === "selflift") {
     if (!inventory.nodes.has(H3_SELF_LIFT.nodeClass)) reasons.push("SELFLIFT_NODE_MISSING_ON_SELECTED_GPU");
@@ -313,8 +316,8 @@ export function validateStudioReadiness(plan: H3StudioPlan, inventory: H3StudioI
   if (plan.attention === "vsa" && !inventory.nodes.has("BlockSparseAttention")) reasons.push("VSA_NODE_MISSING");
   if (plan.profile === "fl2va-8step" && !inventory.loras.has(H3_FL2VA_8STEP_FILE)) reasons.push("MATCHING_FL2VA_8STEP_ADAPTER_MISSING");
   if (plan.attention === "project-sla" && !inventory.nodes.has("H3SLAAttention")) reasons.push("PROJECT_SLA_NODE_MISSING");
-  if (!h3StudioProduction() && !isH3StudioEvidenceV2(evidence)) reasons.push("ASSET_PROVENANCE_AND_PRIVATE_TEST_AUTHORIZATION_REQUIRED");
-  const catalog = h3StudioCatalog(inventory, evidence);
+  if (!admin && !h3StudioProduction() && !isH3StudioEvidenceV2(evidence)) reasons.push("ASSET_PROVENANCE_AND_PRIVATE_TEST_AUTHORIZATION_REQUIRED");
+  const catalog = h3StudioCatalog(inventory, evidence,ownerKey);
   const family = H3_STUDIO_WORKFLOWS.find(w => w.id === plan.workflowId)!.family;
   for (const selection of plan.loras.filter(l => l.enabled)) {
     const entry = catalog.find(l => l.id === selection.id);

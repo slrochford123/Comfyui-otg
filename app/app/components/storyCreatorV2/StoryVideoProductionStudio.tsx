@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 
 import { StoryMediaPreview } from "./StoryPreview";
 
@@ -68,6 +69,7 @@ export function StoryVideoProductionStudio({ projectId, record, mode }: Props) {
   const [singularity, setSingularity] = useState<"standard" | "singularity" | "singularity-v1.3">("standard");
   const [motionRepair, setMotionRepair] = useState(false);
   const [rife, setRife] = useState(false);
+  const [upscale, setUpscale] = useState<boolean>();
   const [preparedTakeId, setPreparedTakeId] = useState("");
   const [batchLimit, setBatchLimit] = useState(8);
   const [busy, setBusy] = useState("");
@@ -151,6 +153,7 @@ export function StoryVideoProductionStudio({ projectId, record, mode }: Props) {
       quality,
       seed: seed ? Number(seed) : undefined,
       rifeInterpolation60Fps: rife,
+      upscale1080p: upscale ?? (quality !== "sh" || rife),
       referenceVersionIds: selectedReferences,
       userLoras: {
         visualStyle,
@@ -306,6 +309,7 @@ export function StoryVideoProductionStudio({ projectId, record, mode }: Props) {
           </label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={motionRepair} onChange={(event) => setMotionRepair(event.target.checked)} /> Motion Repair</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={rife} onChange={(event) => setRife(event.target.checked)} /> 60 FPS</label>
+          <label className="flex items-center gap-2"><input type="checkbox" role="switch" checked={upscale ?? (quality !== "sh" || rife)} onChange={(event) => setUpscale(event.target.checked)} /> 1080p Upscaler (RTX VSR)</label>
         </div>
       </details>
 

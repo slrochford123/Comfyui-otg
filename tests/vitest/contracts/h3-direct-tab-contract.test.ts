@@ -146,12 +146,12 @@ describe("H3 direct-generation tab contract", () => {
     expect(panel).not.toContain("videoClipDurationSeconds");
     expect(panel).toContain("Source videos can be up to 20 minutes.");
     expect(panel).toContain('aria-label="Reference video 5-second start time"');
-    expect(panel).toContain("getH3NativeDimensions(value, orientation)");
-    expect(panel).toContain("fastH3Selected ? getH3GenerationDimensions");
-    expect(panel).toContain("SH · Scene Hunter");
+    expect(panel).toContain("getH3NativeDimensions(quality, orientation)");
+    expect(panel).toContain('fastH3Selected && quality === "hq"');
+    expect(panel).toContain("Seed Hunter");
     expect(panel).toContain("Generate Scene Hunter");
     expect(panel).toContain("aria-label={`${label} orientation`}");
-    expect(panel).toContain("H3_PRODUCTION_DURATION_OPTIONS.map");
+    expect(panel).toContain("H3ClipLengthControl");
     expect(panel).toContain("Up to 9 images, 3 videos, and 3 standalone audio references.");
     expect(panel).toContain('import SpeechInputButton from "./SpeechInputButton"');
     expect(speechInput).toContain('return endpoint || "/api/ollama-ai/transcribe"');

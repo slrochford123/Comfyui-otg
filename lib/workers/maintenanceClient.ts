@@ -1,13 +1,13 @@
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 
-export type MaintenanceTarget = "3090" | "5060ti";
+export type MaintenanceTarget = "3090" | "5060ti" | "3060";
 export type MaintenanceAction = "status" | "reset_comfy" | "free_vram";
 export class MaintenanceError extends Error {
   constructor(message: string, public readonly status = 503) { super(message); }
 }
 export function maintenanceTarget(value: unknown): MaintenanceTarget | null {
-  return value === "3090" || value === "5060ti" ? value : null;
+  return value === "3090" || value === "5060ti" || value === "3060" ? value : null;
 }
 export function maintenanceConfiguration(target: MaintenanceTarget) {
   const environment = process.env.OTG_ENV;
@@ -34,7 +34,11 @@ export function maintenanceConfiguration(target: MaintenanceTarget) {
 const stateValues = new Set(["active", "inactive", "failed", "activating", "deactivating", "not-installed", "not-applicable", "unknown"]);
 const httpValues = new Set(["ready", "busy", "offline", "unmanaged", "unverified", "not-applicable"]);
 function sanitizeStatus(value: any, target: MaintenanceTarget) {
-  const expected = target === "3090" ? /\b3090\b/ : /\b5060\s*Ti\b/i;
+  const expected = {
+    "3090": /\b3090\b/,
+    "5060ti": /\b5060\s*Ti\b/i,
+    "3060": /\bRTX 3060\b(?!\s*Ti\b)/i,
+  }[target];
   if (!value || typeof value.host !== "string" || value.host.length > 128 || !expected.test(String(value.gpu?.name))) throw new MaintenanceError("Maintenance worker identity did not match the selected GPU.");
   const service = (key: string) => {
     const s = value.services?.[key];
@@ -42,7 +46,9 @@ function sanitizeStatus(value: any, target: MaintenanceTarget) {
     return { state: String(s.state), http: String(s.http) };
   };
   const memory = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : null;
-  return { host: value.host, services: { comfy8188: service("comfy8188"), h38189: service("h38189") },
+  return { host: value.host, services: target === "3060"
+    ? { comfy8190: service("comfy8190") }
+    : { comfy8188: service("comfy8188"), h38189: service("h38189") },
     gpu: { name: String(value.gpu.name).slice(0, 100), usedMiB: memory(value.gpu.usedMiB), totalMiB: memory(value.gpu.totalMiB) } };
 }
 export async function maintenanceOperation(target: MaintenanceTarget, action: MaintenanceAction) {
@@ -63,7 +69,9 @@ export async function maintenanceOperation(target: MaintenanceTarget, action: Ma
   if (!body?.ok || body.target !== target || body.environment !== config.environment || body.requestId !== requestId) throw new MaintenanceError("Maintenance response identity could not be verified.");
   const status = sanitizeStatus(body.status, target);
   if (JSON.stringify(status).includes(config.token)) throw new MaintenanceError("Maintenance returned an invalid worker state.");
-  const selectedServices = target === "3090" ? Object.values(status.services) : [status.services.comfy8188];
+  const selectedServices = target === "5060ti"
+    ? [status.services.comfy8188!]
+    : Object.values(status.services).filter(service => service !== undefined);
   if (action === "reset_comfy" && !selectedServices.every(service => service.state === "active" && service.http === "ready")) throw new MaintenanceError("Worker restart did not reach readiness.");
   if (action === "free_vram" && !selectedServices.every(service => service.state === "inactive" && service.http === "offline")) throw new MaintenanceError("Worker did not stop; memory release is not confirmed.");
   return status;

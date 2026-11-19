@@ -4,6 +4,7 @@ import {refModIsDeleted} from "./refModTrash";
 export const characterRefOwnerHash=(owner:string)=>createHash("sha256").update(owner).digest("hex").slice(0,24);
 export function canUseCharacterRefMod(owner:string,name:string){
   const canonical=name.replaceAll("\\","/");
+  if(canonical.startsWith(CHARACTER_REF_PREFIX)&&canonical.split("/").some(part=>part.startsWith("video-private-")))return false;
   if(refModIsDeleted(owner,canonical))return false;
   return !canonical.startsWith(CHARACTER_REF_PREFIX)||!!owner&&canonical.startsWith(CHARACTER_REF_PREFIX+characterRefOwnerHash(owner)+"/");
 }

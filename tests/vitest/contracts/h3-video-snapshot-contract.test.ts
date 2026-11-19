@@ -183,11 +183,11 @@ describe(
         );
 
         expect(panel).toContain(
-          'onClick={() => setSnapshotTarget(target)}',
+          'onClick={() => openSnapshot(target)}',
         );
 
         expect(panel).toContain(
-          'onClick={() => setSnapshotTarget("reference-image")}',
+          'onClick={() => openSnapshot("reference-image")}',
         );
 
         expect(panel).toContain(

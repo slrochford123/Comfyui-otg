@@ -29,6 +29,7 @@ type Props = {
   fastH3BlockedReason?: string;
   afterModelControls?: React.ReactNode;
   hideEnhancements?: boolean;
+  directModelButtons?: boolean;
 };
 
 const TOOLTIPS = {
@@ -48,6 +49,7 @@ export default function H3AdvancedControls({
   fastH3BlockedReason,
   afterModelControls,
   hideEnhancements = false,
+  directModelButtons = false,
 }: Props) {
   const settings = normalizeH3AdvancedSettings(value, referenceOptions.length);
   const fast = isH3OmniRefMode(settings.checkpointMode);
@@ -105,7 +107,10 @@ export default function H3AdvancedControls({
         <div className="mb-2 text-xs font-black uppercase text-white/50">Model</div>
         <div className="grid grid-cols-2 gap-2" role="group" aria-label="H3 model">
           <button type="button" disabled={disabled} aria-pressed={settings.checkpointMode === "standard"} className={buttonClass(settings.checkpointMode === "standard")} onClick={() => setCheckpointMode("standard")}>Standard</button>
-          <H3SingularitySelector value={settings.checkpointMode} disabled={disabled} className={buttonClass(isH3SingularityMode(settings.checkpointMode))} onChange={setCheckpointMode} />
+          {directModelButtons ? ([["singularity-v1.3","Singularity 1.3"],["singularity","Singularity 2"]] as const).map(([id,label]) =>
+            <button key={id} type="button" disabled={disabled} aria-pressed={settings.checkpointMode === id}
+              className={buttonClass(settings.checkpointMode === id)} onClick={() => setCheckpointMode(id)}>{label}</button>)
+            : <H3SingularitySelector value={settings.checkpointMode} disabled={disabled} className={buttonClass(isH3SingularityMode(settings.checkpointMode))} onChange={setCheckpointMode} />}
           {allowFastH3 ? <>
             <button type="button" title={fastH3BlockedReason || "Dedicated FastH3 OmniRef configuration C; eight Euler steps and VSA."} disabled={disabled || !!fastH3BlockedReason} aria-pressed={settings.checkpointMode === "fasth3"} className={buttonClass(settings.checkpointMode === "fasth3")} onClick={() => setCheckpointMode("fasth3")}>FastH3</button>
             <button type="button" title={fastH3BlockedReason || "Experimental SelfLift on FastH3 OmniRef: six half-resolution steps, learned latent lift, two full-resolution steps. Requires the selected worker's SelfLift node and lifter."} disabled={disabled || !!fastH3BlockedReason} aria-pressed={selfLift} className={buttonClass(selfLift)} onClick={() => setCheckpointMode("selflift")}>SelfLift</button>

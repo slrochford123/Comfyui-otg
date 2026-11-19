@@ -1,6 +1,7 @@
 "use client";
 import React, {useCallback, useEffect, useRef, useState} from "react";
-import ImageEditEngineSelect from "./ImageEditEngineSelect";
+import GenerateImageEditModelButtons from "./GenerateImageEditModelButtons";
+import ImageDownloadButton from "./ImageDownloadButton";
 import ImageComparisonSlider from "./ImageComparisonSlider";
 import {comparisonPending, emptyComparisonDraft, loadComparison, newComparisonJob, saveComparison, submitComparison, type ComparisonDraft, type ComparisonJob} from "@/lib/client/beforeAfter";
 
@@ -164,14 +165,15 @@ export default function BeforeAfterPanel({owner}: {owner: string}) {
       <textarea rows={3} maxLength={12000} disabled={locked} value={draft.prompt} placeholder="Make the white suit black. Keep everything else unchanged."
         onChange={event => change({prompt: event.target.value})} className="mt-2 w-full rounded-xl border border-white/20 bg-zinc-950 p-3 text-white" />
     </label>
-    <ImageEditEngineSelect value={draft.engine} onChange={engine => change({engine})} disabled={locked} />
+    <GenerateImageEditModelButtons value={draft.engine} onChange={engine => change({engine})} disabled={locked} />
     <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
       <button type="button" disabled={locked || !source || !draft.prompt.trim()} onClick={() => void generate()} className={button + " bg-violet-600"}>{pending ? "Editing…" : draft.job ? "Try Again" : "Generate Edit"}</button>
       <button type="button" disabled={locked || !draft.job} className={button} onClick={() => {change({job: null, saved: false, position: 50}); setError(""); setMessage("Original restored. Your prompt is kept.");}}>Undo</button>
       {edited ? <>
         <button type="button" disabled={busy || draft.saved} className={button} onClick={() => void save()}>{draft.saved ? "Saved to Gallery" : "Save to Gallery"}</button>
-        <a className={button + " text-center"} href={edited + "&download=1"} download={`before-after-${draft.job!.jobId}.png`}>Download</a>
+
       </> : null}
+      <ImageDownloadButton url={edited ? edited + "&download=1" : undefined} filename={draft.job ? `before-after-${draft.job.jobId}.png` : undefined} />
       {pending ? <button type="button" className={button} onClick={() => setRecovery(value => value + 1)}>Check Status</button> : null}
     </div>
     {pending ? <div role="progressbar" aria-label="Image edit in progress" className="h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full w-1/3 animate-pulse rounded-full bg-violet-400" /></div> : null}

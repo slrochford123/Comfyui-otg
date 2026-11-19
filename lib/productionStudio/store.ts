@@ -801,8 +801,8 @@ export function createStudioStore(root: string) {
       return write(owner, p);
     })();
   }
-  function create(owner: string, name: string) {
-    const id = randomUUID(),
+  function create(owner: string, name: string, requestedId?: string) {
+    const id = requestedId || randomUUID(),
       plan = normalizeStoryProductionPlan(
         {
           title: text(name, 200),

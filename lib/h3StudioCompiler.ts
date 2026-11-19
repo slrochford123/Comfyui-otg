@@ -1,3 +1,4 @@
+import {isAdminOwner} from "@/lib/auth/adminOwner";
 import { isH3SingularityMode } from "@/lib/production/h3Settings";
 import { buildH3Workflow, loadH3WorkflowTemplate, h3TurboLoraForMode, type H3WorkflowBuildInput, type H3PromptGraph } from "@/lib/production/h3Workflows";
 import { applyH3OmniRef, isH3OmniRefMode } from "@/lib/h3OmniRef";
@@ -33,12 +34,12 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   const plan = parseH3StudioPlan(value);
   const backend = studioBackend(plan), gpuPattern = studioGpuPattern(backend);
   const ownerExperimental = h3StudioOwnerExperimental(access?.ownerKey, backend);
-  const production = h3StudioProduction();
+  const production = h3StudioProduction()||isAdminOwner(access?.ownerKey);
   evidence = !production && isH3StudioEvidenceV2(evidence) ? evidence : null;
   if (input.backend !== backend || inventory.backend && inventory.backend !== backend) throw new Error(`H3 plan selects ${backend}; the workflow and worker must use that selected GPU. No fallback is permitted.`);
   const workflow = H3_STUDIO_WORKFLOWS.find(w => w.id === plan.workflowId)!;
   if (workflow.mode !== input.mode) throw new Error("Plan and media workflow do not match.");
-  const catalog = h3StudioCatalog(inventory, evidence);
+  const catalog = h3StudioCatalog(inventory, evidence,access?.ownerKey);
   const optionalLoras = plan.loras.filter(l => l.enabled).map(selection => {
     const entry = catalog.find(l => l.id === selection.id);
     const proof = entry && (evidence?.loras?.[entry.id] || (entry.modelId === null && entry.filename ? evidence?.assets?.[entry.filename] : undefined));
@@ -49,7 +50,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   });
   const native = plan.profile === "native";
   if (isH3OmniRefMode(plan.checkpoint)) assertFastH3Loras(optionalLoras);
-  const resolvedPolicies = validateH3LoraSelections(optionalLoras.map(l => ({ id: l.id, strength: l.strength })), workflow.mode, { backend, files: inventory.loras }).resolved;
+  const resolvedPolicies = validateH3LoraSelections(optionalLoras.map(l => ({ id: l.id, strength: l.strength })), workflow.mode, { backend, files: inventory.loras },access?.ownerKey).resolved;
   const finalPrompt = applyH3LoraTriggers(input.finalPrompt, resolvedPolicies);
   const built = buildH3Workflow({ ...input, backend, finalPrompt: composeH3StudioExecutionPrompt(finalPrompt, plan), seed: plan.seed,
     durationSeconds: studioTemplateDuration(plan.durationSeconds), h3Quality: plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq",
@@ -107,7 +108,7 @@ export function compileH3StudioPlan(value: unknown, input: H3WorkflowBuildInput,
   }
   if (plan.audio === "mute" || plan.audio === "original") delete graph["34"].inputs.audio;
   const templateSha256 = studioTemplateHash(loadH3WorkflowTemplate(backend, workflow.mode, studioTemplateDuration(plan.durationSeconds), plan.quality === "0.2" ? "sh" : plan.quality === "0.6" ? "lq" : "hq"));
-  const readinessReasons = validateStudioReadiness(plan, inventory, evidence, templateSha256);
+  const readinessReasons = validateStudioReadiness(plan, inventory, evidence, templateSha256,access?.ownerKey);
   // Implicit accelerators, Singularity/Realism/Combat, encoder and VAEs need their
   // own provenance/rights too; approving the base checkpoint is not transitive.
   const dependencies: H3StudioDependency[] = [];

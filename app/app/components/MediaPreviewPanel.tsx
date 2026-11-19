@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import ImageDownloadButton from "./ImageDownloadButton";
 import ExpandedMediaViewer from "./ExpandedMediaViewer";
 
 type MediaPreviewPanelProps = {
@@ -12,6 +13,8 @@ type MediaPreviewPanelProps = {
   onRefresh?: () => void;
   onReset?: () => void;
   refreshing?: boolean;
+  imageDownload?: boolean;
+  downloadReady?: boolean;
 };
 
 export default function MediaPreviewPanel({
@@ -23,6 +26,8 @@ export default function MediaPreviewPanel({
   onRefresh,
   onReset,
   refreshing,
+  imageDownload,
+  downloadReady = true,
 }: MediaPreviewPanelProps) {
   const [expanded, setExpanded] = React.useState(false);
   const panel = React.useRef<HTMLDivElement>(null);
@@ -56,7 +61,7 @@ export default function MediaPreviewPanel({
         <div className="flex flex-wrap items-center gap-2">
           {onRefresh ? <button type="button" onClick={onRefresh} disabled={refreshing} className="min-h-10 rounded-xl border border-white/10 px-3 text-sm font-bold text-white/70 disabled:opacity-40">Refresh</button> : null}
           {canShow ? <button type="button" onClick={expand} className="min-h-10 rounded-xl border border-white/10 px-3 text-sm font-bold text-white/70">Expand</button> : null}
-          {canShow ? <a href={url} download className="inline-flex min-h-10 items-center rounded-xl border border-white/10 px-3 text-sm font-bold text-white/70">Download</a> : null}
+          {imageDownload ? <ImageDownloadButton url={canShow && isImage && downloadReady ? url : undefined} /> : canShow && downloadReady ? <a href={url} download className="inline-flex min-h-10 items-center rounded-xl border border-white/10 px-3 text-sm font-bold text-white/70">Download</a> : null}
           {onClear ? <button type="button" onClick={onClear} disabled={!canShow} className="min-h-10 rounded-xl border border-white/10 px-3 text-sm font-bold text-white/70 disabled:opacity-40">Clear Preview</button> : null}
           {onReset ? <button type="button" onClick={onReset} className="min-h-10 rounded-xl border border-red-300/20 px-3 text-sm font-bold text-red-100">Reset</button> : null}
         </div>

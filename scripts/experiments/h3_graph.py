@@ -22,7 +22,7 @@ HASHES = {
 
 
 def validate(settings, sources):
-    if settings.get("mode") not in ("text", "image", "reference", "edit", "edit-image"):
+    if settings.get("mode") not in ("text", "image", "reference", "edit", "edit-image", "text-image"):
         raise ValueError("No verified native H3 image-edit workflow is installed.")
     if settings.get("recipe") != "author":
         raise ValueError("Only the checkpoint-specific recipe is available; no forced Turbo override.")
@@ -37,8 +37,10 @@ def validate(settings, sources):
     counts = {kind: sum(s["kind"] == kind for s in sources) for kind in ("image", "video", "audio")}
     if counts["image"] > 9 or counts["video"] > 3 or counts["audio"] > 3:
         raise ValueError("At most nine image, three video and three audio references")
+    if counts["audio"] and not settings.get("experimentalAudioReferences", False):
+        raise ValueError("Enable Advanced audio references to import prerecorded audio")
     mode = settings["mode"]
-    if mode == "text" and sources:
+    if mode in ("text", "text-image") and sources:
         raise ValueError("Text mode requires no selected references")
     if mode == "image" and (counts["image"] != 1 or len(sources) != 1):
         raise ValueError("Image-to-video requires exactly one selected first-frame image")
@@ -57,7 +59,7 @@ def compile_graph(model, settings, sources, encoder, loras=None):
     if settings["orientation"] == "portrait": width, height = height, width
     frames = settings["seconds"] * 24
     native = frames + (5 - frames % 17) % 17
-    still = settings["mode"] == "edit-image"
+    still = settings["mode"] in ("edit-image", "text-image")
     if still: frames, native = 1, 1
     graph = {}
     def add(key, node, **inputs):
@@ -68,7 +70,7 @@ def compile_graph(model, settings, sources, encoder, loras=None):
     clip = add(15, "CLIPLoader", clip_name=encoder, type="minimax", device="default")
     unet = add(30, "UNETLoader", unet_name=model + ".safetensors", weight_dtype="default")
     for index, lora in enumerate(loras or []):
-        unet = add(60+index, "LoraLoaderModelOnly", model=unet, lora_name=lora['filename'], strength_model=lora['strength'])
+        unet = add(1000+index, "LoraLoaderModelOnly", model=unet, lora_name=lora['filename'], strength_model=lora['strength'])
     shifted = add(38, "MiniMaxH3SigmaShift", model=unet, shift_video=12.0, shift_audio=3.0)
     patched = shifted
     if recipe["attention"] == "vsa":
@@ -87,7 +89,7 @@ def compile_graph(model, settings, sources, encoder, loras=None):
             loaded = add(node, "LoadVideo", file=source["name"])
             components = add(node + 1, "GetVideoComponents", video=loaded)
             refs[f"ref_videos.ref_video_{index}"] = components
-            if source.get("hasAudio"):
+            if source.get("hasAudio") and settings.get("experimentalAudioReferences", False):
                 refs[f"ref_video_audios.ref_video_audio_{index}"] = [str(node + 1), 1]
         else:
             refs[f"ref_audios.ref_audio_{index}"] = add(node, "LoadAudio", audio=source["name"])

@@ -47,7 +47,7 @@ describe("H3 Ref Mods special mode contract", () => {
     const panel = read("app/app/components/H3Panel.tsx");
     expect(panel).toContain('| "h3-refmods"');
     expect(panel).toContain('label: "Ref Mods"');
-    expect(panel).toContain("lg:grid-cols-6");
+    expect(panel).toContain("H3WorkspaceTabs");
     expect(panel).toContain('data-otg="h3-refmods-workspace"');
     expect(panel).toContain("/api/h3/special/refmods/library");
     expect(panel).toContain("/api/h3/special/refmods/generation");

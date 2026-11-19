@@ -5,7 +5,7 @@ import {cleanup, fireEvent, render, screen, waitFor} from "@testing-library/reac
 import NativeImagePanel from "@/app/app/components/NativeImagePanel";
 vi.mock("@/app/app/components/MediaGpuControl", () => ({default: () => <div>Shared GPU controls</div>}));
 const fetcher = vi.fn();
-beforeEach(() => {vi.stubGlobal("fetch", fetcher); fetcher.mockReset();});
+beforeEach(() => {vi.stubGlobal("fetch", ((url:RequestInfo|URL,options?:RequestInit)=>String(url).includes("/h3-support")?Promise.resolve(Response.json({create:false})):fetcher(url,options)) as typeof fetch); fetcher.mockReset();});
 afterEach(() => {cleanup(); vi.unstubAllGlobals();});
 describe("Native image UI submission", () => {
   it("works on Android LAN HTTP without crypto.randomUUID and prevents rapid duplicate submissions", async () => {

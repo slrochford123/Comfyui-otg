@@ -7,7 +7,7 @@ import { nativeShotSeconds } from "./shotPolicy";
 
 /** Assistant append/job progress does not invalidate a proposal; creative edits do. */
 export function planningKey(p: Project) {
-  return createHash("sha256").update(JSON.stringify({ brief: p.brief, plan: p.plan, film: p.film })).digest("hex");
+  return createHash("sha256").update(JSON.stringify({ brief: p.brief, plan: p.plan, film: p.film, storyContextKey: p.storyLink?.sourceKey })).digest("hex");
 }
 export function installStory(p: Project, story: StoryPreview) {
   const oldShots = new Map([...p.retiredPlanShots || [], ...allShots(p)].map(s => [s.id, s]));

@@ -161,7 +161,10 @@ export function cleanupExpiredResourceLocks(now = new Date()): ResourceLock[] {
 }
 
 export function listResourceLocks(): ResourceLock[] {
-  return cleanupExpiredResourceLocks();
+  const timestamp = new Date().toISOString();
+  return (db().prepare(
+    "SELECT * FROM resource_locks WHERE persistent=1 OR expires_at > ? ORDER BY lock_id",
+  ).all(timestamp) as LockRow[]).map(fromRow);
 }
 
 export function acquireResourceLock(

@@ -1,4 +1,5 @@
 "use client";
+import React from "react";
 
 import {
   useEffect,
@@ -42,6 +43,10 @@ type Props = {
   chatError: string;
   activeReply?: { partialText: string; status: string } | null;
   onCancelReply?: () => void;
+  onRetryReply?: () => void;
+  retryBusy?:boolean;
+  replyNotice?:string;
+  failedReply?:string;
   draft: string;
   chatEndRef: RefObject<HTMLDivElement | null>;
   extractionBusy: boolean;
@@ -113,7 +118,7 @@ export function IdeasTab({
   onRemoveChat,
   chatError,
   activeReply,
-  onCancelReply,
+  onCancelReply,onRetryReply,retryBusy,replyNotice,failedReply,
   draft,
   chatEndRef,
   extractionBusy,
@@ -480,6 +485,14 @@ export function IdeasTab({
             </div>
           ) : null}
 
+          {onRetryReply ? <div className="mb-3 space-y-2">
+            <button type="button" disabled={retryBusy} onClick={onRetryReply}
+              className="min-h-11 rounded-xl border border-white/20 bg-violet-600 px-5 py-2 font-semibold disabled:opacity-50">Retry reply</button>
+            <p className="text-xs text-white/65">Retries your saved message. After three unsuccessful OpenAI attempts, Local RTX 3060 continues the conversation.</p>
+            {failedReply ? <details className="text-sm"><summary className="cursor-pointer">View unfinished reply</summary>
+              <p className="whitespace-pre-wrap break-words pt-2">{failedReply}</p></details> : null}
+          </div> : null}
+          {replyNotice ? <p role="status" aria-live="polite" className="mb-3 break-words text-xs text-white/70">{replyNotice}</p> : null}
           {recorderStatus ? (
             <div role="status" className="mb-3 rounded-[14px] border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs leading-5 text-cyan-100/80">
               {recorderStatus}

@@ -1,11 +1,14 @@
 "use client";
+import React from "react";
 import { useEffect, useRef, useState } from "react";
 import { canvas, H3_LICENSE_URL, H3_LICENSE_NOTICE, type Experiment, type LabKind } from "@/lib/experiments/catalog";
 import type { LabAsset, LabSession } from "@/lib/experiments/store";
 import type { LabCapability, LabJob } from "@/lib/experiments/generation";
 import { newClientRequestId } from "@/lib/client/requestId";
 import dynamic from "next/dynamic";
-const RefModReplacementLab = dynamic(() => import("./RefModReplacementLab"));
+import { copyTextToClipboard } from "@/lib/clipboard";
+import SpeechInputButton from "./SpeechInputButton";
+import DirectorPlanCard from "./DirectorPlanCard";
 
 const endpoint = "/api/experiments";
 const input = "w-full min-w-0 rounded-lg border border-white/20 bg-black/30 p-2.5 text-sm";
@@ -28,7 +31,7 @@ function Media({ asset, videoRef, apiRoot = endpoint }: { asset: LabAsset; apiRo
     <details className="mt-1 text-xs text-white/60"><summary>Integrity</summary><p className="break-all">SHA256 {asset.sha256}</p><p>{asset.bytes.toLocaleString()} bytes</p></details>
   </figure>;
 }
-export default function ExperimentLabPanel({ kind, restricted = false }: { kind: LabKind; restricted?: boolean }) {
+export default function ExperimentLabPanel({ kind, restricted = false, experimentId }: { kind: LabKind; restricted?: boolean; experimentId?: string }) {
   const apiRoot = restricted ? "/api/h3/nsfw" : endpoint;
   const [catalog, setCatalog] = useState<Experiment[]>([]), [sessions, setSessions] = useState<LabSession[]>([]);
   const [selected, setSelected] = useState(""), [draft, setDraft] = useState<LabSession | null>(null);
@@ -45,6 +48,7 @@ export default function ExperimentLabPanel({ kind, restricted = false }: { kind:
   const spatialScale = selected === "cinematic-upscale" || selected === "sol-denomix" ? 2 : 1;
   const canGenerate = !!draft && draft.settings.gpu !== "rtx5060ti" && !!capability?.modes.includes(draft.settings.mode)
     && (kind !== "testing" || (!!capability.variants?.[draft.settings.variant || "pika6"]?.includes(draft.settings.mode) && draft.settings.seconds >= (capability.minSeconds || 5)));
+  const directorReady = selected !== "director-studio" || draft?.settings.directorModel !== "huihui9b" || !!capability?.directorModels?.includes("huihui9b");
   const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(sessions.find(item => item.id === draft.id));
   const visibleSessions = sessions.filter(item => item.experiment === selected && item.archived === showArchived);
   const comparison = draft?.assets.filter(asset => asset.role !== "source") || [];
@@ -62,12 +66,13 @@ export default function ExperimentLabPanel({ kind, restricted = false }: { kind:
     void fetch(apiRoot, { cache: "no-store", signal: controller.signal }).then(async response => {
       const result = await response.json(); if (!response.ok) throw new Error(result.error);
       if (!alive.current) return;
-      const filtered = (result as CatalogResponse).catalog.filter(item => item.kind === kind && item.id !== "refmod-replacement");
+      const filtered = (result as CatalogResponse).catalog.filter(item => item.kind === kind && (experimentId ? item.id === experimentId : kind !== "testing" ||
+        !["refmod-replacement","pika-flex","pika-baseline","sol-denomix","nvidia-regenerate","body-swap"].includes(item.id)));
       setCatalog(filtered); setSelected(filtered[0]?.id || ""); setSessions(result.sessions); setCapabilities(result.capabilities || []);
     }).catch(reason => { if (alive.current && reason.name !== "AbortError") setError(reason.message); });
     const players = videos.current;
     return () => { alive.current = false; controller.abort(); upload.current?.abort(); players.clear(); };
-  }, [kind, apiRoot]);
+  }, [kind, apiRoot, experimentId]);
   const sessionId = draft?.id;
   useEffect(() => { setJobs([]); pendingRequest.current = null; }, [sessionId]);
   const savedSources = JSON.stringify(draft?.settings.selectedSources || []);
@@ -138,11 +143,10 @@ export default function ExperimentLabPanel({ kind, restricted = false }: { kind:
     <header className="space-y-2"><p className="text-xs font-semibold uppercase tracking-wider text-cyan-300">{restricted ? "TEST only · approved accounts" : "TEST only · administrator research workspace"}</p><h1 className="text-2xl font-semibold">{restricted ? "H3 NSFW" : kind === "testing" ? "Testing" : "H3 Admin — NSFW Model Testing"}</h1><p className="text-sm text-white/70">{restricted ? "Your private H3 workspace. Sources and results stay separate from normal galleries. Access is managed by your administrator." : "Separate plans, uploads and comparisons. Existing H3 choices, galleries and PROD are unchanged. Nothing here promotes itself."}</p></header>
     {error && <div role="alert" className="rounded-lg border border-red-400/40 bg-red-950/30 p-3 text-sm">{error}</div>}
     {message && <div role="status" className="text-sm text-emerald-300">{message}</div>}
-    {restricted ? <fieldset disabled={busy || !!draft?.archived}><legend className="mb-2 text-sm font-semibold">Model</legend><div className="grid grid-cols-2 gap-2">{catalog.map(item => <button key={item.id} type="button" className={`${button} ${selected === item.id ? "bg-violet-700/60" : "bg-black/20"}`} aria-pressed={selected === item.id} onClick={() => {setSelected(item.id);setDraft(current => current ? {...current,experiment:item.id} : null);setError("");}}>{item.title}</button>)}</div></fieldset> : <label className="block text-sm">{kind === "testing" ? "Experiment" : "Model version"}<select aria-label={kind === "testing" ? "Experiment" : "Model version"} className={`${input} mt-1`} value={selected} disabled={busy || !catalog.length} onChange={event => { if (dirty) { setError("Save or reset this plan before changing experiments."); return; } setSelected(event.target.value); setDraft(null); setError(""); setMessage(""); }}>
+    {restricted ? <fieldset disabled={busy || !!draft?.archived}><legend className="mb-2 text-sm font-semibold">Model</legend><div className="grid grid-cols-2 gap-2">{catalog.map(item => <button key={item.id} type="button" className={`${button} ${selected === item.id ? "bg-violet-700/60" : "bg-black/20"}`} aria-pressed={selected === item.id} onClick={() => {setSelected(item.id);setDraft(current => current ? {...current,experiment:item.id} : null);setError("");}}>{item.title}</button>)}</div></fieldset> : experimentId ? null : <label className="block text-sm">{kind === "testing" ? "Experiment" : "Model version"}<select aria-label={kind === "testing" ? "Experiment" : "Model version"} className={`${input} mt-1`} value={selected} disabled={busy || !catalog.length} onChange={event => { if (dirty) { setError("Save or reset this plan before changing experiments."); return; } setSelected(event.target.value); setDraft(null); setError(""); setMessage(""); }}>
       {catalog.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>}
-    {kind === "testing" && !restricted ? <RefModReplacementLab /> : null}
     {entry && <>
-      <div className="rounded-xl border border-white/10 p-4 text-sm"><h2 className="font-semibold">{entry.title}</h2><p className="mt-1 text-white/80">{entry.purpose}</p><p className="mt-2 text-white/60">{entry.replaces}</p>
+      <div className="rounded-xl border border-white/10 p-4 text-sm"><h2 className="font-semibold">{experimentId === "body-swap" ? "Character Swapping V2" : entry.title}</h2><p className="mt-1 text-white/80">{entry.purpose}</p><p className="mt-2 text-white/60">{entry.replaces}</p>
         <details className="mt-3"><summary className="cursor-pointer text-cyan-300">Recipe, sources and compatibility</summary><p className="my-2">{entry.recipe}</p>
           {entry.filename && <p className="break-all text-xs">Candidate: {entry.filename} · {entry.sizeGiB} GiB · CivitAI version {entry.versionId}<br />SHA256 {entry.sha256}</p>}
           <ul className="mt-2 space-y-1">{entry.sources.map((source, index) => <li key={source}><a className="text-cyan-300 underline" href={source} target="_blank" rel="noreferrer">Source {index + 1}</a></li>)}</ul>
@@ -167,14 +171,19 @@ export default function ExperimentLabPanel({ kind, restricted = false }: { kind:
       </fieldset>}
       {restricted && <details className="rounded-lg border border-white/10 p-3"><summary className="cursor-pointer text-sm">LoRAs and advanced enhancements</summary><p className="mt-2 text-xs text-amber-200">Optional LoRAs, forced Turbo, SLA overrides and normal H3 realism presets have not been qualified with these four checkpoints. They remain disabled; generation uses the verified recipe shown below. Normal H3 settings are unchanged.</p></details>}
       {entry?.id !== "director-studio" && <p className="text-xs text-white/65">{spatialScale === 2 ? `Draft ${dimensions?.width} × ${dimensions?.height} → 2x output ${(dimensions?.width || 0)*2} × ${(dimensions?.height || 0)*2}` : `Target canvas ${dimensions?.width} × ${dimensions?.height}`} · {draft.settings.mode === "edit-image" ? "one native PNG image; no video or audio" : `24 FPS · ${draft.settings.seconds * 24} delivered frames; excess native frames are trimmed, never padded.`} Small qualification tests do not guarantee maximum-size/15-second performance. Auto selects only a qualified private GPU and waits for shared admission.</p>}
+      {entry?.id === "director-studio" && <label className="block text-sm">Director model<select className={`${input} mt-1`} value={draft.settings.directorModel || "qwen4b"} disabled={busy || draft.archived} onChange={e=>patch({directorModel:e.target.value as "qwen4b"|"huihui9b",gpu:"auto"})}>
+        <option value="qwen4b">Qwen3.5 4B · Original Director · RTX 3090</option>
+        <option value="huihui9b" disabled={!capability?.directorModels?.includes("huihui9b")}>Huihui Qwen3.5 9B · Mature Fiction · RTX 3060</option>
+      </select><span className="mt-2 block text-xs text-white/70">{draft.settings.directorModel === "huihui9b" ? "Optional local fiction planning for horror, crime and mature drama. Uses the shared RTX 3060 queue. Up to six clips of 1–10 seconds; camera cuts may occur inside a clip. Review the proposed plan before rendering." : "Original qualified Qwen planner. Existing saved plans remain available when switching models."}</span></label>}
       <label className="block text-sm">{entry?.id === "director-studio" ? "Director concept" : "Scene prompt"}<textarea className={`${input} mt-1 min-h-28`} placeholder="Describe the subject, action, setting, camera and sound. For references, identify each subject." maxLength={8000} value={draft.settings.prompt} disabled={busy || draft.archived} onChange={e => patch({ prompt: e.target.value })} /></label>
+      {entry?.id === "director-studio" && <SpeechInputButton key={draft.id} label="Dictate Testing Director concept" endpoint="/api/local-dictation" className={button} disabled={busy||draft.archived} onStatus={setMessage} onTranscript={text=>setDraft(current=>current?{...current,settings:{...current.settings,prompt:[current.settings.prompt,text].filter(Boolean).join("\n")}}:current)}/>}
       <div className="space-y-3 rounded-lg border border-cyan-400/20 p-3">
         {recipe && <p className="text-sm"><strong>{recipe.steps} steps · {recipe.sampler} / {recipe.scheduler} · {recipe.attention.toUpperCase()} attention</strong><br/><span className="text-xs text-white/70">{recipe.note} {kind === "h3-admin" && "CFG 1 · shifts 12/3 · no extra LoRAs. Sparse attention uses its documented dense fallback on short sequences."}</span></p>}
         {kind === "testing" && entry?.id !== "director-studio" && <p className="text-xs text-amber-200">Only qualified methods and modes can run. {entry?.id === "pika-baseline" ? "Choose a method, generate, then switch only the method and generate again to compare in this session. Each run starts a fresh worker: these are cold-process comparisons, not warm-cache speed claims." : "Recipe and asset hashes are recorded with each result."} Minimum duration {capability?.minSeconds || 5} seconds.</p>}
         {entry?.id !== "director-studio" && <p className="text-xs text-white/70">Use the numbered tags beside selected files in your prompt. Tags follow selection order within each media type. H3 numbers any video soundtracks before standalone audio; when mixing those, describe the sound instead of assuming an audio number. Image-to-video anchors the selected first frame. Edit image and Edit video regenerate from references; neither promises pixel-exact preservation. Source videos are bounded to 608 pixels on their longest side for conditioning only; output uses your selected canvas.</p>}
         {draft.settings.mode !== "text" && <fieldset disabled={busy || draft.archived}><legend className="mb-2 text-sm">Use these source references</legend>{draft.assets.filter(a => a.role === "source").map(asset => <label key={asset.id} className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={sourceIds.includes(asset.id)} onChange={e => setSourceIds(current => e.target.checked ? [...current,asset.id] : current.filter(id => id !== asset.id))}/><span className="break-all">{referenceTag(asset)}{asset.name}</span></label>)}<p className="text-xs text-white/60">Attach source files below, then select them here. Removing or reselecting files can change their tags; check your prompt before generating.</p></fieldset>}
         {entry?.id === "director-studio" && <p className="text-sm text-white/70">Local Qwen planning only: no OpenAI charge, no video rendering, no changes to Story Creator or saved characters. Change the concept and generate again to revise the last completed plan in this session. New sessions start fresh. Uploaded media is not analyzed.</p>}
-        <button type="button" className={`${button} bg-violet-700`} disabled={busy || draft.archived || !canGenerate} onClick={() => void act(generate)}>{entry?.id === "director-studio" ? "Generate private director plan" : `Generate private H3 ${draft.settings.mode === "edit-image" ? "image" : "video"}`}</button>
+        <button type="button" className={`${button} bg-violet-700`} disabled={busy || draft.archived || !canGenerate || !directorReady} onClick={() => void act(generate)}>{entry?.id === "director-studio" ? "Generate private director plan" : `Generate private H3 ${draft.settings.mode === "edit-image" ? "image" : "video"}`}</button>
         {!canGenerate && <p className="text-xs text-amber-200">This exact model/mode is not enabled yet. Your plan can still be saved.</p>}
         {jobs.map(job => <article key={job.id} className="rounded-lg border border-white/10 p-3 text-sm">
           <p className="font-semibold">{job.state} · {job.model}</p><p role="status">{job.stage}</p>
@@ -183,7 +192,7 @@ export default function ExperimentLabPanel({ kind, restricted = false }: { kind:
           {!["completed","failed","canceled"].includes(job.state) && <button className={`${button} mt-2`} type="button" disabled={busy} onClick={() => void act(async () => {await api(apiRoot,{action:"cancel",jobId:job.id});setMessage("Cancellation requested for this private job only.");})}>Cancel private job</button>}
         </article>)}
         {!!jobs.length && <details><summary className="cursor-pointer text-xs text-cyan-300">Download generation receipts and graphs</summary><ul className="mt-2 space-y-2 text-xs">{jobs.map(job=><li key={job.id}><a className="text-cyan-300 underline" href={`${apiRoot}?receipt=${job.id}`}>{job.model} · {job.id.slice(0,8)} · receipt / graph</a></li>)}</ul></details>}
-        {jobs.filter(job=>job.state==="completed"&&job.cleanedUp&&job.director).map(job=><details key={`plan-${job.id}`} className="rounded-lg border border-white/15 p-3" open><summary className="cursor-pointer font-semibold">{job.director!.title}</summary><p className="my-2 whitespace-pre-wrap text-sm">{job.director!.continuity}</p><ol className="list-decimal space-y-3 pl-5">{job.director!.shots.map((shot,index)=><li key={index} className="text-sm"><strong>{shot.title} · {shot.seconds}s</strong><p className="mt-1 whitespace-pre-wrap">{shot.prompt}</p><p className="mt-1 text-white/70">Sound: {shot.sound}</p></li>)}</ol></details>)}
+        {jobs.filter(job=>job.state==="completed"&&job.cleanedUp&&job.director).map(job=><DirectorPlanCard key={`plan-${job.id}`} plan={job.director!} onCopy={text=>void copyTextToClipboard(text).then(ok=>setMessage(ok?"Copied to clipboard.":"Copy failed. Select the text and copy it manually."))}/>)}
       </div>
       <details><summary className="cursor-pointer text-sm text-cyan-300">Review notes and acceptance checklist</summary><p className="my-2 text-xs text-white/65">Record identity, hands/anatomy, intended actions, detail, flicker, audio, duration and cold/warm timings. Leave unknown results blank. A successful upload is not a successful model test.</p><textarea aria-label="Review notes" className={`${input} min-h-28`} value={draft.notes} maxLength={16000} disabled={busy || draft.archived} onChange={e => setDraft({ ...draft, notes: e.target.value })} /></details>
       <div className="flex flex-wrap items-center gap-2">

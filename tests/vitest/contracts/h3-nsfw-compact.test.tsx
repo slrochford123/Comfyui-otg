@@ -20,7 +20,8 @@ beforeEach(() => {
     if (body?.action === "update") { session = { ...body, revision: session.revision + 1 }; return response({ session }); }
     if (body?.action === "create") return response({ session });
     if (body?.action === "generate") return response({ job: { id: body.requestId, state: "completed", cleanedUp: true, model: session.experiment, stage: "Unit fixture complete", created: 1 } });
-    if (url === "/api/enhance-prompt") return response({ enhancedPrompt: "A red paper boat floats on a calm pond." });
+    if (url === "/api/h3/nsfw/prompt") return response({id:body.requestId,status:"queued"});
+    if (String(url).includes("/api/h3/nsfw/prompt?id=")) return response({status:"completed",kind:"enhance",originalPrompt:"A paper boat.",prompt:"A red paper boat floats on a calm pond."});
     return response({ catalog: EXPERIMENTS.filter(e => e.kind === "h3-admin"), sessions: [session], capabilities: EXPERIMENTS.filter(e => e.kind === "h3-admin").map(e => ({ model: e.id, modes: ["text", "image", "reference", "edit", "edit-image"], gpu: "rtx3090", recipe: { steps: 8 } })) });
   });
   vi.stubGlobal("fetch", server);
@@ -35,7 +36,7 @@ it.each(["dasiwa-v4","pinkcherry-v18"])("keeps retired %s readable, disables gen
   expect(screen.getByText(/was removed\. Choose another model/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Create video" })).toBeDisabled();
   expect(screen.getByLabelText("Your scene")).toHaveValue("A paper boat.");
-  fireEvent.click(screen.getByRole("button", { name: "H3 Eros Max · beta 7" }));
+  fireEvent.click(screen.getByRole("button", { name: "H3 Eros Max Beta 7" }));
   expect(screen.getByLabelText("Your scene")).toHaveValue("A paper boat.");
   expect(screen.getByRole("button", { name: "Create video" })).toBeEnabled();
 });
@@ -47,20 +48,23 @@ it.each(["dasiwa-v4","pinkcherry-v18"])("recovers unsaved local text for retired
   await waitFor(() => expect(screen.getByLabelText("Your scene")).toHaveValue("Unsaved Android draft."));
   expect(screen.getByRole("button", { name: "Create video" })).toBeDisabled();
 });
-it("clears, undoes and enhances with the existing endpoint without a plan-creation step", async () => {
+it("clears, undoes and reviews a Huihui enhancement before applying it", async () => {
   await setup(); const prompt = screen.getByRole("textbox", { name: "Your scene" });
   fireEvent.click(screen.getByRole("button", { name: "Clear text" })); expect(prompt).toHaveValue("");
   fireEvent.click(screen.getByRole("button", { name: "Undo text" })); expect(prompt).toHaveValue("A paper boat.");
-  fireEvent.click(screen.getByRole("button", { name: "Enhance", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Medium", exact: true }));
   await waitFor(() => expect(prompt).toHaveValue("A red paper boat floats on a calm pond."));
+  expect(server.mock.calls.some(([url])=>url==="/api/enhance-prompt")).toBe(false);
+  expect(calls("enhance")).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Undo text" })); expect(prompt).toHaveValue("A paper boat.");
   expect(screen.queryByRole("button", { name: "New generation session" })).not.toBeInTheDocument();
 });
 it("keeps original text on enhancement errors", async () => {
   const original = server.getMockImplementation()!;
-  server.mockImplementation((url, o) => url === "/api/enhance-prompt" ? Promise.resolve(response({ error: "Provider unavailable" }, 503)) : original(url, o));
-  await setup(); fireEvent.click(screen.getByRole("button", { name: "Enhance", exact: true }));
+  server.mockImplementation((url, o) => url === "/api/h3/nsfw/prompt" ? Promise.resolve(response({ error: "Provider unavailable" }, 503)) : original(url, o));
+  await setup(); fireEvent.click(screen.getByRole("button", { name: "Medium", exact: true }));
   await screen.findByText("Provider unavailable"); expect(screen.getByLabelText("Your scene")).toHaveValue("A paper boat.");
+  expect(screen.getByRole("button",{name:"Retry Enhance"})).toBeInTheDocument();expect(screen.queryByRole("button",{name:"Retry save"})).not.toBeInTheDocument();
 });
 it("serializes autosave without replacing newer text and preserves edits when switching models", async () => {
   const original = server.getMockImplementation()!;
@@ -75,7 +79,7 @@ it("serializes autosave without replacing newer text and preserves edits when sw
   fireEvent.change(prompt, { target: { value: "Newer edit" } }); release!();
   await waitFor(() => expect(session.settings.prompt).toBe("Newer edit"), { timeout: 2500 });
   expect(prompt).toHaveValue("Newer edit");
-  fireEvent.click(screen.getByRole("button", { name: "H3 Eros Max · beta 7" })); expect(prompt).toHaveValue("Newer edit");
+  fireEvent.click(screen.getByRole("button", { name: "H3 Eros Max Beta 7" })); expect(prompt).toHaveValue("Newer edit");
   expect(screen.getByRole("button", { name: "Native", exact: true })).toBeDisabled();
 });
 it("persists detached references, supports undo and never deletes source media", async () => {
@@ -135,4 +139,29 @@ it("starts a new intent after editing an uncertain request, rather than silently
   fireEvent.change(screen.getByLabelText("Your scene"), { target: { value: "Another paper boat." } });
   expect(await create()).not.toBe(firstSeed);
   const ids = calls("generate").map(([, o]) => JSON.parse(o.body).requestId); expect(ids[0]).not.toBe(ids[1]);
+});
+
+it('retries the failed enhancement at its chosen level instead of only saving the draft',async()=>{
+ const original=server.getMockImplementation()!;let attempts=0;
+ server.mockImplementation((url,o)=>url==='/api/h3/nsfw/prompt'&&attempts++===0?Promise.resolve(response({error:'Enhancement worker unavailable'},503)):original(url,o));
+ await setup();fireEvent.click(screen.getByRole('button',{name:'Long',exact:true}));await screen.findByText('Enhancement worker unavailable');
+ expect(screen.getByLabelText('Your scene')).toHaveValue('A paper boat.');
+ fireEvent.click(screen.getByRole('button',{name:'Retry Enhance',exact:true}));
+ await waitFor(()=>expect(screen.getByLabelText('Your scene')).toHaveValue('A red paper boat floats on a calm pond.'));
+ expect(calls('enhance')).toHaveLength(2);expect(calls('enhance').map(([,o])=>JSON.parse(o.body).level)).toEqual(['long','long']);expect(calls('generate')).toHaveLength(0);
+});
+it('labels a completed-but-rejected enhancement as an enhancement error and retains the scene',async()=>{
+ const original=server.getMockImplementation()!;
+ server.mockImplementation((url,o)=>String(url).includes('/api/h3/nsfw/prompt?id=')?Promise.resolve(response({status:'failed',kind:'enhance',error:'The enhancer changed dialogue in the scene draft.'})):original(url,o));
+ await setup();fireEvent.click(screen.getByRole('button',{name:'Short',exact:true}));await screen.findByText('The enhancer changed dialogue in the scene draft.');
+ expect(screen.getByLabelText('Your scene')).toHaveValue('A paper boat.');expect(screen.getByRole('button',{name:'Retry Enhance'})).toBeInTheDocument();expect(screen.queryByRole('button',{name:'Retry save'})).not.toBeInTheDocument();expect(calls('generate')).toHaveLength(0);
+});
+
+it('keeps polling the original enhancement after a transient connection error and clears the stale error on success',async()=>{
+ const original=server.getMockImplementation()!;let polls=0;
+ server.mockImplementation((url,o)=>String(url).includes('/api/h3/nsfw/prompt?id=')&&polls++===0?Promise.resolve(response({error:'Temporary connection interruption'},503)):original(url,o));
+ await setup();fireEvent.click(screen.getByRole('button',{name:'Medium',exact:true}));await screen.findByText('Temporary connection interruption');
+ expect(screen.getByRole('button',{name:'Checking prompt…'})).toBeDisabled();
+ await waitFor(()=>expect(screen.getByLabelText('Your scene')).toHaveValue('A red paper boat floats on a calm pond.'),{timeout:4500});
+ expect(screen.queryByText('Temporary connection interruption')).not.toBeInTheDocument();expect(calls('enhance')).toHaveLength(1);expect(calls('generate')).toHaveLength(0);
 });

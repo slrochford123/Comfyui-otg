@@ -169,7 +169,7 @@ export async function GET(req: NextRequest) {
     job = await reconcileNativeImageJob(owner.ownerKey, id);
     if (req.nextUrl.searchParams.get("image") === "1") {
       if (!job.imagePath) throw Object.assign(Error("Image output is not ready."), {status: 404});
-      return new NextResponse(new Uint8Array(await fs.readFile(job.imagePath)), {headers: {"Content-Type": "image/png", "Cache-Control": "private, no-store", "Content-Disposition": `inline; filename="${job.model}-${id}.png"`}});
+      return new NextResponse(new Uint8Array(await fs.readFile(job.imagePath)), {headers: {"Content-Type": "image/png", "Cache-Control": "private, no-store", "Content-Disposition": `${req.nextUrl.searchParams.get("download") === "1" ? "attachment" : "inline"}; filename="${job.model}-${id}.png"`}});
     }
     return NextResponse.json(publicJob(job), {headers: {"Cache-Control": "no-store"}});
   } catch (error) { return failure(error); }

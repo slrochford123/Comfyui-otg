@@ -2,6 +2,7 @@ import { isH3SingularityMode } from "@/lib/production/h3Settings";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 import { OTG_DATA_ROOT, safeJoin, safeSegment } from "@/lib/paths";
 import {
@@ -403,12 +404,14 @@ export async function uploadH3InputToBaseUrl(args: {
   sourcePath: string;
   mediaType: "image" | "audio" | "video";
   uploadName: string;
+  expectedSha256?: string;
   subfolder?: string;
   fetcher?: typeof fetch;
 }) {
   const absolutePath = resolveProductionV2MediaPath(args.sourcePath);
   if (!absolutePath) throw new Error(`Production ${args.mediaType} source is not a readable local file: ${args.sourcePath}`);
   const bytes = await fsp.readFile(absolutePath);
+  if (args.expectedSha256 !== undefined && createHash("sha256").update(bytes).digest("hex") !== args.expectedSha256) throw Error("The exact bytes selected for upload changed after Character Voices approval.");
   const extension = path.extname(absolutePath).toLowerCase();
   const filename = `${safeSegment(args.uploadName)}${extension}`;
   const fetcher = args.fetcher || fetch;
@@ -423,7 +426,9 @@ export async function uploadH3InputToBaseUrl(args: {
     body.append("type", "input");
     body.append("overwrite", "true");
     if (args.subfolder) body.append("subfolder", args.subfolder);
-    const response = await fetchWithTimeout(fetcher, `${baseUrl}${endpoint}`, { method: "POST", body }, 60_000);
+    const response = await fetchWithTimeout(fetcher, `${baseUrl}${endpoint}`, {
+      method: "POST", body, ...(args.expectedSha256 !== undefined ? { redirect: "error" as const } : {}),
+    }, 60_000);
     const text = await response.text().catch(() => "");
     if (!response.ok) {
       failures.push(`${endpoint} HTTP ${response.status}: ${text.slice(0, 120)}`);
@@ -443,6 +448,7 @@ export async function uploadH3Input(args: {
   sourcePath: string;
   mediaType: "image" | "audio" | "video";
   uploadName: string;
+  expectedSha256?: string;
   fetcher?: typeof fetch;
 }) {
   return uploadH3InputToBaseUrl({
@@ -450,6 +456,7 @@ export async function uploadH3Input(args: {
     sourcePath: args.sourcePath,
     mediaType: args.mediaType,
     uploadName: args.uploadName,
+    expectedSha256: args.expectedSha256,
     fetcher: args.fetcher,
   });
 }
@@ -466,6 +473,8 @@ export async function submitH3PromptToBaseUrl(args: {
   preSubmitCleanup?: "free" | null;
   releaseIdlePeer?: boolean;
   beforeSubmit?: () => Promise<void>;
+  qualification?: import("@/lib/h3StudioQualification").H3StudioLeasedSubmission;
+  characterVoicesBridgeRoute?: import("@/lib/h3QualificationBridgeRoute").H3QualificationBridgeRoute;
   onAccepted?: (
     promptId: string,
   ) => Promise<void> | void;
@@ -510,6 +519,8 @@ export async function submitH3PromptToBaseUrl(args: {
       purpose: "video",
       releaseIdlePeer: args.releaseIdlePeer ?? true,
       beforeSubmit: args.beforeSubmit,
+      qualification: args.qualification,
+      characterVoicesBridgeRoute: args.characterVoicesBridgeRoute,
       mediaQueueProducer: args.ownerKey && producerKind
         ? {kind: producerKind, ownerKey: args.ownerKey, id: args.jobId}
         : undefined,
@@ -610,6 +621,7 @@ export async function submitH3PromptToBaseUrl(args: {
   return {
     accepted: true as const,
     promptId,
+    queued: response.status === 202 && payload.otg_queue === "waiting-for-gpu",
   };
 }
 
@@ -625,6 +637,8 @@ export async function submitH3Prompt(args: {
   preSubmitCleanup?: "free" | null;
   releaseIdlePeer?: boolean;
   beforeSubmit?: () => Promise<void>;
+  qualification?: import("@/lib/h3StudioQualification").H3StudioLeasedSubmission;
+  characterVoicesBridgeRoute?: import("@/lib/h3QualificationBridgeRoute").H3QualificationBridgeRoute;
   onAccepted?: (
     promptId: string,
   ) => Promise<void> | void;
@@ -641,6 +655,8 @@ export async function submitH3Prompt(args: {
     preSubmitCleanup: args.preSubmitCleanup,
     releaseIdlePeer: args.releaseIdlePeer,
     beforeSubmit: args.beforeSubmit,
+    qualification: args.qualification,
+    characterVoicesBridgeRoute: args.characterVoicesBridgeRoute,
     onAccepted: args.onAccepted,
   });
 }

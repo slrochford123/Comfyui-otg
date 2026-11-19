@@ -1,3 +1,4 @@
+import {assertNsfwMediaAccess} from "@/lib/nsfwMediaAccess";
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
@@ -79,6 +80,7 @@ function ownerAllowedRoots(owner: Awaited<ReturnType<typeof getOwnerContext>>) {
     path.join(process.env.OTG_AUDIO_ANALYSIS_DIR || path.join(OTG_DATA_ROOT, "production_audio_analysis"), ownerSafe),
     path.join(OTG_DATA_ROOT, "extract_audio_jobs", ownerSafe),
     path.join(OTG_DATA_ROOT, "h3-direct", ownerSafe),
+    path.join(OTG_DATA_ROOT, "video-finishing", ownerSafe),
     path.join(OTG_DATA_ROOT, "h3-special", "refmods", ownerSafe),
     path.join(OTG_DATA_ROOT, "production_storyboard_sync", ownerSafe),
     path.join(OTG_DATA_ROOT, "productions", ownerSafe),
@@ -140,6 +142,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Not a file" }, { status: 400 });
     }
 
+    await assertNsfwMediaAccess(req, resolved);
     const fileName = sanitizeFilename(path.basename(resolved));
     return mediaFileResponse(req, resolved, {
       fileName,

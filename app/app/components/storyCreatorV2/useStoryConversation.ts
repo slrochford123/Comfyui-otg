@@ -14,6 +14,8 @@ export function useStoryConversation(input: {
 }) {
   const [turn, setTurn] = useState<StoryConversationTurn | null>(null);
   const [error, setError] = useState("");
+  const [retrying,setRetrying]=useState(false);
+  const retryLock=useRef(false);
   const projectRef = useRef(input.projectId);
   const callbackRef = useRef(input.onMessage);
   const wakeRef = useRef<() => void>(() => {});
@@ -92,6 +94,24 @@ export function useStoryConversation(input: {
     }
   }, [input.projectId, input.ownerKey, refresh]);
 
+  const retry = useCallback(async()=>{
+    if(!turn?.canRetry||retryLock.current)return;
+    retryLock.current=true;setRetrying(true);setError("");
+    const projectId=input.projectId;
+    try {
+      const response=await fetch("/api/story-creator/turns",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({action:"retry",projectId,turnId:turn.id,retryRevision:turn.retryRevision})});
+      const data=await response.json();
+      if(!response.ok)throw Error(data.error||"Could not retry the saved reply.");
+      if(projectRef.current===projectId){setTurn(data.turn);wakeRef.current();}
+    }catch(error){
+      if(projectRef.current===projectId){
+        await refresh().catch(()=>{});
+        setError(error instanceof Error?error.message:"Could not confirm Retry. Reconnect to check the saved reply.");
+      }
+    }finally{retryLock.current=false;setRetrying(false);}
+  },[turn,input.projectId,refresh]);
+
   const cancel = useCallback(async () => {
     if (!turn || !pending(turn)) return;
     try {
@@ -116,5 +136,5 @@ export function useStoryConversation(input: {
     } catch (error) { setError(error instanceof Error ? error.message : "Could not undo story memory."); }
   }, [turn, input.projectId, refresh]);
 
-  return { turn, pending: pending(turn), error, start, cancel, refresh, undoMemory };
+  return { turn, pending: pending(turn)||retrying, error, start, retry, cancel, refresh, undoMemory };
 }

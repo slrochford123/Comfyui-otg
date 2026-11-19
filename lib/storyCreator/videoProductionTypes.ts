@@ -41,6 +41,7 @@ export type StoryVideoSettingsSnapshot = {
   durationSeconds: 5 | 10;
   seed: number;
   rifeInterpolation60Fps: boolean;
+  upscale1080p?: boolean;
   userLoras: ProductionV2H3UserLoraState;
   h3Settings: H3AdvancedSettings;
   referenceVersionIds: string[];

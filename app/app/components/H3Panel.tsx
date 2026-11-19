@@ -1,8 +1,13 @@
 "use client";
+import H3CompletedMediaActions from "./H3CompletedMediaActions";
+import H3EnhanceButtons from "./H3EnhanceButtons";
+import H3ClipLengthControl from "./H3ClipLengthControl";
+import H3WorkspaceTabs from "./H3WorkspaceTabs";
 import AssistantProviderPicker,{selectedAssistantProvider} from "./AssistantProviderPicker";
 import { isH3SingularityMode } from "@/lib/production/h3Settings";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { prepareH3DirectorStills } from "./h3DirectorVisualInputs";
 import {useMediaGpuChoice,MEDIA_GPU_ROUTING_UI_ENABLED} from "./MediaGpuControl";
 import { createPortal } from "react-dom";
 
@@ -25,6 +30,8 @@ import {
 } from "@/lib/h3StylePresets";
 import { H3StylePresetPicker } from "./H3StylePresetPicker";
 import H3AdvancedControls from "./H3AdvancedControls";
+import ExtractCharactersAction from "./ExtractCharactersAction";
+import type { H3CardReference } from "@/lib/h3CardReferences";
 import H3SmartReferences from "./H3SmartReferences";
 import H3SavedUploads from "./H3SavedUploads";
 import {useH3SavedUploads,type SavedH3Upload} from "@/lib/client/h3SavedUploads";
@@ -32,6 +39,9 @@ import type { H3SmartReferenceSelection } from "@/lib/h3SmartReferences";
 import H3SingularitySelector from "./H3SingularitySelector";
 import H3SpeedIndicator from "./H3SpeedIndicator";
 import H3VideoEditPanel from "./H3VideoEditPanel";
+const RefModReplacementLab = dynamic(() => import("./RefModReplacementLab"));
+const EditVideoSwapCharactersPanel = dynamic(() => import("./EditVideoSwapCharactersPanel"));
+const ExperimentLabPanel = dynamic(() => import("./ExperimentLabPanel"));
 import { ExpandableVideo } from "./ExpandedMediaViewer";
 import NativeImagePanel from "./NativeImagePanel";
 import dynamic from "next/dynamic";
@@ -40,10 +50,10 @@ const H3NsfwPanel=dynamic(()=>import("./H3NsfwStudio"));
 const H3CharacterVoiceCorrection=dynamic(()=>import("./H3CharacterVoiceCorrection"));
 import {H3RecoveryClient, h3RecoveryMessage} from "@/lib/client/h3Recovery";
 import {useH3Resume} from "@/lib/client/useH3Resume";
-import H3StudioControls, { type H3StudioController } from "./H3StudioControls";
+import H3StudioControls from "./H3StudioControls";
 import type { H3StudioPlan } from "@/lib/h3StudioPlan";
 import SpeechInputButton from "./SpeechInputButton";
-import VideoSnapshotPicker from "./VideoSnapshotPicker";
+import VideoSnapshotPicker, { seekSnapshotBoundary } from "./VideoSnapshotPicker";
 import {
   DEFAULT_H3_ADVANCED_SETTINGS,
   h3SingularityLabel,
@@ -51,7 +61,6 @@ import {
   type H3AdvancedSettings,
 } from "@/lib/production/h3Settings";
 import {
-  getH3GenerationDimensions,
   getH3NativeDimensions,
   H3_ORIENTATION_OPTIONS,
   H3_PRODUCTION_DURATION_OPTIONS,
@@ -109,12 +118,15 @@ type Mode = ProductionV2H3Mode;
 type H3StudioMode = H3StudioModeId;
 type MediaKind = "image" | "video" | "audio";
 type MediaInput = H3StudioReferenceDescriptor & {
+  characterRef?: H3CardReference;
   file: File;
   url: string;
   sourceDurationSeconds?: number;
   clipStartSeconds?: number;
 };
 type H3GenerationConfig = {
+  characterImageRefs?: Array<H3CardReference | null>;
+  experimentalAudioReferences?: boolean;
   smartReferences?: H3SmartReferenceSelection;
   targetBackend?: "rtx3090" | "rtx5060ti";
   studioPlan?: H3StudioPlan;
@@ -123,9 +135,11 @@ type H3GenerationConfig = {
   orientation: H3Orientation;
   durationSeconds: 5 | 10;
   prompt: string;
+  promptFormat?: "minimax-official-v1";
   stylePresetId: string;
   h3Settings: H3AdvancedSettings;
   rifeInterpolation60Fps: boolean;
+  upscale1080p: boolean;
   optionalLoras: H3StudioLoraSelection[];
   imageDescriptions: string[];
   videoDescriptions: string[];
@@ -154,6 +168,7 @@ type H3StagedBodySwapPayload = {
 };
 type JobStatus = {
   id: string;
+  finishingRetry?: boolean;
   status: string;
   statusMessage: string;
   mode: H3StudioMode;
@@ -266,12 +281,8 @@ const REFERENCE_LIMIT_HELP =
 const H3_ANDROID_UPLOAD_BUDGET_BYTES = 90 * 1024 * 1024;
 const H3_STAGED_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
 const H3_STAGED_UPLOAD_MAX_BYTES = 512 * 1024 * 1024;
-const QUALITY_LABELS: Record<H3Quality, string> = { sh: "SH", lq: "LQ", hq: "HQ" };
-const QUALITY_DETAILS: Record<H3Quality, string> = {
-  sh: "Scene Hunter quick scene search",
-  lq: "0.6 MP native",
-  hq: "1.0 MP native",
-};
+const QUALITY_LABELS: Record<H3Quality, string> = { sh: "Seed Hunter", lq: "Normal", hq: "Enhanced" };
+
 const H3_LAST_JOB_STORAGE_KEY = "otg:h3:last-direct-job-id:v1";
 
 function refModDefaultStrength(category: H3RefModCategory) {
@@ -313,8 +324,12 @@ const H3_REFERENCE_VIDEO_CLIP_SECONDS = 5;
 const H3_REFERENCE_VIDEO_MAX_SOURCE_SECONDS = 20 * 60;
 
 type H3PanelProps = {
+  testVideoFinishing?: boolean;
+  relayFinishingAvailable?: boolean;
+  continuationAvailable?: boolean;
   authenticatedOwnerKey?: string;
   nsfwAvailable?: boolean;
+  isAdmin?: boolean;
 };
 
 type H3PersistedJob = {
@@ -632,6 +647,7 @@ function h3MediaMeta(
       item.file.lastModified || Date.now(),
     description:
       item.description || "",
+    characterRef: item.characterRef,
     includeAudio:
       item.includeAudio,
     sourceDurationSeconds:
@@ -996,7 +1012,7 @@ function GalleryPicker({
   );
 }
 
-export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=false }: H3PanelProps) {
+export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=false, isAdmin=false, relayFinishingAvailable=false, testVideoFinishing=relayFinishingAvailable }: H3PanelProps) {
   const {access:nsfwAccess}=useH3NsfwAccess(nsfwAvailable);
   const [nsfwOpen,setNsfwOpen]=useState(false);
   const storageOwnerKey = useMemo(
@@ -1005,7 +1021,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
   );
   const nsfwViewKey=profileStorageKey("otg:h3:nsfw:view:v1",storageOwnerKey);
   function showNsfw(open:boolean){setNsfwOpen(open);try{localStorage.setItem(nsfwViewKey,open?"1":"0");}catch{/* existing account draft remains server-backed */}}
-  useEffect(()=>{if(!nsfwAccess)return;try{setNsfwOpen(nsfwAccess.enabled&&localStorage.getItem(nsfwViewKey)==="1");}catch{setNsfwOpen(false);}},[nsfwAccess,nsfwViewKey]);
+  useEffect(()=>{if(!nsfwAccess)return;try{setNsfwOpen(nsfwAccess.enabled&&(new URL(window.location.href).searchParams.get("h3view")==="nsfw"||localStorage.getItem(nsfwViewKey)==="1"));}catch{setNsfwOpen(false);}},[nsfwAccess,nsfwViewKey]);
   const recovery = useMemo(() => new H3RecoveryClient(storageOwnerKey), [storageOwnerKey]);
   const submissionInFlight = useRef(false);
   const submissionEpoch = useRef(0);
@@ -1029,8 +1045,12 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
   );
   const [mode, setMode] = useState<Mode>("h3-text-to-video");
   const [videoEditOpen, setVideoEditOpen] = useState(false);
+  const [editTool, setEditTool] = useState("edit");
+  const [directorEditing, setDirectorEditing] = useState(false);
+  const [directorLastDirection, setDirectorLastDirection] = useState("");
+  const [directorPromptEdit, setDirectorPromptEdit] = useState("");
   const [imageCreateOpen, setImageCreateOpen] = useState(false);
-  const [studioController, setStudioController] = useState<H3StudioController>("auto");
+
   const [manualControlsOpen, setManualControlsOpen] = useState(false);
   const [studioBusy, setStudioBusy] = useState(false);
   const [h3Backend, setH3Backend] = useState<"rtx3090" | "rtx5060ti">("rtx3090");
@@ -1050,6 +1070,10 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
   const [h3Settings, setH3Settings] =
     useState<H3AdvancedSettings>(DEFAULT_H3_ADVANCED_SETTINGS);
   const [rifeInterpolation60Fps, setRifeInterpolation60Fps] = useState(false);
+  const [upscaleOverride, setUpscaleOverride] = useState<boolean>();
+  const upscale1080p = upscaleOverride ?? (
+    quality !== "sh" && studioMode !== "h3-realism" && studioMode !== "h3-refmods"
+  );
   const [duration, setDuration] = useState<5 | 10>(5);
   const [orientation, setOrientation] =
     useState<H3Orientation>("landscape");
@@ -1059,6 +1083,8 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
   const [suggestion, setSuggestion] = useState("");
   const [suggestionDraft, setSuggestionDraft] = useState("");
   const [h3DirectorDraft, setH3DirectorDraft] = useState("");
+  const [h3DirectedFingerprint, setH3DirectedFingerprint] = useState("");
+  const [allowDirectorImages, setAllowDirectorImages] = useState(false);
   const [h3DirectorConversationId, setH3DirectorConversationId] =
     useState("");
   const [h3DirectorReply, setH3DirectorReply] = useState("");
@@ -1141,6 +1167,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
   const [firstImage, setFirstImage] = useState<MediaInput | null>(null);
   const [lastImage, setLastImage] = useState<MediaInput | null>(null);
   const [references, setReferences] = useState<MediaInput[]>([]);
+  const [experimentalAudioReferences, setExperimentalAudioReferences] = useState(false);
   const [savedImageTarget,setSavedImageTarget]=useState<"first"|"last">("first");
   const [catalog, setCatalog] = useState<H3LoraCatalogEntry[]>([]);
   const [maxLoras, setMaxLoras] = useState(3);
@@ -1153,6 +1180,14 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
   const [snapshotTarget, setSnapshotTarget] = useState<
     "first" | "last" | "reference-image" | ""
   >("");
+  const [referenceOrderChanged, setReferenceOrderChanged] = useState(false);
+  const [snapshotReferenceId, setSnapshotReferenceId] = useState<string>();
+  const [snapshotResultUrl, setSnapshotResultUrl] = useState<string>();
+  function openSnapshot(target: "first" | "last" | "reference-image", referenceId?: string, videoUrl?: string) {
+    setSnapshotReferenceId(referenceId);
+    setSnapshotResultUrl(videoUrl);
+    setSnapshotTarget(target);
+  }
   const [enhancing, setEnhancing] = useState("");
   const [enhancementLevel, setEnhancementLevel] = useState<
     "short" | "medium" | "long"
@@ -1183,7 +1218,12 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
   const smartMedia = studioMode === "h3-realism" ? realismReferences : references;
   const smartFeatureActive = smartWorkflow && (smartUseFirstFrame || studioMode !== "h3-refmods" && refModSlots.length > 0 || studioMode === "h3-refmods" && references.some(item => item.kind === "image"));
   function smartReferenceConfig(): H3SmartReferenceSelection | undefined {
-    return smartFeatureActive ? {useFirstFrame: smartUseFirstFrame, refMods: refModSlots} : undefined;
+    if (!smartFeatureActive) return undefined;
+    const visualOnly = studioMode === "h3-reference-to-video" && !experimentalAudioReferences;
+    const slots = visualOnly ? refModSlots.filter(slot => slot.components !== "Audio").map(slot => ({
+      ...slot, components: "Visual" as const, audioStrength: 0,
+    })) : refModSlots;
+    return {useFirstFrame: smartUseFirstFrame, refMods: slots};
   }
 
   const specialModeLabel =
@@ -1197,13 +1237,14 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       }),
     [realismPreset, realismSpeedLora, realismPeopleEnabled],
   );
-  const descriptors = references.map(
+  const generationReferences = experimentalAudioReferences ? references : references.filter(item => item.kind !== "audio");
+  const descriptors = generationReferences.map(
     ({ id, kind, name, description, includeAudio, clipStartSeconds }) => ({
       id,
       kind,
       name,
       description,
-      includeAudio,
+      includeAudio: experimentalAudioReferences && includeAudio,
       clipStartSeconds,
     }),
   );
@@ -1284,8 +1325,21 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
   const builderPromptStale =
     promptSource === "builder"
     && (!reviewedFingerprint || reviewedFingerprint !== currentFingerprint);
+  const directorFingerprint = JSON.stringify([
+    mode, duration, quality, orientation, stylePresetId, promptBuilderVisualStyle,
+    cameraFeel, shotFlow, firstImage?.id, lastImage?.id, descriptors, selectedLoras,
+    smartUseFirstFrame, refModSlots, h3Backend,
+    h3DirectorDraft.trim(),
+  ]);
+  const liveDirectorFingerprint = useRef(directorFingerprint);
+  useEffect(() => { liveDirectorFingerprint.current = directorFingerprint; }, [directorFingerprint]);
+  const directedPromptStale = promptSource === "direct" && Boolean(h3DirectedFingerprint)
+    && h3DirectedFingerprint !== directorFingerprint;
+  const useDirectedPrompt = promptSource === "direct" && Boolean(h3DirectedFingerprint) && !directedPromptStale;
   const generationPrompt =
-    promptSource === "builder" ? scenePrompt : originalPrompt;
+    promptSource === "builder" ? scenePrompt
+      : useDirectedPrompt ? originalPrompt
+        : h3DirectorDraft || originalPrompt;
   const hasReferenceVideo =
     legacyModeActive
     && mode === "h3-reference-to-video"
@@ -1294,7 +1348,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     legacyModeActive
     && (Boolean(originalPrompt.trim()) || hasReferenceVideo);
   const lockedReferences = buildH3StudioLockedReferences(promptContext);
-  const exactFinalPrompt = composeH3StudioFinalPrompt(
+  const exactFinalPrompt = useDirectedPrompt ? generationPrompt : composeH3StudioFinalPrompt(
     lockedReferences,
     generationPrompt,
   );
@@ -1436,6 +1490,9 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     legacyModeActive
       && generationPrompt.trim()
       && !builderPromptStale
+      && !directedPromptStale
+      && !h3DirectorBusy
+      && !enhancing
       && (mode !== "h3-image-to-video" || firstImage)
       && (mode !== "h3-reference-to-video" || references.length || refModSlots.length || smartUseFirstFrame)
       && (!smartWorkflow || !smartReferenceError)
@@ -1536,10 +1593,11 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
 
       releaseAllMedia();
       const restoredMode = normalizePersistedMode(stored.mode);
-      setStudioMode(restoredMode);
+      setStudioMode(isLegacyH3Mode(restoredMode) ? restoredMode : "h3-text-to-video");
       setMode(isLegacyH3Mode(restoredMode) ? restoredMode : "h3-text-to-video");
       setQuality(normalizePersistedQuality(stored.quality));
       setRifeInterpolation60Fps(stored.rifeInterpolation60Fps === true);
+      setUpscaleOverride(stored.upscale1080p);
       setH3Settings(
         normalizeH3AdvancedSettings(
           stored.h3Settings ? { ...stored.h3Settings, ...(restoredMode === "h3-refmods" && stored.refModsTurbo === false ? { renderMode: "native" } : {}) } : { renderMode: stored.refModsTurbo === false ? "native" : "turbo" },
@@ -1553,7 +1611,8 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       setScenePrompt(stored.scenePrompt || "");
       setSuggestion(stored.suggestion || "");
       setSuggestionDraft(stored.suggestionDraft || "");
-      setH3DirectorDraft(stored.h3DirectorDraft || "");
+      setH3DirectorDraft(stored.h3DirectorDraft || (!stored.h3DirectorReply ? stored.originalPrompt : "") || "");
+      setH3DirectedFingerprint(stored.h3DirectedFingerprint || "");
       setH3DirectorConversationId(stored.h3DirectorConversationId || "");
       setH3DirectorReply(stored.h3DirectorReply || "");
       setH3DirectorChanges(
@@ -1712,6 +1771,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
         quality,
         h3Settings,
         rifeInterpolation60Fps,
+        upscale1080p: upscaleOverride,
         duration,
         orientation,
         originalPrompt,
@@ -1720,6 +1780,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
         suggestion,
         suggestionDraft,
         h3DirectorDraft,
+        h3DirectedFingerprint,
         h3DirectorConversationId,
         h3DirectorReply,
         h3DirectorChanges,
@@ -1805,6 +1866,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     quality,
     h3Settings,
     rifeInterpolation60Fps,
+    upscaleOverride,
     duration,
     orientation,
     originalPrompt,
@@ -1813,6 +1875,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     suggestion,
     suggestionDraft,
     h3DirectorDraft,
+    h3DirectedFingerprint,
     h3DirectorConversationId,
     h3DirectorReply,
     h3DirectorChanges,
@@ -1954,12 +2017,11 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     function consume(entry: H3RefModLibraryEntry | null) {
       if (!entry?.name) return;
       if(entry.backend&&latestMediaGpuPreference.current==="auto")setH3Backend(entry.backend);
-      setStudioController("manual");
       setManualControlsOpen(false);
       setVideoEditOpen(false);
       setImageCreateOpen(false);
       showNsfw(false);
-      setStudioMode("h3-refmods");
+      selectStudioMode("h3-reference-to-video");
       setRefModLibraryStatus("idle");
       addRefModSlot(entry);
       setMessage(`Added ${entry.displayName || entry.name} to Ref Mods.`);
@@ -2061,6 +2123,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
         meta.name || file.name,
       description:
         meta.description || "",
+      characterRef: meta.characterRef,
       includeAudio:
         meta.includeAudio === true,
       sourceDurationSeconds:
@@ -2217,6 +2280,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     setMode("h3-text-to-video");
     setStudioMode("h3-text-to-video");
     setQuality("lq");
+    setUpscaleOverride(undefined);
     setH3Settings(DEFAULT_H3_ADVANCED_SETTINGS);
     setDuration(5);
     setOrientation("landscape");
@@ -2226,6 +2290,8 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     setSuggestion("");
     setSuggestionDraft("");
     setH3DirectorDraft("");
+    setH3DirectedFingerprint("");
+    setAllowDirectorImages(false);
     setH3DirectorConversationId("");
     setH3DirectorReply("");
     setH3DirectorChanges([]);
@@ -2293,15 +2359,17 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     });
   }
   function replaceOriginal(value: string) {
-    setUndoPrompt(originalPrompt);
     setOriginalPrompt(value);
     setPromptSource("direct");
   }
 
   async function enhance(level: "short" | "medium" | "long") {
+    const description = h3DirectorDraft;
     setEnhancementLevel(level);
-    if (!originalPrompt.trim())
+    if (!description.trim())
       return setMessage("Enter a prompt before enhancing.");
+    if (description.length > 4000)
+      return setMessage("Use up to 4,000 characters for scene enhancement.");
     setEnhancing(level);
     setMessage("");
     try {
@@ -2310,27 +2378,17 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt: originalPrompt,
+          prompt: description,
           enhanceLevel: level,
-          contextType: "video",
-          mediaMode: "video",
-          videoGenerationType: mode,
-          durationSeconds: duration,
-          workflowLabel: "MiniMax H3",
-          selectedStyle: {
-            label: promptBuilderVisualStyle,
-            prompt: promptBuilderVisualStyle,
-          },
-          visualContext: descriptors
-            .map((item) => `${item.kind}: ${item.description || item.name}`)
-            .join("\n"),
+          purpose: "h3-scene-draft",
         }),
       });
       const data = await response.json();
       const value = String(data.enhancedPrompt || data.prompt || "").trim();
       if (!response.ok || !value)
         throw new Error(data.error || "Enhance Prompt returned no text.");
-      replaceOriginal(value);
+      setUndoPrompt(description);
+      setH3DirectorDraft(value);
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "Prompt enhancement failed.",
@@ -2638,23 +2696,31 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
   }
 
   function useCurrentRawPrompt() {
-    if (!originalPrompt.trim()) {
+    if (!(h3DirectorDraft || originalPrompt).trim()) {
       return setMessage("Enter a prompt before generating.");
     }
+    setH3DirectedFingerprint("");
     setPromptSource("direct");
     setMessage("Using your current prompt directly. Prompt Builder is optional.");
   }
 
-  async function askH3Director() {
-    const text = h3DirectorDraft.trim();
+  async function askH3Director(retry = false) {
+    const direction = h3DirectorDraft.trim() || (retry ? directorLastDirection || originalPrompt : "");
+    const text = direction;
     if (!text) {
       return setMessage("Type or dictate a direction for the H3 AI Director.");
     }
+    if (direction.length > 4000) return setMessage("Use up to 4,000 characters for scene direction.");
+    if (mode === "h3-image-to-video" && !firstImage)
+      return setMessage("Choose a First Image before directing the scene.");
     setH3DirectorBusy(true);
     setMessage("H3 Director is refining the scene...");
-    const keyName="otg:h3-director:pending";
-    let requestId=sessionStorage.getItem(keyName);
+    const requestFingerprint = directorFingerprint;
+    const keyName = profileStorageKey("otg:h3-director:pending:v2", storageOwnerKey);
     try {
+      const savedRequest = JSON.parse(sessionStorage.getItem(keyName) || "null") as
+        { id: string; fingerprint: string } | null;
+      let requestId = !retry && savedRequest?.fingerprint === requestFingerprint ? savedRequest.id : null;
       let response:Response;
       if(requestId){
         response=await fetch(`/api/openai-ai/h3-director?requestId=${encodeURIComponent(requestId)}`,{cache:"no-store"});
@@ -2662,7 +2728,24 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       }
       if(!requestId){
         requestId=Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,"0")).join("");
-        sessionStorage.setItem(keyName,requestId);
+        const aiProvider = isAdmin ? selectedAssistantProvider("h3-director") : undefined;
+        const mayAttach = allowDirectorImages || aiProvider === "local3060";
+        const chosenImages = references.filter((item) => item.kind === "image");
+        const chosenVideos = references.filter((item) => item.kind === "video");
+        const visualSources = mode === "h3-image-to-video"
+          ? [
+              ...(firstImage ? [{ label: "First Image", url: firstImage.url }] : []),
+              ...(lastImage ? [{ label: "Last Image", url: lastImage.url }] : []),
+            ]
+          : mode === "h3-reference-to-video"
+            ? [
+                ...(smartUseFirstFrame && firstImage ? [{ label: "First Image", url: firstImage.url }] : []),
+                ...chosenImages.map((item, index) => ({ label: `<Picture ${index + 1}>`, url: item.url })),
+                ...chosenVideos.map((item, index) => ({ label: `<Video ${index + 1}>`, url: item.url, videoTime: item.clipStartSeconds || 0 })),
+              ]
+            : [];
+        const visualInputs = mayAttach ? await prepareH3DirectorStills(visualSources) : [];
+        sessionStorage.setItem(keyName, JSON.stringify({ id: requestId, fingerprint: requestFingerprint }));
         response=await fetch("/api/openai-ai/h3-director", {
         method: "POST",
         cache: "no-store",
@@ -2670,14 +2753,22 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
         headers: { "Content-Type": "application/json", Prefer:"respond-async", "Idempotency-Key":requestId },
         body: JSON.stringify({
           message: text,
-          aiProvider:process.env.NEXT_PUBLIC_OTG_OPENAI_CONVERSATION_CREDITS==="1"?selectedAssistantProvider("h3-director"):undefined,
+          retry,
+          aiProvider,
           conversationId: h3DirectorConversationId,
-          currentPrompt: originalPrompt,
+          stylePresetId,
+          firstImageName: firstImage?.name,
+          lastImageName: lastImage?.name,
+          smartReferences: smartReferenceConfig(),
+          targetBackend: h3Backend,
+          visualInputs,
+          externalMediaConsent: allowDirectorImages,
           mode,
           durationSeconds: duration,
           quality,
           orientation,
-          visualStyle: promptBuilderVisualStyle,
+          visualStyle: stylePresetId === "none" && visualStyle === DEFAULT_PRODUCTION_V2_PROMPT_OPTIONS.visualStyle
+            ? undefined : promptBuilderVisualStyle,
           cameraFeel,
           shotFlow,
           references: descriptors,
@@ -2704,10 +2795,13 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       const data = await response!.json().catch(() => ({}));
       if(response!.ok||response!.status<500||response!.headers.get("X-OTG-H3-Request")==="complete")sessionStorage.removeItem(keyName);
       const nextPrompt = String(data.prompt || "").trim();
-      if (!response!.ok || !nextPrompt) {
+      if (!response!.ok || !nextPrompt || data.promptFormat !== "minimax-official-v1") {
         throw new Error(data.error || "OpenAI H3 Director returned no prompt.");
       }
+      if (requestFingerprint !== liveDirectorFingerprint.current)
+        return setMessage("Scene inputs changed during direction. Direct the current draft again.");
       replaceOriginal(nextPrompt);
+      setH3DirectedFingerprint(requestFingerprint);
       setScenePrompt("");
       setSuggestion("");
       setSuggestionDraft("");
@@ -2729,8 +2823,13 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
               .filter((item: { id: string; prompt: string }) => item.id && item.prompt)
           : [],
       );
-      setH3DirectorDraft("");
-      setMessage("H3 Director updated your editable prompt.");
+      setDirectorLastDirection(direction);
+      setDirectorEditing(false);
+      const providerMessage = data.provider === "local3060" ? "Directed on RTX 3060."
+        : data.provider === "openai" ? "Directed with OpenAI." : "Scene directed.";
+      setMessage(allowDirectorImages && mode !== "h3-text-to-video" && data.visualInputsUsed === 0
+        ? `${providerMessage} Used text and reference labels only.`
+        : providerMessage);
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "OpenAI H3 Director failed.",
@@ -2952,6 +3051,8 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
   }
   function h3GenerationConfig(): H3GenerationConfig {
     return {
+      experimentalAudioReferences,
+      ...(mode === "h3-reference-to-video" && generationReferences.some(item => item.characterRef) ? { characterImageRefs: generationReferences.filter(item => item.kind === "image").map(item => item.characterRef ?? null) } : {}),
       smartReferences: smartReferenceConfig(),
       targetBackend: h3Backend,
       ...(validatedStudioPlan ? { studioPlan: validatedStudioPlan, seed: validatedStudioPlan.seed } : {}),
@@ -2960,25 +3061,27 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       orientation,
       durationSeconds: duration,
       prompt: generationPrompt,
+      ...(useDirectedPrompt ? { promptFormat: "minimax-official-v1" as const } : {}),
       stylePresetId,
       h3Settings: normalizeH3AdvancedSettings(
         h3Settings,
         refModReferenceOptions.length,
       ),
       rifeInterpolation60Fps,
+      upscale1080p,
       optionalLoras: selectedLoras,
-      imageDescriptions: references
+      imageDescriptions: generationReferences
         .filter((item) => item.kind === "image")
         .map((item) => item.description),
-      videoDescriptions: references
+      videoDescriptions: generationReferences
         .filter((item) => item.kind === "video")
         .map((item) => item.description),
-      audioDescriptions: references
+      audioDescriptions: generationReferences
         .filter((item) => item.kind === "audio")
         .map((item) => item.description),
-      videoAudioFlags: references
+      videoAudioFlags: generationReferences
         .filter((item) => item.kind === "video")
-        .map((item) => Boolean(item.includeAudio)),
+        .map((item) => experimentalAudioReferences && Boolean(item.includeAudio)),
       videoClipStartSeconds: references
         .filter((item) => item.kind === "video")
         .map((item) => item.clipStartSeconds || 0),
@@ -2987,13 +3090,13 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
   function appendH3GenerationFiles(body: FormData) {
     if (firstImage) body.append("firstImage", firstImage.file);
     if (lastImage) body.append("lastImage", lastImage.file);
-    references
+    generationReferences
       .filter((item) => item.kind === "image")
       .forEach((item) => body.append("referenceImages", item.file));
-    references
+    generationReferences
       .filter((item) => item.kind === "video")
       .forEach((item) => body.append("referenceVideos", item.file));
-    references
+    generationReferences
       .filter((item) => item.kind === "audio")
       .forEach((item) => body.append("referenceAudios", item.file));
   }
@@ -3009,6 +3112,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       compiledPromptOverride:
         finalRealismPrompt.trim(),
       rifeInterpolation60Fps,
+      upscale1080p,
       creative: h3CreativeDirection,
       checkpointMode: h3Settings.checkpointMode,
       combatLoraEnabled:
@@ -3074,6 +3178,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       sourceVideoClipStartSeconds:
         bodySwapSourceVideo?.clipStartSeconds || 0,
       rifeInterpolation60Fps,
+      upscale1080p,
       creative: h3CreativeDirection,
       optionalLoras: selectedLoras,
       seed:
@@ -3100,6 +3205,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       turbo: h3Settings.renderMode === "turbo",
       h3Settings: { ...h3Settings, refMod: { ...h3Settings.refMod, enabled: false }, motionLab: { enabled: false } },
       rifeInterpolation60Fps,
+      upscale1080p,
       creative: h3CreativeDirection,
       optionalLoras: selectedLoras,
       seed:
@@ -3380,7 +3486,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     }
 
     const audioReferences =
-      references.filter(
+      generationReferences.filter(
         (item) => item.kind === "audio",
       );
 
@@ -3581,8 +3687,14 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       return setMessage(
         `${specialModeLabel} is not available yet. Choose Text, Image, or Reference for a supported generation.`,
       );
+    if (directedPromptStale)
+      return setMessage("Direct the updated scene again or choose Use Draft.");
     if (builderPromptStale)
       return setMessage("The optional Builder prompt changed. Use your current raw prompt or review the Builder result again.");
+    if (mode === "h3-reference-to-video" && referenceOrderChanged && /<Picture \d+>/i.test(generationPrompt)) {
+      const mapping = references.filter(item => item.kind === "image").map((item,index)=>`Picture ${index+1} · ${item.name}`).join("\n");
+      if (!window.confirm("Reference order changed. Confirm that your prompt matches these Picture numbers.\n\n"+mapping)) return;
+    }
     if (!generationPrompt.trim())
       return setMessage("Enter a prompt before generating.");
     if (mode === "h3-image-to-video" && !firstImage)
@@ -3649,9 +3761,34 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     );
     if (response.ok) await refreshJob(job.id);
   }
+  async function continueFromLastFrame() {
+    if (!job?.videoUrl) return;
+    const element = document.createElement("video");
+    element.preload = "auto"; element.muted = true; element.playsInline = true;
+    try {
+      await new Promise<void>((resolve,reject) => {
+        const timer = setTimeout(()=>reject(Error("The previous scene could not be opened.")),8000);
+        element.addEventListener("loadeddata",()=>{clearTimeout(timer);resolve();},{once:true});
+        element.addEventListener("error",()=>{clearTimeout(timer);reject(Error("The previous scene could not be opened."));},{once:true});
+        element.src=job.videoUrl!;
+      });
+      await seekSnapshotBoundary(element,"last");
+      const canvas=document.createElement("canvas");
+      canvas.width=element.videoWidth; canvas.height=element.videoHeight;
+      const context=canvas.getContext("2d");
+      if(!context || !canvas.width || !canvas.height) throw Error("The last frame was not available.");
+      context.drawImage(element,0,0);
+      const blob=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(result=>result?resolve(result):reject(Error("Could not capture the last frame.")),"image/png"));
+      replaceSingle(firstImage,new File([blob],"continued-last-frame.png",{type:"image/png"}),setFirstImage);
+      setMode("h3-reference-to-video"); setStudioMode("h3-reference-to-video"); setSmartUseFirstFrame(true);
+      setMessage("Last frame set as the opening guide. The previous soundtrack was not added.");
+    } catch(error) {setMessage(error instanceof Error?error.message:"Could not continue the scene.");}
+    finally { element.removeAttribute("src"); element.load(); }
+  }
   async function useAsReference() {
     if (!job?.videoUrl) return;
     const response = await fetch(job.videoUrl);
+    if (!response.ok) return setMessage("The previous scene could not be loaded.");
     const blob = await response.blob();
     addReference(
       "video",
@@ -3663,7 +3800,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     setStudioMode("h3-reference-to-video");
     setPromptSource("direct");
     setMessage(
-      "Result added as a video reference. Your raw prompt can generate directly; Prompt Builder remains optional.",
+      "Previous scene added to Reference. Choose the clip window and direct the next scene.",
     );
   }
 
@@ -3750,7 +3887,11 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     );
   }
 
-  function renderSharedOutputControls(label: string, details?: React.ReactNode, afterDuration?: React.ReactNode) {
+  function renderDuration() {
+    return <H3ClipLengthControl value={duration} onChange={value=>setDuration(value as 5|10)} buttonClass={command} activeClass={choiceClass(true)}/>;
+  }
+
+  function renderSharedOutputControls(label: string, details?: React.ReactNode, afterDuration?: React.ReactNode, durationInDirector = false) {
     return (
       <>
         <p className="mb-2 mt-3 text-xs font-bold text-white/50">Quality</p>
@@ -3766,34 +3907,11 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
               className={`${command} text-left ${choiceClass(quality === value)}`}
               onClick={() => setQuality(value)}
             >
-              <span className="block font-black">
-                {value === "sh" ? "SH · Scene Hunter" : QUALITY_LABELS[value]} · {(fastH3Selected ? getH3GenerationDimensions("h3-reference-to-video", value, orientation) : getH3NativeDimensions(value, orientation)).width}x{(fastH3Selected ? getH3GenerationDimensions("h3-reference-to-video", value, orientation) : getH3NativeDimensions(value, orientation)).height}
-              </span>
-              <span className="mt-1 block text-[11px] font-bold leading-4 text-white/45">
-                {QUALITY_DETAILS[value]}
-              </span>
+              {QUALITY_LABELS[value]}
             </button>
           ))}
         </div>
-        <p className="mb-2 mt-4 text-xs font-bold text-white/50">
-          Duration
-        </p>
-        <div
-          className="grid grid-cols-2 gap-2"
-          role="group"
-          aria-label={`${label} duration`}
-        >
-          {H3_PRODUCTION_DURATION_OPTIONS.map((value) => (
-            <button
-              key={value}
-              aria-pressed={duration === value}
-              className={`${command} ${choiceClass(duration === value)}`}
-              onClick={() => setDuration(value)}
-            >
-              {value} sec
-            </button>
-          ))}
-        </div>
+        {!durationInDirector && renderDuration()}
         {afterDuration}
         <p className="mb-2 mt-4 text-xs font-bold text-white/50">
           Orientation
@@ -3814,7 +3932,22 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
             </button>
           ))}
         </div>
-        {modeCapabilities.supportsRife ? renderRife60FpsControl() : null}
+        {modeCapabilities.supportsRife ? <>
+          {renderRife60FpsControl()}
+          <div className="mt-2 flex items-start justify-between gap-3 rounded-[6px] border border-white/10 bg-black/30 p-3" data-otg="h3-upscale-1080p-control">
+            <div>
+              <p className="text-xs font-black uppercase text-white/50">1080p Upscaler (RelayVSR)</p>
+              <p className="mt-1 text-xs leading-5 text-white/50">Off keeps the generated resolution. The 60 FPS setting is independent.</p>
+            </div>
+            <div className="grid min-w-32 grid-cols-2 gap-1" role="group" aria-label="1080p Upscaler">
+              {[false, true].map(enabled => <button
+                key={String(enabled)} type="button" aria-pressed={upscale1080p === enabled}
+                className={`${command} px-2 py-2 text-xs ${choiceClass(upscale1080p === enabled)}`}
+                onClick={() => setUpscaleOverride(enabled)}
+              >{enabled ? "ON" : "OFF"}</button>)}
+            </div>
+          </div>
+        </> : null}
         {details}
       </>
     );
@@ -3913,11 +4046,13 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
           data-otg="h3-advanced-controls-panel"
         >
           <H3AdvancedControls
+            directModelButtons={studioMode !== "h3-reference-to-video"}
             allowFastH3={studioMode === "h3-reference-to-video"}
             fastH3BlockedReason={selectedLoras.map(selection => fastH3LoraBlockReason(catalog.find(entry => entry.id === selection.id)?.filename, selection.strength)).find(reason => reason !== null) || undefined}
             value={h3Settings}
             onChange={setH3Settings}
             referenceOptions={refModReferenceOptions}
+            hideEnhancements
             disabled={active}
             afterModelControls={<>
         <H3SpeedIndicator settings={h3Settings} quality={quality} />
@@ -3944,7 +4079,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
     if (!modeCapabilities.supportsOptionalLoras) return null;
     return (
       <details className={surface} data-otg="h3-optional-loras">
-        <summary className="min-h-11 cursor-pointer py-3 text-sm font-black">Optional H3 LoRAs</summary>
+        <summary className="min-h-11 cursor-pointer py-3 text-sm font-black">Add LoRA</summary>
         <div className="mt-4">
           <div className="flex items-center justify-between">
             <p className="text-xs font-black uppercase text-white/50">
@@ -4060,49 +4195,35 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       className="mx-auto max-w-7xl space-y-4 pb-28 pt-8 md:pt-0"
       data-testid="h3-panel"
     >
-      <div className="flex flex-wrap gap-2">
-      <button type="button" disabled={studioBusy} aria-pressed={!nsfwOpen&&!imageCreateOpen} onClick={()=>{showNsfw(false);setImageCreateOpen(false);}} className="min-h-11 rounded-lg border border-violet-300/30 px-4 font-bold">H3 Video</button>
-      <button type="button" disabled={studioBusy} aria-pressed={imageCreateOpen&&!nsfwOpen} onClick={() => {showNsfw(false);setImageCreateOpen(true);}} className="min-h-11 rounded-lg border border-violet-300/30 px-4 font-bold">H3 · Text to Image</button>
-      {nsfwAccess?.enabled&&<button type="button" disabled={studioBusy} aria-pressed={nsfwOpen} onClick={()=>{setImageCreateOpen(false);showNsfw(true);}} className="min-h-11 rounded-lg border border-violet-300/30 px-4 font-bold">H3 NSFW</button>}
+      <div className="flex flex-wrap gap-2" role="group" aria-label="H3 categories">
+        <button type="button" disabled={studioBusy} aria-pressed={!nsfwOpen&&!imageCreateOpen} onClick={() => {showNsfw(false);setImageCreateOpen(false);}} className={`${command} ${choiceClass(!nsfwOpen&&!imageCreateOpen)}`}>Video</button>
+        <button type="button" disabled={studioBusy} aria-pressed={imageCreateOpen&&!nsfwOpen} onClick={() => {showNsfw(false);setImageCreateOpen(true);}} className={`${command} ${choiceClass(imageCreateOpen&&!nsfwOpen)}`}>Text to Image</button>
+        {nsfwAccess?.enabled && <button type="button" disabled={studioBusy} aria-pressed={nsfwOpen} onClick={() => {setImageCreateOpen(false);showNsfw(true);}} className={`${command} ${choiceClass(nsfwOpen)}`}>Not Safe for Work</button>}
       </div>
-      {nsfwOpen&&nsfwAccess?.enabled?<H3NsfwPanel key={storageOwnerKey} ownerKey={storageOwnerKey}/>:imageCreateOpen ? <NativeImagePanel key={storageOwnerKey} h3Only ownerKey={storageOwnerKey} onBack={() => setImageCreateOpen(false)} /> : <>
-      <H3StudioControls key={`${storageOwnerKey}:${studioControllerEpoch}`} ownerKey={storageOwnerKey} backend={h3Backend} onBackendChange={setH3Backend} controller={studioController} onControllerChange={next => { setStudioController(next); setManualControlsOpen(false); }} manualMenu={studioController === "manual" && !manualControlsOpen} onOpenManualControls={() => setManualControlsOpen(true)} onBackToStudio={() => setManualControlsOpen(false)} onBusyChange={setStudioBusy} />
+      {nsfwOpen && nsfwAccess?.enabled ? <H3NsfwPanel key={storageOwnerKey} ownerKey={storageOwnerKey} testVideoFinishing={testVideoFinishing}/> : imageCreateOpen ?
+        <NativeImagePanel key={storageOwnerKey} h3Only ownerKey={storageOwnerKey} /> : <>
+        <H3WorkspaceTabs label="H3 Video methods" value={manualControlsOpen?"manual":videoEditOpen?"edit":studioMode}
+          buttonClass={command} activeClass={choiceClass(true)} disabled={studioBusy}
+          items={[...MODE_OPTIONS.filter(option=>isLegacyH3Mode(option.id)).map(option=>({id:option.id,label:option.label})),{id:"edit",label:"Edit Video"},{id:"manual",label:"Manual"}]}
+          onChange={id=>{if(id==="edit"){setVideoEditOpen(true);setManualControlsOpen(false);}else if(id==="manual"){setVideoEditOpen(false);setManualControlsOpen(true);}else{setVideoEditOpen(false);setManualControlsOpen(false);selectStudioMode(id as typeof studioMode);}}}/>
+        {manualControlsOpen && <H3StudioControls key={`${storageOwnerKey}:${studioControllerEpoch}`} ownerKey={storageOwnerKey} backend={h3Backend}
+          onBackendChange={setH3Backend} controller="manual" inlineManual onBusyChange={setStudioBusy} />}
+        {videoEditOpen && <div className="space-y-4">
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Edit Video tools">
+            {[["edit", "Edit"], ["body", "Body Swap"], ["swap", "Character Swap"], ...(isAdmin ? [["v2", "Character Swapping V2"], ["refmod", "RefMod Character Swap"]] : [])].map(([id,label]) =>
+              <button type="button" key={id} disabled={active} aria-pressed={editTool === id} className={`${command} ${choiceClass(editTool === id)}`} onClick={() => {
+                setEditTool(id);
+                if (id === "body") selectStudioMode("h3-body-swap");
+                else if (studioMode === "h3-body-swap") selectStudioMode(mode);
+              }}>{label}</button>)}
+          </div>
+          {editTool === "edit" && <H3VideoEditPanel key={storageOwnerKey} backend={h3Backend} authenticatedOwnerKey={storageOwnerKey} studioBusy={studioBusy} />}
+          {editTool === "swap" && <EditVideoSwapCharactersPanel onRefreshGallery={() => {}} />}
+          {isAdmin && editTool === "v2" && <ExperimentLabPanel kind="testing" experimentId="body-swap" />}
+          {isAdmin && editTool === "refmod" && <RefModReplacementLab title="RefMod Character Swap" endpoint="/api/h3/edit-video/refmod-swap" />}
+        </div>}
       </>}
-      <div hidden={nsfwOpen || imageCreateOpen || studioController !== "manual" || manualControlsOpen} data-otg="h3-legacy-manual-tools" className="space-y-4">
-      {validatedStudioPlan ? <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 text-[var(--color-text)]" aria-label="Applied H3 Studio plan"><p>Applied plan: {validatedStudioPlan.workflowId} · {validatedStudioPlan.durationSeconds}s · {validatedStudioPlan.quality} MP. The editable generation prompt below is the approved plan prompt; the original intent remains in its manifest. Changed settings require a fresh plan.</p><button type="button" className="min-h-11 px-3" onClick={() => setValidatedStudioPlan(null)}>Stop using applied studio plan</button></section> : null}
-      {videoEditOpen ? <H3VideoEditPanel key={storageOwnerKey} backend={h3Backend} authenticatedOwnerKey={storageOwnerKey} studioBusy={studioBusy} onBack={() => setVideoEditOpen(false)} /> : <>
-      <section className="relative overflow-hidden rounded-[8px] border border-violet-300/20 bg-[linear-gradient(135deg,#100d25_0%,#09101b_55%,#071216_100%)] px-4 py-5 shadow-[0_20px_60px_rgba(76,29,149,.18)]">
-        <div className="absolute inset-y-0 right-0 w-1 bg-gradient-to-b from-violet-300 via-cyan-300 to-transparent" />
-        <p className="text-xs font-black uppercase text-violet-200">
-          MiniMax creation suite
-        </p>
-        <h1 className="mt-1 text-3xl font-black text-white">H3 Studio</h1>
-        <p className="mt-1 text-sm text-white/58">Create with MiniMax H3</p>
-        <div
-          className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"
-          role="tablist"
-          aria-label="H3 generation mode"
-        >
-          {MODE_OPTIONS.map((option) => (
-            <button
-              key={option.id}
-              role="tab"
-              aria-selected={studioMode === option.id}
-              onClick={() => selectStudioMode(option.id)}
-              className={`min-h-20 rounded-[6px] border p-2 text-left transition ${choiceClass(studioMode === option.id)}`}
-            >
-              <span className="block text-sm font-black text-white">
-                {option.label}
-              </span>
-              <span className="mt-1 block text-[11px] leading-4 text-white/48">
-                {option.detail}
-              </span>
-            </button>
-          ))}
-          <button type="button" className={`min-h-20 rounded-[6px] border p-2 text-left ${command}`} onClick={() => setVideoEditOpen(true)}><span className="block font-black">Edit Video</span><span className="block text-xs">One video + text · H3 V2V</span></button>
-          <button type="button" className={`min-h-20 rounded-[6px] border p-2 text-left ${command}`} onClick={() => setManualControlsOpen(true)}><span className="block font-black">Manual</span><span className="block text-xs">Complete creative controls</span></button>
-        </div>
-      </section>
+      <div hidden={nsfwOpen || imageCreateOpen || manualControlsOpen || (videoEditOpen && editTool !== "body")} data-otg="h3-video-workspace" className="space-y-4">
       {message ? (
         <div className="rounded-[6px] border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-sm text-amber-50">
           {message}
@@ -4126,8 +4247,14 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
             slots={refModSlots} onAddImage={file => studioMode === "h3-realism" ? addRealismReference("image", file) : addReference("image", file)}
             onAddImages={files => addReferenceBatch("image", files, studioMode === "h3-realism")}
             onImageGallery={() => setGalleryTarget("reference-image")}
+            onChooseCharacter={studioMode === "h3-reference-to-video" ? (file, characterRef, description) => {
+              setReferences(items => [...items, {...media(file, "image"), characterRef, description}]);
+            } : undefined}
+            onSnapshot={studioMode === "h3-reference-to-video" ? id => openSnapshot("reference-image", id) : undefined}
+            onFirstSnapshot={studioMode === "h3-reference-to-video" ? () => openSnapshot("first") : undefined}
             onRemoveImage={id => studioMode === "h3-realism" ? removeRealismReference(id) : removeReference(id)}
             onMoveImage={(id, direction) => {
+              if (studioMode === "h3-reference-to-video") setReferenceOrderChanged(true);
               const setter = studioMode === "h3-realism" ? setRealismReferences : setReferences;
               setter(current => {const indices = current.map((item, i) => item.kind === "image" ? i : -1).filter(i => i >= 0); const index = indices.findIndex(i => current[i].id === id); const target = indices[index + direction]; if (index < 0 || target === undefined) return current; const copy = [...current]; [copy[indices[index]], copy[target]] = [copy[target], copy[indices[index]]]; return copy;});
             }}
@@ -4173,6 +4300,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                     Clear
                   </button>
                   <SpeechInputButton
+                    endpoint="/api/local-dictation"
                     label="Dictate Realism prompt"
                     className={command}
                     vocabularyKeywords={h3VoiceVocabularyKeywords}
@@ -4239,7 +4367,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {(["video", "audio"] as const).map((kind) => (
+                    {(["video", "audio"] as const).filter(kind => kind === "video" || experimentalAudioReferences).map((kind) => (
                       <label key={kind} className={`${command} cursor-pointer`}>
                         + {kind[0].toUpperCase() + kind.slice(1)}
                         <input
@@ -4549,6 +4677,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                     Clear
                   </button>
                   <SpeechInputButton
+                    endpoint="/api/local-dictation"
                     label="Dictate Body Swap instruction"
                     className={command}
                     vocabularyKeywords={h3VoiceVocabularyKeywords}
@@ -4606,6 +4735,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                     Clear
                   </button>
                   <SpeechInputButton
+                    endpoint="/api/local-dictation"
                     label="Dictate Ref Mods prompt"
                     className={command}
                     vocabularyKeywords={h3VoiceVocabularyKeywords}
@@ -4739,298 +4869,46 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
             </section>
           ) : (
             <>
-          <section className={surface}>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-black uppercase text-violet-200/75">
-                  01 / Prompt Workspace
-                </p>
-                <h2 className="mt-1 text-lg font-black">Your Scene</h2>
-              </div>
-              <span
-                className={`rounded-full px-2 py-1 text-[11px] font-bold ${builderPromptStale ? "bg-amber-300/15 text-amber-100" : promptSource === "builder" ? "bg-emerald-300/15 text-emerald-100" : "bg-cyan-300/15 text-cyan-100"}`}
-              >
-                {builderPromptStale
-                  ? "Optional Builder prompt changed"
-                  : promptSource === "builder"
-                    ? "Builder prompt selected"
-                    : originalPrompt.trim()
-                      ? "Direct prompt ready"
-                      : hasReferenceVideo
-                        ? "Video reference ready"
-                      : "Prompt required"}
-              </span>
-            </div>
-            <textarea
-              id="h3-prompt"
-              rows={6}
-              className={`${field} mt-3 resize-y text-base leading-6`}
-              value={originalPrompt}
-              onChange={(event) => replaceOriginal(event.target.value)}
+          <section className={`${surface} space-y-3`} aria-label="H3 Scene Director">
+            <h2 className="text-lg font-black">H3 Scene Director</h2>
+            {isAdmin && process.env.NEXT_PUBLIC_OTG_OPENAI_CONVERSATION_CREDITS === "1" && <AssistantProviderPicker scope="h3-director" feature="h3-director" disabled={h3DirectorBusy} />}
+            <textarea aria-label="Scene description" rows={4} className={field} value={h3DirectorDraft} disabled={h3DirectorBusy || Boolean(enhancing)}
               placeholder="Describe the scene, action, camera, dialogue, and sound."
-            />
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button className={command} onClick={() => replaceOriginal("")}>
-                Clear
-              </button>
-              <button
-                className={command}
-                disabled={!undoPrompt}
-                onClick={() => {
-                  const value = originalPrompt;
-                  setOriginalPrompt(undoPrompt);
-                  setUndoPrompt(value);
-                  setScenePrompt("");
-                }}
-              >
-                Undo
-              </button>
+              onChange={event => setH3DirectorDraft(event.target.value)} />
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className={command} disabled={!h3DirectorDraft || h3DirectorBusy || Boolean(enhancing)} onClick={() => {setUndoPrompt(h3DirectorDraft);setH3DirectorDraft("");}}>Clear</button>
+              <button type="button" className={command} disabled={!undoPrompt || h3DirectorBusy || Boolean(enhancing)} onClick={() => {setUndoPrompt(h3DirectorDraft);setH3DirectorDraft(undoPrompt);}}>Undo</button>
+              <SpeechInputButton endpoint="/api/local-dictation" label="Dictate scene description" className={command} disabled={h3DirectorBusy || Boolean(enhancing)}
+                vocabularyKeywords={h3VoiceVocabularyKeywords} onStatus={setMessage}
+                onTranscript={text => setH3DirectorDraft(current => [current.trim(), text].filter(Boolean).join("\n"))} />
             </div>
-            <div className="mt-2" role="group" aria-label="Enhancement level">
-              <p className="mb-2 text-xs font-bold text-white/50">
-                Enhancement level
-              </p>
-              <div className="grid grid-cols-3 gap-2">
-                {(["short", "medium", "long"] as const).map((level) => (
-                  <button
-                    key={level}
-                    aria-pressed={enhancementLevel === level}
-                    className={`${command} px-2 ${choiceClass(enhancementLevel === level)}`}
-                    disabled={Boolean(enhancing)}
-                    onClick={() => void enhance(level)}
-                  >
-                    {enhancing === level
-                      ? "Enhancing..."
-                      : `Enhance ${level[0].toUpperCase() + level.slice(1)}`}
-                  </button>
-                ))}
+            <H3EnhanceButtons buttonClass={command} disabled={h3DirectorBusy||!h3DirectorDraft.trim()} busy={enhancing} onEnhance={level=>void enhance(level)}/>
+            {renderLegacyModelControls()}
+            {renderCreativeControls()}
+            {renderDuration()}
+            {(mode === "h3-image-to-video" || mode === "h3-reference-to-video") && (
+              <label className="flex items-start gap-2 text-sm">
+                <input type="checkbox" checked={allowDirectorImages} disabled={h3DirectorBusy}
+                  onChange={event => setAllowDirectorImages(event.target.checked)} />
+                Analyze selected images and video stills with the Director (may send them to OpenAI)
+              </label>
+            )}
+            <button type="button" className={`${command} ${primary}`} disabled={!h3DirectorDraft.trim() || h3DirectorBusy || Boolean(enhancing)}
+              onClick={() => void askH3Director()}>{h3DirectorBusy ? "Directing…" : "Direct Scene"}</button>
+            {h3DirectorReply && <div className="space-y-3 rounded-lg border border-cyan-300/25 p-3">
+              {directorEditing ? <textarea aria-label="Edit directed prompt" className={field} rows={7} value={directorPromptEdit} onChange={event => setDirectorPromptEdit(event.target.value)} />
+                : <p className="whitespace-pre-wrap text-sm">{originalPrompt || h3DirectorReply}</p>}
+              {directedPromptStale && <p className="text-sm text-amber-200">Scene inputs changed. Direct the scene again or use the draft.</p>}
+              <div className="flex flex-wrap gap-2">
+                {directorEditing ? <button type="button" className={command} disabled={!directorPromptEdit.trim()}
+                  onClick={() => {replaceOriginal(directorPromptEdit);setH3DirectorReply(directorPromptEdit);setDirectorEditing(false);}}>Save</button> : <>
+                  <button type="button" className={command} disabled={!(directorLastDirection || originalPrompt) || h3DirectorBusy} onClick={() => void askH3Director(true)}>Retry</button>
+                  <button type="button" className={command} disabled={h3DirectorBusy || !h3DirectorDraft.trim()} onClick={() => {replaceOriginal("");setH3DirectedFingerprint("");setH3DirectorReply("");}}>Use Draft</button>
+                  <button type="button" className={command} disabled={h3DirectorBusy} onClick={() => {setDirectorPromptEdit(originalPrompt);setDirectorEditing(true);}}>Edit</button>
+                </>}
               </div>
-            </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                className={`${command} ${primary}`}
-                disabled={building}
-                onClick={() => void buildPrompt()}
-              >
-                {building
-                  ? "Building with Ollama..."
-                  : "AI Prompt Builder · Optional"}
-              </button>
-              <SpeechInputButton
-                label="Dictate H3 prompt"
-                className={command}
-                context="H3 video scene direction, fantasy character names, camera movement, references, LoRAs, SLR Studios."
-                vocabularyKeywords={h3VoiceVocabularyKeywords}
-                onStatus={setMessage}
-                onTranscript={(text) => replaceOriginal([originalPrompt.trim(), text].filter(Boolean).join("\n"))}
-              />
-            </div>
-            <div
-              className="mt-4 rounded-[6px] border border-cyan-300/20 bg-cyan-300/10 p-3"
-              data-otg="h3-openai-director"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <p className="text-xs font-black uppercase text-cyan-100/80">
-                    H3 Scene Director
-                  </p>
-                  <p className="mt-1 text-xs text-white/55">
-                    Refines the editable scene prompt while preserving locked H3 controls.
-                  </p>
-                </div>
-                {h3DirectorConversationId ? (
-                  <span className="rounded-full bg-black/25 px-2 py-1 text-[10px] font-bold uppercase text-white/45">
-                    Memory active
-                  </span>
-                ) : null}
-              </div>
-              {process.env.NEXT_PUBLIC_OTG_OPENAI_CONVERSATION_CREDITS==="1"&&<AssistantProviderPicker scope="h3-director" feature="h3-director" disabled={h3DirectorBusy} />}
-              <textarea
-                rows={3}
-                className={`${field} mt-3 resize-y text-sm leading-5`}
-                value={h3DirectorDraft}
-                onChange={(event) => setH3DirectorDraft(event.target.value)}
-                placeholder="Tell the AI Director what to create or refine. Example: make the camera lower and keep the wolf doctor calm."
-              />
-              <div className="mt-2 flex flex-wrap gap-2">
-                <button
-                  className={`${command} ${primary}`}
-                  disabled={h3DirectorBusy}
-                  onClick={() => void askH3Director()}
-                >
-                  {h3DirectorBusy ? "Directing..." : "Apply Director Prompt"}
-                </button>
-                <SpeechInputButton
-                  label="Dictate Director note"
-                  className={command}
-                  context="H3 video scene direction, fantasy character names, camera movement, references, LoRAs, SLR Studios."
-                  vocabularyKeywords={h3VoiceVocabularyKeywords}
-                  onStatus={setMessage}
-                  onTranscript={(text) =>
-                    setH3DirectorDraft(
-                      [h3DirectorDraft.trim(), text].filter(Boolean).join("\n"),
-                    )
-                  }
-                />
-                <button
-                  className={command}
-                  disabled={!h3DirectorDraft}
-                  onClick={() => setH3DirectorDraft("")}
-                >
-                  Clear Note
-                </button>
-              </div>
-              {h3DirectorReply ? (
-                <div className="mt-3 text-sm text-cyan-50">
-                  <p>{h3DirectorReply}</p>
-                  {h3DirectorChanges.length ? (
-                    <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-white/60">
-                      {h3DirectorChanges.map((change, index) => (
-                        <li key={`${change}-${index}`}>{change}</li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
-              ) : null}
-              {h3DirectorPromptVersions.length ? (
-                <details className="mt-3 text-xs text-white/60">
-                  <summary className="cursor-pointer font-bold text-white/70">
-                    Prompt version history
-                  </summary>
-                  <div className="mt-2 space-y-2">
-                    {h3DirectorPromptVersions.slice(-5).map((version, index) => (
-                      <button
-                        key={version.id}
-                        type="button"
-                        className="block w-full rounded-[6px] border border-white/10 bg-black/25 p-2 text-left hover:border-cyan-200/40"
-                        onClick={() => replaceOriginal(version.prompt)}
-                      >
-                        <span className="font-bold text-white/70">
-                          Version {Math.max(0, h3DirectorPromptVersions.length - 5) + index + 1}
-                        </span>
-                        <span className="mt-1 block line-clamp-2 text-white/50">
-                          {version.prompt}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </details>
-              ) : null}
-            </div>
+            </div>}
           </section>
-          <details className={surface}>
-            <summary className="cursor-pointer text-sm font-black">
-              Choose the Look
-            </summary>
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
-              <div className="text-xs text-white/55 md:col-span-3">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <span className="font-bold text-white/85">
-                      Visual Style
-                    </span>
-                    <p className="mt-0.5 text-[11px] text-white/40">
-                      Choose a visual identity for the entire H3 video.
-                    </p>
-                  </div>
-
-                  <span className="rounded-full border border-white/10 bg-black/25 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white/45">
-                    {H3_STYLE_PRESETS.length - 1} creative styles
-                  </span>
-                </div>
-
-                <H3StylePresetPicker
-                  value={stylePresetId}
-                  onChange={setStylePresetId}
-                />
-              </div>
-
-              <label className="text-xs text-white/55">
-                Prompt Builder Visual Style
-                <select
-                  className={`${field} mt-1 ${
-                    stylePresetId !== "none" ? "opacity-60" : ""
-                  }`}
-                  value={promptBuilderVisualStyle}
-                  disabled={stylePresetId !== "none"}
-                  onChange={(event) => setVisualStyle(event.target.value)}
-                >
-                  {H3_VISUAL_STYLE_OPTIONS.map((item) => (
-                    <option key={item}>{item}</option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="text-xs text-white/55">
-                Camera Feel
-                <select
-                  className={`${field} mt-1`}
-                  value={cameraFeel}
-                  onChange={(event) => setCameraFeel(event.target.value)}
-                >
-                  {H3_CAMERA_FEEL_OPTIONS.map((item) => (
-                    <option key={item}>{item}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-xs text-white/55">
-                Shot Flow
-                <select
-                  className={`${field} mt-1`}
-                  value={shotFlow}
-                  onChange={(event) => setShotFlow(event.target.value)}
-                >
-                  {H3_SHOT_FLOW_OPTIONS.map((item) => (
-                    <option key={item}>{item}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </details>
-          {suggestion ? (
-            <section className={surface}>
-              <p className="text-xs font-black uppercase text-violet-200/75">
-                Ollama Review
-              </p>
-              <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                <div>
-                  <h3 className="text-sm font-black">Your Original</h3>
-                  <div className="mt-2 min-h-32 whitespace-pre-wrap rounded-[6px] border border-white/10 bg-black/35 p-3 text-sm text-white/70">
-                    {originalPrompt}
-                  </div>
-                  <button
-                    className={`${command} mt-2`}
-                    onClick={useCurrentRawPrompt}
-                  >
-                    Keep Original
-                  </button>
-                </div>
-                <div>
-                  <h3 className="text-sm font-black">Ollama Suggestion</h3>
-                  <textarea
-                    rows={8}
-                    className={`${field} mt-2 resize-y`}
-                    value={suggestionDraft}
-                    onChange={(event) => setSuggestionDraft(event.target.value)}
-                  />
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      className={`${command} ${primary}`}
-                      onClick={() => acceptPrompt(suggestion)}
-                    >
-                      Use Suggested Prompt
-                    </button>
-                    <button
-                      className={command}
-                      onClick={() => acceptPrompt(suggestionDraft)}
-                    >
-                      Edit Suggested Prompt
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </section>
-          ) : null}
           {mode === "h3-image-to-video" ? (
             <section className={surface}>
               <p className="text-xs font-black uppercase text-violet-200/75">
@@ -5098,7 +4976,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                         <button
                           type="button"
                           className={command}
-                          onClick={() => setSnapshotTarget(target)}
+                          onClick={() => openSnapshot(target)}
                         >
                           Snapshot
                         </button>
@@ -5147,7 +5025,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                     <button
                       type="button"
                       className={command}
-                      onClick={() => setSnapshotTarget("reference-image")}
+                      onClick={() => openSnapshot("reference-image")}
                     >
                       Snapshot
                     </button>
@@ -5159,8 +5037,15 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                   </button>
                 </div>
               </div>
+              <details className="mt-3 text-sm">
+                <summary>Advanced audio references</summary>
+                <label className="mt-2 flex gap-2">
+                  <input type="checkbox" checked={experimentalAudioReferences} onChange={event => setExperimentalAudioReferences(event.target.checked)} />
+                  Use imported audio for this experiment
+                </label>
+              </details>
               <div className="mt-4 grid gap-3 md:grid-cols-2">
-                {references.map((item, index) => item.kind === "image" ? null : (
+                {references.map((item, index) => item.kind === "image" || item.kind === "audio" && !experimentalAudioReferences ? null : (
                   <article
                     key={item.id}
                     className="min-w-0 overflow-hidden rounded-[6px] border border-white/10 bg-black/30 p-3"
@@ -5216,7 +5101,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                           item={item}
                           onChange={(patch) => updateReference(item.id, patch)}
                         />
-                        <label className="mt-3 flex items-center gap-2 text-sm text-white/70">
+                        {experimentalAudioReferences && <label className="mt-3 flex items-center gap-2 text-sm text-white/70">
                           <input
                             type="checkbox"
                             checked={item.includeAudio === true}
@@ -5227,7 +5112,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                             }
                           />
                           Use Audio From Video
-                        </label>
+                        </label>}
                       </>
                     ) : null}
                   </article>
@@ -5464,9 +5349,9 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                 {nativeDimensions.width}x{nativeDimensions.height}
               </div>,
               renderVisibleModelControls(),
+              true,
             )}
           </section>
-          {renderLegacyModelControls()}
           <button
             className={`${command} ${primary} min-h-14 w-full text-base`}
             disabled={submissionBusy || active || !canGenerate}
@@ -5474,8 +5359,10 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
           >
             {submissionBusy ? "Preparing video…" : submissionRetry ? "Retry Create Video" : active
               ? quality === "sh" ? "Scene Hunter Running" : "Generation Running"
-              : builderPromptStale
-                ? "Use Raw Prompt or Review Builder"
+              : directedPromptStale
+                ? "Direct Again or Use Draft"
+                : builderPromptStale
+                  ? "Use Raw Prompt or Review Builder"
                 : !canGenerate
                   ? "Add Prompt and Required Inputs"
                 : quality === "sh" ? "Generate Scene Hunter" : "Generate Video"}
@@ -5555,7 +5442,7 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
               disabled={active}
               onClick={() => void retry()}
             >
-              Retry
+              {job.finishingRetry ? "Retry finishing" : "Retry"}
             </button>
             <button
               className={command}
@@ -5609,8 +5496,15 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
             <div className="mt-4">
               <h3 className="mb-2 text-sm font-black text-white">Final Video</h3>
               <ExpandableVideo url={job.videoUrl} poster={job.thumbnailUrl || undefined} />
-              <H3CharacterVoiceCorrection jobId={job.id}/>
+              {job.status === "completed" && <H3CompletedMediaActions key={job.id} voiceSource={{jobId:job.id}} extraction={job.mode === "h3-text-to-video"?{engine:"h3",jobId:job.id}:undefined}/> }
               <div className="mt-3 flex flex-wrap gap-2">
+                {job.status === "completed" && <button type="button" className={command} onClick={() => {
+                  if (mode === "h3-image-to-video") openSnapshot("first", undefined, job.videoUrl || undefined);
+                  else {
+                    setMode("h3-reference-to-video"); setStudioMode("h3-reference-to-video");
+                    openSnapshot("reference-image", undefined, job.videoUrl || undefined);
+                  }
+                }}>Snapshot</button>}
                 <a
                   href={`${job.videoUrl}${job.videoUrl.includes("?") ? "&" : "?"}download=1`}
                   download={job.galleryFileName || "MiniMax-H3-video.mp4"}
@@ -5631,12 +5525,13 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
                     Saving to Gallery...
                   </span>
                 )}
-                <button
-                  className={command}
-                  onClick={() => void useAsReference()}
-                >
-                  Use as Reference
-                </button>
+                <details>
+                  <summary className={command}>Continue Scene</summary>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button type="button" className={command} onClick={() => void continueFromLastFrame()}>Use last frame</button>
+                    <button type="button" className={command} onClick={() => void useAsReference()}>Use as Reference</button>
+                  </div>
+                </details>
               </div>
               {job.galleryError ? (
                 <p className="mt-2 text-sm text-amber-100">Gallery save: {job.galleryError}</p>
@@ -5688,6 +5583,8 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
       </section>
       <VideoSnapshotPicker
         open={Boolean(snapshotTarget)}
+        allowFrameEdit
+        initialVideoUrl={snapshotResultUrl}
         onClose={() => setSnapshotTarget("")}
         onSnapshot={({ file }) => {
           if (snapshotTarget === "first") {
@@ -5703,10 +5600,16 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
               setLastImage,
             );
           } else if (snapshotTarget === "reference-image") {
-            addReference(
-              "image",
-              file,
-            );
+            if (snapshotReferenceId) {
+              const current = references.find(item => item.id === snapshotReferenceId && item.kind === "image");
+              if (!current) throw Error("The original reference is no longer in the deck.");
+              const replacement = { ...media(file, "image"), id: current.id, description: current.characterRef ? "" : current.description };
+              release(current);
+              setReferences(items => items.map(item => item.id === current.id ? replacement : item));
+            } else {
+              if (references.filter(item => item.kind === "image").length >= 9 || generationReferences.length >= 12) throw Error("The Reference Deck is full.");
+              addReference("image", file);
+            }
           }
 
           setSnapshotTarget("");
@@ -5730,7 +5633,6 @@ export default function H3Panel({ authenticatedOwnerKey = "", nsfwAvailable=fals
           }}
         />
       ) : null}
-      </>}
       </div>
     </div>
   );

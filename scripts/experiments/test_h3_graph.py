@@ -21,14 +21,29 @@ class GraphTests(unittest.TestCase):
         g,_=compile_graph('prism-pika',{**self.settings,'mode':'image'},[dict(kind='image',name='a.png')],'encoder');self.assertEqual(g['40']['class_type'],'MiniMaxH3AddGuide');self.assertEqual(g['40']['inputs']['frame_idx'],0)
     def test_silent_video_does_not_connect_nonexistent_audio(self):
         for audio in (False,True):
-            g,_=compile_graph('prism-pika',{**self.settings,'mode':'edit'},[dict(kind='video',name='a.mp4',hasAudio=audio)],'encoder')
+            g,_=compile_graph('prism-pika',{**self.settings,'mode':'edit','experimentalAudioReferences':True},[dict(kind='video',name='a.mp4',hasAudio=audio)],'encoder')
             self.assertEqual('ref_video_audios.ref_video_audio_0' in g['39']['inputs'],audio)
+    def test_native_audio_does_not_import_a_video_soundtrack(self):
+        graph,_=compile_graph('eros-beta7',{**self.settings,'mode':'reference'},[dict(kind='video',name='scene.mp4',hasAudio=True)],'encoder')
+        self.assertFalse(any(k.startswith('ref_video_audios.') or k.startswith('ref_audios.') for k in graph['39']['inputs']))
+        self.assertFalse(any(n['class_type']=='LoadAudio' for n in graph.values()))
+    def test_standalone_audio_requires_explicit_advanced_opt_in(self):
+        sources=[dict(kind='audio',name='voice.wav')]
+        with self.assertRaisesRegex(ValueError,'Advanced audio'):compile_graph('eros-beta7',{**self.settings,'mode':'reference'},sources,'encoder')
+        graph,_=compile_graph('eros-beta7',{**self.settings,'mode':'reference','experimentalAudioReferences':True},sources,'encoder')
+        self.assertIn('ref_audios.ref_audio_0',graph['39']['inputs'])
     def test_image_edit_uses_native_image_latent_and_never_extracts_a_video_frame(self):
         g,a=compile_graph('prism-pika',{**self.settings,'mode':'edit-image'},[dict(kind='image',name='a.png')],'encoder')
         self.assertEqual(g['93']['class_type'],'EmptyLatentImage');self.assertEqual(g['5']['class_type'],'SaveImage')
         self.assertEqual(a['frames'],1);self.assertEqual(a['format'],'png');self.assertIsNone(a['fps'])
         self.assertFalse(any(n['class_type'] in ('CreateVideo','SaveVideo') for n in g.values()))
         self.assertEqual(g['39']['inputs']['ref_images.ref_image_0'],['100',0])
+    def test_unqualified_text_image_can_be_prepared_offline_without_fake_references(self):
+        graph,actual=compile_graph('eros-beta7',{**self.settings,'mode':'text-image'},[],'encoder')
+        self.assertEqual(graph['5']['class_type'],'SaveImage')
+        self.assertEqual(actual['frames'],1)
+        self.assertFalse(any(k.startswith('ref_images.') or k.startswith('ref_audios.') or k.startswith('ref_video_audios.') for k in graph['39']['inputs']))
+        with self.assertRaises(ValueError):compile_graph('eros-beta7',{**self.settings,'mode':'text-image'},[dict(kind='image',name='not-allowed.png')],'encoder')
     def test_missing_or_mismatched_inputs_fail(self):
         for mode in ('image','reference','edit'):
             with self.assertRaises(ValueError):validate({**self.settings,'mode':mode},[])

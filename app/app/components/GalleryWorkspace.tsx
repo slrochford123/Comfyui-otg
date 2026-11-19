@@ -1,8 +1,12 @@
 "use client";
 
 import React from "react";
+import dynamic from "next/dynamic";
+import {useH3NsfwAccess} from "@/lib/client/useH3NsfwAccess";
+const NsfwGalleryCollection=dynamic(()=>import("./NsfwGalleryCollection"));
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/cn";
+import H3CharacterVoiceCorrection from "./H3CharacterVoiceCorrection";
 import ImageEditEngineSelect from "./ImageEditEngineSelect";
 import type {NativeEditEngine} from "@/lib/client/nativeImages";
 
@@ -693,6 +697,8 @@ type GalleryWorkspaceProps = {
 };
 
 const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWorkspaceProps) {
+  const [nsfw,setNsfw]=React.useState(false);
+  const {access:nsfwAccess}=useH3NsfwAccess(props.activeTab==="gallery");
   const {
     activeTab,
     galleryItems,
@@ -791,7 +797,8 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
     : `${galleryCount} gallery item${galleryCount === 1 ? "" : "s"}`;
   return (
     <>
-      {activeTab === "gallery" ? (
+      {activeTab==="gallery"&&nsfwAccess?.enabled&&<div className="flex gap-2"><button className="min-h-11 rounded-xl border border-white/20 px-4" aria-pressed={nsfw} onClick={()=>setNsfw(v=>!v)}>NSFW</button></div>}
+      {activeTab === "gallery" && nsfw && nsfwAccess?.enabled ? <NsfwGalleryCollection/> : activeTab === "gallery" ? (
         <div className="space-y-4">
           <div className="rounded-[28px] border border-white/10 bg-black/45 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_0_40px_rgba(80,80,180,0.08)] backdrop-blur-sm">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -927,7 +934,7 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
 
       {viewerState && viewerItem && viewerUrl ? (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/90 p-4" onClick={onCloseViewer}>
-          <div className="flex max-h-[92vh] w-full max-w-6xl flex-col gap-3 rounded-[28px] border border-white/10 bg-[#060912] p-4 shadow-[0_0_50px_rgba(0,0,0,0.55)]" onClick={(e) => e.stopPropagation()}>
+          <div className="flex max-h-[92vh] w-full max-w-6xl flex-col gap-3 overflow-y-auto rounded-[28px] border border-white/10 bg-[#060912] p-4 shadow-[0_0_50px_rgba(0,0,0,0.55)]" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold text-white/80">{viewerTitle}</div>
@@ -988,6 +995,8 @@ const GalleryWorkspace = React.memo(function GalleryWorkspace(props: GalleryWork
                 </button>
               ) : null}
             </div>
+            {viewerIsVideo && viewerItem.fileName && viewerItem.source && <H3CharacterVoiceCorrection key={viewerUrl}
+              source={{ galleryName: viewerItem.fileName, galleryScope: viewerItem.source }} />}
             {viewerItems.length > 1 ? (
               <div className="text-center text-xs text-white/45">Swipe left or right, or use the arrow keys, to move through the gallery without closing the viewer.</div>
             ) : null}

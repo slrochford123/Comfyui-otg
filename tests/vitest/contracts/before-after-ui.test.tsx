@@ -5,11 +5,14 @@ import {cleanup, fireEvent, render, screen, waitFor} from "@testing-library/reac
 import ImageComparisonSlider from "@/app/app/components/ImageComparisonSlider";
 import BeforeAfterPanel from "@/app/app/components/BeforeAfterPanel";
 import {emptyComparisonDraft} from "@/lib/client/beforeAfter";
+const networkCalls:Array<{url:string;options?:RequestInit}>=[];
+const requests = (mock:typeof fetch)=> ((url:RequestInfo|URL,options?:RequestInit)=>{networkCalls.push({url:String(url),options});return String(url).includes("/h3-support")?Promise.resolve(Response.json({create:false})):mock(url,options);}) as typeof fetch;
 const persistence = vi.hoisted(() => ({load: vi.fn(), save: vi.fn()}));
 vi.mock("@/lib/client/beforeAfter", async original => ({...await original<typeof import("@/lib/client/beforeAfter")>(), loadComparison: persistence.load, saveComparison: persistence.save}));
 beforeEach(() => {
+  networkCalls.length=0;
   persistence.save.mockResolvedValue(undefined); persistence.load.mockResolvedValue({draft: emptyComparisonDraft(), source: null});
-  vi.stubGlobal("fetch", vi.fn()); URL.createObjectURL = vi.fn(() => "blob:original"); URL.revokeObjectURL = vi.fn();
+  vi.stubGlobal("fetch", requests(vi.fn())); URL.createObjectURL = vi.fn(() => "blob:original"); URL.revokeObjectURL = vi.fn();
 });
 afterEach(() => {cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals();});
 describe("Accessible comparison slider", () => {
@@ -37,7 +40,7 @@ describe("Accessible comparison slider", () => {
 describe("Compact before/after editor", () => {
   it("does not generate without an original and a prompt", async () => {
     render(<BeforeAfterPanel owner="alice" />); await screen.findByRole("button", {name: "Add Image"});
-    expect(screen.getByRole("button", {name: "Generate Edit"}).hasAttribute("disabled")).toBe(true); expect(fetch).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", {name: "Generate Edit"}).hasAttribute("disabled")).toBe(true); expect(networkCalls.filter(c=>c.options?.method==="POST")).toEqual([]);
   });
   it("restores the exact result and separates Undo from deleting Gallery files", async () => {
     persistence.load.mockResolvedValue({source: new File(["original"], "source.png"), draft: {...emptyComparisonDraft(), prompt: "Black suit", position: 32, job: {jobId: "exact", engine: "qwen", status: "completed", imageUrl: "/api/images/before-after?jobId=exact&image=1", seed: 1}}});
@@ -45,7 +48,7 @@ describe("Compact before/after editor", () => {
     expect((screen.getByRole("slider") as HTMLInputElement).value).toBe("32");
     fireEvent.click(screen.getByRole("button", {name: "Undo", exact: true}));
     expect(screen.queryByAltText("After: edited image")).toBeNull(); expect(screen.getByAltText("Original image")).toBeTruthy();
-    expect((screen.getByRole("textbox", {name: "Describe the change"}) as HTMLTextAreaElement).value).toBe("Black suit"); expect(fetch).not.toHaveBeenCalled();
+    expect((screen.getByRole("textbox", {name: "Describe the change"}) as HTMLTextAreaElement).value).toBe("Black suit"); expect(networkCalls.filter(c=>c.options?.method==="POST")).toEqual([]);
   });
   it("does not overwrite saved state before hydration, including StrictMode", async () => {
     let finish: (value: unknown) => void = () => {}; persistence.load.mockImplementation(() => new Promise(resolve => {finish = resolve;}));
@@ -58,7 +61,7 @@ describe("Compact before/after editor", () => {
     const job = {jobId: "saved-upload-id", engine: "qwen", seed: 123, status: "submitting"};
     persistence.load.mockResolvedValue({source: new File(["original"], "source.png"), draft: {...emptyComparisonDraft(), prompt: "Black suit", job}});
     const fetcher = vi.fn().mockResolvedValueOnce(Response.json({error: "Not found"}, {status: 404})).mockResolvedValueOnce(Response.json({...job, status: "queued"}));
-    vi.stubGlobal("fetch", fetcher); render(<BeforeAfterPanel owner="alice" />);
+    vi.stubGlobal("fetch", requests(fetcher)); render(<BeforeAfterPanel owner="alice" />);
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
     const form = fetcher.mock.calls[1][1].body as FormData;
     expect(form.get("clientRequestId")).toBe("saved-upload-id"); expect(form.get("seed")).toBe("123"); expect(form.get("prompt")).toBe("Black suit");

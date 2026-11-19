@@ -22,14 +22,19 @@ import { inspectStudioQualificationRuntime } from "@/lib/h3StudioRuntime";
  * upload; topology/material mismatches fail the fingerprint check inside its mutex.
  */
 export async function qualificationCli(args: string[]) {
-  const allowed = new Set(["--execute", "--proposal", "--approval", "--prepare"]);
+  const allowed = new Set(["--execute", "--proposal", "--approval", "--prepare", "--character-voices"]);
   for (let i = 0; i < args.length; i++) {
     if (!allowed.has(args[i])) throw new Error("Unknown qualification option.");
-    if (!["--execute", "--prepare"].includes(args[i]) && !args[++i]) throw new Error("Option requires an absolute local file.");
+    if (!["--execute", "--prepare", "--character-voices"].includes(args[i]) && !args[++i]) throw new Error("Option requires an absolute local file.");
   }
   const option = (name: string) => args.includes(name) ? args[args.indexOf(name) + 1] : undefined;
   const file = option("--proposal");
   if (!file) throw new Error("Pass --proposal /absolute/owner-mode600/proposal.json. No execution is the default.");
+  if (args.includes("--character-voices")) {
+    if (args.includes("--prepare")) throw Error("Character Voices proposals require already pinned, reviewed media.");
+    const { runH3CharacterVoicesQualification } = await import("./character-voices-qualification");
+    return runH3CharacterVoicesQualification(file, option("--approval"), args.includes("--execute"));
+  }
   const proposal = readH3StudioOwnerJson(file) as { ownerKey: string; plan: unknown; compilerInput: H3WorkflowBuildInput;
     inventory: Omit<H3StudioInventory, "nodes" | "models" | "loras" | "files"> & { nodes: string[]; models: string[]; loras: string[]; files: string[] };
     evidence: NonNullable<Parameters<typeof compileH3StudioPlan>[3]>; jobInput: H3DirectJobInput;

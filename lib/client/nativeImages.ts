@@ -1,7 +1,9 @@
 import type {NativeImageModel} from "@/lib/images/nativeImageModels";
 import {newClientRequestId} from "./requestId";
-export type NativeEditEngine = "qwen" | "fibo2-edit-turbo" | "fibo2-dev";
+export type NativeEditEngine = "qwen" | "fibo2-edit-turbo" | "fibo2-dev" | "qwen-edit-2509" | "h3-image-edit";
 export function nativeEditEngineLabel(engine: NativeEditEngine) {
+  if (engine === "qwen-edit-2509") return "Qwen Image Edit 2509";
+  if (engine === "h3-image-edit") return "H3 Edit Image";
   return engine === "qwen" ? "Qwen Image Edit 2.1 Turbo" : engine === "fibo2-dev" ? "Fibo 2.0 Dev" : "Fibo 2.0 Turbo Edit";
 }
 export type NativeImageResult = {jobId: string; promptId: string; model: NativeImageModel; imageUrl: string; serverPath: string; width: number; height: number; seed: number};
@@ -27,13 +29,13 @@ export async function waitForNativeImage(jobId: string, args: {signal?: AbortSig
   }
   throw Error("This image job is taking longer than expected. Keep its job ID and refresh later; it has not been resubmitted.");
 }
-export async function submitNativeImageEdit(args: {model: Exclude<NativeEditEngine, "qwen">; imageAPath?: string; image?: File; referenceImages?: File[]; referencePaths?: string[]; prompt: string; negativePrompt?: string; seed: string;
+export async function submitNativeImageEdit(args: {model: Exclude<NativeEditEngine, "qwen">; imageAPath?: string; image?: File; referenceImages?: File[]; referencePaths?: string[]; prompt: string; negativePrompt?: string; seed: string; requestId?: string;
   width?: number; height?: number; saveToGallery?: boolean; fetchImpl?: typeof fetch}) {
   if (!args.imageAPath && !args.image) throw Error("A source image is required for editing.");
-  if (1 + (args.referenceImages?.length || 0) + (args.referencePaths?.length || 0) > 4) throw Error("Fibo accepts at most 4 images total.");
+  if (1 + (args.referenceImages?.length || 0) + (args.referencePaths?.length || 0) > (args.model === "qwen-edit-2509" ? 3 : 4)) throw Error("Too many images for the selected edit model.");
   const body = new FormData();
   body.set("model", args.model); body.set("prompt", args.prompt); body.set("negativePrompt", args.negativePrompt || "");
-  body.set("seed", args.seed); body.set("clientRequestId", newClientRequestId());
+  body.set("seed", args.seed); body.set("clientRequestId", args.requestId ?? newClientRequestId());
   body.set("saveToGallery", String(args.saveToGallery === true));
   if (args.image) body.set("image", args.image);
   else body.set("imageAPath", args.imageAPath!);

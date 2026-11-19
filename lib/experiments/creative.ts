@@ -8,11 +8,18 @@ export { H3_CAMERA_FEEL_OPTIONS, H3_SHOT_FLOW_OPTIONS, H3_VISUAL_STYLE_OPTIONS }
 /** Prompt-only look controls; never silently load a model or acceleration adapter. */
 export function labFinalPrompt(settings: LabSettings, triggers: string[] = []) {
   const preset = resolveH3StylePreset(settings.stylePresetId || "none");
-  const parts = [settings.prompt.trim()];
-  if (preset?.id !== "none" && preset?.masterPrompt) parts.push(preset.masterPrompt);
-  else if (settings.visualStyle && settings.visualStyle !== DEFAULT_LAB_CREATIVE.visualStyle) parts.push(h3StyleProfile(settings.visualStyle));
-  if (settings.cameraFeel && settings.cameraFeel !== DEFAULT_LAB_CREATIVE.cameraFeel) parts.push(`Camera: ${settings.cameraFeel}.`);
-  if (settings.shotFlow && settings.shotFlow !== DEFAULT_LAB_CREATIVE.shotFlow) parts.push(`Shot flow: ${settings.shotFlow}.`);
+  const parts: string[] = [];
+  let scene=settings.prompt.trim();
+  if (settings.directedPrompt || settings.manualPrompt) {
+    parts.push(scene);
+  } else {
+    if (preset?.masterPrompt) parts.push(preset.masterPrompt);
+    else if (settings.visualStyle && settings.visualStyle !== DEFAULT_LAB_CREATIVE.visualStyle) parts.push(h3StyleProfile(settings.visualStyle));
+    for(const style of H3_STYLE_PRESETS){const prefix=style.masterPrompt?.trim();if(prefix&&(scene===prefix||scene.startsWith(prefix+"\n")))scene=scene.slice(prefix.length).trim();}
+    parts.push(scene);
+    if (settings.cameraFeel && settings.cameraFeel !== DEFAULT_LAB_CREATIVE.cameraFeel) parts.push(`Camera: ${settings.cameraFeel}.`);
+    if (settings.shotFlow && settings.shotFlow !== DEFAULT_LAB_CREATIVE.shotFlow) parts.push(`Shot flow: ${settings.shotFlow}.`);
+  }
   for (const trigger of triggers) if (trigger && !parts.join("\n").toLowerCase().includes(trigger.toLowerCase())) parts.push(trigger);
   return parts.join("\n");
 }

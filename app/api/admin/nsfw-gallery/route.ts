@@ -1,0 +1,20 @@
+import { NextRequest,NextResponse } from "next/server";
+import { nsfwRoute } from "@/lib/experiments/nsfwHttp";
+import { listNsfwGallery,registerNsfwSavedItem } from "@/lib/experiments/nsfwGallery";
+import {boundedJson} from "@/lib/experiments/http";
+import {isAdminGallerySourceId} from "@/lib/adminGallerySources";
+import {adminGalleryMediaKind} from "@/lib/adminGalleryMedia";
+import {RequestError} from "@/lib/requestError";
+import {HEAD as checkSource} from "@/app/api/admin/gallery-file/route";
+export const runtime="nodejs";export const dynamic="force-dynamic";
+export const GET=nsfwRoute(async(r,owner)=>NextResponse.json(listNsfwGallery(owner,{admin:true,search:(r.nextUrl.searchParams.get("search")||"").slice(0,200),media:r.nextUrl.searchParams.get("media")||"all",sort:r.nextUrl.searchParams.get("sort")||"newest",page:Number(r.nextUrl.searchParams.get("page")),per:Number(r.nextUrl.searchParams.get("per"))})),true,true);
+export const POST=nsfwRoute(async(r)=>{
+ const b=await boundedJson(r),source=String(b.source||""),rel=String(b.rel||"");
+ if(b.action!=="classify"||!isAdminGallerySourceId(source)||!rel||rel.length>1024||rel.startsWith("/")||rel.includes("\\")||rel.split("/").includes(".."))throw new RequestError("Choose an existing registered-source image or video.",400);
+ const kind=adminGalleryMediaKind(rel);if(kind!=="image"&&kind!=="video")throw new RequestError("Choose an image or video.",400);
+ const params=new URLSearchParams({source,rel}),url=new URL("/api/admin/gallery-file?"+params,r.url);
+ const checked=await checkSource(new NextRequest(url,{method:"HEAD",headers:r.headers}));await checked.body?.cancel();
+ if(!checked.ok)throw new RequestError("The selected source is unavailable. Nothing was classified.",409);
+ const id=registerNsfwSavedItem("",`hardware:${source}:${rel}`,{name:rel.split("/").at(-1)||rel,kind,url:"/api/admin/gallery-file?"+params,thumbnailUrl:"/api/admin/gallery-thumbnail?"+params,created:Date.now()/1000,gpu:source,device:"Registered source",favorite:false,source:"Classified hardware output"});
+ return NextResponse.json({ok:true,id});
+},true,true);

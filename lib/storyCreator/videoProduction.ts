@@ -544,6 +544,7 @@ export function prepareStoryVideoTake(input: {
   quality?: unknown;
   seed?: unknown;
   rifeInterpolation60Fps?: unknown;
+  upscale1080p?: unknown;
   userLoras?: unknown;
   h3Settings?: unknown;
   referenceVersionIds?: unknown;
@@ -593,6 +594,7 @@ export function prepareStoryVideoTake(input: {
     durationSeconds,
     seed,
     rifeInterpolation60Fps: input.rifeInterpolation60Fps === true,
+    upscale1080p: typeof input.upscale1080p === "boolean" ? input.upscale1080p : undefined,
     userLoras,
     h3Settings: normalizeH3AdvancedSettings(input.h3Settings, references.length),
     referenceVersionIds: references.map((reference) => reference.versionId),
@@ -693,6 +695,7 @@ export function submitStoryVideoTake(input: {
     orientation: take.settings.orientation,
     h3Settings: take.settings.h3Settings,
     rifeInterpolation60Fps: take.settings.rifeInterpolation60Fps,
+    upscale1080p: take.settings.upscale1080p,
     seed: take.settings.seed,
     startImage,
     references: take.method === "reference-to-video" ? productionReferences : [],

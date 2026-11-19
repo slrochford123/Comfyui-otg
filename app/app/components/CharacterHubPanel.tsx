@@ -6,6 +6,11 @@ import {nativeEditEngineLabel, type NativeEditEngine} from "@/lib/client/nativeI
 // OTG_CHARACTER_TAB_REWORK_CURRENT_STABLE_PHASE1
 
 import React from "react";
+import dynamic from "next/dynamic";
+
+const VideoCharacterLab = dynamic(() => import("./VideoCharacterLab"), {
+  loading: () => <p role="status">Loading character extraction…</p>,
+});
 import MossImageControls, { defaultMossSettings, type MossImageSettings } from "./MossImageControls";
 import { mossOutputShape } from "@/lib/images/mossImage";
 import MossGallerySaveButton from "./MossGallerySaveButton";
@@ -53,6 +58,7 @@ type CharacterHubPanelProps = {
   isAdmin?: boolean;
   authenticatedOwnerKey?: string;
   refCardsEnabled?: boolean;
+  extractionEnabled?: boolean;
 };
 
 type CharacterHubView =
@@ -61,6 +67,7 @@ type CharacterHubView =
   | "background-gallery"
   | "asset-gallery"
   | "refmod-gallery"
+  | "extract-characters"
   | "create-character"
   | "create-freeform"
   | "upload-character"
@@ -3629,12 +3636,14 @@ function RefModGalleryPanel({
   initialCharacter,
   onInitialCharacterConsumed,
   refCardsEnabled = false,
+  extractionEnabled = false,
 }: {
   onBack: () => void;
   onCreateCharacter: () => void;
   initialCharacter?: SavedCharacterOption | null;
   onInitialCharacterConsumed?: () => void;
   refCardsEnabled?: boolean;
+  extractionEnabled?: boolean;
 }) {
   const [entries, setEntries] = React.useState<H3RefModLibraryEntry[]>([]);
   const [trashEnabled,setTrashEnabled]=React.useState(false);
@@ -4095,6 +4104,7 @@ export default function CharacterHubPanel({
   isAdmin = false,
   authenticatedOwnerKey = "",
   refCardsEnabled = false,
+  extractionEnabled = false,
 }: CharacterHubPanelProps) {
   const [view, setView] = React.useState<CharacterHubView>("home");
   const [
@@ -4116,6 +4126,8 @@ export default function CharacterHubPanel({
       .catch(()=>{/* The normal Characters library remains available for retry. */});
     return()=>abort.abort();
   }, [authenticatedOwnerKey]);
+
+  React.useEffect(()=>{if(extractionEnabled&&new URL(window.location.href).searchParams.has("extractionWorkspace"))setView("extract-characters");},[extractionEnabled]);
 
   function openCharacterRefModCreator(character: SavedCharacterOption) {
     setRefModInitialCharacter(character);
@@ -4265,6 +4277,34 @@ export default function CharacterHubPanel({
       <VoiceCharactersPanel
         onBack={() => setView("home")}
       />
+    );
+  }
+
+  if (view === "extract-characters" && extractionEnabled) {
+    return (
+      <section className="min-w-0 space-y-4" data-otg="characters-extract-video">
+        <BackButton label="Characters" onClick={() => setView("home")} />
+        <div className="rounded-2xl border border-cyan-300/20 bg-black/20 p-4 sm:p-6">
+          <h1 className="text-2xl font-bold">Extract Characters</h1>
+          <p className="mt-2 text-sm leading-6 text-white/75">
+            Turn characters from a video into reusable Character Cards. Review captured faces,
+            outfits, and angles, then approve the images you want to keep in your Characters library.
+          </p>
+          <p className="mt-2 text-sm font-semibold text-cyan-200">MP4 · up to 3 minutes · 256 MiB</p>
+          <details className="mt-4 text-sm leading-6">
+            <summary className="cursor-pointer font-semibold">Quick guide</summary>
+            <ol className="mt-2 list-decimal space-y-2 pl-5">
+              <li>Upload a short, trimmed clip with clear views of the character's face and clothing, then choose Analyze video.</li>
+              <li>Select the appearances to keep. Merge views only when they show the same character. Use the frame slider and crop tool to capture a missing view.</li>
+              <li>Choose one to four source images of the same character. Save Character is available for one original picture; use Create Model to combine multiple source views into one front-facing full-body default.</li>
+              <li>Review the proposed default model against the originals. Retry or Edit if needed, then Approve and Save/Update Character. The same saved record becomes available in H3's Choose Character.</li>
+              <li>Create Character Card generates four additional views from the approved default. Approve each, then assemble the five-image sheet. Only that approved set unlocks Create RefMod. Add Voice is optional whenever the character is saved.</li>
+            </ol>
+            <p className="mt-2 text-white/65">Original video and captured frames are preserved. Reconstructed views need your review and use the existing GPU approval controls. Voice and RefMod creation are optional.</p>
+          </details>
+        </div>
+        <VideoCharacterLab library />
+      </section>
     );
   }
 
@@ -4457,6 +4497,16 @@ export default function CharacterHubPanel({
           onClick={() => setView("refmod-gallery")}
           status="Manage RefMods →"
         />
+        {extractionEnabled && <div className="md:col-span-3">
+          <GalleryCard
+            eyebrow="From video"
+            title="Extract Characters"
+            description="Upload a short video, review character views, and save reusable Character Cards. MP4 up to 3 minutes and 256 MiB."
+            accent="bg-cyan-300"
+            onClick={() => setView("extract-characters")}
+            status="Extract from video →"
+          />
+        </div>}
       </div>
     </div>
   );

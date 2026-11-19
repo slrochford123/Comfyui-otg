@@ -1,13 +1,14 @@
+import {requireCharacterDevelopment} from "@/lib/h3CharacterDevelopmentAvailability";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/app/api/admin/_requireAdmin";
 import { RequestError } from "@/lib/requestError";
 import { requireTestLab } from "./store";
 
 export const privateHeaders = { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", "Cross-Origin-Resource-Policy": "same-origin" };
-export function labRoute(handler: (request: NextRequest, owner: string) => Promise<Response>) {
+export function labRoute(handler: (request: NextRequest, owner: string) => Promise<Response>, feature: "testing"|"characters" = "testing") {
   return async (request: NextRequest) => {
     try {
-      requireTestLab();
+      if(feature==="characters")requireCharacterDevelopment();else requireTestLab();
       const auth = await requireAdmin();
       if (!auth.ok) throw new RequestError(auth.error, auth.status);
       if (!["GET", "HEAD"].includes(request.method)) {
@@ -41,3 +42,5 @@ export async function boundedJson(request: NextRequest) {
   } catch (error) { if (error instanceof RequestError) throw error; throw new RequestError("Invalid JSON request.", 400); }
   finally { reader.releaseLock(); }
 }
+
+export const characterDevelopmentRoute=(handler:(request:NextRequest,owner:string)=>Promise<Response>)=>labRoute(handler,"characters");

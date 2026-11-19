@@ -1,3 +1,6 @@
+import {probeVideoInfo} from "@/lib/videoFrame";
+import {cancelRelay, inspectRelay, retryRelay, startRelay, testRelayFinishing} from "@/lib/videoFinishing/relay";
+import {isAdminUserId} from "@/lib/auth/admin";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -8,6 +11,7 @@ import { assertLabAssetCapacity, getAsset, getSession, labRoot, MAX_ASSET_BYTES,
 import { requireNsfwAccess } from "./nsfwAccess";
 import { productionNsfwScope } from "./availability";
 import { labFinalPrompt } from "./creative";
+import {director3060Runtime,huihuiDirectorAvailable,directorMessages} from "./director3060";
 import type { LabSettings } from "./catalog";
 import {prepareLabImage} from "./images";
 import {MAX_H3_RENDER_REFERENCES} from "./referenceLimits";
@@ -17,11 +21,12 @@ type ModelRuntime = { path: string; sha256: string; bytes: number; mtimeNs: numb
 type PrivateLora = {filename:string;path:string;sha256:string;bytes:number;mtimeNs:number;models:string[];displayName:string;minStrength:number;maxStrength:number;defaultStrength:number;triggerWords:string[]};
 type RuntimeConfig = { environment: string; gpu: string; models: Record<string, ModelRuntime>; runner: string; runnerSha256: string; files: {path:string;sha256:string}[]; loras?:Record<string,PrivateLora> };
 export type LabLora = {id:string;displayName:string;minStrength:number;maxStrength:number;defaultStrength:number;triggerWords:string[];models:string[]};
-export type LabCapability = { model: string; gpu: string; modes: string[]; reason: string; variants?:Record<string,string[]>; minSeconds?:number; recipe?:Recipe; variantRecipes?:Record<string,Recipe> };
+export type LabCapability = { directorModels?:string[]; model: string; gpu: string; modes: string[]; reason: string; variants?:Record<string,string[]>; minSeconds?:number; recipe?:Recipe; variantRecipes?:Record<string,Recipe> };
 export type LabJob = {
+  generationMode?: LabSettings["mode"];
   id: string; session: string; model: string; state: string; stage: string; created: number;
   started?: number; completed?: number; totalSeconds?: number; elapsedSeconds?: number;
-  output?: string; cleanedUp?: boolean; actual?: Record<string, unknown>; peakGpuMiB?: number;
+  output?: string; cleanedUp?: boolean; finishingRetry?: boolean; actual?: Record<string, unknown>; peakGpuMiB?: number;
   progress?: {step:number;total:number;sampleStarted:number;updated:number;samplingRemainingSeconds?:number};
   previewVersion?: number; estimatedRemainingSeconds?:number; estimateSource?:"similar-runs"; progressPercent?:number;
   director?: {title:string;continuity:string;shots:{title:string;seconds:number;prompt:string;sound:string}[]};
@@ -33,7 +38,7 @@ export function labLoras():LabLora[] {
 function selectedLoras(settings:LabSettings,model:string,cfg:RuntimeConfig) {
   return (settings.loras||[]).map(selection=>{
     const lora=cfg.loras?.[selection.id];
-    if(!lora||!lora.models.includes(model)||!Number.isFinite(selection.strength)||selection.strength<lora.minStrength||selection.strength>lora.maxStrength)throw new RequestError("That LoRA/strength is not qualified for the selected private H3 model.",409);
+    if(!lora||!lora.models.includes(model)||!Number.isFinite(selection.strength)||selection.strength<lora.minStrength||selection.strength>lora.maxStrength)throw new RequestError("This LoRA has different tensor targets, is missing, or has an invalid strength for the selected model.",409);
     return lora;
   });
 }
@@ -61,7 +66,7 @@ export function labCapabilities(): LabCapability[] {
     const configured = runtimes[entry.kind];
     const installed = configured?.config.models[entry.id];
     const modes = installed && (entry.kind === "testing" || installed.sha256.toLowerCase() === entry.sha256?.toLowerCase()) ? installed.qualifiedModes || [] : [];
-    return { model: entry.id, gpu: "rtx3090", modes, variants:installed?.variants, minSeconds:installed?.minSeconds, recipe:installed?.recipe, variantRecipes:installed?.variantRecipes, reason: unavailable.has(entry.kind) ? "This workspace's private runtime failed integrity validation. Generation is disabled; the other workspace is unaffected." : installed?.reason || (modes.length
+    return { ...(entry.id === "director-studio" ? {directorModels:["qwen4b",...(huihuiDirectorAvailable()?["huihui9b"]:[])]} : {}), model: entry.id, gpu: "rtx3090", modes, variants:installed?.variants, minSeconds:installed?.minSeconds, recipe:installed?.recipe, variantRecipes:installed?.variantRecipes, reason: unavailable.has(entry.kind) ? "This workspace's private runtime failed integrity validation. Generation is disabled; the other workspace is unaffected." : installed?.reason || (modes.length
       ? "Private 3090 workflow qualified at the recorded small test size. Larger/longer renders remain experimental. 5060 Ti not yet qualified."
       : entry.kind === "testing" ? entry.blockers.join(" ") : "Exact checkpoint/mode has not completed isolated generation qualification yet. No job will be substituted.") };
   });
@@ -82,7 +87,8 @@ function readStatus(root: string, row: Row): LabJob {
   if ((!["completed","failed","canceled"].includes(status.state) || !status.cleanedUp) && Date.now()/1000-(heartbeat || status.created)>120) {
     status.state="needs_attention";status.stage="Private worker heartbeat is stale. No automatic resubmission or GPU reservation release was attempted. Administrator recovery is required.";
   }
-  return { ...status, id: row.id, session: row.session, model: row.model };
+  let generationMode:LabSettings["mode"]|undefined;try{generationMode=JSON.parse(fs.readFileSync(path.join(root,"jobs",row.id,"request.json"),"utf8")).settings?.mode;}catch{}
+  return { ...status, generationMode, id: row.id, session: row.session, model: row.model };
 }
 export function listLabJobs(owner: string, session: string): LabJob[] {
   getSession(owner, session);
@@ -102,23 +108,41 @@ export function listLabJobs(owner: string, session: string): LabJob[] {
           const source = path.join(root, "jobs", row.id, asset.mime === "image/png" ? "result.png" : asset.mime === "application/json" ? "result.json" : "result.mp4"), target = path.join(root, row.asset + ".media");
           const stat = fs.lstatSync(source);
           if (!stat.isFile() || stat.nlink !== 1 || stat.size > MAX_ASSET_BYTES) throw new RequestError("Generated file failed integrity or size validation; original remains in private job storage.", 409);
-          const bytes = fs.readFileSync(source), sha = crypto.createHash("sha256").update(bytes).digest("hex");
+          let bytes = fs.readFileSync(source), sha = crypto.createHash("sha256").update(bytes).digest("hex");
           const receipt = JSON.parse(fs.readFileSync(path.join(root, "jobs", row.id, "status.json"), "utf8"));
           if (sha !== receipt.outputSha256 || stat.size !== receipt.outputBytes) throw new RequestError("Generated file checksum does not match its receipt.", 409);
+          const request = testRelayFinishing() && asset.mime === "video/mp4" ? JSON.parse(fs.readFileSync(path.join(root,"jobs",row.id,"request.json"),"utf8")) : null;
+          if (request?.videoFinishing === "relayvsr") {
+            const finish = startRelay({owner,job:`private:${row.id}`,source});
+            if (!finish?.file) {
+              status.state = finish?.state === "failed" ? "failed" : "running";
+              status.stage = finish?.message || "Generated · awaiting upscale";
+              status.finishingRetry = finish?.state === "failed";
+              status.progressPercent = finish?.state === "finalizing" ? 99 : 97;
+              return status;
+            }
+            bytes = fs.readFileSync(finish.file);
+            if (bytes.length > MAX_ASSET_BYTES) throw new RequestError("Finished video exceeds the private Gallery file limit.",409);
+            sha = crypto.createHash("sha256").update(bytes).digest("hex");
+            status.actual = {...status.actual, sourceWidth:status.actual?.width, sourceHeight:status.actual?.height, width:finish.receipt?.width, height:finish.receipt?.height};
+          }
           // DB transaction makes concurrent polls publish this immutable result only once.
           db.transaction(() => {
             if ((db.prepare("SELECT ready FROM assets WHERE id=?").get(row.asset) as { ready: number }).ready) return;
             if (!fs.existsSync(target)) fs.writeFileSync(target, bytes, { flag: "wx", mode: 0o600 });
             else if (!fs.lstatSync(target).isFile() || crypto.createHash("sha256").update(fs.readFileSync(target)).digest("hex") !== sha) throw new RequestError("Generated asset destination conflict.", 409);
-            db.prepare("UPDATE assets SET ready=1,bytes=?,sha256=? WHERE id=? AND owner=?").run(stat.size, sha, row.asset, owner);
+            db.prepare("UPDATE assets SET ready=1,bytes=?,sha256=? WHERE id=? AND owner=?").run(bytes.length, sha, row.asset, owner);
           })();
         }
         status.output = row.asset;
       }
       if (["failed", "canceled"].includes(status.state) && status.cleanedUp) {
-        db.prepare("UPDATE assets SET bytes=0 WHERE id=? AND ready=0").run(row.asset);
+        db.prepare("UPDATE assets SET bytes=0 WHERE id=? AND ready=0 AND bytes<>0").run(row.asset);
       }
-      db.prepare("UPDATE generation_jobs SET status=? WHERE id=?").run(JSON.stringify(status), row.id);
+      const serialized = JSON.stringify(status);
+      if (serialized !== row.status) {
+        db.prepare("UPDATE generation_jobs SET status=? WHERE id=? AND status=?").run(serialized,row.id,row.status);
+      }
       return status;
     });
   });
@@ -130,6 +154,7 @@ export async function submitLabJob(owner: string, data: Record<string, unknown>,
   const entry = labExperiment(session.experiment);
   if (!entry || isRetiredExperiment(session.experiment)) throw new RequestError("This model has been removed. Refresh and choose another H3 model. Your saved media is unchanged.",409);
   const kind = entry.kind;
+  if (restricted && process.env.OTG_ENV === "test" && session.settings.mode === "edit-image") throw new RequestError("Choose Text, Image, Reference, or Edit Video.",400);
   if (restricted && kind !== "h3-admin") throw new RequestError("Model not available.",403);
   if (!runtime(kind)) throw new RequestError("Private H3 generation has not been qualified/configured. No job was submitted.",409);
   validId(data.requestId);
@@ -142,6 +167,10 @@ export async function submitLabJob(owner: string, data: Record<string, unknown>,
   const cfg = runtime(kind), capability = labCapabilities().find(c => c.model === session.experiment);
   if (restricted && (cfg?.config as RuntimeConfig & {permissionGuardVersion?:number})?.permissionGuardVersion !== 1) throw new RequestError("Permission-aware H3 worker is not installed. No job was submitted.",503);
   if (!cfg || !capability?.modes.includes(session.settings.mode)) throw new RequestError("This exact model and mode have not passed isolated qualification. No job was submitted.", 409);
+  const huihui = session.experiment === "director-studio" && session.settings.directorModel === "huihui9b";
+  if(session.settings.directorModel === "huihui9b" && !huihui)throw new RequestError("Huihui is only available in the Director.",400);
+  if(huihui){director3060Runtime();if(session.settings.gpu!=="auto")throw new RequestError("Huihui uses only the shared RTX 3060. Reselect the Director model to confirm its GPU.",400);}
+  if(!isAdminUserId(owner)&&(session.settings.loras?.length||0)>6)throw new RequestError("Choose up to six LoRAs or ask an administrator.",403);
   const loras=selectedLoras(session.settings,session.experiment,cfg.config);
   const finalPrompt=kind==="h3-admin"?labFinalPrompt(session.settings,loras.flatMap(l=>l.triggerWords)):session.settings.prompt;
   if(finalPrompt.length>8000)throw new RequestError("Shorten the scene to leave room for the selected style (8,000 characters total).",400);
@@ -157,17 +186,26 @@ export async function submitLabJob(owner: string, data: Record<string, unknown>,
   });
   const images = sources.filter(s => s.asset.mime.startsWith("image/")), videos = sources.filter(s => s.asset.mime.startsWith("video/")), audios = sources.filter(s => s.asset.mime.startsWith("audio/"));
   const mode = session.settings.mode;
+  if(kind==="h3-admin"){
+    const audioCount=audios.length+(session.settings.experimentalAudioReferences===true?(await Promise.all(videos.map(async video=>(await probeVideoInfo(video.file,{uploadedVideo:true})).hasAudio))).filter(Boolean).length:0);
+    const count:Record<string,number>={Picture:images.length,Video:videos.length,Audio:session.settings.experimentalAudioReferences===true?audioCount:0};
+    for(const tag of finalPrompt.matchAll(/<(Picture|Video|Audio) (\d+)>/g))if(Number(tag[2])<1||Number(tag[2])>count[tag[1]])throw new RequestError(`The prompt uses ${tag[0]} without a selected reference. Review the compiled prompt and Advanced audio setting.`,400);
+  }
+
+  if(kind==="h3-admin"&&audios.length&&session.settings.experimentalAudioReferences!==true)throw new RequestError("Enable Advanced audio references before selecting standalone audio.",400);
   if (session.experiment === "director-studio" && (mode !== "text" || sources.length)) throw new RequestError("Director planning is text-only; media analysis is not enabled.",400);
   if (session.experiment === "sol-denomix" && (mode !== "reference" || !images.length || images.length !== sources.length)) throw new RequestError("DenoMix currently supports image references only.",400);
   if (kind === "testing" && mode === "reference" && !images.length && !videos.length) throw new RequestError("This reference workflow needs an image or video; audio alone is unsupported.",400);
   if (session.experiment === "body-swap" && (mode !== "edit" || images.length !== 1 || videos.length !== 1 || sources.length !== 2)) throw new RequestError("Character swap requires one video and one replacement character image.",400);
-  if ((mode === "text" && sources.length) || (["image","edit-image"].includes(mode) && (images.length !== 1 || sources.length !== 1)) ||
+  if ((["text","text-image"].includes(mode) && sources.length) || (["image","edit-image"].includes(mode) && (images.length !== 1 || sources.length !== 1)) ||
       (mode === "reference" && !sources.length) || (mode === "edit" && (videos.length !== 1 || audios.length)) || images.length > 9 || videos.length > 3 || audios.length > 3) {
     throw new RequestError("Text: no references. Image: one first frame. Edit image: one source image. Reference: up to 9 images/3 videos/3 audio. Edit video: one video, optional images.", 400);
   }
   const preparedImages=new Map<string,Awaited<ReturnType<typeof prepareLabImage>>>();
   for(const source of images)preparedImages.set(source.asset.id,await prepareLabImage(source.file,source.asset.sha256));
   const id = data.requestId;
+  const previousDirector = session.experiment === "director-studio" ? listLabJobs(owner,session.id).find(j=>j.state==="completed"&&j.cleanedUp&&j.director) : undefined;
+  if(huihui)directorMessages(finalPrompt,previousDirector?.director);
   const result = jobs((db, root) => db.transaction(() => {
     const pending = (db.prepare("SELECT * FROM generation_jobs WHERE owner=? AND (json_extract(status,'$.state') NOT IN ('completed','failed','canceled') OR coalesce(json_extract(status,'$.cleanedUp'),0)<>1)").all(owner) as Row[]).map(row=>{
       const status=readStatus(root,row);
@@ -176,11 +214,11 @@ export async function submitLabJob(owner: string, data: Record<string, unknown>,
       return status;
     });
     if (!uncappedH3History(session.experiment) && (db.prepare(`SELECT count(*) AS n FROM generation_jobs WHERE owner=? AND model IN (${TESTING_SQL_IDS})`).get(owner,...TESTING_EXPERIMENT_IDS) as {n:number}).n >= 48) throw new RequestError("The 48-run private research retention limit was reached. Review/export evidence before adding more jobs.",409);
-    if (pending.filter(row => !["completed", "failed", "canceled"].includes(row.state)||!row.cleanedUp).length >= 4) throw new RequestError("At most four pending private jobs per administrator.", 409);
+    if (!isAdminUserId(owner) && pending.filter(row => !["completed", "failed", "canceled"].includes(row.state)||!row.cleanedUp).length >= 4) throw new RequestError("At most four pending private jobs per administrator.", 409);
     assertLabAssetCapacity(db,root,owner,session,MAX_ASSET_BYTES,"video/mp4",12*1024**3);
     const asset = crypto.randomUUID(), created = Date.now() / 1000;
     const status: LabJob = { id, session: session.id, model: session.experiment, state: "queued", stage: "Preparing isolated job", created };
-    const image=mode==="edit-image", director=session.experiment==="director-studio";
+    const image=["edit-image","text-image"].includes(mode), director=session.experiment==="director-studio";
     db.prepare("INSERT INTO assets(id,session,owner,name,mime,role,bytes,created) VALUES(?,?,?,?,?,?,?,?)").run(asset,session.id,owner,`${session.experiment}-${id}.${director?"json":image?"png":"mp4"}`,director?"application/json":image?"image/png":"video/mp4","generated",MAX_ASSET_BYTES,new Date().toISOString());
     db.prepare("INSERT INTO generation_jobs(id,owner,session,model,asset,status,created) VALUES(?,?,?,?,?,?,?)").run(id,owner,session.id,session.experiment,asset,JSON.stringify(status),created);
     return { root, status };
@@ -199,13 +237,20 @@ export async function submitLabJob(owner: string, data: Record<string, unknown>,
       } finally { fs.closeSync(fd); }
       return { name, sha256, kind: source.asset.mime.split("/")[0], assetId: source.asset.id };
     });
-    const previousDirector = session.experiment === "director-studio" ? listLabJobs(owner,session.id).find(j=>j.state==="completed"&&j.cleanedUp&&j.director) : undefined;
-    fs.writeFileSync(path.join(dir,"request.json"),JSON.stringify({ id, model:session.experiment,settings:{...session.settings,prompt:finalPrompt},sources:references, ...(permission && !permission.admin ? {authorization:{userId:owner,version:permission.version}} : {}), ...(previousDirector ? {directorContext:previousDirector.director,parentJob:previousDirector.id}: {}) }),{flag:"wx",mode:0o600});
+
+    fs.writeFileSync(path.join(dir,"request.json"),JSON.stringify({ id, model:session.experiment,sourceDevice:typeof data.sourceDevice==="string"?data.sourceDevice.slice(0,128):undefined,
+      ...(testRelayFinishing() && !["edit-image","text-image"].includes(session.settings.mode) && session.experiment !== "director-studio" &&
+        (session.settings.upscale1080p ?? (session.settings.resolution !== "0.2" && (restricted || session.experiment === "body-swap"))) ? {videoFinishing:"relayvsr"} : {}),
+      settings:{...session.settings,prompt:finalPrompt,...(session.experiment==="director-studio"?{seed:crypto.randomInt(0,2147483647)}:{})},sources:references, ...(permission && !permission.admin ? {authorization:{userId:owner,version:permission.version}} : {}), ...(previousDirector ? {directorContext:previousDirector.director,parentJob:previousDirector.id}: {}) }),{flag:"wx",mode:0o600});
     fs.writeFileSync(path.join(dir,"status.json"),JSON.stringify(result.status),{flag:"wx",mode:0o600});
     const log = fs.openSync(path.join(dir,"runner.log"),"wx",0o600);
-    const child = spawn("/usr/bin/python3", [cfg.config.runner,"--job",dir,"--config",cfg.file], {
-      detached:true,stdio:["ignore",log,log],env:{NODE_ENV:"production",PATH:"/usr/local/bin:/usr/bin:/bin",HOME:process.env.HOME,LANG:"C.UTF-8",OTG_ENV:cfg.config.environment},
-    });
+    const child = huihui
+      ? spawn(process.execPath,["-r",path.join(process.cwd(),"scripts/register-ts-worker.cjs"),path.join(process.cwd(),"scripts/experiments/director3060-worker.cjs"),dir],{
+          cwd:process.cwd(),detached:true,stdio:["ignore",log,log],env:{...process.env,NODE_ENV:"production",OTG_ENV:"test"},
+        })
+      : spawn("/usr/bin/python3", [cfg.config.runner,"--job",dir,"--config",cfg.file], {
+          detached:true,stdio:["ignore",log,log],env:{NODE_ENV:"production",PATH:"/usr/local/bin:/usr/bin:/bin",HOME:process.env.HOME,LANG:"C.UTF-8",OTG_ENV:cfg.config.environment},
+        });
     fs.closeSync(log);
     await new Promise<void>((resolve,reject) => { child.once("spawn",resolve);child.once("error",reject); });
     launched = true;
@@ -225,8 +270,17 @@ export function cancelLabJob(owner: string, id: unknown) {
     const row = db.prepare("SELECT * FROM generation_jobs WHERE id=? AND owner=?").get(id,owner) as Row | undefined;
     if (!row) throw new RequestError("Generation not found.",404);
     const status = readStatus(root,row);
+    if (inspectRelay(owner,`private:${row.id}`)) cancelRelay(owner,`private:${row.id}`);
     if (!["completed","failed","canceled"].includes(status.state)) fs.writeFileSync(path.join(root,"jobs",id,"cancel"),"cancel requested\n",{mode:0o600});
     return { id, requested: true };
+  });
+}
+export function retryLabFinishing(owner: string, id: unknown) {
+  validId(id);
+  return jobs(db => {
+    const row = db.prepare("SELECT id FROM generation_jobs WHERE id=? AND owner=?").get(id,owner) as {id:string} | undefined;
+    if (!row || !retryRelay(owner,`private:${row.id}`)) throw new RequestError("Failed video finishing job not found.",404);
+    return {id:row.id};
   });
 }
 export function exportLabJob(owner: string, id: unknown) {
@@ -235,7 +289,9 @@ export function exportLabJob(owner: string, id: unknown) {
     const row=db.prepare("SELECT * FROM generation_jobs WHERE id=? AND owner=?").get(id,owner) as Row|undefined;
     if (!row) throw new RequestError("Generation not found.",404);
     const dir=path.join(root,"jobs",id), request=JSON.parse(fs.readFileSync(path.join(dir,"request.json"),"utf8"));
-    return {schemaVersion:1,testOnly:process.env.OTG_ENV==="test",status:readStatus(root,row),request,
+    const status=readStatus(root,row);
+    if(status.state==="completed"&&status.cleanedUp&&db.prepare("SELECT 1 FROM assets WHERE id=? AND owner=? AND ready=1").get(row.asset,owner))status.output=row.asset;
+    return {schemaVersion:1,testOnly:process.env.OTG_ENV==="test",status,request,
       graph:fs.existsSync(path.join(dir,"graph.json"))?JSON.parse(fs.readFileSync(path.join(dir,"graph.json"),"utf8")):null,
       warning:"Private graph uses LabMemory nodes, pinned checkpoints and normalized source filenames. This receipt is not a reusable execution or promotion authorization."};
   });

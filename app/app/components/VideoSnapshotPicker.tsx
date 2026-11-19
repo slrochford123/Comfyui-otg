@@ -7,6 +7,10 @@ import React, {
   useState,
 } from "react";
 
+import { createPortal } from "react-dom";
+import { submitNativeImageEdit, waitForNativeImage } from "@/lib/client/nativeImages";
+import { newClientRequestId } from "@/lib/client/requestId";
+
 export type VideoSnapshotResult = {
   file: File;
   sourceVideoName: string;
@@ -20,6 +24,8 @@ export type VideoSnapshotResult = {
 
 type VideoSnapshotPickerProps = {
   open: boolean;
+  allowFrameEdit?: boolean;
+  initialVideoUrl?: string;
   onClose: () => void;
   onSnapshot: (
     result: VideoSnapshotResult,
@@ -343,12 +349,16 @@ export default function VideoSnapshotPicker({
   open,
   onClose,
   onSnapshot,
+  allowFrameEdit = false,
+  initialVideoUrl,
 }: VideoSnapshotPickerProps) {
   const videoRef =
     useRef<HTMLVideoElement | null>(
       null,
     );
   const captureGuard = useRef(false);
+  const insertingGuard = useRef(false);
+  const [inserting,setInserting] = useState(false);
   const captureEpoch = useRef(0);
   useEffect(() => () => { captureEpoch.current++; }, []);
 
@@ -377,6 +387,43 @@ export default function VideoSnapshotPicker({
 
   const [message, setMessage] =
     useState("");
+
+  const [editSource, setEditSource] = useState<VideoSnapshotResult>();
+  const [instruction, setInstruction] = useState("");
+  const [candidateUrl, setCandidateUrl] = useState("");
+  const [editing, setEditing] = useState(false);
+  const imageAttempt = useRef<{ instruction: string; requestId: string; jobId?: string } | undefined>(undefined);
+  const imageWatcher = useRef<AbortController | undefined>(undefined);
+  const restoreFocus = useRef<HTMLElement | null>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open || !allowFrameEdit) return;
+    restoreFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const overlay = overlayRef.current;
+    const background = Array.from(document.body.children).filter((el): el is HTMLElement => el !== overlay && el instanceof HTMLElement);
+    const restore = background.map(el => el.inert);
+    const scrollStyle = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    background.forEach(el => { el.inert = true; });
+    overlay?.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
+    return () => {
+      document.body.style.overflow = scrollStyle;
+      background.forEach((el, index) => { el.inert = restore[index]; });
+      restoreFocus.current?.focus({ preventScroll: true });
+    };
+  }, [open, allowFrameEdit]);
+
+  useEffect(() => {
+    if (!open || !initialVideoUrl) return;
+    const controller = new AbortController();
+    void fetch(initialVideoUrl, { signal: controller.signal }).then(async response => {
+      if (!response.ok) throw Error("Could not open the completed video.");
+      const blob = await response.blob();
+      if (!controller.signal.aborted) setSourceFile(new File([blob], "completed-video.mp4", { type: blob.type || "video/mp4" }));
+    }).catch(() => { if (!controller.signal.aborted) setMessage("Could not open the completed video. Choose a video to continue."); });
+    return () => controller.abort();
+  }, [open, initialVideoUrl]);
 
   const frameStepSeconds =
     useMemo(
@@ -419,6 +466,11 @@ export default function VideoSnapshotPicker({
       setSeeking(false);
       setCapturing(false);
       setMessage("");
+      imageWatcher.current?.abort();
+      setEditSource(undefined);
+      setEditing(false);
+      setCandidateUrl("");
+      imageAttempt.current = undefined;
     },
     [open],
   );
@@ -432,6 +484,7 @@ export default function VideoSnapshotPicker({
           if (
             event.key === "Escape"
             && !capturing
+            && !insertingGuard.current
           ) {
             onClose();
           }
@@ -685,24 +738,16 @@ export default function VideoSnapshotPicker({
   }
 
   async function useSnapshot(boundary?: "first" | "last") {
-    const epoch = captureEpoch.current;
-    const result =
-      await captureFrame(boundary);
-
-    if (!result || epoch !== captureEpoch.current) {
-      return;
-    }
-
-    setMessage(
-      `Captured frame in ${result.captureDurationMs} ms. Saving snapshot...`,
-    );
-
+    if(insertingGuard.current)return;
+    insertingGuard.current=true;setInserting(true);
     try {
-      await onSnapshot(result);
-      onClose();
-    } catch {
-      setMessage("The frame was captured but could not be inserted. Try again.");
-    }
+      const epoch=captureEpoch.current;
+      const result=await captureFrame(boundary);
+      if(!result||epoch!==captureEpoch.current)return;
+      setMessage(`Captured frame in ${result.captureDurationMs} ms. Saving snapshot...`);
+      await onSnapshot(result);onClose();
+    } catch {setMessage("The frame was captured but could not be inserted. Try again.");}
+    finally{insertingGuard.current=false;setInserting(false);}
   }
 
   async function downloadSnapshot() {
@@ -731,13 +776,92 @@ export default function VideoSnapshotPicker({
     }
   }
 
+  async function openFrameEdit() {
+    const epoch = captureEpoch.current;
+    const result = await captureFrame();
+    if (!result || epoch !== captureEpoch.current) return;
+    setEditSource(result);
+    setInstruction("");
+    setCandidateUrl("");
+    imageAttempt.current = undefined;
+    setMessage("");
+  }
+
+  function cancelFrameEdit() {
+    imageWatcher.current?.abort();
+    setEditSource(undefined);
+    setEditing(false);
+    setCandidateUrl("");
+    imageAttempt.current = undefined;
+    setMessage("");
+  }
+
+  async function editFrame(retry = false) {
+    if (!editSource || !instruction.trim() || editing) return;
+    const controller = new AbortController();
+    imageWatcher.current = controller;
+    setEditing(true);
+    setMessage("Preparing Fibo Turbo edit…");
+    try {
+      if (!imageAttempt.current || (retry && candidateUrl)) {
+        imageAttempt.current = { instruction: instruction.trim(), requestId: newClientRequestId() };
+      }
+      const attempt = imageAttempt.current;
+      if (!attempt.jobId) {
+        const submitted = await submitNativeImageEdit({
+          model: "fibo2-edit-turbo", image: editSource.file, prompt: attempt.instruction, seed: "",
+          requestId: attempt.requestId, saveToGallery: false,
+          fetchImpl: (input, init) => fetch(input, { ...init, signal: controller.signal }),
+        });
+        attempt.jobId = submitted.jobId;
+      }
+      const result = await waitForNativeImage(attempt.jobId, {
+        signal: controller.signal,
+        onStatus: status => setMessage(`Fibo Turbo · ${status}`),
+      });
+      if (!controller.signal.aborted) {
+        setCandidateUrl(result.imageUrl);
+        setMessage("");
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        const message = error instanceof Error ? error.message : "Frame editing failed.";
+        if (/failed|canceled/i.test(message) && imageAttempt.current?.jobId) imageAttempt.current = undefined;
+        setMessage(message);
+      }
+    } finally {
+      if (!controller.signal.aborted) setEditing(false);
+    }
+  }
+
+  async function useEditedFrame() {
+    if(insertingGuard.current)return;
+    if (!editSource || !candidateUrl || editing) return;
+    const epoch = captureEpoch.current;
+    insertingGuard.current=true;setInserting(true);setEditing(true);
+    try {
+      const response = await fetch(candidateUrl);
+      if (!response.ok) throw Error("The edited frame could not be loaded.");
+      const blob = await response.blob();
+      if (epoch !== captureEpoch.current) return;
+      await onSnapshot({ ...editSource, file: new File([blob], "edited-snapshot.png", { type: "image/png" }) });
+      onClose();
+    } catch (error) {
+      if (epoch === captureEpoch.current) setMessage(error instanceof Error ? error.message : "Could not use the edited frame.");
+    } finally {
+      insertingGuard.current=false;setInserting(false);
+      if (epoch === captureEpoch.current) setEditing(false);
+    }
+  }
+
   if (!open) {
     return null;
   }
 
-  return (
+  const dialog = (
     <div
-      className="fixed inset-0 z-[12000] flex items-center justify-center overflow-y-auto bg-black/75 p-3 backdrop-blur-sm sm:p-6"
+      ref={overlayRef}
+      className="fixed inset-0 z-[12000] flex items-start justify-center overflow-y-auto overscroll-contain bg-black/75 px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-sm sm:items-center sm:p-6"
       role="dialog"
       aria-modal="true"
       aria-label="Snapshot from Video"
@@ -757,7 +881,7 @@ export default function VideoSnapshotPicker({
 
           <button
             type="button"
-            disabled={capturing}
+            disabled={capturing || inserting}
             onClick={onClose}
             aria-label="Close Snapshot"
             className="flex h-8 w-8 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] text-lg font-bold text-zinc-300 transition hover:border-white/25 hover:text-white disabled:opacity-40"
@@ -767,6 +891,23 @@ export default function VideoSnapshotPicker({
         </div>
 
         <div className="space-y-4 p-4">
+          {editSource && <section className="space-y-3" aria-label="Edit Frame">
+            {candidateUrl && <img className="max-h-[36dvh] w-full object-contain" src={candidateUrl} alt="Edited frame preview" />}
+            <label className="block text-sm">What should change?
+              <textarea value={instruction} disabled={editing} rows={3} maxLength={3000}
+                className="mt-1 w-full rounded border border-white/20 bg-black p-2 text-base text-white"
+                onChange={event => setInstruction(event.target.value)} />
+            </label>
+            <div className="flex flex-wrap gap-2 [&>*]:min-h-11 [&>*]:rounded-md [&>*]:border [&>*]:border-white/20 [&>*]:px-3 [&>*]:py-2">
+              <button type="button" disabled={!instruction.trim() || editing} onClick={() => void editFrame(!!candidateUrl)}>{candidateUrl ? "Retry" : editing ? "Editing…" : "Apply Edit"}</button>
+              <button type="button" onClick={cancelFrameEdit}>Cancel</button>
+              {candidateUrl && <>
+                <a href={candidateUrl + "&download=1"} download>Download</a>
+                <button type="button" disabled={editing||inserting} onClick={() => void useEditedFrame()}>Use Frame</button>
+              </>}
+            </div>
+          </section>}
+          <div hidden={!!editSource}>
           {!sourceFile ? (
             <label className="flex min-h-52 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-white/15 bg-black/30 px-5 text-center transition hover:border-cyan-300/35 hover:bg-cyan-300/[0.03]">
               <span className="text-sm font-black text-zinc-200">
@@ -875,7 +1016,7 @@ export default function VideoSnapshotPicker({
                       ),
                     )
                   }
-                  disabled={!ready || capturing}
+                  disabled={!ready || capturing || inserting}
                   onChange={(event) => {
                     seekTo(
                       Number(
@@ -904,7 +1045,7 @@ export default function VideoSnapshotPicker({
               <div className="flex items-center justify-center gap-2">
                 <button
                   type="button"
-                  disabled={!ready || seeking || capturing}
+                  disabled={!ready || seeking || capturing || inserting}
                   onClick={() =>
                     seekTo(
                       currentTime
@@ -918,7 +1059,7 @@ export default function VideoSnapshotPicker({
 
                 <button
                   type="button"
-                  disabled={!ready || seeking || capturing}
+                  disabled={!ready || seeking || capturing || inserting}
                   onClick={() =>
                     seekTo(
                       currentTime
@@ -932,8 +1073,8 @@ export default function VideoSnapshotPicker({
               </div>
 
               <div className="grid grid-cols-2 gap-2" aria-label="Use video boundary frame as input image">
-                <button type="button" disabled={!ready || seeking || capturing} onClick={() => void useSnapshot("first")} className="min-h-11 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-sm font-bold text-cyan-100 disabled:opacity-35">Use First Frame</button>
-                <button type="button" disabled={!ready || seeking || capturing} onClick={() => void useSnapshot("last")} className="min-h-11 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-sm font-bold text-cyan-100 disabled:opacity-35">Use Last Frame</button>
+                <button type="button" disabled={!ready || seeking || capturing || inserting} onClick={() => void useSnapshot("first")} className="min-h-11 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-sm font-bold text-cyan-100 disabled:opacity-35">Use First Frame</button>
+                <button type="button" disabled={!ready || seeking || capturing || inserting} onClick={() => void useSnapshot("last")} className="min-h-11 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-sm font-bold text-cyan-100 disabled:opacity-35">Use Last Frame</button>
               </div>
               <p className="text-xs text-zinc-400">Select the video's first or last frame and insert it as the chosen image input.</p>
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-4">
@@ -962,7 +1103,7 @@ export default function VideoSnapshotPicker({
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    disabled={capturing}
+                    disabled={capturing || inserting}
                     onClick={onClose}
                     className="min-h-9 rounded-md border border-white/10 bg-white/[0.04] px-3 text-xs font-black text-zinc-300 transition hover:border-white/25 hover:text-white disabled:opacity-35"
                   >
@@ -971,7 +1112,7 @@ export default function VideoSnapshotPicker({
 
                   <button
                     type="button"
-                    disabled={!ready || seeking || capturing}
+                    disabled={!ready || seeking || capturing || inserting}
                     onClick={() => void downloadSnapshot()}
                     aria-label="Download Snapshot"
                     className="min-h-9 rounded-md border border-white/10 bg-white/[0.04] px-3 text-xs font-black text-zinc-300 transition hover:border-white/25 hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
@@ -979,9 +1120,13 @@ export default function VideoSnapshotPicker({
                     Download Snapshot
                   </button>
 
+                  {allowFrameEdit && <button type="button"
+                    disabled={!ready || seeking || capturing || inserting}
+                    onClick={() => void openFrameEdit()}
+                    className="min-h-11 rounded-md border border-white/20 px-3 text-xs font-black">Edit Frame</button>}
                   <button
                     type="button"
-                    disabled={!ready || seeking || capturing}
+                    disabled={!ready || seeking || capturing || inserting}
                     onClick={() => void useSnapshot()}
                     className="min-h-9 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-4 text-xs font-black text-cyan-100 transition hover:border-cyan-200/55 hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-35"
                   >
@@ -994,6 +1139,7 @@ export default function VideoSnapshotPicker({
             </>
           )}
 
+          </div>
           {message ? (
             <div
               role="status"
@@ -1006,4 +1152,5 @@ export default function VideoSnapshotPicker({
       </div>
     </div>
   );
+  return allowFrameEdit ? createPortal(dialog, document.body) : dialog;
 }

@@ -1,41 +1,42 @@
 "use client";
+import React from "react";
 import { useEffect, useRef, useState } from "react";
-import { LAB_WORKFLOWS, RATING_LABELS, REFMOD_LAB_API as API, REPLACEMENT_DEFAULTS, type ReplacementSettings, type Evaluation } from "@/lib/refmodLab/contract";
+import { LAB_WORKFLOWS, RATING_LABELS, REFMOD_LAB_API, REPLACEMENT_DEFAULTS, type ReplacementSettings, type Evaluation } from "@/lib/refmodLab/contract";
 import type { ReplacementRun } from "@/lib/refmodLab/server";
 import type { LabSession } from "@/lib/experiments/store";
 import { newClientRequestId } from "@/lib/client/requestId";
 const input = "w-full min-w-0 rounded-lg border border-white/20 bg-black/40 p-2 text-sm";
 const button = "min-h-11 rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-40";
 type Snapshot = { workspace: { session: LabSession; settings: ReplacementSettings } | null; runs: ReplacementRun[]; refs: { name: string; kind: string; displayName: string; preview: string | null }[]; capabilities: { workflow: string; available: boolean; errors: string[] }[]; samAvailable: boolean; gpu5060Reason: string };
-async function api<T>(data?: unknown): Promise<T> { const r = await fetch(API, { cache: "no-store", ...(data ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) } : {}) }); const b = await r.json(); if (!r.ok) throw Error(b.error || "Lab request failed."); return b; }
+async function call<T>(endpoint: string, data?: unknown): Promise<T> { const r = await fetch(endpoint, { cache: "no-store", ...(data ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) } : {}) }); const b = await r.json(); if (!r.ok) throw Error(b.error || "Lab request failed."); return b; }
 const media = (id: string) => `/api/experiments/assets?id=${encodeURIComponent(id)}`;
-function Ratings({ run, saved }: { run: ReplacementRun; saved: () => void }) {
+function Ratings({ run, saved, endpoint }: { run: ReplacementRun; saved: () => void; endpoint: string }) {
   const [value, setValue] = useState<Evaluation>(run.evaluation), [message, setMessage] = useState(""), [busy, setBusy] = useState(false);
-  return <form className="space-y-3" onSubmit={e => { e.preventDefault(); setBusy(true); void api({ action: "evaluate", id: run.id, evaluation: value }).then(() => { setMessage("Evaluation saved."); saved(); }).catch(e => setMessage(e.message)).finally(() => setBusy(false)); }}>
+  return <form className="space-y-3" onSubmit={e => { e.preventDefault(); setBusy(true); void call(endpoint, { action: "evaluate", id: run.id, evaluation: value }).then(() => { setMessage("Evaluation saved."); saved(); }).catch(e => setMessage(e.message)).finally(() => setBusy(false)); }}>
     <div className="grid grid-cols-2 gap-2">{Object.entries(RATING_LABELS).map(([key, label]) => <label key={key} className="text-sm">{label}<select aria-label={label} className={input} value={value.scores[key as keyof typeof RATING_LABELS] || ""} onChange={e => setValue(v => { const scores = { ...v.scores }; if (e.target.value) scores[key as keyof typeof RATING_LABELS] = Number(e.target.value); else delete scores[key as keyof typeof RATING_LABELS]; return { ...v, scores }; })}><option value="">Not rated</option>{[1, 2, 3, 4, 5].map(n => <option key={n}>{n}</option>)}</select></label>)}</div>
     <label className="block text-sm">Evaluation notes<textarea className={input} maxLength={4000} value={value.notes} onChange={e => setValue(v => ({ ...v, notes: e.target.value }))} placeholder="Identity drift, movement, camera changes…" /></label><button className={button} disabled={busy}>Save evaluation</button><p role="status">{message}</p>
   </form>;
 }
-export default function RefModReplacementLab() {
+export default function RefModReplacementLab({title = "RefMod Character Replacement Lab", endpoint = REFMOD_LAB_API}: {title?: string; endpoint?: string}) {
   const [open, setOpen] = useState(false), [snapshot, setSnapshot] = useState<Snapshot | null>(null), [settings, setSettings] = useState(REPLACEMENT_DEFAULTS);
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [message, setMessage] = useState(""), [selected, setSelected] = useState("");
   const [gallery, setGallery] = useState<{ name: string; url: string }[] | null>(null), [compare, setCompare] = useState("both");
   const initialized = useRef(false), players = useRef<(HTMLVideoElement | null)[]>([]), pending = useRef<{ key: string; id: string } | null>(null);
   const session = snapshot?.workspace?.session, runs = snapshot?.runs || [], run = runs.find(r => r.id === selected) || runs[0];
-  const active = runs.some(r => !["completed", "failed", "canceled", "needs-review"].includes(r.state));
+  const active = runs.some(r => !["completed", "failed", "finishing-failed", "canceled", "needs-review"].includes(r.state));
   const ref = snapshot?.refs.find(r => r.name === settings.refMod), capability = snapshot?.capabilities.find(c => c.workflow === settings.workflow);
   const patch = (s: Partial<ReplacementSettings>) => setSettings(v => ({ ...v, ...s }));
-  async function refresh() { const s = await api<Snapshot>(); setSnapshot(s); }
+  async function refresh() { const s = await call<Snapshot>(endpoint); setSnapshot(s); }
   useEffect(() => {
     if (!open) return;
     let gone = false, loading = false;
     async function load() {
       if (loading) return; loading = true;
-      try { let s = await api<Snapshot>(); if (!s.workspace) { await api({ action: "init" }); s = await api<Snapshot>(); } if (gone) return; setSnapshot(s); if (!initialized.current) { setSettings(s.workspace!.settings); initialized.current = true; } }
+      try { let s = await call<Snapshot>(endpoint); if (!s.workspace) { await call(endpoint, { action: "init" }); s = await call<Snapshot>(endpoint); } if (gone) return; setSnapshot(s); if (!initialized.current) { setSettings(s.workspace!.settings); initialized.current = true; } }
       catch (e) { if (!gone) setError((e as Error).message); } finally { loading = false; }
     }
     void load(); const timer = window.setInterval(() => void load(), 5000); return () => { gone = true; clearInterval(timer); };
-  }, [open]);
+  }, [open, endpoint]);
   async function act(fn: () => Promise<void>) { setBusy(true); setError(""); setMessage(""); try { await fn(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
   async function upload(file: File, target: "sourceId" | "imageId" | "maskId") {
     if (!session) throw Error("Open the lab first.");
@@ -48,13 +49,13 @@ export default function RefModReplacementLab() {
   }
   async function generate(validate = false) {
     const key = JSON.stringify(settings); if (!pending.current || pending.current.key !== key) pending.current = { key, id: newClientRequestId() };
-    const b = await api<{ run?: ReplacementRun; reconstruction?: string }>({ action: validate ? "validate" : "generate", settings, requestId: pending.current.id });
+    const b = await call<{ run?: ReplacementRun; reconstruction?: string }>(endpoint, { action: validate ? "validate" : "generate", settings, requestId: pending.current.id });
     if (b.run) { setSelected(b.run.id); pending.current = null; await refresh(); } setMessage(validate ? `Graph validated; no GPU submitted. ${b.reconstruction}` : "Test queued. Return here for the saved result.");
   }
   function playTogether() { const videos = players.current.filter((v): v is HTMLVideoElement => !!v); videos.forEach(v => { v.pause(); v.currentTime = 0; }); void Promise.all(videos.map(v => v.play())).catch(() => setMessage("Tap each player if Android blocks simultaneous playback.")); }
   const videoAssets = session?.assets.filter(a => a.mime.startsWith("video/") && a.role === "source") || [];
   return <details open={open} onToggle={e => setOpen(e.currentTarget.open)} className="min-w-0 rounded-xl border border-violet-400/30 bg-black/20 p-3">
-    <summary className="cursor-pointer text-lg font-semibold">RefMod Character Replacement Lab</summary>
+    <summary className="cursor-pointer text-lg font-semibold">{title}</summary>
     {open ? <div className="mt-4 space-y-4">
       <p className="text-sm text-white/70">Admin · TEST only. A/B redraw the video. C composites a generated character over source frames. Quality is for you to evaluate.</p>
       {!session ? <p role="status" className="text-sm">Loading private lab…</p> : null}
@@ -69,6 +70,10 @@ export default function RefModReplacementLab() {
         <label className="block text-sm">Target subject<input className={input} maxLength={300} value={settings.subject} onChange={e => patch({ subject: e.target.value })} placeholder="Zeltroi, the foreground runner crossing the lake" /></label>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" role="group" aria-label="Replacement workflow">{Object.entries(LAB_WORKFLOWS).map(([id, label]) => <button type="button" key={id} aria-pressed={settings.workflow === id} className={`${button} ${settings.workflow === id ? "bg-violet-700/50" : ""}`} onClick={() => patch({ workflow: id as ReplacementSettings["workflow"] })}>{id}: {label}</button>)}</div>
         {!capability?.available ? <p className="text-sm text-amber-200">{capability?.errors.join("; ") || "Checking dependencies…"}</p> : null}
+        {endpoint === "/api/h3/edit-video/refmod-swap" && <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" role="switch" checked={settings.upscale1080p ?? settings.quality !== "0.2"}
+            onChange={e => patch({ upscale1080p: e.target.checked })} />1080p Upscaler (RelayVSR)
+        </label>}
         <div className="grid grid-cols-2 gap-3"><label className="text-sm">Model<select className={input} value={settings.model} onChange={e => patch({ model: e.target.value as ReplacementSettings["model"] })}><option value="standard">Standard Ref2VA Native</option><option value="singularity">Singularity v1.3 Native</option></select></label><label className="text-sm">Resolution<select className={input} value={settings.quality} onChange={e => patch({ quality: e.target.value as ReplacementSettings["quality"] })}><option value="0.2">0.2 MP</option><option value="0.6">0.6 MP</option><option value="1">1 MP</option></select></label></div>
         <label className="block text-sm">RefMod strength · {settings.strength.toFixed(2)}<input className="w-full" type="range" min="0" max="1" step="0.05" value={settings.strength} onChange={e => patch({ strength: Number(e.target.value) })} /></label>
         <label className="block text-sm">Correction prompt · optional<textarea className={input} rows={3} maxLength={4000} value={settings.prompt} onChange={e => patch({ prompt: e.target.value })} /></label>
@@ -79,14 +84,15 @@ export default function RefModReplacementLab() {
           <label className="block text-sm">Additional identity image<input type="file" accept="image/*" onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void act(() => upload(f, "imageId")); }} /></label><select className={input} aria-label="Saved additional identity image" value={settings.imageId} onChange={e => patch({ imageId: e.target.value })}><option value="">None</option>{session?.assets.filter(a => a.mime.startsWith("image/") && a.role === "source").map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>{settings.imageId ? <div className="flex items-center gap-2">{/* eslint-disable-next-line @next/next/no-img-element */}<img className="h-16 w-16 object-contain" src={media(settings.imageId)} alt="Additional identity reference" /><button type="button" className={button} onClick={() => patch({ imageId: "" })}>Remove image input</button></div> : null}
           <label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={settings.preserveAudio} onChange={e => patch({ preserveAudio: e.target.checked })} />Keep original audio</label><button type="button" className={button} onClick={() => patch({ ...REPLACEMENT_DEFAULTS, sourceId: settings.sourceId, refMod: settings.refMod })}>Reset options · keep source and RefMod</button>
         </details>
-        <div className="flex flex-wrap gap-2"><button type="button" className={`${button} bg-violet-700/50`} disabled={active || !capability?.available || !settings.sourceId || !settings.refMod || !settings.subject.trim()} onClick={() => void act(() => generate())}>Generate Test</button><button type="button" className={button} onClick={() => void act(() => generate(true))}>Validate graph only</button><button type="button" className={button} onClick={() => void act(async () => { await api({ action: "save", settings }); setMessage("Settings saved."); })}>Save settings</button></div>
+        <div className="flex flex-wrap gap-2"><button type="button" className={`${button} bg-violet-700/50`} disabled={active || !capability?.available || !settings.sourceId || !settings.refMod || !settings.subject.trim()} onClick={() => void act(() => generate())}>Generate Test</button><button type="button" className={button} onClick={() => void act(() => generate(true))}>Validate graph only</button><button type="button" className={button} onClick={() => void act(async () => { await call(endpoint, { action: "save", settings }); setMessage("Settings saved."); })}>Save settings</button></div>
       </fieldset>
       {runs.length ? <label className="block text-sm">Saved test results<select className={input} value={run?.id || ""} onChange={e => setSelected(e.target.value)}>{runs.map(r => <option key={r.id} value={r.id}>{r.settings.workflow} · {r.refName} · {r.state} · {new Date(r.created).toLocaleString()}</option>)}</select></label> : null}
       {run ? <article className="space-y-3 rounded-xl border border-white/20 p-3"><h3 className="font-semibold">{LAB_WORKFLOWS[run.settings.workflow]} · {run.state}</h3><p role="status">{run.message}</p><p className="text-xs text-white/70">{run.refName} · {run.settings.model} Native · {run.width}×{run.height} · {run.settings.seconds}s · seed {run.settings.seed}{run.generationSeconds !== null ? ` · elapsed ${run.generationSeconds.toFixed(1)}s (includes queue/finalization)` : ""}</p><p className="text-xs text-white/60">{run.reconstruction} {run.audio}</p>
-        {!['completed', 'failed', 'canceled', 'needs-review'].includes(run.state) || run.state === "needs-review" && run.promptId ? <button type="button" className={button} disabled={busy} onClick={() => void act(async () => { await api({ action: "cancel", id: run.id }); await refresh(); })}>Cancel Test</button> : null}
-        <div className="flex flex-wrap gap-2"><button type="button" className={button} onClick={() => setCompare(compare === "both" ? "edited" : compare === "edited" ? "original" : "both")}>View: {compare}</button><button type="button" className={button} onClick={playTogether}>Play both from start</button><button type="button" className={button} onClick={() => setSettings({ ...run.settings })}>Reuse test inputs</button><a className={button} href={`${API}?receipt=${run.id}`}>Download settings</a><a className={button} href={`${API}?file=${run.id}&kind=graph`}>Graph</a></div>
-        <div className={`grid min-w-0 gap-3 ${compare === "both" ? "md:grid-cols-2" : ""}`}>{compare !== "edited" ? <figure><figcaption>Original · selected window</figcaption>{run.started ? <video key={`source-${run.id}`} ref={v => { players.current[0] = v; }} className="max-h-96 w-full" src={`${API}?file=${run.id}&kind=source`} controls playsInline preload="metadata" /> : <p className="text-sm">Preparing comparison preview…</p>}</figure> : null}{compare !== "original" && run.outputId ? <figure><figcaption>Corrected</figcaption><video key={`output-${run.id}`} ref={v => { players.current[1] = v; }} className="max-h-96 w-full" src={media(run.outputId)} controls playsInline preload="metadata" /><a className="text-sm text-cyan-200 underline" href={media(run.outputId) + "&download=1"}>Download output</a></figure> : null}</div>
-        {run.maskOutputId ? <details><summary>Inspect generated mask</summary><video className="max-h-72 w-full" src={media(run.maskOutputId)} controls playsInline preload="metadata" /></details> : null}{run.state === "completed" ? <Ratings key={run.id} run={run} saved={() => void refresh().catch(e => setError(e.message))} /> : null}
+        {!['completed', 'failed', 'finishing-failed', 'canceled', 'needs-review'].includes(run.state) || run.state === "needs-review" && run.promptId ? <button type="button" className={button} disabled={busy} onClick={() => void act(async () => { await call(endpoint, { action: "cancel", id: run.id }); await refresh(); })}>Cancel Test</button> : null}
+        <div className="flex flex-wrap gap-2"><button type="button" className={button} onClick={() => setCompare(compare === "both" ? "edited" : compare === "edited" ? "original" : "both")}>View: {compare}</button><button type="button" className={button} onClick={playTogether}>Play both from start</button><button type="button" className={button} onClick={() => setSettings({ ...run.settings })}>Reuse test inputs</button><a className={button} href={`${endpoint}?receipt=${run.id}`}>Download settings</a><a className={button} href={`${endpoint}?file=${run.id}&kind=graph`}>Graph</a></div>
+        {run.state === "finishing-failed" ? <button type="button" className={button} disabled={busy} onClick={() => void act(async () => { await call(endpoint, { action: "retry-finishing", id: run.id }); await refresh(); })}>Retry finishing</button> : null}
+        <div className={`grid min-w-0 gap-3 ${compare === "both" ? "md:grid-cols-2" : ""}`}>{compare !== "edited" ? <figure><figcaption>Original · selected window</figcaption>{run.started ? <video key={`source-${run.id}`} ref={v => { players.current[0] = v; }} className="max-h-96 w-full" src={`${endpoint}?file=${run.id}&kind=source`} controls playsInline preload="metadata" /> : <p className="text-sm">Preparing comparison preview…</p>}</figure> : null}{compare !== "original" && run.outputId ? <figure><figcaption>Corrected</figcaption><video key={`output-${run.id}`} ref={v => { players.current[1] = v; }} className="max-h-96 w-full" src={media(run.outputId)} controls playsInline preload="metadata" /><a className="text-sm text-cyan-200 underline" href={media(run.outputId) + "&download=1"}>Download output</a></figure> : null}</div>
+        {run.maskOutputId ? <details><summary>Inspect generated mask</summary><video className="max-h-72 w-full" src={media(run.maskOutputId)} controls playsInline preload="metadata" /></details> : null}{run.state === "completed" ? <Ratings key={run.id} run={run} endpoint={endpoint} saved={() => void refresh().catch(e => setError(e.message))} /> : null}
       </article> : null}
     </div> : null}
   </details>;

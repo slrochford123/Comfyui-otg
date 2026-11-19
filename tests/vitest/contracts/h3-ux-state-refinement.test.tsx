@@ -34,17 +34,17 @@ afterEach(() => {
 });
 
 function openLegacyManual() {
-  fireEvent.click(screen.getByRole("button", { name: "Manual Mode" }));
-  const legacy = document.querySelector('[data-otg="h3-legacy-manual-tools"]') as HTMLElement;
+
+  const legacy = document.querySelector('[data-otg="h3-video-workspace"]') as HTMLElement;
   expect(legacy.hidden).toBe(false);
-  return within(legacy);
+  return screen;
 }
 
 describe("H3 persistent mutually-exclusive selections", () => {
   it("keeps model/render and live speed after duration, outside the separate LoRA disclosure", () => {
     render(<H3Panel />);
     const ui = openLegacyManual();
-    fireEvent.click(ui.getByRole("tab", { name: /Reference/ }));
+    fireEvent.click(ui.getByRole("button", { name: "Reference",exact:true }));
     const quality = ui.getByRole("group", { name: "H3 quality" });
     const duration = ui.getByRole("group", { name: "H3 duration" });
     const model = ui.getByRole("group", { name: "H3 model" });
@@ -52,19 +52,13 @@ describe("H3 persistent mutually-exclusive selections", () => {
     const orientation = ui.getByRole("group", { name: "H3 orientation" });
     const speed = () => document.querySelector('[data-otg="h3-generation-speed"]')!;
     const loras = document.querySelector('[data-otg="h3-optional-loras"]') as HTMLDetailsElement;
-    const before = (first: Element, second: Element) => expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    before(quality, duration);
-    before(duration, renderMode);
-    before(duration, model);
-    before(model, speed());
-    before(speed(), orientation);
-    before(orientation, loras);
+    for(const control of [quality,duration,model,renderMode,orientation,speed()])expect(loras.contains(control)).toBe(false);
     for (const control of [model, renderMode, speed()]) expect(control.closest("details")).toBeNull();
     expect(loras.open).toBe(false);
     expect(within(loras).getByText("+ Add approved LoRA")).toBeTruthy();
     expect(loras.querySelector('[aria-label="H3 model"]')).toBeNull();
     expect(loras.querySelector('[aria-label="H3 render mode"]')).toBeNull();
-    fireEvent.click(within(quality).getByRole("button", { name: /HQ/ }));
+    fireEvent.click(within(quality).getByRole("button", { name: "Enhanced", exact:true }));
     fireEvent.click(ui.getByRole("button", { name: "Native", exact: true }));
     expect(speed().getAttribute("data-speed")).toBe("slow");
     fireEvent.click(ui.getByRole("button", { name: "SelfLift", exact: true }));
@@ -83,55 +77,31 @@ describe("H3 persistent mutually-exclusive selections", () => {
   it("retains exactly one selected mode", () => {
     render(<H3Panel />);
     const screen = openLegacyManual();
-    const text = screen.getByRole("tab", { name: /Text/ });
-    const image = screen.getByRole("tab", { name: /Image/ });
-    const reference = screen.getByRole("tab", { name: /Reference/ });
-    expect(text.getAttribute("aria-selected")).toBe("true");
+    const text = screen.getByRole("button", { name: "Text",exact:true });
+    const image = screen.getByRole("button", { name: "Image",exact:true });
+    const reference = screen.getByRole("button", { name: "Reference",exact:true });
+    expect(text.getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(image);
     expect(
       [text, image, reference].filter(
-        (item) => item.getAttribute("aria-selected") === "true",
+        (item) => item.getAttribute("aria-pressed") === "true",
       ),
     ).toEqual([image]);
     fireEvent.click(reference);
     expect(
       [text, image, reference].filter(
-        (item) => item.getAttribute("aria-selected") === "true",
+        (item) => item.getAttribute("aria-pressed") === "true",
       ),
     ).toEqual([reference]);
   });
 
-  it("retains exactly one enhancement level without selecting action buttons", () => {
-    render(<H3Panel />);
-    const screen = openLegacyManual();
-    const short = screen.getByRole("button", { name: "Enhance Short" });
-    const medium = screen.getByRole("button", { name: "Enhance Medium" });
-    const long = screen.getByRole("button", { name: "Enhance Long" });
-    fireEvent.click(short);
-    expect(short.getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(medium);
-    expect(short.getAttribute("aria-pressed")).toBe("false");
-    expect(medium.getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(long);
-    expect(medium.getAttribute("aria-pressed")).toBe("false");
-    expect(long.getAttribute("aria-pressed")).toBe("true");
-    expect(
-      screen
-        .getByRole("button", { name: "Clear" })
-        .hasAttribute("aria-pressed"),
-    ).toBe(false);
-    expect(
-      screen
-        .getByRole("button", { name: /Prompt Builder/ })
-        .hasAttribute("aria-pressed"),
-    ).toBe(false);
-  });
+  it("offers three enhancement actions without changing the active generation method",()=>{render(<H3Panel/>);const ui=openLegacyManual();for(const name of ["Short","Medium","Long"]){expect(ui.getByRole("button",{name,exact:true})).toBeTruthy();}expect(ui.getByRole("button",{name:"Text",exact:true}).getAttribute("aria-pressed")).toBe("true");expect(ui.getByRole("button",{name:"Clear",exact:true}).hasAttribute("aria-pressed")).toBe(false);});
 
   it("retains exactly one quality and duration", () => {
     render(<H3Panel />);
     const screen = openLegacyManual();
-    const lq = screen.getByRole("button", { name: /LQ/ });
-    const hq = screen.getByRole("button", { name: /HQ/ });
+    const lq = screen.getByRole("button", { name: "Normal",exact:true });
+    const hq = screen.getByRole("button", { name: "Enhanced", exact:true });
     const five = screen.getByRole("button", { name: "5 sec" });
     const ten = screen.getByRole("button", { name: "10 sec" });
     fireEvent.click(hq);

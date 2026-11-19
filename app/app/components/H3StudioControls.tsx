@@ -12,6 +12,8 @@ import { h3SingularityLabel } from "@/lib/production/h3Settings";
 import { h3LoraDefaultStrength } from "@/lib/h3LoraGuidance";
 import { newClientRequestId } from "@/lib/client/requestId";
 import css from "./H3StudioControls.module.css";
+import ExtractCharactersAction from "./ExtractCharactersAction";
+import H3CharacterVoiceCorrection from "./H3CharacterVoiceCorrection";
 import VideoSnapshotPicker from "./VideoSnapshotPicker";
 import H3SpeedIndicator from "./H3SpeedIndicator";
 import H3SavedUploads from "./H3SavedUploads";
@@ -23,9 +25,9 @@ type Asset = { id: string; kind: "image" | "video" | "audio"; role: "first" | "l
 type Source = { id: string; file: File; kind: Asset["kind"]; role: Asset["role"]; description: string; includeAudio: boolean; clipStartSeconds: number; revision: number; asset?: Asset; registrationAsset?: Asset; error?: string };
 type Preview = { manifest: { executable: boolean; experimental?: boolean; blockedReasons: string[]; steps: number; sampler: string; templateSha256: string }; graph: unknown; estimate: { explanation: string; generationCredits?: number | null; generationSeconds?: number | null }; review: { id: string; mediaFingerprint: string } };
 type Quote = { id: string; estimatedUsd: number | null; qualified: boolean; unavailable: string[] };
-type Job = { id: string; status: string; statusMessage: string; progressPercent?: number | null; error?: string | null; videoUrl?: string | null; galleryUrl?: string | null; galleryStatus?: string; galleryError?: string | null; nativeResolution?: string | null; approximatePreview?: { imageUrl: string; label: string } | null };
+type Job = { id: string; mode?: string; finishingRetry?: boolean; status: string; statusMessage: string; progressPercent?: number | null; error?: string | null; videoUrl?: string | null; galleryUrl?: string | null; galleryStatus?: string; galleryError?: string | null; nativeResolution?: string | null; approximatePreview?: { imageUrl: string; label: string } | null };
 type HistoryItem = Pick<Job, "id" | "status" | "statusMessage">;
-type Props = { ownerKey: string; backend?: H3StudioPlan["backend"]; onBackendChange?: (backend: NonNullable<H3StudioPlan["backend"]>) => void; controller?: H3StudioController; onControllerChange?: (controller: H3StudioController) => void; manualMenu?: boolean; onOpenManualControls?: () => void; onBackToStudio?: () => void; initialSourceVideo?: File; videoEditControls?: boolean; sourceBlockMessage?: string; onBusyChange?: (busy: boolean) => void };
+type Props = { inlineManual?: boolean; ownerKey: string; backend?: H3StudioPlan["backend"]; onBackendChange?: (backend: NonNullable<H3StudioPlan["backend"]>) => void; controller?: H3StudioController; onControllerChange?: (controller: H3StudioController) => void; manualMenu?: boolean; onOpenManualControls?: () => void; onBackToStudio?: () => void; initialSourceVideo?: File; videoEditControls?: boolean; sourceBlockMessage?: string; onBusyChange?: (busy: boolean) => void };
 const isActive = (job: Job | null) => !!job && !["completed", "failed", "canceled"].includes(job.status);
 const MEDIA_ACCEPT = { image: ".png,.jpg,.jpeg,.webp", video: ".mp4,.mov,.mkv,.webm,.m4v", audio: ".wav,.mp3,.ogg,.flac,.m4a" };
 function sourceError(file: File, kind: Source["kind"]) {
@@ -63,12 +65,13 @@ function SourcePreview({ source }: { source: Source }) {
   if (source.kind === "video") return <video ref={node => { element.current = node; }} className={css.media} controls playsInline preload="metadata" />;
   return <audio ref={node => { element.current = node; }} className={css.media} controls preload="metadata" />;
 }
-export default function H3StudioControls({ ownerKey, backend: controlledBackend, onBackendChange, controller: controlledController, onControllerChange, manualMenu = false, onOpenManualControls, onBackToStudio, initialSourceVideo, videoEditControls = false, sourceBlockMessage = "", onBusyChange }: Props) {
+export default function H3StudioControls({ inlineManual = false, ownerKey, backend: controlledBackend, onBackendChange, controller: controlledController, onControllerChange, manualMenu = false, onOpenManualControls, onBackToStudio, initialSourceVideo, videoEditControls = false, sourceBlockMessage = "", onBusyChange }: Props) {
   const recovery = useMemo(() => new H3RecoveryClient(ownerKey, videoEditControls ? "studio-edit" : "studio"), [ownerKey, videoEditControls]);
   const [submissionRetry, setSubmissionRetry] = useState(false);
   const [localController, setLocalController] = useState<H3StudioController>("auto");
   const controller = controlledController ?? localController;
   function setController(next: H3StudioController) { setLocalController(next); onControllerChange?.(next); }
+  const [previousPrompt, setPreviousPrompt] = useState("");
   const [plan, setPlan] = useState<H3StudioPlan>(() => ({ ...DEFAULT_H3_STUDIO_PLAN, backend: controlledBackend ?? "rtx3090", workflowId: videoEditControls ? "reference-edit" : "native-t2v" }));
   const legacyModelSettings = useRef<Pick<H3StudioPlan, "profile" | "attention" | "combatEnabled"> | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
@@ -437,6 +440,17 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
     finally { inFlight.current = false; jobGuard.current = false; setBusy(false); setJobBusy(false); }
   }
   function prepareRetry() {
+    const failed = jobRef.current;
+    if (failed?.finishingRetry) {
+      void (async () => {
+        try {
+          const result = await responseJson(await fetch("/api/h3/generation", {method:"POST", headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({action:"retry",jobId:failed.id})}));
+          acceptJob(result.job);
+        } catch (error) {setMessage(h3RecoveryMessage(error));}
+      })();
+      return;
+    }
     const retained = submittedPlan.current;
     if (!retained || retained.jobId !== jobRef.current?.id || retained.mediaIdentity !== mediaIdentity()) { setMessage("Restore the source media and preview a new plan before generating again."); return; }
     setPlan(retained.plan); setDirectorPlanReady(true); setGenerationConsent(false);
@@ -477,21 +491,20 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
   const shown = catalog.filter(l => (!category || l.categories.includes(category)) && `${l.name} ${l.version} ${l.category}`.toLowerCase().includes(query.toLowerCase()));
   const planActions = <div className={css.row}><button type="button" disabled={busy || jobBusy || active || !mediaReady || !!mediaIssue || !plan.originalPrompt.trim() || !!clarification} onClick={() => controller === "auto" ? void createAutomatic() : directGeneration ? void execute() : void request("preview")}>{busy || jobBusy ? "Preparing video…" : submissionRetry ? "Retry Create Video" : controller === "auto" || videoEditControls || directGeneration ? "Create Video" : "Preview Video Plan (no cost)"}</button>{directGeneration && controller === "manual" ? <button type="button" disabled={busy || jobBusy || active || !mediaReady || !!mediaIssue || !plan.originalPrompt.trim()} onClick={() => void request("preview")}>View Plan (optional)</button> : null}<button type="button" disabled={busy || jobBusy || active} onClick={() => change({ ...DEFAULT_H3_STUDIO_PLAN })}>Reset plan (keep media)</button></div>;
   return <section className={css.studio} aria-label="H3 Auto and Manual controllers">
-    <h2>{videoEditControls ? "H3 Reference Video Edit" : "H3 Video Studio"}</h2>
-    <div className={css.controller} aria-label="Studio controller"><button type="button" aria-pressed={controller === "auto"} onClick={() => setController("auto")}>Auto Mode</button><button type="button" aria-pressed={controller === "manual"} onClick={() => setController("manual")}>Manual Mode</button></div>
-    {MEDIA_GPU_ROUTING_UI_ENABLED ? <p className={css.notice}>Use Rendering GPU above. Automatic selects a compatible device before compiling the job; Manual stays on your selected device.</p> : <label className={css.notice}>Rendering GPU<select aria-label="H3 rendering GPU" disabled={busy || jobBusy || active || catalogLoading} value={backend} onChange={e => change({ backend: e.target.value as NonNullable<H3StudioPlan["backend"]> })}><option value="rtx3090">RTX 3090</option><option value="rtx5060ti">RTX 5060 Ti</option></select></label>}
+    <h2>{inlineManual ? "Manual" : videoEditControls ? "H3 Reference Video Edit" : "H3 Video Studio"}</h2>
+    {!inlineManual && <div className={css.controller} aria-label="Studio controller"><button type="button" aria-pressed={controller === "auto"} onClick={() => setController("auto")}>Auto Mode</button><button type="button" aria-pressed={controller === "manual"} onClick={() => setController("manual")}>Manual Mode</button></div>}
+    {MEDIA_GPU_ROUTING_UI_ENABLED ? null : <label className={css.notice}>Rendering GPU<select aria-label="H3 rendering GPU" disabled={busy || jobBusy || active || catalogLoading} value={backend} onChange={e => change({ backend: e.target.value as NonNullable<H3StudioPlan["backend"]> })}><option value="rtx3090">RTX 3090</option><option value="rtx5060ti">RTX 5060 Ti</option></select></label>}
     {manualMenu ? <p className={css.notice}>Choose an H3 Studio option below, or select Manual for complete creative controls.</p> : null}
     {/* Keep drafts/media mounted when returning to the original Studio menu. Job polling and Safe Cancel stay visible below. */}
     <div hidden={manualMenu} data-otg="h3-studio-plan-controls">
     {controller === "manual" && onBackToStudio ? <button type="button" onClick={onBackToStudio}>Back to H3 Studio</button> : null}
     {experimental ? <p role="status" className={css.notice}>Owner Experimental Mode · private TEST · {backend === "rtx3090" ? "RTX 3090" : "RTX 5060 Ti"}. Installed configurations may be run before generation testing. Outputs and quality are unverified.</p> : null}
-    <p className={css.notice}>{controller === "auto" ? omniRef ? "Create Video uses the explicitly selected FastH3 OmniRef configuration C: eight Euler steps and VSA attention." : "Describe your video and add optional media. Create Video starts one generation using SLA Attention and a matching 8-step Turbo workflow." : "Complete manual controls · choose a workflow, compatible models, references and creative settings."}</p>
     <fieldset className={css.fields} disabled={active || jobBusy || busy || catalogLoading}>
-    <label>{videoEditControls ? "Edit prompt" : "Video description"}<textarea aria-label={videoEditControls ? "Reference video edit prompt" : undefined} rows={4} maxLength={4000} value={plan.originalPrompt} onChange={e => change({ originalPrompt: e.target.value, prompt: e.target.value })} /></label>
+    <label>{inlineManual ? "Manual prompt" : videoEditControls ? "Edit prompt" : "Video description"}<textarea aria-label={videoEditControls ? "Reference video edit prompt" : undefined} rows={4} maxLength={4000} value={plan.originalPrompt} onChange={e => {setPreviousPrompt(plan.originalPrompt);change({ originalPrompt: e.target.value, prompt: e.target.value });}} /></label>
     {clarification ? <p role="status">{clarification} Update the video description to answer, then request a new plan.</p> : null}
     <div className={css.grid}>
       {controller === "auto" && plan.workflowId === "native-r2v" ? <label>Model<select value={plan.checkpoint} onChange={e => change({ checkpoint: e.target.value as H3StudioPlan["checkpoint"] })}><option value="standard">Standard</option><optgroup label="Singularity"><option value="singularity-v1.3">v1.3</option><option value="singularity">v2</option></optgroup><option value="fasth3">FastH3 OmniRef · dedicated 8 steps</option><option value="selflift">SelfLift · FastH3 OmniRef · 6 + 2 steps</option></select></label> : null}
-      <label>{videoEditControls ? "Resolution (MP)" : "Quality"}<select value={plan.quality} onChange={e => change({ quality: e.target.value as H3StudioPlan["quality"] })}><option value="0.2">0.2 MP</option><option value="0.6">0.6 MP</option><option value="1">1 MP</option></select></label>
+      <label>{videoEditControls ? "Resolution (MP)" : "Quality"}<select value={plan.quality} onChange={e => change({ quality: e.target.value as H3StudioPlan["quality"] })}><option value="0.2">{inlineManual ? "Seed Hunter" : "0.2 MP"}</option><option value="0.6">{inlineManual ? "Normal" : "0.6 MP"}</option><option value="1">{inlineManual ? "Enhanced" : "1 MP"}</option></select></label>
       <label>Aspect<select value={plan.orientation} onChange={e => change({ orientation: e.target.value as H3StudioPlan["orientation"] })}><option value="landscape">Landscape</option><option value="portrait">Portrait</option></select></label>
       <label>Duration<select value={plan.durationSeconds} onChange={e => change({ durationSeconds: Number(e.target.value) as 5 | 10 })}><option value={5}>5 seconds</option><option value={10}>10 seconds</option></select></label>
       <label>Audio<select value={plan.audio} onChange={e => change({ audio: e.target.value as H3StudioPlan["audio"] })}><option value="generated">H3 generated</option><option value="original" disabled={controller === "auto" ? !media.videos : plan.workflowId !== "reference-edit"}>Original source (video edit only)</option><option value="mute">Muted</option></select></label>
@@ -499,7 +512,7 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
     {videoEditControls && controller === "auto" ? <div className={css.grid}>
       <label>Generation mode<select value={plan.profile} onChange={e => change({ profile: e.target.value as H3StudioPlan["profile"] })}><option value="native">Native H3 · 20 steps</option><option value="ref2va-8step">Turbo LoRA · Ref2VA 8 steps</option></select></label>
       <label>SLA attention<input type="checkbox" checked={plan.attention === "project-sla"} onChange={e => change({ attention: e.target.checked ? "project-sla" : "dense" })} /></label>
-      <p className={css.notice}>0.2 MP: 608 × 352 · 0.6 MP: 1056 × 608 · 1 MP: 1344 × 768. Portrait reverses dimensions. Turbo uses the matching Ref2VA 8-step adapter; Native does not load it.</p>
+
     </div> : null}
     {videoEditControls ? <>{planActions}{mediaIssue ? <p role="status">{mediaIssue}</p> : <p className={css.notice}>{directGeneration ? "Create Video starts your edit using the selected inputs." : "Create Video reviews the edit locally first; approve the generation estimate to submit it."}</p>}</> : null}
     <fieldset className={css.fields} aria-label="Source media">
@@ -530,6 +543,8 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
     {!videoEditControls && mediaIssue ? <p role="status">{mediaIssue}</p> : null}
     <p className={css.notice}>{dimensions.width} × {dimensions.height} · 24 FPS · {studioFrames(plan.durationSeconds)} generation frames · {backend === "rtx3090" ? "RTX 3090" : "RTX 5060 Ti"}. Temporal-grid surplus is trimmed explicitly to the requested duration. Jobs stay on your selected GPU; they do not switch automatically.</p>
     {plan.workflowId === "reference-edit" ? <p className={css.notice}>Source fit: preserve aspect ratio and pad to the selected canvas. Reference-guided editing can reinterpret motion and identity; it is not a frame-perfect structural filter.</p> : null}
+    <label>60 FPS (RIFE)<input type="checkbox" checked={plan.rifeInterpolation60Fps === true} disabled={active || busy || jobBusy} onChange={e => change({ rifeInterpolation60Fps: e.target.checked })} /></label>
+    <label>1080p Upscaler (RelayVSR)<input type="checkbox" role="switch" checked={plan.upscale1080p ?? plan.quality !== "0.2"} disabled={active || busy || jobBusy} onChange={e => change({ upscale1080p: e.target.checked })} /></label>
     {controller === "manual" ? <>
       <label>Generation prompt<textarea rows={4} maxLength={4000} value={plan.prompt} onChange={e => change({ prompt: e.target.value })} /></label>
       <div className={css.grid}>
@@ -549,7 +564,7 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
         <label>Category<select value={category} onChange={e => setCategory(e.target.value)}><option value="">All researched categories</option>{[...new Set(catalog.flatMap(l => l.categories))].sort().map(c => <option key={c}>{c}</option>)}</select></label>
         <ul className={css.catalog}>{shown.map(l => {
           const fastReason = omniRef ? fastH3LoraBlockReason(l.filename) : null;
-          return <li key={l.id}><strong>{l.name}</strong><p>{l.version} · {l.installation} · {l.rights}</p><p className={css.notice}>{l.blockedReasons.join(" · ") || fastReason || (omniRef ? "FastH3 model targets checked · output quality untested" : "Installed · experimental, generation untested")}</p><p className={css.notice}>{l.guidance?.strengthStatus === "author-guidance" ? `Starting strength ${l.defaultStrength}; see author guidance for context.` : "No author strength published; starting value is a local default."} {l.triggerWords?.length ? `Triggers added automatically: ${l.triggerWords.join(" · ")}` : "No verified trigger to add."}</p>{l.guidance ? <details><summary>Author guidance</summary><p className={css.notice}>{l.guidance.notes}</p><a href={l.guidance.source} target="_blank" rel="noopener noreferrer">Exact model version</a></details> : null}<button type="button" disabled={!!fastReason || !!l.blockedReasons.length || plan.loras.length >= 3 || plan.loras.some(s => s.id === l.id)} onClick={() => change({ loras: [...plan.loras, { id: l.id, strength: h3LoraDefaultStrength(l.filename, l.defaultStrength, l.strength?.min, l.strength?.max, H3_STUDIO_WORKFLOWS.find(w => w.id === plan.workflowId)?.mode), enabled: true }] })}>Add {l.name}</button></li>;
+          return <li key={l.id}><strong>{l.name}</strong><p>{l.version} · {l.installation} · {l.rights}</p><p className={css.notice}>{l.blockedReasons.join(" · ") || fastReason || (omniRef ? "FastH3 model targets checked · output quality untested" : "Installed · experimental, generation untested")}</p><p className={css.notice}>{l.guidance?.strengthStatus === "author-guidance" ? `Starting strength ${l.defaultStrength}; see author guidance for context.` : "No author strength published; starting value is a local default."} {l.triggerWords?.length ? `Triggers added automatically: ${l.triggerWords.join(" · ")}` : "No verified trigger to add."}</p>{l.guidance ? <details><summary>Author guidance</summary><p className={css.notice}>{l.guidance.notes}</p><a href={l.guidance.source} target="_blank" rel="noopener noreferrer">Exact model version</a></details> : null}<button type="button" disabled={!!fastReason || !!l.blockedReasons.length || plan.loras.some(s => s.id === l.id)} onClick={() => change({ loras: [...plan.loras, { id: l.id, strength: h3LoraDefaultStrength(l.filename, l.defaultStrength, l.strength?.min, l.strength?.max, H3_STUDIO_WORKFLOWS.find(w => w.id === plan.workflowId)?.mode), enabled: true }] })}>Add {l.name}</button></li>;
         })}</ul>
       </details>
       <ol className={css.stack}>{plan.loras.map((l, i) => <li key={l.id}><span>{catalog.find(c => c.id === l.id)?.name || l.id}</span><label>Enabled<input type="checkbox" checked={l.enabled} onChange={e => change({ loras: plan.loras.map((v, n) => n === i ? { ...v, enabled: e.target.checked } : v) })} /></label><label>Strength<input type="number" min={catalog.find(c => c.id === l.id)?.strength?.min ?? 0} max={catalog.find(c => c.id === l.id)?.strength?.max ?? 2} step={0.05} value={l.strength} onChange={e => change({ loras: plan.loras.map((v, n) => n === i ? { ...v, strength: Number(e.target.value) } : v) })} /></label><div className={css.row}><button type="button" disabled={i === 0} aria-label={`Move LoRA ${i + 1} earlier`} onClick={() => reorder(i, -1)}>Earlier</button><button type="button" disabled={i === plan.loras.length - 1} aria-label={`Move LoRA ${i + 1} later`} onClick={() => reorder(i, 1)}>Later</button></div><button type="button" onClick={() => change({ loras: plan.loras.filter((_, n) => n !== i) })}>Remove LoRA {i + 1}</button></li>)}</ol>
@@ -560,7 +575,13 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
       <button type="button" disabled={busy || !mediaReady || !!mediaIssue || !plan.originalPrompt.trim()} onClick={() => request("quote")}>Estimate AI planning cost</button>
       {quote ? <div className={css.status}>Planner estimate: {quote.estimatedUsd === null ? "Pricing unavailable" : `$${quote.estimatedUsd.toFixed(5)}`} USD. {quote.qualified ? "" : "AI planning is unavailable: no compatible installed capability is available for these references."}{quote.unavailable.length ? <ul>{quote.unavailable.map(reason => <li key={reason}>{reason}</li>)}</ul> : null}<label><input type="checkbox" disabled={!quote.qualified || quote.estimatedUsd === null} checked={consent} onChange={e => setConsent(e.target.checked)} />I approve one planner call at the displayed estimate.</label><button type="button" disabled={busy || !consent || !quote.qualified || quote.estimatedUsd === null || sources.length > 0 && !externalMediaConsent || !!clarification} onClick={() => request("director")}>Ask AI Director</button></div> : null}
     </details>}
-    {!videoEditControls ? planActions : null}
+    {inlineManual ? <div className={css.row}>
+      <button type="button" disabled={!mediaReady || !!mediaIssue || !plan.originalPrompt.trim()} onClick={() => directGeneration ? void execute() : void request("preview")}>Generate</button>
+      <button type="button" disabled={!job?.finishingRetry && (!mediaReady || !!mediaIssue || !plan.originalPrompt.trim())} onClick={prepareRetry}>Retry</button>
+      <button type="button" disabled={!previousPrompt} onClick={() => {change({originalPrompt:previousPrompt,prompt:previousPrompt});setPreviousPrompt(plan.originalPrompt);}}>Undo</button>
+      <button type="button" onClick={() => {setPreviousPrompt(plan.originalPrompt);change({originalPrompt:"",prompt:""});}}>Clear</button>
+      <button type="button" onClick={() => change({...DEFAULT_H3_STUDIO_PLAN,backend})}>Reset</button>
+    </div> : !videoEditControls ? planActions : null}
     </fieldset>
     {controller === "manual" && preview ? <div className={css.status} ref={reviewedPlanElement} tabIndex={-1} aria-label="Reviewed video plan">
       <strong>Video Plan</strong><p>{plan.prompt}</p><p>{plan.workflowId} · {preview.manifest.steps} steps · {preview.manifest.sampler}</p>
@@ -582,9 +603,12 @@ export default function H3StudioControls({ ownerKey, backend: controlledBackend,
       {active && livePreviewUrl(job.approximatePreview?.imageUrl) ? <figure>{job.approximatePreview?.imageUrl.startsWith("data:video/") ? <video className={css.media} src={livePreviewUrl(job.approximatePreview?.imageUrl)} aria-label="Approximate generation preview" autoPlay loop muted playsInline controls /> : <img className={css.media} src={livePreviewUrl(job.approximatePreview?.imageUrl)} alt="Approximate generation preview" />}<figcaption>Approximate preview · final video may differ</figcaption></figure> : null}
       <div className={css.row}><button type="button" disabled={jobBusy} onClick={() => void jobAction("refresh")}>Refresh job</button>{active ? <button type="button" disabled={jobBusy || job.status === "canceling"} onClick={() => void jobAction("cancel")}>{job.status === "canceling" ? "Canceling…" : "Safe Cancel"}</button> : <button type="button" disabled={jobBusy || busy || !mediaReady || submittedPlan.current?.jobId !== job.id || submittedPlan.current.mediaIdentity !== mediaIdentity()} onClick={prepareRetry}>{controller === "auto" ? "Retry Video" : "Prepare retry"}</button>}</div>
       {!active ? <p className={css.notice}>{controller === "auto" ? "Retry starts one new video using the retained inputs." : "Retry prepares a fresh plan review using retained media. Approve the new generation estimate before submitting. For an older job, select its source media and preview a new plan."}</p> : null}
-      {job.status === "completed" && localUrl(job.videoUrl) ? <><ExpandableVideo className={css.media} url={localUrl(job.videoUrl)!} /><p>{job.nativeResolution} · {job.galleryStatus === "saved" ? "Saved to Gallery" : job.galleryStatus === "failed" ? "Gallery save failed" : "Saving to Gallery…"}</p><div className={css.row}><a className={css.link} href={`${localUrl(job.videoUrl)}${job.videoUrl!.includes("?") ? "&" : "?"}download=1`} download>Download video</a>{localUrl(job.galleryUrl) ? <a className={css.link} href={localUrl(job.galleryUrl)}>Open Gallery video</a> : null}{job.galleryStatus === "failed" ? <button type="button" disabled={jobBusy} onClick={() => void jobAction("gallery")}>Retry Gallery save</button> : null}</div>{job.galleryError ? <p>{job.galleryError}</p> : null}</> : null}
+      {job.status === "completed" && localUrl(job.videoUrl) ? <><ExpandableVideo className={css.media} url={localUrl(job.videoUrl)!} />{inlineManual && <>
+        {job.mode === "h3-text-to-video" && <ExtractCharactersAction key={job.id} engine="h3" jobId={job.id} />}
+        <H3CharacterVoiceCorrection key={job.id} source={{jobId:job.id}} />
+      </>}<p>{job.nativeResolution} · {job.galleryStatus === "saved" ? "Saved to Gallery" : job.galleryStatus === "failed" ? "Gallery save failed" : "Saving to Gallery…"}</p><div className={css.row}><a className={css.link} href={`${localUrl(job.videoUrl)}${job.videoUrl!.includes("?") ? "&" : "?"}download=1`} download>Download video</a>{localUrl(job.galleryUrl) ? <a className={css.link} href={localUrl(job.galleryUrl)}>Open Gallery video</a> : null}{job.galleryStatus === "failed" ? <button type="button" disabled={jobBusy} onClick={() => void jobAction("gallery")}>Retry Gallery save</button> : null}</div>{job.galleryError ? <p>{job.galleryError}</p> : null}</> : null}
     </section> : null}
     {history.length ? <details><summary>Recent H3 jobs ({history.length})</summary><ul className={css.stack}>{history.map(item => <li key={item.id}><button type="button" disabled={jobBusy || active && item.id !== job?.id} onClick={() => void jobAction("refresh", item.id)}>{item.statusMessage || item.status} · {item.id}</button></li>)}</ul><p className={css.notice}>Recent jobs on this device and account. Open a job to load its current status.</p></details> : null}
-    <VideoSnapshotPicker open={snapshotRole !== null} onClose={() => setSnapshotRole(null)} onSnapshot={({ file }) => { if (snapshotRole) addSources([file], "image", snapshotRole); }} />
+    <VideoSnapshotPicker allowFrameEdit={inlineManual} open={snapshotRole !== null} onClose={() => setSnapshotRole(null)} onSnapshot={({ file }) => { if (snapshotRole) addSources([file], "image", snapshotRole); }} />
   </section>;
 }

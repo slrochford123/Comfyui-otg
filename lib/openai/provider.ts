@@ -1,4 +1,5 @@
-import { readLedgerUsage, reserveOpenAIUsage, settleOpenAIUsage, finishUnsettledOpenAIUsage, ConversationCreditInsufficient, noteConversationProvider, conversationCreditStatus, markOpenAIResponse, readUncertainConversationRequest } from "@/lib/openai/usageLedger";
+import {hasUnlimitedProviderUsage} from "@/lib/auth/providerUsage";
+import { readLedgerUsage, reserveOpenAIUsage, settleOpenAIUsage, finishUnsettledOpenAIUsage, ConversationCreditInsufficient, noteConversationProvider, conversationCreditStatus, markOpenAIResponse, readUncertainConversationRequest, readConversationRequest } from "@/lib/openai/usageLedger";
 import {RequestError} from "@/lib/requestError";
 import { conversationalAccount, conversationFeature, conversationPolicyEnabled, conversationRequestKey, isConversationalUseCase, recordConversationRoute } from "./conversationAccount";
 import { conversationCostNanos, conversationPriceVersion, conversationReserveNanos } from "./conversationPricing";
@@ -111,10 +112,10 @@ export function getOpenAIClient() {
   return client;
 }
 
-export function assertOpenAIAuthorized(ownerKey: string, useCase: OpenAIUseCase, reservedUsd = 0.25, allowance?:Parameters<typeof reserveOpenAIUsage>[0]["allowance"]) {
+export function assertOpenAIAuthorized(ownerKey: string, useCase: OpenAIUseCase, reservedUsd = 0.25, allowance?:Parameters<typeof reserveOpenAIUsage>[0]["allowance"], accountId?:string) {
   if (!openAIEnabled()) throw new Error("OpenAI is not configured or is disabled.");
   return reserveOpenAIUsage({
-    ownerKey, useCase, reservedUsd,allowance,
+    ownerKey, useCase, reservedUsd,allowance,accountId,
     windowMs: numberFromEnv("OPENAI_RATE_WINDOW_MS", 60000),
     maxRequests: numberFromEnv("OPENAI_RATE_LIMIT_PER_MINUTE", 12),
     userLimit: allowance ? 0 : numberFromEnv("OPENAI_DAILY_USER_COST_LIMIT_USD", 2),
@@ -122,7 +123,7 @@ export function assertOpenAIAuthorized(ownerKey: string, useCase: OpenAIUseCase,
   });
 }
 
-async function reserveTextRequest(args: TextRequest): Promise<{id:string;allowance:boolean}|{id:null;reason:ConversationFallbackReason}> {
+async function reserveTextRequest(args: TextRequest): Promise<{id:string;allowance:boolean;unlimitedOutput?:boolean}|{id:null;reason:ConversationFallbackReason}> {
   // Deliberately conservative byte-based upper estimate, not a token count claim.
   const inputBytes = Buffer.byteLength(JSON.stringify([args.instructions,args.input,args.tools,args.responseSchema]));
   if (inputBytes > 8 * 1024 * 1024) throw new Error("OpenAI input exceeds the application request limit.");
@@ -139,7 +140,7 @@ async function reserveTextRequest(args: TextRequest): Promise<{id:string;allowan
         priceVersion:conversationPriceVersion,requestKey:requested?args.useCase+":"+requested:undefined});
       noteConversationProvider(account,feature,"openai");
       recordConversationRoute("openai",args.model);
-      return {id,allowance:true};
+      return {id,allowance:true,unlimitedOutput:hasUnlimitedProviderUsage(account.id,args.ownerKey)};
     } catch (error) {
       const reason = error instanceof ConversationCreditInsufficient ? "allowance" :
         productionBudgetEnabled() && error instanceof OpenAIGlobalBudgetReached ? "global-budget" : null;
@@ -149,8 +150,9 @@ async function reserveTextRequest(args: TextRequest): Promise<{id:string;allowan
       return {id:null,reason};
     }
   }
+  const accountId = args.accountId || (await conversationalAccount(args.ownerKey).catch(() => null))?.id;
   const estimate = tokenCost(args.model, inputBytes + 4096, args.maxOutputTokens || 900);
-  return {id:assertOpenAIAuthorized(args.ownerKey,args.useCase,Math.max(numberFromEnv("OPENAI_REQUEST_RESERVE_USD",0.25),estimate)),allowance:false};
+  return {id:assertOpenAIAuthorized(args.ownerKey,args.useCase,Math.max(numberFromEnv("OPENAI_REQUEST_RESERVE_USD",0.25),estimate),undefined,accountId),allowance:false,unlimitedOutput:isConversationalUseCase(args.useCase)&&hasUnlimitedProviderUsage(accountId,args.ownerKey)};
 }
 
 async function fallbackStream(args: TextRequest, reason: ConversationFallbackReason):Promise<RoutedTextStream> {
@@ -272,7 +274,7 @@ export async function createOpenAIText(args: TextRequest):Promise<{text:string;u
         model: args.model,
         instructions: args.instructions,
         input: args.input,
-        max_output_tokens: args.maxOutputTokens || 900,
+        ...(route.unlimitedOutput ? {} : {max_output_tokens: args.maxOutputTokens || 900}),
         ...(allowance ? {service_tier:"default"} : {}),
         ...(args.responseSchema ? { text: { format: { type: "json_schema", name: args.responseSchema.name, strict: true, schema: args.responseSchema.schema } } } : {}),
         ...(args.store !== undefined ? { store: args.store } : {}),
@@ -318,8 +320,9 @@ export async function createOpenAITextStream(args: TextRequest): Promise<RoutedT
         model: args.model,
         instructions: args.instructions,
         input: args.input,
-        max_output_tokens: args.maxOutputTokens || 900,
+        ...(route.unlimitedOutput ? {} : {max_output_tokens: args.maxOutputTokens || 900}),
         stream: true,
+        ...(args.store !== undefined ? { store: args.store } : {}),
         ...(allowance ? {service_tier:"default"} : {}),
         ...(args.tools?.length ? { tools: args.tools, parallel_tool_calls: false } : {}),
         ...(args.responseSchema ? { text: { format: { type: "json_schema", name: args.responseSchema.name, strict: true, schema: args.responseSchema.schema } } } : {}),
@@ -375,10 +378,13 @@ export async function createOpenAITextStream(args: TextRequest): Promise<RoutedT
                 ),
               }, reservationId, event.response?.id);
             }
-            if (allowance && event.type === "response.incomplete" && text.trim()) {
+            if (allowance && !args.responseSchema && event.type === "response.incomplete" && text.trim()) {
               completedResponse=event.response;
               break;
             }
+            if (event.type === "response.incomplete") throw Object.assign(new Error("OpenAI reply was incomplete."), {
+              code: event.response?.incomplete_details?.reason === "max_output_tokens" ? "OUTPUT_LIMIT" : "CONTENT_FILTER",
+            });
             throw new Error(
               String(
                 event.type === "response.incomplete"
@@ -397,6 +403,8 @@ export async function createOpenAITextStream(args: TextRequest): Promise<RoutedT
           throw new Error("OpenAI stream ended before completion.");
         }
 
+        if ((completedResponse.output || []).some((item:any)=>(item.content||[]).some((part:any)=>part.type==="refusal")))
+          throw Object.assign(new Error("The provider declined this request."),{code:"CONTENT_FILTER"});
         const finalText = String(completedResponse.output_text || text).trim();
         const usage = usageFromResponse(completedResponse);
         if (!allowance) recordUsage({
@@ -433,6 +441,7 @@ export async function createOpenAITextStream(args: TextRequest): Promise<RoutedT
 
 export async function transcribeOpenAIAudio(args: {
   ownerKey: string;
+  accountId?: string;
   projectId?: string;
   audio: Buffer;
   fileName: string;
@@ -446,7 +455,8 @@ export async function transcribeOpenAIAudio(args: {
 }) {
   args.signal?.throwIfAborted();
   const model = openAIModels().transcribe;
-  const reservationId = assertOpenAIAuthorized(args.ownerKey, "transcribe", Math.max(0.25, audioCost(model, Math.max(0, Number(args.audioSeconds || 0)))));
+  const accountId = args.accountId || (await conversationalAccount(args.ownerKey).catch(() => null))?.id;
+  const reservationId = assertOpenAIAuthorized(args.ownerKey, "transcribe", Math.max(0.25, audioCost(model, Math.max(0, Number(args.audioSeconds || 0)))),undefined,accountId);
   const controller = new AbortController();
   const signal = args.signal ? AbortSignal.any([args.signal, controller.signal]) : controller.signal;
   const timer = setTimeout(() => controller.abort(), args.timeoutMs || 120_000);
@@ -490,3 +500,30 @@ export async function transcribeOpenAIAudio(args: {
   }
 }
 
+
+/** Recover a saved response without another generation or reservation. Unknown usage remains held. */
+export async function recoverOpenAIStoryResponse(args: TextRequest, requestKey:string) {
+  const account=await conversationalAccount(args.ownerKey,args.accountId);
+  const hold=readConversationRequest(account.id,`${args.useCase}:${requestKey}`);
+  if(!hold) return null; // No provider dispatch was reserved.
+  if(!hold.providerId) {
+    if(["pending","unknown"].includes(hold.status)) throw Object.assign(new Error("The previous OpenAI request still needs reconciliation."),{code:"RECOVERY_PENDING"});
+    return null;
+  }
+  let response:any;
+  try { response=await getOpenAIClient().responses.retrieve(hold.providerId,{}, {signal:args.signal?AbortSignal.any([args.signal,AbortSignal.timeout(10_000)]):AbortSignal.timeout(10_000)}); }
+  catch { throw Object.assign(new Error("Could not check the saved OpenAI response. No new request was sent."),{code:"RECOVERY_PENDING"}); }
+  if(response.id!==hold.providerId || !["completed","incomplete","failed","cancelled"].includes(response.status))
+    throw Object.assign(new Error("OpenAI is still processing the saved response."),{code:"RECOVERY_PENDING"});
+  if(response.usage) recordTextUsage({...args,model:hold.model},response,hold.id,true);
+  if(response.status!=="completed") {
+    if(response.incomplete_details?.reason==="content_filter")throw Object.assign(new Error("The provider could not complete this request."),{code:"CONTENT_FILTER"});
+    return null;
+  }
+  const text=String(response.output_text || (response.output||[]).flatMap((item:any)=>item.content||[])
+    .filter((part:any)=>part.type==="output_text").map((part:any)=>part.text||"").join(""));
+  if((response.output||[]).some((item:any)=>(item.content||[]).some((part:any)=>part.type==="refusal")))
+    throw Object.assign(new Error("The provider declined this request."),{code:"CONTENT_FILTER"});
+  return {type:"done" as const,text,usage:usageFromResponse(response),toolCalls:(response.output||[])
+    .filter((item:any)=>item.type==="function_call").map((item:any)=>({name:String(item.name),arguments:String(item.arguments),call_id:String(item.call_id)}))};
+}

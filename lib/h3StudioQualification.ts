@@ -6,10 +6,12 @@ import { execFileSync } from "node:child_process";
 import { resolveFfprobePath } from "@/lib/ffmpeg";
 import { qualificationEnvironment } from "@/lib/runtime/configPaths";
 import { readH3StudioOwnerJson, exactH3StudioQualification, type H3StudioEvidence, type H3StudioQualificationRecord } from "@/lib/h3StudioRegistry";
-import { H3_STUDIO_COMPILER_VERSION, computeH3StudioSourceRevision, h3StudioBoundGraphDigest, h3StudioDigest, h3StudioQualificationRequestBinding, h3StudioQualificationFingerprint, stableH3StudioJson, isH3StudioSha256, type H3StudioDependency } from "@/lib/h3StudioIdentity";
+import { H3_STUDIO_COMPILER_VERSION, computeH3CharacterVoicesSourceRevision, computeH3StudioSourceRevision, h3CharacterVoicesQualificationBinding, h3StudioBoundGraphDigest, h3StudioDigest, h3StudioQualificationRequestBinding, h3StudioQualificationFingerprint, stableH3StudioJson, isH3StudioSha256, type H3StudioDependency } from "@/lib/h3StudioIdentity";
 import type { H3DirectJobInput } from "@/lib/h3DirectJobs";
 import type { H3PromptGraph } from "@/lib/production/h3Workflows";
 import { parseH3StudioPlan, type H3StudioPlan } from "@/lib/h3StudioPlan";
+import { readDispatchProcess, type DispatchProcess } from "@/lib/workers/dispatchProcess";
+import type { H3QualificationBridgeRoute } from "@/lib/h3QualificationBridgeRoute";
 
 export type H3StudioQualificationManifest = {
   qualificationFingerprint: string; boundGraphDigest: string; templateSha256: string;
@@ -21,6 +23,7 @@ export type H3StudioQualificationApproval = {
   schemaVersion: 2; approvalId: string; environment: "test"; target: "3090"; ownerKey: string;
   fingerprint: string; requestDigest: string; sourceRevision: string; gpuUuid: string; expiresAt: string; maxJobs: 1;
 };
+export type H3CharacterVoicesQualificationApproval = H3StudioQualificationApproval & { kind: "character-voices"; jobId: string; boundGraphDigest: string; requiredVramBytes: number; bridgeRoute: H3QualificationBridgeRoute };
 export type H3StudioQualificationLiveCheck = {
   queueRunning: number; queuePending: number; gpuUuid: string; gpuName: string;
   freeVramBytes: number; requiredVramBytes: number; checkedAt: string;
@@ -28,12 +31,14 @@ export type H3StudioQualificationLiveCheck = {
   physicalMutexHeld: true; peerReleaseDisabled: true;
 };
 type Pending = { approval: H3StudioQualificationApproval; jobId: string; lockFile: string; consumed: boolean; requiredVramBytes: number;
-  plan: H3StudioPlan; requestBinding: ReturnType<typeof h3StudioQualificationRequestBinding>; checkedBeforeUpload: boolean };
+  plan?: H3StudioPlan; approvedGraphDigest?: string; bridgeRoute?: H3QualificationBridgeRoute; requestBinding: ReturnType<typeof h3StudioQualificationRequestBinding> | ReturnType<typeof h3CharacterVoicesQualificationBinding>; checkedBeforeUpload: boolean };
+export type H3StudioLeasedSubmission = { jobId: string; ownerKey: string; process: DispatchProcess };
 // Module-private map and object identity: JSON/HTTP flags cannot manufacture a capability.
 const pending = new Map<string, Pending>();
 const admissions = new WeakSet<object>();
 const consumedAdmissions = new Map<string, H3StudioQualificationAdmission>();
 const submittedGraphs = new Map<string, H3PromptGraph>();
+const leasedChecks = new Map<string, { identity: H3StudioLeasedSubmission; graphDigest: string; check: () => Promise<void> }>();
 export type H3StudioQualificationAdmission = Readonly<{ jobId: string; ownerKey: string; fingerprint: string;
   sourceRevision: string; requestDigest: string; boundGraphDigest: string; gpuUuid: string; admittedAt: string }>;
 function localCliOnly() {
@@ -50,38 +55,76 @@ function validLive(live: H3StudioQualificationLiveCheck, gpuUuid: string) {
     && Number.isSafeInteger(live.freeVramBytes) && Number.isSafeInteger(live.requiredVramBytes)
     && live.requiredVramBytes > 0 && live.freeVramBytes >= live.requiredVramBytes;
 }
+
+function ownerApprovalPath(approvalFile: string) {
+  const file = path.resolve(approvalFile), directory = fs.statSync(path.dirname(file));
+  if (file !== approvalFile || fs.realpathSync(path.dirname(file)) !== path.dirname(file) || directory.uid !== process.getuid!()
+    || (directory.mode & 0o777) !== 0o700) throw new Error("Approval requires an owner-only mode-700 directory without symlinks.");
+  return file;
+}
+
+function reserveLocalApproval(file: string, state: Omit<Pending, "lockFile" | "consumed" | "checkedBeforeUpload">) {
+  if (pending.size) throw Error("A local qualification job is already active.");
+  const { approval: a, jobId } = state;
+  const lockFile = path.join(path.dirname(file), ".qualification-active");
+  fs.closeSync(fs.openSync(lockFile, "wx", 0o600));
+  try {
+    // Never remove or reuse the one-shot marker after a failed attempt.
+    const used = fs.openSync(path.join(path.dirname(file), `.${a.approvalId}.consumed`), "wx", 0o600);
+    try {
+      fs.writeFileSync(used, JSON.stringify({ jobId, fingerprint: a.fingerprint, requestDigest: a.requestDigest, sourceRevision: a.sourceRevision, consumedAt: new Date().toISOString() }));
+      fs.fsyncSync(used);
+    } finally { fs.closeSync(used); }
+    pending.set(jobId, { ...state, approval: structuredClone(a), lockFile, consumed: false, checkedBeforeUpload: false });
+  } catch (error) { fs.unlinkSync(lockFile); throw error; }
+}
+
+function basicApproval(a: H3StudioQualificationApproval, input: { ownerKey: string; jobId: string; sourceRevision: string }) {
+  const lifetime = Date.parse(a?.expiresAt) - Date.now();
+  return a?.schemaVersion === 2 && a.environment === "test" && a.target === "3090" && a.maxJobs === 1
+    && /^[a-zA-Z0-9-]{16,100}$/.test(a.approvalId) && a.ownerKey === input.ownerKey && !!a.ownerKey?.trim()
+    && isH3StudioSha256(a.fingerprint) && isH3StudioSha256(a.requestDigest) && isH3StudioSha256(a.sourceRevision)
+    && a.sourceRevision === input.sourceRevision && !!a.gpuUuid?.trim() && lifetime > 0 && lifetime <= 60 * 60_000
+    && /^h3-direct-[a-f0-9-]{36}$/.test(input.jobId);
+}
 /** Called by the local CLI after job creation, before startH3DirectJob. Consumes approval on disk once. */
 export function authorizeH3StudioQualificationJob(input: {
   approvalFile: string; jobId: string; ownerKey: string; sourceRevision: string; manifest: H3StudioQualificationManifest;
   request: H3DirectJobInput;
 }) {
   localCliOnly();
-  if (pending.size) throw new Error("A local qualification job is already active.");
-  const file = path.resolve(input.approvalFile);
-  const directory = fs.statSync(path.dirname(file));
-  if (file !== input.approvalFile || fs.realpathSync(path.dirname(file)) !== path.dirname(file) || directory.uid !== process.getuid!()
-    || (directory.mode & 0o777) !== 0o700) throw new Error("Approval requires an owner-only mode-700 directory without symlinks.");
+  const file = ownerApprovalPath(input.approvalFile);
   const a = readH3StudioOwnerJson(file, 16_000) as H3StudioQualificationApproval;
   const requestBinding = h3StudioQualificationRequestBinding(input.manifest.plan, input.request);
-  if (a.schemaVersion !== 2 || a.environment !== "test" || a.target !== "3090" || a.maxJobs !== 1
-    || !/^[a-zA-Z0-9-]{16,100}$/.test(a.approvalId) || a.ownerKey !== input.ownerKey || !a.ownerKey?.trim()
-    || !isH3StudioSha256(a.fingerprint) || a.fingerprint !== input.manifest.qualificationFingerprint || !input.manifest.readyForQualification
-    || !isH3StudioSha256(a.requestDigest) || a.requestDigest !== h3StudioDigest(requestBinding)
+  if (!basicApproval(a, input) || a.fingerprint !== input.manifest.qualificationFingerprint || !input.manifest.readyForQualification
+    || a.requestDigest !== h3StudioDigest(requestBinding)
     || !Number.isSafeInteger(input.manifest.requiredVramBytes) || input.manifest.requiredVramBytes! <= 0
-    || !isH3StudioSha256(a.sourceRevision) || a.sourceRevision !== input.sourceRevision || !a.gpuUuid?.trim()
-    || !Number.isFinite(Date.parse(a.expiresAt)) || Date.parse(a.expiresAt) <= Date.now() || Date.parse(a.expiresAt) - Date.now() > 60 * 60_000
-    || !/^h3-direct-[a-f0-9-]{36}$/.test(input.jobId)) throw new Error("Approval does not bind this exact TEST owner, GPU, fingerprint, source and single job.");
-  const lockFile = path.join(path.dirname(file), ".qualification-active");
-  const lock = fs.openSync(lockFile, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600);
-  fs.closeSync(lock);
-  try {
-    // Durable one-shot marker. Never remove/reuse this marker, including on failure.
-    const used = fs.openSync(path.join(path.dirname(file), `.${a.approvalId}.consumed`), fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600);
-    fs.writeFileSync(used, JSON.stringify({ jobId: input.jobId, fingerprint: a.fingerprint, requestDigest: a.requestDigest, sourceRevision: a.sourceRevision, consumedAt: new Date().toISOString() }));
-    fs.fsyncSync(used); fs.closeSync(used);
-    pending.set(input.jobId, { approval: structuredClone(a), jobId: input.jobId, lockFile, consumed: false, requiredVramBytes: input.manifest.requiredVramBytes!,
-      plan: structuredClone(input.manifest.plan), requestBinding, checkedBeforeUpload: false });
-  } catch (error) { fs.unlinkSync(lockFile); throw error; }
+    || input.request.characterVoices) throw new Error("Approval does not bind this exact TEST owner, GPU, fingerprint, source and single job.");
+  reserveLocalApproval(file, { approval: a, jobId: input.jobId, requiredVramBytes: input.manifest.requiredVramBytes!, plan: structuredClone(input.manifest.plan), requestBinding });
+}
+
+export function authorizeH3CharacterVoicesQualificationJob(input: {
+  approvalFile: string; jobId: string; ownerKey: string; sourceRevision: string; boundGraphDigest: string;
+  request: H3DirectJobInput; requiredVramBytes: number; bridgeRoute: H3QualificationBridgeRoute;
+}) {
+  localCliOnly();
+  const file = ownerApprovalPath(input.approvalFile);
+  const approval = readH3StudioOwnerJson(file, 16_000) as H3CharacterVoicesQualificationApproval;
+  const requestBinding = h3CharacterVoicesQualificationBinding(input.request);
+  const requestDigest = h3StudioDigest(requestBinding);
+  if (!basicApproval(approval, input) || approval.kind !== "character-voices" || approval.jobId !== input.jobId
+    || approval.boundGraphDigest !== input.boundGraphDigest || !isH3StudioSha256(input.boundGraphDigest)
+    || approval.requestDigest !== requestDigest || approval.fingerprint !== h3StudioDigest({ requestDigest, boundGraphDigest: input.boundGraphDigest })
+    || input.sourceRevision !== computeH3CharacterVoicesSourceRevision() || !Number.isSafeInteger(input.requiredVramBytes) || input.requiredVramBytes <= 0
+    || input.requiredVramBytes !== approval.requiredVramBytes || !approval.bridgeRoute || h3StudioDigest(approval.bridgeRoute) !== h3StudioDigest(input.bridgeRoute)) throw Error("The local approval is missing or does not match the exact Character Voices graph, media, seed, owner, bridge route and RTX 3090 request.");
+  reserveLocalApproval(file, { approval, jobId: input.jobId, requiredVramBytes: input.requiredVramBytes,
+    approvedGraphDigest: input.boundGraphDigest, bridgeRoute: structuredClone(input.bridgeRoute), requestBinding });
+}
+
+export function h3CharacterVoicesQualificationOnly() { return process.env.OTG_H3_CHARACTER_VOICES_QUALIFICATION_ONLY === "1"; }
+
+function liveRequestDigest(p: Pending, request: H3DirectJobInput) {
+  return h3StudioDigest(p.plan ? h3StudioQualificationRequestBinding(request.studioPlan || p.plan, request) : h3CharacterVoicesQualificationBinding(request));
 }
 /** Detection is server-local. Never infer qualification mode from job.input or request JSON. */
 export function hasH3StudioQualificationAdmission(jobId: string, ownerKey: string) {
@@ -96,7 +139,7 @@ export const qualificationAllowed = isStudioQualificationJob;
 export function assertH3StudioQualificationRequest(jobId: string, ownerKey: string, request: H3DirectJobInput) {
   const p = pending.get(jobId);
   if (!p || p.consumed || !hasH3StudioQualificationAdmission(jobId, ownerKey)
-    || h3StudioDigest(h3StudioQualificationRequestBinding(request.studioPlan || p.plan, request)) !== p.approval.requestDigest) throw new Error("Exact approved qualification request changed before upload.");
+    || liveRequestDigest(p, request) !== p.approval.requestDigest) throw new Error("Exact approved qualification request changed before upload.");
   p.checkedBeforeUpload = true;
 }
 export function getH3StudioQualificationRequiredVramBytes(jobId: string, ownerKey: string): number | null {
@@ -104,7 +147,7 @@ export function getH3StudioQualificationRequiredVramBytes(jobId: string, ownerKe
 }
 export function getH3StudioQualificationContext(jobId: string, ownerKey: string) {
   const p = pending.get(jobId);
-  return p && hasH3StudioQualificationAdmission(jobId, ownerKey) ? { fingerprint: p.approval.fingerprint, requiredVramBytes: p.requiredVramBytes, gpuUuid: p.approval.gpuUuid } : null;
+  return p && hasH3StudioQualificationAdmission(jobId, ownerKey) ? { fingerprint: p.approval.fingerprint, requiredVramBytes: p.requiredVramBytes, gpuUuid: p.approval.gpuUuid, bridgeRoute: p.bridgeRoute } : null;
 }
 /** Invoke once, inside the physical mutex, immediately before submitting the freshly compiled graph. */
 export function consumeH3StudioQualificationAdmission(input: {
@@ -116,8 +159,9 @@ export function consumeH3StudioQualificationAdmission(input: {
   if (qualificationEnvironment() !== "test" || !p || p.consumed || !p.checkedBeforeUpload || p.approval.ownerKey !== input.ownerKey
     || p.approval.fingerprint !== input.fingerprint || p.approval.sourceRevision !== input.sourceRevision
     || Date.parse(p.approval.expiresAt) <= Date.now() || !input.readyForQualification || !isH3StudioSha256(input.boundGraphDigest)
+    || (p.approvedGraphDigest && p.approvedGraphDigest !== input.boundGraphDigest)
     || input.live?.requiredVramBytes !== p.requiredVramBytes || !validLive(input.live, p.approval.gpuUuid)) return null;
-  try { if (h3StudioDigest(h3StudioQualificationRequestBinding(input.request.studioPlan || p.plan, input.request)) !== p.approval.requestDigest) return null; } catch { return null; }
+  try { if (liveRequestDigest(p, input.request) !== p.approval.requestDigest) return null; } catch { return null; }
   p.consumed = true; // synchronous: competing calls cannot both consume.
   const admission = Object.freeze({ jobId: input.jobId, ownerKey: input.ownerKey, fingerprint: input.fingerprint,
     sourceRevision: input.sourceRevision, requestDigest: p.approval.requestDigest, boundGraphDigest: input.boundGraphDigest, gpuUuid: p.approval.gpuUuid, admittedAt: new Date().toISOString() });
@@ -133,6 +177,32 @@ export function releaseH3StudioQualificationAdmission(jobId: string, ownerKey: s
   if (a) admissions.delete(a);
   consumedAdmissions.delete(jobId);
   submittedGraphs.delete(jobId);
+  leasedChecks.delete(jobId);
+}
+
+/** Only the process that owns the local authorization can run the physical pre-POST check. */
+export function bindH3StudioLeasedSubmission(jobId: string, ownerKey: string, graph: H3PromptGraph, check: () => Promise<void>): H3StudioLeasedSubmission {
+  const p = pending.get(jobId), graphDigest = h3StudioBoundGraphDigest(graph);
+  if (!p || p.consumed || !p.checkedBeforeUpload || !hasH3StudioQualificationAdmission(jobId, ownerKey) || leasedChecks.has(jobId)
+    || (p.approvedGraphDigest && p.approvedGraphDigest !== graphDigest)) throw Error("The submitted graph differs from the exact local qualification approval.");
+  const identity = { jobId, ownerKey, process: readDispatchProcess() };
+  leasedChecks.set(jobId, { identity, graphDigest, check });
+  return identity;
+}
+
+export function isOriginatingH3StudioLeaseProcess(identity: H3StudioLeasedSubmission) {
+  const local = readDispatchProcess();
+  return local.pid === identity.process.pid && local.startTicks === identity.process.startTicks && local.bootId === identity.process.bootId;
+}
+
+/** The lease invokes this before the physical /prompt POST, with the exact payload to send. */
+export async function runH3StudioLeasedSubmission(identity: H3StudioLeasedSubmission, graph: H3PromptGraph) {
+  const registered = leasedChecks.get(identity.jobId);
+  if (!registered || !isOriginatingH3StudioLeaseProcess(identity) || registered.identity.ownerKey !== identity.ownerKey
+    || !hasH3StudioQualificationAdmission(identity.jobId, identity.ownerKey) || h3StudioBoundGraphDigest(graph) !== registered.graphDigest) throw Error("The original exact qualification admission is no longer available. No render was submitted.");
+  leasedChecks.delete(identity.jobId);
+  await registered.check();
+  if (!consumedAdmissions.has(identity.jobId) || !submittedGraphs.has(identity.jobId)) throw Error("The physical submit check did not consume the exact approval.");
 }
 /** Capture the actual graph immediately before submit, not a preview or sanitized graph. */
 export function captureH3StudioQualificationGraph(input: { jobId: string; ownerKey: string; graph: H3PromptGraph }) {
@@ -175,7 +245,7 @@ export function buildH3StudioQualificationRecord(input: {
     output = { sha256: hash.digest("hex"), bytes: stat.size };
   } finally { fs.closeSync(fd); }
   const record: H3StudioQualificationRecord = { schemaVersion: 2, fingerprint: a.fingerprint, compilerVersion: H3_STUDIO_COMPILER_VERSION,
-    requestDigest: a.requestDigest, requestBinding: pending.get(j.id)!.requestBinding,
+    requestDigest: a.requestDigest, requestBinding: pending.get(j.id)!.requestBinding as ReturnType<typeof h3StudioQualificationRequestBinding>,
     plan: parseH3StudioPlan(m.plan), graphArtifact: input.graphArtifact,
     telemetry: structuredClone(input.telemetry), outputProbe: probeH3StudioQualificationOutput(j.outputPath),
     environment: "test", target: "3090", sourceRevision: a.sourceRevision, boundGraphDigest: a.boundGraphDigest,

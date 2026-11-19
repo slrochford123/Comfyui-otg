@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const Module = require("node:module");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const ts = require("typescript");
 
 const repoRoot = path.resolve(__dirname, "..");
@@ -15,6 +16,13 @@ Module._resolveFilename = function resolveFilename(request, parent, isMain, opti
 
 require.extensions[".ts"] = function compileTypeScript(module, filename) {
   const source = fs.readFileSync(filename, "utf8");
+  const before = source.includes("import.meta") ? [context => {
+    const visit = node => ts.isPropertyAccessExpression(node) && node.name.text === "url"
+      && ts.isMetaProperty(node.expression) && node.expression.keywordToken === ts.SyntaxKind.ImportKeyword
+      ? context.factory.createStringLiteral(pathToFileURL(filename).href)
+      : ts.visitEachChild(node, visit, context);
+    return file => ts.visitNode(file, visit);
+  }] : [];
   const output = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
@@ -25,6 +33,7 @@ require.extensions[".ts"] = function compileTypeScript(module, filename) {
       strict: false,
     },
     fileName: filename,
+    transformers: { before },
   });
   module._compile(output.outputText, filename);
 };

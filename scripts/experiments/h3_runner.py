@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from urllib.parse import urlsplit
 import uuid
 from h3_graph import HASHES, compile_graph
 
@@ -75,21 +76,58 @@ class Job:
         self.status.update(kwargs, heartbeat=time.time()); write(self.root/'status.json', self.status)
     def admission(self, action):
         cfg = self.cfg['admission']
-        if cfg['mode'] != 'ssh': raise ValueError('Reviewed shared SSH authority is required')
-        args = ['/usr/bin/ssh', *cfg.get('sshOptions', []), '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+        if cfg['mode'] == 'local':
+            args = ['/usr/bin/python3', cfg['script']]
+        elif cfg['mode'] == 'ssh':
+            args = ['/usr/bin/ssh', *cfg.get('sshOptions', []), '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
                 '-o', 'ClearAllForwardings=yes', '--', cfg['target'], '/usr/bin/python3 ' + cfg['script']]
+        else: raise ValueError('Reviewed shared GPU authority is required')
         result = json.loads(run(args, input=json.dumps(dict(action=action, gpu='rtx3090', owner=self.id,
             **({'token': self.token} if action == 'release' else {}))) + '\n', timeout=20))
         if result.get('ok') is not True: raise RuntimeError('Shared GPU authority unavailable')
+        if action == 'acquire' and result.get('granted') and (type(result.get('token')) is not int or result['token'] < 1):
+            raise RuntimeError('Invalid shared GPU fencing token; generation was not started')
         return result
+    def waiting(self, reason, **measurements):
+        self.wait_reason = reason
+        self.wait_details = measurements
+        return False
     def idle(self):
         for base in self.cfg['queues']:
             q = http(base, '/queue')
-            if q.get('queue_running') or q.get('queue_pending'): return False
+            if not isinstance(q.get('queue_running'), list) or not isinstance(q.get('queue_pending'), list):
+                raise RuntimeError('GPU queue status is invalid; generation was not started')
+            if q['queue_running'] or q['queue_pending']:
+                port = urlsplit(base).port
+                return self.waiting(f"Waiting for ComfyUI {port}: {len(q['queue_running'])} running, {len(q['queue_pending'])} queued",
+                    queuePort=port, running=len(q['queue_running']), pending=len(q['queue_pending']))
         mem = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
-        if int(mem['MemAvailable'].split()[0]) < self.cfg.get('minRamGiB', 34) * 1024**2: return False
+        available_ram = int(mem['MemAvailable'].split()[0]) / 1024**2
+        required_ram = self.cfg.get('minRamGiB', 34)
+        if available_ram < required_ram:
+            return self.waiting(f'Waiting for system RAM: {available_ram:.1f} GiB available; {required_ram} GiB required',
+                availableRamGiB=round(available_ram, 2), requiredRamGiB=required_ram)
         gpu = run(['nvidia-smi', '-i', self.cfg['gpuUuid'], '--query-gpu=memory.free,utilization.gpu', '--format=csv,noheader,nounits']).strip().split(',')
-        return int(gpu[0]) >= self.cfg.get('minVramMiB', 20000) and int(gpu[1]) < 5
+        free_vram = int(gpu[0]); required_vram = self.cfg.get('minVramMiB', 20000)
+        if free_vram < required_vram:
+            return self.waiting(f'Waiting for RTX 3090 memory: {free_vram} MiB free; {required_vram} MiB required',
+                freeVramMiB=free_vram, requiredVramMiB=required_vram)
+        # Desktop/video activity contributes to aggregate GPU utilization. It is
+        # not evidence of inference. Only the two queue-checked service PIDs may
+        # already hold CUDA contexts; unknown compute processes block admission.
+        service_pids = run(['/usr/bin/systemctl', 'show', '--property=MainPID', '--value',
+            'otg-comfyui.service', 'otg-comfyui-h3.service']).split()
+        if len(service_pids) != 2 or any(not value.isdigit() or int(value) < 1 for value in service_pids):
+            raise RuntimeError('RTX 3090 worker identity unavailable; generation was not started')
+        compute_pids = run(['/usr/bin/nvidia-smi', '-i', self.cfg['gpuUuid'],
+            '--query-compute-apps=pid', '--format=csv,noheader,nounits']).split()
+        unknown = sorted(set(map(int, compute_pids)) - set(map(int, service_pids)))
+        if unknown:
+            return self.waiting('Waiting for another RTX 3090 compute process to finish', computePids=unknown)
+        self.wait_reason = 'RTX 3090 resources available'
+        self.wait_details = dict(freeVramMiB=free_vram, availableRamGiB=round(available_ram, 2),
+            gpuUtilizationPercent=int(gpu[1]), checkedServicePids=list(map(int, service_pids)))
+        return True
     def source_files(self, worker):
         sources = []
         for index, asset in enumerate(self.request.get('sources', [])):
@@ -119,12 +157,12 @@ class Job:
         return compile_graph(model, settings, sources, encoder, loras)
     def prepare_extra_models(self, worker):
         model=self.request['model']; selections=self.request['settings'].get('loras',[])
-        if len(selections)>6 or len({s['id'] for s in selections})!=len(selections):raise ValueError('Invalid private LoRA selection')
+        if len({s['id'] for s in selections})!=len(selections):raise ValueError('Invalid private LoRA selection')
         for i,selection in enumerate(selections):
             info=self.cfg.get('loras',{}).get(selection['id'])
             if not info or model not in info['models'] or not info['minStrength']<=selection['strength']<=info['maxStrength']:raise ValueError('Unqualified private LoRA/strength')
             source=Path(info['path']); stat=source.stat()
-            if not source.resolve().is_relative_to((Path(self.cfg['sharedModels'])/'loras').resolve()) or stat.st_size!=info['bytes'] or stat.st_mtime_ns!=info['mtimeNs'] or sha(source)!=info['sha256']:raise ValueError('Private LoRA pin changed')
+            if not source.resolve().is_relative_to((Path(self.cfg['sharedModels'])/'loras').resolve()) or stat.st_size!=info['bytes'] or sha(source)!=info['sha256']:raise ValueError('LoRA file content changed or is missing; refresh the installed LoRA inventory')
             directory=worker/'models/loras';directory.mkdir(exist_ok=True)
             (directory/f'lab-{i}.safetensors').symlink_to(source)
     def custom_nodes(self):
@@ -150,11 +188,15 @@ class Job:
                     if grant.get('granted'):
                         self.token = grant['token']; write(self.root/'reservation.json', dict(gpu='rtx3090',owner=self.id,token=self.token))
                         if self.idle(): break
-                        self.admission('release'); self.token = None
-                self.update(stage='Waiting for idle 3090, shared reservation and sufficient RAM/VRAM'); time.sleep(5)
+                        released = self.admission('release')
+                        if released.get('matched') is not True: raise RuntimeError('GPU reservation release was not confirmed')
+                        self.token = None
+                    else:
+                        self.waiting('Waiting for the shared RTX 3090 reservation or an earlier queued request')
+                self.update(stage=self.wait_reason, resourceWait=self.wait_details); time.sleep(5)
             self.run_worker(file, model, settings)
     def run_worker(self, checkpoint, model, settings):
-        started = time.time(); self.update(state='running', stage='Preparing private H3 worker', started=started, gpu='rtx3090', progressPercent=2)
+        started = time.time(); self.update(state='running', stage='Preparing private H3 worker', started=started, gpu='rtx3090', progressPercent=2, resourceWait=None)
         worker = self.root/'worker'
         for name in ('input','output','temp','user','custom_nodes','models/diffusion_models','models/text_encoders','models/vae','cache'):
             (worker/name).mkdir(parents=True, mode=0o700)
@@ -227,7 +269,7 @@ class Job:
                 self.update(peakGpuMiB=peak,elapsedSeconds=round(time.time()-started,1))
             time.sleep(2)
         raw_completed=time.time()
-        if settings['mode']=='edit-image':
+        if settings['mode'] in ('edit-image','text-image'):
             outputs=list((worker/'output').rglob('lab-image*.png'))
             if len(outputs)!=1:raise RuntimeError('Expected exactly one native H3 image, not a video frame selection')
             output=self.root/'result.png';shutil.copyfile(outputs[0],output)
@@ -271,7 +313,10 @@ def main():
     root=Path(args.job).absolute();cfg=read(args.config)
     environment=os.environ.get('OTG_ENV')
     if environment not in ('test','prod') or cfg.get('environment')!=environment or cfg.get('gpu')!='rtx3090': raise ValueError('Invalid isolated runtime boundary')
-    if environment=='prod' and (os.getuid()==0 or cfg.get('workspace')!='h3-nsfw' or read(root/'request.json').get('remoteLeaseSeconds')!=60): raise ValueError('Production H3 requires the unprivileged restricted transport')
+    if environment=='prod':
+        local = cfg.get('localExecution') is True and cfg.get('workspaceRoot') and root.parent.resolve()==Path(cfg['workspaceRoot']).resolve()/'jobs'
+        if os.getuid()==0 or cfg.get('workspace')!='h3-nsfw' or not (local or read(root/'request.json').get('remoteLeaseSeconds')==60):
+            raise ValueError('Production H3 requires its configured unprivileged workspace or restricted transport')
     job=Job(root,cfg)
     try:job.execute()
     except Cancelled as error:job.update(state='canceled',stage=str(error),completed=time.time())

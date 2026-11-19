@@ -1,13 +1,34 @@
 /** Local native ComfyUI graphs. These are not BRIA's paid API nodes. */
-export type NativeImageModel = "minimax-h3-image" | "fibo2-dev" | "fibo2-edit-turbo";
+export type NativeImageModel = "minimax-h3-image" | "h3-image-t2i" | "h3-image-edit" | "fibo2-dev" | "fibo2-edit-turbo" | "qwen-edit-2509";
 export type NativeImageGraph = Record<string, {class_type: string; inputs: Record<string, unknown>}>;
+const H3_IMAGE_ASSETS = {
+  unet: "minimax_h3_image_pruned_int8_convrot.safetensors",
+  clip: "qwen3vl_32b_minimax_h3_int8_convrot.safetensors", clipType: "minimax",
+  vae: "minimax_h3_image_vae_fp16.safetensors", steps: 6, cfg: 1,
+} as const;
 export const NATIVE_IMAGE_MODELS = {
+  "h3-image-t2i": {
+    ...H3_IMAGE_ASSETS, label: "MiniMax H3 Image", operation: "create",
+    workflowFile: "workflows/official/image_minimax_h3_image_t2i.json",
+  },
+  "h3-image-edit": {
+    ...H3_IMAGE_ASSETS, label: "H3 Edit Image", operation: "edit",
+    workflowFile: "workflows/official/image_minimax_h3_image_edit.json",
+  },
   "minimax-h3-image": {
     label: "MiniMax H3 Image", operation: "create", steps: 30, cfg: null,
     unet: "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
     clip: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", clipType: "minimax",
     vae: "minimax_h3_video_vae_fp16.safetensors",
     workflowFile: "workflows/official/image_minimax_h3_t2i.json",
+  },
+  "qwen-edit-2509": {
+    label: "Qwen Image Edit 2509", operation: "edit", steps: 4, cfg: 1,
+    unet: "qwen_image_edit_2509_fp8_e4m3fn.safetensors",
+    clip: "qwen_2.5_vl_7b_fp8_scaled.safetensors", clipType: "qwen_image",
+    vae: "qwen_image_vae.safetensors",
+    lora: "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors",
+    workflowFile: "workflows/official/image_qwen_image_edit_2509.json",
   },
   "fibo2-dev": {
     label: "Fibo 2.0 Dev", operation: "create-edit", steps: 50, cfg: 5,
@@ -65,9 +86,10 @@ export function buildNativeImageGraph(args: {
   }
   if (args.width * args.height > 1_100_000) throw Error("Native image generation is limited to about one megapixel.");
   const images = args.images ?? (args.image ? [args.image] : []);
+  if (args.model === "qwen-edit-2509" && images.length > 3) throw Error("Qwen Image Edit 2509 accepts up to 3 images.");
   if (images.length > 4) throw Error("Fibo accepts at most 4 images total. Nothing was discarded.");
-  if (config.operation === "edit" && !images.length) throw Error("Fibo Turbo is an edit model: a source image is required.");
-  if (args.model === "minimax-h3-image" && images.length) throw Error("This H3 template is text-to-image, not image editing.");
+  if (config.operation === "edit" && !images.length) throw Error("A source image is required for this edit model.");
+  if (config.operation === "create" && images.length) throw Error("This H3 template is text-to-image, not image editing.");
   const graph: NativeImageGraph = {
     "451": {class_type: "UNETLoader", inputs: {unet_name: config.unet, weight_dtype: "default"}},
     "453": {class_type: "CLIPLoader", inputs: {clip_name: config.clip, type: config.clipType, device: "default"}},
@@ -75,7 +97,35 @@ export function buildNativeImageGraph(args: {
     "457": {class_type: "VAEDecode", inputs: {samples: ["458", 0], vae: ["454", 0]}},
     "461": {class_type: "SaveImage", inputs: {images: ["457", 0], filename_prefix: "SLR_TEST_Images/image"}},
   };
-  if (args.model !== "minimax-h3-image") {
+  if (args.model === "h3-image-t2i" || args.model === "h3-image-edit") {
+    const refs = Object.fromEntries(images.map((image, index) => {
+      const id = String(470 + index);
+      graph[id] = {class_type: "LoadImage", inputs: {image}};
+      return [`images.image_${index + 1}`, [id, 0]];
+    }));
+    graph["474"] = {class_type: "MiniMaxH3ImageConditioning", inputs: {
+      clip: ["453", 0], vae: ["454", 0], prompt: args.prompt, width: args.width, height: args.height, ...refs,
+    }};
+    graph["479"] = {class_type: "ConditioningZeroOut", inputs: {conditioning: ["474", 0]}};
+    graph["458"] = {class_type: "KSampler", inputs: {model: ["451", 0], positive: ["474", 0], negative: ["479", 0],
+      latent_image: ["474", 1], seed: args.seed, steps: config.steps, cfg: config.cfg, sampler_name: "euler", scheduler: "simple", denoise: 1}};
+  } else if (args.model === "qwen-edit-2509") {
+    const refs = Object.fromEntries(images.map((image, index) => {
+      const id = String(470 + index);
+      graph[id] = {class_type: "LoadImage", inputs: {image}};
+      return [`image${index + 1}`, [id, 0]];
+    }));
+    graph["475"] = {class_type: "LoraLoaderModelOnly", inputs: {model: ["451", 0], lora_name: NATIVE_IMAGE_MODELS[args.model].lora, strength_model: 1}};
+    graph["476"] = {class_type: "ModelSamplingAuraFlow", inputs: {model: ["475", 0], shift: 3}};
+    graph["477"] = {class_type: "CFGNorm", inputs: {model: ["476", 0], strength: 1, pre_cfg: false}};
+    for (const [id, prompt] of [["474", args.prompt], ["479", args.negativePrompt || ""]]) {
+      graph[id] = {class_type: "TextEncodeQwenImageEditPlus", inputs: {clip: ["453", 0], vae: ["454", 0], prompt, ...refs}};
+    }
+    graph["480"] = {class_type: "FluxKontextImageScale", inputs: {image: ["470", 0]}};
+    graph["481"] = {class_type: "VAEEncode", inputs: {pixels: ["480", 0], vae: ["454", 0]}};
+    graph["458"] = {class_type: "KSampler", inputs: {model: ["477", 0], positive: ["474", 0], negative: ["479", 0],
+      latent_image: ["481", 0], seed: args.seed, steps: config.steps, cfg: config.cfg, sampler_name: "euler", scheduler: "simple", denoise: 1}};
+  } else if (args.model !== "minimax-h3-image") {
     graph["474"] = {class_type: "TextEncodeFibo2", inputs: {
       clip: ["453", 0], vae: ["454", 0], prompt: args.prompt,
       negative_prompt: args.negativePrompt || "", width: args.width, height: args.height, batch_size: 1,

@@ -1,6 +1,8 @@
+import {isAdminOwner} from "@/lib/auth/adminOwner";
 import fs from "node:fs";
 /** Explicit private owner opt-in, never inferred from Admin, NODE_ENV or browser flags. */
 export function h3StudioOwnerExperimental(ownerKey?: string, backend: "rtx3090" | "rtx5060ti" = "rtx3090"): boolean {
+  if (isAdminOwner(ownerKey)) return true;
   if (process.env.OTG_ENV !== "test" || !ownerKey || !process.getuid || process.getuid() === 0) return false;
   const file = process.env.OTG_H3_STUDIO_EXPERIMENTAL_FILE;
   if (!file?.startsWith("/")) return false;

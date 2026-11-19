@@ -45,7 +45,7 @@ describe("existing OpenAI adapter with Story Creator structured streaming", () =
       yield { type: "response.incomplete", response: { incomplete_details: { reason: "max_output_tokens" }, usage: { input_tokens: 10, output_tokens: 2 } } };
     })());
     const stream = await createOpenAITextStream({ ownerKey: "fixture-owner", useCase: "story-helper", model: "fixture-model", instructions: "fixture", input: [] });
-    await expect((async () => { for await (const _ of stream) { /* consume */ } })()).rejects.toThrow("max_output_tokens");
+    await expect((async () => { for await (const _ of stream) { /* consume */ } })()).rejects.toThrow("incomplete");
     expect(sdk.create.mock.calls[0][0].text).toBeUndefined();
     expect(sdk.create.mock.calls[0][1].maxRetries).toBe(0);
   });

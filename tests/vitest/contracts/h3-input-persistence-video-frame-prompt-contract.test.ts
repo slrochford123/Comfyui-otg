@@ -125,7 +125,7 @@ describe(
         );
 
         expect(panel).toContain(
-          "Video reference ready",
+          "prepareH3DirectorStills",
         );
       },
     );

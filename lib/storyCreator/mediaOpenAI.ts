@@ -13,8 +13,7 @@ const reserveUsd = 0.25;
 export function storyOpenAIImagesEnabled(accountId: unknown) {
   const test = process.env.OTG_ENV === "test";
   const enabled = test || (process.env.OTG_ENV === "prod" && process.env.OTG_STORY_OPENAI_IMAGE_ENABLED === "1");
-  const globalCap = Number(process.env.OPENAI_DAILY_GLOBAL_COST_LIMIT_USD || (test ? "20" : "0"));
-  return enabled && openAIEnabled() && Number.isFinite(globalCap) && globalCap > 0 && isAdminUserId(accountId);
+  return enabled && openAIEnabled() && isAdminUserId(accountId);
 }
 export const storyOpenAIImageTimeoutMs = maxSeconds * 1000;
 
@@ -49,7 +48,7 @@ export async function renderStoryOpenAIImage(options: {
     output_format:"png", complexity:"medium"} as const;
   let budget: ReturnType<typeof assertOpenAIAuthorized>;
   try {
-    budget = assertOpenAIAuthorized(options.ownerKey,"story-image",reserveUsd);
+    budget = assertOpenAIAuthorized(options.ownerKey,"story-image",reserveUsd,undefined,options.accountId);
   } catch {
     throw Object.assign(new Error("The image API budget is unavailable."), {fallbackAllowed: true});
   }

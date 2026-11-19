@@ -52,7 +52,13 @@ export async function reconcileNativeImageJob(ownerKey: string, id: string): Pro
           if (!response.ok) throw Error("The completed image could not be retrieved. Try refreshing this job.");
           const bytes = Buffer.from(await response.arrayBuffer());
           const metadata = await sharp(bytes).metadata();
-          if (metadata.width !== job.width || metadata.height !== job.height) throw Error("Generated image dimensions differ from the requested configuration.");
+          if (!metadata.width || !metadata.height) throw Error("Generated image dimensions could not be verified.");
+          if (job.model === "qwen-edit-2509") {
+            job.width = metadata.width;
+            job.height = metadata.height;
+          } else if (metadata.width !== job.width || metadata.height !== job.height) {
+            throw Error("Generated image dimensions differ from the requested configuration.");
+          }
           const output = path.join(OTG_DATA_ROOT, "uploads", "characters", safeSegment(ownerKey), `native-${id}.png`);
           await fs.mkdir(path.dirname(output), {recursive: true, mode: 0o700});
           const temporary = output + "." + randomUUID() + ".tmp";
