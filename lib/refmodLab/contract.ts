@@ -6,6 +6,7 @@ export type ReplacementSettings = {
   model: "standard" | "singularity"; quality: "0.2" | "0.6" | "1";
   sourceId: string; imageId: string; maskId: string; refMod: string;
   subject: string; prompt: string; strength: number; swapLora: boolean; swapStrength: number;
+  upscale1080p?: boolean;
   seconds: number; start: number; seed: number; preserveAudio: boolean; maskMode: "tracked" | "upload";
 };
 export const REPLACEMENT_DEFAULTS: ReplacementSettings = { workflow: "A", backend: "rtx3090", model: "standard", quality: "0.2", sourceId: "", imageId: "", maskId: "", refMod: "", subject: "", prompt: "", strength: 1, swapLora: true, swapStrength: 1, seconds: 5, start: 0, seed: 424242, preserveAudio: true, maskMode: "tracked" };
@@ -20,7 +21,9 @@ export function parseReplacementSettings(value: unknown): ReplacementSettings {
   for (const [key, min, max] of [["strength", 0, 1], ["swapStrength", 0, 2], ["seconds", 2, 10], ["start", 0, 1200], ["seed", 0, Number.MAX_SAFE_INTEGER]] as const) if (typeof s[key] !== "number" || !Number.isFinite(s[key]) || (s[key] as number) < min || (s[key] as number) > max) throw Error(`Invalid ${key}.`);
   if (!Number.isInteger(s.seconds) || !Number.isSafeInteger(s.seed) || typeof s.swapLora !== "boolean" || typeof s.preserveAudio !== "boolean") throw Error("Invalid duration, seed or audio selection.");
   // Only declared fields can enter a durable job; browser paths/graphs are never accepted.
-  return Object.fromEntries(Object.keys(REPLACEMENT_DEFAULTS).map(k => [k, s[k]])) as ReplacementSettings;
+  if (s.upscale1080p !== undefined && typeof s.upscale1080p !== "boolean") throw Error("Invalid upscaler setting.");
+  return { ...Object.fromEntries(Object.keys(REPLACEMENT_DEFAULTS).map(k => [k, s[k]])),
+    ...(s.upscale1080p === undefined ? {} : { upscale1080p: s.upscale1080p }) } as ReplacementSettings;
 }
 export function parseEvaluation(value: unknown): Evaluation {
   const e = value as Evaluation;

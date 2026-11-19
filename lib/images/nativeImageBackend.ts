@@ -23,12 +23,14 @@ export async function nativeImageSupport(baseUrl: string, model: NativeImageMode
     const info = await response.json();
     const config = NATIVE_IMAGE_MODELS[model];
     const graph = buildNativeImageGraph({model, prompt: "compatibility check", width: 1024, height: 1024, seed: 1,
-      ...(model === "fibo2-edit-turbo" ? {image: "validation-only.png"} : {})});
+      ...(config.operation === "edit" ? {image: "validation-only.png"} : {})});
     for (const node of Object.values(graph)) if (!info[node.class_type]) throw Error(`Missing node: ${node.class_type}`);
     for (const [node, key, value] of [["UNETLoader", "unet_name", config.unet], ["CLIPLoader", "clip_name", config.clip],
       ["CLIPLoader", "type", config.clipType], ["VAELoader", "vae_name", config.vae]]) {
       if (!info[node]?.input?.required?.[key]?.[0]?.includes(value)) throw Error(`Missing ${key}: ${value}`);
     }
+    if ("lora" in config && !info.LoraLoaderModelOnly?.input?.required?.lora_name?.[0]?.includes(config.lora))
+      throw Error(`Missing LoRA: ${config.lora}`);
     return {ok: true, reason: ""};
   } catch (error) { return {ok: false, reason: String((error as Error).message)}; }
 }

@@ -23,10 +23,10 @@ export function useMediaGpuChoice() {
     window.dispatchEvent(new Event(event));
   }] as const;
 }
-export default function MediaGpuControl({ disabled = false, onManualGpu }: {disabled?: boolean; onManualGpu?: (gpu: Exclude<MediaGpuChoice,"auto">) => void}) {
+export default function MediaGpuControl({ disabled = false, onManualGpu, buttonRouting = false }: {disabled?: boolean; buttonRouting?: boolean; onManualGpu?: (gpu: Exclude<MediaGpuChoice,"auto">) => void}) {
   const [choice, setChoice] = useMediaGpuChoice();
   const [enabled,setEnabled]=useState(false);
-  const [queue,setQueue]=useState<Array<{gpu:string;label:string;ready:boolean;queued:number}>>([]);
+  const [queue,setQueue]=useState<Array<{gpu:string;label:string;ready:boolean;reason:string;queued:number}>>([]);
   useEffect(()=>{
     if(!MEDIA_GPU_ROUTING_UI_ENABLED)return;
     const controller=new AbortController();let timer:ReturnType<typeof setTimeout>;
@@ -42,6 +42,28 @@ export default function MediaGpuControl({ disabled = false, onManualGpu }: {disa
   },[]);
   useEffect(() => { if (choice !== "auto") onManualGpu?.(choice); }, [choice, onManualGpu]);
   if(!MEDIA_GPU_ROUTING_UI_ENABLED||!enabled)return null;
+  const selectable = (gpu: MediaGpuChoice) => {
+    const device = queue.find(item => item.gpu === gpu);
+    // Occupied workers can still accept a queued job.
+    return device && !/cannot be confirmed|telemetry unavailable/i.test(device.reason);
+  };
+  const manualDevices = ["rtx5060ti", "rtx3090"] as const;
+  const defaultManual = manualDevices.find(selectable);
+  const selection = "min-h-11 rounded-lg border border-white/20 px-3 font-semibold aria-pressed:border-cyan-300 aria-pressed:bg-cyan-400/20 disabled:opacity-40";
+  if (buttonRouting) return <fieldset disabled={disabled} className="rounded-xl border border-white/15 p-3 text-sm">
+    <legend className="px-1 font-semibold">Rendering GPU</legend>
+    <div role="group" aria-label="GPU routing" className="flex flex-wrap gap-2">
+      <button type="button" className={selection} aria-pressed={choice === "auto"} onClick={() => setChoice("auto")}>Automatic</button>
+      <button type="button" className={selection} aria-pressed={choice !== "auto"} disabled={choice === "auto" && !defaultManual}
+        onClick={() => { if (choice === "auto" && defaultManual) setChoice(defaultManual); }}>Manual</button>
+    </div>
+    {choice !== "auto" && <div role="group" aria-label="Manual rendering GPU" className="mt-2 flex flex-wrap gap-2">
+      {manualDevices.map(gpu => <button key={gpu} type="button" className={selection} aria-pressed={choice === gpu}
+        disabled={!selectable(gpu)} onClick={() => setChoice(gpu)}>{gpu === "rtx5060ti" ? "RTX 5060 Ti" : "RTX 3090"}</button>)}
+    </div>}
+    <p role="status" className="mt-2 text-xs text-white/65">{queue.filter(device => device.gpu !== "rtx3060").map(device =>
+      `${device.label}: ${device.ready ? "available" : selectable(device.gpu as MediaGpuChoice) ? device.reason : "unavailable"}${device.queued ? ` · ${device.queued} queued` : ""}`).join(" · ")}</p>
+  </fieldset>;
   return <fieldset disabled={disabled} className="rounded-xl border border-white/15 p-3 text-sm">
     <legend className="px-1 font-semibold">Rendering GPU</legend>
     <div className="flex flex-wrap items-center gap-2">

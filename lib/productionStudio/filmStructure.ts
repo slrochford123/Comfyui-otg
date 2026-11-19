@@ -48,6 +48,10 @@ export function segmentForScene(p: Project, sceneId: string) {
 /** Approved facts are a separate, bounded context. Pending conversation is never canon. */
 export function filmContext(p: Project) {
   return {
+    linkedStory: p.storyLink ? {title:p.storyLink.title,episode:p.storyLink.episode,approvedFacts:p.storyLink.canon,
+      workingConversation:{status:"unapproved working notes, not canon",messages:p.storyLink.workingNotes},
+      referenceNames:p.storyLink.sourceAssets.map(a=>({name:a.name,role:a.role})),
+      instruction:"Respect approved facts. Use working notes as context only. Focus on this scene or clip; propose changes instead of rewriting canon."} : undefined,
     synopsis: p.film?.outline.synopsis || (p.plan.status === "approved" ? p.plan.summary : ""),
     outline: p.film?.outline.acts.map(a => ({ title: a.title, summary: a.summary, segments: a.segments.map(s => ({ id: s.id, title: s.title, summary: s.summary })) })),
     approvedRecaps: Object.entries(p.film?.segments || {}).filter(([,m]) => m.approved).map(([id,m]) => ({ id, revision: m.approvedRevision, synopsis:m.recap?.synopsis,characters:m.recap?.characters,continuity:m.recap?.continuity.join("; ").slice(0,2400), chronology:m.recap?.chronology.map(s=>s.slice(0,180)).join("; ").slice(0,1600) })),

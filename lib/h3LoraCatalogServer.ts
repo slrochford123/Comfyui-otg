@@ -1,3 +1,4 @@
+import {isAdminOwner} from "@/lib/auth/adminOwner";
 import { execFile as execFileCallback } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -296,16 +297,15 @@ function allowedForMode(entry: H3LoraCatalogEntry, mode: H3LoraRequestMode) {
       : entry.approvedForR2V;
 }
 
-export function publicH3LoraCatalog(mode?: H3LoraRequestMode, backend?: ProductionV2H3BackendId) {
+export function publicH3LoraCatalog(mode?: H3LoraRequestMode, backend?: ProductionV2H3BackendId, owner?:string) {
+  const admin=isAdminOwner(owner);
   const catalog = readH3LoraCatalog();
   return {
     ...catalog,
+    maxSelections:admin?catalog.entries.length:catalog.maxSelections,
     entries: catalog.entries.filter(
       (entry) =>
-        entry.enabled &&
-        entry.approvedForH3 &&
-        entry.compatibilityStatus === "approved" &&
-        (!mode || allowedForMode(entry, mode)) &&
+        (admin || entry.enabled && entry.approvedForH3 && entry.compatibilityStatus === "approved" && (!mode || allowedForMode(entry, mode))) &&
         entry.discoveredOn.length > 0 && (!backend || entry.discoveredOn.includes(backend)),
     ),
   };
@@ -315,12 +315,14 @@ export function validateH3LoraSelections(
   value: unknown,
   mode: H3LoraRequestMode,
   liveWorker?: { backend: ProductionV2H3BackendId; files: ReadonlySet<string> },
+  owner?:string,
 ) {
   const catalog = readH3LoraCatalog();
+  const admin=isAdminOwner(owner);
   const requested = Array.isArray(value)
     ? (value as H3StudioLoraSelection[])
     : [];
-  if (requested.length > catalog.maxSelections)
+  if (!admin && requested.length > catalog.maxSelections)
     throw new Error(
       `H3 supports at most ${catalog.maxSelections} optional LoRAs.`,
     );
@@ -335,14 +337,12 @@ export function validateH3LoraSelections(
     const entry = catalog.entries.find((item) => item.id === id);
     if (!entry) throw new Error(`H3 LoRA ${id} is not in the admin catalog.`);
     if (
-      !entry.enabled ||
-      !entry.approvedForH3 ||
-      entry.compatibilityStatus !== "approved"
+      !admin && (!entry.enabled || !entry.approvedForH3 || entry.compatibilityStatus !== "approved")
     )
       throw new Error(
         `H3 LoRA ${entry.displayName} is not approved and enabled.`,
       );
-    if (!allowedForMode(entry, mode))
+    if (!admin && !allowedForMode(entry, mode))
       throw new Error(
         `H3 LoRA ${entry.displayName} is not approved for this generation mode.`,
       );

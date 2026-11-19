@@ -43,6 +43,7 @@ export type ProductionV2H3GenerationPayload = {
   h3Quality: H3Quality;
   seed: number;
   rifeInterpolation60Fps?: boolean;
+  upscale1080p?: boolean;
   orientation?: H3Orientation;
   h3Settings?: H3AdvancedSettings;
   startImage: ProductionV2VisualReference | null;
@@ -218,6 +219,7 @@ function fromRow(row: JobRow | undefined): ProductionV2GenerationJob | null {
       ...rawPayload,
       h3Quality: normalizeH3Quality(rawPayload.h3Quality),
       rifeInterpolation60Fps: rawPayload.rifeInterpolation60Fps === true,
+      upscale1080p: typeof rawPayload.upscale1080p === "boolean" ? rawPayload.upscale1080p : undefined,
       userLoras: normalizeProductionV2H3UserLoras(rawPayload.userLoras),
     },
     workflowId: row.workflow_id,

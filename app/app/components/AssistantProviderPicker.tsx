@@ -44,7 +44,7 @@ export default function AssistantProviderPicker({scope,disabled,feature=scope.st
   if(!ENABLED)return null;
   const exhausted=credit?.availableNanos===0;
   const low=credit?.availableNanos!=null&&credit.availableNanos<=1e9;
-  const active=value==="local3060"||exhausted?"Local RTX 3060":credit?.lastRoute?.provider==="local3060"?"Local RTX 3060":"OpenAI";
+  const active=value==="local3060"||exhausted?"Local RTX 3060":!credit?.admin&&credit?.lastRoute?.provider==="local3060"?"Local RTX 3060":"OpenAI";
   return <div className="space-y-1 text-sm">
     <label className="flex flex-wrap items-center gap-2"><span>AI provider</span>
     <select value={value} disabled={disabled} className="rounded-lg border border-white/20 bg-slate-950 p-2"
@@ -55,7 +55,7 @@ export default function AssistantProviderPicker({scope,disabled,feature=scope.st
     </label>
     {credit&&<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
       <span role="status">{active} · {credit.admin?"Unlimited app allowance":`$${((credit.availableNanos||0)/1e9).toFixed(2)} OpenAI credit`}
-        {credit.lastRoute?.reason==="global-budget"?" · The site-wide OpenAI budget was reached. Conversations continue on RTX 3060.":exhausted?" · Credit depleted. Conversations continue on RTX 3060.":credit.lastRoute?.reason==="allowance"?" · The latest request used local AI because available credit was insufficient.":low?" · Allowance running low.":""}
+        {!credit.admin&&(credit.lastRoute?.reason==="global-budget"?" · The site-wide OpenAI budget was reached. Conversations continue on RTX 3060.":exhausted?" · Credit depleted. Conversations continue on RTX 3060.":credit.lastRoute?.reason==="allowance"?" · The latest request used local AI because available credit was insufficient.":low?" · Allowance running low.":"")}
         {!credit.openAIAvailable&&" · OpenAI unavailable."}</span>
       {!credit.admin&&<><button type="button" className="min-h-9 underline" disabled={requesting||credit.requested} onClick={requestCredit}>{credit.requested?"Credit requested":"Request Additional Credit"}</button>
         <a className="underline" href="mailto:slrochford123@gmail.com?subject=SLR%20Studios%20OpenAI%20credit">Contact Administrator</a></>}

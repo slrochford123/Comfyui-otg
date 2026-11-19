@@ -132,6 +132,7 @@ export type Project = {
   createdAt: string;
   updatedAt: string;
   brief: Brief;
+  storyLink?: import("./storyHandoffTypes").StoryLink;
   storyProjectId: string | null;
   storyPlanVersion: number | null;
   plan: StoryProductionPlan;

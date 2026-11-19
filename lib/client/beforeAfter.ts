@@ -4,7 +4,7 @@ import {profileStorageKey} from "./profileStorage";
 
 export type ComparisonJob = {jobId: string; engine: NativeEditEngine; seed: number; status: string; promptId?: string; imageUrl?: string; error?: string};
 export type ComparisonDraft = {version: 1; prompt: string; engine: NativeEditEngine; position: number; job: ComparisonJob | null; saved: boolean};
-export const emptyComparisonDraft = (): ComparisonDraft => ({version: 1, prompt: "", engine: "qwen", position: 50, job: null, saved: false});
+export const emptyComparisonDraft = (): ComparisonDraft => ({version: 1, prompt: "", engine: "qwen-edit-2509", position: 50, job: null, saved: false});
 export const comparisonPending = (job: ComparisonJob | null) => Boolean(job && !["completed", "failed", "canceled"].includes(job.status));
 export function freshComparisonSeed(previous?: number) {
   const bytes = new Uint32Array(1); globalThis.crypto.getRandomValues(bytes);

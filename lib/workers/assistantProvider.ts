@@ -15,6 +15,12 @@ export function resolveAssistantProvider(value:unknown):AssistantProvider {
   if(value==="local3060"&&!local3060Enabled())throw Error("The local RTX 3060 provider is not enabled. No cloud request was made.");
   return value;
 }
+/** Reviewed assistants prefer the cloud for regular accounts. The usage
+ * reservation in the shared provider decides when to use the fenced 3060. */
+export function resolveReviewedAssistantProvider(value:unknown, admin:boolean):AssistantProvider {
+  return admin ? resolveAssistantProvider(value ?? "openai") : "openai";
+}
+
 export const assistantProvider=()=>scope.getStore()||"openai";
 export const withAssistantProvider=<T>(provider:AssistantProvider,run:()=>T)=>scope.run(provider,run);
 export const assistantAvailable=(provider=assistantProvider())=>provider==="local3060"?local3060Enabled():openAIEnabled()||conversationPolicyEnabled()&&local3060Enabled();

@@ -36,13 +36,9 @@ export function applyH3OptionalLoraChainBeforeConsumer(
   let previousOutput = Number(currentModel[1]) || 0;
 
   selected.forEach((lora, index) => {
-    const nodeId = String(nodeIdStart + index);
-
-    if (graph[nodeId]) {
-      throw new Error(
-        `${context} optional LoRA node ${nodeId} collides with the workflow template.`,
-      );
-    }
+    let candidate=nodeIdStart+index;
+    while(graph[String(candidate)])candidate++;
+    const nodeId=String(candidate);
 
     graph[nodeId] = {
       class_type: "LoraLoaderModelOnly",

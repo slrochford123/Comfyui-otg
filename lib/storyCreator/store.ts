@@ -1165,9 +1165,14 @@ function migrateStoryCreatorSchema(database: Database.Database) {
   if (!factColumns.some((column) => String(column.name) === "deleted_at")) {
     database.exec("ALTER TABLE story_facts ADD COLUMN deleted_at INTEGER");
   }
+  database.exec(`CREATE TABLE IF NOT EXISTS story_conversation_attempts (
+    turn_id TEXT NOT NULL REFERENCES story_conversation_turns(id) ON DELETE CASCADE,
+    number INTEGER NOT NULL, provider TEXT NOT NULL, request_key TEXT NOT NULL,
+    status TEXT NOT NULL, response_json TEXT, failure_code TEXT, started_at INTEGER NOT NULL,
+    finished_at INTEGER, PRIMARY KEY(turn_id,number));`);
   const turnColumns = new Set((database.prepare("PRAGMA table_info(story_conversation_turns)").all() as Array<{ name: string }>).map((column) => column.name));
   for (const [name, declaration] of Object.entries({ memory_summary: "TEXT NOT NULL DEFAULT ''",
-    memory_fact_ids_json: "TEXT NOT NULL DEFAULT '[]'", purpose: "TEXT NOT NULL DEFAULT 'conversation'", writing_mode: "TEXT NOT NULL DEFAULT ''", ai_provider: "TEXT NOT NULL DEFAULT 'openai'", media_source_id: "TEXT", media_result_id: "TEXT" })) {
+    memory_fact_ids_json: "TEXT NOT NULL DEFAULT '[]'", purpose: "TEXT NOT NULL DEFAULT 'conversation'", writing_mode: "TEXT NOT NULL DEFAULT ''", ai_provider: "TEXT NOT NULL DEFAULT 'openai'", media_source_id: "TEXT", media_result_id: "TEXT", retry_revision: "INTEGER NOT NULL DEFAULT 0", reply_notice: "TEXT NOT NULL DEFAULT ''", failure_code: "TEXT NOT NULL DEFAULT ''" })) {
     if (!turnColumns.has(name)) database.exec(`ALTER TABLE story_conversation_turns ADD COLUMN ${name} ${declaration}`);
   }
 }
@@ -1230,7 +1235,7 @@ function cleanProjectId(value: unknown) {
   return id;
 }
 
-function cleanMessageContent(value: unknown) {
+function cleanMessageContent(value: unknown, preserveFullReply = false) {
   const content = String(value || "")
     .replace(/\r\n/g, "\n")
     .trim();
@@ -1239,7 +1244,7 @@ function cleanMessageContent(value: unknown) {
     throw new Error("Story message content is required.");
   }
 
-  return content.slice(0, 100_000);
+  return preserveFullReply ? content : content.slice(0, 100_000);
 }
 
 function cleanMessageRole(value: unknown): StoryCreatorMessageRole {
@@ -2199,6 +2204,8 @@ export function addStoryCreatorMessage(input: {
   role: unknown;
   content: unknown;
   dictationId?: unknown;
+  /** Internal completed provider response; never accepted from a request body. */
+  preserveFullReply?: boolean;
 }) {
   const { ownerKey, projectId } = assertOwnedActiveProject(
     input.ownerKey,
@@ -2206,7 +2213,7 @@ export function addStoryCreatorMessage(input: {
   );
 
   const role = cleanMessageRole(input.role);
-  const content = cleanMessageContent(input.content);
+  const content = cleanMessageContent(input.content, input.preserveFullReply === true);
   const now = Date.now();
   const dictationId = input.dictationId;
   if (dictationId !== undefined && (role !== "user" || typeof dictationId !== "string" ||
@@ -2283,6 +2290,10 @@ export type StoryConversationTurn = {
   sourceMessageId: string;
   mediaSourceId?: string;
   mediaResultId?: string;
+  retryRevision: number;
+  openAIAttempts: number;
+  notice: string;
+  canRetry: boolean;
   // Requested provider before dispatch, actual provider once routed.
   aiProvider?: "openai" | "local3060";
   purpose: "conversation" | "writing";
@@ -2302,6 +2313,9 @@ function rowToConversationTurn(row: any): StoryConversationTurn {
   return {
     id: row.id, projectId: row.project_id, ownerKey: row.owner_key,
     sourceMessageId: row.source_message_id, status: row.status,
+    retryRevision: row.retry_revision || 0, notice: row.reply_notice || "",
+    openAIAttempts: Number((db().prepare("SELECT count(*) AS n FROM story_conversation_attempts WHERE turn_id=? AND provider='openai'").get(row.id) as any).n),
+    canRetry: ["failed","interrupted","cancelled"].includes(row.status) && !["CONTENT_FILTER","INVALID_REQUEST"].includes(row.failure_code),
     mediaSourceId: row.media_source_id || undefined, mediaResultId: row.media_result_id || undefined,
     aiProvider: row.ai_provider === "local3060" ? "local3060" : "openai",
     purpose: row.purpose || "conversation", writingMode: row.writing_mode || "",
@@ -2384,13 +2398,13 @@ export function claimStoryConversationTurn(input: {
 
 export function updateStoryConversationTurn(input: {
   ownerKey: string; projectId: string; turnId: string; leaseToken: string;
-  partialText?: string; terminal?: "failed" | "cancelled"; error?: string; aiProvider?: "openai"|"local3060";
+  partialText?: string; terminal?: "failed" | "cancelled"; error?: string; aiProvider?: "openai"|"local3060"; notice?:string; failureCode?:string;
 }) {
   getStoryConversationTurn(input);
   db().prepare(`UPDATE story_conversation_turns SET partial_text=COALESCE(?,partial_text),
-    status=COALESCE(?,status),ai_provider=COALESCE(?,ai_provider),error=?,lease_until=?,updated_at=?
+    status=COALESCE(?,status),ai_provider=COALESCE(?,ai_provider),reply_notice=COALESCE(?,reply_notice),failure_code=COALESCE(?,failure_code),error=?,lease_until=?,updated_at=?
     WHERE id=? AND owner_key=? AND project_id=? AND lease_token=? AND status='running'`)
-    .run(input.partialText?.slice(0, 100_000) ?? null, input.terminal ?? null,input.aiProvider??null, input.error || "",
+    .run(input.partialText?.slice(0, 100_000) ?? null, input.terminal ?? null,input.aiProvider??null, input.notice??null,input.failureCode??null,input.error || "",
       Date.now() + 180_000, Date.now(), input.turnId, input.ownerKey, input.projectId, input.leaseToken);
   return getStoryConversationTurn(input);
 }
@@ -2404,7 +2418,7 @@ export function completeStoryConversationTurn(input: {
       WHERE id=? AND owner_key=? AND project_id=? AND lease_token=? AND status='running'
       AND cancel_requested=0`).get(input.turnId, input.ownerKey, input.projectId, input.leaseToken) as any;
     if (!row) return null;
-    const message = addStoryCreatorMessage({ ...input, role: "assistant" });
+    const message = addStoryCreatorMessage({ ...input, role: "assistant", preserveFullReply: true });
     let savedFactIds: string[] = [];
     let memorySummary = "Conversation saved. No new unambiguous story facts were detected.";
     if (input.memory?.facts?.length) {
@@ -7133,4 +7147,45 @@ export function approveStoryProductionPlan(input: {
 
   write();
   return getStoryProductionPlan({ ownerKey, projectId })!;
+}
+
+export type StoryConversationAttempt = {number:number;provider:"openai"|"local3060";requestKey:string;status:string;responseJson:string|null;failureCode:string|null};
+export function getStoryConversationAttempt(input:{ownerKey:string;projectId:string;turnId:string}):StoryConversationAttempt|null {
+  getStoryConversationTurn(input);
+  return db().prepare(`SELECT number,provider,request_key AS requestKey,status,response_json AS responseJson,failure_code AS failureCode
+    FROM story_conversation_attempts WHERE turn_id=? ORDER BY number DESC LIMIT 1`).get(input.turnId) as StoryConversationAttempt || null;
+}
+export function retryStoryConversationTurn(input:{ownerKey:string;projectId:string;turnId:string;retryRevision:number}) {
+  return db().transaction(()=>{
+    const turn=getStoryConversationTurn({...input,chatOnly:true});
+    if(!turn)throw storyBibleError("STORY_TURN_NOT_FOUND","Saved reply not found.");
+    if(turn.retryRevision!==input.retryRevision || ["queued","running","completed"].includes(turn.status))return {turn,created:false};
+    if(!turn.canRetry)throw Error("Edit this request before sending it again.");
+    if(db().prepare("SELECT 1 FROM story_conversation_turns WHERE project_id=? AND owner_key=? AND status IN ('queued','running') AND lease_until>?").get(input.projectId,input.ownerKey,Date.now()))
+      throw storyBibleError("STORY_TURN_BUSY","Wait for the current reply before retrying.");
+    // Upgrade a historical failed turn once, retaining its original billing key for recovery.
+    if(!getStoryConversationAttempt(input)&&turn.aiProvider!=="local3060")db().prepare(`INSERT INTO story_conversation_attempts
+      (turn_id,number,provider,request_key,status,started_at) VALUES (?,1,'openai',?,'interrupted',?)`).run(turn.id,turn.id,turn.createdAt);
+    db().prepare(`UPDATE story_conversation_turns SET status='queued',cancel_requested=0,lease_token='',lease_until=?,
+      retry_revision=retry_revision+1,error='',failure_code='',reply_notice='Checking the saved response…',updated_at=? WHERE id=? AND owner_key=? AND project_id=?`)
+      .run(Date.now()+180000,Date.now(),turn.id,input.ownerKey,input.projectId);
+    return {turn:getStoryConversationTurn(input)!,created:true};
+  }).immediate();
+}
+export function beginStoryConversationAttempt(input:{ownerKey:string;projectId:string;turnId:string;leaseToken:string;provider:"openai"|"local3060"}) {
+  return db().transaction(()=>{
+    if(!db().prepare("SELECT 1 FROM story_conversation_turns WHERE id=? AND owner_key=? AND project_id=? AND lease_token=? AND status='running' AND cancel_requested=0")
+      .get(input.turnId,input.ownerKey,input.projectId,input.leaseToken))throw Error("Reply execution no longer owns this turn.");
+    const previous=getStoryConversationAttempt(input),number=(previous?.number||0)+1;
+    const requestKey=number===1?input.turnId:`${input.turnId}.attempt-${number}`;
+    db().prepare(`INSERT INTO story_conversation_attempts (turn_id,number,provider,request_key,status,started_at)
+      VALUES (?,?,?,?,'running',?)`).run(input.turnId,number,input.provider,requestKey,Date.now());
+    return getStoryConversationAttempt(input)!;
+  }).immediate();
+}
+export function finishStoryConversationAttempt(input:{ownerKey:string;projectId:string;turnId:string;leaseToken:string;number:number;response?:unknown;failureCode?:string;provider?:"openai"|"local3060"}) {
+  db().prepare(`UPDATE story_conversation_attempts SET status=?,response_json=?,failure_code=?,finished_at=?,provider=COALESCE(?,provider)
+    WHERE turn_id=? AND number=? AND EXISTS(SELECT 1 FROM story_conversation_turns WHERE id=? AND owner_key=? AND project_id=? AND lease_token=? AND status='running' AND cancel_requested=0)`)
+    .run(input.response?'completed':'failed',input.response?JSON.stringify(input.response):null,input.failureCode||null,Date.now(),input.provider||null,
+      input.turnId,input.number,input.turnId,input.ownerKey,input.projectId,input.leaseToken);
 }

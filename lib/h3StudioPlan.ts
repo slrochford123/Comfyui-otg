@@ -29,6 +29,8 @@ export type H3StudioPlan = {
   orientation: "landscape" | "portrait";
   durationSeconds: number;
   fps: 24;
+  upscale1080p?: boolean;
+  rifeInterpolation60Fps?: boolean;
   seed: number;
   prompt: string;
   originalPrompt: string;
@@ -67,7 +69,9 @@ export function parseH3StudioPlan(value: unknown): H3StudioPlan {
   // v1 saved plans predate these controls. Only the added fields get defaults.
   const profileDefaults = H3_STUDIO_PROFILES[raw.profile as keyof typeof H3_STUDIO_PROFILES] || H3_STUDIO_PROFILES.native;
   const p: Record<string, unknown> = { backend: "rtx3090", camera: "none", motion: "none", ...profileDefaults, ...raw };
-  if (Object.keys(p).some(key => !Object.hasOwn(DEFAULT_H3_STUDIO_PLAN, key))) throw new Error("Unknown H3 plan field.");
+  const finisherFields = ["upscale1080p", "rifeInterpolation60Fps"];
+  if (Object.keys(p).some(key => !Object.hasOwn(DEFAULT_H3_STUDIO_PLAN, key) && !finisherFields.includes(key))) throw new Error("Unknown H3 plan field.");
+  if (finisherFields.some(key => Object.hasOwn(p, key) && typeof p[key] !== "boolean")) throw new Error("Invalid H3 video finishing selection.");
   if (Object.keys(DEFAULT_H3_STUDIO_PLAN).some(key => !Object.hasOwn(p, key))) throw new Error("Incomplete H3 plan.");
   const enums: Record<string, readonly unknown[]> = {
     backend: ["rtx3090", "rtx5060ti"],
@@ -80,7 +84,7 @@ export function parseH3StudioPlan(value: unknown): H3StudioPlan {
   for (const [key, values] of Object.entries(enums)) if (!values.includes(p[key])) throw new Error(`Unsupported H3 ${key}.`);
   if (!Number.isSafeInteger(p.seed) || Number(p.seed) < 0 || typeof p.combatEnabled !== "boolean") throw new Error("Invalid H3 seed or Combat state.");
   for (const key of ["prompt", "originalPrompt"]) if (typeof p[key] !== "string" || !(p[key] as string).trim() || (p[key] as string).length > 4000) throw new Error("Describe the video in 1–4000 characters.");
-  if (!Array.isArray(p.loras) || p.loras.length > 3) throw new Error("At most three qualified optional LoRAs may be stacked.");
+  if (!Array.isArray(p.loras)) throw new Error("Invalid optional LoRA list.");
   const ids = new Set<string>();
   for (const entry of p.loras) {
     const l = object(entry);

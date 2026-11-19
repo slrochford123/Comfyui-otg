@@ -17,13 +17,14 @@ import { uploadH3InputToBaseUrl, submitH3PromptToBaseUrl, getH3PromptHistoryFrom
 import { retrieveRemoteComfyMedia } from "@/lib/storyCreator/remoteComfyMedia";
 import { cancelComfyPrompt } from "@/lib/comfySafeCancel";
 import { prepareLabImage } from "@/lib/experiments/images";
+import { cancelRelay, retryRelay, startRelay, testRelayFinishing } from "@/lib/videoFinishing/relay";
 import { buildReplacementGraph, graphCompatibility, replacementCanvas, SAM_MODEL, SWAP_LORA, MASK_OUTPUT_NODE } from "./graph";
 import { REFMOD_LAB_ID, REPLACEMENT_DEFAULTS, parseReplacementSettings, parseEvaluation, type ReplacementSettings, type Evaluation } from "./contract";
 
 const BASE = "http://100.75.162.64:8189";
 type Ref = { name: string; kind: "image" | "video"; displayName: string; preview: string | null };
 export type ReplacementRun = { id: string; requestId: string; session: string; settings: ReplacementSettings; refKind: "image" | "video"; refName: string; state: string; message: string; promptId: string | null; created: string; started: string | null; completed: string | null; generationSeconds: number | null; outputId: string | null; maskOutputId: string | null; evaluation: Evaluation; width?: number; height?: number; reconstruction?: string; audio?: string; graph?: unknown };
-type StoredRun = ReplacementRun & { ownerKey: string };
+type StoredRun = ReplacementRun & { ownerKey: string; finishDelivery?: boolean };
 function dbLab<T>(fn: (db: Database.Database) => T): T {
   return withLab(db => {
     db.exec(`CREATE TABLE IF NOT EXISTS replacement_workspaces(owner TEXT PRIMARY KEY, session TEXT NOT NULL, settings TEXT NOT NULL);
@@ -46,7 +47,7 @@ function patchRun(owner: string, id: string, patch: Partial<StoredRun>) {
   })());
 }
 function publicRun(run: StoredRun): ReplacementRun { const { ownerKey: _key, ...safe } = run; return safe; }
-const terminal = (s: string) => ["completed", "failed", "canceled", "needs-review"].includes(s);
+const terminal = (s: string) => ["completed", "failed", "finishing-failed", "canceled", "needs-review"].includes(s);
 function runs(owner: string) { return dbLab(db => (db.prepare("SELECT body FROM replacement_runs WHERE owner=? ORDER BY rowid DESC LIMIT 100").all(owner) as { body: string }[]).map(r => JSON.parse(r.body) as StoredRun)); }
 function workspace(owner: string) { const row = dbLab(db => db.prepare("SELECT session,settings FROM replacement_workspaces WHERE owner=?").get(owner)) as { session: string; settings: string } | undefined; return row ? { session: getSession(owner, row.session), settings: JSON.parse(row.settings) as ReplacementSettings } : null; }
 export function assertReplacementAsset(owner: string, id: string, session: string, kind: "video" | "image") {
@@ -105,8 +106,22 @@ export async function replacementPost(request: NextRequest, owner: string) {
     let evaluation; try { evaluation = parseEvaluation(data.evaluation); } catch (e) { throw new RequestError((e as Error).message, 400); }
     return NextResponse.json({ ok: true, run: publicRun(patchRun(owner, run.id, { evaluation })) });
   }
+  if (data.action === "retry-finishing") {
+    const run = readRun(owner, String(data.id));
+    if (run.state !== "finishing-failed" || !retryRelay(run.ownerKey, `refmod:${run.id}`)) {
+      throw new RequestError("This video is unavailable for a finishing retry.", 409);
+    }
+    const updated = patchRun(owner, run.id, { state: "finishing", message: "Generated · awaiting upscale retry", completed: null });
+    ensureRunner(owner, run.id);
+    return NextResponse.json({ ok: true, run: publicRun(updated) }, { status: 202 });
+  }
   if (data.action === "cancel") {
     const run = readRun(owner, String(data.id));
+    if (run.state === "finishing") {
+      cancelRelay(run.ownerKey, `refmod:${run.id}`);
+      const canceled = patchRun(owner, run.id, { state: "canceled", message: "Video finishing canceled.", completed: new Date().toISOString() });
+      return NextResponse.json({ ok: true, run: publicRun(canceled) });
+    }
     if (!terminal(run.state) || run.state === "needs-review" && run.promptId) {
       patchRun(owner, run.id, { state: "canceling", message: "Cancel requested for this test only." });
       if (run.promptId) { const outcome = await cancelComfyPrompt(BASE, run.promptId); if (outcome.status === "canceled") patchRun(owner, run.id, { state: "canceled", message: "Test canceled.", completed: new Date().toISOString() }); }
@@ -135,11 +150,18 @@ export async function replacementPost(request: NextRequest, owner: string) {
   if (errors.length) throw new RequestError("Unsupported combination: " + errors.join("; "), 422);
   if (data.action === "validate") return NextResponse.json({ ok: true, runnable: true, gpuSubmitted: false, prompt: built.prompt, graph: built.graph, reconstruction: built.reconstruction });
   if (typeof data.requestId !== "string" || !/^[a-zA-Z0-9_-]{8,100}$/.test(data.requestId)) throw new RequestError("Invalid test request ID.", 400);
+  const finishDelivery = request.nextUrl.pathname === "/api/h3/edit-video/refmod-swap" && testRelayFinishing() && (settings.upscale1080p ?? settings.quality !== "0.2");
   const result = dbLab(db => db.transaction(() => {
     const previous = db.prepare("SELECT body FROM replacement_runs WHERE owner=? AND request_id=?").get(owner, data.requestId as string) as { body: string } | undefined;
-    if (previous) { const r = JSON.parse(previous.body); if (JSON.stringify(r.settings) !== JSON.stringify(settings)) throw new RequestError("Request ID already belongs to another test.", 409); return r as StoredRun; }
+    if (previous) {
+      const run = JSON.parse(previous.body) as StoredRun;
+      if (Boolean(run.finishDelivery) !== finishDelivery || JSON.stringify(run.settings) !== JSON.stringify(settings)) {
+        throw new RequestError("Request ID already belongs to another test.", 409);
+      }
+      return run;
+    }
     if ((db.prepare("SELECT body FROM replacement_runs WHERE owner=?").all(owner) as { body: string }[]).some(r => !terminal(JSON.parse(r.body).state))) throw new RequestError("Wait for or cancel your active lab test first.", 409);
-    const run: StoredRun = { id: crypto.randomUUID(), requestId: data.requestId as string, session: current.session.id, ownerKey: scope.ownerKey, refKind: ref.kind, refName: ref.displayName, settings, state: "preparing", message: "Preparing source window; no quality guarantee.", promptId: null, created: new Date().toISOString(), started: null, completed: null, generationSeconds: null, outputId: null, maskOutputId: null, evaluation: { scores: {}, notes: "" }, width: built.width, height: built.height, reconstruction: built.reconstruction };
+    const run: StoredRun = { id: crypto.randomUUID(), requestId: data.requestId as string, session: current.session.id, ownerKey: scope.ownerKey, refKind: ref.kind, refName: ref.displayName, settings, state: "preparing", message: "Preparing source window", promptId: null, created: new Date().toISOString(), started: null, completed: null, generationSeconds: null, outputId: null, maskOutputId: null, evaluation: { scores: {}, notes: "" }, width: built.width, height: built.height, reconstruction: built.reconstruction, finishDelivery };
     db.prepare("INSERT INTO replacement_runs VALUES(?,?,?,?)").run(run.id, owner, run.requestId, JSON.stringify(run));
     db.prepare("UPDATE replacement_workspaces SET settings=? WHERE owner=?").run(JSON.stringify(settings), owner); return run;
   })());
@@ -185,7 +207,6 @@ async function finish(owner: string, run: StoredRun, history: Awaited<ReturnType
   const outProbe = await probeVideoInfo(output);
   if (!outProbe.durationSeconds || Math.abs(outProbe.durationSeconds - s.seconds) > .12 || hasAudio && !outProbe.hasAudio) throw Error("Output duration/audio verification failed.");
   if (readRun(owner, run.id).state === "canceling") return;
-  const outputId = run.outputId || await saveOutput(owner, run, output, "corrected");
   let maskOutputId = run.maskOutputId;
   if (s.workflow === "C" && !maskOutputId) {
     const masks = await getH3PromptHistoryFromBaseUrl(BASE, run.promptId!, fetch, MASK_OUTPUT_NODE);
@@ -195,7 +216,20 @@ async function finish(owner: string, run: StoredRun, history: Awaited<ReturnType
     maskOutputId = await saveOutput(owner, run, maskFile, "mask");
   }
   if (readRun(owner, run.id).state === "canceling") return;
-  patchRun(owner, run.id, { state: "completed", message: "Ready for your visual evaluation.", outputId, maskOutputId, completed: new Date().toISOString(), generationSeconds: run.started ? (Date.now() - Date.parse(run.started)) / 1000 : null, audio });
+  const prepared = patchRun(owner, run.id, { maskOutputId, audio, state: "finishing" });
+  await publish(owner, prepared, output);
+}
+async function publish(owner: string, run: StoredRun, source: string) {
+  if (readRun(owner, run.id).state !== "finishing") return;
+  const delivery = run.finishDelivery ? startRelay({ owner: run.ownerKey, job: `refmod:${run.id}`, source }) : null;
+  if (delivery && delivery.state !== "completed") {
+    patchRun(owner, run.id, { state: delivery.state === "failed" ? "finishing-failed" : "finishing", message: delivery.message });
+    return;
+  }
+  const outputId = run.outputId || await saveOutput(owner, run, delivery?.file || source, "corrected");
+  if (readRun(owner, run.id).state !== "finishing") return;
+  patchRun(owner, run.id, { state: "completed", message: "Ready for your visual evaluation.", outputId,
+    completed: new Date().toISOString(), generationSeconds: run.started ? (Date.now() - Date.parse(run.started)) / 1000 : null });
 }
 const running = new Set<string>();
 function ensureRunner(owner: string, id: string) {
@@ -207,6 +241,7 @@ function ensureRunner(owner: string, id: string) {
 }
 async function execute(owner: string, id: string) {
   let run = readRun(owner, id); if (terminal(run.state)) return;
+  if (run.state === "finishing") { await publish(owner, run, path.join(runDirectory(id), "output.mp4")); return; }
   if (!run.promptId && run.state === "canceling") { patchRun(owner, id, { state: "canceled", message: "Canceled before GPU submission." }); return; }
   if (!run.promptId) {
     // Durable submit intent distinguishes a crash during dispatch from safe preparation.

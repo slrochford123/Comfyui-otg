@@ -154,6 +154,7 @@ type ProductionV2GenerationJobPayload = {
   nativeFps?: number;
   finalFps?: number;
   rifeInterpolation60Fps?: boolean;
+  upscale1080p?: boolean;
   etaSeconds: number | null;
   etaMinSeconds: number | null;
   etaMaxSeconds: number | null;
@@ -3516,8 +3517,8 @@ export default function ProductionV2Panel() {
                         {selectedScene.h3Quality === "sh"
                           ? "Scene Hunter · 0.2 MP native (608x352) quick scene search"
                           : selectedScene.h3Quality === "hq"
-                            ? "1.0 MP native (1376x768) + RTX VSR ULTRA"
-                            : "0.6 MP native (1056x608) + RTX VSR ULTRA"}
+                            ? "1.0 MP native (1376x768)"
+                            : "0.6 MP native (1056x608)"}
                       </div>
                       {h3Eta ? (
                         <div className="mt-1 text-[10px] leading-4 text-zinc-500" data-otg="production-v2-h3-eta">
@@ -3551,6 +3552,15 @@ export default function ProductionV2Panel() {
                             Interpolates the finished video to 60 FPS. H3 still renders natively at 24 FPS.
                           </span>
                         </span>
+                      </label>
+                      <label className="mt-2 flex items-center gap-3 rounded-lg border border-white/10 bg-black/25 p-3 text-xs font-bold text-zinc-200">
+                        <input type="checkbox" role="switch" className="h-4 w-4 accent-violet-300" disabled={readOnly}
+                          checked={selectedScene.modelState.h3.upscale1080p ?? (selectedScene.h3Quality !== "sh" || selectedScene.modelState.h3.rifeInterpolation60Fps)}
+                          onChange={(event) => {
+                            const upscale1080p = event.target.checked;
+                            updateSharedSceneInput(scene => ({ ...scene, modelState: { ...scene.modelState, h3: { ...scene.modelState.h3, upscale1080p } } }));
+                          }} />
+                        1080p Upscaler (RTX VSR)
                       </label>
                     </div>
                   ) : (

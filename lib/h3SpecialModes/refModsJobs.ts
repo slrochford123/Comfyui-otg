@@ -1,3 +1,4 @@
+import { cancelRelay, finishH3WithRelay, inspectRelay, retryRelay, testRelayFinishing } from "@/lib/videoFinishing/relay";
 import { makeH3SmartReferenceInput } from "@/lib/h3SmartReferencesServer";
 import {assertOwnedCharacterRefMods} from "./characterRefCardAccess";
 import { compileH3SmartReferencePrompt, type H3SmartReferenceInput } from "@/lib/h3SmartReferences";
@@ -74,6 +75,7 @@ export type H3RefModsJobInput = {
   turbo: boolean;
   h3Settings?: ReturnType<typeof validateH3RefModsRequest>["h3Settings"];
   rifeInterpolation60Fps: boolean;
+  upscale1080p?: boolean;
   seed: number;
   creative: H3RefModsCreativeDirection;
   optionalLoras: ResolvedH3OptionalLora[];
@@ -93,6 +95,7 @@ export type H3RefModsJob = {
   workflowId: string | null;
   workflowFile: string | null;
   outputPath: string | null;
+  relaySourcePath?: string;
   galleryOwner: Pick<OwnerContext, "ownerKey" | "username" | "deviceId" | "scope"> | null;
   galleryStatus: "pending" | "saving" | "saved" | "failed";
   galleryFileName: string | null;
@@ -262,12 +265,12 @@ function isRunnableStatus(status: H3RefModsJob["status"]) {
   return ["queued", "preparing", "submitted", "running", "finalizing"].includes(status);
 }
 
-export function validateH3RefModsJobInput(input: H3RefModsRequestInput): H3RefModsJobInput {
+export function validateH3RefModsJobInput(input: H3RefModsRequestInput,ownerKey?:string): H3RefModsJobInput {
   const normalized = validateH3RefModsRequest(input);
   if (input.smartReferences && (normalized.h3Settings.refMod.enabled || normalized.h3Settings.motionLab.enabled)) throw Error("Turn off legacy RefMod / Motion Lab enhancements before using Smart References.");
   const optionalLoras = validateH3LoraSelections(
     input.optionalLoras,
-    "h3-refmods",
+    "h3-refmods",undefined,ownerKey,
   ).resolved;
   const seed = normalized.seed ?? crypto.randomBytes(6).readUIntBE(0, 6);
   if (!Number.isSafeInteger(seed) || seed < 0) {
@@ -285,6 +288,7 @@ export function validateH3RefModsJobInput(input: H3RefModsRequestInput): H3RefMo
     turbo: normalized.turbo,
     h3Settings: normalized.h3Settings,
     rifeInterpolation60Fps: normalized.rifeInterpolation60Fps,
+    upscale1080p: normalized.upscale1080p,
     seed,
     creative: normalized.creative,
     optionalLoras,
@@ -297,7 +301,7 @@ export async function createH3RefModsJob(
   input: H3RefModsRequestInput,
   galleryOwner: H3RefModsJob["galleryOwner"] = null,
 ) {
-  const normalized = validateH3RefModsJobInput(input);
+  const normalized = validateH3RefModsJobInput(input,ownerKey);
   assertOwnedCharacterRefMods(ownerKey,normalized.refMods);
   const id = `h3-refmods-${crypto.randomUUID()}`;
   const now = new Date().toISOString();
@@ -340,7 +344,8 @@ export async function cancelH3RefModsJob(ownerKey: string, id: string) {
     statusMessage: "Canceling...",
     error: null,
   });
-  await fetch(`${current.backendUrl.replace(/\/+$/, "")}/interrupt`, {
+  if (current.relaySourcePath) cancelRelay(ownerKey, id);
+  else await fetch(`${current.backendUrl.replace(/\/+$/, "")}/interrupt`, {
     method: "POST",
     cache: "no-store",
   }).catch(() => undefined);
@@ -549,17 +554,29 @@ async function execute(job: H3RefModsJob) {
   for (;;) {
     const current = await getH3RefModsJob(job.ownerKey, job.id);
     if (current?.status === "canceling" || current?.status === "canceled") return;
-    const history = await getH3PromptHistoryFromBaseUrl(persisted.backendUrl, promptId);
-    if (history.state === "failed") throw new Error("MiniMax H3 Ref Mods failed in ComfyUI. Review the ComfyUI history for the full node traceback.");
-    if (history.state === "completed" && history.video) {
-      let outputPath = await downloadH3VideoFromBaseUrl({
+    const source = current?.relaySourcePath;
+    const history = source ? null : await getH3PromptHistoryFromBaseUrl(persisted.backendUrl, promptId);
+    if (history?.state === "failed") throw new Error("MiniMax H3 Ref Mods failed in ComfyUI. Review the ComfyUI history for the full node traceback.");
+    if (source || (history?.state === "completed" && history.video)) {
+      let outputPath = source || await downloadH3VideoFromBaseUrl({
         baseUrl: persisted.backendUrl,
-        file: history.video,
+        file: history!.video!,
         ownerKey: job.ownerKey,
         productionId: "h3-refmods",
         sceneId: job.id,
         generationJobId: job.id,
       });
+      if (job.input.upscale1080p && testRelayFinishing()) {
+        await updateJob(job.ownerKey, job.id, { relaySourcePath: outputPath, status: "finalizing", statusMessage: "Generated · awaiting upscale" });
+        const finished = await finishH3WithRelay({ owner: job.ownerKey, job: job.id, source: outputPath }, async message => {
+          const latest = await getH3RefModsJob(job.ownerKey, job.id);
+          if (latest?.status === "canceled" || latest?.status === "canceling") return false;
+          if (latest?.statusMessage !== message) await updateJob(job.ownerKey, job.id, { statusMessage: message });
+          return true;
+        });
+        if (!finished) return;
+        outputPath = finished;
+      }
       const rifeResult = await applyH3Rife60FpsFinalization({
         enabled: job.input.rifeInterpolation60Fps,
         baseUrl: persisted.backendUrl,
@@ -649,10 +666,18 @@ export function retryH3RefModsJob(source: H3RefModsJob) {
     turbo: source.input.turbo,
     h3Settings: source.input.h3Settings,
     rifeInterpolation60Fps: source.input.rifeInterpolation60Fps,
+    upscale1080p: source.input.upscale1080p,
     creative: source.input.creative,
     optionalLoras: source.input.optionalLoras,
     seed: crypto.randomBytes(6).readUIntBE(0, 6),
   }, source.galleryOwner);
+}
+
+export async function retryH3RefModsJobFinishing(job: H3RefModsJob) {
+  if (job.status !== "failed" || !job.relaySourcePath || !retryRelay(job.ownerKey, job.id)) return null;
+  return updateJob(job.ownerKey, job.id, {
+    status: "finalizing", statusMessage: "Generated · awaiting upscale retry", error: null, completedAt: null,
+  });
 }
 
 export function h3RefModsPublicStatus(job: H3RefModsJob) {
@@ -668,6 +693,7 @@ export function h3RefModsPublicStatus(job: H3RefModsJob) {
     quality: job.input.quality,
     orientation,
     durationSeconds: job.input.durationSeconds,
+    finishingRetry: Boolean(job.relaySourcePath && inspectRelay(job.ownerKey, job.id)?.state === "failed"),
     nativeFps: H3_RIFE_NATIVE_FPS,
     finalFps: h3FinalFpsForRife(job.input.rifeInterpolation60Fps),
     rifeInterpolation60Fps: job.input.rifeInterpolation60Fps === true,

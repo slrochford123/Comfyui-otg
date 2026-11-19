@@ -52,6 +52,15 @@ export async function snapshotFile(
   metadata: Record<string, unknown> = {},
 ) {
   s.get(owner, project);
+  const prepared = await prepareSnapshotFile(s, project, source, name, kind, metadata);
+  s.addAsset(owner, project, prepared.asset, prepared.path);
+  return prepared.asset;
+}
+/** Prepare an immutable copy before an atomic cross-feature project import. */
+export async function prepareSnapshotFile(
+  s: StudioStore, project: string, source: string, name: string, kind: AssetKind,
+  metadata: Record<string, unknown> = {},
+) {
   const id = randomUUID(),
     ext = path.extname(source).toLowerCase();
   if (!/^\.[a-z0-9]{1,12}$/.test(ext))
@@ -91,8 +100,7 @@ export async function snapshotFile(
     createdAt: new Date().toISOString(),
     metadata,
   };
-  s.addAsset(owner, project, a, dest);
-  return a;
+  return { asset: a, path: dest };
 }
 export async function upload(
   s: StudioStore,

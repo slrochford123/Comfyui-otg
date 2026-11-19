@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "current": "2.41",
+  "current": "2.44",
   "builds": [
     {
       "version": "2",
@@ -248,6 +248,22 @@
       "version": "2.41",
       "date": "2026-11-09",
       "summary": "Story Creator dictation parity, OpenAI default, ElevenLabs music/effects, character RefMod handoff, qualified RTX 3060 Fast H3 and RTX 3090 finishing."
+    },
+    {
+      "version": "2.42",
+      "date": "2026-11-09",
+      "summary": "TEST: optional Huihui Qwen3.5 9B Mature Fiction Director with a shared RTX 3060 queue, durable plans, cancellation and preserved original Qwen option."
+    },
+    {
+      "version": "2.43",
+      "date": "2026-11-13",
+      "summary": "H3 Reference Deck, reviewed scene continuation, and mobile header spacing.",
+      "sourceBaseCommit": "53d0eb72df9d38a8bb982320a95e9acce1b154bc"
+    },
+    {
+      "version": "2.44",
+      "date": "2026-11-15",
+      "summary": "Optional 1080p video upscaling in H3 and supported video forms, independent of 60 FPS interpolation."
     }
   ]
 }

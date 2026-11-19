@@ -99,6 +99,7 @@ export type H3RefModsRequestInput = {
   turbo?: unknown;
   h3Settings?: unknown;
   rifeInterpolation60Fps?: unknown;
+  upscale1080p?: unknown;
   seed?: unknown;
   creative?: H3CreativeDirectionInput;
   optionalLoras?: unknown;
@@ -407,6 +408,7 @@ export function validateH3RefModsRequest(input: H3RefModsRequestInput) {
     refMods,
     turbo: input.h3Settings ? normalizeH3AdvancedSettings(input.h3Settings).renderMode === "turbo" : input.turbo !== false,
     h3Settings: normalizeH3AdvancedSettings(input.h3Settings || { renderMode: input.turbo === false ? "native" : "turbo" }),
+    upscale1080p: input.upscale1080p === true,
     rifeInterpolation60Fps: input.rifeInterpolation60Fps === true || clean(input.rifeInterpolation60Fps).toLowerCase() === "true",
     seed,
     creative: normalizeH3CreativeDirection(input.creative),

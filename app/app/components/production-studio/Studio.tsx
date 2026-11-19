@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import {WORKSPACES,restoredWorkspace} from "@/lib/productionStudio/workflow";
 import type {Workspace} from "@/lib/productionStudio/model";
 import {request,useStudio} from "./useStudio";
+import LinkedStory from "./LinkedStory";
 import Plan from "./Plan";
 import GuidedCreate from "./GuidedCreate";
 import RevisionHistory from "./RevisionHistory";
@@ -37,6 +38,7 @@ function ProjectStudio({ownerKey,id}:{ownerKey:string;id:string}){
   <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold">{p.name}</h2><span role="status" className="text-xs">{s.status} · revision {p.revision}{busy?' · Working…':''}</span></div>
   {s.error&&<div role="alert" className="rounded-xl border border-amber-400/30 bg-amber-500/10 p-3 space-y-2"><p>{s.error}</p><div className="flex flex-wrap gap-2"><Button onClick={()=>run(s.status.includes('Conflict')||s.status.includes('review')?s.reapply:s.flush)}>{s.status.includes('Conflict')?'Review / Reapply Pending Edits':'Retry Save'}</Button><Button onClick={()=>s.setError('')}>Dismiss</Button></div></div>}
   <nav aria-label="Production workspaces" className="flex gap-2 overflow-x-auto snap-x pb-2">{WORKSPACES.map((w,i)=><Button key={w} disabled={busy||!s.saved} aria-current={workspace===w?'step':undefined} className={'shrink-0 snap-start !px-3 !py-2 '+(workspace===w?'!bg-purple-600 !text-white !border-purple-300 font-bold shadow-md underline underline-offset-4':'!bg-white/5 !text-white/70')} onClick={()=>run(()=>navigate(w))}>{i+1}. {w}</Button>)}</nav>
+  <LinkedStory s={s} run={run}/>
   <AssistantProviderPicker scope={"production:"+ownerKey+":"+id} disabled={busy}/>
   <TalkbackProvider s={s} workspace={workspace}>
    {workspace==='Plan'?<Plan s={s} run={run} onContinue={()=>run(()=>navigate('Cast & World'))}/>:workspace==='Cast & World'?<GuidedCreate s={s} run={run} onContinue={()=>run(()=>navigate('Storyboard'))}/>:workspace==='Storyboard'?<Storyboard s={s} run={run} onContinue={()=>run(()=>navigate('Action'))}/>:workspace==='Action'?<Action s={s} run={run} onStoryboard={()=>run(()=>navigate('Storyboard'))}/>:workspace==='Edit'?<ClipEditor s={s} run={run} onFinish={()=>run(()=>navigate('Finish'))}/>:<Finish s={s} run={run}/>}

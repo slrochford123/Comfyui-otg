@@ -403,10 +403,12 @@ export function applyProductionV2H3GenerationToProduction(
   const hasVsrFinal = Boolean(job.vsrBackend && job.vsrPromptId);
   const finalWidth = hasVsrFinal ? H3_FINAL_WIDTH : nativeDimensions.nativeWidth;
   const finalHeight = hasVsrFinal ? H3_FINAL_HEIGHT : nativeDimensions.nativeHeight;
-  const finalFps = hasVsrFinal ? h3FinalFpsForRife(job.payload.rifeInterpolation60Fps) : H3_RIFE_NATIVE_FPS;
+  const hasRifeFinal = job.payload.rifeInterpolation60Fps === true && (hasVsrFinal ||
+    (job.payload.upscale1080p === false && job.status === "completed" && job.outputPath !== job.nativeOutputPath));
+  const finalFps = h3FinalFpsForRife(hasRifeFinal);
   const postprocess = hasVsrFinal
     ? job.payload.rifeInterpolation60Fps ? "rtx-vsr-ultra+rife-60fps" : "rtx-vsr-ultra"
-    : "native-h3";
+    : hasRifeFinal ? "native-h3+rife-60fps" : "native-h3";
   const scenes = production.scenes.map((scene) => {
     if (scene.id !== job.sceneId) return scene;
     if (status === "generated" && outputPath && job.backend && job.comfyPromptId) {
@@ -440,7 +442,7 @@ export function applyProductionV2H3GenerationToProduction(
               finalHeight,
               nativeFps: H3_RIFE_NATIVE_FPS,
               finalFps,
-              rifeInterpolation60Fps: hasVsrFinal && job.payload.rifeInterpolation60Fps === true,
+              rifeInterpolation60Fps: hasRifeFinal,
               postprocess,
               videoReferenceVersionId: parentVersionId,
             },
@@ -500,7 +502,7 @@ export function applyProductionV2H3GenerationToProduction(
             finalHeight,
             nativeFps: H3_RIFE_NATIVE_FPS,
             finalFps,
-            rifeInterpolation60Fps: hasVsrFinal && job.payload.rifeInterpolation60Fps === true,
+            rifeInterpolation60Fps: hasRifeFinal,
             postprocess,
           },
         }, { selectActive: true, selectGenerated: true, selectForAssembly: true });
@@ -867,13 +869,41 @@ async function advanceNativeH3Job(job: ProductionV2GenerationJob, dependencies: 
   }
 }
 
+function interpolateProductionH3(job: ProductionV2GenerationJob, outputPath: string) {
+  return applyH3Rife60FpsFinalization({
+    enabled: true,
+    backend: job.backend || undefined,
+    sourceVideoPath: outputPath,
+    ownerKey: job.ownerKey,
+    productionId: job.productionId,
+    sceneId: job.sceneId,
+    generationJobId: job.id,
+    outputPrefix: `otg_production_v2_rife/${safeSegment(job.productionId)}/${safeSegment(job.sceneId)}/${safeSegment(job.id)}`,
+  });
+}
+
 async function prepareAndSubmitVsr(job: ProductionV2GenerationJob, dependencies: SchedulerDependencies) {
   if (!job.nativeOutputPath) {
     failActiveJob(job, "RTX VSR post-processing cannot start because the native H3 artifact path is missing.");
     return;
   }
   // Scene Hunter is a native-resolution search preview, not a 1080p final.
-  if (job.payload.h3Quality === "sh" && !job.payload.rifeInterpolation60Fps) {
+  if (job.payload.upscale1080p === false) {
+    let outputPath = job.nativeOutputPath;
+    if (job.payload.rifeInterpolation60Fps) {
+      try {
+        outputPath = (await interpolateProductionH3(job, outputPath))?.outputPath || outputPath;
+      } catch (error) {
+        failActiveJob(job, `RIFE 60 FPS finalization failed: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+    }
+    const message = outputPath === job.nativeOutputPath ? "Complete - native H3 output" : "Complete - native resolution at 60 FPS";
+    const completed = completeProductionV2GenerationNativeJob(job.id, outputPath, message);
+    if (completed) sceneStatus(completed, "generated", outputPath);
+    return;
+  }
+  if (job.payload.upscale1080p !== true && job.payload.h3Quality === "sh" && !job.payload.rifeInterpolation60Fps) {
     const completed = completeProductionV2GenerationNativeJob(job.id, job.nativeOutputPath, "Complete - native Scene Hunter preview");
     if (completed) sceneStatus(completed, "generated", job.nativeOutputPath);
     return;
@@ -1102,16 +1132,7 @@ async function advanceVsrJob(job: ProductionV2GenerationJob, dependencies: Sched
 
   if (job.payload.rifeInterpolation60Fps === true) {
     try {
-      const rifeResult = await applyH3Rife60FpsFinalization({
-        enabled: true,
-        backend: job.backend || undefined,
-        sourceVideoPath: finalOutputPath,
-        ownerKey: job.ownerKey,
-        productionId: job.productionId,
-        sceneId: job.sceneId,
-        generationJobId: job.id,
-        outputPrefix: `otg_production_v2_rife/${safeSegment(job.productionId)}/${safeSegment(job.sceneId)}/${safeSegment(job.id)}`,
-      });
+      const rifeResult = await interpolateProductionH3(job, finalOutputPath);
       if (rifeResult) finalOutputPath = rifeResult.outputPath;
     } catch (error) {
       failActiveJob(
@@ -1163,12 +1184,13 @@ export async function runProductionV2H3SchedulerTick(dependencies: SchedulerDepe
         userLoraFilenames,
         requireRife60Fps: waiting.payload.rifeInterpolation60Fps === true,
       };
+      const needsVsr = waiting.payload.upscale1080p ?? (waiting.payload.h3Quality !== "sh");
       const [primaryProbe, secondaryProbe, vsrProbe] = await Promise.all([
         probe("rtx3090", h3Requirements),
         probe("rtx5060ti", h3Requirements),
-        probe(H3_VSR_BACKEND, { requireVsr: true }),
+        needsVsr ? probe(H3_VSR_BACKEND, { requireVsr: true }) : null,
       ]);
-      if (waiting.payload.h3Quality !== "sh" && (!vsrProbe.healthy || !vsrProbe.compatible)) {
+      if (vsrProbe && (!vsrProbe.healthy || !vsrProbe.compatible)) {
         markProductionV2GenerationWaiting(waiting.id, "Waiting for a compatible RTX VSR ULTRA 1080p backend");
         continue;
       }
@@ -1253,7 +1275,9 @@ export function productionV2GenerationPublicStatus(job: ProductionV2GenerationJo
   const native = recipe ? qualifiedNativeDimensions(job) : null;
   const finalWidth = hasVsrFinal ? H3_FINAL_WIDTH : (native?.nativeWidth || null);
   const finalHeight = hasVsrFinal ? H3_FINAL_HEIGHT : (native?.nativeHeight || null);
-  const finalFps = hasVsrFinal ? h3FinalFpsForRife(job.payload.rifeInterpolation60Fps) : H3_RIFE_NATIVE_FPS;
+  const hasRifeFinal = job.payload.rifeInterpolation60Fps === true && (hasVsrFinal ||
+    (job.payload.upscale1080p === false && job.status === "completed" && job.outputPath !== job.nativeOutputPath));
+  const finalFps = h3FinalFpsForRife(hasRifeFinal);
   return {
     id: job.id,
     productionId: job.productionId,
@@ -1276,7 +1300,7 @@ export function productionV2GenerationPublicStatus(job: ProductionV2GenerationJo
     finalResolution: finalWidth && finalHeight ? `${finalWidth}x${finalHeight}` : null,
     nativeFps: H3_RIFE_NATIVE_FPS,
     finalFps,
-    rifeInterpolation60Fps: hasVsrFinal && job.payload.rifeInterpolation60Fps === true,
+    rifeInterpolation60Fps: hasRifeFinal,
     workflowId: job.workflowId,
     workflowFile: job.workflowFile,
     approximatePreview: progress?.approximatePreview || null,

@@ -16,6 +16,7 @@ import { DesignTab } from "./storyCreatorV2/DesignTab";
 import { StoryAudioProductionStudio } from "./storyCreatorV2/StoryAudioProductionStudio";
 import { StoryVideoProductionStudio } from "./storyCreatorV2/StoryVideoProductionStudio";
 import { StoryMovieEditor } from "./storyCreatorV2/StoryMovieEditor";
+import ProductionHandoff from "./storyCreatorV2/ProductionHandoff";
 import { IdeasTab } from "./storyCreatorV2/IdeasTab";
 import {
   ProductionPlanner,
@@ -501,6 +502,8 @@ export default function StoryCreatorPanel({
         }
 
         try {
+          const requested = new URL(window.location.href).searchParams.get("storyProject");
+          if (requested && nextProjects.some((project: StoryProject) => project.id === requested)) return requested;
           const remembered = window.localStorage.getItem(`otg:story:last-project:v1:${ownerKey}`);
           if (remembered && nextProjects.some((project: StoryProject) => project.id === remembered)) return remembered;
         } catch { /* storage is optional */ }
@@ -2284,6 +2287,8 @@ export default function StoryCreatorPanel({
           onBack={() => setSelectedProjectId("")}
         />
 
+        <ProductionHandoff key={selectedProject.id} projectId={selectedProject.id} busy={chatBusy} />
+
         <StoryStudioShell
           mode={storyProductionMode}
           memoryOpen={storyMemoryOpen}
@@ -2333,6 +2338,10 @@ export default function StoryCreatorPanel({
             chatError={chatError || conversation.error}
             activeReply={conversation.pending ? conversation.turn : null}
             onCancelReply={() => void conversation.cancel()}
+            onRetryReply={conversation.turn?.canRetry ? () => void conversation.retry() : undefined}
+            retryBusy={conversation.pending}
+            replyNotice={conversation.turn?.notice}
+            failedReply={!conversation.pending && conversation.turn?.canRetry ? conversation.turn.partialText : undefined}
             draft={draft}
             chatEndRef={chatEndRef}
             extractionBusy={storyExtractionBusy}

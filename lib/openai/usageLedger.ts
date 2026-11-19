@@ -6,6 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { RequestError } from "@/lib/requestError";
 import type { OpenAIUsageRecord } from "@/lib/openai/provider";
 import { newYorkBudgetDayStart, productionBudgetEnabled } from "./budgetDay";
+import { hasUnlimitedProviderUsage } from "@/lib/auth/providerUsage";
 
 function withLedger<T>(fn: (db: Database.Database) => T): T {
   const root = process.env.OTG_DATA_DIR || process.env.OTG_DATA_ROOT || path.join(os.homedir(), "AI/runtime/test/data");
@@ -22,6 +23,9 @@ function withLedger<T>(fn: (db: Database.Database) => T): T {
       CREATE INDEX IF NOT EXISTS usage_owner_time ON usage_records(owner, ts);
       CREATE TABLE IF NOT EXISTS reservations (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, owner TEXT NOT NULL, use_case TEXT NOT NULL, cost REAL NOT NULL, status TEXT NOT NULL, provider_id TEXT);
       CREATE INDEX IF NOT EXISTS reservation_owner_time ON reservations(owner, ts);
+      CREATE TABLE IF NOT EXISTS provider_usage_accounts (
+        reservation TEXT PRIMARY KEY, account TEXT NOT NULL, cap_exempt INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS conversation_credit_events (
         account TEXT NOT NULL, event_key TEXT NOT NULL, ts INTEGER NOT NULL, kind TEXT NOT NULL,
         nanos INTEGER NOT NULL, actor TEXT NOT NULL, note TEXT NOT NULL, PRIMARY KEY(account,event_key)
@@ -164,11 +168,12 @@ export function readUncertainConversationRequest(id:string) {
     WHERE r.id=? AND r.status='unknown'`).get(id) as {owner:string;useCase:OpenAIUsageRecord["useCase"];providerId:string|null;account:string;model:string;feature:string|null}|undefined);
 }
 
-export function reserveOpenAIUsage(args: { ownerKey: string; useCase: string; reservedUsd: number; userLimit: number; globalLimit: number; maxRequests: number; windowMs: number; allowance?:Allowance }) {
+export function reserveOpenAIUsage(args: { ownerKey: string; useCase: string; reservedUsd: number; userLimit: number; globalLimit: number; maxRequests: number; windowMs: number; allowance?:Allowance; accountId?:string }) {
   if (!args.ownerKey || !Number.isFinite(args.reservedUsd) || args.reservedUsd < 0) throw new RequestError("Invalid OpenAI request budget.", 400);
+  const unlimited = hasUnlimitedProviderUsage(args.allowance?.account.id || args.accountId, args.ownerKey);
   return withLedger(db => db.transaction(() => {
     const now = Date.now(), since = now - 86400000;
-    const a = args.allowance;
+    const a = args.allowance ? {...args.allowance, account:{...args.allowance.account, admin:unlimited}} : undefined;
     if (a) {
       initialize(db,a.account);
       if (a.requestKey && db.prepare("SELECT 1 FROM conversation_allowance_requests WHERE account=? AND request_key=?").get(a.account.id,a.requestKey))
@@ -176,13 +181,15 @@ export function reserveOpenAIUsage(args: { ownerKey: string; useCase: string; re
       if (!a.account.admin && a.nanos>(balance(db,a.account).availableNanos||0)) throw new ConversationCreditInsufficient();
     }
     const requests = db.prepare("SELECT COUNT(*) AS count FROM reservations WHERE owner=? AND use_case=? AND ts>=?").get(args.ownerKey, args.useCase, now - args.windowMs) as { count: number };
-    if (requests.count >= args.maxRequests) throw new RequestError("OpenAI rate limit reached. Please wait and retry.", 429);
+    if (requests.count >= args.maxRequests && !(unlimited && process.env.OTG_ENV === "test")) {
+      throw new RequestError("OpenAI rate limit reached. Please wait and retry.", 429);
+    }
     const totals = db.prepare(`SELECT SUM(cost) AS total, SUM(CASE WHEN owner=? THEN cost ELSE 0 END) AS own FROM (
       SELECT owner,cost FROM usage_records WHERE ts>=? UNION ALL
       SELECT owner,cost FROM reservations WHERE ts>=? AND status IN ('pending','unknown')
     )`).get(args.ownerKey, since, since) as { total: number | null; own: number | null };
-    if (args.userLimit > 0 && Number(totals.own || 0) + args.reservedUsd > args.userLimit) throw new RequestError("Daily OpenAI cost limit reached for this user, including in-flight requests.", 429);
-    if (args.globalLimit > 0) {
+    if (!unlimited && args.userLimit > 0 && Number(totals.own || 0) + args.reservedUsd > args.userLimit) throw new RequestError("Daily OpenAI cost limit reached for this user, including in-flight requests.", 429);
+    if (!unlimited && args.globalLimit > 0) {
       if (productionBudgetEnabled()) {
         const dayStart = newYorkBudgetDayStart(now);
         const { nanos } = db.prepare(`SELECT COALESCE(SUM(nanos),0) AS nanos FROM (
@@ -200,6 +207,8 @@ export function reserveOpenAIUsage(args: { ownerKey: string; useCase: string; re
     }
     const id = randomUUID();
     db.prepare("INSERT INTO reservations (id,ts,owner,use_case,cost,status) VALUES (?,?,?,?,?,'pending')").run(id, now, args.ownerKey, args.useCase, args.reservedUsd);
+    const accountId = a?.account.id || args.accountId;
+    if (accountId) db.prepare("INSERT INTO provider_usage_accounts VALUES (?,?,?)").run(id,accountId,unlimited?1:0);
     if (a) {
       db.prepare("INSERT INTO conversation_allowance_requests VALUES (?,?,?,?,NULL,?,?)")
         .run(id,a.account.id,a.requestKey||null,a.account.admin?0:a.nanos,a.model,a.priceVersion);
@@ -216,7 +225,9 @@ export function settleOpenAIUsage(id: string, record: OpenAIUsageRecord, provide
     if (!reservation || reservation.owner !== record.ownerKey) throw new Error("OpenAI reservation owner mismatch.");
     if(reconciledBy&&reservation.status!=="unknown")throw new RequestError("The reservation was already reconciled.",409);
     const a = db.prepare("SELECT account,price_version FROM conversation_allowance_requests WHERE reservation=?").get(id) as {account:string;price_version:string}|undefined;
+    const policy = db.prepare("SELECT account,cap_exempt FROM provider_usage_accounts WHERE reservation=?").get(id) as {account:string;cap_exempt:number}|undefined;
     db.prepare("INSERT OR IGNORE INTO usage_records VALUES (?,?,?,?,?)").run(id, record.ts, record.ownerKey, record.approximateCostUsd, JSON.stringify({ ...record, requestId: id, providerRequestId: providerId,
+      ...(policy?{accountId:policy.account,applicationCapExempt:!!policy.cap_exempt}:{}),
       ...(a?{accountId:a.account,priceVersion:a.price_version}:{}) }));
     if (a) db.prepare("UPDATE conversation_allowance_requests SET actual_nanos=? WHERE reservation=? AND actual_nanos IS NULL")
       .run(Math.round(record.approximateCostUsd*1e9),id);
@@ -232,4 +243,12 @@ export function finishUnsettledOpenAIUsage(id: string, definitelyRejected = fals
 
 export function readOpenAIReservationSummary() {
   return withLedger(db => db.prepare("SELECT status, COUNT(*) AS requests, SUM(cost) AS reservedUsd FROM reservations WHERE ts>=? AND status IN ('pending','unknown') GROUP BY status").all(Date.now() - 86400000) as Array<{status: "pending" | "unknown"; requests: number; reservedUsd: number}>);
+}
+
+/** Account and server request-key scope; never accepts a client-supplied provider response ID. */
+export function readConversationRequest(accountId:string, requestKey:string) {
+  return withLedger(db=>db.prepare(`SELECT r.id,r.owner,r.status,r.provider_id AS providerId,a.model
+    FROM reservations r JOIN conversation_allowance_requests a ON a.reservation=r.id
+    WHERE a.account=? AND a.request_key=?`).get(accountId,requestKey) as
+    {id:string;owner:string;status:string;providerId:string|null;model:string}|undefined);
 }
