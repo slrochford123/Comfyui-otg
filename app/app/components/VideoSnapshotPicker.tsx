@@ -483,6 +483,7 @@ export default function VideoSnapshotPicker({
         (event: KeyboardEvent) => {
           if (
             event.key === "Escape"
+            && !event.defaultPrevented
             && !capturing
             && !insertingGuard.current
           ) {
